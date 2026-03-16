@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.diffusion.recipes.flux.flux import model_config, pretrain_config
+from megatron.bridge.diffusion.recipes.flux.flux import (
+    finetune_config,
+    model_config,
+    pretrain_config,
+)
 
 
-__all__ = ["model_config", "pretrain_config"]
+__all__ = ["finetune_config", "model_config", "pretrain_config"]

@@ -17,7 +17,7 @@ import tempfile
 
 import pytest
 
-from megatron.bridge.diffusion.data.flux.flux_mock_datamodule import FluxMockDataModuleConfig
+from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
 from megatron.bridge.diffusion.recipes.flux.flux import model_config, pretrain_config
 from megatron.bridge.training.config import ConfigContainer
@@ -71,11 +71,12 @@ class TestPretrainConfig:
     def test_pretrain_config_returns_complete_config(self):
         """Test that pretrain_config returns a ConfigContainer with all required components."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(dir=tmpdir, mock=True)
+            config = pretrain_config(dir=tmpdir)  # no data_paths => mock/synthetic data
 
             assert isinstance(config, ConfigContainer)
             assert isinstance(config.model, FluxProvider)
-            assert isinstance(config.dataset, FluxMockDataModuleConfig)
+            assert isinstance(config.dataset, FluxDatasetConfig)
+            assert config.dataset.path is None  # mock mode: no data path
 
             # Check all required components exist
             assert hasattr(config, "train")
@@ -88,7 +89,7 @@ class TestPretrainConfig:
     def test_pretrain_config_directory_structure(self):
         """Test that pretrain_config creates correct directory structure."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(dir=tmpdir, name="test_run", mock=True)
+            config = pretrain_config(dir=tmpdir, name="test_run")
 
             assert "test_run" in config.checkpoint.save
             assert "test_run" in config.logger.tensorboard_dir
@@ -99,7 +100,6 @@ class TestPretrainConfig:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = pretrain_config(
                 dir=tmpdir,
-                mock=True,
                 train_iters=5000,
                 global_batch_size=8,
                 micro_batch_size=2,
@@ -115,7 +115,6 @@ class TestPretrainConfig:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = pretrain_config(
                 dir=tmpdir,
-                mock=True,
                 num_joint_layers=12,
                 hidden_size=2048,
                 guidance_embed=True,
@@ -132,7 +131,6 @@ class TestPretrainConfig:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = pretrain_config(
                 dir=tmpdir,
-                mock=True,
                 image_H=512,
                 image_W=512,
                 vae_channels=16,
@@ -140,7 +138,7 @@ class TestPretrainConfig:
 
             assert config.dataset.image_H == 512
             assert config.dataset.image_W == 512
-            assert config.dataset.vae_channels == 16
+            assert config.dataset.latent_channels == 16
 
     def test_pretrain_config_with_real_dataset(self):
         """Test pretrain_config with real dataset configuration."""
@@ -148,9 +146,7 @@ class TestPretrainConfig:
             data_path = os.path.join(tmpdir, "data")
             os.makedirs(data_path, exist_ok=True)
 
-            config = pretrain_config(dir=tmpdir, mock=False, data_paths=[data_path])
+            config = pretrain_config(dir=tmpdir, data_paths=[data_path])
 
-            from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDataModuleConfig
-
-            assert isinstance(config.dataset, FluxDataModuleConfig)
+            assert isinstance(config.dataset, FluxDatasetConfig)
             assert config.dataset.path == [data_path]

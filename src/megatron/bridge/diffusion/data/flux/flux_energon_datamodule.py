@@ -14,16 +14,105 @@
 
 # pylint: disable=C0115,C0116,C0301
 
+import logging
 from dataclasses import dataclass
+from typing import Optional, Union
 
 from torch import int_repr
 
-from megatron.bridge.data.utils import DatasetBuildContext
+from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 from megatron.bridge.diffusion.data.common.diffusion_energon_datamodule import (
     DiffusionDataModule,
     DiffusionDataModuleConfig,
 )
 from megatron.bridge.diffusion.data.flux.flux_taskencoder import FluxTaskEncoder
+
+
+logger = logging.getLogger(__name__)
+
+
+def _is_empty_path(path: Optional[Union[str, list]]) -> bool:
+    """Return True if path should be treated as empty (use mock data)."""
+    if path is None:
+        return True
+    if isinstance(path, str):
+        return not path.strip()
+    if isinstance(path, list):
+        return len(path) == 0
+    return True
+
+
+@dataclass(kw_only=True)
+class FluxDatasetConfig(DatasetProvider):
+    """
+    Unified FLUX dataset config: mock vs real is decided at runtime in build_datasets()
+    based on whether `path` is set (same pattern as Gemma/LLM recipes with dataset.blend).
+
+    Use this in the recipe with path=None by default. Override with dataset.path=/path/to/wds
+    to load real data; no separate --data_paths or mock flag needed.
+    """
+
+    path: Optional[Union[str, list]] = None
+    seq_length: int = 1024
+    packing_buffer_size: Optional[int] = None
+    micro_batch_size: int = 1
+    global_batch_size: int = 4
+    num_workers: int = 16
+    dataloader_type: str = "external"
+    vae_scale_factor: int = 8
+    latent_channels: int = 16
+    # Mock-only params (used when path is empty)
+    image_H: int = 1024
+    image_W: int = 1024
+    prompt_seq_len: int = 512
+    context_dim: int = 4096
+    pooled_prompt_dim: int = 768
+
+    def __post_init__(self):
+        self.sequence_length = self.seq_length
+
+    def build_datasets(self, context: DatasetBuildContext):
+        if _is_empty_path(self.path):
+            logger.info(
+                "FLUX dataset: path is None or empty; using mock/synthetic data. "
+                "Set dataset.path=/path/to/wds to use real data."
+            )
+            from megatron.bridge.diffusion.data.flux.flux_mock_datamodule import (
+                FluxMockDataModuleConfig,
+            )
+
+            mock_cfg = FluxMockDataModuleConfig(
+                path="",
+                seq_length=self.seq_length,
+                packing_buffer_size=self.packing_buffer_size,
+                micro_batch_size=self.micro_batch_size,
+                global_batch_size=self.global_batch_size,
+                num_workers=self.num_workers,
+                dataloader_type=self.dataloader_type,
+                image_H=self.image_H,
+                image_W=self.image_W,
+                vae_channels=self.latent_channels,
+                vae_scale_factor=self.vae_scale_factor,
+                prompt_seq_len=self.prompt_seq_len,
+                context_dim=self.context_dim,
+                pooled_prompt_dim=self.pooled_prompt_dim,
+            )
+            return mock_cfg.build_datasets(context)
+
+        # Real data: path is set (string or list)
+        path_str = self.path if isinstance(self.path, str) else self.path[0]
+        real_cfg = FluxDataModuleConfig(
+            path=path_str,
+            seq_length=self.seq_length,
+            packing_buffer_size=self.packing_buffer_size,
+            micro_batch_size=self.micro_batch_size,
+            global_batch_size=self.global_batch_size,
+            num_workers=self.num_workers,
+            vae_scale_factor=self.vae_scale_factor,
+            latent_channels=self.latent_channels,
+            task_encoder_seq_length=None,
+        )
+        return real_cfg.build_datasets(context)
 
 
 @dataclass(kw_only=True)

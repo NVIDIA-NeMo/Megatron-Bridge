@@ -13,15 +13,13 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.diffusion.data.flux.flux_mock_datamodule import FluxMockDataModuleConfig
+from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -100,9 +98,8 @@ def pretrain_config(
     name: str = "default",
     # Dataset configuration
     data_paths: Optional[List[str]] = None,
-    mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
+    tensor_parallelism: int = 2,
     pipeline_parallelism: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
@@ -127,7 +124,7 @@ def pretrain_config(
     pooled_prompt_dim: int = 768,
     # Training hyperparameters
     train_iters: int = 10000,
-    global_batch_size: int = 4,
+    global_batch_size: int = 16,
     micro_batch_size: int = 1,
     lr: float = 1e-4,
     lr_warmup_iters: int = 1000,
@@ -175,6 +172,10 @@ def pretrain_config(
     Returns:
         ConfigContainer: Configuration for pre-training.
     """
+    # Deferred imports to avoid circular import (flux -> recipes.utils -> recipes.__init__ -> flux)
+    from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+    from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+
     base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
     run_output_dir = os.path.join(base_output_dir, name)
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
@@ -210,37 +211,21 @@ def pretrain_config(
 
     precision_config.grad_reduce_in_fp32 = False
 
-    if mock:
-        dataset = FluxMockDataModuleConfig(
-            path=None,
-            seq_length=1024,
-            image_H=image_H,
-            image_W=image_W,
-            vae_channels=vae_channels,
-            vae_scale_factor=vae_scale_factor,
-            prompt_seq_len=prompt_seq_len,
-            context_dim=context_dim,
-            pooled_prompt_dim=pooled_prompt_dim,
-            micro_batch_size=micro_batch_size,
-            global_batch_size=global_batch_size,
-            num_workers=16,
-            packing_buffer_size=None,
-        )
-    else:
-        # Real dataset configuration using Energon WebDataset
-        from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDataModuleConfig
-
-        dataset = FluxDataModuleConfig(
-            path=data_paths,  # Path to WebDataset shards directory
-            seq_length=1024,
-            vae_scale_factor=vae_scale_factor,
-            latent_channels=vae_channels,
-            micro_batch_size=micro_batch_size,
-            global_batch_size=global_batch_size,
-            num_workers=16,
-            task_encoder_seq_length=None,
-            packing_buffer_size=None,  # Disable Sequence Packing for now
-        )
+    dataset = FluxDatasetConfig(
+        path=data_paths,
+        seq_length=1024,
+        packing_buffer_size=None,
+        micro_batch_size=micro_batch_size,
+        global_batch_size=global_batch_size,
+        num_workers=8,
+        vae_scale_factor=vae_scale_factor,
+        latent_channels=vae_channels,
+        image_H=image_H,
+        image_W=image_W,
+        prompt_seq_len=prompt_seq_len,
+        context_dim=context_dim,
+        pooled_prompt_dim=pooled_prompt_dim,
+    )
 
     # Config Container
     cfg = ConfigContainer(
@@ -285,4 +270,29 @@ def pretrain_config(
         mixed_precision=precision_config,
     )
 
+    return cfg
+
+
+def finetune_config(
+    pretrained_checkpoint: Optional[str] = None,
+    **kwargs: Any,
+) -> ConfigContainer:
+    """
+    Create a fine-tuning configuration for FLUX model.
+    Returns:
+        ConfigContainer: Configuration for fine-tuning (checkpoint.finetune=True).
+    """
+    cfg = pretrain_config(**kwargs)
+    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, "default")
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+
+    cfg.checkpoint = CheckpointConfig(
+        save_interval=20,
+        save=checkpoint_dir,
+        load=checkpoint_dir,
+        pretrained_checkpoint=pretrained_checkpoint,  # Set to load from pretrained weights
+        ckpt_format="torch_dist",
+        fully_parallel_save=True,
+    )
     return cfg
