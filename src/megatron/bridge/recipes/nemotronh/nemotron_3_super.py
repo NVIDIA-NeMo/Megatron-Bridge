@@ -284,7 +284,7 @@ def _nemotron_3_super_common(
         ),
         tokenizer=tokenizer_config,
         checkpoint=CheckpointConfig(
-            async_save=False,
+            async_save=True,
             save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,

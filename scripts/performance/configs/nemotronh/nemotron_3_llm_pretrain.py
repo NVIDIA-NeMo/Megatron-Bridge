@@ -41,6 +41,8 @@ def set_nemotron_3_super_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.model.moe_router_force_load_balancing = True
 
+    cfg.checkpoint.async_save = False
+
 
 def nemotron_3_super_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
