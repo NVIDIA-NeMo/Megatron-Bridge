@@ -369,6 +369,11 @@ def main(
         )
 
     if enable_nsys:
+        if compute_dtype == "fp8_mx" and nsys_trace is None:
+            logger.warning("Using `cuda-sw` trace mode for MXFP8 profiling")
+            logger.warning("MXFP8 profiling results might not be accurate due to software tracing limitations.")
+            # TODO: Remove this once the functional issues associated with PyT 26.02 are resolved.
+            nsys_trace = ["cuda-sw", "nvtx"]
         plugins.append(
             NsysPlugin(
                 profile_step_start=profiling_start_step,
