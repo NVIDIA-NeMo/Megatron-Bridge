@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Optional
+
 import torch
 from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.extensions.transformer_engine import (
@@ -81,6 +83,8 @@ class Qwen3VLModel(MegatronModule):
         add_encoder: bool = True,
         add_decoder: bool = True,
         pg_collection: ProcessGroupCollection = None,
+        mtp_block_spec: Optional[ModuleSpec] = None,
+        vp_stage: Optional[int] = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -162,6 +166,8 @@ class Qwen3VLModel(MegatronModule):
             fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
             share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
+            mtp_block_spec=mtp_block_spec,
+            vp_stage=vp_stage,
             pg_collection=pg_collection,
         )
         if pre_process:
@@ -293,6 +299,12 @@ class Qwen3VLModel(MegatronModule):
         cp_rank = self.pg_collection.cp.rank()
         cp_size = self.pg_collection.cp.size()
 
+        # input_ids to pass to the language model for MTP (Multi-Token Prediction).
+        # MTP's _get_embeddings rolls input_ids to generate future-token embeddings,
+        # so it must be a real tensor. For packed sequences we use the THD-format
+        # input_ids_thd (updated below); for regular sequences we use input_ids as-is.
+        lm_input_ids = input_ids
+
         if self.pre_process:
             # can reorganize_inputs at dataset
             vision_data, vision_grid_thw, vision_mask = reorganize_inputs(
@@ -379,6 +391,7 @@ class Qwen3VLModel(MegatronModule):
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
+                lm_input_ids = input_ids_thd
                 _, _, vision_mask_thd = reorganize_inputs(
                     input_ids=input_ids_thd,
                     pixel_values=pixel_values,
@@ -426,6 +439,14 @@ class Qwen3VLModel(MegatronModule):
 
         else:
             combined_embeddings = None
+            # On non-pre_process PP stages (e.g. the last stage where MTP runs),
+            # convert lm_input_ids to THD format so it matches position_ids.
+            if packed_seq_params is not None:
+                if attention_mask is None:
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
+                lm_input_ids, _ = preprocess_packed_seqs(
+                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
+                )
 
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
@@ -485,7 +506,7 @@ class Qwen3VLModel(MegatronModule):
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
 
         output = self.language_model(
-            input_ids=None,
+            input_ids=lm_input_ids,
             position_ids=position_ids,  # None in encoder
             attention_mask=attention_mask,  # None in encoder
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage

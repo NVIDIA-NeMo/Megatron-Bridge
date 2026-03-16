@@ -38,6 +38,12 @@ from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronNano
 class NemotronVLBridge(MegatronModelBridge):
     """Conversion utilities between HF Nemotron-VL and Megatron-Core format."""
 
+    # Extend CONFIG_MAPPING with Nemotron-VL specific fields
+    CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
+        # Mamba-specific fields
+        ("hybrid_override_pattern", "hybrid_layer_pattern"),
+    ]
+
     # ------------------------------------------------------------------
     # Provider translation
     # ------------------------------------------------------------------
@@ -48,6 +54,9 @@ class NemotronVLBridge(MegatronModelBridge):
 
         # Use base class helper for common config mapping
         provider_kwargs = self.hf_config_to_provider_kwargs(llm_config)
+
+        # Remove num_layers from provider as it is derived from hybrid_layer_pattern
+        provider_kwargs["num_layers"] = None
 
         # Handle vocab size divisibility
         provider_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(llm_config.vocab_size)
