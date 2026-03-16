@@ -104,6 +104,15 @@ class NemotronHBridge(MegatronModelBridge):
 
         return provider
 
+    @classmethod
+    def get_hf_tokenizer_kwargs(cls) -> dict:
+        """Return HuggingFace tokenizer kwargs for Nemotron-H models.
+
+        Nemotron-H models only provide a fast tokenizer (tokenizer.json),
+        so use_fast=True is required.
+        """
+        return {"use_fast": True}
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
         # First create simple 1:1 parameter mappings using a dictionary for readability
