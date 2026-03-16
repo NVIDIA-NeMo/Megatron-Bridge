@@ -94,14 +94,13 @@ def import_hf_to_megatron(
     etp: int = 1,
     torch_dtype: str = "bfloat16",
     trust_remote_code: bool = False,
-    device: str = "cuda",
 ) -> None:
     """Import a HuggingFace model and save it as a distributed Megatron checkpoint."""
     _check_distributed()
     dtype = _parse_dtype(torch_dtype)
 
     print_rank_0(f"Importing: {hf_model} -> {megatron_path}")
-    print_rank_0(f"  TP={tp}  PP={pp}  EP={ep}  ETP={etp}  dtype={torch_dtype}  device={device}")
+    print_rank_0(f"  TP={tp}  PP={pp}  EP={ep}  ETP={etp}  dtype={torch_dtype}")
 
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
@@ -109,7 +108,7 @@ def import_hf_to_megatron(
         torch_dtype=dtype,
     )
 
-    model_provider = bridge.to_megatron_provider(load_weights=True, device=device)
+    model_provider = bridge.to_megatron_provider(load_weights=True)
     model_provider.tensor_model_parallel_size = tp
     model_provider.pipeline_model_parallel_size = pp
     model_provider.expert_model_parallel_size = ep
