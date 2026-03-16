@@ -29,7 +29,11 @@ from megatron.core.utils import (
     get_pg_size,
 )
 
-from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, remove_non_pickleables
+from megatron.bridge.models.conversion.utils import (
+    get_module_and_param_from_name,
+    is_modelopt_dynamic_module,
+    remove_non_pickleables,
+)
 
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
@@ -499,7 +503,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         scatter_list = None
         if self.tp_rank == src_rank and splits:
-            scatter_list = [s.to(device=device, dtype=dtype) for s in splits]
+            scatter_list = [s.to(device=device, dtype=dtype).contiguous() for s in splits]
 
         torch.distributed.scatter(
             output,
@@ -1084,6 +1088,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
     _MODULE_TYPE_REGISTRY: Dict[str, set] = {
         "column": {
             "ColumnParallelLinear",
+            "LinearCrossEntropyModule",
             "TEColumnParallelLinear",
             "TELayerNormColumnParallelLinear",
             "TEColumnParallelGroupedLinear",
@@ -1157,7 +1162,10 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
 
     def _detect_parallelism_type(self, module: nn.Module) -> str:
         """Detect parallelism type from module."""
-        module_type = type(module).__name__
+        if is_modelopt_dynamic_module(module):
+            module_type = module.get_original_cls_by_level(level=0).__name__
+        else:
+            module_type = type(module).__name__
 
         # Handle fused modules like TELayerNormColumnParallelLinear
         # These modules have both column-parallel weights (weight, bias)

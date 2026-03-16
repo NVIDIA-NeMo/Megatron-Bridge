@@ -949,10 +949,6 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
     else:
         mask = [1] * len(input_ids)
 
-    if tokenizer.eos_id and input_ids[-1] != tokenizer.eos_id:
-        input_ids += [tokenizer.eos_id]
-        mask += [1]
-
     if 0 in mask:
         # traverse the list backward for first occurrence of masked token
         context_end_idx = len(mask) - mask[::-1].index(0)
