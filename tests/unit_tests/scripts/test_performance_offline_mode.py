@@ -190,21 +190,7 @@ def test_parse_cli_args_accepts_offline_flag(monkeypatch):
 
     parser = argument_parser.parse_cli_args()
     args = parser.parse_args(
-        [
-            "--model_family_name",
-            "llama",
-            "--model_recipe_name",
-            "llama3_8b",
-            "--num_gpus",
-            "8",
-            "--gpu",
-            "h100",
-            "--account",
-            "test_account",
-            "--partition",
-            "test_partition",
-            "--offline",
-        ]
+        ["--model_family_name", "llama", "--model_recipe_name", "llama3_8b", "--num_gpus", "8", "--gpu", "h100", "--offline"]
     )
 
     assert args.offline is True
@@ -223,7 +209,7 @@ def test_setup_experiment_rejects_hf_token_with_offline(monkeypatch):
 
 
 def test_slurm_executor_sets_offline_env_and_container_writable(monkeypatch):
-    """Offline mode should disable HF Hub access and keep the writable-container workaround."""
+    """Offline mode should set HF_HUB_OFFLINE and leave TRANSFORMERS_OFFLINE untouched."""
     _install_fake_nemo_run(monkeypatch)
     executors = _load_module("test_perf_executors", EXECUTORS_PATH)
 
@@ -243,3 +229,23 @@ def test_slurm_executor_sets_offline_env_and_container_writable(monkeypatch):
     assert "--container-writable" in executor.srun_args
     assert executor.env_vars["HF_HUB_OFFLINE"] == "1"
     assert executor.env_vars["TRANSFORMERS_OFFLINE"] == "1"
+
+
+def test_slurm_executor_default_has_container_writable_and_hub_online(monkeypatch):
+    """By default, --container-writable is always set and HF Hub access stays online."""
+    _install_fake_nemo_run(monkeypatch)
+    executors = _load_module("test_perf_executors_default", EXECUTORS_PATH)
+
+    monkeypatch.setattr(executors, "PERF_ENV_VARS", executors.PERF_ENV_VARS.copy())
+
+    executor = executors.slurm_executor(
+        gpu="h100",
+        account="test_account",
+        partition="test_partition",
+        log_dir="/tmp/log_dir",
+        nodes=1,
+        num_gpus_per_node=8,
+    )
+
+    assert "--container-writable" in executor.srun_args
+    assert executor.env_vars["HF_HUB_OFFLINE"] == "0"
