@@ -111,7 +111,10 @@ class KimiK25VLModel(MegatronModule):
 
             # load vision config from hf model path
             from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
-            config.vision_config = safe_load_config_with_retry(config.hf_model_path, trust_remote_code=True).vision_config
+
+            config.vision_config = safe_load_config_with_retry(
+                config.hf_model_path, trust_remote_code=True
+            ).vision_config
 
             self.vision_tower_config = VisionTowerConfig(config.vision_config)
             self.projector_config = ProjectorConfig(config.vision_config)
@@ -141,7 +144,6 @@ class KimiK25VLModel(MegatronModule):
 
         # don't use huggingface's function for PP
         self.media_placeholder_token_id = config.media_placeholder_token_id
-
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
@@ -273,7 +275,6 @@ class KimiK25VLModel(MegatronModule):
 
         return final_embedding, final_attention_mask, final_labels, position_ids
 
-
     def _compute_num_image_tokens_from_grid(self, grid_thws: torch.Tensor) -> List[int]:
         """Pre-compute number of image tokens from grid_thws without running vision tower.
 
@@ -298,7 +299,6 @@ class KimiK25VLModel(MegatronModule):
         """Extract and project image features."""
         image_features = self.vision_tower(pixel_values, grid_thws)
         return self.mm_projector(image_features)
-
 
     def forward(
         self,
@@ -331,7 +331,9 @@ class KimiK25VLModel(MegatronModule):
         if self.pre_process:
             if inputs_embeds is None:
                 # GPTModel uses .embedding() not .get_input_embeddings()
-                inputs_embeds = self.language_model.embedding(input_ids=input_ids, position_ids=None)  # [seq_len, batch, hidden]
+                inputs_embeds = self.language_model.embedding(
+                    input_ids=input_ids, position_ids=None
+                )  # [seq_len, batch, hidden]
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [batch, seq_len, hidden]
 
             # Process vision features only on the first pipeline stage

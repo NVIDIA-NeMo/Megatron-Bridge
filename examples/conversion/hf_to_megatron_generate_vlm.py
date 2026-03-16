@@ -205,7 +205,11 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str, tp_s
                 padding=True,
                 return_tensors="pt",
             )
-        image_grid_thw = getattr(inputs, "image_grid_thw", None) if getattr(inputs, "image_grid_thw", None) is not None else getattr(inputs, "grid_thws", None)
+        image_grid_thw = (
+            getattr(inputs, "image_grid_thw", None)
+            if getattr(inputs, "image_grid_thw", None) is not None
+            else getattr(inputs, "grid_thws", None)
+        )
         return (
             inputs.input_ids,
             inputs.pixel_values,

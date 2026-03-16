@@ -25,7 +25,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.kimi_vl.utils import maybe_dequantize_fp8_weight, get_common_configs, dequantize_int4,quantize_to_int4
+from megatron.bridge.models.kimi_vl.utils import (
+    maybe_dequantize_fp8_weight,
+    get_common_configs,
+    dequantize_int4,
+    quantize_to_int4,
+)
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
@@ -91,7 +96,11 @@ class KimiK25VLBridge(MegatronModelBridge):
         """Load a weight, dequantizing INT4 triplets and FP8 block-wise tensors when present."""
         base = key[:-7] if key.endswith(".weight") else key
         packed_key = f"{base}.weight_packed"
-        if packed_key in hf_state_dict and f"{base}.weight_scale" in hf_state_dict and f"{base}.weight_shape" in hf_state_dict:
+        if (
+            packed_key in hf_state_dict
+            and f"{base}.weight_scale" in hf_state_dict
+            and f"{base}.weight_shape" in hf_state_dict
+        ):
             weight = dequantize_int4(
                 hf_state_dict[packed_key],
                 hf_state_dict[f"{base}.weight_scale"],
@@ -119,7 +128,6 @@ class KimiK25VLBridge(MegatronModelBridge):
             return True
         return False
 
-
     def maybe_modify_converted_hf_weight(
         self,
         task: WeightConversionTask,
@@ -127,7 +135,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
         """Add rotary embedding inverse frequency parameter if needed."""
-        
+
         hf_state_dict = {}
         for fqn, tensor in converted_weights_dict.items():
             if self._is_quantized_expert_key(fqn):

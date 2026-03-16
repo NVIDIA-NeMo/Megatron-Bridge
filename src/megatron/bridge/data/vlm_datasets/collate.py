@@ -15,6 +15,7 @@
 """
 Collation utilities for building VLM training batches from conversation examples.
 """
+
 from typing import Any
 
 import warnings
@@ -508,7 +509,6 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     return batch
 
 
-
 def _expand_image_tokens(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
@@ -726,6 +726,7 @@ def kimi_k25_vl_collate_fn(
         result.pop(k, None)
     result["visual_inputs"] = visual_inputs
     return result
+
 
 # Mapping of processor types to their collate functions
 COLLATE_FNS = {

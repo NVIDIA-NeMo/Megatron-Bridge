@@ -25,6 +25,7 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
+
 def _get_kimi_k25_vl_pipeline_layout(pp_size: int, vp_size: int):
     """Get pipeline layout for Kimi-K25-VL based on PP and VP size."""
     map_pp_vp_to_layout = {
