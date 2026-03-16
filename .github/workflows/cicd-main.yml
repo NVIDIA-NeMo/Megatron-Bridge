@@ -567,6 +567,8 @@ jobs:
           - script: L2_Launch_recipes_llama_cuda_graphs
           - script: L2_Launch_recipes_llama_distill
           - script: L2_Launch_recipes_qwen_vl
+          - script: L2_Launch_models_flux
+          - script: L2_Launch_models_wan
     needs: [pre-flight, cicd-unit-tests]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |

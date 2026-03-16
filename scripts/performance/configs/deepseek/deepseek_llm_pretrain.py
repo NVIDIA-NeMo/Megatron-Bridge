@@ -77,11 +77,6 @@ def deepseek_v3_pretrain_config_gb300(
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
-    # we are debugging this and might change this in the future.
-    cfg.dataset.num_workers = 0
-    cfg.dataset.pin_memory = False
-
     return cfg
 
 
@@ -116,11 +111,6 @@ def deepseek_v3_pretrain_config_gb200(
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
-
-    # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
-    # we are debugging this and might change this in the future.
-    cfg.dataset.num_workers = 0
-    cfg.dataset.pin_memory = False
 
     return cfg
 

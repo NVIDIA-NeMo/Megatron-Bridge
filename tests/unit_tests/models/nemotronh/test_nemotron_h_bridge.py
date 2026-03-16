@@ -154,6 +154,7 @@ class TestNemotronHBridge:
         bridge = NemotronHBridge()
 
         result = bridge.provider_bridge(mock_pretrained_nemotronh)
+        result.finalize()
 
         # Check Mamba-specific configuration
         assert result.mamba_state_dim == mock_nemotronh_config.ssm_state_size
