@@ -1,0 +1,36 @@
+name: Performance Config Lint
+
+on:
+  pull_request:
+    paths:
+      - "scripts/performance/configs/**"
+      - "scripts/performance/utils/**"
+
+jobs:
+  affected-perf-configs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed so origin/<base_ref> is available for diff
+
+      - name: Compute affected pretrain configs
+        id: compute
+        run: |
+          git diff origin/${{ github.base_ref }}...${{ github.sha }} \
+            | python scripts/performance/get_affected_pretrain_configs.py \
+            | tee affected.txt
+          if [ ! -s affected.txt ]; then
+            echo "(no pretrain configs affected)" > affected.txt
+          fi
+
+      - name: Write step summary
+        run: |
+          echo "## Affected Pretrain Configs" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat affected.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Set output
+        id: configs
+        run: echo "affected=$(cat affected.txt | tr '\n' ',')" >> $GITHUB_OUTPUT
