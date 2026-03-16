@@ -323,6 +323,17 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         return self._model_name_or_path
 
     @property
+    def auto_map_model_class(self) -> Optional[str]:
+        """Get the custom model class string from the config's auto_map."""
+        config = self.config
+        auto_map = getattr(config, "auto_map", None)
+        if auto_map:
+            for key in ("AutoModelForCausalLM", "AutoModel"):
+                if key in auto_map:
+                    return str(auto_map[key])
+        return None
+
+    @property
     def model(self) -> VLMType:
         """Lazy load and return the underlying model."""
         if not hasattr(self, "_model"):
