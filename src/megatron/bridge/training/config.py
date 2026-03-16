@@ -1940,6 +1940,17 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     # Validate configuration after all modifications
     cfg.validate()
 
+    # Enable variable_seq_lengths for in-batch packing with pipeline parallelism.
+    # In-batch packing concatenates multiple sequences into a single variable-length tensor,
+    # so PP stages must communicate tensor shapes dynamically instead of using static buffers.
+    # This must be set AFTER validate() because validate() re-runs __post_init__ on sub-configs,
+    # which would trigger a false-positive MoE dispatcher compatibility check for non-MoE models.
+    if (
+        getattr(cfg.dataset, "pack_sequences_in_batch", False)
+        and cfg.model.pipeline_model_parallel_size > 1
+    ):
+        cfg.model.variable_seq_lengths = True
+
 
 def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -> None:
     """Validate and synchronize distributed optimizer settings between DDP and optimizer configs.
