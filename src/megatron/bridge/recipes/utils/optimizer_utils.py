@@ -12,9 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 from typing import Optional
 
 from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
+
+
+# MCore renamed `muon_use_nesterov` → `muon_nesterov` in the dev branch.
+# Support both by detecting which field is present at import time.
+_OPTIMIZER_CONFIG_FIELDS = {f.name for f in dataclasses.fields(OptimizerConfig)}
+_MUON_NESTEROV_KWARG = "muon_nesterov" if "muon_nesterov" in _OPTIMIZER_CONFIG_FIELDS else "muon_use_nesterov"
 
 
 def distributed_muon_with_cosine_annealing(
@@ -72,7 +79,7 @@ def distributed_muon_with_cosine_annealing(
         bf16=precision == "bf16-mixed",
         fp16=precision == "16-mixed",
         muon_momentum=muon_momentum,
-        muon_use_nesterov=muon_use_nesterov,
+        **{_MUON_NESTEROV_KWARG: muon_use_nesterov},
         muon_scale_mode=muon_scale_mode,
         muon_fp32_matmul_prec=muon_fp32_matmul_prec,
         muon_num_ns_steps=muon_num_ns_steps,
