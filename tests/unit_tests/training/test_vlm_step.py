@@ -806,6 +806,91 @@ class TestPackBatchSequences:
 
         assert cu_seqlens.dtype == torch.int32
 
+    def test_packing_none_labels_loss_mask(self):
+        """Test packing with labels=None and loss_mask=None (non-last PP stage)."""
+        tokens = torch.tensor(
+            [
+                [1, 2, 3, 0, 0, 0, 0, 0],  # length 3
+                [4, 5, 6, 7, 0, 0, 0, 0],  # length 4
+            ]
+        )
+        position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
+
+        result = pack_batch_sequences(
+            tokens=tokens,
+            labels=None,
+            loss_mask=None,
+            attention_mask=None,
+            position_ids=position_ids,
+            pad_token_id=0,
+            pad_to_multiple_of=1,
+        )
+
+        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
+
+        assert packed_tokens.shape == (1, 7)
+        assert torch.equal(packed_tokens, torch.tensor([[1, 2, 3, 4, 5, 6, 7]]))
+        assert packed_labels is None
+        assert packed_loss_mask is None
+        assert packed_attn is None
+        assert packed_pos.shape == (1, 7)
+        assert torch.equal(packed_pos, torch.tensor([[0, 1, 2, 0, 1, 2, 3]]))
+        assert cu_seqlens.tolist() == [0, 3, 7]
+        assert max_seqlen.item() == 4
+
+    def test_packing_none_labels_loss_mask_with_padding(self):
+        """Test packing with None labels/loss_mask and pad_to_multiple_of > 1."""
+        tokens = torch.tensor(
+            [
+                [1, 2, 3, 0, 0, 0, 0, 0],  # length 3 -> padded to 4
+                [4, 5, 6, 7, 8, 0, 0, 0],  # length 5 -> padded to 8
+            ]
+        )
+        position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
+
+        result = pack_batch_sequences(
+            tokens=tokens,
+            labels=None,
+            loss_mask=None,
+            attention_mask=None,
+            position_ids=position_ids,
+            pad_token_id=0,
+            pad_to_multiple_of=4,
+        )
+
+        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
+
+        assert packed_tokens.shape == (1, 12)
+        assert packed_labels is None
+        assert packed_loss_mask is None
+        assert packed_attn is None
+        assert cu_seqlens.tolist() == [0, 4, 12]
+        assert max_seqlen.item() == 8
+
+    def test_packing_none_labels_empty_batch(self, caplog):
+        """Test empty batch with None labels/loss_mask returns None for those fields."""
+        tokens = torch.tensor([[0, 0, 0, 0]])
+        position_ids = torch.arange(4).unsqueeze(0)
+
+        result = pack_batch_sequences(
+            tokens=tokens,
+            labels=None,
+            loss_mask=None,
+            attention_mask=None,
+            position_ids=position_ids,
+            pad_token_id=0,
+            pad_to_multiple_of=1,
+        )
+
+        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
+
+        assert packed_tokens.shape == (1, 0)
+        assert packed_labels is None
+        assert packed_loss_mask is None
+        assert packed_pos.shape == (1, 0)
+        assert cu_seqlens.tolist() == [0]
+        assert max_seqlen.item() == 0
+
     def test_packing_gpu_tensor(self):
         """Test packing works on GPU if available."""
         if not torch.cuda.is_available():
