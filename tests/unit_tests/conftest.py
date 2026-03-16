@@ -124,3 +124,10 @@ def sample_config_data():
 def sample_train_state_data():
     """Provide sample train state data for testing."""
     return {"iteration": 5000, "epoch": 10, "step": 50000, "learning_rate": 0.0001, "loss": 2.34}
+
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Force immediate exit to bypass PyTorch/CUDA C++ destructor crashes during teardown."""
+    import os
+    os._exit(int(exitstatus))
