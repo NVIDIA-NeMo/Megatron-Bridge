@@ -24,6 +24,9 @@ from megatron.bridge.models.kimi_vl.utils import (
     maybe_dequantize_fp8_weight,
 )
 
+
+pytestmark = pytest.mark.unit
+
 _requires_fp8 = pytest.mark.skipif(
     not hasattr(torch, "float8_e4m3fn"),
     reason="torch.float8_e4m3fn not available in this PyTorch build",

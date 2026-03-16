@@ -44,6 +44,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from PIL import Image
 from transformers import AutoProcessor, AutoTokenizer
 
+
 try:
     from qwen_vl_utils import process_vision_info
 
@@ -222,16 +223,21 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str, tp_s
                 return_tensors="pt",
             )
 
+        grid_thw = getattr(inputs, "grid_thws", getattr(inputs, "image_grid_thw", None))
         return (
             inputs.input_ids,
             inputs.pixel_values,
-            image_grid_thw,
+            grid_thw,
             getattr(inputs, "image_sizes", None),
             messages,
         )
     else:
         # Text-only processing
-        inputs = processor(text=[prompt], return_tensors="pt")
+        if _is_kimi_processor(processor):
+            messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+            inputs = processor(messages=messages)
+        else:
+            inputs = processor(text=[prompt], return_tensors="pt")
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, 0)
         return input_ids, None, None, None, None
 

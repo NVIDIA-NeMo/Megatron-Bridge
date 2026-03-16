@@ -483,11 +483,12 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             return _generate_synthetic_vision_inputs(tokenizer, prompt, tp_size)
     else:
         # Text-only processing for both VL models without images and regular LLMs
-        if is_vl_model and processor:
-            # Use processor for VL models even in text-only mode
+        if _is_kimi_processor(processor):
+            messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+            inputs = processor(messages=messages)
+        elif is_vl_model and processor:
             inputs = processor(text=[prompt], return_tensors="pt")
         else:
-            # Use tokenizer for regular LLMs
             inputs = tokenizer(prompt, return_tensors="pt")
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
         return input_ids, None, None, None
