@@ -38,4 +38,3 @@ uv run python -m torch.distributed.run --nproc_per_node=1 --nnodes=1 \
   tests/functional_tests/recipes/test_gemma3_vl_recipes_finetune.py -k "test_gemma3_vl_finetune_packed_recipes"
 
 coverage combine -q
-
