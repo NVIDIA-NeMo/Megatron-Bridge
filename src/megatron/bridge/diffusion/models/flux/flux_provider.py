@@ -132,3 +132,22 @@ class FluxProvider(TransformerConfig, ModelProviderMixin[VisionModule]):
 
         model = Flux(config=self)
         return model
+
+
+@dataclass
+class FluxModelProvider14B(FluxProvider):
+    """FLUX 14B model configuration.
+
+    Architecture: 19 joint + 38 single transformer blocks, hidden_size=3072,
+    24 attention heads, context_dim=4096. Default seq_length=1024.
+    """
+
+    num_joint_layers: int = 19
+    num_single_layers: int = 38
+    hidden_size: int = 3072
+    num_attention_heads: int = 24
+    in_channels: int = 64
+    context_dim: int = 4096
+    guidance_embed: bool = False
+    guidance_scale: float = 3.5
+    seq_length: int = 1024

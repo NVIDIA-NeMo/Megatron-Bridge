@@ -14,7 +14,7 @@
 
 """Functional smoke tests for Mcore FLUX pretrain mock runs.
 
-Uses the generic run_recipe.py entry point with flux_pretrain_config and flux_step.
+Uses the generic run_recipe.py entry point with flux_14b_pretrain_config and flux_step.
 Mock/synthetic data is used when dataset.path is not set (no --mock flag).
 """
 
@@ -57,7 +57,7 @@ class TestMcoreFluxPretrain:
             "--parallel-mode",
             "scripts/training/run_recipe.py",
             "--recipe",
-            "flux_pretrain_config",
+            "flux_14b_pretrain_config",
             "--step_func",
             "flux_step",
             "model.tensor_model_parallel_size=1",

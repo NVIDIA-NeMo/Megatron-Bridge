@@ -18,12 +18,7 @@ Megatron Bridge Recipe Configurations
 This module exposes all recipe configurations from all model families.
 """
 
-from megatron.bridge.diffusion.recipes.flux.flux import (
-    finetune_config as flux_finetune_config,
-)
-from megatron.bridge.diffusion.recipes.flux.flux import (
-    pretrain_config as flux_pretrain_config,
-)
+from megatron.bridge.diffusion.recipes.flux.flux import *
 from megatron.bridge.recipes.deepseek import *
 from megatron.bridge.recipes.gemma import *
 from megatron.bridge.recipes.gemma3_vl import *

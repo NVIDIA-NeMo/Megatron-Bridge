@@ -100,7 +100,7 @@ From the **Megatron-Bridge repository root**:
 
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe flux_pretrain_config \
+  --recipe flux_14b_pretrain_config \
   --step_func flux_step
 ```
 
@@ -108,7 +108,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe flux_pretrain_config \
+  --recipe flux_14b_pretrain_config \
   --step_func flux_step \
   dataset.path=${WORKSPACE}/data/my_flux_wds/
 ```
@@ -117,7 +117,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe flux_pretrain_config \
+  --recipe flux_14b_pretrain_config \
   --step_func flux_step \
   dataset.path=${WORKSPACE}/data/my_flux_wds/ \
   train.train_iters=10000 \
@@ -169,7 +169,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
    Run [inference_flux.py](inference_flux.py) with `--flux_ckpt` (Megatron `iter_*` path), `--vae_ckpt`, and `--prompts`.
 
 3. **Pretraining**  
-   Run `scripts/training/run_recipe.py --recipe flux_pretrain_config --step_func flux_step` (optionally with `dataset.path=...` for real data and CLI overrides).
+   Run `scripts/training/run_recipe.py --recipe flux_14b_pretrain_config --step_func flux_step` (optionally with `dataset.path=...` for real data and CLI overrides).
 
 4. **Fine-Tuning**  
    Run `scripts/training/run_recipe.py --recipe flux_finetune_config --step_func flux_step checkpoint.pretrained_checkpoint=<path>` (optionally with `dataset.path=...` and overrides).

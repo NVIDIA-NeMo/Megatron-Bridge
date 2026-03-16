@@ -29,22 +29,10 @@ Usage:
         torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_finetune_config
 
-    Diffusion (FLUX) pretrain (uses mock data when data_paths not set):
+    Diffusion (FLUX) pretrain:
         torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe flux_pretrain_config \
+            --recipe flux_14b_pretrain_config \
             --step_func flux_step
-
-    Diffusion (FLUX) with CLI overrides:
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe flux_pretrain_config \
-            --step_func flux_step \
-            train.train_iters=5000 optimizer.lr=0.0002
-
-    Diffusion (FLUX) finetune (mode inferred from recipe name):
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe flux_finetune_config \
-            --step_func flux_step \
-            checkpoint.pretrained_checkpoint=/path/to/pretrained/checkpoint
 
     With CLI overrides:
         torchrun --nproc_per_node=8 run_recipe.py \

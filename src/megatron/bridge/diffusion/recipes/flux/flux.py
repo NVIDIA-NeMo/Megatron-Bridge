@@ -13,14 +13,13 @@
 # limitations under the License.
 
 import os
-from typing import Any, List, Optional, Union
+from typing import Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
-from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
+from megatron.bridge.diffusion.models.flux.flux_provider import FluxModelProvider14B
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -29,175 +28,43 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
-def model_config(
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
-    seq_length: int = 1024,
-    # FLUX-specific parameters
-    num_joint_layers: int = 19,
-    num_single_layers: int = 38,
-    hidden_size: int = 3072,
-    num_attention_heads: int = 24,
-    in_channels: int = 64,
-    context_dim: int = 4096,
-    guidance_embed: bool = False,
-    guidance_scale: float = 3.5,
-) -> FluxProvider:
+def flux_14b_pretrain_config() -> ConfigContainer:
     """
-    Configure the FLUX model.
+    Return a pre-training configuration for FLUX model.
 
-    Args:
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
-        seq_length (int): Sequence length for the model.
-        num_joint_layers (int): Number of double (joint) transformer blocks.
-        num_single_layers (int): Number of single transformer blocks.
-        hidden_size (int): Hidden dimension size.
-        num_attention_heads (int): Number of attention heads.
-        in_channels (int): Number of input channels (latent channels).
-        context_dim (int): Text encoder context dimension.
-        guidance_embed (bool): Whether to use guidance embedding (for FLUX-dev).
-        guidance_scale (float): Classifier-free guidance scale.
-
-    Returns:
-        FluxProvider: Configuration for the FLUX model.
-    """
-    return FluxProvider(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
-        seq_length=seq_length,
-        # FLUX-specific
-        num_joint_layers=num_joint_layers,
-        num_single_layers=num_single_layers,
-        hidden_size=hidden_size,
-        num_attention_heads=num_attention_heads,
-        in_channels=in_channels,
-        context_dim=context_dim,
-        guidance_embed=guidance_embed,
-        guidance_scale=guidance_scale,
-    )
-
-
-def pretrain_config(
-    dir: Optional[str] = None,
-    name: str = "default",
-    # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    # Model configuration
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
-    use_megatron_fsdp: bool = False,
-    # FLUX model configuration
-    num_joint_layers: int = 19,
-    num_single_layers: int = 38,
-    hidden_size: int = 3072,
-    num_attention_heads: int = 24,
-    in_channels: int = 64,
-    context_dim: int = 4096,
-    guidance_embed: bool = False,
-    guidance_scale: float = 3.5,
-    # Image configuration
-    image_H: int = 1024,
-    image_W: int = 1024,
-    vae_channels: int = 16,
-    vae_scale_factor: int = 8,
-    prompt_seq_len: int = 512,
-    pooled_prompt_dim: int = 768,
-    # Training hyperparameters
-    train_iters: int = 10000,
-    global_batch_size: int = 16,
-    micro_batch_size: int = 1,
-    lr: float = 1e-4,
-    lr_warmup_iters: int = 1000,
-    # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
-) -> ConfigContainer:
-    """
-    Create a pre-training configuration for FLUX model.
-
-    Args:
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
-        name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
-        mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
-        use_megatron_fsdp (bool): Whether to use Megatron FSDP.
-        num_joint_layers (int): Number of double (joint) transformer blocks.
-        num_single_layers (int): Number of single transformer blocks.
-        hidden_size (int): Hidden dimension size.
-        num_attention_heads (int): Number of attention heads.
-        in_channels (int): Number of input channels (latent channels).
-        context_dim (int): Text encoder context dimension.
-        guidance_embed (bool): Whether to use guidance embedding (for FLUX-dev).
-        guidance_scale (float): Classifier-free guidance scale.
-        image_H (int): Image height.
-        image_W (int): Image width.
-        vae_channels (int): Number of VAE latent channels.
-        vae_scale_factor (int): VAE downsampling factor.
-        prompt_seq_len (int): Sequence length for text prompts (T5).
-        pooled_prompt_dim (int): Dimensionality of pooled text embeddings (CLIP).
-        train_iters (int): Total number of training iterations.
-        global_batch_size (int): Global batch size for training.
-        micro_batch_size (int): Micro batch size for training.
-        lr (float): Learning rate.
-        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
-
-    Returns:
-        ConfigContainer: Configuration for pre-training.
+    Default parallelism: TP=2, PP=1. Uses mock/synthetic data when data_paths is None.
+    To customize (e.g. data paths, checkpoint dir), edit this recipe or add a new recipe
+    that builds on these defaults.
     """
     # Deferred imports to avoid circular import (flux -> recipes.utils -> recipes.__init__ -> flux)
     from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
     from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
+    # Output directories
+    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
+    name = "default"
     run_output_dir = os.path.join(base_output_dir, name)
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
-    model_cfg = model_config(
-        tensor_parallelism=tensor_parallelism,
-        pipeline_parallelism=pipeline_parallelism,
-        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_parallelism=virtual_pipeline_parallelism,
-        context_parallelism=context_parallelism,
-        sequence_parallelism=sequence_parallelism,
-        seq_length=1024,
-        num_joint_layers=num_joint_layers,
-        num_single_layers=num_single_layers,
-        hidden_size=hidden_size,
-        num_attention_heads=num_attention_heads,
-        in_channels=in_channels,
-        context_dim=context_dim,
-        guidance_embed=guidance_embed,
-        guidance_scale=guidance_scale,
-    )
+    # Model configuration - use FluxModelProvider14B (19 joint + 38 single layers)
+    model_cfg = FluxModelProvider14B()
+    model_cfg.tensor_model_parallel_size = 2
+    model_cfg.pipeline_model_parallel_size = 1
+    model_cfg.pipeline_dtype = torch.bfloat16
+    model_cfg.virtual_pipeline_model_parallel_size = None
+    model_cfg.context_parallel_size = 1
+    model_cfg.sequence_parallel = False
+
+    # Training hyperparameters
+    train_iters = 10000
+    global_batch_size = 16
+    micro_batch_size = 1
+    lr = 1e-4
+    lr_warmup_iters = 1000
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
@@ -206,10 +73,17 @@ def pretrain_config(
     )
     opt_config.use_precision_aware_optimizer = False
 
-    if isinstance(precision_config, str):
-        precision_config = get_mixed_precision_config(precision_config)
-
+    precision_config = get_mixed_precision_config("bf16_mixed")
     precision_config.grad_reduce_in_fp32 = False
+
+    # Dataset configuration (data_paths=None => mock/synthetic data)
+    data_paths = None
+    image_H = 1024
+    image_W = 1024
+    vae_channels = 16
+    vae_scale_factor = 8
+    prompt_seq_len = 512
+    pooled_prompt_dim = 768
 
     dataset = FluxDatasetConfig(
         path=data_paths,
@@ -223,11 +97,10 @@ def pretrain_config(
         image_H=image_H,
         image_W=image_W,
         prompt_seq_len=prompt_seq_len,
-        context_dim=context_dim,
+        context_dim=model_cfg.context_dim,
         pooled_prompt_dim=pooled_prompt_dim,
     )
 
-    # Config Container
     cfg = ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
@@ -249,7 +122,7 @@ def pretrain_config(
             overlap_param_gather=False,
             average_in_collective=True,
             use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp,
+            use_megatron_fsdp=False,
         ),
         dataset=dataset,
         logger=LoggerConfig(
@@ -266,23 +139,21 @@ def pretrain_config(
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
-        comm_overlap=comm_overlap_config,
+        comm_overlap=None,
         mixed_precision=precision_config,
     )
 
     return cfg
 
 
-def finetune_config(
-    pretrained_checkpoint: Optional[str] = None,
-    **kwargs: Any,
-) -> ConfigContainer:
+def flux_14b_finetune_config(pretrained_checkpoint: Optional[str] = None) -> ConfigContainer:
     """
-    Create a fine-tuning configuration for FLUX model.
-    Returns:
-        ConfigContainer: Configuration for fine-tuning (checkpoint.finetune=True).
+    Return a fine-tuning configuration for FLUX model.
+
+    Uses the same defaults as flux_14b_pretrain_config() and overrides checkpoint to load from
+    pretrained_checkpoint when provided.
     """
-    cfg = pretrain_config(**kwargs)
+    cfg = flux_14b_pretrain_config()
     base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
     run_output_dir = os.path.join(base_output_dir, "default")
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
@@ -291,7 +162,7 @@ def finetune_config(
         save_interval=20,
         save=checkpoint_dir,
         load=checkpoint_dir,
-        pretrained_checkpoint=pretrained_checkpoint,  # Set to load from pretrained weights
+        pretrained_checkpoint=pretrained_checkpoint,
         ckpt_format="torch_dist",
         fully_parallel_save=True,
     )

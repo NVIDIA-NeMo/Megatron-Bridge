@@ -13,10 +13,9 @@
 # limitations under the License.
 
 from megatron.bridge.diffusion.recipes.flux.flux import (
-    finetune_config,
-    model_config,
-    pretrain_config,
+    flux_14b_finetune_config,
+    flux_14b_pretrain_config,
 )
 
 
-__all__ = ["finetune_config", "model_config", "pretrain_config"]
+__all__ = ["flux_14b_finetune_config", "flux_14b_pretrain_config"]

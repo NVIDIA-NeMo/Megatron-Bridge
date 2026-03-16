@@ -12,141 +12,74 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import tempfile
-
 import pytest
 
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
-from megatron.bridge.diffusion.recipes.flux.flux import model_config, pretrain_config
+from megatron.bridge.diffusion.recipes.flux.flux import flux_14b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
 
 pytestmark = [pytest.mark.unit]
 
 
-class TestModelConfig:
-    """Tests for model_config function."""
-
-    def test_model_config_returns_flux_provider_with_defaults(self):
-        """Test that model_config returns a FluxProvider with correct defaults."""
-        config = model_config()
-
-        assert isinstance(config, FluxProvider)
-
-        # Parallelism defaults
-        assert config.tensor_model_parallel_size == 1
-        assert config.pipeline_model_parallel_size == 1
-        assert config.sequence_parallel is False
-
-        # FLUX-specific defaults
-        assert config.num_joint_layers == 19
-        assert config.num_single_layers == 38
-        assert config.hidden_size == 3072
-        assert config.num_attention_heads == 24
-
-    def test_model_config_custom_parameters(self):
-        """Test model_config with custom parameters."""
-        config = model_config(
-            tensor_parallelism=2,
-            pipeline_parallelism=4,
-            num_joint_layers=10,
-            num_single_layers=20,
-            hidden_size=2048,
-            guidance_embed=True,
-        )
-
-        assert config.tensor_model_parallel_size == 2
-        assert config.pipeline_model_parallel_size == 4
-        assert config.num_joint_layers == 10
-        assert config.num_single_layers == 20
-        assert config.hidden_size == 2048
-        assert config.guidance_embed is True
-
-
 class TestPretrainConfig:
-    """Tests for pretrain_config function."""
+    """Tests for pretrain_config function (flattened, no-arg API)."""
 
     def test_pretrain_config_returns_complete_config(self):
         """Test that pretrain_config returns a ConfigContainer with all required components."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(dir=tmpdir)  # no data_paths => mock/synthetic data
+        config = flux_14b_pretrain_config()
 
-            assert isinstance(config, ConfigContainer)
-            assert isinstance(config.model, FluxProvider)
-            assert isinstance(config.dataset, FluxDatasetConfig)
-            assert config.dataset.path is None  # mock mode: no data path
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, FluxProvider)
+        assert isinstance(config.dataset, FluxDatasetConfig)
+        assert config.dataset.path is None  # default: mock/synthetic data
 
-            # Check all required components exist
-            assert hasattr(config, "train")
-            assert hasattr(config, "optimizer")
-            assert hasattr(config, "scheduler")
-            assert hasattr(config, "ddp")
-            assert hasattr(config, "logger")
-            assert hasattr(config, "checkpoint")
+        assert hasattr(config, "train")
+        assert hasattr(config, "optimizer")
+        assert hasattr(config, "scheduler")
+        assert hasattr(config, "ddp")
+        assert hasattr(config, "logger")
+        assert hasattr(config, "checkpoint")
 
     def test_pretrain_config_directory_structure(self):
-        """Test that pretrain_config creates correct directory structure."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(dir=tmpdir, name="test_run")
+        """Test that pretrain_config uses default directory structure."""
+        config = flux_14b_pretrain_config()
 
-            assert "test_run" in config.checkpoint.save
-            assert "test_run" in config.logger.tensorboard_dir
-            assert config.checkpoint.save.endswith("checkpoints")
+        assert "default" in config.checkpoint.save
+        assert "default" in config.logger.tensorboard_dir
+        assert config.checkpoint.save.endswith("checkpoints")
 
-    def test_pretrain_config_custom_training_parameters(self):
-        """Test pretrain_config with custom training parameters."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(
-                dir=tmpdir,
-                train_iters=5000,
-                global_batch_size=8,
-                micro_batch_size=2,
-                lr=5e-5,
-            )
+    def test_pretrain_config_default_training_parameters(self):
+        """Test pretrain_config default training parameters."""
+        config = flux_14b_pretrain_config()
 
-            assert config.train.train_iters == 5000
-            assert config.train.global_batch_size == 8
-            assert config.train.micro_batch_size == 2
+        assert config.train.train_iters == 10000
+        assert config.train.global_batch_size == 16
+        assert config.train.micro_batch_size == 1
 
-    def test_pretrain_config_custom_model_parameters(self):
-        """Test that model parameters propagate correctly."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(
-                dir=tmpdir,
-                num_joint_layers=12,
-                hidden_size=2048,
-                guidance_embed=True,
-                tensor_parallelism=2,
-            )
+    def test_pretrain_config_default_model_parameters(self):
+        """Test that default model parameters are set correctly."""
+        config = flux_14b_pretrain_config()
 
-            assert config.model.num_joint_layers == 12
-            assert config.model.hidden_size == 2048
-            assert config.model.guidance_embed is True
-            assert config.model.tensor_model_parallel_size == 2
+        assert config.model.num_joint_layers == 19
+        assert config.model.hidden_size == 3072
+        assert config.model.guidance_embed is False
+        assert config.model.tensor_model_parallel_size == 2
 
-    def test_pretrain_config_mock_dataset_configuration(self):
-        """Test pretrain_config with mock dataset parameters."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(
-                dir=tmpdir,
-                image_H=512,
-                image_W=512,
-                vae_channels=16,
-            )
+    def test_pretrain_config_default_dataset_configuration(self):
+        """Test pretrain_config default dataset parameters."""
+        config = flux_14b_pretrain_config()
 
-            assert config.dataset.image_H == 512
-            assert config.dataset.image_W == 512
-            assert config.dataset.latent_channels == 16
+        assert config.dataset.image_H == 1024
+        assert config.dataset.image_W == 1024
+        assert config.dataset.latent_channels == 16
 
-    def test_pretrain_config_with_real_dataset(self):
-        """Test pretrain_config with real dataset configuration."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            data_path = os.path.join(tmpdir, "data")
-            os.makedirs(data_path, exist_ok=True)
+    def test_pretrain_config_dataset_accepts_path_list(self):
+        """Test that dataset config can be overridden to use real data paths."""
+        config = flux_14b_pretrain_config()
+        assert config.dataset.path is None
 
-            config = pretrain_config(dir=tmpdir, data_paths=[data_path])
-
-            assert isinstance(config.dataset, FluxDatasetConfig)
-            assert config.dataset.path == [data_path]
+        # FluxDatasetConfig accepts path as list; recipe default is None
+        config.dataset.path = ["/some/data/path"]
+        assert config.dataset.path == ["/some/data/path"]
