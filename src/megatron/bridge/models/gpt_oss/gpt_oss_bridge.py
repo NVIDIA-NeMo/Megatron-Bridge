@@ -25,7 +25,10 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
+    _align_expert_weight_to_shape,
 )
+from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
+from megatron.bridge.models.gpt_oss.gpt_oss_provider import GPTOSSProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
@@ -104,20 +107,28 @@ class GPTOSSBridge(MegatronModelBridge):
     ) -> torch.Tensor:
         """Load weights from HuggingFace state dict with MXFP4 dequantization support.
 
-        GPT-OSS stores fused expert weights as [num_experts, hidden, intermediate].
-        Megatron expects the per-expert slice as [intermediate, hidden], so we
-        transpose the 3D tensor once here rather than per-expert in hf_to_megatron.
+        down_proj expert weights are stored transposed vs Megatron (HF: [in, out], Megatron: [out, in]).
+        We transpose them once here so that GPTOSSMLPDownProjMapping.hf_to_megatron can treat the
+        per-expert slice as-is, and megatron_to_hf symmetrically transposes back on export.
+
+        gate_up_proj is handled directly in GPTOSSMLPGateUpProjMapping.hf_to_megatron via
+        _align_expert_weight_to_shape, which auto-detects the orientation difference between
+        BF16 checkpoints ([num_experts, hidden, 2*intermediate]) and MXFP4-dequantized checkpoints
+        ([num_experts, 2*intermediate, hidden]).
         """
         if isinstance(hf_param, str):
             if hf_param in hf_state_dict:
                 hf_weights = hf_state_dict[hf_param]
-                if ".mlp.experts." in hf_param and hf_weights.ndim == 3:
+                if ".mlp.experts.down_proj" in hf_param and hf_weights.ndim == 3:
                     hf_weights = hf_weights.transpose(-1, -2)
                 return hf_weights
             blocks_key = hf_param + "_blocks"
             scales_key = hf_param + "_scales"
             if blocks_key in hf_state_dict and scales_key in hf_state_dict:
-                return _dequantize_mxfp4(hf_state_dict[blocks_key], hf_state_dict[scales_key])
+                hf_weights = _dequantize_mxfp4(hf_state_dict[blocks_key], hf_state_dict[scales_key])
+                if ".mlp.experts.down_proj" in hf_param and hf_weights.ndim == 3:
+                    hf_weights = hf_weights.transpose(-1, -2)
+                return hf_weights
             raise KeyError(
                 f"Cannot locate weights for '{hf_param}'. Missing both de-quantized tensor and "
                 f"quantized representation (blocks='{blocks_key}', scales='{scales_key}')."
@@ -262,7 +273,11 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
 
     def hf_to_megatron(self, hf_weights: Union[torch.Tensor, Dict], megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
-        return super().hf_to_megatron(self._interleave(hf_weights[global_expert_number]), megatron_module)
+        expert_weight = hf_weights[global_expert_number] if hf_weights.ndim >= 2 else hf_weights
+        normalized_param = self._normalize_expert_param_name(self.megatron_param)
+        _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
+        expert_weight = _align_expert_weight_to_shape(expert_weight, target_param.shape, "gate_up_proj")
+        return super().hf_to_megatron(self._interleave(expert_weight), megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
         if megatron_weights is None:

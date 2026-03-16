@@ -168,6 +168,9 @@ def main(args) -> None:
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     for m in model:
+        if hasattr(m, "config"):
+            m.config.mtp_num_layers = 0
+            m.config.grad_scale_func = None
         if hasattr(m, "mtp_process"):
             m.mtp_process = False
 
