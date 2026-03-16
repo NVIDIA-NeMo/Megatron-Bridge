@@ -99,10 +99,11 @@ TRAIN_MODES = {
     "finetune": finetune,
 }
 
-DATASET_CONFIGS: dict[str, tuple[Callable, int]] = {
-    "squad": (default_squad_config, 2048),
-    "openmathinstruct2": (default_openmathinstruct2_config, 4096),
-    "gsm8k": (default_gsm8k_config, 2048),
+# todo (chcui) unify finetune and pretraining datasets into single dataset config
+DATASET_CONFIGS: dict[str, Callable] = {
+    "squad": default_squad_config,
+    "openmathinstruct2": default_openmathinstruct2_config,
+    "gsm8k": default_gsm8k_config,
 }
 
 # Error message constants
@@ -174,7 +175,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "If omitted, the recipe's built-in dataset (typically SQuAD) is used. "
         "For pretraining, override data paths via Hydra-style CLI args instead "
         "(e.g., dataset.data_path=/data/my_dataset_text_document).",
-    )
+    )  # todo (chcui) unify finetune and pretraining datasets into single dataset config
     args, cli_overrides = parser.parse_known_args()
     return args, cli_overrides
 
@@ -262,18 +263,16 @@ def apply_dataset_override(
 ) -> ConfigContainer:
     """Replace the recipe's dataset config with the requested one.
 
-    Also updates model.seq_length to match the dataset's default when the user
-    hasn't explicitly set --seq_length.
+    Also updates model.seq_length to match the dataset's when the user
+    has explicitly set --seq_length.
     """
-    config_factory, default_seq = DATASET_CONFIGS[dataset_name]
-    effective_seq = seq_length if seq_length is not None else default_seq
-    config.dataset = config_factory(
-        seq_length=effective_seq,
-        packed_sequence=packed_sequence,
-        pad_seq_to_mult=1,
-    )
-    if hasattr(config, "model") and config.model is not None:
-        config.model.seq_length = effective_seq
+    config_factory = DATASET_CONFIGS[dataset_name]
+    kwargs: dict = {"packed_sequence": packed_sequence, "pad_seq_to_mult": 1}
+    if seq_length is not None:
+        kwargs["seq_length"] = seq_length
+    config.dataset = config_factory(**kwargs)
+    if seq_length is not None and hasattr(config, "model") and config.model is not None:
+        config.model.seq_length = seq_length
     return config
 
 
