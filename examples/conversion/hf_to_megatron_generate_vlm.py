@@ -26,11 +26,6 @@ Example:
   # Load from Megatron checkpoint:
   uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
 
-  # Kimi K2.5 VL generation (text-only):
-  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path=/path/to/Kimi-K2.5 --prompt="Hello, how are you?" --trust_remote_code
-
-  # Kimi K2.5 VL generation (with image, multi-GPU with expert parallelism):
-  torchrun --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path=/path/to/Kimi-K2.5 --prompt="Describe this image." --image_path=/path/to/test_image.jpg --trust_remote_code --tp 1 --ep 8
 """
 
 import argparse
@@ -43,14 +38,8 @@ from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from PIL import Image
 from transformers import AutoProcessor, AutoTokenizer
+from qwen_vl_utils import process_vision_info
 
-try:
-    from qwen_vl_utils import process_vision_info
-
-    QWEN_VL_UTILS_AVAILABLE = True
-except ImportError:
-    QWEN_VL_UTILS_AVAILABLE = False
-    process_vision_info = None
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
@@ -152,11 +141,6 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(requests.get(image_path, stream=True).raw)
     else:
         return Image.open(image_path)
-
-
-def _is_kimi_processor(processor) -> bool:
-    """Check if the processor is a Kimi K2.5 processor."""
-    return processor is not None and type(processor).__name__ == "KimiK25Processor"
 
 
 def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0):

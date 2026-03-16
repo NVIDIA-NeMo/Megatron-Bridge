@@ -58,20 +58,6 @@ Run Script Examples:
         --megatron_model_path "/path/to/megatron/checkpoint" \
         --prompt "Hello world"
 
-    # Kimi K2.5 VL comparison (text-only, single GPU):
-    uv run python examples/conversion/compare_hf_and_megatron/compare.py \
-        --hf_model_path /path/to/Kimi-K2.5 \
-        --prompt "Hello, how are you?" \
-        --trust_remote_code
-
-    # Kimi K2.5 VL comparison (with image, multi-GPU with expert parallelism):
-    torchrun --nproc_per_node=8 examples/conversion/compare_hf_and_megatron/compare.py \
-        --hf_model_path /path/to/Kimi-K2.5 \
-        --prompt "Describe this image." \
-        --image_path /path/to/test_image.jpg \
-        --trust_remote_code \
-        --tp 1 --ep 8
-
     # Enable debug hooks to inspect forward pass intermediate results:
     uv run python examples/conversion/compare_hf_and_megatron/compare.py \
         --hf_model_path "Qwen/Qwen3-1.7B" \
@@ -509,14 +495,16 @@ def _load_hf_model(args, is_vl_model: bool):
         return None
 
     print_rank_0("Loading HuggingFace model...")
-    trust = is_safe_repo(trust_remote_code=args.trust_remote_code, hf_path=args.hf_model_path)
-    model_class = get_model_class(args.model_class, is_vl_model, trust_remote_code=bool(args.trust_remote_code))
+    model_class = get_model_class(args.model_class, is_vl_model, trust_remote_code=args.trust_remote_code)
 
     hf_model = model_class.from_pretrained(
         args.hf_model_path,
         torch_dtype=torch.bfloat16,
         device_map="cuda",
-        trust_remote_code=trust,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=args.hf_model_path,
+        ),
     )
     hf_model = hf_model.eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
