@@ -1,0 +1,14 @@
+diff --git a/utils/torch_utils.py b/utils/torch_utils.py
+index e4aa4fe61..d067be53b 100644
+--- a/utils/torch_utils.py
++++ b/utils/torch_utils.py
+@@ -706,6 +706,9 @@ def is_torch_equal_or_newer(target: str) -> bool:
+     Returns:
+         Whether the condition meets.
+     """
++    if target == "2.11.0.dev":
++        return False
++
+     try:
+         return _is_torch_equal_or_newer(str(torch.__version__), target)
+     except Exception:
