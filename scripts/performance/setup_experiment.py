@@ -245,9 +245,6 @@ def main(
     gres: Optional[str] = None,
 ):
     """Sets up the experiment and runs it."""
-    if hf_token and offline:
-        raise ValueError("--hf_token and --offline cannot be used together.")
-
     if (
         model_family_name in ["qwen3"]
         and model_recipe_name
@@ -258,8 +255,9 @@ def main(
         and task == "pretrain"
     ):
         assert hf_token or offline, (
-            "Qwen3 tokenizer requires --hf_token or --offline. If using --offline, pre-download the tokenizer into "
-            "the local HuggingFace cache. NullTokenizer to be used soon."
+            "Qwen3 tokenizer requires --hf_token (online) or --offline (with a pre-populated local HF cache). "
+            "For --offline, pre-download the tokenizer with `huggingface-cli download` and ensure HF_HOME points "
+            "to the cache directory. NullTokenizer to be used soon."
         )
 
     if wandb_key is not None:

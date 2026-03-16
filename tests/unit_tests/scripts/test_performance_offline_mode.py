@@ -190,22 +190,44 @@ def test_parse_cli_args_accepts_offline_flag(monkeypatch):
 
     parser = argument_parser.parse_cli_args()
     args = parser.parse_args(
-        ["--model_family_name", "llama", "--model_recipe_name", "llama3_8b", "--num_gpus", "8", "--gpu", "h100", "--offline"]
+        [
+            "--model_family_name",
+            "llama",
+            "--model_recipe_name",
+            "llama3_8b",
+            "--num_gpus",
+            "8",
+            "--gpu",
+            "h100",
+            "--offline",
+        ]
     )
 
     assert args.offline is True
 
 
-def test_setup_experiment_rejects_hf_token_with_offline(monkeypatch):
-    """The launcher should fail fast if online token mode and offline mode are both requested."""
-    _install_setup_experiment_stubs(monkeypatch)
-    setup_experiment = _load_module("test_perf_setup_experiment", SETUP_EXPERIMENT_PATH)
+def test_argparse_rejects_hf_token_with_offline(monkeypatch):
+    """argparse should reject --hf_token and --offline together at parse time."""
+    _install_fake_nemo_run(monkeypatch)
+    argument_parser = _load_module("test_perf_argument_parser_excl", ARGUMENT_PARSER_PATH)
 
-    kwargs = _minimal_main_kwargs()
-    kwargs.update({"hf_token": "hf_test_token", "offline": True})
-
-    with pytest.raises(ValueError, match="--hf_token and --offline cannot be used together"):
-        setup_experiment.main(**kwargs)
+    parser = argument_parser.parse_cli_args()
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "--model_family_name",
+                "llama",
+                "--model_recipe_name",
+                "llama3_8b",
+                "--num_gpus",
+                "8",
+                "--gpu",
+                "h100",
+                "--hf_token",
+                "hf_test_token",
+                "--offline",
+            ]
+        )
 
 
 def test_slurm_executor_sets_offline_env_and_container_writable(monkeypatch):
