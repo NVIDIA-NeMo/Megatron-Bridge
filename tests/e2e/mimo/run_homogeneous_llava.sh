@@ -7,7 +7,7 @@ NUM_NODES=1
 uv run torchrun \
     --nproc_per_node "$GPUS_PER_NODE" \
     --nnodes "$NUM_NODES" \
-    tests/e2e/mimo/test_mimo_training_llava_homo.py \
+    tests/e2e/mimo/test_mimo_training_llava_homogeneous.py \
     --micro-batch-size 2 \
     --global-batch-size 32 \
     --train-iters 500 \
@@ -22,4 +22,4 @@ uv run torchrun \
     --wandb-project "Megatron-Bridge-MIMO" \
     --wandb-exp-name "mimo-llava-e2e-test" \
     --wandb-save-dir "/tmp/wandb" \
-    --dataset-root /path/to/llava/pretrain
+    --dataset-root /lustre/fsw/portfolios/coreai/users/kjafarisadeg/nemo_workspace/workspace/datasets/LLaVA-Pretrain
