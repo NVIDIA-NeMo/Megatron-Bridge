@@ -1385,7 +1385,6 @@ def load_checkpoint(
         load_dir, state, model, optimizer, opt_param_scheduler, strict, checkpointing_context
     )
 
-
 def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
     """Helper function to load state dict with fallback for missing extra states."""
     try:
@@ -1393,13 +1392,16 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
     except Exception as e:
         if strict:
             # Fallback support for backward compatibility breaking changes in TransformerEngine
-            print_rank_0(f"Warning: Exception during strict loading: {e}")
             load_return = module.load_state_dict(state_dict, strict=False)
-            print_rank_0(f"load_return: {load_return}")
+            missing = load_return.missing_keys
+            unexpected = load_return.unexpected_keys
+            non_extra = [k for k in missing + unexpected if not k.endswith("._extra_state")]
+            if non_extra:
+                print_rank_0(f"Warning: Exception during strict loading: {e}")
+                print_rank_0(f"Non-extra-state mismatched keys: {non_extra}")
         else:
             # Re-raise if we were already in non-strict mode
             raise
-
 
 def _load_checkpoint_from_path(
     load_dir: str,
