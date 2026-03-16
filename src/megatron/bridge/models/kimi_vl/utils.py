@@ -1,3 +1,18 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 import torch
 import math
 from typing import Mapping
@@ -62,76 +77,6 @@ def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
     configs["layernorm_epsilon"] = hf_config.rms_norm_eps
 
     return configs
-
-
-def dequantize_fp8_blockwise(
-    weight: torch.Tensor,
-    scale_inv: torch.Tensor,
-    *,
-    dtype: torch.dtype = torch.bfloat16,
-) -> torch.Tensor:
-    """Dequantize an FP8 block-wise quantized weight tensor to higher precision.
-
-    Block sizes are inferred from the shapes of *weight* and *scale_inv*:
-    ``block_m = ceil(M / scale_inv.shape[0])``, and likewise for the column
-    dimension.  This matches the DeepSeek-V3 / Kimi-K2.5 FP8 convention where
-    ``weight_block_size = [128, 128]``.
-
-    Args:
-        weight: FP8 weight tensor, shape ``[M, N]`` (``torch.float8_e4m3fn``).
-        scale_inv: Per-block inverse scale factors, shape
-            ``[ceil(M/block_m), ceil(N/block_n)]``.
-        dtype: Target output dtype (default ``torch.bfloat16``).
-
-    Returns:
-        Dequantized tensor of shape ``[M, N]`` in *dtype*.
-    """
-    M, N = weight.shape
-    scale_rows, scale_cols = scale_inv.shape
-    block_m = math.ceil(M / scale_rows)
-    block_n = math.ceil(N / scale_cols)
-
-    padded_M = scale_rows * block_m
-    padded_N = scale_cols * block_n
-
-    if M != padded_M or N != padded_N:
-        result = torch.zeros(padded_M, padded_N, dtype=dtype, device=weight.device)
-        result[:M, :N] = weight.to(dtype)
-    else:
-        result = weight.to(dtype)
-
-    result = result.reshape(scale_rows, block_m, scale_cols, block_n)
-    result.mul_(scale_inv[:, None, :, None].to(dtype))
-    result = result.reshape(padded_M, padded_N)
-
-    if M != padded_M or N != padded_N:
-        result = result[:M, :N].contiguous()
-    return result
-
-
-def maybe_dequantize_fp8_weight(
-    hf_param: str,
-    hf_weights: torch.Tensor,
-    hf_state_dict: Mapping[str, torch.Tensor],
-    dtype: torch.dtype = torch.bfloat16,
-) -> torch.Tensor:
-    """Return *hf_weights* dequantized to *dtype* when FP8, otherwise pass through.
-
-    Detection heuristic: the weight has ``float8_e4m3fn`` dtype **and** a
-    matching ``{hf_param}_scale_inv`` key exists in *hf_state_dict*.
-    """
-    if not hasattr(torch, "float8_e4m3fn") or hf_weights.dtype != torch.float8_e4m3fn:
-        return hf_weights
-
-    scale_inv_key = hf_param + "_scale_inv"
-    if scale_inv_key not in hf_state_dict:
-        return hf_weights
-
-    return dequantize_fp8_blockwise(
-        hf_weights,
-        hf_state_dict[scale_inv_key],
-        dtype=dtype,
-    )
 
 
 def dequantize_int4(
