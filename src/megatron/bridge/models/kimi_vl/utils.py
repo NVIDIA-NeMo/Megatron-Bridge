@@ -26,7 +26,6 @@ except ImportError:
     HAVE_APEX = False
 
 
-
 def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
     """
     Returns a dictionary of common configurations for the DeepSeek family of models.
@@ -207,6 +206,7 @@ def quantize_to_int4(
     weight_scale = scale.to(torch.float16).cpu()
 
     return weight_packed, weight_scale, weight_shape
+
 
 def is_quantized_expert_key(key: str) -> bool:
     if "mlp.experts." in key and ".weight" in key:

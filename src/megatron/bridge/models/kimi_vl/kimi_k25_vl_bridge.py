@@ -26,7 +26,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.kimi_vl.utils import (
-    maybe_dequantize_fp8_weight,
     get_common_configs,
     dequantize_int4,
     quantize_to_int4,
@@ -109,7 +108,7 @@ class KimiK25VLBridge(MegatronModelBridge):
             )
         else:
             weight = hf_state_dict[key]
-        return maybe_dequantize_fp8_weight(key, weight, hf_state_dict)
+        return weight
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
