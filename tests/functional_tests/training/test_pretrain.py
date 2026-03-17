@@ -14,6 +14,7 @@
 
 import logging
 import os
+from dataclasses import dataclass
 
 import pytest
 import torch
@@ -41,6 +42,25 @@ from tests.functional_tests.utils import (
     initialize_distributed,
     verify_checkpoint_files,
 )
+
+
+@dataclass
+class Llama32ModelProvider1B(GPTModelProvider):
+    """GPTModelProvider pre-configured with Llama 3.2 1B architecture defaults."""
+
+    num_layers: int = 16
+    hidden_size: int = 2048
+    num_attention_heads: int = 32
+    num_query_groups: int = 8
+    ffn_hidden_size: int = 8192
+    kv_channels: int = 64
+    vocab_size: int = 128256
+    normalization: str = "RMSNorm"
+    gated_linear_unit: bool = True
+    hidden_dropout: float = 0.0
+    rotary_percent: float = 1.0
+    rope_scaling: bool = True
+    rope_scaling_factor: float = 32.0
 
 
 class TestPretrain:
