@@ -59,6 +59,7 @@ class WorkloadBaseConfig:
 
     # MoE configuration
     moe_flex_dispatcher_backend: Optional[str] = None
+    moe_token_dispatcher_type: Optional[str] = None
     moe_a2a_overlap: Optional[bool] = False
     peft: Optional[str] = None
 
