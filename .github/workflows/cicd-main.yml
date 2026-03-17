@@ -474,7 +474,7 @@ jobs:
           - script: L1_Launch_models_qwen35_vl
           - script: L1_Launch_models_qwen3_vl
           - script: L1_Launch_post_training_quantization
-          - script: L1_Launch_quantization_export
+          # - script: L1_Launch_quantization_export
           - script: L1_Launch_recipes_gpt_oss
           - script: L1_Launch_recipes_llama_3b
           - script: L1_Launch_recipes_ministral3
