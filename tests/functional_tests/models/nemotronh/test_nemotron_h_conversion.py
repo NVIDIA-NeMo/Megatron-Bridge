@@ -385,7 +385,9 @@ class TestNemotron3NanoConversion:
         _fix_tied_weights_keys(model)
 
         # Save model, config, and modeling code to directory
-        model.save_pretrained(model_dir, safe_serialization=True)
+        # NOTE(liding): save_original_format=False is a workaround for a potential bug in transformers v5.
+        # Check the notes above in TestNemotronHConversion.test_toy_model_creation for more details.
+        model.save_pretrained(model_dir, safe_serialization=True, save_original_format=False)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)
 
