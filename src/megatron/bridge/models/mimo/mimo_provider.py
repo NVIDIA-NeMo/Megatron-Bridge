@@ -209,12 +209,18 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         self,
         spec: ModuleSpec,
         pg_collection: ProcessGroupCollection,
+        pre_process: Optional[bool] = None,
+        post_process: Optional[bool] = None,
     ) -> ModuleSpec:
-        """Deep copy language model spec and inject pg_collection into params."""
+        """Deep copy language model spec and inject stage-aware params."""
         spec = copy.deepcopy(spec)
         if spec.params is None:
             spec.params = {}
         spec.params["pg_collection"] = pg_collection
+        if pre_process is not None:
+            spec.params["pre_process"] = pre_process
+        if post_process is not None:
+            spec.params["post_process"] = post_process
         return spec
 
     def _inject_pg_collection_into_modality_spec(
@@ -285,7 +291,12 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         if self.mimo_parallelism_config:
             llm_pg = infra.pg_collections.get("llm")
             if llm_pg is not None:
-                language_spec = self._inject_pg_collection_into_language_spec(language_spec, llm_pg)
+                language_spec = self._inject_pg_collection_into_language_spec(
+                    language_spec,
+                    llm_pg,
+                    pre_process=is_pp_first_stage(llm_pg.pp),
+                    post_process=is_pp_last_stage(llm_pg.pp),
+                )
 
         # Inject pg_collection into modality specs
         modality_specs: Dict[str, ModuleSpec] = {}

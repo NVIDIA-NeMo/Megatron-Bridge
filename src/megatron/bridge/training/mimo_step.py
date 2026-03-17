@@ -129,30 +129,37 @@ def forward_step(
     # Get the model's role to determine if we're at first pipeline stage
     mimo_model = unwrap_mimo_model(model)
 
-    # Determine if this rank needs data (first PP stage for its module)
+    # Determine if this rank needs data.
+    # - LLM ranks: first stage needs input_ids; last stage needs labels/loss_mask.
+    # - Modality ranks: only first stage needs raw modality inputs.
     needs_data = True
     if mimo_model.role is not None:
-        # For LLM ranks, only first PP stage needs input_ids
-        # For encoder ranks (vision), check if first stage of any modality module
         if mimo_model.role.has_language_module:
             module_name = mimo_model.role.language_module_name
-            needs_data = mimo_model.role.is_first_stage(module_name)
+            is_first_stage = mimo_model.role.is_first_stage(module_name)
+            is_last_stage = mimo_model.role.is_last_stage(module_name)
+            needs_data = is_first_stage or is_last_stage
         elif mimo_model.role.has_modality_modules:
-            # Encoder module - check if first stage for any modality module
             modality_modules = mimo_model.role.modality_module_names
             needs_data = any(mimo_model.role.is_first_stage(mod) for mod in modality_modules)
 
-    # Get batch from iterator
-    data_batch = get_batch(data_iterator)
-
-    if data_batch is None:
-        if needs_data:
-            # First stage should have data - this is unexpected
-            logger.warning(
-                "get_batch returned None at first pipeline stage. Check MIMO parallelism config and data loading."
+    if needs_data:
+        data_batch = get_batch(data_iterator)
+        if data_batch is None:
+            raise RuntimeError(
+                "get_batch returned None at a stage that requires data. "
+                "This indicates a data-loading or parallelism misconfiguration."
             )
-        # For non-first stages, empty dict is expected - hidden states come from pipeline
-        data_batch = {}
+    else:
+        # Non-data stages consume hidden states from pipeline input tensors.
+        data_batch = {
+            "input_ids": None,
+            "position_ids": None,
+            "attention_mask": None,
+            "labels": None,
+            "loss_mask": None,
+            "modality_inputs": None,
+        }
 
     # Extract loss_mask before forward pass
     loss_mask = data_batch.get("loss_mask")
