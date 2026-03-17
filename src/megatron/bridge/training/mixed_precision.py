@@ -137,12 +137,14 @@ class MixedPrecisionConfig:
         if self.fp4 and not is_te_min_version("2.7.0.dev0"):
             raise ValueError("fp4 requires Transformer Engine >= 2.7.0.dev0 for NVFP4BlockScaling support.")
 
+        # grad_reduce_in_fp32 only fills in None fields — explicit values take precedence.
+        # This allows callers to set grad_reduce_in_fp32=True for fp32 gradient accumulation
+        # while independently customising grad_comm_dtype (e.g. bf16 for MLPerf FP8 runs).
         if self.grad_reduce_in_fp32:
-            self.megatron_fsdp_main_grads_dtype = torch.float32
-            self.megatron_fsdp_grad_comm_dtype = torch.float32
-        else:
-            self.megatron_fsdp_main_grads_dtype = None
-            self.megatron_fsdp_grad_comm_dtype = None
+            if self.megatron_fsdp_main_grads_dtype is None:
+                self.megatron_fsdp_main_grads_dtype = torch.float32
+            if self.megatron_fsdp_grad_comm_dtype is None:
+                self.megatron_fsdp_grad_comm_dtype = torch.float32
         for mfsdp_mp_arg in (
             self.megatron_fsdp_main_params_dtype,
             self.megatron_fsdp_main_grads_dtype,

@@ -785,8 +785,8 @@ class TestGradReduceInFp32AffectsFsdpDtypes:
         assert config.megatron_fsdp_main_grads_dtype is None
         assert config.megatron_fsdp_grad_comm_dtype is None
 
-    def test_finalize_enforces_grad_reduce_in_fp32_false(self):
-        """finalize() overrides custom fsdp grad dtypes to None when grad_reduce_in_fp32=False."""
+    def test_finalize_preserves_explicit_fsdp_dtypes_when_grad_reduce_in_fp32_false(self):
+        """finalize() preserves explicitly-set FSDP dtype values when grad_reduce_in_fp32=False."""
         config = MixedPrecisionConfig(
             grad_reduce_in_fp32=False,
             megatron_fsdp_main_grads_dtype=torch.bfloat16,
@@ -797,8 +797,30 @@ class TestGradReduceInFp32AffectsFsdpDtypes:
 
         config.finalize()
 
-        assert config.megatron_fsdp_main_grads_dtype is None
-        assert config.megatron_fsdp_grad_comm_dtype is None
+        assert config.megatron_fsdp_main_grads_dtype == torch.bfloat16
+        assert config.megatron_fsdp_grad_comm_dtype == torch.bfloat16
+
+    def test_finalize_preserves_grad_comm_dtype_when_grad_reduce_in_fp32_true(self):
+        """finalize() respects explicit grad_comm_dtype even when grad_reduce_in_fp32=True.
+
+        This enables the MLPerf use case: fp32 gradient accumulation (main_grads_dtype=fp32)
+        combined with bf16 gradient communication (grad_comm_dtype=bf16).
+        """
+        config = MixedPrecisionConfig(
+            grad_reduce_in_fp32=True,
+            megatron_fsdp_grad_comm_dtype=torch.bfloat16,
+        )
+        config.finalize()
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.bfloat16
+
+    def test_finalize_preserves_grad_comm_dtype_override_on_recipe(self):
+        """User can override grad_comm_dtype on a recipe and have it survive finalize()."""
+        config = bf16_mixed()
+        config.megatron_fsdp_grad_comm_dtype = torch.bfloat16
+        config.finalize()
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.bfloat16
 
     def test_grad_reduce_in_fp32_toggle_round_trip(self):
         """Toggling grad_reduce_in_fp32 True->False->True updates fsdp dtypes correctly."""
