@@ -43,10 +43,10 @@ def _build_text_only_mrope_position_ids(input_ids: torch.Tensor) -> torch.Tensor
 
 
 class Qwen3OmniThinkerModel(MegatronModule):
-    """Stage-1 Qwen3-Omni thinker model.
+    """Qwen3-Omni thinker model.
 
-    This stage intentionally supports the language backbone first. Vision/audio
-    runtime support is added in later milestones.
+    The current implementation supports multimodal thinker-side forward paths
+    for text, vision, and audio inputs.
     """
 
     def __init__(
@@ -231,11 +231,11 @@ class Qwen3OmniThinkerModel(MegatronModule):
         **kwargs,
     ) -> torch.Tensor:
         if inference_params is not None:
-            raise NotImplementedError("Stage 1 Qwen3-Omni does not support inference.")
+            raise NotImplementedError("Qwen3-Omni Megatron inference is not implemented yet.")
         if packed_seq_params is not None:
-            raise NotImplementedError("Stage 1 Qwen3-Omni does not support packed sequences.")
+            raise NotImplementedError("Qwen3-Omni packed sequence support is not implemented yet.")
         if self.config.sequence_parallel and any(value is not None for value in (pixel_values, pixel_values_videos)):
-            raise NotImplementedError("Stage 2 vision runtime does not yet support sequence parallel.")
+            raise NotImplementedError("Qwen3-Omni vision runtime does not yet support sequence parallel.")
 
         if audio_feature_lengths is None and feature_attention_mask is not None:
             audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)

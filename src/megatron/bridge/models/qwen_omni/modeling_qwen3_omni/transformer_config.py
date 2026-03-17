@@ -19,10 +19,10 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import
 
 @dataclass
 class Qwen3OmniTransformerConfig(Qwen3VLTransformerConfig):
-    """Stage-1 Qwen3-Omni transformer config.
+    """Qwen3-Omni transformer config.
 
-    Stage 1 focuses on the thinker language backbone and checkpoint conversion.
-    Vision and audio runtime support are added in later stages.
+    This config extends the Qwen3-VL language/vision path with Qwen3-Omni
+    multimodal token ids and audio-related settings.
     """
 
     vocab_size: int = 152064
