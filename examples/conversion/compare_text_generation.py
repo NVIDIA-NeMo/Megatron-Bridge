@@ -266,7 +266,8 @@ def megatron_generate(
             input_ids = generated_ids
 
             # If the generated token is the end of sequence token, stop generating
-            if next_token_ids.item() in [tokenizer.eos_id, tokenizer.eod_id]:
+            eod_id = getattr(tokenizer, "eod_id", tokenizer.eos_id)
+            if next_token_ids.item() in [tokenizer.eos_id, eod_id]:
                 break
 
     if parallel_state.get_pipeline_model_parallel_world_size() > 1:
