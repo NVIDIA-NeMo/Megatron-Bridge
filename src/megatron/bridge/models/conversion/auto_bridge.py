@@ -1370,6 +1370,13 @@ class AutoBridge(Generic[MegatronModelT]):
         try:
             return getattr(transformers, resolved_arch)
         except AttributeError:
+            # Fall back to string-based lookup for custom models not in transformers
+            # (e.g. Qwen3ASRForConditionalGeneration from qwen_asr package).
+            # This mirrors the auto_map path and works with string-registered bridges.
+            if hasattr(model_bridge.get_model_bridge, "_exact_types"):
+                registry = model_bridge.get_model_bridge._exact_types
+                if resolved_arch in registry:
+                    return resolved_arch
             raise ValueError(
                 f"\n✗ Architecture class '{resolved_arch}' not found in transformers\n\n"
                 f"This could mean:\n"
