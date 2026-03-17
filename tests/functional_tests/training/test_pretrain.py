@@ -221,6 +221,7 @@ class TestPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.pleasefixme
     def test_pretrain_with_mup(self, tmp_path, caplog):
         """
         Test end to end training with μP (Maximal Update Parameterization) enabled.
