@@ -1,0 +1,7980 @@
+{
+  "deepseek_v2_lite_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "comm_overlap.delay_wgrad_compute",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "comm_overlap.overlap_moe_expert_parallel_comm",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.kv_channels",
+        "file_a": 16,
+        "file_b": 64
+      },
+      {
+        "key": "model.num_query_groups",
+        "file_a": null,
+        "file_b": 16
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "deepseek_v2_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "comm_overlap.delay_wgrad_compute",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "comm_overlap.overlap_moe_expert_parallel_comm",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.kv_channels",
+        "file_a": 128,
+        "file_b": 64
+      },
+      {
+        "key": "model.num_query_groups",
+        "file_a": null,
+        "file_b": 128
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "deepseek_v3_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "comm_overlap.delay_wgrad_compute",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "comm_overlap.overlap_moe_expert_parallel_comm",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.kv_channels",
+        "file_a": 128,
+        "file_b": 64
+      },
+      {
+        "key": "model.moe_flex_dispatcher_backend",
+        "file_a": null,
+        "file_b": "hybridep"
+      },
+      {
+        "key": "model.moe_shared_expert_overlap",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "model.moe_token_dispatcher_type",
+        "file_a": "alltoall",
+        "file_b": "flex"
+      },
+      {
+        "key": "model.num_query_groups",
+        "file_a": null,
+        "file_b": 128
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gemma2_27b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gemma2_2b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gemma2_9b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gemma3_1b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.attention_backend",
+        "file_a": 1,
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gemma3_vl_12b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gemma3_vl_27b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gemma3_vl_4b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "glm45_355b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.moe_router_group_topk",
+        "file_a": null,
+        "file_b": 1
+      },
+      {
+        "key": "model.moe_router_num_groups",
+        "file_a": null,
+        "file_b": 1
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "glm45_355b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.moe_router_group_topk",
+        "file_a": null,
+        "file_b": 1
+      },
+      {
+        "key": "model.moe_router_num_groups",
+        "file_a": null,
+        "file_b": 1
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "glm45_air_106b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.moe_router_group_topk",
+        "file_a": null,
+        "file_b": 1
+      },
+      {
+        "key": "model.moe_router_num_groups",
+        "file_a": null,
+        "file_b": 1
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "glm45_air_106b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.moe_router_group_topk",
+        "file_a": null,
+        "file_b": 1
+      },
+      {
+        "key": "model.moe_router_num_groups",
+        "file_a": null,
+        "file_b": 1
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "glm_45v_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gpt_oss_120b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gpt_oss_120b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gpt_oss_20b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "gpt_oss_20b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama2_7b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama31_405b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama31_405b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama31_70b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=4096, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 2048,
+        "file_b": 4096
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama31_70b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama31_8b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=4096, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 2048,
+        "file_b": 4096
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama31_8b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama32_1b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=4096, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 2048,
+        "file_b": 4096
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama32_1b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama32_3b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=4096, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 2048,
+        "file_b": 4096
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama32_3b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama3_70b_16k_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama3_70b_64k_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama3_70b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=4096, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 2048,
+        "file_b": 4096
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama3_70b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama3_8b_128k_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama3_8b_16k_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama3_8b_64k_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama3_8b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=4096, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 2048,
+        "file_b": 4096
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "llama3_8b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "moonlight_16b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "comm_overlap.delay_wgrad_compute",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "comm_overlap.overlap_moe_expert_parallel_comm",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "99990,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.add_bias_linear",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "model.attention_dropout",
+        "file_a": 0.0,
+        "file_b": null
+      },
+      {
+        "key": "model.attention_softmax_in_fp32",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "model.bf16",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "model.bias_activation_fusion",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "model.bias_dropout_fusion",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "model.gated_linear_unit",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "model.gradient_accumulation_fusion",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "model.hidden_dropout",
+        "file_a": 0.0,
+        "file_b": null
+      },
+      {
+        "key": "model.masked_softmax_fusion",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "model.moe_router_dtype",
+        "file_a": "fp32",
+        "file_b": null
+      },
+      {
+        "key": "model.moe_router_load_balancing_type",
+        "file_a": "seq_aux_loss",
+        "file_b": null
+      },
+      {
+        "key": "model.moe_router_pre_softmax",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "model.multi_latent_attention",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.normalization",
+        "file_a": null,
+        "file_b": "LayerNorm"
+      },
+      {
+        "key": "model.params_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "model.persist_layer_norm",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "model.qk_layernorm",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotron_3_nano_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "comm_overlap.tp_comm_bootstrap_backend",
+        "file_a": "nccl",
+        "file_b": null
+      },
+      {
+        "key": "comm_overlap.tp_comm_overlap",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.calculate_per_token_loss",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotron_3_nano_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "comm_overlap.delay_wgrad_compute",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "comm_overlap.overlap_moe_expert_parallel_comm",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "dataset.num_workers",
+        "file_a": 1,
+        "file_b": 8
+      },
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "ddp.average_in_collective",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "ddp.data_parallel_sharding_strategy",
+        "file_a": null,
+        "file_b": "optim_grads_params"
+      },
+      {
+        "key": "logger.log_timers_to_tensorboard",
+        "file_a": false,
+        "file_b": true
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.min_lr",
+        "file_a": 1.6e-05,
+        "file_b": 3e-05
+      },
+      {
+        "key": "scheduler.end_weight_decay",
+        "file_a": 0.1,
+        "file_b": 0.033
+      },
+      {
+        "key": "scheduler.lr_warmup_iters",
+        "file_a": 333,
+        "file_b": 500
+      },
+      {
+        "key": "scheduler.start_weight_decay",
+        "file_a": 0.1,
+        "file_b": 0.033
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 1000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.manual_gc_eval",
+        "file_a": true,
+        "file_b": 100
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotron_nano_12b_v2_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotron_nano_12b_v2_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.attention_backend",
+        "file_a": 1,
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotron_nano_9b_v2_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotron_nano_9b_v2_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.attention_backend",
+        "file_a": 1,
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotronh_47b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=8192, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotronh_47b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.attention_backend",
+        "file_a": 1,
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotronh_4b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=8192, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotronh_4b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.attention_backend",
+        "file_a": 1,
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotronh_56b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=8192, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotronh_56b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotronh_8b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=8192, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "nemotronh_8b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.attention_backend",
+        "file_a": 1,
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "olmoe_7b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 2000,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 2000
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_14b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_14b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_1p5b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_1p5b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_32b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_32b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_500m_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_500m_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_72b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_72b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_7b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen25_7b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen2_1p5b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen2_1p5b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen2_500m_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen2_500m_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen2_72b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen2_72b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen2_7b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen2_7b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_14b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_14b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_1p7b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_1p7b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_235b_a22b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_235b_a22b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "mixed_precision",
+        "file_a": null,
+        "file_b": "bf16_mixed"
+      },
+      {
+        "key": "mixed_precision.autocast_enabled",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.bf16",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.first_last_layers_bf16",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp16",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp32",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp4_recipe",
+        "file_a": "nvfp4",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_amax_compute_algo",
+        "file_a": "most_recent",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_amax_history_len",
+        "file_a": 1,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_dot_product_attention",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_margin",
+        "file_a": 0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_multi_head_attention",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_param",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_param_gather",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_recipe",
+        "file_a": "tensorwise",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_wgrad",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.grad_reduce_in_fp32",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.hysteresis",
+        "file_a": 2,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.initial_loss_scale",
+        "file_a": 4294967296,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.loss_scale_window",
+        "file_a": 1000,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.min_loss_scale",
+        "file_a": 1.0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.num_layers_at_end_in_bf16",
+        "file_a": 0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.num_layers_at_start_in_bf16",
+        "file_a": 0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.params_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.pipeline_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.reuse_grad_buf_for_mxfp8_param_ag",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "model.moe_token_dispatcher_type",
+        "file_a": "alltoall",
+        "file_b": "flex"
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_30b_a3b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "dataset.seq_length",
+        "file_a": 4096,
+        "file_b": 2048
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 50,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 10,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 50
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 10
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_30b_a3b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "mixed_precision",
+        "file_a": null,
+        "file_b": "bf16_mixed"
+      },
+      {
+        "key": "mixed_precision.autocast_enabled",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.bf16",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.first_last_layers_bf16",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp16",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp32",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp4_recipe",
+        "file_a": "nvfp4",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_amax_compute_algo",
+        "file_a": "most_recent",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_amax_history_len",
+        "file_a": 1,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_dot_product_attention",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_margin",
+        "file_a": 0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_multi_head_attention",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_param",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_param_gather",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_recipe",
+        "file_a": "tensorwise",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_wgrad",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.grad_reduce_in_fp32",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.hysteresis",
+        "file_a": 2,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.initial_loss_scale",
+        "file_a": 4294967296,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.loss_scale_window",
+        "file_a": 1000,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.min_loss_scale",
+        "file_a": 1.0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.num_layers_at_end_in_bf16",
+        "file_a": 0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.num_layers_at_start_in_bf16",
+        "file_a": 0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.params_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.pipeline_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.reuse_grad_buf_for_mxfp8_param_ag",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "model.moe_token_dispatcher_type",
+        "file_a": "alltoall",
+        "file_b": "flex"
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_32b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_32b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_4b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_4b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_600m_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_600m_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_8b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.dataset_kwargs",
+        "file_a": {},
+        "file_b": {
+          "pad_to_max_length": true
+        }
+      },
+      {
+        "key": "dataset.packed_sequence_specs",
+        "file_a": null,
+        "file_b": "PackedSequenceSpecs(packed_sequence_size=2048, tokenizer_model_name=None, packed_train_data_path=None, packed_val_data_path=None, packed_metadata_path=None, pad_cu_seqlens=False, pad_seq_to_mult=1)"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.global_batch_size",
+        "file_a": 128,
+        "file_b": 8
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_8b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_next_80b_a3b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 30,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 30
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_next_80b_a3b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "dataset.split",
+        "file_a": "1,1,1",
+        "file_b": "9999,8,2"
+      },
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "mixed_precision",
+        "file_a": null,
+        "file_b": "bf16_mixed"
+      },
+      {
+        "key": "mixed_precision.autocast_enabled",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.bf16",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.first_last_layers_bf16",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp16",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp32",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp4_recipe",
+        "file_a": "nvfp4",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_amax_compute_algo",
+        "file_a": "most_recent",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_amax_history_len",
+        "file_a": 1,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_dot_product_attention",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_margin",
+        "file_a": 0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_multi_head_attention",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_param",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_param_gather",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_recipe",
+        "file_a": "tensorwise",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.fp8_wgrad",
+        "file_a": true,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.grad_reduce_in_fp32",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.hysteresis",
+        "file_a": 2,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.initial_loss_scale",
+        "file_a": 4294967296,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.loss_scale_window",
+        "file_a": 1000,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.min_loss_scale",
+        "file_a": 1.0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.num_layers_at_end_in_bf16",
+        "file_a": 0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.num_layers_at_start_in_bf16",
+        "file_a": 0,
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.params_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.pipeline_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "mixed_precision.reuse_grad_buf_for_mxfp8_param_ag",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "model.moe_token_dispatcher_type",
+        "file_a": "alltoall",
+        "file_b": "flex"
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_vl_235b_a22b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.autocast_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_vl_235b_a22b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.autocast_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_vl_30b_a3b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.autocast_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_vl_30b_a3b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.autocast_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_vl_8b_finetune_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.autocast_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "model.bias_activation_fusion",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  },
+  "qwen3_vl_8b_pretrain_config": {
+    "status": "changed",
+    "differences": [
+      {
+        "key": "logger.skip_train_metrics_log",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "model.autocast_dtype",
+        "file_a": "torch.bfloat16",
+        "file_b": null
+      },
+      {
+        "key": "model.bias_activation_fusion",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "optimizer.adam_eps",
+        "file_a": 1e-05,
+        "file_b": null
+      },
+      {
+        "key": "tokenizer.force_system_message",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "tokenizer.legacy_tokenizer",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "train.check_optimizer_step_success",
+        "file_a": null,
+        "file_b": true
+      },
+      {
+        "key": "train.eval_interval",
+        "file_a": 500,
+        "file_b": null
+      },
+      {
+        "key": "train.eval_iters",
+        "file_a": 32,
+        "file_b": null
+      },
+      {
+        "key": "train.skip_sync_grad_norm_across_mp",
+        "file_a": null,
+        "file_b": false
+      },
+      {
+        "key": "train.skip_train",
+        "file_a": false,
+        "file_b": null
+      },
+      {
+        "key": "validation.eval_interval",
+        "file_a": null,
+        "file_b": 500
+      },
+      {
+        "key": "validation.eval_iters",
+        "file_a": null,
+        "file_b": 32
+      },
+      {
+        "key": "validation.skip_train",
+        "file_a": null,
+        "file_b": false
+      }
+    ]
+  }
+}
