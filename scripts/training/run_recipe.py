@@ -73,6 +73,7 @@ Usage:
             --dataset vlm-preloaded \\
             --step_func qwen3_vl_step \\
             dataset.train_data_path=/data/vlm_train.json \\
+            dataset.image_folder=/data/vlm_images \\
             dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
             checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
