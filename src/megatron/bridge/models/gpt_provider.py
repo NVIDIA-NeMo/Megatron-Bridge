@@ -265,7 +265,8 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.init_model_with_meta_device:
             model_init_device_context = partial(torch.device, device="meta")
 
-        # Check if mtp_block_spec parameter is supported
+        # Guard for main/dev branch submodule compat: mtp_block_spec was added in the dev branch.
+        # TODO: remove guard once the addition lands in main and Bridge pins the new main commit.
         kwargs = {}
         if "mtp_block_spec" in inspect.signature(MCoreGPTModel.__init__).parameters:
             kwargs["mtp_block_spec"] = mtp_block_spec(self, vp_stage=vp_stage)
