@@ -38,6 +38,7 @@ IMAGE_TOKEN_ID = 900
 VIDEO_TOKEN_ID = 901
 AUDIO_TOKEN_ID = 902
 VISION_START_TOKEN_ID = 903
+AUDIO_START_TOKEN_ID = 904
 
 
 def _make_toy_thinker_config():
@@ -53,6 +54,15 @@ def _make_toy_thinker_config():
             "out_hidden_size": HIDDEN_SIZE,
             "num_position_embeddings": 16,
             "deepstack_visual_indexes": [0],
+        },
+        audio_config={
+            "num_mel_bins": 8,
+            "d_model": 32,
+            "encoder_attention_heads": 4,
+            "encoder_ffn_dim": 64,
+            "encoder_layers": 2,
+            "output_dim": HIDDEN_SIZE,
+            "downsample_hidden_size": 16,
         },
         text_config={
             "num_hidden_layers": 2,
@@ -74,6 +84,7 @@ def _make_toy_thinker_config():
         video_token_id=VIDEO_TOKEN_ID,
         audio_token_id=AUDIO_TOKEN_ID,
         vision_start_token_id=VISION_START_TOKEN_ID,
+        audio_start_token_id=AUDIO_START_TOKEN_ID,
     )
 
 
@@ -156,6 +167,9 @@ class TestQwen3OmniModel:
             video_token_id=VIDEO_TOKEN_ID,
             audio_token_id=AUDIO_TOKEN_ID,
             vision_start_token_id=VISION_START_TOKEN_ID,
+            audio_start_token_id=AUDIO_START_TOKEN_ID,
+            position_id_per_seconds=25,
+            seconds_per_chunk=2,
         )
 
     @staticmethod
@@ -235,9 +249,26 @@ class TestQwen3OmniModel:
         )
         assert output is not None
 
-    def test_audio_runtime_not_enabled(self, thinker_config):
+    def test_audio_forward(self, thinker_config):
         model = self._build_model(thinker_config)
-        input_ids = torch.randint(0, 1000, (1, 8))
+        if torch.cuda.is_available():
+            model = model.to("cuda")
+            device = "cuda"
+        else:
+            device = "cpu"
 
-        with pytest.raises(NotImplementedError, match="Audio runtime support"):
-            model(input_ids=input_ids, input_features=torch.randn(1, 80, 16))
+        input_ids = torch.tensor(
+            [[AUDIO_START_TOKEN_ID, AUDIO_TOKEN_ID, AUDIO_TOKEN_ID, 21, 22, 23]],
+            device=device,
+        )
+        labels = torch.randint(0, 1000, input_ids.shape, device=device)
+        input_features = torch.randn(1, 8, 10, device=device)
+        feature_attention_mask = torch.ones(1, 10, dtype=torch.long, device=device)
+
+        output = model(
+            input_ids=input_ids,
+            labels=labels,
+            input_features=input_features,
+            feature_attention_mask=feature_attention_mask,
+        )
+        assert output is not None

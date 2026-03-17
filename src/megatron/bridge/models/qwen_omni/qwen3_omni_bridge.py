@@ -78,6 +78,9 @@ class Qwen3OmniBridge(MegatronModelBridge):
             video_token_id=getattr(thinker_config, "video_token_id", 151656),
             audio_token_id=getattr(thinker_config, "audio_token_id", 151646),
             vision_start_token_id=getattr(thinker_config, "vision_start_token_id", 151652),
+            audio_start_token_id=getattr(thinker_config, "audio_start_token_id", 151647),
+            position_id_per_seconds=getattr(thinker_config, "position_id_per_seconds", 25),
+            seconds_per_chunk=getattr(thinker_config, "seconds_per_chunk", 2),
             mrope_section=rope_scaling.get("mrope_section", [24, 20, 20]),
         )
         return provider
@@ -105,6 +108,10 @@ class Qwen3OmniBridge(MegatronModelBridge):
                 ReplicatedMapping(
                     megatron_param="thinker.visual.**",
                     hf_param="thinker.visual.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="thinker.audio_model.**",
+                    hf_param="thinker.audio_tower.**",
                 ),
                 QKVMapping(
                     megatron_param="thinker.language_model.decoder.layers.*.self_attention.linear_qkv.weight",

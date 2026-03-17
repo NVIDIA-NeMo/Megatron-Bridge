@@ -42,5 +42,7 @@ class Qwen3OmniTransformerConfig(Qwen3VLTransformerConfig):
     vision_end_token_id: int = 151653
     audio_start_token_id: int = 151647
     audio_end_token_id: int = 151648
+    position_id_per_seconds: int = 25
+    seconds_per_chunk: int = 2
 
     qk_layernorm: bool = True
