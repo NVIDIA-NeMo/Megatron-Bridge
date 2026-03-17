@@ -17,11 +17,11 @@ from typing import Any, Optional
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 
-from megatron.bridge.models.kimi.kimi_provider import KimiK2Provider
+from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
 @dataclass
-class KimiK25VLModelProvider(KimiK2Provider):
+class KimiK25VLModelProvider(MLAModelProvider):
     """
     Model provider for Kimi K2.5 VL (Vision-Language) Models.
 

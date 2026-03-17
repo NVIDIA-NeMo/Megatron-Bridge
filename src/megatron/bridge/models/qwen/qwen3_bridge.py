@@ -46,7 +46,6 @@ class Qwen3Bridge(MegatronModelBridge):
 
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.add_qkv_bias = False  # Qwen3 does NOT have QKV bias (unlike Qwen2)
         provider.hidden_dropout = 0.0

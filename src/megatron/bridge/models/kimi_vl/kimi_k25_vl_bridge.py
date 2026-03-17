@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Mapping
+from functools import partial
 from typing import Dict, Mapping
 
 import torch
+import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
@@ -34,8 +36,19 @@ from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 
+try:
+    import transformer_engine  # noqa: F401
 
-@MegatronModelBridge.register_bridge(source="KimiK25ForConditionalGeneration", target=KimiK25VLModel)
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+@MegatronModelBridge.register_bridge(
+    source="KimiK25ForConditionalGeneration",
+    target=KimiK25VLModel,
+    provider=KimiK25VLModelProvider,
+)
 class KimiK25VLBridge(MegatronModelBridge):
     """
     Megatron Bridge for Kimi K2.5 VL.
@@ -88,6 +101,50 @@ class KimiK25VLBridge(MegatronModelBridge):
             # HF model path (needed for dynamic module loading of vision components)
             hf_model_path=hf_pretrained._model_name_or_path,
         )
+
+        # Kimi K2 language model defaults (previously in KimiK2Provider, now set here
+        # following main's pattern where bridge configures the provider).
+        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.normalization = "RMSNorm"
+        provider.activation_func = F.silu
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.share_embeddings_and_output_weights = False
+        provider.qk_layernorm = True
+        provider.multi_latent_attention = True
+
+        provider.moe_grouped_gemm = True
+        provider.moe_router_pre_softmax = True
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_router_load_balancing_type = "seq_aux_loss"
+        provider.moe_shared_expert_overlap = True
+        provider.moe_router_enable_expert_bias = True
+        provider.moe_router_dtype = "fp32"
+        provider.moe_permute_fusion = True
+
+        provider.apply_rope_fusion = False
+        provider.bias_activation_fusion = True
+        provider.bias_dropout_fusion = True
+        provider.cross_entropy_fusion_impl = "te"
+        provider.cross_entropy_loss_fusion = True
+        provider.masked_softmax_fusion = True
+        provider.persist_layer_norm = True
+        provider.async_tensor_model_parallel_allreduce = True
+
+        provider.hidden_dropout = 0.0
+        provider.attention_softmax_in_fp32 = False
+
+        provider.make_vocab_size_divisible_by = 1280
+        provider.seq_length = 4096
+
+        provider.moe_layer_freq = [0] * text_config.first_k_dense_replace + [1] * (
+            text_config.num_hidden_layers - text_config.first_k_dense_replace
+        )
+        provider.moe_shared_expert_intermediate_size = (
+            text_config.moe_intermediate_size * text_config.n_shared_experts
+        )
+        provider.moe_aux_loss_coeff = 1e-3
 
         return provider
 

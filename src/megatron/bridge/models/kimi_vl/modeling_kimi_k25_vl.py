@@ -328,18 +328,9 @@ class KimiK25VLModel(MegatronModule):
                 pixel_values = pixel_values.to(self.vision_tower.dtype)
                 image_features = self._extract_image_features(pixel_values, image_grid_thw)
 
-                # Truncate image features to match placeholder count in input_ids.
-                # get_batch() may have truncated input_ids to seq_length, removing
-                # some trailing placeholders while pixel_values stay intact.
-                num_placeholders = (input_ids == self.media_placeholder_token_id).sum().item()
-                if isinstance(image_features, list):
-                    image_features_cat = torch.cat(image_features, dim=0)
-                else:
-                    image_features_cat = image_features
-                if image_features_cat.shape[0] > num_placeholders:
-                    image_features_cat = image_features_cat[:num_placeholders]
-                # Wrap back as single-element list for _merge compatibility
-                image_features = [image_features_cat]
+                # Ensure image_features is a list for _merge compatibility
+                if not isinstance(image_features, list):
+                    image_features = [image_features]
 
                 inputs_embeds = inputs_embeds.to(image_features[0].dtype)
 
@@ -347,13 +338,24 @@ class KimiK25VLModel(MegatronModule):
                 if attention_mask is None:
                     attention_mask = (input_ids != self.config.pad_token_id).long()
 
+                # Check if input_ids are pre-expanded (PP training with collate-time expansion)
+                # or need dynamic expansion (inference / single-placeholder per image).
+                num_placeholders = (input_ids == self.media_placeholder_token_id).sum().item()
+                total_features = sum(f.shape[0] for f in image_features)
+                if num_placeholders == total_features:
+                    # Pre-expanded: 1:1 replacement, keep sequence length
+                    target_seq_length = input_ids.shape[1]
+                else:
+                    # Dynamic expansion: let merge compute the natural expanded length
+                    target_seq_length = None
+
                 inputs_embeds, _, labels, position_ids = self._merge_input_ids_with_image_features(
                     image_features,
                     inputs_embeds,
                     input_ids,
                     attention_mask,
                     labels,
-                    target_seq_length=input_ids.shape[1],
+                    target_seq_length=target_seq_length,
                 )
                 # Reset attention_mask to None — Megatron computes causal masking internally.
                 # Passing a non-None 2D mask causes GPTModel to take a different code path
