@@ -2256,9 +2256,7 @@ def _align_expert_weight_to_shape(
         return result
     if transpose_hint is False:
         if tuple(weight.shape) != tuple(target_shape):
-            raise ValueError(
-                f"Unexpected {name} shape {tuple(weight.shape)}; expected {tuple(target_shape)}."
-            )
+            raise ValueError(f"Unexpected {name} shape {tuple(weight.shape)}; expected {tuple(target_shape)}.")
         return weight
     # Auto-detect (transpose_hint is None)
     if tuple(weight.shape) == tuple(target_shape):

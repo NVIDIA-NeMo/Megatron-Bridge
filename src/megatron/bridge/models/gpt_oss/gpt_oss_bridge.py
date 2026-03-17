@@ -28,7 +28,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     _align_expert_weight_to_shape,
 )
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
-from megatron.bridge.models.gpt_oss.gpt_oss_provider import GPTOSSProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
