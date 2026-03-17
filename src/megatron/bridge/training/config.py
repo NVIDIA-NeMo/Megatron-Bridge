@@ -1533,6 +1533,13 @@ class ConfigContainer(Container):
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
 
+        if self.model.restore_modelopt_state:
+            if self.model.gradient_accumulation_fusion:
+                print_rank_0(
+                    "Gradient accumulation fusion is not supported with Restore_modelopt_state, setting to False"
+                )
+                self.model.gradient_accumulation_fusion = False
+
         # Megatron FSDP Config checks
         if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
             # Set Megatron FSDP Configs
