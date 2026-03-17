@@ -444,7 +444,8 @@ def parse_cli_args():
         type=parse_kv,
         metavar="KEY=VALUE",
         help="Set environment variable (repeatable). Example: -E NCCL_DEBUG_SUBSYS=INIT,NET,ENV. \
-        This is an alternative to --custom_env_vars (--custom_env_vars ispreferred for most cases).",
+        This is an alternative to --custom_env_vars (--custom_env_vars ispreferred for most cases). \
+        E.g. -E var1=value1 -E var2=value2",
     )
     slurm_args.add_argument(
         "-cs",
