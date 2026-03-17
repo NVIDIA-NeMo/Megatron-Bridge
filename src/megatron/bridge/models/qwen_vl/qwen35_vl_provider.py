@@ -36,9 +36,6 @@ from typing import Any, Callable, List, Optional
 
 import transformers
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    get_transformer_block_with_experimental_attention_variant_spec,
-)
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from packaging.version import Version as PkgVersion
@@ -62,6 +59,16 @@ except ImportError:
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+
+try:
+    from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+        get_transformer_block_with_experimental_attention_variant_spec,
+    )
+except ModuleNotFoundError:
+    def get_transformer_block_with_experimental_attention_variant_spec(*args, **kwargs):
+        raise NotImplementedError(
+            "Qwen3.5-VL experimental attention variants require a newer Megatron-Core build."
+        )
 
 
 def _check_qwen3_5_available() -> None:

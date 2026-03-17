@@ -1,0 +1,192 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import datetime
+import os
+
+import pytest
+import torch
+import torch.distributed as dist
+import torch.nn.functional as F
+from megatron.core import parallel_state
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
+    Qwen3OmniMoeThinkerConfig,
+)
+
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
+    Qwen3OmniTransformerConfig,
+)
+
+
+HIDDEN_SIZE = 128
+
+
+def _make_toy_thinker_config():
+    return Qwen3OmniMoeThinkerConfig(
+        text_config={
+            "num_hidden_layers": 2,
+            "hidden_size": HIDDEN_SIZE,
+            "intermediate_size": 256,
+            "moe_intermediate_size": 64,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "num_experts": 8,
+            "num_experts_per_tok": 2,
+            "vocab_size": 1000,
+            "max_position_embeddings": 128,
+            "rms_norm_eps": 1e-6,
+            "attention_bias": False,
+            "rope_theta": 1000000.0,
+            "rope_scaling": {"rope_type": "default", "mrope_section": [4, 6, 6]},
+        }
+    )
+
+
+@pytest.fixture(scope="module")
+def thinker_config():
+    return _make_toy_thinker_config()
+
+
+class TestQwen3OmniModel:
+    @classmethod
+    def setup_class(cls):
+        if not dist.is_initialized():
+            os.environ["MASTER_ADDR"] = "127.0.0.1"
+            os.environ["MASTER_PORT"] = "29501"
+            os.environ["RANK"] = "0"
+            os.environ["LOCAL_RANK"] = "0"
+            os.environ["WORLD_SIZE"] = "1"
+
+            device_count = torch.cuda.device_count()
+            if device_count > 0:
+                torch.cuda.set_device(0)
+
+            dist.init_process_group(
+                backend="nccl" if device_count > 0 else "gloo",
+                world_size=1,
+                rank=0,
+                timeout=datetime.timedelta(minutes=30),
+            )
+
+    @classmethod
+    def teardown_class(cls):
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+    def _setup_parallel_state(self, tp_size=1, pp_size=1):
+        if parallel_state.model_parallel_is_initialized():
+            parallel_state.destroy_model_parallel()
+
+        parallel_state.initialize_model_parallel(
+            tensor_model_parallel_size=tp_size,
+            pipeline_model_parallel_size=pp_size,
+            virtual_pipeline_model_parallel_size=None,
+            context_parallel_size=1,
+        )
+        model_parallel_cuda_manual_seed(123)
+
+    def teardown_method(self):
+        parallel_state.destroy_model_parallel()
+
+    @staticmethod
+    def _make_language_config():
+        return Qwen3OmniTransformerConfig(
+            num_layers=2,
+            hidden_size=HIDDEN_SIZE,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=HIDDEN_SIZE // 4,
+            ffn_hidden_size=256,
+            moe_ffn_hidden_size=64,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            vocab_size=1000,
+            language_max_sequence_length=128,
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            qk_layernorm=True,
+            layernorm_epsilon=1e-6,
+            bf16=False,
+            use_cpu_initialization=True,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            mrope_section=[4, 6, 6],
+        )
+
+    @staticmethod
+    def _make_layer_spec():
+        return get_gpt_layer_with_transformer_engine_spec(
+            num_experts=8,
+            moe_grouped_gemm=True,
+            qk_layernorm=True,
+            fp8=False,
+        )
+
+    def _build_model(self, thinker_config):
+        self._setup_parallel_state(tp_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        return Qwen3OmniModel(
+            language_transformer_config=self._make_language_config(),
+            language_transformer_layer_spec=self._make_layer_spec(),
+            thinker_transformer_config=thinker_config,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            pg_collection=pg_collection,
+        )
+
+    def test_model_freeze_api(self, thinker_config):
+        model = self._build_model(thinker_config)
+        model.freeze(freeze_language_model=True)
+
+        for name, param in model.named_parameters():
+            if name.startswith("thinker.language_model"):
+                assert param.requires_grad is False
+
+    def test_set_input_tensor(self, thinker_config):
+        model = self._build_model(thinker_config)
+        test_tensor = torch.randn(2, 4, HIDDEN_SIZE)
+        model.set_input_tensor([test_tensor])
+        assert model.thinker.encoder_hidden_state is not None
+
+    def test_text_only_forward(self, thinker_config):
+        model = self._build_model(thinker_config)
+        if torch.cuda.is_available():
+            model = model.to("cuda")
+            device = "cuda"
+        else:
+            device = "cpu"
+
+        input_ids = torch.randint(0, 1000, (1, 16), device=device)
+        labels = torch.randint(0, 1000, (1, 16), device=device)
+        output = model(
+            input_ids=input_ids,
+            labels=labels,
+            attention_mask=None,
+        )
+        assert output is not None
+
+    def test_multimodal_runtime_not_enabled(self, thinker_config):
+        model = self._build_model(thinker_config)
+        input_ids = torch.randint(0, 1000, (1, 8))
+
+        with pytest.raises(NotImplementedError, match="Vision/audio runtime support"):
+            model(input_ids=input_ids, input_features=torch.randn(1, 80, 16))
