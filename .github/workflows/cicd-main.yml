@@ -634,6 +634,7 @@ jobs:
   Nemo_CICD_Test:
     needs:
       - pre-flight
+      - check-labels
       - cicd-unit-tests
       - cicd-functional-tests-l0
       - cicd-functional-tests-l1
@@ -657,20 +658,44 @@ jobs:
         shell: bash -x -e -u -o pipefail {0}
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.run_id }}
-          SKIPPING_IS_ALLOWED: ${{ needs.pre-flight.outputs.docs_only == 'true' || needs.pre-flight.outputs.is_deployment_workflow == 'true' || needs.pre-flight.outputs.is_ci_workload == 'true' || inputs.test_suite == 'unit-only' || inputs.test_suite == 'functional-only' }}
+          # A tier is "expected" if its if-condition (excluding success()/is_ci_workload/force_run_all) would be true.
+          # Unexpected skips in an expected tier are failures.
+          EXPECT_L0: ${{ github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' }}
+          EXPECT_L1: ${{ (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true') }}
+          EXPECT_L2: ${{ (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         run: |
           FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
 
-          if [ "${FAILED_JOBS:-0}" -eq 0 ] || [ "$SKIPPING_IS_ALLOWED" == "true" ]; then
-              echo "✅ All previous jobs completed successfully"
-              exit 0
-          else
-              echo "❌ Found $FAILED_JOBS failed job(s)"
-              # Show which jobs failed
-              gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | .name'
-              exit 1
+          UNEXPECTED_SKIPS=0
+          check_tier_skips() {
+            local tier="$1" expect="$2"
+            [ "$expect" != "true" ] && return
+            local n
+            n=$(gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
+              '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length') || n=0
+            if [ "${n:-0}" -gt 0 ]; then
+              echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
+              gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
+                '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name'
+              UNEXPECTED_SKIPS=$((UNEXPECTED_SKIPS + n))
+            fi
+          }
+
+          check_tier_skips "L0" "$EXPECT_L0"
+          check_tier_skips "L1" "$EXPECT_L1"
+          check_tier_skips "L2" "$EXPECT_L2"
+
+          if [ "${FAILED_JOBS:-0}" -gt 0 ]; then
+            echo "❌ Found $FAILED_JOBS failed job(s):"
+            gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | .name'
           fi
+
+          if [ "${FAILED_JOBS:-0}" -gt 0 ] || [ "${UNEXPECTED_SKIPS:-0}" -gt 0 ]; then
+            exit 1
+          fi
+
+          echo "✅ All previous jobs completed successfully"
+          exit 0
 
   Coverage_Fake:
     runs-on: ubuntu-latest
