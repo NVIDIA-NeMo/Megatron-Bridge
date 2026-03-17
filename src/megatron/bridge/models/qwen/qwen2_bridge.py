@@ -49,7 +49,6 @@ class Qwen2Bridge(MegatronModelBridge):
 
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.add_qkv_bias = True
         provider.hidden_dropout = 0.0

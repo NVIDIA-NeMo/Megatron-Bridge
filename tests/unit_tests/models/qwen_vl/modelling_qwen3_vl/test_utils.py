@@ -46,7 +46,8 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
 
 """
 Test utils functions for Qwen3VL model.
-    Run with: torchrun --nproc_per_node=2 tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_utils.py
+    Run with: uv run torchrun --nproc_per_node=2 -m pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_utils.py
+    Or for single GPU: uv run pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_utils.py
 """
 
 
