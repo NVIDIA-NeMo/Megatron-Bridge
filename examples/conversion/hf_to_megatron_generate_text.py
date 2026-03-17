@@ -167,11 +167,15 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
-    # Disable MTP for inference (MTP is only used during training)
     def _disable_mtp(m):
-        """Disable MTP on a model by clearing mtp_num_layers and mtp_process."""
+        """Disable MTP for inference (MTP is only used during training).
+
+        Uses mtp_num_layers=0 (not None) so that range(mtp_num_layers) in
+        Megatron-Core's MTP forward is a no-op empty loop rather than crashing
+        with TypeError: 'NoneType' object cannot be interpreted as an integer.
+        """
         if hasattr(m, "config"):
-            m.config.mtp_num_layers = None
+            m.config.mtp_num_layers = 0
             m.config.grad_scale_func = None
         if hasattr(m, "mtp_process"):
             m.mtp_process = False

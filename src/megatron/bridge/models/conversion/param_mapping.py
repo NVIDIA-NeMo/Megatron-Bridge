@@ -2227,13 +2227,47 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
         return {key: value}
 
 
-def _align_expert_weight_to_shape(weight: torch.Tensor, target_shape: torch.Size, name: str) -> torch.Tensor:
-    """Auto-detect whether a transpose is needed to match the Megatron target shape.
+def _align_expert_weight_to_shape(
+    weight: torch.Tensor,
+    target_shape: torch.Size,
+    name: str,
+    transpose_hint: bool | None = None,
+) -> torch.Tensor:
+    """Align an expert weight tensor to match a Megatron target shape.
 
-    Handles both transformers <5.0 (transposed) and 5.0+ (standard) expert weight layouts.
+    Args:
+        weight: The weight tensor to align.
+        target_shape: The expected Megatron parameter shape.
+        name: Name used in error messages.
+        transpose_hint: If ``True``, transpose the last two dims unconditionally.
+            If ``False``, return as-is (assert shape already matches).
+            If ``None`` (default), auto-detect: returns the tensor directly if
+            the shape matches, transposes the last two dims if the transposed
+            shape matches, or raises ``ValueError`` otherwise. Auto-detection
+            is ambiguous for square 2-D weights — pass an explicit
+            ``transpose_hint`` in that case.
     """
+    if transpose_hint is True:
+        result = weight.t().contiguous() if weight.ndim == 2 else weight.transpose(-1, -2).contiguous()
+        if tuple(result.shape) != tuple(target_shape):
+            raise ValueError(
+                f"Unexpected {name} shape after transpose: {tuple(result.shape)}; expected {tuple(target_shape)}."
+            )
+        return result
+    if transpose_hint is False:
+        if tuple(weight.shape) != tuple(target_shape):
+            raise ValueError(
+                f"Unexpected {name} shape {tuple(weight.shape)}; expected {tuple(target_shape)}."
+            )
+        return weight
+    # Auto-detect (transpose_hint is None)
     if tuple(weight.shape) == tuple(target_shape):
         return weight
+    if weight.ndim == 2 and weight.shape[0] == weight.shape[1]:
+        raise ValueError(
+            f"Cannot auto-detect transpose for square {name} weight {tuple(weight.shape)}; "
+            f"pass an explicit transpose_hint=True/False."
+        )
     if weight.ndim == 2 and tuple(weight.t().shape) == tuple(target_shape):
         return weight.t().contiguous()
     raise ValueError(f"Unexpected {name} shape {tuple(weight.shape)}; expected {tuple(target_shape)}.")
