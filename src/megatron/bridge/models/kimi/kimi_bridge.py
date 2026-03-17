@@ -33,13 +33,13 @@ except (ImportError, ModuleNotFoundError):
 
 
 @MegatronModelBridge.register_bridge(
-    source="DeepseekV2ForCausalLM",
+    source="KimiK2ForCausalLM",
     target=GPTModel,
     provider=MLAModelProvider,
-    model_type="deepseek_v2",
+    model_type="kimi_k2",
 )
-class DeepSeekV2Bridge(MegatronModelBridge):
-    """Megatron Bridge for DeepSeek-V2."""
+class KimiK2Bridge(MegatronModelBridge):
+    """Megatron Bridge for Kimi K2."""
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
@@ -48,6 +48,7 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.share_embeddings_and_output_weights = False
         provider.qk_layernorm = True
@@ -58,6 +59,7 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_router_load_balancing_type = "seq_aux_loss"
         provider.moe_shared_expert_overlap = True
+        provider.moe_router_enable_expert_bias = True
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
 
@@ -68,17 +70,19 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         provider.cross_entropy_loss_fusion = True
         provider.masked_softmax_fusion = True
         provider.persist_layer_norm = True
+        provider.async_tensor_model_parallel_allreduce = True
 
         provider.hidden_dropout = 0.0
         provider.attention_softmax_in_fp32 = False
 
-        provider.make_vocab_size_divisible_by = 3200
+        provider.make_vocab_size_divisible_by = 1280
         provider.seq_length = 4096
 
         provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
+        provider.moe_aux_loss_coeff = 1e-3
 
         return provider
 

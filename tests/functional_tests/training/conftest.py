@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.gpt_oss.gpt_oss_bridge import GPTOSSBridge
+import pytest
 
 
-__all__ = [
-    "GPTOSSBridge",
-]
+@pytest.fixture(scope="session", autouse=True)
+def ensure_test_data(tmp_path_factory):
+    """Override parent conftest fixture: training tests use MockGPTDatasetConfig and need no data."""
+    yield tmp_path_factory.mktemp("test_data")
