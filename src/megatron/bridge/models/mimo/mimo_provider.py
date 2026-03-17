@@ -16,6 +16,7 @@ import copy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
 
+from megatron.bridge.utils.common_utils import print_rank_0
 import torch
 import torch.distributed as dist
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -540,3 +541,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         if self.mimo_parallelism_config is not None:
             world_size = dist.get_world_size() if dist.is_initialized() else None
             self.mimo_parallelism_config.finalize(world_size)
+
+        if self.model.restore_modelopt_state:
+            if self.model.gradient_accumulation_fusion:
+                print_rank_0("Gradient accumulation fusion is not supported with Restore_modelopt_state, setting to False")
+                self.model.gradient_accumulation_fusion = False
