@@ -184,6 +184,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
                     stacklevel=2,
                 )
             self.hybrid_layer_pattern = self.hybrid_override_pattern
+            self.hybrid_override_pattern = None
             used_hybrid_override_pattern = True
 
         # Check if hybrid_layer_pattern is specified and derive num_layers from pattern

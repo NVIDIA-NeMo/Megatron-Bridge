@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import logging
 
 
 logger = logging.getLogger(__name__)
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import torch
 from megatron.core import tensor_parallel
@@ -33,6 +35,9 @@ from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import get_model_config
 
+
+if TYPE_CHECKING:
+    from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 try:
     from megatron.core.fp8_utils import correct_amax_history_if_needed
@@ -53,6 +58,7 @@ def unimodal_build_distributed_models(
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
     model_type: ModelType = ModelType.encoder_or_decoder,
+    mixed_precision_config: MixedPrecisionConfig | None = None,
 ) -> list[MegatronModule]:
     """Build model stages and wrap for distributed training.
 
@@ -81,6 +87,7 @@ def unimodal_build_distributed_models(
             Pass ``None`` to skip.
         pre_wrap_hook: Hook applied to the model stage list before any wrapping.
         model_type: Deprecated flag, only used for backwards compatibility.
+        mixed_precision_config: Mixed-precision config for DDP wrapper.
 
     Returns:
         List of model stages, wrapped and ready for distributed training.
@@ -144,6 +151,7 @@ def unimodal_build_distributed_models(
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
             pg_collection=pg_collection,
+            mixed_precision_config=mixed_precision_config,
         )
 
     return model_list
@@ -196,6 +204,7 @@ def _ddp_wrap(
     overlap_param_gather_with_optimizer_step: bool,
     use_megatron_fsdp: bool = False,
     use_torch_fsdp2: bool = False,
+    mixed_precision_config: MixedPrecisionConfig | None = None,
     *,
     pg_collection: ProcessGroupCollection,
 ) -> list[MegatronModule]:
@@ -209,15 +218,23 @@ def _ddp_wrap(
             for overlapping parameter gathering with optimizer step
         use_megatron_fsdp: Whether to use Megatron FSDP.
         use_torch_fsdp2: Whether to use PyTorch FSDP v2 instead of DDP
+        mixed_precision_config: Mixed-precision config for DDP wrapper.
         pg_collection: Model communication process groups.
 
     Returns:
         list[MegatronModule]: List of DDP/FSDP wrapped model modules
     """
+    ddp_init_kwargs = {}
     if use_megatron_fsdp:
         DP = FullyShardedDataParallel
         if use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
+        if mixed_precision_config is not None:
+            # Also pass the mixed-precision arguments for Megatron-FSDP only.
+            mixed_precision_config.finalize()
+            ddp_init_kwargs["main_params_dtype"] = mixed_precision_config.megatron_fsdp_main_params_dtype
+            ddp_init_kwargs["main_grads_dtype"] = mixed_precision_config.megatron_fsdp_main_grads_dtype
+            ddp_init_kwargs["grad_comm_dtype"] = mixed_precision_config.megatron_fsdp_grad_comm_dtype
     elif use_torch_fsdp2:
         DP = TorchFullyShardedDataParallel
     else:
@@ -238,6 +255,7 @@ def _ddp_wrap(
                 # model chunks is overlapped with compute anyway.
                 disable_bucketing=(model_chunk_idx > 0) or overlap_param_gather_with_optimizer_step,
                 pg_collection=pg_collection,
+                **ddp_init_kwargs,
             )
             for (model_chunk_idx, model_chunk) in enumerate(model)
         ]
