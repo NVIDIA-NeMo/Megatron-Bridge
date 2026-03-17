@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import abc
 import os
 from pathlib import Path
-from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypedDict, TypeVar, Union
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -53,6 +55,10 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.models.config import from_hf_pretrained, save_hf_pretrained
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 try:
@@ -123,6 +129,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         | None = None,
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
+        mixed_precision_config: MixedPrecisionConfig | None = None,
         pg_collection: ProcessGroupCollection | None = None,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
@@ -151,6 +158,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
                 this will override all hooks registered via `register_post_wrap_hook`.
             mixed_precision_wrapper: A module wrapper (e.g., `Float16Module`) applied when fp16/bf16
                 is enabled. If None, no mixed precision wrapper is applied.
+            mixed_precision_config: Optional MixedPrecisionConfig. Used to configure mixed-precision
+                features on models during initialization.
             pg_collection: Optional pre-initialized ProcessGroupCollection. If provided, skips
                 model parallel initialization and uses the provided collection directly.
                 This is used when `use_decentralized_pg=True` in the distributed config.
@@ -207,6 +216,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             init_model_with_meta_device=init_model_with_meta_device,
             pre_wrap_hook=final_pre_wrap_hook,
             mixed_precision_wrapper=mixed_precision_wrapper,
+            mixed_precision_config=mixed_precision_config,
             pg_collection=pg_collection,
         )
 
@@ -491,6 +501,7 @@ def get_model(
     ]
     | None = None,
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
+    mixed_precision_config: MixedPrecisionConfig | None = None,
     *,
     pg_collection: ProcessGroupCollection,
 ) -> list[MegatronModule]:
@@ -508,7 +519,7 @@ def get_model(
             Uses the provide() method with optional pre_process(bool), post_process(bool),
             vp_stage(int) arguments for pipeline parallelism
         ddp_config: Configuration for distributed data parallel training
-        model_type: Type of model (encoder, decoder, or encoder_and_decoder)
+        model_type: Type of model (encoder, decoder)
         overlap_param_gather_with_optimizer_step: Whether to overlap parameter
             gathering with optimizer step for performance optimization
         fp16: Enable FP16 mixed precision training. If None, uses model config
@@ -525,6 +536,8 @@ def get_model(
             hooks will be executed in order.
         mixed_precision_wrapper: Wrapper class/function applied when fp16/bf16 is enabled. Defaults
             to Megatron-Core's `Float16Module`. If None, the wrapper is not applied.
+        mixed_precision_config: MixedPrecisionConfig that controls mixed-precision features
+            for the created model.
 
     Returns:
         list[MegatronModule]: List of model modules. Contains multiple modules
@@ -607,6 +620,7 @@ def get_model(
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
+            mixed_precision_config=mixed_precision_config,
             pg_collection=pg_collection,
         )
 
@@ -634,9 +648,6 @@ def _create_model(
     vp_size = getattr(model_provider, "virtual_pipeline_model_parallel_size", None)
     pp_group = pg_collection.pp
     if (pp_group.size() > 1) and (vp_size is not None):
-        assert model_type != ModelType.encoder_and_decoder, (
-            "Interleaved schedule not supported for model with both encoder and decoder"
-        )
         model = []
         for i in range(vp_size):
             pre_process = is_vp_first_stage(vp_stage=i, vp_size=vp_size) and is_pp_first_stage(pp_group)
@@ -651,14 +662,10 @@ def _create_model(
     else:
         pre_process = is_pp_first_stage(pp_group)
         post_process = is_pp_last_stage(pp_group)
-        if model_type == ModelType.encoder_and_decoder:
-            # Deprecated in upstream; simplify to first/last stage semantics
-            model = model_provider.provide()
-        else:
-            model = model_provider.provide(
-                pre_process=pre_process,
-                post_process=post_process,
-            )
+        model = model_provider.provide(
+            pre_process=pre_process,
+            post_process=post_process,
+        )
         model.model_type = model_type
 
     if not isinstance(model, list):

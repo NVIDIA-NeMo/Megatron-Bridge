@@ -342,7 +342,7 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests
-          timeout: 15
+          timeout: 18
           is_unit_test: "true"
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -379,6 +379,8 @@ jobs:
           - script: L2_Launch_models_qwen_quantization
           - script: L2_Launch_models_qwen_vl
           - script: L2_Launch_models_qwen35_vl
+          - script: L2_Launch_models_flux
+          - script: L2_Launch_models_wan
           - script: L2_Launch_recipes_gemma_vl
           - script: L2_Launch_recipes_gpt_oss
           - script: L2_Launch_models_qwen_vl_quantization
