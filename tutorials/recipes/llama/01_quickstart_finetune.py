@@ -44,7 +44,7 @@ For multi-node training, see launch_with_sbatch.sh or 04_launch_slurm_with_nemo_
 
 import argparse
 
-from megatron.bridge.recipes.llama import llama32_1b_finetune_config
+from megatron.bridge.recipes.llama import llama32_1b_peft_config
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 
@@ -68,9 +68,9 @@ def main() -> None:
     """Run Llama 3.2 1B finetuning with LoRA."""
     args = parse_args()
 
-    # Load the base finetune configuration
+    # Load the PEFT (LoRA) configuration
     # Uses LoRA for efficient finetuning on a single GPU
-    config = llama32_1b_finetune_config()
+    config = llama32_1b_peft_config(peft_scheme="lora")
 
     # Load from the pretrained checkpoint
     config.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
@@ -107,7 +107,7 @@ def main() -> None:
 
     # === Full supervised finetuning (no LoRA) ===
     # For full finetuning, reload config with peft=None:
-    # config = llama32_1b_finetune_config(peft=None)
+    # config = llama32_1b_sft_config()
     # config.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
     # Note: Full finetuning uses more memory than LoRA
     # The recipe automatically adjusts parallelism for full SFT

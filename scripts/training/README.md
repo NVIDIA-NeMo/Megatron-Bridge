@@ -25,7 +25,7 @@ torchrun --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
 ### Finetune
 
 ```bash
-torchrun --nproc_per_node=8 run_recipe.py --recipe llama32_1b_finetune_config
+torchrun --nproc_per_node=8 run_recipe.py --recipe llama32_1b_sft_config
 ```
 
 ## Usage with Different Models

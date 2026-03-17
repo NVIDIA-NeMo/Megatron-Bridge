@@ -25,9 +25,13 @@ Usage:
         torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config
 
-    Finetune:
+    SFT (full finetuning):
         torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_finetune_config
+            --recipe llama32_1b_sft_config
+
+    PEFT (LoRA/DoRA):
+        torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe llama32_1b_peft_config
 
     With CLI overrides:
         torchrun --nproc_per_node=8 run_recipe.py \
@@ -82,7 +86,7 @@ TRAIN_MODES = {
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
     "Unable to infer training mode from recipe name. "
-    "Please include 'pretrain' or 'finetune' in the recipe name or pass --mode explicitly."
+    "Please include 'pretrain', 'sft', 'peft', or 'finetune' in the recipe name or pass --mode explicitly."
 )
 
 
@@ -103,7 +107,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "--recipe",
         type=str,
         required=True,
-        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_finetune_config)",
+        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_sft_config, gemma3_1b_peft_config)",
     )
     parser.add_argument(
         "--step_func",
@@ -207,7 +211,7 @@ def infer_train_mode(recipe_name: str) -> str:
     """Infer training mode from the recipe name."""
     lowered = recipe_name.lower()
     has_pretrain = "pretrain" in lowered
-    has_finetune = "finetune" in lowered
+    has_finetune = "finetune" in lowered or "sft" in lowered or "peft" in lowered
     if has_pretrain ^ has_finetune:
         return "pretrain" if has_pretrain else "finetune"
     raise ValueError(ERR_INFER_MODE_FAILED)
