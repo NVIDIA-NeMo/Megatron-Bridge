@@ -14,7 +14,7 @@
 
 import logging
 import os
-from dataclasses import dataclass
+from typing import Callable
 
 import pytest
 import torch
@@ -44,23 +44,33 @@ from tests.functional_tests.utils import (
 )
 
 
-@dataclass
 class Llama32ModelProvider1B(GPTModelProvider):
-    """GPTModelProvider pre-configured with Llama 3.2 1B architecture defaults."""
-
-    num_layers: int = 16
-    hidden_size: int = 2048
-    num_attention_heads: int = 32
-    num_query_groups: int = 8
-    ffn_hidden_size: int = 8192
-    kv_channels: int = 64
-    vocab_size: int = 128256
     normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
     gated_linear_unit: bool = True
+    position_embedding_type: str = "rope"
+    add_bias_linear: bool = False
+    attention_dropout: float = 0.0
     hidden_dropout: float = 0.0
+    share_embeddings_and_output_weights: bool = False
+    bias_activation_fusion: bool = True
+    masked_softmax_fusion: bool = True
+    persist_layer_norm: bool = True
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
+    num_query_groups: int = 8
+    kv_channels: int = 64
+    init_method_std: float = 0.01
+    layernorm_epsilon: float = 1e-05
     rotary_percent: float = 1.0
+    rotary_base: int = 500_000
     rope_scaling: bool = True
     rope_scaling_factor: float = 32.0
+    num_layers: int = 16
+    hidden_size: int = 2048
+    ffn_hidden_size: int = 8192
+    num_attention_heads: int = 32
+    vocab_size: int | None = None
 
 
 class TestPretrain:
