@@ -211,7 +211,22 @@ def megatron_generate(
         m.eval()
 
     print_rank_0("Tokenizing input prompt.")
-    input_ids = torch.tensor(tokenizer.tokenize(prompt)).unsqueeze(0).cuda()
+    token_ids = tokenizer.tokenize(prompt)
+
+    # Prepend BOS if not already present and the tokenizer has one.
+    # This mirrors HF model.generate(), which uses the tokenizer's add_bos_token=True
+    # setting and includes BOS in the generation context. Without this, Megatron and HF
+    # generate from different contexts and produce different tokens.
+    bos_id = None
+    for tok in (tokenizer, getattr(tokenizer, "_tokenizer", None)):
+        if tok is not None:
+            bos_id = getattr(tok, "bos_id", None)
+            if bos_id is not None:
+                break
+    if bos_id is not None and (not token_ids or token_ids[0] != bos_id):
+        token_ids = [bos_id] + token_ids
+
+    input_ids = torch.tensor(token_ids).unsqueeze(0).cuda()
     generated_ids = input_ids.clone()
     num_input_tokens = input_ids.shape[1]
 
