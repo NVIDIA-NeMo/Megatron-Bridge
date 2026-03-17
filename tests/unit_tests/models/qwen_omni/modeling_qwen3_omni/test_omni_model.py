@@ -34,10 +34,26 @@ from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config imp
 
 
 HIDDEN_SIZE = 128
+IMAGE_TOKEN_ID = 900
+VIDEO_TOKEN_ID = 901
+AUDIO_TOKEN_ID = 902
+VISION_START_TOKEN_ID = 903
 
 
 def _make_toy_thinker_config():
     return Qwen3OmniMoeThinkerConfig(
+        vision_config={
+            "depth": 2,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_heads": 4,
+            "patch_size": 2,
+            "spatial_merge_size": 1,
+            "temporal_patch_size": 1,
+            "out_hidden_size": HIDDEN_SIZE,
+            "num_position_embeddings": 16,
+            "deepstack_visual_indexes": [0],
+        },
         text_config={
             "num_hidden_layers": 2,
             "hidden_size": HIDDEN_SIZE,
@@ -53,7 +69,11 @@ def _make_toy_thinker_config():
             "attention_bias": False,
             "rope_theta": 1000000.0,
             "rope_scaling": {"rope_type": "default", "mrope_section": [4, 6, 6]},
-        }
+        },
+        image_token_id=IMAGE_TOKEN_ID,
+        video_token_id=VIDEO_TOKEN_ID,
+        audio_token_id=AUDIO_TOKEN_ID,
+        vision_start_token_id=VISION_START_TOKEN_ID,
     )
 
 
@@ -98,7 +118,10 @@ class TestQwen3OmniModel:
             virtual_pipeline_model_parallel_size=None,
             context_parallel_size=1,
         )
-        model_parallel_cuda_manual_seed(123)
+        if torch.cuda.is_available():
+            model_parallel_cuda_manual_seed(123)
+        else:
+            torch.manual_seed(123)
 
     def teardown_method(self):
         parallel_state.destroy_model_parallel()
@@ -129,6 +152,10 @@ class TestQwen3OmniModel:
             hidden_dropout=0.0,
             attention_dropout=0.0,
             mrope_section=[4, 6, 6],
+            image_token_id=IMAGE_TOKEN_ID,
+            video_token_id=VIDEO_TOKEN_ID,
+            audio_token_id=AUDIO_TOKEN_ID,
+            vision_start_token_id=VISION_START_TOKEN_ID,
         )
 
     @staticmethod
@@ -184,9 +211,33 @@ class TestQwen3OmniModel:
         )
         assert output is not None
 
-    def test_multimodal_runtime_not_enabled(self, thinker_config):
+    def test_image_forward(self, thinker_config):
+        model = self._build_model(thinker_config)
+        if torch.cuda.is_available():
+            model = model.to("cuda")
+            device = "cuda"
+        else:
+            device = "cpu"
+
+        input_ids = torch.tensor(
+            [[VISION_START_TOKEN_ID, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 12, 13, 14]],
+            device=device,
+        )
+        labels = torch.randint(0, 1000, input_ids.shape, device=device)
+        pixel_values = torch.randn(4, 3 * 1 * 2 * 2, device=device)
+        image_grid_thw = torch.tensor([[1, 2, 2]], device=device)
+
+        output = model(
+            input_ids=input_ids,
+            labels=labels,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+        )
+        assert output is not None
+
+    def test_audio_runtime_not_enabled(self, thinker_config):
         model = self._build_model(thinker_config)
         input_ids = torch.randint(0, 1000, (1, 8))
 
-        with pytest.raises(NotImplementedError, match="Vision/audio runtime support"):
+        with pytest.raises(NotImplementedError, match="Audio runtime support"):
             model(input_ids=input_ids, input_features=torch.randn(1, 80, 16))
