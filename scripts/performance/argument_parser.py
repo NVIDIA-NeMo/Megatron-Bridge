@@ -443,7 +443,7 @@ def parse_cli_args():
         action="append",
         type=parse_kv,
         metavar="KEY=VALUE",
-        help="Set environment variable (repeatable). This is an alternative to --custom_env_vars \
+        help="Set environment variable (repeatable arg). This is an alternative to --custom_env_vars \
         (--custom_env_vars is preferred for most cases). Example: -E var1=value1,value2 -E var2=value3",
     )
     slurm_args.add_argument(
