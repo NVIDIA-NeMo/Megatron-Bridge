@@ -241,7 +241,10 @@ class Qwen3OmniThinkerModel(MegatronModule):
             audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
 
         if position_ids is None:
-            if pixel_values is None and pixel_values_videos is None:
+            has_multimodal_inputs = any(
+                value is not None for value in (pixel_values, pixel_values_videos, input_features, audio_feature_lengths)
+            )
+            if not has_multimodal_inputs:
                 position_ids = _build_text_only_mrope_position_ids(input_ids)
             else:
                 position_ids, _ = get_rope_index(
@@ -315,7 +318,9 @@ class Qwen3OmniThinkerModel(MegatronModule):
                         joint_embeds: list[torch.Tensor] = []
                         image_mask_joint = image_mask[visual_pos_masks]
                         video_mask_joint = video_mask[visual_pos_masks]
-                        for image_embed, video_embed in zip(deepstack_visual_embeds, video_embeds_multiscale):
+                        for image_embed, video_embed in zip(
+                            deepstack_visual_embeds, video_embeds_multiscale, strict=True
+                        ):
                             embed_joint = image_embed.new_zeros((int(visual_pos_masks.sum().item()), image_embed.shape[-1]))
                             embed_joint[image_mask_joint] = image_embed
                             embed_joint[video_mask_joint] = video_embed

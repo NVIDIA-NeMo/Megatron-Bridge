@@ -52,6 +52,11 @@ def mock_thinker_config(mock_text_config):
     thinker.video_token_id = 151656
     thinker.audio_token_id = 151646
     thinker.vision_start_token_id = 151652
+    vision_config = Mock(spec=[])
+    vision_config.patch_size = 32
+    vision_config.temporal_patch_size = 4
+    vision_config.spatial_merge_size = 3
+    thinker.vision_config = vision_config
     return thinker
 
 
@@ -60,6 +65,7 @@ def mock_hf_config(mock_thinker_config):
     config = Mock()
     config.thinker_config = mock_thinker_config
     config.torch_dtype = torch.float32
+    config.enable_audio_output = False
     config.talker_config = Mock()
     config.code2wav_config = Mock()
     config.tie_word_embeddings = True
@@ -89,6 +95,10 @@ class TestQwen3OmniBridge:
         assert provider.moe_router_topk == 8
         assert provider.share_embeddings_and_output_weights is True
         assert provider.mrope_section == [24, 20, 20]
+        assert provider.language_max_sequence_length == 32768
+        assert provider.patch_size == 32
+        assert provider.temporal_patch_size == 4
+        assert provider.spatial_merge_size == 3
 
     @patch.object(Qwen3OmniBridge, "dtype_from_hf")
     def test_provider_bridge_dtype(self, mock_dtype_from_hf, mock_hf_pretrained):
@@ -113,3 +123,10 @@ class TestQwen3OmniBridge:
         assert any("thinker.language_model.embedding.word_embeddings.weight" in name for name in mapping_names)
         assert any("thinker.language_model.decoder.layers.*.self_attention.linear_qkv.weight" in name for name in mapping_names)
         assert any("thinker.language_model.decoder.layers.*.mlp.router.weight" in name for name in mapping_names)
+
+    def test_provider_bridge_rejects_audio_output_stack(self, mock_hf_pretrained):
+        mock_hf_pretrained.config.enable_audio_output = True
+
+        bridge = Qwen3OmniBridge()
+        with pytest.raises(NotImplementedError, match="audio-output checkpoints are not supported yet"):
+            bridge.provider_bridge(mock_hf_pretrained)

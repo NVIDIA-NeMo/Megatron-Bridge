@@ -14,6 +14,10 @@
 
 import datetime
 import os
+import socket
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 import torch
@@ -22,12 +26,10 @@ from megatron.core import parallel_state
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers import Qwen3OmniMoeForConditionalGeneration
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from tests.functional_tests.models.qwen_omni.utils import (
     SMOKE_MODEL_CACHE_PATH,
-    SMOKE_LOCK_DIR,
-    create_qwen3_omni_smoke_model,
     build_real_sample_inputs,
+    create_qwen3_omni_smoke_model,
     move_inputs_to_device,
     smoke_assets_available,
 )
@@ -46,11 +48,11 @@ class TestQwen3OmniSmoke:
         return str(create_qwen3_omni_smoke_model(SMOKE_MODEL_CACHE_PATH))
 
     @staticmethod
-    def _init_dist() -> None:
+    def _init_dist(master_port: str) -> None:
         if dist.is_initialized():
             return
         os.environ["MASTER_ADDR"] = "127.0.0.1"
-        os.environ["MASTER_PORT"] = "29515"
+        os.environ["MASTER_PORT"] = master_port
         os.environ["RANK"] = "0"
         os.environ["LOCAL_RANK"] = "0"
         os.environ["WORLD_SIZE"] = "1"
@@ -77,6 +79,92 @@ class TestQwen3OmniSmoke:
         else:
             torch.manual_seed(123)
 
+    @staticmethod
+    def _find_free_port() -> str:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return str(sock.getsockname()[1])
+
+    @staticmethod
+    def _run_megatron_smoke_subprocess(qwen3_omni_smoke_model_path: str) -> None:
+        repo_root = Path(__file__).resolve().parents[4]
+        script = """
+import datetime
+import os
+import torch
+import torch.distributed as dist
+from megatron.core import parallel_state
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from tests.functional_tests.models.qwen_omni.test_qwen3_omni_smoke import TestQwen3OmniSmoke
+from tests.functional_tests.models.qwen_omni.utils import (
+    SMOKE_LOCK_DIR,
+    build_real_sample_inputs,
+    move_inputs_to_device,
+)
+
+model_path = os.environ["QWEN3_OMNI_SMOKE_MODEL_PATH"]
+master_port = os.environ["QWEN3_OMNI_MASTER_PORT"]
+
+TestQwen3OmniSmoke._init_dist(master_port)
+TestQwen3OmniSmoke._init_model_parallel()
+
+try:
+    inputs = build_real_sample_inputs(model_path)
+    SMOKE_LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    os.environ["MEGATRON_CONFIG_LOCK_DIR"] = str(SMOKE_LOCK_DIR)
+    bridge = AutoBridge.from_hf_pretrained(model_path, dtype=torch.bfloat16)
+    provider = bridge.to_megatron_provider(load_weights=True)
+    provider.tensor_model_parallel_size = 1
+    provider.pipeline_model_parallel_size = 1
+    provider.pipeline_dtype = torch.bfloat16
+    provider.params_dtype = torch.bfloat16
+    provider.finalize()
+    model = provider.provide_distributed_model(wrap_with_ddp=False)
+    if isinstance(model, list):
+        model = model[0]
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    prepared = move_inputs_to_device(
+        inputs,
+        device,
+        dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+    )
+    prepared["labels"] = prepared["input_ids"].clone()
+
+    with torch.no_grad():
+        outputs = model(**prepared)
+
+    assert outputs is not None
+finally:
+    os.environ.pop("MEGATRON_CONFIG_LOCK_DIR", None)
+    if parallel_state.model_parallel_is_initialized():
+        parallel_state.destroy_model_parallel()
+    if dist.is_initialized():
+        dist.destroy_process_group()
+"""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = "src"
+        env["QWEN3_OMNI_SMOKE_MODEL_PATH"] = qwen3_omni_smoke_model_path
+        env["QWEN3_OMNI_MASTER_PORT"] = TestQwen3OmniSmoke._find_free_port()
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                text=True,
+                cwd=repo_root,
+                env=env,
+                timeout=1800,
+            )
+        except subprocess.TimeoutExpired as exc:
+            pytest.fail(f"Qwen3-Omni Megatron smoke subprocess timed out after {exc.timeout} seconds")
+        if result.returncode != 0:
+            print(f"STDOUT: {result.stdout}")
+            print(f"STDERR: {result.stderr}")
+            pytest.fail(f"Qwen3-Omni Megatron smoke subprocess failed with return code {result.returncode}")
+
     def test_hf_thinker_e2e_smoke(self, qwen3_omni_smoke_model_path):
         inputs = build_real_sample_inputs(qwen3_omni_smoke_model_path)
         model = Qwen3OmniMoeForConditionalGeneration.from_pretrained(
@@ -96,40 +184,4 @@ class TestQwen3OmniSmoke:
         assert outputs.logits.shape[-1] == model.config.thinker_config.text_config.vocab_size
 
     def test_megatron_e2e_smoke(self, qwen3_omni_smoke_model_path):
-        self._init_dist()
-        self._init_model_parallel()
-
-        try:
-            inputs = build_real_sample_inputs(qwen3_omni_smoke_model_path)
-            SMOKE_LOCK_DIR.mkdir(parents=True, exist_ok=True)
-            os.environ["MEGATRON_CONFIG_LOCK_DIR"] = str(SMOKE_LOCK_DIR)
-            bridge = AutoBridge.from_hf_pretrained(qwen3_omni_smoke_model_path, dtype=torch.bfloat16)
-            provider = bridge.to_megatron_provider(load_weights=True)
-            provider.tensor_model_parallel_size = 1
-            provider.pipeline_model_parallel_size = 1
-            provider.pipeline_dtype = torch.bfloat16
-            provider.params_dtype = torch.bfloat16
-            provider.finalize()
-            model = provider.provide_distributed_model(wrap_with_ddp=False)
-            if isinstance(model, list):
-                model = model[0]
-
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            model = model.to(device)
-            prepared = move_inputs_to_device(
-                inputs,
-                device,
-                dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-            )
-            prepared["labels"] = prepared["input_ids"].clone()
-
-            with torch.no_grad():
-                outputs = model(**prepared)
-
-            assert outputs is not None
-        finally:
-            os.environ.pop("MEGATRON_CONFIG_LOCK_DIR", None)
-            if parallel_state.model_parallel_is_initialized():
-                parallel_state.destroy_model_parallel()
-            if dist.is_initialized():
-                dist.destroy_process_group()
+        self._run_megatron_smoke_subprocess(qwen3_omni_smoke_model_path)

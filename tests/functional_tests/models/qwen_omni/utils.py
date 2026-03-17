@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -74,40 +75,57 @@ def create_qwen3_omni_smoke_model(output_dir: Path) -> Path:
     if (output_dir / "config.json").exists() and (output_dir / "model.safetensors").exists():
         return output_dir
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True)
+    SMOKE_LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    lock_dir = SMOKE_LOCK_DIR / f"{output_dir.name}.lock"
+    while True:
+        try:
+            lock_dir.mkdir()
+            break
+        except FileExistsError:
+            if (output_dir / "config.json").exists() and (output_dir / "model.safetensors").exists():
+                return output_dir
+            time.sleep(1)
 
-    config = json.loads((SOURCE_MODEL_PATH / "config.json").read_text())
-    config["enable_audio_output"] = False
-    config["thinker_config"]["text_config"]["num_hidden_layers"] = SMOKE_TEXT_LAYERS
-    config["thinker_config"]["vision_config"]["depth"] = SMOKE_VISION_DEPTH
-    config["thinker_config"]["vision_config"]["deepstack_visual_indexes"] = SMOKE_DEEPSTACK_INDEXES
-    config["thinker_config"]["audio_config"]["encoder_layers"] = SMOKE_AUDIO_LAYERS
-    config["thinker_config"]["audio_config"]["num_hidden_layers"] = SMOKE_AUDIO_LAYERS
-    (output_dir / "config.json").write_text(json.dumps(config, indent=2))
+    try:
+        if (output_dir / "config.json").exists() and (output_dir / "model.safetensors").exists():
+            return output_dir
 
-    for artifact in _ARTIFACTS_TO_COPY:
-        source = SOURCE_MODEL_PATH / artifact
-        if source.exists():
-            shutil.copy2(source, output_dir / artifact)
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
 
-    index = json.loads((SOURCE_MODEL_PATH / "model.safetensors.index.json").read_text())
-    selected_keys = [key for key in index["weight_map"] if _keep_smoke_weight(key)]
-    by_file: dict[str, list[str]] = defaultdict(list)
-    for key in selected_keys:
-        by_file[index["weight_map"][key]].append(key)
+        config = json.loads((SOURCE_MODEL_PATH / "config.json").read_text())
+        config["enable_audio_output"] = False
+        config["thinker_config"]["text_config"]["num_hidden_layers"] = SMOKE_TEXT_LAYERS
+        config["thinker_config"]["vision_config"]["depth"] = SMOKE_VISION_DEPTH
+        config["thinker_config"]["vision_config"]["deepstack_visual_indexes"] = SMOKE_DEEPSTACK_INDEXES
+        config["thinker_config"]["audio_config"]["encoder_layers"] = SMOKE_AUDIO_LAYERS
+        config["thinker_config"]["audio_config"]["num_hidden_layers"] = SMOKE_AUDIO_LAYERS
+        (output_dir / "config.json").write_text(json.dumps(config, indent=2))
 
-    state_dict = {}
-    for filename, keys in sorted(by_file.items()):
-        with safe_open(SOURCE_MODEL_PATH / filename, framework="pt", device="cpu") as handle:
-            for key in keys:
-                state_dict[key] = handle.get_tensor(key)
+        for artifact in _ARTIFACTS_TO_COPY:
+            source = SOURCE_MODEL_PATH / artifact
+            if source.exists():
+                shutil.copy2(source, output_dir / artifact)
 
-    temp_weights = output_dir / "model.safetensors.tmp"
-    save_file(state_dict, str(temp_weights))
-    temp_weights.replace(output_dir / "model.safetensors")
-    return output_dir
+        index = json.loads((SOURCE_MODEL_PATH / "model.safetensors.index.json").read_text())
+        selected_keys = [key for key in index["weight_map"] if _keep_smoke_weight(key)]
+        by_file: dict[str, list[str]] = defaultdict(list)
+        for key in selected_keys:
+            by_file[index["weight_map"][key]].append(key)
+
+        state_dict = {}
+        for filename, keys in sorted(by_file.items()):
+            with safe_open(SOURCE_MODEL_PATH / filename, framework="pt", device="cpu") as handle:
+                for key in keys:
+                    state_dict[key] = handle.get_tensor(key)
+
+        temp_weights = output_dir / "model.safetensors.tmp"
+        save_file(state_dict, str(temp_weights))
+        temp_weights.replace(output_dir / "model.safetensors")
+        return output_dir
+    finally:
+        shutil.rmtree(lock_dir, ignore_errors=True)
 
 
 def build_real_sample_inputs(model_path: str | Path) -> dict[str, torch.Tensor]:

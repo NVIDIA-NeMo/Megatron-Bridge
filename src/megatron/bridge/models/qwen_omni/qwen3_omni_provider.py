@@ -16,6 +16,12 @@ from dataclasses import dataclass, field
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
     Qwen3OmniMoeCode2WavConfig,
     Qwen3OmniMoeTalkerConfig,
@@ -65,6 +71,21 @@ class Qwen3OmniModelProvider(Qwen3MoEModelProvider):
     freeze_audio_model: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
+        pp_group = self._pg_collection.pp if self._pg_collection is not None else None
+        vp_size = self.virtual_pipeline_model_parallel_size
+        if pre_process is None:
+            pre_process = (
+                is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(pp_group)
+                if pp_group is not None
+                else True
+            )
+        if post_process is None:
+            post_process = (
+                is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(pp_group)
+                if pp_group is not None
+                else True
+            )
+
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
             moe_grouped_gemm=self.moe_grouped_gemm,
