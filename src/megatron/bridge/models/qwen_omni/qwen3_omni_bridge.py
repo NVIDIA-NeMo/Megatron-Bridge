@@ -17,7 +17,12 @@ from transformers import Qwen3OmniMoeForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKVMapping
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
+    GatedMLPMapping,
+    QKVMapping,
+    ReplicatedMapping,
+)
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
 from megatron.bridge.models.qwen_omni.qwen3_omni_provider import Qwen3OmniModelProvider
@@ -97,6 +102,10 @@ class Qwen3OmniBridge(MegatronModelBridge):
 
         mapping_list.extend(
             [
+                ReplicatedMapping(
+                    megatron_param="thinker.visual.**",
+                    hf_param="thinker.visual.**",
+                ),
                 QKVMapping(
                     megatron_param="thinker.language_model.decoder.layers.*.self_attention.linear_qkv.weight",
                     q="thinker.model.layers.*.self_attn.q_proj.weight",
