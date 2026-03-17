@@ -655,7 +655,7 @@ jobs:
 
       - name: Get workflow result
         id: result
-        shell: bash -x -e -u -o pipefail {0}
+        shell: bash -e -u -o pipefail {0}
         env:
           GH_TOKEN: ${{ github.token }}
           # A tier is "expected" if its if-condition (excluding success()/is_ci_workload/force_run_all) would be true.
