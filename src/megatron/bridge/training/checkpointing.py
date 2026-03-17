@@ -2296,11 +2296,10 @@ def _load_base_checkpoint(
     checkpoint_path = get_checkpoint_name(load_dir, iteration, release)
     inferred_ckpt_format = _get_checkpoint_format(checkpoint_path)
     ckpt_format = ckpt_cfg.ckpt_format
-    if ckpt_format != inferred_ckpt_format:
-        print_rank_0(
-            f" Checkpoint format '{ckpt_format}' from config differs from inferred format "
-            f"'{inferred_ckpt_format}' for {checkpoint_path}. Using '{ckpt_format}'."
-        )
+    assert ckpt_format == inferred_ckpt_format, (
+        f"Checkpoint format '{ckpt_format}' from config differs from inferred format "
+        f"'{inferred_ckpt_format}' for {checkpoint_path}."
+    )
 
     if not rank0:
         dist_infix = "distributed " if ckpt_format == "torch_dist" else ""
