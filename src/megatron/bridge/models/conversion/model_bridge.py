@@ -766,10 +766,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if len(grouped_buffers[group_key]) == num_experts:
             merged = torch.stack([grouped_buffers[group_key][i] for i in range(num_experts)], dim=0)
 
-            if group_key in hf_state_dict:
-                expected_shape = hf_state_dict[group_key].shape
-                if merged.shape != expected_shape and merged.transpose(-1, -2).shape == expected_shape:
-                    merged = merged.transpose(-1, -2).contiguous()
+            if getattr(task.mapping, "transpose_on_export", False):
+                merged = merged.transpose(-1, -2).contiguous()
 
             del grouped_buffers[group_key]
             return {group_key: merged}
@@ -1065,7 +1063,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 task,
                 converted_weights_dict,
                 hf_state_dict,
-            )
+            )  # dict will be none except for one expert;
+            # All ranks get the full tensor
 
             adapter_tasks = None
             if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
@@ -1073,6 +1072,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 adapter_tasks = adapter_tasks_by_base.get(task_global_base_prefix)
             if merge_adapter_weights and adapter_tasks:
                 adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                # Merge LoRA adapter weights back into the base tensor for HF export
                 converted_weights_dict = self._merge_lora_adapter_weights(
                     megatron_model,
                     converted_weights_dict,
@@ -1088,17 +1088,21 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 # Handle tied embeddings case
                 # TODO(yuya): fix this hard coded naming
                 if embeddings_are_tied and hf_name == "model.embed_tokens.weight":
+                    # Yield the embedding weight
                     yield HFWeightTuple(hf_name, final_tensor)
 
+                    # Also yield as lm_head.weight if it's expected
                     if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
                         expected_keys = hf_pretrained.state.source.get_all_keys()
                         if "lm_head.weight" in expected_keys:
                             yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
                 elif embeddings_are_tied and hf_name == "lm_head.weight":
+                    # This should not happen when embeddings are tied - assert error
                     raise ValueError(
                         "Encountered lm_head.weight when embeddings are tied. This indicates a mapping error."
                     )
                 else:
+                    # Regular case - yield the tensor normally
                     yield HFWeightTuple(hf_name, final_tensor)
 
     def dtype_from_hf(self, config, default=None):

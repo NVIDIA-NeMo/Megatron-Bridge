@@ -167,9 +167,11 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
-    for m in model:
+    # Disable MTP for inference (MTP is only used during training)
+    def _disable_mtp(m):
+        """Disable MTP on a model by clearing mtp_num_layers and mtp_process."""
         if hasattr(m, "config"):
-            m.config.mtp_num_layers = 0
+            m.config.mtp_num_layers = None
             m.config.grad_scale_func = None
         if hasattr(m, "mtp_process"):
             m.mtp_process = False
@@ -177,6 +179,7 @@ def main(args) -> None:
     model = [m.cuda() for m in model]
     for m in model:
         m.eval()
+        _disable_mtp(m)
 
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(

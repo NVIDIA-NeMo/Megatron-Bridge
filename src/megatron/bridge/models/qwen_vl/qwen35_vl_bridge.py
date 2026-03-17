@@ -329,6 +329,7 @@ class Qwen35VLMoEBridge(Qwen3VLMoEBridge):
                 FusedExpertMapping(
                     megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
                     hf_param="model.language_model.layers.*.mlp.experts.down_proj",
+                    transpose_on_export=True,
                 ),
                 # =============================================================
                 # Language Model: Shared Expert MLPs

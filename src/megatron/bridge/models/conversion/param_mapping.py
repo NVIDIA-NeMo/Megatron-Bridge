@@ -2262,9 +2262,16 @@ class FusedExpertMapping(AutoMapping):
 
     is_grouped_export = True
 
-    def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
+    def __init__(
+        self,
+        megatron_param: str,
+        hf_param: str,
+        permute_dims: Optional[Tuple[int, ...]] = None,
+        transpose_on_export: bool = False,
+    ):
         super().__init__(megatron_param, hf_param, permute_dims)
         self.allow_hf_name_mismatch = True
+        self.transpose_on_export = transpose_on_export
 
     @property
     def group_key(self) -> str:
