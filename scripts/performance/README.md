@@ -170,7 +170,7 @@ Practical guidance:
 4. If needed, explicitly override `HF_HOME` with `-ce/--custom_env_vars`.
 5. Pass `--offline` to block Hub network checks.
 
-Note: with `HF_HUB_OFFLINE=0`, jobs may still contact HuggingFace even when files are mounted, which can trigger rate limits.
+Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, Hub-backed code paths may still perform network checks and hit HuggingFace rate limits.
 
 ##### Parallelism arguments
 
@@ -184,7 +184,7 @@ Note: with `HF_HUB_OFFLINE=0`, jobs may still contact HuggingFace even when file
 ##### Slurm launcher behavior
 
 - The launcher always adds `--container-writable` to `srun`.
-- This avoids benchmark failures on clusters where container filesystems are read-only by default (common with Enroot defaults).
+- This avoids benchmark failures on clusters using Enroot defaults, where `ENROOT_ROOTFS_WRITABLE=no`.
 
 ##### Slurm arguments
 

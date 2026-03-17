@@ -44,7 +44,7 @@ PERF_ENV_VARS = {
     "NVTE_NORM_FWD_USE_CUDNN": "1",
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
-    "HF_HUB_OFFLINE": "0",  # Keep Hub online by default; --offline flips this to 1.
+    "HF_HUB_OFFLINE": "0",  # Keep HF Hub online by default; --offline flips this to 1.
 }
 
 
@@ -87,7 +87,7 @@ def slurm_executor(
     srun_args = custom_srun_args.copy() + [
         "--mpi=pmix",
         "--no-container-mount-home",
-        "--container-writable",  # Required for benchmark compatibility on read-only-by-default container setups.
+        "--container-writable",  # Required on clusters using Enroot defaults, where ENROOT_ROOTFS_WRITABLE=no.
     ]
 
     if log_dir is not None:
@@ -112,7 +112,7 @@ def slurm_executor(
         # Enable authenticated online access for tokenizer/config paths.
         PERF_ENV_VARS.update({"HF_TOKEN": hf_token, "TRANSFORMERS_OFFLINE": "0"})
     if offline:
-        # Disable HF Hub network calls. Requires a populated local HF cache.
+        # Disable HF Hub network calls. Requires a pre-populated local HF cache.
         PERF_ENV_VARS["HF_HUB_OFFLINE"] = "1"
 
     PERF_ENV_VARS.update(custom_env_vars)
