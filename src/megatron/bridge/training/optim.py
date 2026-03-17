@@ -19,8 +19,19 @@ from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
     get_megatron_optimizer,
-    get_mup_config_overrides,
 )
+
+
+# TODO: Remove try/except once `get_mup_config_overrides` lands in mcore main.
+#       This guard exists because the symbol lives in mcore dev but not yet in
+#       the main branch that the submodule tracks.
+try:
+    from megatron.core.optimizer import get_mup_config_overrides
+
+    _HAS_MUP_CONFIG_OVERRIDES = True
+except ImportError:
+    _HAS_MUP_CONFIG_OVERRIDES = False
+
 from megatron.core.optimizer.muon import get_megatron_muon_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
@@ -68,7 +79,7 @@ def setup_optimizer(
     # Apply μP optimizer scaling if enabled on the model config
     model_chunks = model if isinstance(model, list) else [model]
     model_config = get_model_config(model_chunks[0])
-    if getattr(model_config, "use_mup", False):
+    if _HAS_MUP_CONFIG_OVERRIDES and getattr(model_config, "use_mup", False):
         mup_overrides = get_mup_config_overrides(
             config=optimizer_config,
             mup_width_mult=model_config.mup_width_mult,
