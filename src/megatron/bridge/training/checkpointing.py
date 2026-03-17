@@ -2292,7 +2292,7 @@ def _load_base_checkpoint(
 
         return None, "", False, None
 
-    # Determine the checkpoint format from config, warn if it differs from auto-detected.
+    # Determine the checkpoint format from config, assert it matches auto-detected.
     checkpoint_path = get_checkpoint_name(load_dir, iteration, release)
     inferred_ckpt_format = _get_checkpoint_format(checkpoint_path)
     ckpt_format = ckpt_cfg.ckpt_format
