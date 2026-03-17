@@ -374,4 +374,7 @@ RUN pip install nvidia-cudnn-frontend==1.17.0 \
         "jaraco-context>=6.1.0" \
         "wheel>=0.46.2" \
         "python-multipart>=0.0.22" \
-        "setuptools>=80.10.2"
+        "setuptools>=80.10.2" \
+        "pillow>=12.1.1" \
+        "protobuf>=6.33.5" \
+        "xgrammar>=0.1.32"
