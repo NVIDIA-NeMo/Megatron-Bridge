@@ -19,8 +19,6 @@
 # Top-level ConfigContainer fields are dataclasses themselves
 
 model:
-  # DEBUGGING
-  testing_claude_code
   crossattn_emb_size: 5120
   hidden_size: 5120
   ffn_hidden_size: 13824

@@ -20,7 +20,8 @@ import sys
 import warnings
 from datetime import datetime
 
-from easydict import EasyDict
+# DEBUGGING
+# from easydict import EasyDict
 
 
 warnings.filterwarnings("ignore")
