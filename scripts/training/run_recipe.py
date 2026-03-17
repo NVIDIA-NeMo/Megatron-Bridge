@@ -31,22 +31,22 @@ Usage:
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
             --recipe llama32_1b_pretrain_config \\
             --dataset llm-pretrain \\
-            dataset.blend=/data/my_dataset_text_document
+            'dataset.blend=[[/data/my_dataset_text_document],null]'
 
     Finetune (SQuAD, default):
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe llama32_1b_finetune_config \\
+            --recipe llama32_1b_sft_config \\
             --dataset llm-finetune
 
     Finetune (GSM8K):
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe llama32_1b_finetune_config \\
+            --recipe llama32_1b_sft_config \\
             --dataset llm-finetune \\
             dataset.dataset_name=gsm8k
 
     Finetune (user-supplied JSONL):
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe llama32_1b_finetune_config \\
+            --recipe llama32_1b_sft_config \\
             --dataset llm-finetune-preloaded \\
             dataset.dataset_root=/data/my_finetune_data
 
@@ -55,21 +55,26 @@ Usage:
             --recipe qwen3_vl_8b_peft_config \\
             --dataset vlm-hf \\
             --step_func qwen3_vl_step \\
-            dataset.maker_name=cord_v2
+            dataset.maker_name=cord_v2 \\
+            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
+            checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
     VLM with Energon dataset:
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
             --recipe qwen3_vl_8b_peft_energon_config \\
             --dataset vlm-energon \\
             --step_func qwen3_vl_step \\
-            dataset.path=/data/energon
+            dataset.path=/data/energon \\
+            checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
     VLM with preloaded JSON:
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
             --recipe qwen3_vl_8b_peft_config \\
             --dataset vlm-preloaded \\
             --step_func qwen3_vl_step \\
-            dataset.train_data_path=/data/vlm_train.json
+            dataset.train_data_path=/data/vlm_train.json \\
+            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
+            checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
     With CLI overrides (Hydra-style, works for any config field):
         uv run torchrun --nproc_per_node=8 run_recipe.py \\

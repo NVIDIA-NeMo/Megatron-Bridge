@@ -212,8 +212,7 @@ def apply_dataset_override(
             )
         factory = LLM_FINETUNE_PRESETS[preset_name]
         kwargs: dict = {"packed_sequence": packed_sequence, "pad_seq_to_mult": 1}
-        if seq_length is not None:
-            kwargs["seq_length"] = seq_length
+        kwargs["seq_length"] = resolved_seq_length
         config.dataset = factory(**kwargs)
 
     elif dataset_type == "llm-finetune-preloaded":
