@@ -19,7 +19,8 @@ from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
 
 
 # MCore renamed `muon_use_nesterov` → `muon_nesterov` in the dev branch.
-# Support both by detecting which field is present at import time.
+# Support both main and dev branch submodule by detecting which field is present at import time.
+# TODO: remove fallback once the dev rename lands in main and Bridge pins the new main commit.
 _OPTIMIZER_CONFIG_FIELDS = {f.name for f in dataclasses.fields(OptimizerConfig)}
 _MUON_NESTEROV_KWARG = "muon_nesterov" if "muon_nesterov" in _OPTIMIZER_CONFIG_FIELDS else "muon_use_nesterov"
 
