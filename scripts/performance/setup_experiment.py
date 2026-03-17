@@ -573,6 +573,10 @@ if __name__ == "__main__":
     if unknown_args:
         logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
 
+    env = dict(args.env or [])
+    custom_env_vars = args.custom_env_vars
+    custom_env_vars.update(env)
+
     # Handle --list_config_variants: show available variants and interactively select
     config_variant = args.config_variant
     if args.list_config_variants:
@@ -625,7 +629,7 @@ if __name__ == "__main__":
         time_limit=args.time_limit,
         container_image=args.container_image,
         custom_mounts=args.custom_mounts,
-        custom_env_vars=args.custom_env_vars,
+        custom_env_vars=custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
         nccl_ub=args.nccl_ub,
