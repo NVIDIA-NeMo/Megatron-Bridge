@@ -28,10 +28,10 @@ from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3Omni
 
 @dataclass
 class Qwen3OmniModelProvider(Qwen3MoEModelProvider):
-    """Stage-1 provider for Qwen3-Omni.
+    """Provider for Qwen3-Omni.
 
-    Stage 1 brings up the thinker language backbone first. Vision and audio
-    runtime support are added in later stages.
+    The current implementation focuses on thinker-side multimodal training and
+    checkpoint conversion paths.
     """
 
     thinker_config: Qwen3OmniMoeThinkerConfig = field(default_factory=lambda: Qwen3OmniMoeThinkerConfig())

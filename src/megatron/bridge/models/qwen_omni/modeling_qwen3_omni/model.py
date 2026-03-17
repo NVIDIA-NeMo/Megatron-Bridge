@@ -31,7 +31,7 @@ from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config imp
 
 
 class Qwen3OmniModel(MegatronModule):
-    """Stage-1 Qwen3-Omni model wrapper."""
+    """Qwen3-Omni model wrapper."""
 
     def __init__(
         self,

@@ -35,7 +35,7 @@ from megatron.bridge.models.qwen_omni.qwen3_omni_provider import Qwen3OmniModelP
     model_type="qwen3_omni",
 )
 class Qwen3OmniBridge(MegatronModelBridge):
-    """Stage-1 bridge for Qwen3-Omni."""
+    """Bridge for Qwen3-Omni."""
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen3OmniModelProvider:
         hf_config = hf_pretrained.config
