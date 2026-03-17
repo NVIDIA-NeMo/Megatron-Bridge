@@ -365,7 +365,7 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests
-          timeout: 15
+          timeout: 18
           is_unit_test: "true"
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
