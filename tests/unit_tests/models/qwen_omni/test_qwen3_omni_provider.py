@@ -30,7 +30,7 @@ class TestQwen3OmniModelProvider:
         assert provider.num_layers == 48
         assert provider.hidden_size == 2048
         assert provider.num_attention_heads == 32
-        assert provider.position_embedding_type == "rope"
+        assert provider.position_embedding_type == "mrope"
         assert provider.scatter_embedding_sequence_parallel is False
         assert provider.qk_layernorm is True
         assert provider.image_token_id == 151655

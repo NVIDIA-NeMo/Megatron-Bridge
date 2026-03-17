@@ -81,6 +81,7 @@ class Qwen3OmniBridge(MegatronModelBridge):
             audio_start_token_id=getattr(thinker_config, "audio_start_token_id", 151647),
             position_id_per_seconds=getattr(thinker_config, "position_id_per_seconds", 25),
             seconds_per_chunk=getattr(thinker_config, "seconds_per_chunk", 2),
+            position_embedding_type="mrope",
             mrope_section=rope_scaling.get("mrope_section", [24, 20, 20]),
         )
         return provider
