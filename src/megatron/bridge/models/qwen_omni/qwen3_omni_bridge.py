@@ -39,6 +39,11 @@ class Qwen3OmniBridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen3OmniModelProvider:
         hf_config = hf_pretrained.config
+        if getattr(hf_config, "enable_audio_output", False):
+            raise NotImplementedError(
+                "Qwen3-Omni talker/code2wav audio-output checkpoints are not supported yet. "
+                "Only thinker-side conversion/runtime is currently implemented."
+            )
         thinker_config = hf_config.thinker_config
         talker_config = getattr(hf_config, "talker_config", None)
         code2wav_config = getattr(hf_config, "code2wav_config", None)
@@ -47,6 +52,7 @@ class Qwen3OmniBridge(MegatronModelBridge):
         model_dtype = self.dtype_from_hf(dtype_config, default=torch.float32)
 
         rope_scaling = getattr(text_config, "rope_scaling", None) or getattr(text_config, "rope_parameters", None) or {}
+        vision_config = thinker_config.vision_config
 
         provider = Qwen3OmniModelProvider(
             thinker_config=thinker_config,
@@ -67,6 +73,7 @@ class Qwen3OmniBridge(MegatronModelBridge):
             vocab_size=text_config.vocab_size,
             seq_length=text_config.max_position_embeddings,
             max_position_embeddings=text_config.max_position_embeddings,
+            language_max_sequence_length=text_config.max_position_embeddings,
             fp16=(model_dtype == torch.float16),
             bf16=(model_dtype == torch.bfloat16),
             params_dtype=model_dtype,
@@ -81,6 +88,9 @@ class Qwen3OmniBridge(MegatronModelBridge):
             audio_start_token_id=getattr(thinker_config, "audio_start_token_id", 151647),
             position_id_per_seconds=getattr(thinker_config, "position_id_per_seconds", 25),
             seconds_per_chunk=getattr(thinker_config, "seconds_per_chunk", 2),
+            patch_size=getattr(vision_config, "patch_size", 16),
+            temporal_patch_size=getattr(vision_config, "temporal_patch_size", 2),
+            spatial_merge_size=getattr(vision_config, "spatial_merge_size", 2),
             position_embedding_type="mrope",
             mrope_section=rope_scaling.get("mrope_section", [24, 20, 20]),
         )

@@ -14,12 +14,14 @@
 
 import datetime
 import os
+import socket
 
 import pytest
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core import parallel_state
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_local_spec
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
@@ -28,6 +30,7 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
 )
 
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.rope import get_rope_index
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
     Qwen3OmniTransformerConfig,
 )
@@ -94,11 +97,17 @@ def thinker_config():
 
 
 class TestQwen3OmniModel:
+    _original_env: dict[str, str | None] = {}
+
     @classmethod
     def setup_class(cls):
         if not dist.is_initialized():
+            cls._original_env = {
+                key: os.environ.get(key) for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "LOCAL_RANK", "WORLD_SIZE")
+            }
+
             os.environ["MASTER_ADDR"] = "127.0.0.1"
-            os.environ["MASTER_PORT"] = "29501"
+            os.environ["MASTER_PORT"] = cls._find_free_port()
             os.environ["RANK"] = "0"
             os.environ["LOCAL_RANK"] = "0"
             os.environ["WORLD_SIZE"] = "1"
@@ -118,6 +127,17 @@ class TestQwen3OmniModel:
     def teardown_class(cls):
         if dist.is_initialized():
             dist.destroy_process_group()
+        for key, value in cls._original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    @staticmethod
+    def _find_free_port() -> str:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return str(sock.getsockname()[1])
 
     def _setup_parallel_state(self, tp_size=1, pp_size=1):
         if parallel_state.model_parallel_is_initialized():
@@ -174,6 +194,13 @@ class TestQwen3OmniModel:
 
     @staticmethod
     def _make_layer_spec():
+        if not torch.cuda.is_available():
+            return get_gpt_layer_local_spec(
+                num_experts=8,
+                moe_grouped_gemm=True,
+                qk_layernorm=True,
+                normalization="RMSNorm",
+            )
         return get_gpt_layer_with_transformer_engine_spec(
             num_experts=8,
             moe_grouped_gemm=True,
@@ -272,3 +299,22 @@ class TestQwen3OmniModel:
             feature_attention_mask=feature_attention_mask,
         )
         assert output is not None
+
+    def test_audio_only_rope_index(self):
+        input_ids = torch.tensor([[AUDIO_START_TOKEN_ID, AUDIO_TOKEN_ID, AUDIO_TOKEN_ID, 17, 18]])
+        audio_seqlens = torch.tensor([16])
+
+        position_ids, mrope_position_deltas = get_rope_index(
+            spatial_merge_size=1,
+            image_token_id=IMAGE_TOKEN_ID,
+            video_token_id=VIDEO_TOKEN_ID,
+            audio_token_id=AUDIO_TOKEN_ID,
+            vision_start_token_id=VISION_START_TOKEN_ID,
+            audio_start_token_id=AUDIO_START_TOKEN_ID,
+            position_id_per_seconds=25,
+            input_ids=input_ids,
+            audio_seqlens=audio_seqlens,
+        )
+
+        assert position_ids.shape == (3, 1, input_ids.shape[1])
+        assert mrope_position_deltas.shape == (1, 1)

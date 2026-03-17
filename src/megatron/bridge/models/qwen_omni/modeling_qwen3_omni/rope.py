@@ -61,7 +61,9 @@ def get_rope_index(
     del seconds_per_chunk
 
     mrope_position_deltas = []
-    if input_ids is not None and (image_grid_thw is not None or video_grid_thw is not None):
+    if input_ids is not None and (
+        image_grid_thw is not None or video_grid_thw is not None or audio_seqlens is not None
+    ):
         total_input_ids = input_ids
         if attention_mask is not None:
             attention_mask = attention_mask == 1

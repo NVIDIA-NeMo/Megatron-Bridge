@@ -26,7 +26,7 @@ try:
     from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
         get_transformer_block_with_experimental_attention_variant_spec,
     )
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     def get_transformer_block_with_experimental_attention_variant_spec(*args, **kwargs):
         raise NotImplementedError(
             "Qwen3-Next requires Megatron-Core support for "

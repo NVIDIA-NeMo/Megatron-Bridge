@@ -17,10 +17,23 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def clear_lru_cache():
-    """Override the global cache-clearing fixture for qwen_omni tests.
+    """Preserve cache clearing when available, otherwise degrade to a no-op.
 
     The repository-wide fixture imports training config modules that are
     currently incompatible with the local Megatron-Core version in this
-    environment. These model-level tests do not rely on that fixture.
+    environment. When those imports work, keep the original cache-clearing
+    behavior for isolation.
     """
+    try:
+        from megatron.bridge.training.utils.checkpoint_utils import read_run_config, read_train_state
+    except (ImportError, ModuleNotFoundError):
+        yield
+        return
+
+    read_run_config.cache_clear()
+    read_train_state.cache_clear()
+
     yield
+
+    read_run_config.cache_clear()
+    read_train_state.cache_clear()

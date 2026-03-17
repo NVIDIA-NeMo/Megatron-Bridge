@@ -12,11 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import patch
+
+import pytest
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
     Qwen3OmniMoeThinkerConfig,
 )
 
 from megatron.bridge.models.qwen_omni import Qwen3OmniModelProvider
+
+
+pytestmark = pytest.mark.unit
 
 
 class TestQwen3OmniModelProvider:
@@ -76,3 +82,23 @@ class TestQwen3OmniModelProvider:
         assert provider.freeze_language_model is True
         assert provider.freeze_vision_model is True
         assert provider.freeze_audio_model is True
+
+    def test_provide_defaults_to_single_stage_pre_post_process(self):
+        provider = Qwen3OmniModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            ffn_hidden_size=256,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=32,
+            vocab_size=1024,
+            use_cpu_initialization=True,
+            bf16=False,
+        )
+
+        with patch("megatron.bridge.models.qwen_omni.qwen3_omni_provider.Qwen3OmniModel") as mock_model_cls:
+            provider.provide()
+
+        _, kwargs = mock_model_cls.call_args
+        assert kwargs["pre_process"] is True
+        assert kwargs["post_process"] is True

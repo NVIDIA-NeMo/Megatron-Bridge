@@ -93,11 +93,21 @@ class TestQwen3OmniConversion:
             "1",
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root, env=env)
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=repo_root,
+                env=env,
+                timeout=1800,
+            )
+        except subprocess.TimeoutExpired as exc:
+            pytest.fail(f"Qwen3-Omni single-GPU conversion timed out after {exc.timeout} seconds")
         if result.returncode != 0:
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
-            assert False, f"Qwen3-Omni single-GPU conversion failed with return code {result.returncode}"
+            pytest.fail(f"Qwen3-Omni single-GPU conversion failed with return code {result.returncode}")
 
         converted_model_dir = output_dir / Path(qwen3_omni_smoke_model_path).name
         assert converted_model_dir.exists()

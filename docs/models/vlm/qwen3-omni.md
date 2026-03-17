@@ -29,6 +29,31 @@ The current test coverage includes:
 - Functional checkpoint conversion tests
 - End-to-end smoke tests using user-provided multimodal assets
 
+## Minimal Workflow
+
+The current implementation is intended for checkpoint conversion and multimodal training/runtime validation.
+
+```python
+from megatron.bridge.models import AutoBridge
+
+bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Omni-30B-A3B-Instruct")
+provider = bridge.to_megatron_provider(load_weights=True)
+provider.tensor_model_parallel_size = 1
+provider.pipeline_model_parallel_size = 1
+provider.finalize()
+model = provider.provide_distributed_model(wrap_with_ddp=False)
+```
+
+For local validation, the functional tests also support a vertically trimmed single-GPU smoke checkpoint built from a user-provided HF checkpoint and multimodal sample asset.
+
+## Known Limitations
+
+- Megatron inference with `inference_params` is not implemented yet
+- `packed_seq_params` is not implemented yet
+- Vision runtime does not support sequence parallel yet
+- Distributed parallelism validation beyond single-rank functional coverage is not included in this PR
+- Functional smoke tests require user-provided local multimodal assets
+
 ## Hugging Face Model Cards
 
 - Qwen3-Omni-30B-A3B-Instruct: `https://huggingface.co/Qwen/Qwen3-Omni-30B-A3B-Instruct`
