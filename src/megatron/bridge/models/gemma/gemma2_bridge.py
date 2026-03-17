@@ -61,7 +61,6 @@ class Gemma2Bridge(MegatronModelBridge):
         provider.hidden_dropout = 0.0
         provider.share_embeddings_and_output_weights = True
         provider.layernorm_zero_centered_gamma = True
-        provider.gradient_accumulation_fusion = False
 
         return provider
 

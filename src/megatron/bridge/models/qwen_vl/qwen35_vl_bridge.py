@@ -49,7 +49,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_vl.qwen3_vl_bridge import Qwen3VLMoEBridge
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
@@ -68,9 +67,9 @@ _QWEN3_5_MOE_HF_CLASS_NAME = "Qwen3_5MoeForConditionalGeneration"
     provider=Qwen35VLMoEModelProvider,
     model_type="qwen3_5_moe",
 )
-class Qwen35VLMoEBridge(Qwen3VLMoEBridge):
+class Qwen35VLMoEBridge(MegatronModelBridge):
     """
-    Megatron Bridge for Qwen3.5 Vision-Language Model.
+    Megatron Bridge for Qwen3.5 Vision-Language Model (MoE variant).
 
     This bridge handles the conversion between HuggingFace Qwen3.5 VL model
     and Megatron-Core Qwen3VLModel formats, including weight mappings and

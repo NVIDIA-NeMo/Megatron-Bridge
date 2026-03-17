@@ -358,6 +358,20 @@ class TestNemotronHBridge:
         )
 
 
+class TestNemotronHBridgeTokenizerKwargs:
+    """Test get_hf_tokenizer_kwargs method."""
+
+    def test_tokenizer_kwargs_returns_dict(self):
+        """Test get_hf_tokenizer_kwargs returns a dict."""
+        kwargs = NemotronHBridge.get_hf_tokenizer_kwargs()
+        assert isinstance(kwargs, dict)
+
+    def test_tokenizer_kwargs_use_fast(self):
+        """Test get_hf_tokenizer_kwargs returns use_fast=True."""
+        kwargs = NemotronHBridge.get_hf_tokenizer_kwargs()
+        assert kwargs.get("use_fast") is True
+
+
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with NemotronH models."""
 
