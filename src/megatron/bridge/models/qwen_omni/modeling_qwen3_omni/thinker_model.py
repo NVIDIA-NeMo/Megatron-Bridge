@@ -26,7 +26,7 @@ from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
     Qwen3OmniMoeVisionEncoder as Qwen3OmniMoeVisionEncoderHF,
 )
 
-from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.rope import get_rope_index
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.rope import get_rope_index
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
     Qwen3OmniTransformerConfig,
 )
