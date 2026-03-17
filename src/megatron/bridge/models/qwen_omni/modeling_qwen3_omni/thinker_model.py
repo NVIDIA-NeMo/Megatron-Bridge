@@ -22,13 +22,14 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
     Qwen3OmniMoeThinkerConfig as Qwen3OmniMoeThinkerConfigHF,
 )
 from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
+    Qwen3OmniMoeAudioEncoder as Qwen3OmniMoeAudioEncoderHF,
     Qwen3OmniMoeVisionEncoder as Qwen3OmniMoeVisionEncoderHF,
 )
 
+from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.rope import get_rope_index
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
     Qwen3OmniTransformerConfig,
 )
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
@@ -77,10 +78,15 @@ class Qwen3OmniThinkerModel(MegatronModule):
         self.video_token_id = language_transformer_config.video_token_id
         self.audio_token_id = language_transformer_config.audio_token_id
         self.vision_start_token_id = language_transformer_config.vision_start_token_id
+        self.audio_start_token_id = language_transformer_config.audio_start_token_id
+        self.position_id_per_seconds = language_transformer_config.position_id_per_seconds
+        self.seconds_per_chunk = language_transformer_config.seconds_per_chunk
 
         if self.pre_process:
             self.visual = Qwen3OmniMoeVisionEncoderHF._from_config(thinker_transformer_config.vision_config)
             hook_hf_module_setattr_for_tp_grad_sync(self.visual)
+            self.audio_model = Qwen3OmniMoeAudioEncoderHF._from_config(thinker_transformer_config.audio_config)
+            hook_hf_module_setattr_for_tp_grad_sync(self.audio_model)
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
@@ -185,6 +191,26 @@ class Qwen3OmniThinkerModel(MegatronModule):
         )
         return video_embeds, list(video_embeds_multiscale)
 
+    def get_audio_features(
+        self,
+        input_features: torch.FloatTensor,
+        feature_attention_mask: torch.LongTensor | None = None,
+        audio_feature_lengths: torch.LongTensor | None = None,
+    ) -> torch.Tensor:
+        if feature_attention_mask is not None:
+            audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
+            input_features = input_features.permute(0, 2, 1)[feature_attention_mask.bool()].permute(1, 0)
+
+        if audio_feature_lengths is None:
+            raise ValueError("Either feature_attention_mask or audio_feature_lengths must be provided")
+
+        target_dtype = getattr(self.audio_model, "dtype", input_features.dtype)
+        audio_outputs = self.audio_model(
+            input_features.to(dtype=target_dtype),
+            feature_lens=audio_feature_lengths,
+        )
+        return audio_outputs.last_hidden_state
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -208,10 +234,11 @@ class Qwen3OmniThinkerModel(MegatronModule):
             raise NotImplementedError("Stage 1 Qwen3-Omni does not support inference.")
         if packed_seq_params is not None:
             raise NotImplementedError("Stage 1 Qwen3-Omni does not support packed sequences.")
-        if any(value is not None for value in (input_features, feature_attention_mask, audio_feature_lengths)):
-            raise NotImplementedError("Audio runtime support is added in later stages.")
         if self.config.sequence_parallel and any(value is not None for value in (pixel_values, pixel_values_videos)):
             raise NotImplementedError("Stage 2 vision runtime does not yet support sequence parallel.")
+
+        if audio_feature_lengths is None and feature_attention_mask is not None:
+            audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
 
         if position_ids is None:
             if pixel_values is None and pixel_values_videos is None:
@@ -221,11 +248,16 @@ class Qwen3OmniThinkerModel(MegatronModule):
                     self.config.spatial_merge_size,
                     self.image_token_id,
                     self.video_token_id,
+                    self.audio_token_id,
                     self.vision_start_token_id,
+                    self.audio_start_token_id,
+                    self.position_id_per_seconds,
+                    self.seconds_per_chunk,
                     input_ids,
                     image_grid_thw=image_grid_thw,
                     video_grid_thw=video_grid_thw,
                     attention_mask=attention_mask,
+                    audio_seqlens=audio_feature_lengths,
                 )
 
         if self.pre_process:
@@ -294,6 +326,26 @@ class Qwen3OmniThinkerModel(MegatronModule):
             else:
                 visual_pos_masks = None
                 deepstack_visual_embeds = None
+
+            if input_features is not None:
+                audio_embeds = self.get_audio_features(
+                    input_features,
+                    feature_attention_mask=feature_attention_mask,
+                    audio_feature_lengths=audio_feature_lengths,
+                )
+                audio_embeds = audio_embeds.to(combined_embeddings.device, combined_embeddings.dtype)
+                combined_embeddings_bsh = combined_embeddings.transpose(0, 1).contiguous()
+                audio_mask = input_ids == self.audio_token_id
+                if combined_embeddings_bsh[audio_mask].numel() != audio_embeds.numel():
+                    raise ValueError(
+                        f"Audio features and audio tokens do not match: tokens={audio_mask.sum()}, "
+                        f"features={audio_embeds.shape[0]}"
+                    )
+                combined_embeddings_bsh.masked_scatter_(
+                    audio_mask.unsqueeze(-1).expand_as(combined_embeddings_bsh),
+                    audio_embeds,
+                )
+                combined_embeddings = combined_embeddings_bsh.transpose(0, 1).contiguous()
 
             if self.config.sequence_parallel:
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)

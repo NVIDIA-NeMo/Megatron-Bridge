@@ -51,6 +51,8 @@ class Qwen3OmniModelProvider(Qwen3MoEModelProvider):
     eos_token_id: int = 151645
 
     language_max_sequence_length: int = 32768
+    position_id_per_seconds: int = 25
+    seconds_per_chunk: int = 2
     patch_size: int = 16
     temporal_patch_size: int = 2
     spatial_merge_size: int = 2
