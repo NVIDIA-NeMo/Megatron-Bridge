@@ -788,6 +788,10 @@ class ValidationConfig:
     during training.
     """
 
+    start_eval_at_iter: int = 0
+    """Training iteration at which to start running evaluation. Evaluation will be skipped
+    for all iterations before this value. Defaults to 0 (evaluate from the beginning)."""
+
     skip_train: bool = False
     """If set, bypass the training loop, perform evaluation for validation/test, and exit."""
 
