@@ -566,6 +566,37 @@ def _initialize_distributed(
         if "MASTER_PORT" not in os.environ:
             os.environ["MASTER_PORT"] = str(get_master_port_safe())
 
+        # Set flight recorder env vars if configured or already present in the
+        # environment. Priority: pre-existing env var > config value.
+        _fr_path = (
+            dist_config.flight_recorder_dump_path
+            or os.environ.get("TORCH_FR_DUMP_TEMP_FILE")
+            or os.environ.get("TORCH_NCCL_DEBUG_INFO_TEMP_FILE")
+        )
+        if _fr_path is not None:
+            _fr_env_defaults = {
+                "TORCH_FR_DUMP_TEMP_FILE": _fr_path,
+                "TORCH_NCCL_DEBUG_INFO_TEMP_FILE": _fr_path,
+                "TORCH_NCCL_TRACE_BUFFER_SIZE": str(dist_config.flight_recorder_trace_buffer_size),
+                "TORCH_NCCL_DUMP_ON_TIMEOUT": str(int(dist_config.flight_recorder_dump_on_timeout)),
+                "TORCH_INCLUDE_STACK_TRACE": str(int(dist_config.flight_recorder_include_stack_trace)),
+                "TORCH_INCLUDE_ONLY_ACTIVE": str(int(dist_config.flight_recorder_include_only_active)),
+                "TORCH_NCCL_EXTRA_DUMP_ON_EXEC": str(int(dist_config.flight_recorder_extra_dump_on_exec)),
+            }
+            for _var, _default in _fr_env_defaults.items():
+                if _var in os.environ:
+                    warnings.warn(
+                        f"Flight recorder: env var {_var} is already set to "
+                        f"'{os.environ[_var]}'; ignoring config value '{_default}'."
+                    )
+                else:
+                    os.environ[_var] = _default
+            if get_rank_safe() == 0:
+                print(
+                    "Flight recorder env vars:\n" + "\n".join(f"  {k}={os.environ[k]}" for k in _fr_env_defaults),
+                    flush=True,
+                )
+
         # Call the init process
         init_process_group_kwargs = {
             "backend": dist_config.distributed_backend,
