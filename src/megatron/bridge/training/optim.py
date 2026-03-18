@@ -79,7 +79,13 @@ def setup_optimizer(
     # Apply μP optimizer scaling if enabled on the model config
     model_chunks = model if isinstance(model, list) else [model]
     model_config = get_model_config(model_chunks[0])
-    if _HAS_MUP_CONFIG_OVERRIDES and getattr(model_config, "use_mup", False):
+    if getattr(model_config, "use_mup", False):
+        if not _HAS_MUP_CONFIG_OVERRIDES:
+            raise ImportError(
+                "use_mup=True requires `get_mup_config_overrides` from megatron.core.optimizer, "
+                "which is not available in the current mcore version. "
+                "Please upgrade megatron-core to a version that includes MuP support."
+            )
         mup_overrides = get_mup_config_overrides(
             config=optimizer_config,
             mup_width_mult=model_config.mup_width_mult,
