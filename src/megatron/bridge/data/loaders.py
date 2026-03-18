@@ -131,7 +131,11 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         eval_iters = 0
     test_iters = cfg.validation.eval_iters
 
-    eval_gbs = cfg.eval_global_batch_size
+    eval_gbs = (
+        cfg.validation.eval_global_batch_size
+        if cfg.validation.eval_global_batch_size is not None
+        else cfg.train.global_batch_size
+    )
     return (
         train_samples,
         eval_iters * eval_gbs,
