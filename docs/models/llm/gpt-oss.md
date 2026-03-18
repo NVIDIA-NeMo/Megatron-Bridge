@@ -125,13 +125,13 @@ cfg = gpt_oss_120b_pretrain_config(
 
 ### Example usage (GPT OSS 20B - LoRA finetuning)
 ```python
-from megatron.bridge.recipes.gpt_oss import gpt_oss_20b_finetune_config
+from megatron.bridge.recipes.gpt_oss import gpt_oss_20b_peft_config
 
-cfg = gpt_oss_20b_finetune_config(
+cfg = gpt_oss_20b_peft_config(
     hf_path="openai/gpt-oss-20b",
     name="gpt_oss_20b_lora_finetune",
     pretrained_checkpoint="path/to/gpt_oss/checkpoint",
-    peft="lora",  # or "dora" for DoRA
+    peft_scheme="lora",  # or "dora" for DoRA
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
@@ -140,11 +140,12 @@ cfg = gpt_oss_20b_finetune_config(
 
 ### Example usage (GPT OSS 20B - Full SFT)
 ```python
-cfg = gpt_oss_20b_finetune_config(
+from megatron.bridge.recipes.gpt_oss import gpt_oss_20b_sft_config
+
+cfg = gpt_oss_20b_sft_config(
     hf_path="openai/gpt-oss-20b",
     name="gpt_oss_20b_full_sft",
     pretrained_checkpoint="path/to/gpt_oss/checkpoint",
-    peft=None,  # Full supervised finetuning
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=5e-6,  # Lower LR for full SFT
@@ -153,13 +154,13 @@ cfg = gpt_oss_20b_finetune_config(
 
 ### Example usage (GPT OSS 120B - LoRA finetuning)
 ```python
-from megatron.bridge.recipes.gpt_oss import gpt_oss_120b_finetune_config
+from megatron.bridge.recipes.gpt_oss import gpt_oss_120b_peft_config
 
-cfg = gpt_oss_120b_finetune_config(
+cfg = gpt_oss_120b_peft_config(
     hf_path="openai/gpt-oss-120b",
     name="gpt_oss_120b_lora_finetune",
     pretrained_checkpoint="path/to/gpt_oss/checkpoint",
-    peft="lora",
+    peft_scheme="lora",
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
