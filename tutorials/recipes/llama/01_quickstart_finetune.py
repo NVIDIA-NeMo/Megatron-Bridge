@@ -106,7 +106,7 @@ def main() -> None:
     # config.peft.alpha = 32  # LoRA alpha scaling
 
     # === Full supervised finetuning (no LoRA) ===
-    # For full finetuning, reload config with peft=None:
+    # For full finetuning, switch to the SFT recipe:
     # config = llama32_1b_sft_config()
     # config.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
     # Note: Full finetuning uses more memory than LoRA

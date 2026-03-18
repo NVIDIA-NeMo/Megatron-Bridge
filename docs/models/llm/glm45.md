@@ -217,7 +217,7 @@ config = glm45_355b_peft_config(
 torchrun --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/glm45-air-106b \
 --recipe glm45_air_106b_peft_config \
-peft_scheme=lora \
+--peft_scheme lora \
 train.global_batch_size=128 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/glm45_air_lora
