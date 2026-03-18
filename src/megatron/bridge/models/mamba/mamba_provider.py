@@ -169,7 +169,15 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
         # mtp_hybrid_override_pattern, and mtp_num_layers.
         # This allows us to use a different mtp_num_layers than the one saved in the checkpoint.
         main_pattern = self.hybrid_override_pattern.split(sep)[0]
-        self.hybrid_override_pattern = main_pattern + sep + sep.join([self.mtp_hybrid_override_pattern] * self.mtp_num_layers)
+        # When mtp_use_repeated_layer=True, the shared MTP layer always exists in the
+        # model and mtp_num_layers is the number of times the MTP layer is repeated in the forward pass.
+        # In this case, include the pattern at least once so the MTP block (and its weights) are
+        # created when the model is initialized even when mtp_num_layers=0.
+        if self.mtp_use_repeated_layer and self.mtp_hybrid_override_pattern:
+            num_pattern_copies = max(1, self.mtp_num_layers)
+        else:
+            num_pattern_copies = self.mtp_num_layers
+        self.hybrid_override_pattern = main_pattern + sep + sep.join([self.mtp_hybrid_override_pattern] * num_pattern_copies)
 
         if self.hybrid_override_pattern and sep in self.hybrid_override_pattern:
             parsed = parse_hybrid_pattern(self.hybrid_override_pattern)
@@ -177,6 +185,11 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
                 inferred_mtp_num_layers = parsed.mtp_num_depths
                 if self.mtp_num_layers is None:
                     self.mtp_num_layers = inferred_mtp_num_layers
+                elif self.mtp_use_repeated_layer:
+                    # With repeated layers, pattern count reflects architecture
+                    # (always 1 shared layer) while mtp_num_layers controls
+                    # forward pass repetitions. They are intentionally decoupled.
+                    pass
                 elif self.mtp_num_layers != inferred_mtp_num_layers:
                     print(
                         f"--mtp-num-layers ({self.mtp_num_layers}) conflicts with "
