@@ -70,6 +70,11 @@ class Qwen3ASRThinkerModel(MegatronModule):
         self.audio_start_token_id = language_transformer_config.audio_start_token_id
 
         self.share_embeddings_and_output_weights = False
+        if pg_collection is None:
+            raise ValueError(
+                "pg_collection is required for Qwen3ASRThinkerModel. "
+                "Use ProcessGroupCollection.use_mpu_process_groups() to get the default collection."
+            )
         self.pg_collection = pg_collection
         self.cp_group = pg_collection.cp
         self.tp_group = pg_collection.tp
@@ -174,10 +179,12 @@ class Qwen3ASRThinkerModel(MegatronModule):
 
         # Process each audio individually (same as HF implementation for precision)
         audio_features = []
-        for input_feature, feature_len in zip(input_features, feature_lens):
+        for input_feature, feature_len in zip(input_features, feature_lens, strict=True):
+            # Convert 0-dim tensor to Python int for slicing
+            feature_len_int = feature_len.item() if feature_len.dim() == 0 else int(feature_len)
             audio_output = self.audio_model(
-                input_feature[:, :feature_len],
-                feature_lens=feature_len.unsqueeze(0),
+                input_feature[:, :feature_len_int],
+                feature_lens=torch.tensor([feature_len_int], device=input_feature.device, dtype=torch.long),
             )
             audio_features.append(audio_output.last_hidden_state)
         audio_features = torch.cat(audio_features, dim=0)
@@ -187,7 +194,7 @@ class Qwen3ASRThinkerModel(MegatronModule):
     def forward(
         self,
         input_ids: torch.Tensor,
-        input_features=None,
+        input_features: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
@@ -195,8 +202,8 @@ class Qwen3ASRThinkerModel(MegatronModule):
         inference_params: InferenceParams | None = None,
         packed_seq_params: PackedSeqParams | None = None,
         extra_block_kwargs: dict | None = None,
-        feature_attention_mask=None,
-        audio_feature_lengths=None,
+        feature_attention_mask: torch.Tensor | None = None,
+        audio_feature_lengths: torch.Tensor | None = None,
         **kwargs,
     ) -> torch.Tensor:
         if inference_params is not None:
@@ -253,6 +260,11 @@ class Qwen3ASRThinkerModel(MegatronModule):
                 input_ids,
                 attention_mask=attention_mask,
             )
+
+        # Split position_ids for CP just like combined_embeddings
+        # position_ids shape: [3, batch, seq_len] -> split on last dim
+        if position_ids is not None and cp_size > 1 and packed_seq_params is None:
+            position_ids = split_data_cp_rank(position_ids, cp_size, 2, cp_rank)
 
         # Pad position_ids to match SP-padded embeddings so rotary_pos_emb
         # has the same sequence length as the all-gathered query/key tensors.

@@ -83,7 +83,7 @@ class Qwen3ASRModel(MegatronModule):
     def forward(
         self,
         input_ids: torch.Tensor,
-        input_features=None,
+        input_features: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
@@ -91,8 +91,8 @@ class Qwen3ASRModel(MegatronModule):
         inference_params: InferenceParams | None = None,
         packed_seq_params: PackedSeqParams | None = None,
         extra_block_kwargs: dict | None = None,
-        feature_attention_mask=None,
-        audio_feature_lengths=None,
+        feature_attention_mask: torch.Tensor | None = None,
+        audio_feature_lengths: torch.Tensor | None = None,
         **kwargs,
     ) -> torch.Tensor:
         return self.thinker(

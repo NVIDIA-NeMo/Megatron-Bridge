@@ -45,7 +45,7 @@ class Qwen3ASRModelProvider(Qwen3ModelProvider):
     - Simple RoPE: same position IDs across all 3 MRoPE dims
     """
 
-    thinker_config: Qwen3ASRThinkerConfig = field(default_factory=lambda: Qwen3ASRThinkerConfig())
+    thinker_config: Qwen3ASRThinkerConfig = field(default_factory=Qwen3ASRThinkerConfig)
 
     # Token IDs matching Qwen3-ASR configuration
     audio_token_id: int = 151646

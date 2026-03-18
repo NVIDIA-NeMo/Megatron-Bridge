@@ -81,13 +81,17 @@ def thinker_config():
     return _make_toy_thinker_config()
 
 
+@pytest.mark.unit
 @pytest.mark.timeout(30)
 class TestQwen3ASRModel:
     """Test suite for Qwen3-ASR Model."""
 
+    _owns_process_group: bool = False
+
     @classmethod
     def setup_class(cls):
         """Setup distributed process group once for all tests in this class."""
+        cls._owns_process_group = False
         if not dist.is_initialized():
             os.environ["MASTER_ADDR"] = "127.0.0.1"
             os.environ["MASTER_PORT"] = "29501"
@@ -105,12 +109,14 @@ class TestQwen3ASRModel:
                 rank=0,
                 timeout=datetime.timedelta(minutes=30),
             )
+            cls._owns_process_group = True
 
     @classmethod
     def teardown_class(cls):
         """Teardown distributed process group once after all tests in this class."""
-        if dist.is_initialized():
+        if dist.is_initialized() and cls._owns_process_group:
             dist.destroy_process_group()
+            cls._owns_process_group = False
 
     def _setup_parallel_state(self, tp_size=1, pp_size=1, cp_size=1):
         """Setup Megatron parallel state."""
