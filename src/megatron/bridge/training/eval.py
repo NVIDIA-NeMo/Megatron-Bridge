@@ -18,7 +18,6 @@ from typing import Any, Callable, Optional, Union
 
 import torch
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
-from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.pipeline_parallel.utils import is_pp_last_stage
@@ -99,8 +98,8 @@ def evaluate(
     total_loss_dict = {}
 
     # make validation batch size independent from training batch size
-    eval_batch_size = state.cfg.eval_global_batch_size
-    eval_micro_batch_size = state.cfg.eval_micro_batch_size
+    eval_batch_size = state.cfg.validation.eval_global_batch_size
+    eval_micro_batch_size = state.cfg.validation.eval_micro_batch_size
     eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * state.cfg.data_parallel_size)
 
     if not state.cfg.dist.use_decentralized_pg:
@@ -257,7 +256,7 @@ def evaluate(
                 # Finetuning path: prepare batch and wrap for VPP
                 non_loss_microbatch_iterator, non_loss_seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
-                    num_microbatches=get_num_microbatches(),
+                    num_microbatches=eval_num_microbatches,
                     default_seq_length=state.cfg.model.seq_length,
                     seq_key="tokens",
                 )
@@ -271,7 +270,7 @@ def evaluate(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=non_loss_data_iterator,
                 model=model,
-                num_microbatches=get_num_microbatches(),
+                num_microbatches=eval_num_microbatches,
                 seq_length=non_loss_seq_length,
                 micro_batch_size=eval_micro_batch_size,
                 forward_only=True,
