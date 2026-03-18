@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""End-to-end smoke tests for local HF and Megatron Qwen3-Omni thinker paths."""
+
 import datetime
 import os
 import socket
@@ -42,13 +44,17 @@ pytestmark = [
 
 
 class TestQwen3OmniSmoke:
+    """End-to-end smoke coverage for local HF and Megatron Qwen3-Omni thinker paths."""
+
     @pytest.fixture(scope="class")
     def qwen3_omni_smoke_model_path(self, tmp_path_factory):
+        """Create or reuse the cached local Qwen3-Omni smoke checkpoint."""
         del tmp_path_factory
         return str(create_qwen3_omni_smoke_model(SMOKE_MODEL_CACHE_PATH))
 
     @staticmethod
     def _init_dist(master_port: str) -> None:
+        """Initialize a single-process distributed group for Megatron smoke tests."""
         if dist.is_initialized():
             return
         os.environ["MASTER_ADDR"] = "127.0.0.1"
@@ -65,6 +71,7 @@ class TestQwen3OmniSmoke:
 
     @staticmethod
     def _init_model_parallel() -> None:
+        """Initialize 1x1 Megatron model-parallel state for local smoke execution."""
         if parallel_state.model_parallel_is_initialized():
             parallel_state.destroy_model_parallel()
         parallel_state.initialize_model_parallel(
@@ -81,12 +88,14 @@ class TestQwen3OmniSmoke:
 
     @staticmethod
     def _find_free_port() -> str:
+        """Reserve and return an ephemeral localhost TCP port."""
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.bind(("127.0.0.1", 0))
             return str(sock.getsockname()[1])
 
     @staticmethod
     def _run_megatron_smoke_subprocess(qwen3_omni_smoke_model_path: str) -> None:
+        """Run the Megatron smoke path in a subprocess to isolate NCCL state from pytest."""
         repo_root = Path(__file__).resolve().parents[4]
         script = """
 import datetime
@@ -166,6 +175,7 @@ finally:
             pytest.fail(f"Qwen3-Omni Megatron smoke subprocess failed with return code {result.returncode}")
 
     def test_hf_thinker_e2e_smoke(self, qwen3_omni_smoke_model_path):
+        """Validate HF thinker forward on one real image+audio local sample."""
         inputs = build_real_sample_inputs(qwen3_omni_smoke_model_path)
         model = Qwen3OmniMoeForConditionalGeneration.from_pretrained(
             qwen3_omni_smoke_model_path,
@@ -184,4 +194,5 @@ finally:
         assert outputs.logits.shape[-1] == model.config.thinker_config.text_config.vocab_size
 
     def test_megatron_e2e_smoke(self, qwen3_omni_smoke_model_path):
+        """Validate Megatron thinker forward on the same real local multimodal sample."""
         self._run_megatron_smoke_subprocess(qwen3_omni_smoke_model_path)

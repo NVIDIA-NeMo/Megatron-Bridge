@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Functional tests for local Qwen3-Omni smoke-checkpoint creation and conversion."""
+
 import json
 import os
 import subprocess
@@ -36,12 +38,16 @@ pytestmark = pytest.mark.skipif(not smoke_assets_available(), reason="Qwen3-Omni
 
 
 class TestQwen3OmniConversion:
+    """Functional coverage for local Qwen3-Omni smoke-checkpoint creation and conversion."""
+
     @pytest.fixture(scope="class")
     def qwen3_omni_smoke_model_path(self, tmp_path_factory):
+        """Create or reuse the cached local Qwen3-Omni smoke checkpoint."""
         del tmp_path_factory
         return str(create_qwen3_omni_smoke_model(SMOKE_MODEL_CACHE_PATH))
 
     def test_smoke_model_creation(self, qwen3_omni_smoke_model_path):
+        """Verify the reduced checkpoint can be materialized and loaded by HF."""
         model_path = Path(qwen3_omni_smoke_model_path)
         assert model_path.exists()
         assert (model_path / "config.json").exists()
@@ -68,6 +74,7 @@ class TestQwen3OmniConversion:
 
     @pytest.mark.run_only_on("GPU")
     def test_qwen3_omni_conversion_single_gpu(self, qwen3_omni_smoke_model_path, tmp_path):
+        """Run the roundtrip conversion example on one GPU with the reduced local checkpoint."""
         output_dir = tmp_path / "qwen3_omni_single_gpu"
         output_dir.mkdir(exist_ok=True)
 
