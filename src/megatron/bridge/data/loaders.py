@@ -175,6 +175,41 @@ def build_train_valid_test_data_loaders(
     Returns:
         A tuple (train_dataloader, valid_dataloader, test_dataloader).
     """
+    # Check for MIMO path
+    from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
+    from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+
+    if isinstance(cfg.model, MimoModelProvider):
+        if not isinstance(cfg.dataset, MimoDatasetProvider):
+            raise ValueError(
+                "MIMO models require cfg.dataset to be a MimoDatasetProvider. "
+                "Use HFMimoDatasetProvider, MockMimoProvider, or a subclass of MimoDatasetProvider."
+            )
+        from megatron.bridge.data.mimo.loaders import build_mimo_data_loaders
+
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
+        train_dataloader, valid_dataloader, test_dataloader = build_mimo_data_loaders(
+            cfg=cfg,
+            train_state=train_state,
+            mimo_provider=cfg.dataset,
+            train_samples=train_samples,
+            valid_samples=valid_samples,
+            test_samples=test_samples,
+        )
+
+        # Sync train_state flags across all ranks.
+        # Use all_reduce(MAX) since some ranks may not have loaders in heterogeneous MIMO.
+        do_train = train_dataloader is not None and cfg.train.train_iters > 0
+        do_valid = valid_dataloader is not None and cfg.train.eval_iters > 0
+        do_test = test_dataloader is not None and cfg.train.eval_iters > 0
+        flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
+        torch.distributed.all_reduce(flags, op=torch.distributed.ReduceOp.MAX)
+        train_state.do_train = flags[0].item()
+        train_state.do_valid = flags[1].item()
+        train_state.do_test = flags[2].item()
+
+        return train_dataloader, valid_dataloader, test_dataloader
+
     (train_dataloader, valid_dataloader, test_dataloader) = (None, None, None)
 
     print_rank_0("> building train, validation, and test datasets ...")

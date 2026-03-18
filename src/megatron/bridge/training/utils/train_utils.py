@@ -347,6 +347,7 @@ def training_log(
     global_state: GlobalState,
     history_wct: list,
     model: list[MegatronModule],
+    pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
@@ -370,6 +371,8 @@ def training_log(
         global_state: The global training state.
         history_wct (list): list of elapsed time per each iteration.
         model (list[MegatronModule]): megatron model state.
+        pg_collection (Optional[Any]): ProcessGroupCollection to use for logging reductions.
+            If None, falls back to extracting from model wrappers.
         log_max_attention_logit (Optional[float]): Maximum attention logit if available, None otherwise.
     Returns:
         bool: The updated report_memory_flag.
@@ -383,7 +386,7 @@ def training_log(
     energy_monitor = global_state.energy_monitor
     logger_config = config.logger
     train_config = config.train
-    pg_collection = get_pg_collection(model)
+    pg_collection = pg_collection or get_pg_collection(model)
 
     # Advanced, skipped, and Nan iterations.
     advanced_iters_key = "advanced iterations"
@@ -609,24 +612,25 @@ def training_log(
             if mlflow_logger:
                 mlflow_logger.log_metrics({"max-attention-logit": log_max_attention_logit}, step=iteration)
 
-    if config.model.num_moe_experts is not None:
+    num_moe_experts = getattr(config.model, "num_moe_experts", None)
+    if num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_names = []
 
-        moe_router_load_balancing_type = config.model.moe_router_load_balancing_type
+        moe_router_load_balancing_type = getattr(config.model, "moe_router_load_balancing_type", "")
         if "aux_loss" in moe_router_load_balancing_type:
             track_names.append("load_balancing_loss")
         if "seq_aux_loss" in moe_router_load_balancing_type:
             track_names.append("seq_load_balancing_loss")
         if "global_aux_loss" in moe_router_load_balancing_type:
             track_names.append("global_load_balancing_loss")
-        if config.model.moe_z_loss_coeff is not None:
+        if getattr(config.model, "moe_z_loss_coeff", None) is not None:
             track_names.append("z_loss")
 
-        if config.model.is_hybrid_model:
-            layers = config.model.hybrid_override_pattern.count("E")
+        if getattr(config.model, "is_hybrid_model", False):
+            layers = getattr(config.model, "hybrid_override_pattern", "").count("E")
         else:
-            layers = config.model.num_layers
+            layers = getattr(config.model, "num_layers", None)
 
         track_moe_metrics(
             loss_scale=moe_loss_scale,
@@ -634,15 +638,15 @@ def training_log(
             writer=writer,
             wandb_writer=wandb_writer,
             total_loss_dict=total_loss_dict,
-            per_layer_logging=config.model.moe_per_layer_logging,
+            per_layer_logging=getattr(config.model, "moe_per_layer_logging", False),
             force_initialize=True,
             track_names=track_names,
             num_layers=layers,
-            moe_layer_freq=config.model.moe_layer_freq,
-            mtp_num_layers=config.model.mtp_num_layers,
+            moe_layer_freq=getattr(config.model, "moe_layer_freq", None),
+            mtp_num_layers=getattr(config.model, "mtp_num_layers", None),
             pg_collection=pg_collection,
         )
-    if config.model.mtp_num_layers is not None:
+    if getattr(config.model, "mtp_num_layers", None) is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
         MTPLossLoggingHelper.track_mtp_metrics(mtp_loss_scale, iteration, writer, wandb_writer, total_loss_dict)
 
@@ -651,6 +655,8 @@ def training_log(
         elapsed_time_per_iteration = elapsed_time / total_iterations
 
         # Calculate GPU utilization
+    num_flops = None
+    if hasattr(config.model, "kv_channels") and hasattr(config.model, "num_attention_heads"):
         num_flops = num_floating_point_operations(config, batch_size)
         per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
         print_rank_0(

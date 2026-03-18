@@ -1,9 +1,9 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MIMO builder utilities."""
 
 from unittest.mock import MagicMock, patch
 
-from megatron.bridge.models.mimo.mimo_builder import _default_topology, build_hypercomm_grids
+from megatron.bridge.models.mimo.mimo_builder import build_hypercomm_grids
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 
 
@@ -214,93 +214,3 @@ class TestBuildHypercommGrids:
 
         encoder_kwargs = mock_grid_class.call_args_list[1][1]
         assert encoder_kwargs["rank_offset"] == 4
-
-
-class TestDefaultTopology:
-    """Test cases for _default_topology()."""
-
-    def test_topology_with_single_encoder(self):
-        """Test topology with LLM and one encoder."""
-        mimo_config = MimoParallelismConfig(
-            module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
-                "clip_encoder": ModuleParallelismConfig(tensor_model_parallel_size=2),
-            }
-        )
-
-        topology = _default_topology(mimo_config)
-
-        # Encoder should point to LLM
-        assert topology["clip_encoder"] == ["llm"]
-        # LLM should have no downstream
-        assert topology["llm"] == []
-
-    def test_topology_with_multiple_encoders(self):
-        """Test topology with LLM and multiple encoders."""
-        mimo_config = MimoParallelismConfig(
-            module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
-                "clip_encoder": ModuleParallelismConfig(tensor_model_parallel_size=2),
-                "dino_encoder": ModuleParallelismConfig(tensor_model_parallel_size=2),
-                "audio_encoder": ModuleParallelismConfig(tensor_model_parallel_size=2),
-            }
-        )
-
-        topology = _default_topology(mimo_config)
-
-        # All encoders should point to LLM
-        assert topology["clip_encoder"] == ["llm"]
-        assert topology["dino_encoder"] == ["llm"]
-        assert topology["audio_encoder"] == ["llm"]
-        # LLM should have no downstream
-        assert topology["llm"] == []
-
-    def test_topology_with_llm_only(self):
-        """Test topology with only LLM module."""
-        mimo_config = MimoParallelismConfig(
-            module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
-            }
-        )
-
-        topology = _default_topology(mimo_config)
-
-        # LLM should have no downstream
-        assert topology["llm"] == []
-        # Should only have one entry
-        assert len(topology) == 1
-
-    def test_topology_structure(self):
-        """Test that topology has correct structure (dict of lists)."""
-        mimo_config = MimoParallelismConfig(
-            module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
-                "encoder": ModuleParallelismConfig(tensor_model_parallel_size=2),
-            }
-        )
-
-        topology = _default_topology(mimo_config)
-
-        # Check it's a dict
-        assert isinstance(topology, dict)
-        # Check values are lists
-        for value in topology.values():
-            assert isinstance(value, list)
-
-    def test_topology_all_modules_present(self):
-        """Test that all modules appear in topology."""
-        mimo_config = MimoParallelismConfig(
-            module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
-                "encoder1": ModuleParallelismConfig(tensor_model_parallel_size=2),
-                "encoder2": ModuleParallelismConfig(tensor_model_parallel_size=2),
-            }
-        )
-
-        topology = _default_topology(mimo_config)
-
-        # All modules should be present in topology
-        assert "llm" in topology
-        assert "encoder1" in topology
-        assert "encoder2" in topology
-        assert len(topology) == 3
