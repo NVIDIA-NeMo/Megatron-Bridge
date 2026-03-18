@@ -55,8 +55,6 @@ Supported Override Syntax:
 
 import argparse
 import logging
-import os
-import sys
 from pathlib import Path
 from typing import Tuple
 
@@ -136,15 +134,6 @@ def main() -> None:
     kd_config = ModelOptDistillConfig()
     cfg.model = convert_to_distillation_provider(cfg.model, teacher_cfg.model, kd_config)
     logger.info("Loaded base student and teacher configurations")
-
-    # Print configuration on rank 0
-    if get_rank_safe() == 0:
-        cfg.print_yaml()
-
-    # Check if config file exists before processing
-    if not os.path.exists(args.config_file):
-        logger.error(f"Override YAML file not found: {args.config_file}")
-        sys.exit(1)
 
     # Process configuration with YAML and CLI overrides
     cfg = process_config_with_overrides(
