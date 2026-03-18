@@ -27,7 +27,7 @@ from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.training.checkpointing import maybe_finalize_async_save
+from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.train import checkpoint_and_decide_exit, save_checkpoint_and_time
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.mimo_parallel_utils import (
