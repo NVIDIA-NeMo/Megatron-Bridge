@@ -305,6 +305,10 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     visual_inputs = batch.get("visual_inputs")
     cp_size = pg_collection.cp.size() if pg_collection is not None and pg_collection.cp is not None else 1
 
+    # Assume sequence parallel size is always open.
+    tp_sp_size = pg_collection.tp.size() if pg_collection is not None and pg_collection.tp is not None else 1
+    pad_to_multiple_of = tp_sp_size * (cp_size * 2 if cp_size > 1 else 1)
+
     if enable_packing:
         # Pack sequences
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
@@ -323,7 +327,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
             attention_mask=batch.get("attention_mask"),
             position_ids=batch.get("position_ids"),
             pad_token_id=0,
-            pad_to_multiple_of=cp_size * 2 if cp_size > 1 else 1,
+            pad_to_multiple_of=pad_to_multiple_of,
         )
 
         # Update batch dict with packed tensors

@@ -14,6 +14,7 @@
 
 import types
 from typing import Optional, List
+import logging
 
 import torch
 from megatron.core.transformer.module import MegatronModule
@@ -24,7 +25,7 @@ from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
-
+logger = logging.getLogger(__name__)
 
 class KimiK25VLModel(MegatronModule):
     """
@@ -158,9 +159,7 @@ class KimiK25VLModel(MegatronModule):
         image_features: List[torch.Tensor],
         inputs_embeds: torch.Tensor,
         input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
-        target_seq_length: Optional[int] = None,
     ):
         """Merge image features into input embeddings.
 
@@ -173,8 +172,6 @@ class KimiK25VLModel(MegatronModule):
             target_seq_length: Optional fixed output length for pipeline parallelism.
         """
         _, embed_dim = image_features[0].shape
-        feature_lengths = [x.shape[0] for x in image_features]
-        total_image_features = sum(feature_lengths)
         image_features_cat = torch.cat(image_features, dim=0)
 
         image_token_index = self.media_placeholder_token_id
@@ -183,22 +180,40 @@ class KimiK25VLModel(MegatronModule):
 
         batch_size, sequence_length = input_ids.shape
 
-        # Count placeholder tokens in input_ids
+        # Count placeholder tokens in input_ids (total across batch)
         num_placeholders = (input_ids == image_token_index).sum().item()
+        total_image_features = image_features_cat.shape[0]
 
-        # Check if tokens are pre-expanded (PP mode with collate-time expansion)
-        # Pre-expanded mode: simple 1:1 replacement, no sequence length change
-        assert num_placeholders == total_image_features, f"Please make sure the number of placeholders in input_ids matches the number of image features for pre-expanded mode in collate_fn."
+        # When seq_length truncation in the collate function removes trailing
+        # placeholder tokens from some samples, the total image features will
+        # exceed the remaining placeholders.  Truncate features **per sample**
+        # so that each sample's features align with its own placeholders.
+        #
+        # This handles multi-image samples correctly: images are assigned to
+        # samples greedily in order.  If a sample's last image is partially
+        # truncated (some placeholders removed by seq_length cutoff), only
+        # the surviving prefix of that image's features is kept.
+        if total_image_features > num_placeholders:
+            per_sample_placeholders = (input_ids == image_token_index).sum(dim=1)  # (B,)
+
+            truncated_parts = []
+            feat_idx = 0  # index into image_features list
+            for sample_idx in range(batch_size):
+                remaining = per_sample_placeholders[sample_idx].item()
+                while remaining > 0 and feat_idx < len(image_features):
+                    n_feat = image_features[feat_idx].shape[0]
+                    n_keep = min(n_feat, remaining)
+                    truncated_parts.append(image_features[feat_idx][:n_keep])
+                    remaining -= n_keep
+                    feat_idx += 1
+
+            image_features_cat = torch.cat(truncated_parts, dim=0)
 
         final_embedding = inputs_embeds.clone()
         image_mask = input_ids == image_token_index
 
         # Replace placeholder embeddings with image features
         final_embedding[image_mask] = image_features_cat.to(inputs_embeds.dtype)
-
-        # Attention mask and labels stay the same (no expansion)
-        final_attention_mask = attention_mask
-        position_ids = (attention_mask.cumsum(-1) - 1).masked_fill_((attention_mask == 0), 1)
 
         if labels is not None:
             # Mask out image positions in labels (don't compute loss on image tokens)
@@ -207,7 +222,7 @@ class KimiK25VLModel(MegatronModule):
         else:
             final_labels = None
 
-        return final_embedding, final_attention_mask, final_labels, position_ids
+        return final_embedding, final_labels
 
 
     def _extract_image_features(self, pixel_values, grid_thws):
@@ -253,7 +268,6 @@ class KimiK25VLModel(MegatronModule):
         """
         if self.pre_process:
             if inputs_embeds is None:
-                # GPTModel uses .embedding() not .get_input_embeddings()
                 inputs_embeds = self.language_model.embedding(
                     input_ids=input_ids, position_ids=None
                 )  # [seq_len, batch, hidden]
@@ -266,37 +280,31 @@ class KimiK25VLModel(MegatronModule):
             if has_pixels and not_generation:
                 pixel_values = pixel_values.to(self.vision_tower.dtype)
                 image_features = self._extract_image_features(pixel_values, image_grid_thw)
-
-                # Ensure image_features is a flat tensor for uniform handling
-                if isinstance(image_features, list):
-                    image_features_cat = torch.cat(image_features, dim=0)
-                else:
-                    image_features_cat = image_features
-
-                # Truncate image features to match placeholder count in input_ids.
-                # get_batch() may have truncated input_ids to seq_length, removing
-                # some trailing placeholders while pixel_values stay intact.
-                num_placeholders = (input_ids == self.media_placeholder_token_id).sum().item()
-                if image_features_cat.shape[0] > num_placeholders > 0:
-                    image_features_cat = image_features_cat[:num_placeholders]
-
-                # Wrap as single-element list for _merge compatibility
-                image_features = [image_features_cat]
-
                 inputs_embeds = inputs_embeds.to(image_features[0].dtype)
 
-                # Build attention_mask from input_ids if not provided (Megatron skips it by default)
-                if attention_mask is None:
-                    attention_mask = (input_ids != self.config.pad_token_id).long()
-
-                inputs_embeds, _, labels, position_ids = self._merge_input_ids_with_image_features(
+                # Please make sure inputs_embeds is in pre-expanded mode for image tokens.
+                inputs_embeds, labels = self._merge_input_ids_with_image_features(
                     image_features,
                     inputs_embeds,
                     input_ids,
-                    attention_mask,
                     labels,
-                    target_seq_length=input_ids.shape[1],
                 )
+
+                # calculate position_ids in model.forward when position_ids is not provided.
+                if position_ids is None:
+                    if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
+                        # THD: compute per-sample position_ids that reset at each boundary
+                        cu_seqlens = packed_seq_params.cu_seqlens_q  # [num_samples + 1]
+                        total_len = input_ids.shape[1]
+                        position_ids = torch.zeros(1, total_len, dtype=torch.long, device=input_ids.device)
+                        for i in range(len(cu_seqlens) - 1):
+                            start, end = cu_seqlens[i], cu_seqlens[i + 1]
+                            position_ids[0, start:end] = torch.arange(end - start, device=input_ids.device)
+                    else:
+                        # BSHD format
+                        if attention_mask is None:
+                            attention_mask = (input_ids != self.config.pad_token_id).long()
+                        position_ids = (attention_mask.cumsum(-1) - 1).masked_fill_((attention_mask == 0), 1)
 
                 # Don't need attention mask for causal attention.
                 attention_mask = None
