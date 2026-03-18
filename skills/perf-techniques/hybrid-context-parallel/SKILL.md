@@ -1,11 +1,11 @@
 ---
 name: hybrid-context-parallel
-description: Operational guide for enabling hierarchical context parallelism in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification.
+description: Operational guide for enabling hierarchical context parallelism in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification. Use when the user asks about hierarchical_context_parallel_sizes, a2a+p2p, CP scaling beyond KV heads, or multi-level context parallelism.
 ---
 
 # Hybrid / Hierarchical Context Parallel Skill
 
-For stable background and recommendation level, see:
+For what HCP is, when to use it, and the decision tree (a2a+p2p vs pure a2a vs p2p), see:
 
 - `docs/training/hybrid-context-parallel.md`
 - `card.yaml` (co-located)
@@ -79,13 +79,49 @@ pg_collection = ProcessGroupCollection(
 )
 ```
 
+## Implementation Map
+
+### Config definition
+
+`hierarchical_context_parallel_sizes` is declared in `ModelParallelConfig`:
+
+```
+# 3rdparty/Megatron-LM/megatron/core/model_parallel_config.py
+hierarchical_context_parallel_sizes: Optional[list[int]] = None
+# First value = a2a group size, second value = p2p group size.
+# Product must equal context_parallel_size.
+```
+
+`cp_comm_type` is declared in `TransformerConfig`:
+
+```
+# 3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
+cp_comm_type: Optional[Union[str, List[str]]] = None
+# Can be per-layer (List[str]) or uniform (str).
+# Values: "p2p", "all_gather", "a2a", "a2a+p2p"
+```
+
+### Validation (MCore)
+
+`TransformerConfig.__post_init__` enforces that `a2a+p2p` requires HCP sizes and the product matches CP.
+
+### Process group creation
+
+`parallel_state.initialize_model_parallel` creates hierarchical CP sub-groups when HCP sizes are provided via `create_hierarchical_groups`.
+
+### TE integration
+
+`TEDotProductAttention` passes the hierarchical groups to Transformer Engine when `a2a+p2p` is used. Requires **Transformer Engine >= 1.12.0**.
+
 ## Pitfalls
 
-1. `a2a+p2p` and upstream `hybrid_context_parallel=True` are different features.
-2. Bridge HCP is MPU-only today. If `use_decentralized_pg=True`, Bridge initializes flat CP groups and leaves HCP unset.
-3. No checked-in Bridge recipe currently exercises HCP directly.
-4. Single-GPU load helpers clear `hierarchical_context_parallel_sizes`.
-5. Treat end-to-end HCP training as advanced until there is in-tree functional coverage.
+1. **Different features**: `a2a+p2p` and upstream `hybrid_context_parallel=True` are different features. The latter is for balancing packed/variable-length workloads.
+2. **Bridge HCP is MPU-only today**: If `use_decentralized_pg=True`, Bridge initializes flat CP groups and leaves HCP unset.
+3. **No checked-in Bridge recipe** currently exercises HCP directly.
+4. **Single-GPU load helpers** clear `hierarchical_context_parallel_sizes`.
+5. **Silent broken training**: If you use `a2a+p2p` without setting `hierarchical_context_parallel_sizes`, MCore now asserts. Older versions would silently disable CP communication — each rank attended only to its local chunk, producing artificially high throughput but completely broken gradients.
+6. **Product must match**: `prod(hierarchical_context_parallel_sizes)` must exactly equal `context_parallel_size`. A mismatch triggers an assertion.
+7. **Verify in logs**: Look for the process group initialization output. You should see `HIERARCHICAL_CONTEXT_PARALLEL_GROUPS` being created. If you only see `CONTEXT_PARALLEL_GROUP`, HCP is not active.
 
 ## Verification
 

@@ -66,9 +66,16 @@ see `docs/training/hybrid-context-parallel.md`.
 
 ### MoE Expert Parallel
 
+MoE expert-parallel overlap hides the cost of token dispatch/combine all-to-all
+communication by overlapping it with expert FFN compute. Optionally, delayed
+expert weight-gradient computation (`moe_delay_wgrad_compute`) provides
+additional overlap.
+
 MoE overlap should be treated separately from generic TP, DP, and PP overlap.
-Its constraints depend on dispatcher choice, expert parallelism, precision, and
-runtime support.
+Its constraints depend on dispatcher choice (`alltoall` or `flex`), expert
+parallelism degree, precision (BF16/FP16), and runtime support. When pipeline
+parallelism is used, virtual pipeline parallelism is required for the overlap
+scheduling to interleave correctly.
 
 ## Stable Constraints and Caveats
 
@@ -100,5 +107,5 @@ For most teams, the right order is:
 - `docs/training/hybrid-context-parallel.md`
 - `skills/perf-techniques/tp-dp-comm-overlap.md`
 - `skills/perf-techniques/expert-parallel-overlap.md`
-- `knowledge/techniques/tp_dp_comm_overlap.yaml`
-- `knowledge/techniques/moe_comm_overlap.yaml`
+- `skills/perf-techniques/moe-comm-overlap/SKILL.md`
+- `skills/perf-techniques/moe-comm-overlap/card.yaml`

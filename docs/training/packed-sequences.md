@@ -16,14 +16,18 @@ those examples are batched conventionally, many tokens in each batch are just
 padding. Packed sequences reduce that waste by building longer packs from
 multiple examples and carrying boundary metadata into the attention path.
 
-In Bridge today, it is important to distinguish two related but different
-things:
+In Bridge today, there are two distinct packing paths plus long-context
+enablement through context parallelism:
 
-- offline packed sequence training for text-only fine-tuning
-- long-sequence training, which is primarily handled through context
-  parallelism and other memory-management techniques
+| Path | Use case | Key config |
+|---|---|---|
+| Offline packed SFT | Text-only finetuning | `packed_sequence_specs` |
+| VLM in-batch packing | VLM finetuning | `pack_sequences_in_batch=True` |
+| Long-context (CP) | Pretrain / finetune at 16K-128K+ | `context_parallel_size > 1` |
 
-Those features are related, but they are not the same knob.
+These are related but they are not the same knob. Offline packed SFT and VLM
+in-batch packing solve padding waste; long-context training primarily addresses
+activation memory and communication tradeoffs at larger sequence lengths.
 
 ## When to Use It
 
@@ -85,5 +89,7 @@ The most stable caveats to remember are:
 - `docs/training/multi-token-prediction.md`
 - `docs/performance-guide.md`
 - `docs/training/hybrid-context-parallel.md`
-- `skills/perf-techniques/sequence-packing.md`
+- `skills/perf-techniques/sequence-packing/SKILL.md`
 - `skills/perf-techniques/sequence-packing/card.yaml`
+- `skills/perf-techniques/packed-sequences-long-context/SKILL.md`
+- `skills/perf-techniques/packed-sequences-long-context/card.yaml`
