@@ -212,7 +212,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-concurrency = ["thread", "multiprocessing"]
+concurrency = ["thread"]  # remove "multiprocessing"
 omit = [
     "/tmp/*",
     "/opt/Megatron-Bridge/tests/*",
