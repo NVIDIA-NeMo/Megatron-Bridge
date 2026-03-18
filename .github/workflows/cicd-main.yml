@@ -790,8 +790,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: [Nemo_CICD_Test, pre-flight]
     if: |
-      needs.pre-flight.outputs.is_ci_workload == 'true'
-      && !failure()
+      (
+        (needs.pre-flight.outputs.is_ci_workload == 'true' && !failure())
+        || success()
+      )
+      && needs.pre-flight.outputs.docs_only == 'false'
+      && needs.pre-flight.outputs.is_deployment_workflow == 'false'
       && !cancelled()
     strategy:
       matrix:
