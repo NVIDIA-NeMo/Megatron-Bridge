@@ -79,6 +79,6 @@ accordingly.
 
 ## Related
 
-- Operational details: `skills/perf-techniques/cuda-graphs/SKILL.md`
-- Performance guide: `docs/performance-guide.md`
-- Communication overlap interaction: `docs/training/communication-overlap.md`
+- Operational details: [skills/perf-techniques/cuda-graphs/SKILL.md](../../skills/perf-techniques/cuda-graphs/SKILL.md)
+- Performance guide: [docs/performance-guide.md](../performance-guide.md)
+- Communication overlap interaction: [docs/training/communication-overlap.md](communication-overlap.md)
