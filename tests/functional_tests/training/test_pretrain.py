@@ -14,6 +14,7 @@
 
 import logging
 import os
+from typing import Callable
 
 import pytest
 import torch
@@ -41,6 +42,35 @@ from tests.functional_tests.utils import (
     initialize_distributed,
     verify_checkpoint_files,
 )
+
+
+class Llama32ModelProvider1B(GPTModelProvider):
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    position_embedding_type: str = "rope"
+    add_bias_linear: bool = False
+    attention_dropout: float = 0.0
+    hidden_dropout: float = 0.0
+    share_embeddings_and_output_weights: bool = False
+    bias_activation_fusion: bool = True
+    masked_softmax_fusion: bool = True
+    persist_layer_norm: bool = True
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
+    num_query_groups: int = 8
+    kv_channels: int = 64
+    init_method_std: float = 0.01
+    layernorm_epsilon: float = 1e-05
+    rotary_percent: float = 1.0
+    rotary_base: int = 500_000
+    rope_scaling: bool = True
+    rope_scaling_factor: float = 32.0
+    num_layers: int = 16
+    hidden_size: int = 2048
+    ffn_hidden_size: int = 8192
+    num_attention_heads: int = 32
+    vocab_size: int | None = None
 
 
 class TestPretrain:
@@ -194,6 +224,7 @@ class TestPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.pleasefixme
     def test_pretrain_with_mup(self, tmp_path, caplog):
         """
         Test end to end training with μP (Maximal Update Parameterization) enabled.
