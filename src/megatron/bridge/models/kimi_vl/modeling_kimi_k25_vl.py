@@ -25,7 +25,9 @@ from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+
 logger = logging.getLogger(__name__)
+
 
 class KimiK25VLModel(MegatronModule):
     """
@@ -199,9 +201,7 @@ class KimiK25VLModel(MegatronModule):
         # - Dynamic expansion: 1 placeholder per image (inference), num_placeholders <= num_images.
         is_pre_expanded = num_placeholders == total_image_features
         is_truncated_pre_expanded = (
-            not is_pre_expanded
-            and num_placeholders > num_images
-            and num_placeholders < total_image_features
+            not is_pre_expanded and num_placeholders > num_images and num_placeholders < total_image_features
         )
 
         if is_pre_expanded or is_truncated_pre_expanded:
@@ -310,7 +310,6 @@ class KimiK25VLModel(MegatronModule):
             final_labels = None
 
         return final_embedding, final_attention_mask, final_labels, position_ids
-
 
     def _extract_image_features(self, pixel_values, grid_thws):
         """Extract and project image features."""

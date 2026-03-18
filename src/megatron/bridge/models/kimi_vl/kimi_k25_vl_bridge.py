@@ -141,9 +141,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         provider.moe_layer_freq = [0] * text_config.first_k_dense_replace + [1] * (
             text_config.num_hidden_layers - text_config.first_k_dense_replace
         )
-        provider.moe_shared_expert_intermediate_size = (
-            text_config.moe_intermediate_size * text_config.n_shared_experts
-        )
+        provider.moe_shared_expert_intermediate_size = text_config.moe_intermediate_size * text_config.n_shared_experts
         provider.moe_aux_loss_coeff = 1e-3
 
         return provider

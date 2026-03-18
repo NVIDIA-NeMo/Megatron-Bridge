@@ -191,7 +191,7 @@ __all__ = [
     "GPTModelProvider",
     "GPTOSSBridge",
     "T5ModelProvider",
-    "KimiK2Bridge"
+    "KimiK2Bridge",
     "KimiK25VLModel",
     "KimiK25VLBridge",
     "KimiK25VLModelProvider",

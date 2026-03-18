@@ -22,6 +22,7 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 import torch.nn.functional as F
+
 try:
     import transformer_engine  # type: ignore  # noqa: F401
 
