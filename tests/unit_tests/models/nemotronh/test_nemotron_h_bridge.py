@@ -278,6 +278,60 @@ class TestNemotronHBridge:
         # When n_routed_experts is 0, num_moe_experts should be 0 or None
         assert result.num_moe_experts in (0, None)
 
+    def test_provider_bridge_moe_latent_size(self, nemotronh_8b_config_dict):
+        """Test moe_latent_size mapping for Super model."""
+        moe_config_dict = {
+            **nemotronh_8b_config_dict,
+            "n_routed_experts": 512,
+            "moe_intermediate_size": 2688,
+            "moe_shared_expert_intermediate_size": 5376,
+            "num_experts_per_tok": 22,
+            "n_group": 1,
+            "topk_group": 1,
+            "routed_scaling_factor": 5.0,
+            "moe_latent_size": 1024,
+            "moe_shared_expert_overlap": False,
+        }
+
+        cfg = Mock(spec=[])
+        for k, v in moe_config_dict.items():
+            setattr(cfg, k, v)
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = cfg
+
+        bridge = NemotronHBridge()
+        result = bridge.provider_bridge(mock_pretrained)
+
+        # Check Super-specific MoE configuration
+        assert result.moe_latent_size == 1024
+        assert result.moe_shared_expert_overlap is False
+
+    def test_provider_bridge_mtp_config(self, nemotronh_8b_config_dict):
+        """Test MTP configuration mapping for Super model."""
+        mtp_config_dict = {
+            **nemotronh_8b_config_dict,
+            "n_routed_experts": 0,
+            "num_nextn_predict_layers": 2,
+            "mtp_hybrid_override_pattern": "*E",
+            "keep_mtp_spec_in_bf16": True,
+        }
+
+        cfg = Mock(spec=[])
+        for k, v in mtp_config_dict.items():
+            setattr(cfg, k, v)
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = cfg
+
+        bridge = NemotronHBridge()
+        result = bridge.provider_bridge(mock_pretrained)
+
+        # Check MTP configuration mappings
+        assert result.mtp_num_layers == 2
+        assert result.mtp_hybrid_override_pattern == "*E"
+        assert result.keep_mtp_spec_in_bf16 is True
+
     def test_provider_bridge_no_moe_when_attribute_missing(self, nemotronh_8b_config_dict):
         """Test that MoE configs are not added when n_routed_experts attribute is missing."""
         from types import SimpleNamespace
@@ -319,6 +373,18 @@ class TestNemotronHBridge:
         # Check pre_mlp_layernorm mapping exists
         assert "decoder.layers.*.pre_mlp_layernorm.weight" in megatron_params
 
+    def test_mapping_registry_contains_latent_proj_mappings(self):
+        """Test that mapping_registry contains latent projection mappings for Super model."""
+        bridge = NemotronHBridge()
+        mapping_registry = bridge.mapping_registry()
+
+        # Get all megatron params from mappings
+        megatron_params = [m.megatron_param for m in mapping_registry.mappings if hasattr(m, "megatron_param")]
+
+        # Check latent projection mappings exist (used by Super model)
+        assert "decoder.layers.*.mlp.fc1_latent_proj.weight" in megatron_params
+        assert "decoder.layers.*.mlp.fc2_latent_proj.weight" in megatron_params
+
     def test_mapping_registry_moe_hf_params(self):
         """Test that MoE mappings have correct HF parameter names."""
         bridge = NemotronHBridge()
@@ -352,6 +418,28 @@ class TestNemotronHBridge:
         assert (
             param_map.get("decoder.layers.*.mlp.shared_experts.linear_fc2.weight")
             == "backbone.layers.*.mixer.shared_experts.down_proj.weight"
+        )
+
+    def test_mapping_registry_latent_proj_hf_params(self):
+        """Test that latent projection mappings have correct HF parameter names."""
+        bridge = NemotronHBridge()
+        mapping_registry = bridge.mapping_registry()
+
+        # Create a lookup dict of megatron -> hf params
+        param_map = {
+            m.megatron_param: m.hf_param
+            for m in mapping_registry.mappings
+            if hasattr(m, "megatron_param") and hasattr(m, "hf_param")
+        }
+
+        # Check latent projection HF param mappings
+        assert (
+            param_map.get("decoder.layers.*.mlp.fc1_latent_proj.weight")
+            == "backbone.layers.*.mixer.fc1_latent_proj.weight"
+        )
+        assert (
+            param_map.get("decoder.layers.*.mlp.fc2_latent_proj.weight")
+            == "backbone.layers.*.mixer.fc2_latent_proj.weight"
         )
 
 

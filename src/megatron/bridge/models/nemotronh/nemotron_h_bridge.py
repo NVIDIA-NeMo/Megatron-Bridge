@@ -26,9 +26,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     MambaConv1dMapping,
     MambaInProjMapping,
+    MegatronParamMapping,
     QKVMapping,
     RowParallelMapping,
-    MegatronParamMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
@@ -147,9 +147,7 @@ class _MTPFlatteningMapping(MegatronParamMapping[torch.Tensor]):
             remaining = captures[1:]
         else:
             if len(captures) < 2:
-                raise ValueError(
-                    f"Expected 2 captures (outer, inner) for MTP nested mapping, got {captures}"
-                )
+                raise ValueError(f"Expected 2 captures (outer, inner) for MTP nested mapping, got {captures}")
             inner_eff = int(captures[1])
             remaining = captures[2:]
 
@@ -237,6 +235,7 @@ class NemotronHBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
+
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
         # Mamba-specific fields
         ("mamba_head_dim", "mamba_head_dim"),
@@ -296,7 +295,6 @@ class NemotronHBridge(MegatronModelBridge):
             provider.moe_permute_fusion = True
             provider.moe_shared_expert_overlap = True
 
-        
         if hasattr(hf_config, "moe_latent_size"):
             provider.moe_latent_size = hf_config.moe_latent_size
         if hasattr(hf_config, "moe_shared_expert_overlap"):
@@ -309,7 +307,6 @@ class NemotronHBridge(MegatronModelBridge):
             provider.keep_mtp_spec_in_bf16 = hf_config.keep_mtp_spec_in_bf16
 
         return provider
-
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
@@ -335,6 +332,7 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.input_layernorm.weight": "backbone.layers.*.norm.weight",
             # TODO (@maanug): need to find a way to prune the vocab padding from the vocab dimension for these params
             "embedding.word_embeddings.weight": "backbone.embeddings.weight",
+            "embedding.word_embeddings.weight": "backbone.embedding.weight",
             "output_layer.weight": "lm_head.weight",
             # MoE layers
             "decoder.layers.*.mlp.router.weight": "backbone.layers.*.mixer.gate.weight",

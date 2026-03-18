@@ -116,8 +116,8 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
     # Optimizer hyperparameters
     cfg.optimizer.lr = 1.6e-3
     cfg.optimizer.weight_decay = 0.1
-    cfg.scheduler.min_lr = 1.6e-5
-    cfg.scheduler.warmup_iters = 333
+    cfg.optimizer.min_lr = 1.6e-5
+    cfg.scheduler.lr_warmup_iters = 333
 
     # Communication Overlap
     cfg.comm_overlap = CommOverlapConfig(
