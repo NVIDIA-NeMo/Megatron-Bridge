@@ -285,7 +285,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "recompute-num-layers":              ("model.recompute_num_layers",        None),
 
     # ── Mock data ───────────────────────────────────────────────────────
-    "mock-data":                         (None,                                 "skip"),  # Bridge uses blend=null
+    "mock-data":                         ("dataset.mock",                       "flag"),
 
     # ── RNG ──────────────────────────────────────────────────────────────
     "seed":                              ("rng.seed",                           None),
@@ -340,7 +340,7 @@ def _try_parse_value(val: str) -> Any:
     return _try_numeric(val)
 
 
-def parse_yaml_config(path: str) -> dict[str, Any]:
+def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str]]:
     """Parse a Megatron-LM style YAML into a flat arg dict.
 
     Expected YAML structure:
@@ -374,7 +374,7 @@ def parse_yaml_config(path: str) -> dict[str, Any]:
     return parsed, env_vars
 
 
-def parse_raw_args(args_str: str) -> dict[str, Any]:
+def parse_raw_args(args_str: str) -> tuple[dict[str, Any], dict[str, str]]:
     """Parse a raw MLM CLI string into a flat arg dict."""
     tokens = shlex.split(args_str)
     parsed: dict[str, Any] = {}
@@ -1513,7 +1513,8 @@ def main():
         default="overrides",
         help="Output format (default: overrides). "
         "MLM→Bridge: 'overrides' emits Hydra overrides, 'recipe' emits a standalone recipe file. "
-        "Bridge→MLM (--reverse): always emits MLM args (--emit is ignored).",
+        "Bridge→MLM (--reverse): always emits MLM args (--emit is ignored). "
+        "Output is written to stdout unless -o/--output is specified.",
     )
     parser.add_argument("--recipe-name", type=str, default="custom_model", help="Recipe name for --emit recipe")
     parser.add_argument("--output", "-o", type=str, help="Write output to file instead of stdout")

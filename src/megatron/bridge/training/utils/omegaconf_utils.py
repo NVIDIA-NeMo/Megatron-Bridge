@@ -505,10 +505,9 @@ def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, An
 
                 # Restore serialized callable fields (e.g. "relu" → F.relu)
                 if key in _SERIALIZABLE_CALLABLE_FIELDS and isinstance(final_value, str):
-                    restored = str_to_callable(final_value)
-                    if restored is not None:
-                        final_value = restored
-                    else:
+                    try:
+                        final_value = str_to_callable(final_value)
+                    except ValueError:
                         logger.warning(f"Could not restore callable for {key}='{final_value}'; keeping string")
 
                 setattr(config_obj, key, final_value)

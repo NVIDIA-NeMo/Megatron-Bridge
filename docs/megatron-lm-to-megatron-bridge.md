@@ -16,9 +16,13 @@ python scripts/translate_mlm_to_bridge.py --yaml model_configs/DeepSeek-V3.yaml
 python scripts/translate_mlm_to_bridge.py \
     --args "--num-layers 32 --hidden-size 4096 --num-attention-heads 32 --bf16 --swiglu"
 
-# Emit a standalone Bridge recipe Python file
+# Emit a standalone Bridge recipe Python file (output goes to stdout; use -o to write to a file)
 python scripts/translate_mlm_to_bridge.py \
     --yaml DeepSeek-V3.yaml --emit recipe --recipe-name deepseek_v3
+
+# Write output to a file instead of stdout
+python scripts/translate_mlm_to_bridge.py \
+    --yaml DeepSeek-V3.yaml -o bridge_overrides.txt
 ```
 
 ### Bridge → MLM (reverse direction)
@@ -78,8 +82,9 @@ python scripts/translate_mlm_to_bridge.py --reverse \
 | `--rotary-base N` | `model.rotary_base=N` | |
 | `--num-experts N` | `model.num_moe_experts=N` | |
 | `--moe-router-topk K` | `model.moe_router_topk=K` | |
+| `--mock-data` | `dataset.mock=true` | Use synthetic data (no files needed) |
 
-Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`, `--mock-data`) are silently skipped with a comment. Unknown flags are listed in a separate section so you can handle them manually.
+Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`) are silently skipped with a comment. `--mock-data` translates to `dataset.mock=true`. Unknown flags are listed in a separate section so you can handle them manually.
 
 ## Quick start
 
