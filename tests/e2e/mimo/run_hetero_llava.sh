@@ -8,18 +8,20 @@ uv run torchrun \
     --nproc_per_node "$GPUS_PER_NODE" \
     --nnodes "$NUM_NODES" \
     tests/e2e/mimo/test_mimo_training_llava.py \
-    --micro-batch-size 2 \
-    --global-batch-size 32 \
-    --train-iters 500 \
+    --micro-batch-size 4 \
+    --global-batch-size 128 \
+    --train-iters 2000 \
     --adam-beta1 0.9 \
     --adam-beta2 0.95 \
     --clip-grad 1.0 \
     --log-interval 1 \
-    --lr 1e-4 \
-    --lr-warmup-iters 20 \
+    --lr 1e-3 \
+    --lr-warmup-iters 60 \
     --min-lr 2.0e-5 \
-    --weight-decay 0.01 \
+    --weight-decay 0.0 \
     --wandb-project "Megatron-Bridge-MIMO" \
     --wandb-exp-name "mimo-llava-e2e-test" \
     --wandb-save-dir "/tmp/wandb" \
+    --vision-encoder-checkpoint /path/to/clip_checkpoint \
+    --language-model-checkpoint /path/to/llm_checkpoint \
     --dataset-root /path/to/llava/pretrain/dataset
