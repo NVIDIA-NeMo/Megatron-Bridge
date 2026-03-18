@@ -200,6 +200,8 @@ When you create a pull request, **add labels immediately** so reviewers and CI c
 2. **One or more area labels** — `area:model`, `area:recipe`, `area:training`, `area:data`, `area:ckpt`, `area:peft`, `area:perf`, `area:distill`, `area:prune`, `area:quant`, `area:build`, or `area:misc`
 3. **`docs-only`** — if the PR touches only documentation (no code changes); this skips most CI jobs
 4. **`needs-review`** — when the PR is ready for review
+5. **`needs-more-tests`** — if the change needs additional test coverage; triggers both L0 and L1 CI
+6. **`high-complexity`** — if the PR is large, touches many files, or is prone to merge conflicts
 
 Add risk labels when applicable:
 - `breaking-change` — if any public API, CLI argument, config key, or function signature changes
@@ -364,22 +366,40 @@ Without this step, your new launcher script will not be picked up by CI.
 We use [uv](https://docs.astral.sh/uv/) for managing dependencies. For reproducible builds, our project tracks the generated `uv.lock` file in the repository.
 On a weekly basis, the CI attempts an update of the lock file to test against upstream dependencies.
 
-New required dependencies can be added by `uv add $DEPENDENCY`.
+### Adding a New Dependency
 
-New optional dependencies can be added by `uv add --optional --extra $EXTRA $DEPENDENCY`.
+**Adding required (non-optional) dependencies is strongly discouraged** and will be strictly reviewed. Every required dependency inflates the package and container image for all downstream consumers — most of whom will not need it. Prefer **optional dependencies** under an extra group whenever possible.
+
+If your feature requires a dependency that is not already in `pyproject.toml`, **submit the dependency change as a separate PR first**. Do not bundle dependency additions with feature code — this keeps reviews focused and makes CI failures easier to diagnose.
+
+1. Add the dependency to `pyproject.toml` (either via `uv add` or by editing the file directly):
+
+```bash
+# Preferred: optional dependency under an extra group
+uv add --optional --extra $EXTRA $DEPENDENCY
+
+# Required dependency (needs strong justification — affects all downstream)
+uv add $DEPENDENCY
+```
 
 `EXTRA` refers to the subgroup of extra-dependencies to which you're adding the new dependency.
 Example: For adding a TRT-LLM specific dependency, run `uv add --optional --extra trtllm $DEPENDENCY`.
 
-Alternatively, the `pyproject.toml` file can also be modified directly.
-
-Adding a new dependency will update UV's lock-file. Please check this into your branch:
+2. Regenerate the lock file:
 
 ```bash
-git add uv.lock pyproject.toml
-git commit -m "build: Adding dependencies"
+uv lock
+```
+
+3. Commit both files and open a PR:
+
+```bash
+git add pyproject.toml uv.lock
+git commit -s -m "[build] chore: Add $DEPENDENCY"
 git push
 ```
+
+4. Once the dependency PR is merged, rebase your feature branch onto `main` and open the feature PR.
 
 ### 🧹 Linting and Formatting
 
