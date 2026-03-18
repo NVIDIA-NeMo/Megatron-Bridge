@@ -166,6 +166,9 @@ Format your commit messages and PR titles as:
 - `ckpt` - Checkpoint conversion, loading, export, and save paths
 - `peft` - PEFT methods (LoRA, adapters) and adapter export
 - `perf` - Performance optimizations and throughput improvements
+- `distill` - Knowledge distillation
+- `prune` - Pruning and sparsity
+- `quant` - Quantization (PTQ, QAT, FP8 recipes)
 - `ci` - CI, automation, and workflow infrastructure
 - `docs` - Documentation, examples, and contributor guidance
 - `build` - Dependencies, packaging, and environment setup
@@ -188,6 +191,21 @@ Format your commit messages and PR titles as:
 [BREAKING][training] refactor: Change optimizer config structure
 [ci, build] chore: Update ruff version
 ```
+
+## 🏷️ Labeling Your PR
+
+When you create a pull request, **add labels immediately** so reviewers and CI can route it correctly. At minimum, apply:
+
+1. **One type label** — `bug`, `feature`, `docs`, or `ci`
+2. **One or more area labels** — `area:model`, `area:recipe`, `area:training`, `area:data`, `area:ckpt`, `area:peft`, `area:perf`, `area:distill`, `area:prune`, `area:quant`, `area:build`, or `area:misc`
+3. **`docs-only`** — if the PR touches only documentation (no code changes); this skips most CI jobs
+4. **`needs-review`** — when the PR is ready for review
+
+Add risk labels when applicable:
+- `breaking-change` — if any public API, CLI argument, config key, or function signature changes
+- `needs-more-tests` — if the change needs additional test coverage (also triggers L1 CI)
+
+Properly labeled PRs get faster reviews and avoid sitting in the triage queue.
 
 ## 🏷️ Repository Labels and Triage
 
@@ -245,6 +263,9 @@ Use one primary area label after triage:
 | `area:ckpt` | Checkpoint conversion, loading, export, and save paths |
 | `area:peft` | PEFT methods (LoRA, adapters) and adapter export |
 | `area:perf` | Performance optimizations, kernel integration, and throughput improvements |
+| `area:distill` | Knowledge distillation |
+| `area:prune` | Pruning and sparsity |
+| `area:quant` | Quantization (PTQ, QAT, FP8 recipes) |
 | `area:build` | Dependencies, packaging, images, and environment setup |
 | `area:misc` | Cross-cutting utilities, logging, helpers, and other changes that do not fit a primary domain |
 
