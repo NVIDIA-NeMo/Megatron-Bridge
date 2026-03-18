@@ -107,6 +107,7 @@ def create_test_training_config(**kwargs: Any) -> TrainingConfig:
     """Creates an instance of TrainingConfig with defaults for testing."""
     defaults = {
         "global_batch_size": 32,
+        "micro_batch_size": 1,
         "train_iters": 1000,
     }
     defaults.update(kwargs)
@@ -533,7 +534,9 @@ class TestConfigContainerValidation:
             pipeline_dtype=torch.bfloat16,
         )
         container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=world_size, model_config=gpt_model_cfg
+            world_size_override=world_size,
+            model_config=gpt_model_cfg,
+            validation_config=ValidationConfig(eval_global_batch_size=10, eval_micro_batch_size=1),
         )
 
         try:
@@ -1566,8 +1569,8 @@ class TestEvalBatchSizeConfig:
     def test_eval_micro_batch_size_none_without_training_value_fails(self, monkeypatch):
         """If train.micro_batch_size is None and eval is not explicitly set, assert should fire."""
         gpt_model_cfg = create_test_gpt_config()
-        # micro_batch_size defaults to None in TrainingConfig
-        train_cfg = create_test_training_config(global_batch_size=32)
+        # micro_batch_size must be explicitly None to test this path
+        train_cfg = create_test_training_config(global_batch_size=32, micro_batch_size=None)
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=8, model_config=gpt_model_cfg, train_config=train_cfg
         )
