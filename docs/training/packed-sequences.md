@@ -33,7 +33,8 @@ activation memory and communication tradeoffs at larger sequence lengths.
 
 Packed sequences are a good fit when all of the following are true:
 
-- you are doing text-only SFT or PEFT
+- you are doing SFT, PEFT, or VLM finetuning (all three packing paths are
+  supported; see the path table above)
 - your examples have variable lengths and padding waste is significant
 - you can tolerate the micro-batch constraints of packed training
 

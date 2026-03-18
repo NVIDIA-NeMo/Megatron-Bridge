@@ -48,6 +48,16 @@ Megatron FSDP in Bridge requires:
 - checkpoint format `fsdp_dtensor`
 - standard rank initialization order
 
+The `fsdp_dtensor` format uses PyTorch DTensor to store sharded parameters
+and optimizer state. It is **not interchangeable** with `torch_dist` or `zarr`
+checkpoints — you cannot load an `fsdp_dtensor` checkpoint into a non-FSDP run
+or vice versa.
+
+`fsdp_dtensor` is compatible with tensor parallelism, pipeline parallelism,
+context parallelism, and expert parallelism. The one unsupported combination is
+`use_tp_pp_dp_mapping=True`, which uses an alternative rank-initialization order
+that conflicts with FSDP sharding.
+
 Important stable constraints:
 
 - `use_megatron_fsdp` and `use_torch_fsdp2` are mutually exclusive
