@@ -481,7 +481,7 @@ the primary scaling dimension.
 For operational details on configuring combined parallelism, troubleshooting
 layouts, and memory estimation, see the
 [parallelism strategies skill](../skills/perf-techniques/parallelism-strategies/SKILL.md).
-
+[parallelism strategies skill](../skills/perf-techniques/parallelism-strategies/SKILL.md).
 ## Configuration Guidelines
 
 ### Memory Optimization
