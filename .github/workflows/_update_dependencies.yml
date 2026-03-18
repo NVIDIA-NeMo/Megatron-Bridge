@@ -102,7 +102,7 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         id: create-pull-request
         env:
-          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ inputs.target-branch}}) (${{ needs.pre-flight.outputs.date }})"
+          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"
         with:
           branch: ${{ env.SOURCE_BRANCH }}
           base: ${{ env.TARGET_BRANCH }}
