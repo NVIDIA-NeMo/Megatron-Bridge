@@ -125,7 +125,7 @@ def transformers_generate(hf_model: str, prompt: str, max_new_tokens: int = 20) 
     )
 
     generated_ids = output.sequences[0].tolist()
-    generated_text = tokenizer.decode(output.sequences[0])
+    generated_text = tokenizer.decode(output.sequences[0], skip_special_tokens=True)
     generated_logits = [token_logits[0].cpu() for token_logits in output.scores]
 
     print_rank_0("====== HF GENERATED TEXT OUTPUT ======")
@@ -266,7 +266,8 @@ def megatron_generate(
             input_ids = generated_ids
 
             # If the generated token is the end of sequence token, stop generating
-            if next_token_ids.item() in [tokenizer.eos_id, tokenizer.eod_id]:
+            eod_id = getattr(tokenizer, "eod_id", tokenizer.eos_id)
+            if next_token_ids.item() in [tokenizer.eos_id, eod_id]:
                 break
 
     if parallel_state.get_pipeline_model_parallel_world_size() > 1:
@@ -279,7 +280,14 @@ def megatron_generate(
             group_src=parallel_state.get_pipeline_model_parallel_last_rank(),
         )
 
-    generated_text = tokenizer.detokenize(generated_ids[0])
+    # Strip leading BOS to match HF's skip_special_tokens=True behavior.
+    ids_tensor = generated_ids[0]
+    bos_id = getattr(tokenizer, "bos_id", None)
+    if bos_id is None:
+        bos_id = getattr(getattr(tokenizer, "_tokenizer", None), "bos_id", None)
+    if bos_id is not None and len(ids_tensor) > 0 and ids_tensor[0].item() == bos_id:
+        ids_tensor = ids_tensor[1:]
+    generated_text = tokenizer.detokenize(ids_tensor)
     generated_ids = generated_ids[0].tolist()
 
     print_rank_0("====== MEGATRON GENERATED TEXT OUTPUT ======")
