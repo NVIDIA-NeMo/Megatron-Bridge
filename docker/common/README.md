@@ -73,6 +73,10 @@ cd /opt/Megatron-Bridge
 uv pip install <package>
 ```
 
+Examples of Megatron-Bridge managed packages are TransformerEngine, nvidia-resiliency-ext, nvidia-modelopt. For a complete list, please visit `/opt/Megatron-Bridge/pyproject.toml`. Any of these dependencies can be re-installed via this directory.  
+
+It is unsafe to install packages that are not part of Megatron-Bridge from within this directory. For changing those dependencies, please visit the next section.  
+
 **NeMo toolkit, Export-Deploy, Run, or Evaluator**:
 
 ```bash
@@ -82,10 +86,14 @@ uv pip install <package>
 
 This is safe to use for general packages — MBridge-managed packages
 (TransformerEngine, nvidia-resiliency-ext, nvidia-modelopt, etc.) are protected
-and will not be overwritten.
+and will not be overwritten. This directory also prevents accidental re-install of heavy dependencies like trt-llm or vllm. For reinstalling those, please visit the next section.
 
 **vllm, tensorrt-llm, or tensorrt**:
 
 These are built from source and baked into the container at build time (see
 `docker/Dockerfile.fw_base`). They cannot be managed via `uv pip install`.
 To change them, rebuild the container.
+
+**general note:**
+
+Running uv pip install outside any of the two directories above might lead to a re-install of torch, thus breaking all dependencies that have been compiled against the original torch version. By running uv pip install inside any of the two directories, we can avoid this unwanted side-effect.
