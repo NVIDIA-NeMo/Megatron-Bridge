@@ -92,3 +92,35 @@ def str_to_callable(name: str) -> Callable:
 
     known_names = sorted(n for n in ACTIVATION_FUNC_MAP if "." not in n)
     raise ValueError(f"Unknown activation function: '{name}'. Known names: {known_names}")
+
+
+# Short name -> torch.dtype
+DTYPE_MAP: dict[str, torch.dtype] = {
+    "fp32": torch.float32,
+    "float32": torch.float32,
+    "fp16": torch.float16,
+    "float16": torch.float16,
+    "bf16": torch.bfloat16,
+    "bfloat16": torch.bfloat16,
+    "fp8": torch.float8_e4m3fn,
+    "float8_e4m3fn": torch.float8_e4m3fn,
+    "float8_e5m2": torch.float8_e5m2,
+}
+
+# Add "torch.<name>" aliases
+DTYPE_MAP.update({f"torch.{k}": v for k, v in list(DTYPE_MAP.items()) if "." not in k})
+
+
+def str_to_dtype(name: str) -> torch.dtype:
+    """Resolve a dtype string to a ``torch.dtype``.
+
+    Accepts short names (``"bf16"``), canonical names (``"bfloat16"``), or
+    fully-qualified names (``"torch.bfloat16"``).
+
+    Raises:
+        ValueError: If the name cannot be resolved.
+    """
+    if name in DTYPE_MAP:
+        return DTYPE_MAP[name]
+    known = sorted(n for n in DTYPE_MAP if "." not in n)
+    raise ValueError(f"Unknown dtype: '{name}'. Known names: {known}")

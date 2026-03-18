@@ -51,14 +51,24 @@ def _safe_asdict(obj, skip_keys: set[str]) -> dict:
 def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
     """Resolve string-valued fields to their runtime types.
 
-    Currently handles ``activation_func``: if it was set to a string
-    (e.g. via a CLI override like ``model.activation_func=silu``), it is
-    resolved to the corresponding callable before MCore post-init runs.
+    Handles ``activation_func`` (e.g. ``model.activation_func=silu``) and dtype
+    fields ``params_dtype`` / ``pipeline_dtype`` (e.g. ``model.params_dtype=bf16``)
+    when they arrive as strings via CLI overrides.
     """
     if isinstance(config.activation_func, str):
         from megatron.bridge.utils.activation_map import str_to_callable
 
         config.activation_func = str_to_callable(config.activation_func)
+
+    if isinstance(config.params_dtype, str):
+        from megatron.bridge.utils.activation_map import str_to_dtype
+
+        config.params_dtype = str_to_dtype(config.params_dtype)
+
+    if isinstance(config.pipeline_dtype, str):
+        from megatron.bridge.utils.activation_map import str_to_dtype
+
+        config.pipeline_dtype = str_to_dtype(config.pipeline_dtype)
 
 
 @dataclass
