@@ -88,3 +88,35 @@ class WanModelProvider(TransformerConfig, ModelProviderMixin[VisionModule]):  # 
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
             parallel_output=self.parallel_output,
         )
+
+
+@dataclass
+class WanModelProvider1_3B(WanModelProvider):
+    """WAN 1.3B model configuration.
+
+    Architecture: 30 layers, hidden_size=1536, 12 attention heads,
+    ffn_hidden_size=8960. Default seq_length=1024.
+    """
+
+    num_layers: int = 30
+    hidden_size: int = 1536
+    ffn_hidden_size: int = 8960
+    num_attention_heads: int = 12
+    crossattn_emb_size: int = 1536
+    seq_length: int = 1024
+
+
+@dataclass
+class WanModelProvider14B(WanModelProvider):
+    """WAN 14B model configuration.
+
+    Architecture: 40 layers, hidden_size=5120, 40 attention heads,
+    ffn_hidden_size=13824. Default seq_length=1024.
+    """
+
+    num_layers: int = 40
+    hidden_size: int = 5120
+    ffn_hidden_size: int = 13824
+    num_attention_heads: int = 40
+    crossattn_emb_size: int = 5120
+    seq_length: int = 1024
