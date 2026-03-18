@@ -58,9 +58,34 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_PEFORMANCE = "run_script.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
 
+# CLI flags consumed by setup_experiment.py that should NOT be forwarded to run_script.py.
+EXCLUDED_SCRIPT_ARGS = [
+    "--additional_slurm_params",
+]
+
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
+
+
+def filter_script_args(argv: List[str], excluded: List[str] = EXCLUDED_SCRIPT_ARGS) -> List[str]:
+    """Return a copy of argv with excluded flags and their values removed.
+
+    Handles ``--flag=value`` (skips one token) and ``--flag value`` (skips flag + one value token).
+    """
+    filtered = []
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        opt_name = token.split("=", 1)[0]
+
+        if opt_name in excluded:
+            # --flag=value: one combined token; --flag value: two tokens
+            i += 1 if "=" in token else 2
+        else:
+            filtered.append(token)
+            i += 1
+    return filtered
 
 
 def check_training_finished(log_file_paths: List[str], is_long_convergence_run: bool = True) -> bool:
@@ -488,7 +513,7 @@ def main(
         path=str(run_script_path),
         entrypoint="python",
         env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
-        args=list(sys.argv[1:]),
+        args=filter_script_args(sys.argv[1:]),
     )
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
