@@ -311,9 +311,14 @@ def train_mimo(
 
     logger.info(f"Rank {dist.get_rank()}: Starting MIMO training loop")
 
-    # Save initial checkpoint at step 0 (before any training) if requested
+    # Save initial checkpoint at step 0 (before any training) if requested.
+    # At step 0 the optimizer has not run yet so Adam state buffers (exp_avg,
+    # exp_avg_sq) do not exist.  Temporarily disable optimizer saving to avoid
+    # KeyError in the distributed-checkpoint path.
     if save_initial_checkpoint and cfg.checkpoint.save is not None and train_state.step == 0:
         logger.info(f"Rank {dist.get_rank()}: Saving initial checkpoint (step 0)")
+        _orig_save_optim = cfg.checkpoint.save_optim
+        cfg.checkpoint.save_optim = False
         timers("save-checkpoint", log_level=0).start(barrier=True)
         save_checkpoint(
             state=global_state,
@@ -321,8 +326,10 @@ def train_mimo(
             optimizer=optimizer,
             opt_param_scheduler=first_scheduler,
             num_floating_point_operations_so_far=0,
+            pg_collection=local_pg_collection,
         )
         timers("save-checkpoint").stop()
+        cfg.checkpoint.save_optim = _orig_save_optim
 
     # Main training loop
     timers("interval-time", log_level=0).start(barrier=True)
