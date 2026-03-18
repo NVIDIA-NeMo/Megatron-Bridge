@@ -84,9 +84,9 @@ cd /opt/NeMo-FW
 uv pip install <package>
 ```
 
-This is safe to use for general packages — MBridge-managed packages
+This is safe to use for general packages. This directory also prevents accidental re-install of heavy dependencies like trt-llm or vllm. MBridge-managed packages
 (TransformerEngine, nvidia-resiliency-ext, nvidia-modelopt, etc.) are protected
-and will not be overwritten. This directory also prevents accidental re-install of heavy dependencies like trt-llm or vllm. For reinstalling those, please visit the next section.
+and will not be overwritten. For reinstalling those, please visit the next section.
 
 **vllm, tensorrt-llm, or tensorrt**:
 
