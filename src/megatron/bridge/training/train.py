@@ -47,7 +47,6 @@ from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.transformer.enums import CudaGraphScope
-from megatron.core.transformer.moe.paged_stash import check_paged_stash_overflow, PagedStashRunner
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
@@ -84,6 +83,13 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
+# For Paged Stashing support
+try:
+    from megatron.core.transformer.moe.paged_stash import PagedStashRunner
+
+    HAS_PAGED_STASHING = True
+except ImportError:
+    HAS_PAGED_STASHING = False
 
 
 def train(
@@ -254,7 +260,7 @@ def train(
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
-    if config.model.moe_expert_rank_capacity_factor is not None:
+    if config.model.moe_expert_rank_capacity_factor is not None and HAS_PAGED_STASHING:
         copy_main_params = config.optimizer.reuse_grad_buf_for_mxfp8_param_ag and config.ddp.overlap_param_gather
         forward_backward_func = PagedStashRunner(model_config, copy_main_params, model, optimizer, forward_backward_func)
 

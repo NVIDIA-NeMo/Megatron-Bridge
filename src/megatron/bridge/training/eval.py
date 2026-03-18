@@ -25,7 +25,6 @@ from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.enums import CudaGraphScope
-from megatron.core.transformer.moe.paged_stash import check_paged_stash_overflow, PagedStashRunner
 from megatron.core.utils import get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
@@ -39,7 +38,13 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
 from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
+# For Paged Stashing support
+try:
+    from megatron.core.transformer.moe.paged_stash import PagedStashRunner
 
+    HAS_PAGED_STASHING = True
+except ImportError:
+    HAS_PAGED_STASHING = False
 
 def evaluate(
     state: GlobalState,
@@ -133,7 +138,7 @@ def evaluate(
                 pp_size=pg_collection.pp.size(),
                 vp_size=state.cfg.model.virtual_pipeline_model_parallel_size,
             )
-        if state.cfg.model.moe_expert_rank_capacity_factor is not None:
+        if state.cfg.model.moe_expert_rank_capacity_factor is not None and HAS_PAGED_STASHING:
             copy_main_params = state.cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag and state.cfg.ddp.overlap_param_gather
             forward_backward_func = PagedStashRunner(state.cfg.model, copy_main_params, model, None, forward_backward_func)
 
