@@ -180,7 +180,7 @@ class TestBuildDistributedModel:
         assert result == mock_dist_model
 
     def test_build_with_provider(self):
-        """Test that provide_distributed_model is called providers."""
+        """Test that provide_distributed_model is called for providers."""
         mock_provider = MagicMock()
         # Ensure isinstance(mock_provider, ModelConfig) is False
         mock_provider.__class__ = type("FakeProvider", (), {})
