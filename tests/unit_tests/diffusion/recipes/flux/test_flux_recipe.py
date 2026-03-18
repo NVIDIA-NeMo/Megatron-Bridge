@@ -16,7 +16,7 @@ import pytest
 
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
-from megatron.bridge.diffusion.recipes.flux.flux import flux_14b_pretrain_config
+from megatron.bridge.diffusion.recipes.flux.flux import flux_12b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -28,7 +28,7 @@ class TestPretrainConfig:
 
     def test_pretrain_config_returns_complete_config(self):
         """Test that pretrain_config returns a ConfigContainer with all required components."""
-        config = flux_14b_pretrain_config()
+        config = flux_12b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
         assert isinstance(config.model, FluxProvider)
@@ -44,7 +44,7 @@ class TestPretrainConfig:
 
     def test_pretrain_config_directory_structure(self):
         """Test that pretrain_config uses default directory structure."""
-        config = flux_14b_pretrain_config()
+        config = flux_12b_pretrain_config()
 
         assert "default" in config.checkpoint.save
         assert "default" in config.logger.tensorboard_dir
@@ -52,7 +52,7 @@ class TestPretrainConfig:
 
     def test_pretrain_config_default_training_parameters(self):
         """Test pretrain_config default training parameters."""
-        config = flux_14b_pretrain_config()
+        config = flux_12b_pretrain_config()
 
         assert config.train.train_iters == 10000
         assert config.train.global_batch_size == 16
@@ -60,7 +60,7 @@ class TestPretrainConfig:
 
     def test_pretrain_config_default_model_parameters(self):
         """Test that default model parameters are set correctly."""
-        config = flux_14b_pretrain_config()
+        config = flux_12b_pretrain_config()
 
         assert config.model.num_joint_layers == 19
         assert config.model.hidden_size == 3072
@@ -69,7 +69,7 @@ class TestPretrainConfig:
 
     def test_pretrain_config_default_dataset_configuration(self):
         """Test pretrain_config default dataset parameters."""
-        config = flux_14b_pretrain_config()
+        config = flux_12b_pretrain_config()
 
         assert config.dataset.image_H == 1024
         assert config.dataset.image_W == 1024
@@ -77,9 +77,9 @@ class TestPretrainConfig:
 
     def test_pretrain_config_dataset_accepts_path_list(self):
         """Test that dataset config can be overridden to use real data paths."""
-        config = flux_14b_pretrain_config()
+        config = flux_12b_pretrain_config()
         assert config.dataset.path is None
 
-        # FluxDatasetConfig accepts path as list; recipe default is None
-        config.dataset.path = ["/some/data/path"]
-        assert config.dataset.path == ["/some/data/path"]
+        # FluxDatasetConfig accepts path as str; recipe default is None
+        config.dataset.path = "/some/data/path"
+        assert config.dataset.path == "/some/data/path"

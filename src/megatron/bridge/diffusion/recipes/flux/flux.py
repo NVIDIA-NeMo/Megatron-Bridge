@@ -18,7 +18,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
-from megatron.bridge.diffusion.models.flux.flux_provider import FluxModelProvider14B
+from megatron.bridge.diffusion.models.flux.flux_provider import FluxModelProvider12B
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -30,9 +30,9 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
-def flux_14b_pretrain_config() -> ConfigContainer:
+def flux_12b_pretrain_config() -> ConfigContainer:
     """
-    Return a pre-training configuration for FLUX model.
+    Return a pre-training configuration for FLUX 12B model.
 
     Default parallelism: TP=2, PP=1. Uses mock/synthetic data when data_paths is None.
     To customize (e.g. data paths, checkpoint dir), edit this recipe or add a new recipe
@@ -49,8 +49,8 @@ def flux_14b_pretrain_config() -> ConfigContainer:
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
-    # Model configuration - use FluxModelProvider14B (19 joint + 38 single layers)
-    model_cfg = FluxModelProvider14B()
+    # Model configuration - use FluxModelProvider12B (19 joint + 38 single layers)
+    model_cfg = FluxModelProvider12B()
     model_cfg.tensor_model_parallel_size = 2
     model_cfg.pipeline_model_parallel_size = 1
     model_cfg.pipeline_dtype = torch.bfloat16
@@ -145,14 +145,14 @@ def flux_14b_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-def flux_14b_finetune_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def flux_12b_finetune_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
     """
-    Return a fine-tuning configuration for FLUX model.
+    Return a fine-tuning configuration for FLUX 12B model.
 
-    Uses the same defaults as flux_14b_pretrain_config() and overrides checkpoint to load from
+    Uses the same defaults as flux_12b_pretrain_config() and overrides checkpoint to load from
     pretrained_checkpoint when provided.
     """
-    cfg = flux_14b_pretrain_config()
+    cfg = flux_12b_pretrain_config()
     base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
     run_output_dir = os.path.join(base_output_dir, "default")
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")

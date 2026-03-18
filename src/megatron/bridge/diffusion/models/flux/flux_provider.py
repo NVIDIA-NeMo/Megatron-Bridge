@@ -135,8 +135,8 @@ class FluxProvider(TransformerConfig, ModelProviderMixin[VisionModule]):
 
 
 @dataclass
-class FluxModelProvider14B(FluxProvider):
-    """FLUX 14B model configuration.
+class FluxModelProvider12B(FluxProvider):
+    """FLUX 12B model configuration.
 
     Architecture: 19 joint + 38 single transformer blocks, hidden_size=3072,
     24 attention heads, context_dim=4096. Default seq_length=1024.

@@ -16,7 +16,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Optional
 
 from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 from megatron.bridge.diffusion.data.common.diffusion_energon_datamodule import (
@@ -29,17 +29,6 @@ from megatron.bridge.diffusion.data.flux.flux_taskencoder import FluxTaskEncoder
 logger = logging.getLogger(__name__)
 
 
-def _is_empty_path(path: Optional[Union[str, list]]) -> bool:
-    """Return True if path should be treated as empty (use mock data)."""
-    if path is None:
-        return True
-    if isinstance(path, str):
-        return not path.strip()
-    if isinstance(path, list):
-        return len(path) == 0
-    return True
-
-
 @dataclass(kw_only=True)
 class FluxDatasetConfig(DatasetProvider):
     """
@@ -50,7 +39,7 @@ class FluxDatasetConfig(DatasetProvider):
     to load real data; no separate --data_paths or mock flag needed.
     """
 
-    path: Optional[Union[str, list]] = None
+    path: Optional[str] = None
     seq_length: int = 1024
     packing_buffer_size: Optional[int] = None
     micro_batch_size: int = 1
@@ -70,7 +59,7 @@ class FluxDatasetConfig(DatasetProvider):
         self.sequence_length = self.seq_length
 
     def build_datasets(self, context: DatasetBuildContext):
-        if _is_empty_path(self.path):
+        if not (self.path or "").strip():
             logger.info(
                 "FLUX dataset: path is None or empty; using mock/synthetic data. "
                 "Set dataset.path=/path/to/wds to use real data."
@@ -97,7 +86,6 @@ class FluxDatasetConfig(DatasetProvider):
             )
             return mock_cfg.build_datasets(context)
 
-        # Real data: path is set (string or list)
         real_cfg = FluxDataModuleConfig(
             path=self.path,
             seq_length=self.seq_length,

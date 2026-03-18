@@ -31,7 +31,7 @@ Usage:
 
     Diffusion (FLUX) pretrain:
         torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe flux_14b_pretrain_config \
+            --recipe flux_12b_pretrain_config \
             --step_func flux_step
 
     With CLI overrides:

@@ -25,35 +25,6 @@ pytestmark = [pytest.mark.unit]
 
 
 # -----------------------------------------------------------------------------
-# _is_empty_path
-# -----------------------------------------------------------------------------
-
-
-class TestIsEmptyPath:
-    """Tests for _is_empty_path helper."""
-
-    def test_none_is_empty(self):
-        assert flux_dm_mod._is_empty_path(None) is True
-
-    def test_empty_string_is_empty(self):
-        assert flux_dm_mod._is_empty_path("") is True
-
-    def test_whitespace_only_string_is_empty(self):
-        assert flux_dm_mod._is_empty_path("   ") is True
-
-    def test_non_empty_string_is_not_empty(self):
-        assert flux_dm_mod._is_empty_path("/path/to/data") is False
-        assert flux_dm_mod._is_empty_path("x") is False
-
-    def test_empty_list_is_empty(self):
-        assert flux_dm_mod._is_empty_path([]) is True
-
-    def test_non_empty_list_is_not_empty(self):
-        assert flux_dm_mod._is_empty_path(["/a"]) is False
-        assert flux_dm_mod._is_empty_path(["/a", "/b"]) is False
-
-
-# -----------------------------------------------------------------------------
 # FluxDatasetConfig (unified config: mock vs real at runtime)
 # -----------------------------------------------------------------------------
 
@@ -98,6 +69,9 @@ class TestFluxDatasetConfig:
         fake_train, fake_val, fake_test = iter(["a"]), iter(["b"]), iter(["c"])
 
         class FakeMockConfig:
+            def __init__(self, **kwargs):
+                pass
+
             def build_datasets(self, context):
                 return (fake_train, fake_val, fake_test)
 
@@ -129,28 +103,6 @@ class TestFluxDatasetConfig:
         assert list(test) == list("val")
         # Verify real config was built with the string path (via _FakeDiffusionDataModule)
         assert cfg.path == "/path/to/wds"
-
-    def test_build_datasets_list_path_uses_first_element(self, monkeypatch):
-        """When path is a list, build_datasets uses path[0] as path_str for FluxDataModuleConfig."""
-        received_paths = []
-
-        class CapturePathFake(_FakeDiffusionDataModule):
-            def __init__(self, *, path, **kwargs):
-                received_paths.append(path)
-                super().__init__(path=path, **kwargs)
-
-        monkeypatch.setattr(flux_dm_mod, "DiffusionDataModule", CapturePathFake)
-        cfg = flux_dm_mod.FluxDatasetConfig(
-            path=["/first/shard", "/second/shard"],
-            seq_length=1024,
-            packing_buffer_size=4,
-            micro_batch_size=2,
-            global_batch_size=8,
-            num_workers=0,
-        )
-        train, val, test = cfg.build_datasets(context=None)
-        assert list(train) == list("train")
-        assert received_paths == ["/first/shard"]
 
 
 # -----------------------------------------------------------------------------
