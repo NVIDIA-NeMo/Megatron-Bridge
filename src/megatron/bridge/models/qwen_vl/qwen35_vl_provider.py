@@ -203,6 +203,7 @@ class Qwen35VLModelProvider(GPTModelProvider):
 
         language_transformer_config = self
         hf_vision_config = self.vision_config
+        hf_vision_config.torch_dtype = self.params_dtype
 
         block_spec = get_transformer_block_with_experimental_attention_variant_spec(
             language_transformer_config,
@@ -400,6 +401,7 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
 
         language_transformer_config = self
         hf_vision_config = self.vision_config
+        hf_vision_config.torch_dtype = self.params_dtype
 
         # Build hybrid block spec: produces TransformerBlockSubmodules with
         # per-layer specs (GDN layers get GatedDeltaNet, attention layers get

@@ -372,7 +372,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             else:
                 value = getattr(hf_config, hf_name, None)
                 has_value = hasattr(hf_config, hf_name)
-            if has_value:
+            if has_value and megatron_name not in provider_kwargs:
                 provider_kwargs[megatron_name] = value
 
         # Extract rotary_base via compat function (handles both legacy rope_theta
@@ -469,7 +469,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         # Use specified provider class, defaulting to GPTModelProvider
         provider_class = self.PROVIDER_CLASS if self.PROVIDER_CLASS is not None else GPTModelProvider
-        provider = provider_class(**provider_kwargs)
+        # Filter kwargs to only fields the provider dataclass accepts, so that MLA-only None
+        # values (q_lora_rank, kv_lora_rank, …) are silently dropped for non-MLA providers
+        # while still being passed through for MLA providers that declare them as fields.
+        valid_fields = provider_class.__dataclass_fields__
+        provider = provider_class(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
 
         # All models that flow through the base provider_bridge use RoPE.
         # YARN is already handled above (hf_config_to_provider_kwargs sets
@@ -766,9 +770,17 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if len(grouped_buffers[group_key]) == num_experts:
             merged = torch.stack([grouped_buffers[group_key][i] for i in range(num_experts)], dim=0)
 
-            if group_key in hf_state_dict:
-                expected_shape = hf_state_dict[group_key].shape
-                if merged.shape != expected_shape and merged.transpose(-1, -2).shape == expected_shape:
+            if getattr(task.mapping, "transpose_on_export", False):
+                if group_key in hf_state_dict:
+                    # Adaptive: only transpose when the stacked shape doesn't match the original HF
+                    # shape but the transposed shape does.  This handles configurations where the
+                    # per-expert weight is already in [out, in] (PyTorch) rather than [in, out]
+                    # (TE) layout — e.g. when explicit_expert_comm=False (etp=1, ep=1).
+                    expected = tuple(hf_state_dict[group_key].shape)
+                    transposed = merged.transpose(-1, -2).contiguous()
+                    if tuple(merged.shape) != expected and tuple(transposed.shape) == expected:
+                        merged = transposed
+                else:
                     merged = merged.transpose(-1, -2).contiguous()
 
             del grouped_buffers[group_key]

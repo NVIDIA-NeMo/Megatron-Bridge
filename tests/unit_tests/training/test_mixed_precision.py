@@ -730,6 +730,222 @@ class TestMixedPrecisionRecipes:
         assert ddp_config.bf16 is True
 
 
+class TestGradReduceInFp32AffectsFsdpDtypes:
+    """Tests that grad_reduce_in_fp32 propagates to Megatron-FSDP dtype fields."""
+
+    def test_grad_reduce_in_fp32_sets_fsdp_grads_and_comm_to_fp32_on_init(self):
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=True)
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.float32
+
+    def test_grad_reduce_in_fp32_sets_fsdp_grads_and_comm_to_fp32_via_setattr(self):
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=False)
+        config.megatron_fsdp_main_grads_dtype = torch.bfloat16
+        config.megatron_fsdp_grad_comm_dtype = torch.bfloat16
+
+        config.grad_reduce_in_fp32 = True
+
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.float32
+
+    def test_grad_reduce_in_fp32_false_preserves_custom_fsdp_dtypes(self):
+        config = MixedPrecisionConfig(
+            grad_reduce_in_fp32=False,
+            megatron_fsdp_main_grads_dtype=torch.bfloat16,
+            megatron_fsdp_grad_comm_dtype=torch.bfloat16,
+        )
+        assert config.megatron_fsdp_main_grads_dtype == torch.bfloat16
+        assert config.megatron_fsdp_grad_comm_dtype == torch.bfloat16
+
+    def test_finalize_enforces_grad_reduce_in_fp32(self):
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=False)
+        config.megatron_fsdp_main_grads_dtype = torch.bfloat16
+        config.megatron_fsdp_grad_comm_dtype = torch.bfloat16
+
+        config.grad_reduce_in_fp32 = True
+        config.finalize()
+
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.float32
+
+    def test_grad_reduce_in_fp32_false_sets_fsdp_grads_and_comm_to_none_on_init(self):
+        """When grad_reduce_in_fp32=False at init, fsdp grad dtypes default to None (auto)."""
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=False)
+        assert config.megatron_fsdp_main_grads_dtype is None
+        assert config.megatron_fsdp_grad_comm_dtype is None
+
+    def test_grad_reduce_in_fp32_false_sets_fsdp_grads_and_comm_to_none_via_setattr(self):
+        """Switching grad_reduce_in_fp32 from True to False resets fsdp grad dtypes to None."""
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=True)
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.float32
+
+        config.grad_reduce_in_fp32 = False
+
+        assert config.megatron_fsdp_main_grads_dtype is None
+        assert config.megatron_fsdp_grad_comm_dtype is None
+
+    def test_finalize_enforces_grad_reduce_in_fp32_false(self):
+        """finalize() overrides custom fsdp grad dtypes to None when grad_reduce_in_fp32=False."""
+        config = MixedPrecisionConfig(
+            grad_reduce_in_fp32=False,
+            megatron_fsdp_main_grads_dtype=torch.bfloat16,
+            megatron_fsdp_grad_comm_dtype=torch.bfloat16,
+        )
+        assert config.megatron_fsdp_main_grads_dtype == torch.bfloat16
+        assert config.megatron_fsdp_grad_comm_dtype == torch.bfloat16
+
+        config.finalize()
+
+        assert config.megatron_fsdp_main_grads_dtype is None
+        assert config.megatron_fsdp_grad_comm_dtype is None
+
+    def test_grad_reduce_in_fp32_toggle_round_trip(self):
+        """Toggling grad_reduce_in_fp32 True->False->True updates fsdp dtypes correctly."""
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=True)
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.float32
+
+        config.grad_reduce_in_fp32 = False
+        assert config.megatron_fsdp_main_grads_dtype is None
+        assert config.megatron_fsdp_grad_comm_dtype is None
+
+        config.grad_reduce_in_fp32 = True
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.float32
+
+    def test_grad_reduce_in_fp32_does_not_touch_main_params_dtype(self):
+        config = MixedPrecisionConfig(
+            grad_reduce_in_fp32=True,
+            megatron_fsdp_main_params_dtype=torch.bfloat16,
+        )
+        assert config.megatron_fsdp_main_params_dtype == torch.bfloat16
+
+    def test_grad_reduce_in_fp32_false_does_not_touch_main_params_dtype(self):
+        config = MixedPrecisionConfig(
+            grad_reduce_in_fp32=False,
+            megatron_fsdp_main_params_dtype=torch.bfloat16,
+        )
+        assert config.megatron_fsdp_main_params_dtype == torch.bfloat16
+
+
+class TestFsdpDtypeStringConversion:
+    """Tests that string values for megatron_fsdp_* fields are converted to torch.dtype."""
+
+    @pytest.mark.parametrize(
+        "str_val, expected_dtype",
+        [
+            ("fp32", torch.float32),
+            ("bf16", torch.bfloat16),
+            ("fp16", torch.float16),
+            ("auto", None),
+        ],
+    )
+    def test_main_params_dtype_string_conversion(self, str_val, expected_dtype):
+        config = MixedPrecisionConfig(megatron_fsdp_main_params_dtype=str_val)
+        assert config.megatron_fsdp_main_params_dtype is expected_dtype
+
+    @pytest.mark.parametrize(
+        "str_val, expected_dtype",
+        [
+            ("fp32", torch.float32),
+            ("bf16", torch.bfloat16),
+            ("fp16", torch.float16),
+            ("auto", None),
+        ],
+    )
+    def test_main_grads_dtype_string_conversion(self, str_val, expected_dtype):
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=False, megatron_fsdp_main_grads_dtype=str_val)
+        assert config.megatron_fsdp_main_grads_dtype is expected_dtype
+
+    @pytest.mark.parametrize(
+        "str_val, expected_dtype",
+        [
+            ("fp32", torch.float32),
+            ("bf16", torch.bfloat16),
+            ("fp16", torch.float16),
+            ("auto", None),
+        ],
+    )
+    def test_grad_comm_dtype_string_conversion(self, str_val, expected_dtype):
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=False, megatron_fsdp_grad_comm_dtype=str_val)
+        assert config.megatron_fsdp_grad_comm_dtype is expected_dtype
+
+    def test_setattr_string_conversion(self):
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=False)
+        config.megatron_fsdp_main_params_dtype = "bf16"
+        config.megatron_fsdp_main_grads_dtype = "fp16"
+        config.megatron_fsdp_grad_comm_dtype = "auto"
+
+        assert config.megatron_fsdp_main_params_dtype == torch.bfloat16
+        assert config.megatron_fsdp_main_grads_dtype == torch.float16
+        assert config.megatron_fsdp_grad_comm_dtype is None
+
+    def test_finalize_rejects_unknown_string(self):
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=False)
+        object.__setattr__(config, "megatron_fsdp_main_params_dtype", "int8")
+
+        with pytest.raises(ValueError, match="Could not map int8 to torch.dtype"):
+            config.finalize()
+
+    def test_torch_dtype_values_are_not_modified(self):
+        config = MixedPrecisionConfig(
+            megatron_fsdp_main_params_dtype=torch.bfloat16,
+            megatron_fsdp_main_grads_dtype=torch.float16,
+            megatron_fsdp_grad_comm_dtype=torch.float32,
+        )
+        assert config.megatron_fsdp_main_params_dtype == torch.bfloat16
+        assert config.megatron_fsdp_main_grads_dtype == torch.float16
+        assert config.megatron_fsdp_grad_comm_dtype == torch.float32
+
+
+class TestProvideDistributedModelMixedPrecisionConfig:
+    """Test that mixed_precision_config is forwarded through provide_distributed_model."""
+
+    @patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")
+    @patch("megatron.bridge.models.model_provider.get_model")
+    @patch("megatron.bridge.models.model_provider.torch.distributed")
+    @patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True)
+    def test_mixed_precision_config_forwarded_to_get_model(self, mock_ps_init, mock_dist, mock_get_model, mock_use_pg):
+        from megatron.core.transformer.module import MegatronModule
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        from megatron.bridge.models.model_provider import ModelProviderMixin
+
+        class _Module(MegatronModule):
+            def __init__(self):
+                super().__init__(TransformerConfig(num_layers=1, hidden_size=1, num_attention_heads=1))
+
+        class _Provider(ModelProviderMixin):
+            def provide(self, pre_process=None, post_process=None, vp_stage=None):
+                return _Module()
+
+        mock_dist.is_initialized.return_value = True
+        mock_get_model.return_value = [_Module()]
+
+        class _PG:
+            def __init__(self):
+                self.pp = object()
+                self.tp = object()
+                self.cp = object()
+                self.dp = object()
+                self.dp_cp = object()
+                self.expt_dp = object()
+
+        mock_use_pg.return_value = _PG()
+
+        mp_config = MixedPrecisionConfig(bf16=True, params_dtype=torch.bfloat16)
+        provider = _Provider()
+        provider.provide_distributed_model(
+            ddp_config=DistributedDataParallelConfig(),
+            mixed_precision_config=mp_config,
+            wrap_with_ddp=False,
+        )
+
+        mock_get_model.assert_called_once()
+        assert mock_get_model.call_args.kwargs["mixed_precision_config"] is mp_config
+
+
 class TestRegisterAndGetMixedPrecisionConfig:
     """Tests for the `register` decorator and `get_mixed_precision_config` helper."""
 
