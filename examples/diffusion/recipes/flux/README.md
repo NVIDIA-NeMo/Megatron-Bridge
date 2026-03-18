@@ -1,6 +1,6 @@
 # FLUX Examples
 
-This directory contains example scripts for the FLUX diffusion model (text-to-image) with Megatron-Bridge: checkpoint conversion, inference, pretraining, and fine-tuning.
+This directory contains example scripts for the FLUX diffusion model (text-to-image) with Megatron-Bridge: checkpoint conversion and inference. Pretraining and fine-tuning use the generic `scripts/training/run_recipe.py` entry point.
 
 All commands below assume you run them from the **Megatron-Bridge repository root** unless noted. Use `uv run` when you need the project’s virtualenv (e.g. `uv run python ...`, `uv run torchrun ...`).
 
@@ -90,54 +90,73 @@ uv run python examples/diffusion/recipes/flux/inference_flux.py \
 
 ## 3. Pretraining
 
-The script [pretrain_flux.py](pretrain_flux.py) runs FLUX pretraining with the `pretrain_config()` recipe. Configuration can be overridden with Hydra-style CLI keys.
+Run FLUX pretraining with the generic **run_recipe** script (same entry point as for LLM training).
 
-**Recipe:** [megatron.bridge.diffusion.recipes.flux.flux.pretrain_config](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/diffusion/recipes/flux/flux.py)
+**Recipe:** [megatron.bridge.diffusion.recipes.flux.flux.flux_12b_pretrain_config](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/diffusion/recipes/flux/flux.py)
 
-### Quick run with mock data (single node, 8 GPUs)
+From the **Megatron-Bridge repository root**:
+
+**Mock data (no dataset path):**
 
 ```bash
-uv run torchrun --nproc_per_node=8 examples/diffusion/recipes/flux/pretrain_flux.py --mock
+uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe flux_12b_pretrain_config \
+  --step_func flux_step
 ```
 
-### With CLI overrides only
+**Real data (WebDataset path):** Set `dataset.path` so the recipe uses real data instead of mock:
 
 ```bash
-uv run torchrun --nproc_per_node=8 examples/diffusion/recipes/flux/pretrain_flux.py --mock \
-  model.tensor_model_parallel_size=4 \
+uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe flux_12b_pretrain_config \
+  --step_func flux_step \
+  dataset.path=${WORKSPACE}/data/my_flux_wds/
+```
+
+**With CLI overrides (iters, LR, batch size, etc.):**
+
+```bash
+uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe flux_12b_pretrain_config \
+  --step_func flux_step \
+  dataset.path=${WORKSPACE}/data/my_flux_wds/ \
   train.train_iters=10000 \
+  train.global_batch_size=16 \
   optimizer.lr=1e-4
 ```
 
+**Small datasets (e.g. &lt; 100 examples):** Use a smaller `dataset.num_workers` so each DataLoader worker gets samples (e.g. `dataset.num_workers=2`), and set `train.global_batch_size` appropriately (e.g. 8 for 64 examples on 8 GPUs).
 
-### Flow matching options
-
-```bash
-uv run torchrun --nproc_per_node=8 examples/diffusion/recipes/flux/pretrain_flux.py --mock \
-  --timestep-sampling logit_normal \
-  --flow-shift 1.0 \
-  --use-loss-weighting
-```
-
-Before pretraining with real data, set the dataset in the recipe or in your YAML/CLI (e.g. `data_paths`, dataset blend, and cache paths). For data preprocessing, see the Megatron-Bridge data tutorials.
+For data preprocessing and WebDataset format, see the Megatron-Bridge data tutorials.
 
 ---
 
 ## 4. Fine-Tuning
 
-The script [finetune_flux.py](finetune_flux.py) fine-tunes a pretrained FLUX checkpoint (Megatron format). It loads model weights and resets optimizer and step count; config can be overridden via YAML and CLI as with pretraining.
+Run FLUX fine-tuning with the generic **run_recipe** script. Set the pretrained checkpoint via the **checkpoint.pretrained_checkpoint** CLI override (path to the Megatron checkpoint directory or a specific iteration, e.g. `.../flux.1-dev` or `.../flux.1-dev/iter_0000000`):
 
-Point `--load-checkpoint` at the **Megatron checkpoint directory** (either the base dir, e.g. `.../flux.1-dev`, or a specific iteration, e.g. `.../flux.1-dev/iter_0000000`):
+**Resume / finetune from a checkpoint:**
 
 ```bash
-uv run torchrun --nproc_per_node=8 examples/diffusion/recipes/flux/finetune_flux.py \
-  --load-checkpoint ${WORKSPACE}/checkpoints/flux/flux.1-dev/iter_0000000 \
-  --mock
+uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe flux_12b_finetune_config \
+  --step_func flux_step \
+  checkpoint.pretrained_checkpoint=${WORKSPACE}/checkpoints/flux/flux.1-dev/iter_0000000
 ```
 
-**Note**: If you pass a path that ends with an `iter_XXXXXXX` directory, the script loads that iteration; otherwise it uses the latest iteration under the given path.
+**With real data and overrides:**
 
-**Note**: Loss might explode if you are using a mock dataset.
+```bash
+uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe flux_12b_finetune_config \
+  --step_func flux_step \
+  checkpoint.pretrained_checkpoint=${WORKSPACE}/checkpoints/flux/flux.1-dev/iter_0000000 \
+  dataset.path=${WORKSPACE}/data/my_flux_wds/ \
+  train.global_batch_size=8 \
+  optimizer.lr=5e-6
+```
+
+**Note:** Loss might be exploded if you attempt to finetune a pretrained checkpoint on mock dataset for testing purpose.
 
 ---
 
@@ -150,9 +169,9 @@ uv run torchrun --nproc_per_node=8 examples/diffusion/recipes/flux/finetune_flux
    Run [inference_flux.py](inference_flux.py) with `--flux_ckpt` (Megatron `iter_*` path), `--vae_ckpt`, and `--prompts`.
 
 3. **Pretraining**  
-   Run [pretrain_flux.py](pretrain_flux.py) with `--mock` or your data config; optionally use `--config-file` and CLI overrides.
+   Run `scripts/training/run_recipe.py --recipe flux_12b_pretrain_config --step_func flux_step` (optionally with `dataset.path=...` for real data and CLI overrides).
 
 4. **Fine-Tuning**  
-   Run [finetune_flux.py](finetune_flux.py) with `--load-checkpoint` set to a Megatron checkpoint (import or pretrain/finetune output), then `--mock` or your data and overrides.
+   Run `scripts/training/run_recipe.py --recipe flux_12b_finetune_config --step_func flux_step checkpoint.pretrained_checkpoint=<path>` (optionally with `dataset.path=...` and overrides).
 
-For more details, see the docstrings in each script and the recipe in `src/megatron/bridge/diffusion/recipes/flux/flux.py`.
+For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/flux/flux.py` and `scripts/training/run_recipe.py`.

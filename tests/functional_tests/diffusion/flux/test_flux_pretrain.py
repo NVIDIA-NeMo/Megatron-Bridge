@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional smoke tests for Mcore FLUX pretrain mock runs."""
+"""Functional smoke tests for Mcore FLUX pretrain mock runs.
+
+Uses the generic run_recipe.py entry point with flux_12b_pretrain_config and flux_step.
+Mock/synthetic data is used when dataset.path is not set (no --mock flag).
+"""
 
 import os
 import subprocess
@@ -29,16 +33,13 @@ class TestMcoreFluxPretrain:
         Functional test for FLUX pretrain recipe with mock data.
 
         This test verifies that the FLUX pretrain recipe can run successfully
-        in mock mode with minimal configuration, ensuring:
+        via run_recipe.py with minimal configuration (mock data when no dataset.path), ensuring:
         1. The distributed training can start without errors
         2. Model initialization works correctly
         3. Forward/backward passes complete successfully
         4. The training loop executes without crashes
         """
-        # Set up temporary directories for dataset and checkpoints
-        dataset_path = os.path.join(tmp_path, "mock_dataset")
         checkpoint_dir = os.path.join(tmp_path, "checkpoints")
-        os.makedirs(dataset_path, exist_ok=True)
         os.makedirs(checkpoint_dir, exist_ok=True)
 
         # Build the command for the mock run
@@ -54,12 +55,11 @@ class TestMcoreFluxPretrain:
             "--data-file=/opt/Megatron-Bridge/.coverage",
             "--source=/opt/Megatron-Bridge/",
             "--parallel-mode",
-            "examples/diffusion/recipes/flux/pretrain_flux.py",
-            "--mock",
-            "--timestep-sampling",
-            "logit_normal",
-            "--scheduler-steps",
-            "1000",
+            "scripts/training/run_recipe.py",
+            "--recipe",
+            "flux_12b_pretrain_config",
+            "--step_func",
+            "flux_step",
             "model.tensor_model_parallel_size=1",
             "model.pipeline_model_parallel_size=1",
             "model.context_parallel_size=1",
@@ -100,7 +100,7 @@ class TestMcoreFluxPretrain:
             pytest.fail("FLUX pretrain mock run exceeded timeout of 1800 seconds (30 minutes)")
         except subprocess.CalledProcessError as e:
             result = e
-            pytest.fail(f"FLUX pretrain mock run failed with return code {e.returncode}")
+            pytest.fail(f"FLUX pretrain mock run failed with return code {e.returncode}. Check STDOUT/STDERR above.")
         finally:
             # Always print output for debugging
             if result is not None:
