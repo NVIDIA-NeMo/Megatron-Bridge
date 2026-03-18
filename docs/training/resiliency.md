@@ -107,6 +107,26 @@ Async save is valuable when:
 - Other formats (zarr, fsdp_dtensor) do not support async save
 - The persistent checkpoint worker must be enabled
 
+## Local Checkpointing
+
+Local checkpointing saves checkpoint data to node-local storage first, then
+replicates across a configurable number of nodes. This avoids the latency of
+writing to shared network storage during the critical path.
+
+### When to Use It
+
+Local checkpointing is useful when:
+
+- shared-storage checkpoint writes are the bottleneck in your checkpoint interval
+- you want faster recovery from node failures without depending on network filesystem availability
+- training at scale where network-storage contention is common
+
+### Stable Constraints
+
+- Node-local storage must have sufficient capacity for at least one checkpoint
+- Replication degree must be configured to survive the expected failure rate
+- Requires compatible checkpoint format (see `skills/resiliency/SKILL.md`)
+
 ## Re-run State Machine
 
 The re-run state machine is an experimental feature for attributing unexpected

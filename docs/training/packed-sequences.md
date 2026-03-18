@@ -7,7 +7,7 @@ fine-tuning and PEFT optimization rather than a general pretraining feature.
 
 This page is the stable overview for what packed sequences are, when to use
 them, and which constraints are durable. For operational setup, code anchors,
-and verification commands, see `skills/perf-techniques/sequence-packing.md`.
+and verification commands, see `skills/perf-techniques/sequence-packing/SKILL.md`.
 
 ## What It Is
 

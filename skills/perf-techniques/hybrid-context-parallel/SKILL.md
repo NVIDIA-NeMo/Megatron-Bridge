@@ -125,21 +125,30 @@ cp_comm_type: Optional[Union[str, List[str]]] = None
 
 ## Verification
 
-Verify the supported MPU path:
+No dedicated Bridge end-to-end test exists yet for HCP (see `card.yaml`
+`follow_up_validation`). Use the existing unit tests and log inspection instead.
+
+Run the decentralized-PG unit test to confirm the flat-CP behavior is preserved:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 uv run python -m torch.distributed.run --nproc_per_node=4 \
-  scripts/verify_hybrid_context_parallel.py --mode mpu
+uv run python -m pytest tests/unit_tests/training/test_decentralized_pg.py -q
 ```
 
-Verify the unsupported decentralized-PG path stays flat:
+For a manual smoke check, launch a 4-GPU run with a small recipe and
+`cp_comm_type=a2a+p2p` plus `hierarchical_context_parallel_sizes=[2,2]`:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3 uv run python -m torch.distributed.run --nproc_per_node=4 \
-  scripts/verify_hybrid_context_parallel.py --mode decentralized
+  scripts/training/run_recipe.py \
+  --recipe llama32_1b_pretrain_config \
+  model.context_parallel_size=4 \
+  model.cp_comm_type=a2a+p2p \
+  "model.hierarchical_context_parallel_sizes=[2,2]" \
+  train.train_iters=2
 ```
 
 Success criteria:
 
-- MPU mode prints `HCP_MPU_GROUPS_READY`
-- decentralized mode prints `HCP_DECENTRALIZED_GROUPS_FLAT`
+- Logs show `HIERARCHICAL_CONTEXT_PARALLEL_GROUPS` being created
+- Training completes at least one step without error
+- If you only see `CONTEXT_PARALLEL_GROUP`, HCP is not active

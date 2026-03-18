@@ -53,7 +53,7 @@ evidence:
   - src/megatron/bridge/training/config.py
   - src/megatron/bridge/training/model_load_save.py
   - docs/performance-guide.md
-  - scripts/verify_hybrid_context_parallel.py
+  - tests/unit_tests/training/test_decentralized_pg.py
   - 3rdparty/Megatron-LM/megatron/core/model_parallel_config.py
   - 3rdparty/Megatron-LM/megatron/core/parallel_state.py
   - 3rdparty/Megatron-LM/megatron/core/extensions/transformer_engine.py

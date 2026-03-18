@@ -14,7 +14,7 @@ validation_status:
   megatron_fsdp_performance_claims:
     - doc_only
   torch_fsdp2_runtime:
-    - unclear
+    - known_failure
 feature_meaning:
   megatron_fsdp: >
     Megatron-Core custom FSDP path enabled through use_megatron_fsdp and

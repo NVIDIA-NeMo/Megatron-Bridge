@@ -43,6 +43,7 @@ Required constraints:
 - `expert_model_parallel_size > 1`
 - `num_moe_experts > 1`
 - `moe_token_dispatcher_type in {"alltoall", "flex"}`
+- `moe_shared_expert_overlap = False`
 - base precision is BF16 or FP16
 - PyTorch `>= 2.6.0`
 - if `PP > 1`, set `virtual_pipeline_model_parallel_size`
@@ -105,6 +106,6 @@ uv run python -m pytest \
 
 Success criteria:
 
-- Pytest reports `41 passed`
+- Pytest reports both targeted files passing with zero failures
 - `test_comm_overlap.py` covers MoE overlap and delayed-wgrad validation
 - `test_deepep.py` covers DeepEP or HybridEP helper activation and GPU gating

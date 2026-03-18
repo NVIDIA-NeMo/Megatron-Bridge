@@ -5,7 +5,7 @@ parallelism, especially the `a2a+p2p` transport path and
 `hierarchical_context_parallel_sizes`.
 
 For operational setup, code anchors, and verification commands, see
-`skills/perf-techniques/hybrid-context-parallel.md`.
+`skills/perf-techniques/hybrid-context-parallel/SKILL.md`.
 
 ## What It Is
 

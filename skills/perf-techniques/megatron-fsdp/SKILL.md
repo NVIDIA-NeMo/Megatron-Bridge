@@ -29,6 +29,7 @@ cfg = llama3_8b_pretrain_config()
 cfg.dist.use_megatron_fsdp = True
 cfg.ddp.use_megatron_fsdp = True
 cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+cfg.ddp.average_in_collective = False
 cfg.checkpoint.ckpt_format = "fsdp_dtensor"
 cfg.checkpoint.save = "/tmp/fsdp_ckpts"
 cfg.checkpoint.load = None

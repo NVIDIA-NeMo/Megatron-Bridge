@@ -51,7 +51,7 @@ cfg.rng.te_rng_tracker = True                           # required
 
 ### Key constraints
 
-- `use_te_rng_tracker` must be `True` when `cuda_graph_impl != "none"`.
+- `cfg.rng.te_rng_tracker` must be `True` when `cuda_graph_impl != "none"`.
 - `full_iteration` scope requires `cuda_graph_impl = "local"` and
   `rerun_state_machine.check_for_nan_in_loss = False`.
 - MoE models with token-dropless routing have limited graph support

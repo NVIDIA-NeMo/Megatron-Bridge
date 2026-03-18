@@ -205,7 +205,7 @@ parallel_state.initialize_model_parallel(
    Always profile the first iteration to check memory and communication.
 
 7. `CUDA_DEVICE_MAX_CONNECTIONS` and related env vars interact with
-   overlap settings. See `skills/perf-techniques/tp-dp-comm-overlap.md`.
+   overlap settings. See `skills/perf-techniques/tp-dp-comm-overlap/SKILL.md`.
 
 ## Verification
 

@@ -43,6 +43,11 @@ cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
 cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
 ```
 
+**Note:** `pad_cu_seqlens = True` also requires a metadata JSON file alongside
+the packed dataset (asserted in `src/megatron/bridge/data/datasets/sft.py`).
+Custom packed datasets that omit the metadata file will hit an assertion at
+dataset initialization.
+
 In-batch packing for VLM finetuning:
 
 ```python
