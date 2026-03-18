@@ -125,6 +125,9 @@ class Qwen25VLModel(MegatronModule):
         self.get_image_features = types.MethodType(Qwen2_5_VLModel.get_image_features, self)
         self.get_video_features = types.MethodType(Qwen2_5_VLModel.get_video_features, self)
         self.get_rope_index = types.MethodType(Qwen2_5_VLModel.get_rope_index, self)
+        # get_vision_position_ids is only available in transformers 5.3.0+
+        if is_transformers_min_version("5.3.0"):
+            self.get_vision_position_ids = types.MethodType(Qwen2_5_VLModel.get_vision_position_ids, self)
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
@@ -141,6 +144,7 @@ class Qwen25VLModel(MegatronModule):
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
+        mm_token_type_ids: Optional[torch.IntTensor] = None,
         labels: Tensor = None,
         inference_context: BaseInferenceContext = None,
         packed_seq_params: PackedSeqParams = None,
@@ -196,13 +200,24 @@ class Qwen25VLModel(MegatronModule):
         # Each stage has input_ids and visual grid info from the data iterator
         # This avoids any broadcasting overhead
         hf_attention_mask = None
-        position_ids, rope_deltas = self.get_rope_index(
-            input_ids,
-            image_grid_thw,
-            video_grid_thw,
-            second_per_grid_ts=second_per_grid_ts,
-            attention_mask=hf_attention_mask,
-        )
+        # In transformers 5.3.0+, get_rope_index requires mm_token_type_ids as the second argument
+        if is_transformers_min_version("5.3.0"):
+            position_ids, rope_deltas = self.get_rope_index(
+                input_ids,
+                mm_token_type_ids,
+                image_grid_thw,
+                video_grid_thw,
+                second_per_grid_ts=second_per_grid_ts,
+                attention_mask=hf_attention_mask,
+            )
+        else:
+            position_ids, rope_deltas = self.get_rope_index(
+                input_ids,
+                image_grid_thw,
+                video_grid_thw,
+                second_per_grid_ts=second_per_grid_ts,
+                attention_mask=hf_attention_mask,
+            )
 
         outputs = self.language_model.forward(
             input_ids=None,
