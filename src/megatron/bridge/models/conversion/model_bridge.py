@@ -372,7 +372,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             else:
                 value = getattr(hf_config, hf_name, None)
                 has_value = hasattr(hf_config, hf_name)
-            if has_value and megatron_name not in provider_kwargs:
+            if has_value and value is not None:
                 provider_kwargs[megatron_name] = value
 
         # Extract rotary_base via compat function (handles both legacy rope_theta
@@ -771,17 +771,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             merged = torch.stack([grouped_buffers[group_key][i] for i in range(num_experts)], dim=0)
 
             if getattr(task.mapping, "transpose_on_export", False):
-                if group_key in hf_state_dict:
-                    # Adaptive: only transpose when the stacked shape doesn't match the original HF
-                    # shape but the transposed shape does.  This handles configurations where the
-                    # per-expert weight is already in [out, in] (PyTorch) rather than [in, out]
-                    # (TE) layout — e.g. when explicit_expert_comm=False (etp=1, ep=1).
-                    expected = tuple(hf_state_dict[group_key].shape)
-                    transposed = merged.transpose(-1, -2).contiguous()
-                    if tuple(merged.shape) != expected and tuple(transposed.shape) == expected:
-                        merged = transposed
-                else:
-                    merged = merged.transpose(-1, -2).contiguous()
+                merged = merged.transpose(-1, -2).contiguous()
 
             del grouped_buffers[group_key]
             return {group_key: merged}
@@ -1077,7 +1067,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 task,
                 converted_weights_dict,
                 hf_state_dict,
-            )
+            )  # dict will be none except for one expert;
+            # All ranks get the full tensor
 
             adapter_tasks = None
             if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
@@ -1085,6 +1076,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 adapter_tasks = adapter_tasks_by_base.get(task_global_base_prefix)
             if merge_adapter_weights and adapter_tasks:
                 adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                # Merge LoRA adapter weights back into the base tensor for HF export
                 converted_weights_dict = self._merge_lora_adapter_weights(
                     megatron_model,
                     converted_weights_dict,
@@ -1100,17 +1092,21 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 # Handle tied embeddings case
                 # TODO(yuya): fix this hard coded naming
                 if embeddings_are_tied and hf_name == "model.embed_tokens.weight":
+                    # Yield the embedding weight
                     yield HFWeightTuple(hf_name, final_tensor)
 
+                    # Also yield as lm_head.weight if it's expected
                     if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
                         expected_keys = hf_pretrained.state.source.get_all_keys()
                         if "lm_head.weight" in expected_keys:
                             yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
                 elif embeddings_are_tied and hf_name == "lm_head.weight":
+                    # This should not happen when embeddings are tied - assert error
                     raise ValueError(
                         "Encountered lm_head.weight when embeddings are tied. This indicates a mapping error."
                     )
                 else:
+                    # Regular case - yield the tensor normally
                     yield HFWeightTuple(hf_name, final_tensor)
 
     def dtype_from_hf(self, config, default=None):

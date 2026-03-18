@@ -64,7 +64,6 @@ IGNORE_PRECISION_PARAMS = [
     "e_score_correction_bias",
     "A_log",
     "linear_attn.norm.weight",
-    "dt_bias",
 ]
 
 
@@ -167,9 +166,9 @@ def main(
             original_param = bridge.hf_pretrained.state[name]
             compare_param = param
             compare_original = original_param
-            # Cast to float32 for params with known dtype mismatches between Megatron and HF
-            # (e.g. Megatron keeps expert_bias in float32 while HF may use bfloat16)
-            if any(p in name for p in IGNORE_PRECISION_PARAMS) or compare_param.dtype != compare_original.dtype:
+            # Cast to float32 when dtypes differ (e.g. fp8 HF weights vs bf16 Megatron,
+            # or Megatron keeping expert_bias in float32 while HF uses bfloat16)
+            if compare_param.dtype != compare_original.dtype or any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
             match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
