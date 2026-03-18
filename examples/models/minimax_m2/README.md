@@ -20,7 +20,6 @@ Edit the variables at the top of `slurm_conversion.sh`:
 
 ```bash
 CONTAINER_IMAGE="/path/to/container.sqsh"
-CONTAINER_MOUNTS="/path/to/project:/opt/Megatron-Bridge"
 # Optional:
 export HF_TOKEN="hf_your_token_here"
 export HF_HOME="/path/to/shared/HF_HOME"
@@ -58,7 +57,6 @@ Edit the variables at the top of `slurm_inference.sh`:
 
 ```bash
 CONTAINER_IMAGE="/path/to/container.sqsh"
-CONTAINER_MOUNTS="/path/to/project:/opt/Megatron-Bridge"
 export HF_TOKEN="hf_your_token_here"
 ```
 
