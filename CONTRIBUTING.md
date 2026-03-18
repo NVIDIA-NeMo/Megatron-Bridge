@@ -326,10 +326,10 @@ Functional tests are placed in tiered launcher scripts inside [`tests/functional
 | Tier | Prefix | Trigger | Purpose |
 |------|--------|---------|---------|
 | **L0** | `L0_Launch_*.sh` | Every PR, main push, schedule | Core smoke tests — must be fast and stable |
-| **L1** | `L1_Launch_*.sh` | Main push + schedule (not PRs) | Broader model/recipe coverage |
+| **L1** | `L1_Launch_*.sh` | Main push + schedule; PRs labeled `needs-more-tests` | Broader model/recipe coverage |
 | **L2** | `L2_Launch_*.sh` | Schedule / `workflow_dispatch` only | VL models, checkpoint conversion, heavy quantization |
 
-When adding a new launcher script, choose the appropriate tier and **also update** [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the corresponding `cicd-functional-tests-l{0,1,2}` job matrix:
+When adding a new launcher script, always start with the **L0** tier so it runs on every PR. A maintainer will adjust the tier later if the test is too slow or better suited for nightly coverage. You must **also update** [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the corresponding job matrix:
 
 ```yaml
 # Example: adding an L1 test
@@ -372,9 +372,16 @@ uv run ruff format .
 Note: If `ruff` is missing, please follow the [installation](#local-workstation) guide.
 
 
-## 📄 Documentation Requirement
+## 📄 Documentation and Test Requirements
 
-**Important**: All new key features (e.g., enabling a new model, enabling a new parallelism strategy) must include documentation update (either a new doc or updating an existing one). This document update should:
+### All Features
+
+**Every feature PR must evaluate whether documentation and tests need to be added or updated.** This applies to all changes, not just large features. Before submitting a PR, check:
+
+- [ ] **Docs**: Does this change need a new doc page, or does an existing doc need updating?
+- [ ] **Tests**: Does this change need new unit or functional tests, or do existing tests need updating?
+
+For new key features (e.g., enabling a new model, enabling a new parallelism strategy), documentation is **required**. The documentation should:
 
 - Explain the motivation and purpose of the feature
 - Outline the technical approach and architecture
@@ -387,6 +394,16 @@ This ensures that all significant changes are well-thought-out and properly docu
 2. **Developer Extensibility**: Enables developers to understand the internal architecture and implementation details, making it easier to modify, extend, or adapt the code for their specific use cases
 
 Quality documentation is essential for both the usability of Megatron-Bridge and its ability to be customized by the community.
+
+### Refactoring PRs
+
+Refactoring PRs that rename symbols, move files, or change paths are high risk for creating stale references. When a refactor changes any public name or path, you **must** check whether the following need corresponding updates:
+
+- [ ] **Docs**: Any docs that reference the old names, paths, config keys, or CLI arguments
+- [ ] **Docstrings**: Docstrings in the codebase that mention the old names or paths
+- [ ] **Scripts**: Example and training scripts under `scripts/` that import or reference the old names or paths
+
+A refactor PR that renames something without updating all references will break users silently. Reviewers should verify these are addressed before approving.
 
 ## ✨ Code Quality
 
