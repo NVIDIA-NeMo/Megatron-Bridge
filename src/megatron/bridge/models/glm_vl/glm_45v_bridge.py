@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict
-
 import torch
-from megatron.core import parallel_state
 from transformers import Glm4vMoeForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -34,7 +31,6 @@ from megatron.bridge.models.glm.glm_moe_mappings import (
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 @MegatronModelBridge.register_bridge(source=Glm4vMoeForConditionalGeneration, target=GLM45VModel)
@@ -239,54 +235,3 @@ class GLM45VBridge(MegatronModelBridge):
             return ".weight"
 
         return ""
-
-    def maybe_modify_converted_hf_weight(
-        self,
-        task,
-        converted_weights_dict: Dict[str, torch.Tensor],
-        hf_state_dict,
-    ) -> Dict[str, torch.Tensor]:
-        if not isinstance(task.mapping, (GLMExpertGateUpProjMapping, GLMExpertDownProjMapping)):
-            return converted_weights_dict
-
-        if not converted_weights_dict:
-            return {}
-
-        text_config = getattr(self._hf_config, "text_config", self._hf_config)
-        num_experts = text_config.n_routed_experts
-        ep_size = parallel_state.get_expert_model_parallel_world_size()
-        experts_per_rank = num_experts // ep_size
-
-        try:
-            local_expert_number = extract_expert_number_from_param(task.param_name) % experts_per_rank
-        except ValueError:
-            return converted_weights_dict
-
-        if not hasattr(self, "hf_weights_cache"):
-            self.hf_weights_cache = {}
-
-        for key, value in converted_weights_dict.items():
-            if key not in self.hf_weights_cache:
-                self.hf_weights_cache[key] = {}
-
-            if ep_size == 1:
-                self.hf_weights_cache[key][local_expert_number] = value
-            else:
-                if value.shape[0] != ep_size:
-                    raise ValueError(f"Expected EP dim {ep_size} for {key}, got {value.shape}.")
-                for i, exp_val in enumerate(value):
-                    global_expert_number = local_expert_number + (i * experts_per_rank)
-                    self.hf_weights_cache[key][global_expert_number] = exp_val
-
-            if len(self.hf_weights_cache[key]) == num_experts:
-                merged = torch.stack([self.hf_weights_cache[key][i] for i in range(num_experts)], dim=0)
-                if key in hf_state_dict:
-                    expected = hf_state_dict[key].shape
-                    if merged.shape != expected and merged.transpose(-1, -2).shape == expected:
-                        merged = merged.transpose(-1, -2).contiguous()
-                del self.hf_weights_cache[key]
-                return {key: merged}
-
-            return {}
-
-        return {}
