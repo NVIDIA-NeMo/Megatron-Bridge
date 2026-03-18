@@ -187,9 +187,7 @@ def pack_batch_sequences(
 
     # Concatenate sequences (remove padding)
     packed_tokens = torch.zeros(1, total_len, dtype=tokens.dtype, device=device)
-    packed_labels = (
-        torch.zeros(1, total_len, dtype=labels.dtype, device=device) if labels is not None else None
-    )
+    packed_labels = torch.zeros(1, total_len, dtype=labels.dtype, device=device) if labels is not None else None
     packed_loss_mask = (
         torch.zeros(1, total_len, dtype=loss_mask.dtype, device=device) if loss_mask is not None else None
     )
