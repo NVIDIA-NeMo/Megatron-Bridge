@@ -31,7 +31,7 @@ from transformers import AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
 
 
 class SingleBatchIterator:
@@ -167,23 +167,10 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
-    def _disable_mtp(m):
-        """Disable MTP for inference (MTP is only used during training).
-
-        Uses mtp_num_layers=0 (not None) so that range(mtp_num_layers) in
-        Megatron-Core's MTP forward is a no-op empty loop rather than crashing
-        with TypeError: 'NoneType' object cannot be interpreted as an integer.
-        """
-        if hasattr(m, "config"):
-            m.config.mtp_num_layers = 0
-            m.config.grad_scale_func = None
-        if hasattr(m, "mtp_process"):
-            m.mtp_process = False
-
     model = [m.cuda() for m in model]
     for m in model:
         m.eval()
-        _disable_mtp(m)
+        disable_mtp_for_inference(m)
 
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(

@@ -121,7 +121,7 @@ from PIL import Image
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
 
 
 # Cosine similarity threshold: require at least 98% similarity (2% tolerance)
@@ -616,10 +616,9 @@ def _load_megatron_model(args):
         model_provider.finalize()
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
+    # Workaround: disable MTP for inference (causes hangs on NCCL collectives)
     for m in megatron_model:
-        if hasattr(m, "mtp_process"):
-            m.mtp_process = False
-        m.config.grad_scale_func = None
+        disable_mtp_for_inference(m)
 
     model_components = [m.eval() for m in megatron_model]
 
@@ -737,9 +736,11 @@ def compare_models_one_step(args) -> None:
         if hf_logits is not None:
             hf_logits = hf_logits.float()
 
+        # Create tensors for broadcasting if they don't exist on non-rank-0
         if hf_next_token is None:
             hf_next_token = torch.zeros(1, device=input_ids.device, dtype=torch.long)
         if hf_logits is None:
+            # Get vocab size from tokenizer for proper tensor size
             vocab_size = getattr(
                 tokenizer, "vocab_size", len(tokenizer.vocab) if hasattr(tokenizer, "vocab") else 32000
             )

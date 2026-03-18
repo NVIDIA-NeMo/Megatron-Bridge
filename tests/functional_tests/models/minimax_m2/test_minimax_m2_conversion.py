@@ -14,6 +14,7 @@
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -134,8 +135,10 @@ class TestMiniMaxM2Conversion:
         test_output_dir = tmp_path / f"minimax_m2_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
+        repo_root = Path(__file__).resolve().parents[4]
+        coverage_file = tmp_path / ".coverage"
         cmd = [
-            "python",
+            sys.executable,
             "-m",
             "torch.distributed.run",
             "--nproc_per_node=2",
@@ -143,10 +146,10 @@ class TestMiniMaxM2Conversion:
             "-m",
             "coverage",
             "run",
-            "--data-file=/opt/Megatron-Bridge/.coverage",
-            "--source=/opt/Megatron-Bridge/",
+            f"--data-file={coverage_file}",
+            f"--source={repo_root}",
             "--parallel-mode",
-            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
+            str(repo_root / "examples/conversion/hf_megatron_roundtrip_multi_gpu.py"),
             "--hf-model-id",
             toy_model_path,
             "--output-dir",
@@ -163,13 +166,13 @@ class TestMiniMaxM2Conversion:
             cmd,
             capture_output=True,
             text=True,
-            cwd=Path(__file__).parent.parent.parent.parent,
+            cwd=repo_root,
         )
 
         if result.returncode != 0:
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
-            assert False, f"MiniMax-M2 {test_name} conversion failed with return code {result.returncode}"
+            pytest.fail(f"MiniMax-M2 {test_name} conversion failed with return code {result.returncode}")
 
         model_name = Path(toy_model_path).name
         converted_dir = test_output_dir / model_name
