@@ -102,7 +102,7 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         id: create-pull-request
         env:
-          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ inputs.target-branch}}) (${{ needs.pre-flight.outputs.date }})"
+          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"
         with:
           branch: ${{ env.SOURCE_BRANCH }}
           base: ${{ env.TARGET_BRANCH }}
@@ -115,6 +115,7 @@ jobs:
           commit-message: ${{ env.title }}
           signoff: true
           committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          labels: needs-more-tests
 
       - name: Post /ok to test comment
         env:

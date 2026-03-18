@@ -307,6 +307,7 @@ def main(args) -> None:
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.initialize_model_parallel(seed=0)
+        model_provider.finalize()
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     model = [m.cuda() for m in model]
