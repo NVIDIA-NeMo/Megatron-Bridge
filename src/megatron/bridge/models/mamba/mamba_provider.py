@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import logging
 import warnings
 from dataclasses import dataclass
@@ -39,6 +40,14 @@ try:
 except ImportError:
     # TODO(yuya): remove fallback once MCore pin includes get_hybrid_total_layer_count
     _mcore_get_hybrid_total_layer_count = None
+
+# MCore renamed `hybrid_override_pattern` → `hybrid_layer_pattern` in the dev branch.
+# Support both main and dev branch submodule by detecting which parameter is present at import time.
+# TODO: remove fallback once the dev rename lands in main and Bridge pins the new main commit.
+_MCORE_MAMBA_INIT_PARAMS = set(inspect.signature(MCoreMambaModel.__init__).parameters)
+_HYBRID_LAYER_PATTERN_KWARG = (
+    "hybrid_layer_pattern" if "hybrid_layer_pattern" in _MCORE_MAMBA_INIT_PARAMS else "hybrid_override_pattern"
+)
 
 
 logger = logging.getLogger(__name__)
@@ -247,7 +256,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             mamba_stack_spec=mamba_stack_spec,
             vocab_size=padded_vocab_size,
             max_sequence_length=self.seq_length,
-            hybrid_layer_pattern=self.hybrid_layer_pattern,
+            **{_HYBRID_LAYER_PATTERN_KWARG: self.hybrid_layer_pattern},
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
             parallel_output=self.parallel_output,
             share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
