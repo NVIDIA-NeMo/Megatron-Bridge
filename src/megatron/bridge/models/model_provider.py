@@ -241,29 +241,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             **model_parallel_kwargs: Additional arguments for `parallel_state.initialize_model_parallel`.
         """
         if not torch.distributed.is_initialized():
-            from datetime import timedelta
-
-            from megatron.bridge.utils.common_utils import (
-                get_master_addr_safe,
-                get_master_port_safe,
-                get_rank_safe,
-                get_world_size_safe,
-            )
-
-            # Populate env vars from SLURM when launched via srun (without torchrun)
-            if "RANK" not in os.environ:
-                os.environ["RANK"] = str(get_rank_safe())
-            if "WORLD_SIZE" not in os.environ:
-                os.environ["WORLD_SIZE"] = str(get_world_size_safe())
-            if "LOCAL_RANK" not in os.environ:
-                os.environ["LOCAL_RANK"] = str(get_local_rank_preinit())
-            if "MASTER_ADDR" not in os.environ:
-                os.environ["MASTER_ADDR"] = get_master_addr_safe()
-            if "MASTER_PORT" not in os.environ:
-                os.environ["MASTER_PORT"] = str(get_master_port_safe())
-
             torch.cuda.set_device(get_local_rank_preinit())
-            torch.distributed.init_process_group("nccl", timeout=timedelta(minutes=60))
+            torch.distributed.init_process_group("nccl")
 
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=getattr(self, "tensor_model_parallel_size", 1),

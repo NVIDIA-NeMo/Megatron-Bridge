@@ -824,7 +824,7 @@ def compare_models_one_step(args) -> None:
                 megatron_logits_cmp = megatron_logits[:hf_vocab_size]
                 megatron_next_token_cmp = torch.argmax(megatron_logits_cmp, dim=-1)
 
-                # Compare outputs
+                # Compare outputs (only where we have valid Megatron results)
                 print("=== COMPARISON ===")
                 token_match = hf_next_token.item() == megatron_next_token_cmp.item()
                 token_status_emoji = "✅" if token_match else "❌"
