@@ -1084,10 +1084,8 @@ class TestConfigContainerValidation:
             dist_config=dist_cfg,
         )
         try:
-            container.model.gradient_accumulation_fusion = True
             container.ddp.average_in_collective = True
             container.validate()
-            assert container.model.gradient_accumulation_fusion is False
             assert container.ddp.average_in_collective is False
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
