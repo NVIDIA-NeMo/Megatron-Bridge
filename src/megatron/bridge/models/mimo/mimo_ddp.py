@@ -48,12 +48,20 @@ def wrap_mimo_model_distributed(
         if llm_grid is not None and is_current_rank_in_grid(llm_grid):
             llm_pg = pg_collections.get("llm")
             if llm_pg is not None:
-                mimo_model.language_model = DistributedDataParallel(
+                wrapped_lm = DistributedDataParallel(
                     config=mimo_model.language_model.config,
                     ddp_config=ddp_config,
                     module=mimo_model.language_model,
                     pg_collection=llm_pg,
                 )
+                # MCore's DDP wrapper does not proxy arbitrary module methods.
+                # MimoModel._forward_language_module() checks for and calls
+                # language_model.set_input_tensor(...) on non-first PP stages.
+                # Preserve that method on the wrapper so decoder input tensors
+                # are wired correctly when language_model is DDP-wrapped.
+                if hasattr(wrapped_lm.module, "set_input_tensor"):
+                    wrapped_lm.set_input_tensor = wrapped_lm.module.set_input_tensor
+                mimo_model.language_model = wrapped_lm
 
     # Wrap modality submodules
     if hasattr(mimo_model, 'modality_submodules'):
