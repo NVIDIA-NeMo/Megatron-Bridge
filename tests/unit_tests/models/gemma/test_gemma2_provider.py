@@ -22,6 +22,7 @@ from megatron.bridge.models.gemma.gemma2_provider import (
     Gemma2ModelProvider9B,
     Gemma2ModelProvider27B,
 )
+from megatron.bridge.utils.fusions import can_enable_gradient_accumulation_fusion
 
 
 class TestGemma2ModelProvider:
@@ -58,7 +59,7 @@ class TestGemma2ModelProvider:
         assert provider.rotary_base == 10000
         assert provider.window_size == (4096, 0)
         assert provider.vocab_size == 256000
-        assert provider.gradient_accumulation_fusion is False
+        assert provider.gradient_accumulation_fusion is can_enable_gradient_accumulation_fusion()
         assert provider.query_pre_attn_scalar == 224
         assert provider.attn_logit_softcapping == 50.0
         assert provider.final_logit_softcapping == 30.0

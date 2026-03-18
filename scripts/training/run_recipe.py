@@ -25,9 +25,13 @@ Usage:
         torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config
 
-    Finetune:
+    SFT (full finetuning):
         torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_finetune_config
+            --recipe llama32_1b_sft_config
+
+    PEFT (LoRA/DoRA):
+        torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe llama32_1b_peft_config
 
     With CLI overrides:
         torchrun --nproc_per_node=8 run_recipe.py \
@@ -84,8 +88,7 @@ TRAIN_MODES = {
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
     "Unable to infer training mode from recipe name. "
-    "Please include 'pretrain' or 'finetune' (or 'sft'/'peft') in the recipe name, "
-    "or pass --mode explicitly."
+    "Please include 'pretrain', 'sft', 'peft', or 'finetune' in the recipe name or pass --mode explicitly."
 )
 
 
@@ -106,7 +109,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "--recipe",
         type=str,
         required=True,
-        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_finetune_config)",
+        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_sft_config, gemma3_1b_peft_config)",
     )
     parser.add_argument(
         "--step_func",
@@ -134,10 +137,11 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         help="Sequence length for training",
     )
     parser.add_argument(
-        "--dataset_type",
+        "--hf_path",
         type=str,
         default=None,
-        help="Dataset type for VLM recipes (e.g., 'energon', 'mock', 'hf', 'preloaded').",
+        help="HuggingFace model ID or local path to model directory. "
+        "Use a local path for more stable multinode training.",
     )
     args, cli_overrides = parser.parse_known_args()
     return args, cli_overrides
@@ -148,7 +152,7 @@ def load_recipe(
     peft_scheme: str | None,
     packed_sequence: bool = False,
     seq_length: int | None = None,
-    dataset_type: str | None = None,
+    hf_path: str | None = None,
 ) -> ConfigContainer:
     """
     Load recipe by name from megatron.bridge.recipes.
@@ -158,7 +162,7 @@ def load_recipe(
         peft_scheme: PEFT scheme to use ('lora', 'dora', or None)
         packed_sequence: Enable packed sequence training (default: False)
         seq_length: Sequence length for training (optional)
-        dataset_type: Dataset type for VLM recipes (e.g., 'energon', 'mock', 'hf', 'preloaded')
+        hf_path: HuggingFace model ID or local path to model directory (optional)
 
     Returns:
         ConfigContainer from calling the recipe
@@ -184,13 +188,13 @@ def load_recipe(
         accepts_peft = "peft" in params or has_var_keyword
         accepts_packed_sequence = "packed_sequence" in params or has_var_keyword
         accepts_seq_length = "seq_length" in params or has_var_keyword
-        accepts_dataset_type = "dataset_type" in params or has_var_keyword
+        accepts_hf_path = "hf_path" in params or has_var_keyword
     except (ValueError, TypeError):
         # If signature inspection fails, fallback conservatively
         accepts_peft = True  # peft is widely supported, try passing it
         accepts_packed_sequence = False  # new parameter, don't pass if unsure
         accepts_seq_length = False  # new parameter, don't pass if unsure
-        accepts_dataset_type = False  # VLM-specific, don't pass if unsure
+        accepts_hf_path = False  # model-specific, don't pass if unsure
 
     # Build kwargs dynamically based on what the recipe accepts
     kwargs = {}
@@ -200,8 +204,8 @@ def load_recipe(
         kwargs["packed_sequence"] = packed_sequence
     if accepts_seq_length and seq_length is not None:
         kwargs["seq_length"] = seq_length
-    if accepts_dataset_type and dataset_type is not None:
-        kwargs["dataset_type"] = dataset_type
+    if accepts_hf_path and hf_path is not None:
+        kwargs["hf_path"] = hf_path
 
     try:
         return config_builder(**kwargs)
@@ -237,7 +241,7 @@ def main() -> None:
         args.peft_scheme,
         args.packed_sequence,
         args.seq_length,
-        args.dataset_type,
+        args.hf_path,
     )
 
     config = process_config_with_overrides(
