@@ -292,6 +292,13 @@ def build_and_load_model(
                 model_cfg.finalize()
             builder_cls = model_cfg.get_builder_cls()
             builder = builder_cls(model_cfg)
+            # Note: `use_cpu_initialization` is not passed as an explicit kwarg here,
+            # unlike the ModelProviderMixin path which passes it directly to
+            # `provide_distributed_model`. Instead, it is handled by the
+            # `megatron_cpu_init_context` context manager (see below), which sets
+            # the flag on the config object. This is intentional — we do not want
+            # to duplicate TransformerConfig fields like `use_cpu_initialization`
+            # as kwargs on `build_distributed_models`.
             return builder.build_distributed_models(
                 ProcessGroupCollection.use_mpu_process_groups(), wrap_with_ddp=False
             )
