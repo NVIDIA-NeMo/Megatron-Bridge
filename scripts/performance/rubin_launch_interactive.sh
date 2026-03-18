@@ -55,6 +55,13 @@ GBS="${GBS:-128}"
 CG_IMPL="${CG_IMPL:-none}"
 CG_SCOPE="${CG_SCOPE:-full_iteration}"
 
+# Nsys profiling (set ENABLE_NSYS=1 to activate)
+ENABLE_NSYS="${ENABLE_NSYS:-0}"
+NSYS_PROFILE_START="${NSYS_PROFILE_START:-5}"
+NSYS_PROFILE_END="${NSYS_PROFILE_END:-6}"
+NSYS_OUTPUT="${NSYS_OUTPUT:-/tmp/nsys_profile}"
+NSYS_TRACE="${NSYS_TRACE:-cuda,nvtx}"
+
 # Megatron-Bridge root inside the container
 MBRIDGE_ROOT="${MBRIDGE_ROOT:-/opt/Megatron-Bridge}"
 
@@ -85,7 +92,41 @@ fi
 cd "${MBRIDGE_ROOT}"
 
 # ──────────────────────────────────────────────────────────────────────
-# Build the command
+# Hydra-style overrides & nsys setup
+# ──────────────────────────────────────────────────────────────────────
+
+# Hydra-style overrides appended after the argparse flags.
+# run_script.py passes unknown args through to set_cli_overrides().
+HYDRA_OVERRIDES=(
+    # Force FP32 reduction to fix NaN grad norm issues on single-GPU runs.
+    mixed_precision.grad_reduce_in_fp32=true
+    ddp.grad_reduce_in_fp32=true
+)
+
+# Build the nsys wrapper command if profiling is enabled
+NSYS_PREFIX=()
+
+if [ "${ENABLE_NSYS}" = "1" ]; then
+    HYDRA_OVERRIDES+=(
+        profiling.use_nsys_profiler=true
+        profiling.profile_step_start="${NSYS_PROFILE_START}"
+        profiling.profile_step_end="${NSYS_PROFILE_END}"
+        "profiling.profile_ranks=[0]"
+    )
+
+    NSYS_PREFIX=(
+        nsys profile
+        -s none
+        -t "${NSYS_TRACE}"
+        -o "${NSYS_OUTPUT}"
+        --force-overwrite true
+        --capture-range=cudaProfilerApi
+        --capture-range-end=stop
+    )
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# Build the command (after nsys may have patched MAX_STEPS)
 # ──────────────────────────────────────────────────────────────────────
 RUN_CMD=(
     scripts/performance/run_script.py
@@ -106,14 +147,6 @@ RUN_CMD=(
     --cuda_graph_scope   "${CG_SCOPE}"
 )
 
-# Hydra-style overrides appended after the argparse flags.
-# run_script.py passes unknown args through to set_cli_overrides().
-HYDRA_OVERRIDES=(
-    # Force FP32 reduction to fix NaN grad norm issues on single-GPU runs.
-    mixed_precision.grad_reduce_in_fp32=true
-    ddp.grad_reduce_in_fp32=true
-)
-
 echo "============================================================"
 echo " Megatron-Bridge Interactive Launch"
 echo "============================================================"
@@ -125,13 +158,16 @@ echo " Steps:     ${MAX_STEPS}"
 echo " GPUs:      ${NUM_GPUS}  (nproc_per_node=${NPROC_PER_NODE})"
 echo " Parallel:  TP=${TP}, PP=${PP}, CP=${CP}"
 echo " Batch:     MBS=${MBS}, GBS=${GBS}"
+if [ "${ENABLE_NSYS}" = "1" ]; then
+echo " Nsys:      ON  (steps ${NSYS_PROFILE_START}-${NSYS_PROFILE_END}, output: ${NSYS_OUTPUT})"
+fi
 echo " Hydra:     ${HYDRA_OVERRIDES[*]}"
 echo "============================================================"
 
 if [ "${NPROC_PER_NODE}" -gt 1 ]; then
     echo "Launching with torchrun (nproc_per_node=${NPROC_PER_NODE}) ..."
-    torchrun --nproc_per_node="${NPROC_PER_NODE}" "${RUN_CMD[@]}" "${HYDRA_OVERRIDES[@]}"
+    "${NSYS_PREFIX[@]}" torchrun --nproc_per_node="${NPROC_PER_NODE}" "${RUN_CMD[@]}" "${HYDRA_OVERRIDES[@]}"
 else
     echo "Launching with python (single process) ..."
-    python "${RUN_CMD[@]}" "${HYDRA_OVERRIDES[@]}"
+    "${NSYS_PREFIX[@]}" python "${RUN_CMD[@]}" "${HYDRA_OVERRIDES[@]}"
 fi
