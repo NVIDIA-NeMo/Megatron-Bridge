@@ -108,10 +108,14 @@ Note:
     - `gemma2_2b_pretrain_config`: Pre-training configuration for Gemma 2 2B
     - `gemma2_9b_pretrain_config`: Pre-training configuration for Gemma 2 9B
     - `gemma2_27b_pretrain_config`: Pre-training configuration for Gemma 2 27B
-  - **Finetuning:**
-    - `gemma2_2b_finetune_config`: Finetuning configuration for Gemma 2 2B with PEFT support (LoRA, DoRA)
-    - `gemma2_9b_finetune_config`: Finetuning configuration for Gemma 2 9B with PEFT support (LoRA, DoRA)
-    - `gemma2_27b_finetune_config`: Finetuning configuration for Gemma 2 27B with PEFT support (LoRA, DoRA)
+  - **SFT:**
+    - `gemma2_2b_sft_config`: Full SFT for Gemma 2 2B
+    - `gemma2_9b_sft_config`: Full SFT for Gemma 2 9B
+    - `gemma2_27b_sft_config`: Full SFT for Gemma 2 27B
+  - **PEFT** (LoRA, DoRA):
+    - `gemma2_2b_peft_config`: PEFT for Gemma 2 2B
+    - `gemma2_9b_peft_config`: PEFT for Gemma 2 9B
+    - `gemma2_27b_peft_config`: PEFT for Gemma 2 27B
 
 Before training, ensure the following environment variables are set:
 1. `SAVE_DIR`: checkpoint and log saving directory
@@ -164,8 +168,7 @@ config = gemma2_27b_pretrain_config(
 ```bash
 torchrun --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-2b \
---recipe gemma2_2b_finetune_config \
---peft none \
+--recipe gemma2_2b_sft_config \
 train.global_batch_size=64 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/gemma2_2b_finetune
@@ -173,12 +176,11 @@ checkpoint.save=$SAVE_DIR/gemma2_2b_finetune
 
 Or programmatically:
 ```python
-from megatron.bridge.recipes.gemma import gemma2_2b_finetune_config
+from megatron.bridge.recipes.gemma import gemma2_2b_sft_config
 
-config = gemma2_2b_finetune_config(
+config = gemma2_2b_sft_config(
     name="gemma2_2b_full_finetune",
     pretrained_checkpoint="/models/gemma-2-2b",
-    peft="none",
     train_iters=1000,
     global_batch_size=64,
 )
@@ -188,8 +190,7 @@ config = gemma2_2b_finetune_config(
 ```bash
 torchrun --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-9b \
---recipe gemma2_9b_finetune_config \
---peft none \
+--recipe gemma2_9b_sft_config \
 train.global_batch_size=64 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/gemma2_9b_finetune
@@ -199,8 +200,7 @@ checkpoint.save=$SAVE_DIR/gemma2_9b_finetune
 ```bash
 torchrun --nproc-per-node=16 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-27b \
---recipe gemma2_27b_finetune_config \
---peft none \
+--recipe gemma2_27b_sft_config \
 train.global_batch_size=64 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/gemma2_27b_finetune
@@ -212,24 +212,24 @@ checkpoint.save=$SAVE_DIR/gemma2_27b_finetune
 ```bash
 torchrun --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-2b \
---recipe gemma2_2b_finetune_config \
---peft lora \
+--recipe gemma2_2b_peft_config \
+--peft_scheme lora \
 train.global_batch_size=128 \
 checkpoint.save=$SAVE_DIR/gemma2_2b_lora
 ```
 
 PEFT options:
-- `--peft`: Set to `lora` for LoRA or `dora` for DoRA. Set to `none` for full finetuning.
+- `--peft_scheme`: Set to `lora` for LoRA or `dora` for DoRA. Use `gemma2_*_sft_config` for full finetuning.
 
 Or programmatically:
 ```python
-from megatron.bridge.recipes.gemma import gemma2_2b_finetune_config
+from megatron.bridge.recipes.gemma import gemma2_2b_peft_config
 
 # LoRA finetuning
-config = gemma2_2b_finetune_config(
+config = gemma2_2b_peft_config(
     name="gemma2_2b_lora_finetune",
     pretrained_checkpoint="/models/gemma-2-2b",
-    peft="lora",  # or "dora"
+    peft_scheme="lora",  # or "dora"
     train_iters=1000,
     global_batch_size=128,
 )
@@ -237,12 +237,12 @@ config = gemma2_2b_finetune_config(
 
 #### Gemma 2 9B LoRA
 ```python
-from megatron.bridge.recipes.gemma import gemma2_9b_finetune_config
+from megatron.bridge.recipes.gemma import gemma2_9b_peft_config
 
-config = gemma2_9b_finetune_config(
+config = gemma2_9b_peft_config(
     name="gemma2_9b_lora_finetune",
     pretrained_checkpoint="/models/gemma-2-9b",
-    peft="lora",
+    peft_scheme="lora",
     train_iters=1000,
     global_batch_size=128,
 )
@@ -250,12 +250,12 @@ config = gemma2_9b_finetune_config(
 
 #### Gemma 2 27B LoRA
 ```python
-from megatron.bridge.recipes.gemma import gemma2_27b_finetune_config
+from megatron.bridge.recipes.gemma import gemma2_27b_peft_config
 
-config = gemma2_27b_finetune_config(
+config = gemma2_27b_peft_config(
     name="gemma2_27b_lora_finetune",
     pretrained_checkpoint="/models/gemma-2-27b",
-    peft="lora",
+    peft_scheme="lora",
     train_iters=1000,
     global_batch_size=128,
 )
