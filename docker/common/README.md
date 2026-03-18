@@ -2,12 +2,12 @@
 
 ## Repository Overview
 
-- Megatron-Bridge (/opt/Megatron-Bridge/)
-- Megatron-LM (/opt/Megatron-Bridge/3rdparty/Megatron-LM/)
-- Evaluator (/opt/Evaluator/)
-- Export-Deploy (/opt/Export-Deploy/)
-- NeMo (/opt/NeMo/)
-- Run (/opt/Run/)
+- Megatron-Bridge (`/opt/Megatron-Bridge/`)
+- Megatron-LM (`/opt/Megatron-Bridge/3rdparty/Megatron-LM/`)
+- Evaluator (`/opt/Evaluator/`)
+- Export-Deploy (`/opt/Export-Deploy/`)
+- NeMo (`/opt/NeMo/`)
+- Run (`/opt/Run/`)
 
 ---
 
