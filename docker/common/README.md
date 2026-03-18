@@ -45,7 +45,7 @@ docker run -v <local-folder-path>:<container-folder-path> <container-image>
 
 #### 1 Overwrite existing directory
 
-1. Define the `<container-folder-path>` to correspond to the path defined in Repository Overview. (ie. /my-path/Megatron-Bridge/:/opt/Megatron-Bridge/)
+1. Define the `<container-folder-path>` to correspond to the path defined in Repository Overview. (ie. `/my-path/Megatron-Bridge/:/opt/Megatron-Bridge/`)
 
 2. `cd /opt/NeMo-FW` and run `uv sync --no-cache-dir --all-groups --inexact`
 
@@ -53,7 +53,7 @@ docker run -v <local-folder-path>:<container-folder-path> <container-image>
 
 #### 2 Mount directory to a different path
 
-1. Modify `/opt/NeMo-FW/pyproject.toml` sections `tool.uv.sources` and `tool.uv; override-dependencies` to reflect new path. (ie. "megatron-bridge" = { path = `<container-folder-path>`, editable = true })
+1. Modify `/opt/NeMo-FW/pyproject.toml` sections `tool.uv.sources` and `tool.uv; override-dependencies` to reflect new path. (ie. `"megatron-bridge" = { path = <container-folder-path>, editable = true }`)
 
 2. `cd /opt/NeMo-FW` and run `uv sync --no-cache-dir --all-groups --inexact`
 
