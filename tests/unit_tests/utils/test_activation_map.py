@@ -18,10 +18,14 @@ import pytest
 import torch.nn.functional as F
 from megatron.core.activations import fast_gelu, squared_relu
 
+import torch
+
 from megatron.bridge.utils.activation_map import (
     ACTIVATION_FUNC_MAP,
+    DTYPE_MAP,
     callable_to_str,
     str_to_callable,
+    str_to_dtype,
 )
 
 
@@ -159,6 +163,48 @@ class TestActivationFuncMapContents:
         """Every value in the map is callable."""
         for name, fn in ACTIVATION_FUNC_MAP.items():
             assert callable(fn), f"ACTIVATION_FUNC_MAP['{name}'] is not callable"
+
+
+class TestStrToDtype:
+    """Tests for str_to_dtype(name: str) -> torch.dtype."""
+
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            ("fp32", torch.float32),
+            ("float32", torch.float32),
+            ("32", torch.float32),
+            ("32-true", torch.float32),
+            ("torch.float32", torch.float32),
+            ("fp16", torch.float16),
+            ("float16", torch.float16),
+            ("16", torch.float16),
+            ("16-mixed", torch.float16),
+            ("torch.float16", torch.float16),
+            ("bf16", torch.bfloat16),
+            ("bfloat16", torch.bfloat16),
+            ("bf16-mixed", torch.bfloat16),
+            ("torch.bfloat16", torch.bfloat16),
+        ],
+    )
+    def test_known_names(self, name, expected):
+        assert str_to_dtype(name) == expected
+
+    def test_unknown_raises_value_error(self):
+        with pytest.raises(ValueError, match="Unknown dtype"):
+            str_to_dtype("unknown")
+
+    def test_empty_string_raises_value_error(self):
+        with pytest.raises(ValueError):
+            str_to_dtype("")
+
+    def test_error_message_lists_known_names(self):
+        with pytest.raises(ValueError, match="bf16"):
+            str_to_dtype("bad_dtype")
+
+    def test_dtype_map_all_values_are_torch_dtype(self):
+        for name, dtype in DTYPE_MAP.items():
+            assert isinstance(dtype, torch.dtype), f"DTYPE_MAP['{name}'] is not a torch.dtype"
 
 
 class TestRoundTrip:

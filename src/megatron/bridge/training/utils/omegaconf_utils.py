@@ -497,9 +497,11 @@ def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, An
 
                 # If the original was a torch.dtype and value is a string, convert back
                 if isinstance(current_attr, torch.dtype) and isinstance(value, str):
+                    from megatron.bridge.utils.activation_map import str_to_dtype
+
                     try:
-                        final_value = getattr(torch, value.split(".")[-1])
-                    except AttributeError:
+                        final_value = str_to_dtype(value)
+                    except ValueError:
                         logger.warning(f"Could not convert string '{value}' back to torch.dtype")
                         final_value = value
 

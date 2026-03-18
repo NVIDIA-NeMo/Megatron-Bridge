@@ -1147,8 +1147,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     def dtype_from_str(self, dtype: str) -> torch.dtype:
         """Convert a string precision identifier to equivalent torch dtype.
 
-        This utility method handles various string representations of PyTorch
-        data types, including common abbreviations and mixed precision formats.
+        Delegates to ``megatron.bridge.utils.activation_map.str_to_dtype``.
+        Defaults to ``torch.float32`` for unrecognized strings.
 
         Args:
             dtype (str): String representation of dtype (e.g., "float16", "fp16",
@@ -1156,27 +1156,12 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         Returns:
             torch.dtype: Corresponding PyTorch dtype (defaults to float32 if unknown).
-
-        Supported formats:
-            - float16/fp16/16/16-mixed → torch.float16
-            - bfloat16/bf16-mixed → torch.bfloat16
-            - Others → torch.float32 (default)
-
-        Example:
-            .. code-block:: python
-
-                dtype = bridge.dtype_from_str("fp16")
-                print(dtype)  # torch.float16
-
-                dtype = bridge.dtype_from_str("bf16-mixed")
-                print(dtype)  # torch.bfloat16
         """
-        assert isinstance(dtype, str)
-        if dtype in ["float16", "fp16", "16", "16-mixed"]:
-            return torch.float16
-        elif dtype in ["bfloat16", "bf16-mixed"]:
-            return torch.bfloat16
-        else:
+        from megatron.bridge.utils.activation_map import str_to_dtype
+
+        try:
+            return str_to_dtype(dtype)
+        except ValueError:
             return torch.float32
 
     def make_vocab_size_divisible_by(self, vocab_size: int) -> int:

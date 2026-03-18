@@ -98,17 +98,24 @@ def str_to_callable(name: str) -> Callable:
 DTYPE_MAP: dict[str, torch.dtype] = {
     "fp32": torch.float32,
     "float32": torch.float32,
+    "32": torch.float32,
+    "32-true": torch.float32,
     "fp16": torch.float16,
     "float16": torch.float16,
+    "16": torch.float16,
+    "16-mixed": torch.float16,
     "bf16": torch.bfloat16,
     "bfloat16": torch.bfloat16,
+    "bf16-mixed": torch.bfloat16,
     "fp8": torch.float8_e4m3fn,
     "float8_e4m3fn": torch.float8_e4m3fn,
     "float8_e5m2": torch.float8_e5m2,
 }
 
-# Add "torch.<name>" aliases
-DTYPE_MAP.update({f"torch.{k}": v for k, v in list(DTYPE_MAP.items()) if "." not in k})
+# Add "torch.<name>" aliases for canonical (non-numeric, non-mixed) names
+DTYPE_MAP.update(
+    {f"torch.{k}": v for k, v in DTYPE_MAP.items() if "." not in k and not k[0].isdigit() and "-" not in k}
+)
 
 
 def str_to_dtype(name: str) -> torch.dtype:
