@@ -18,11 +18,24 @@ from shutil import rmtree
 from unittest.mock import patch
 
 import pytest
+import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def pytest_configure(config):
+    """Register custom markers for unit tests."""
+    config.addinivalue_line(
+        "markers",
+        "pleasefixme: marks test as needing fixes (will be skipped in CI)",
+    )
+    config.addinivalue_line(
+        "markers",
+        "run_only_on: marks test to run only on specific hardware (CPU/GPU)",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -58,6 +71,15 @@ def reset_env_vars():
     # After the test, restore the original environment
     os.environ.clear()
     os.environ.update(original_env)
+
+
+@pytest.fixture(autouse=True)
+def check_gpu_requirements(request):
+    """Fixture to skip tests that require GPU when CUDA is not available"""
+    marker = request.node.get_closest_marker("run_only_on")
+    if marker and "gpu" in [arg.lower() for arg in marker.args]:
+        if not torch.cuda.is_available():
+            pytest.skip("Test requires GPU but CUDA is not available")
 
 
 @pytest.fixture(autouse=True)
