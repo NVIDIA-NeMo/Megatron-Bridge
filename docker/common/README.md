@@ -29,7 +29,7 @@ Uv virtualenv installed packages (/opt/venv/)
 
 Execute `uv pip list` to see full list of installed packages. Packages installed in /opt/venv take precedence over pip installed packages.
 
-See /opt/NeMo-FW/pyproject.toml for additonal uv configurations.
+See `/opt/NeMo-FW/pyproject.toml` for additonal uv configurations.
 
 ---
 
