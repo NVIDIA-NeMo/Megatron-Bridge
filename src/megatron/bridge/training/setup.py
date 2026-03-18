@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import inspect
-import warnings
 import logging
 import time
 from functools import partial
