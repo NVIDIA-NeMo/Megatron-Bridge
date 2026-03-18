@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 
 import torch
 from argument_parser import parse_cli_args
@@ -28,8 +29,31 @@ from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 logger = logging.getLogger(__name__)
 
 
+def _dump_env_rank0() -> None:
+    """Capture the container environment to /nemo_run/env_<SLURM_JOB_ID>.log on rank 0.
+
+    The file lands alongside log*.out and configs/ inside the per-run nemo_run
+    directory for easy post-run debugging.
+    """
+    if os.environ.get("SLURM_JOB_ID") is None:
+        return
+    if int(os.environ.get("SLURM_PROCID", "-1")) != 0:
+        return
+    job_id = os.environ["SLURM_JOB_ID"]
+    env_path = f"/nemo_run/env_{job_id}.log"
+    try:
+        with open(env_path, "w") as f:
+            for k, v in sorted(os.environ.items()):
+                f.write(f"{k}={v}\n")
+        logger.info(f"Environment dump written to {env_path}")
+    except OSError as e:
+        logger.warning(f"Failed to write environment dump to {env_path}: {e}")
+
+
 def main():
     """Main function to run the pretraining/finetuning script."""
+    _dump_env_rank0()
+
     # Parse known args and treat any unknown args as Hydra-style config overrides.
     # `argparse.parse_known_args()` returns the unknown args as a `list[str]`.
     parser = parse_cli_args()
