@@ -16,17 +16,26 @@ def _make_cfg():
         decrease_batch_size_if_needed=False,
     )
     cfg.data_parallel_size = 1
+    cfg.checkpoint.load = None
+    cfg.checkpoint.pretrained_checkpoint = None
+    cfg.checkpoint.non_persistent_ckpt_type = None
     return cfg
 
 
 def _make_setup_output(module_to_grid_map):
+    global_state = MagicMock()
+    global_state.train_state.step = 0
     return SimpleNamespace(
         model=MagicMock(),
-        mimo_infra=SimpleNamespace(module_to_grid_map=module_to_grid_map),
+        mimo_infra=SimpleNamespace(
+            module_to_grid_map=module_to_grid_map,
+            pg_collections={"llm": MagicMock()},
+        ),
         multimodule_communicator=MagicMock(),
         train_data_iterator=iter([]),
         valid_data_iterator=None,
-        global_state=MagicMock(),
+        global_state=global_state,
+        checkpointing_context=None,
     )
 
 
@@ -70,7 +79,7 @@ def test_pretrain_mimo_uses_constructor_wired_config(
             cfg=cfg,
             mimo_provider=MagicMock(),
             forward_step_func=forward_step_func,
-            build_data_iterators_fn=MagicMock(),
+            build_data_iterators_fn=MagicMock(return_value=(iter([]), None)),
             opt_config=opt_config,
             schedulers=schedulers,
             global_state=MagicMock(),
