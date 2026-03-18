@@ -180,10 +180,11 @@ class KimiK25VLModel(MegatronModule):
             labels: Optional labels for training
             target_seq_length: Optional fixed output length for pipeline parallelism.
         """
-        num_images, embed_dim = image_features[0].shape
+        _, embed_dim = image_features[0].shape
         feature_lengths = [x.shape[0] for x in image_features]
         total_image_features = sum(feature_lengths)
         image_features_cat = torch.cat(image_features, dim=0)
+        num_images = len(image_features)
 
         image_token_index = self.media_placeholder_token_id
         pad_token_id = self.config.pad_token_id
