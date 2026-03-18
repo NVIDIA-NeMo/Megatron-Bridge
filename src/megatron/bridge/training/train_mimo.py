@@ -311,25 +311,14 @@ def train_mimo(
 
     logger.info(f"Rank {dist.get_rank()}: Starting MIMO training loop")
 
-    # Save initial checkpoint at step 0 (before any training) if requested.
-    # At step 0 the optimizer has not run yet so Adam state buffers (exp_avg,
-    # exp_avg_sq) do not exist.  Temporarily disable optimizer saving to avoid
-    # KeyError in the distributed-checkpoint path.
-    if save_initial_checkpoint and cfg.checkpoint.save is not None and train_state.step == 0:
-        logger.info(f"Rank {dist.get_rank()}: Saving initial checkpoint (step 0)")
-        _orig_save_optim = cfg.checkpoint.save_optim
-        cfg.checkpoint.save_optim = False
-        timers("save-checkpoint", log_level=0).start(barrier=True)
-        save_checkpoint(
-            state=global_state,
-            model=[model],
-            optimizer=optimizer,
-            opt_param_scheduler=first_scheduler,
-            num_floating_point_operations_so_far=0,
-            pg_collection=local_pg_collection,
-        )
-        timers("save-checkpoint").stop()
-        cfg.checkpoint.save_optim = _orig_save_optim
+    # Track whether we need to save an initial checkpoint after the first
+    # training step.  We defer the save until after step 1 so that the
+    # optimizer has been stepped once and Adam state buffers (exp_avg,
+    # exp_avg_sq) exist, allowing full optimizer and scheduler state to be
+    # persisted.
+    _need_initial_checkpoint = (
+        save_initial_checkpoint and cfg.checkpoint.save is not None and train_state.step == 0
+    )
 
     # Main training loop
     timers("interval-time", log_level=0).start(barrier=True)
@@ -381,6 +370,22 @@ def train_mimo(
         # Update training state
         train_state.step += 1
         train_state.consumed_train_samples += micro_batch_size * num_microbatches * cfg.data_parallel_size
+
+        # Save initial checkpoint after the first step so that Adam state
+        # buffers exist and full optimizer + scheduler state can be persisted.
+        if _need_initial_checkpoint and train_state.step == 1:
+            _need_initial_checkpoint = False
+            logger.info(f"Rank {dist.get_rank()}: Saving initial checkpoint (after step 1)")
+            timers("save-checkpoint", log_level=0).start(barrier=True)
+            save_checkpoint(
+                state=global_state,
+                model=[model],
+                optimizer=optimizer,
+                opt_param_scheduler=first_scheduler,
+                num_floating_point_operations_so_far=0,
+                pg_collection=local_pg_collection,
+            )
+            timers("save-checkpoint").stop()
 
         # Get learning rate from first scheduler
         learning_rate = None
