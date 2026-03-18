@@ -117,9 +117,12 @@ python examples/conversion/hf_to_megatron_generate_text.py \
 - Pretrain recipes:
   - `glm45_355b_pretrain_config`: Pre-training for GLM 4.5 355B
   - `glm45_air_106b_pretrain_config`: Pre-training for GLM 4.5 Air 106B
-- Finetune recipes:
-  - `glm45_355b_finetune_config`: Finetuning for GLM 4.5 355B with PEFT support
-  - `glm45_air_106b_finetune_config`: Finetuning for GLM 4.5 Air 106B with PEFT support
+- SFT recipes:
+  - `glm45_355b_sft_config`: Full SFT for GLM 4.5 355B
+  - `glm45_air_106b_sft_config`: Full SFT for GLM 4.5 Air 106B
+- PEFT recipes (LoRA, DoRA):
+  - `glm45_355b_peft_config`: PEFT for GLM 4.5 355B
+  - `glm45_air_106b_peft_config`: PEFT for GLM 4.5 Air 106B
 
 ### Parallelism Configurations
 
@@ -163,12 +166,11 @@ config = glm45_air_106b_pretrain_config(
 
 #### Full Finetuning (GLM 4.5 Air)
 ```python
-from megatron.bridge.recipes.glm import glm45_air_106b_finetune_config
+from megatron.bridge.recipes.glm import glm45_air_106b_sft_config
 
-config = glm45_air_106b_finetune_config(
+config = glm45_air_106b_sft_config(
     name="glm45_air_full_finetune",
     pretrained_checkpoint="/models/glm45-air-106b",
-    peft=None,  # Full finetuning
     train_iters=1000,
     global_batch_size=128,
     micro_batch_size=1,
@@ -178,12 +180,12 @@ config = glm45_air_106b_finetune_config(
 
 #### LoRA Finetuning (GLM 4.5 Air)
 ```python
-from megatron.bridge.recipes.glm import glm45_air_106b_finetune_config
+from megatron.bridge.recipes.glm import glm45_air_106b_peft_config
 
-config = glm45_air_106b_finetune_config(
+config = glm45_air_106b_peft_config(
     name="glm45_air_lora_finetune",
     pretrained_checkpoint="/models/glm45-air-106b",
-    peft="lora",  # or "dora"
+    peft_scheme="lora",  # or "dora"
     train_iters=1000,
     global_batch_size=128,
     micro_batch_size=1,
@@ -194,12 +196,12 @@ config = glm45_air_106b_finetune_config(
 
 #### DoRA Finetuning (GLM 4.5 355B)
 ```python
-from megatron.bridge.recipes.glm import glm45_355b_finetune_config
+from megatron.bridge.recipes.glm import glm45_355b_peft_config
 
-config = glm45_355b_finetune_config(
+config = glm45_355b_peft_config(
     name="glm45_355b_dora_finetune",
     pretrained_checkpoint="/models/glm45-355b",
-    peft="dora",
+    peft_scheme="dora",
     train_iters=1000,
     global_batch_size=128,
     micro_batch_size=1,
@@ -214,8 +216,8 @@ config = glm45_355b_finetune_config(
 # GLM 4.5 Air - LoRA finetuning on single node (8 GPUs)
 torchrun --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/glm45-air-106b \
---recipe glm45_air_106b_finetune_config \
-peft=lora \
+--recipe glm45_air_106b_peft_config \
+--peft_scheme lora \
 train.global_batch_size=128 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/glm45_air_lora
@@ -223,8 +225,7 @@ checkpoint.save=$SAVE_DIR/glm45_air_lora
 # GLM 4.5 355B - Full finetuning (256 GPUs)
 torchrun --nnodes=32 --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/glm45-355b \
---recipe glm45_355b_finetune_config \
-peft=None \
+--recipe glm45_355b_sft_config \
 train.global_batch_size=256 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/glm45_355b_full
