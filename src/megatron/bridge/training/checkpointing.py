@@ -84,8 +84,7 @@ from megatron.bridge.utils.common_utils import (
     print_rank_0,
 )
 from megatron.bridge.utils.import_utils import safe_import
-from megatron.bridge.training.ema_checkpoint import has_ema_state, save_ema_user_state
-
+from megatron.bridge.training.callbacks import CheckpointCallbackContext
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
 
@@ -548,23 +547,6 @@ def save_checkpoint(
     ckpt_format = ckpt_cfg.ckpt_format if ckpt_type == CheckpointType.GLOBAL else "torch"  # torch for local
     print_rank_0(f"saving checkpoint at iteration {train_state.step:7d} to {save_dir} in {ckpt_format} format")
     
-    # EMA
-    def ema_finalize_fn(checkpoint_name_: str) -> None:
-        if ckpt_type == CheckpointType.LOCAL:
-            return
-
-        if checkpointing_context is None:
-            return
-
-        user_state = checkpointing_context.get("callback_user_state")
-        if not has_ema_state(user_state):
-            return
-
-        save_ema_user_state(
-            checkpoint_name_,
-            user_state
-        )
-
     # Collect rng state across data parallel ranks.
     if pg_collection is None:
         pg_collection = get_pg_collection(model)
@@ -583,6 +565,15 @@ def save_checkpoint(
 
     # Checkpoint name.
     checkpoint_name = get_checkpoint_name(save_dir, train_state.step, release=False)
+    
+    def callback_finalize_fn() -> None:
+        _fire_checkpoint_callback(
+            checkpointing_context=checkpointing_context,
+            hook_name="on_checkpoint_save",
+            state=state,
+            checkpoint_name=checkpoint_name,
+            checkpoint_type=ckpt_type,
+        )
 
     # Save dataloader state if the dataloader supports it (currently only Megatron Energon).
     maybe_save_dataloader_state(
@@ -753,8 +744,6 @@ def save_checkpoint(
         if not ckpt_cfg.async_save:
             assert async_save_request is None
 
-            ema_finalize_fn(checkpoint_name)
-
             if torch.distributed.is_initialized():
                 torch.distributed.barrier()
 
@@ -819,11 +808,10 @@ def save_checkpoint(
 
         if ckpt_cfg.async_save:
             assert async_save_request is not None
-            async_save_request.add_finalize_fn(lambda: ema_finalize_fn(checkpoint_name))
             async_save_request.add_finalize_fn(train_state_finalize_fn)
-        else:
-            ema_finalize_fn(checkpoint_name)
+        else:  # Checkpoint lifecycle callbacks are currently fired only for synchronous saves
             train_state_finalize_fn()
+            callback_finalize_fn() 
 
     # Ensure all ranks see a fully written checkpoint (e.g., run_config.yaml) before W&B scans.
     def _post_save_global_barrier() -> None:
@@ -920,6 +908,30 @@ def cleanup_old_non_persistent_checkpoint(
         threading.Thread(target=remove_iter_ckpts, args=(rm_iter_ckpts,)).start()
     else:
         remove_iter_ckpts(rm_iter_ckpts)
+
+
+def _fire_checkpoint_callback(
+    checkpointing_context: dict[str, Any] | None,
+    hook_name: str,
+    state: GlobalState,
+    checkpoint_name: str,
+    checkpoint_type: CheckpointType,
+) -> None:
+    """Fire a checkpoint lifecycle callback if a callback manager is available."""
+    if checkpointing_context is None:
+        return
+
+    callback_manager = checkpointing_context.get("callback_manager")
+    if callback_manager is None:
+        return
+
+    context = CheckpointCallbackContext(
+        state=state,
+        checkpoint_name=checkpoint_name,
+        checkpoint_type=checkpoint_type,
+        user_state=callback_manager.user_state,
+    )
+    callback_manager.fire(hook_name, context)
 
 
 def maybe_save_dataloader_state(
@@ -1690,10 +1702,6 @@ def _load_checkpoint_from_path(
         pg_collection=pg_collection,
         **load_kwargs,
     )
-    
-    if checkpointing_context is not None:
-        checkpointing_context["loaded_checkpoint_name"] = checkpoint_name
-        checkpointing_context["loaded_checkpoint_type"] = ckpt_type
 
     # Checkpoint not loaded
     if state_dict is None:
@@ -1880,6 +1888,14 @@ def _load_checkpoint_from_path(
     if state.train_state.step > 0:
         is_local_chkpt = ckpt_type == CheckpointType.LOCAL
         fault_tolerance.on_checkpoint_loaded(is_local_chkpt=is_local_chkpt, global_state=state)
+
+    _fire_checkpoint_callback(
+        checkpointing_context=checkpointing_context,
+        hook_name="on_checkpoint_load",
+        state=state,
+        checkpoint_name=checkpoint_name,
+        checkpoint_type=ckpt_type,
+    )
 
     return state.train_state.step, state.train_state.floating_point_operations_so_far
 

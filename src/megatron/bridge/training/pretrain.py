@@ -17,7 +17,6 @@ from nvidia_resiliency_ext.inprocess import CallWrapper
 
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.callbacks import Callback, CallbackManager, normalize_callbacks
-from megatron.bridge.training.checkpointing import CheckpointType
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
@@ -27,7 +26,6 @@ from megatron.bridge.training.train import _finish_train, train
 from megatron.bridge.training.utils.log_utils import barrier_and_log
 from megatron.bridge.utils.common_utils import print_rank_0
 from megatron.bridge.utils.decorators import experimental_fn
-from megatron.bridge.training.ema_checkpoint import load_ema_user_state
 
 @experimental_fn
 def pretrain(
@@ -135,32 +133,14 @@ def _pretrain(
     valid_data_iterator = setup_output.valid_data_iterator
     test_data_iterator = setup_output.test_data_iterator
     ckpt_context = setup_output.checkpointing_context
+    pg_collection = setup_output.pg_collection
     
     if ckpt_context is None:
         ckpt_context = {}
-
+    
     if callback_manager is not None:
-        ckpt_context["callback_user_state"] = callback_manager.user_state
-
-        loaded_checkpoint_name = ckpt_context.get("loaded_checkpoint_name")
-        loaded_checkpoint_type = ckpt_context.get("loaded_checkpoint_type")
-
-        if (
-            loaded_checkpoint_name is not None
-            and loaded_checkpoint_type in (CheckpointType.GLOBAL, CheckpointType.FSDP_DTENSOR)
-            and not config.checkpoint.finetune
-            and state.train_state.step > 0
-        ):
-            restored = load_ema_user_state(
-                loaded_checkpoint_name,
-                callback_manager.user_state
-            )
-            if not restored:
-                print_rank_0(
-                    f"No EMA sidecar found in {loaded_checkpoint_name}; "
-                    "EMA will be re-initialized on train start."
-                )
-
+        ckpt_context["callback_manager"] = callback_manager
+        
     # TRAINING
     if not config.validation.skip_train:
         if state.train_state.do_train and config.train.train_iters > 0:
@@ -173,6 +153,7 @@ def _pretrain(
                 valid_data_iterator,
                 state,
                 ckpt_context,
+                pg_collection,
                 callback_manager=callback_manager,
             )
 

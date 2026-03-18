@@ -1,12 +1,24 @@
-import os,torch
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
+import torch
 from typing import Any
-from megatron.bridge.training.utils.checkpoint_utils import (
-    get_checkpoint_name,
-    is_checkpoint_iteration_directory,
-)
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 EMA_DIRNAME = "ema_state"
+
 
 def has_ema_state(user_state: dict[str, Any] | None) -> bool:
     return (
@@ -21,7 +33,7 @@ def _ema_rank_filename(checkpoint_name: str, rank: int | None = None) -> str:
         rank = get_rank_safe()
     return os.path.join(checkpoint_name, EMA_DIRNAME, f"rank_{rank:05d}.pt")
 
-def save_ema_user_state(checkpoint_name, user_state) -> bool:
+def save_ema_user_state(checkpoint_name: str, user_state: dict[str, Any]) -> bool:
     if not has_ema_state(user_state):
         return False
 
@@ -50,7 +62,7 @@ def save_ema_user_state(checkpoint_name, user_state) -> bool:
     os.replace(tmp_path, final_path)
     return True
 
-def load_ema_user_state(checkpoint_name, user_state) -> bool:
+def load_ema_user_state(checkpoint_name: str, user_state: dict[str, Any]) -> bool:
     path = _ema_rank_filename(checkpoint_name)
 
     if not os.path.exists(path):

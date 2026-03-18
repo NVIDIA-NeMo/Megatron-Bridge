@@ -1,5 +1,26 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import torch
-from megatron.bridge.training.callbacks import Callback
+
+from megatron.bridge.training.callbacks import Callback, CheckpointCallbackContext
+from megatron.bridge.training.checkpointing import CheckpointType
+from megatron.bridge.training.ema_checkpoint import (
+    has_ema_state,
+    load_ema_user_state,
+    save_ema_user_state,
+)
 from megatron.bridge.utils.common_utils import print_rank_0
 
 class EMACallback(Callback):
@@ -45,13 +66,6 @@ class EMACallback(Callback):
         context.user_state["ema_state"] = remapped
         context.user_state.setdefault("ema_updates", 0)
         context.user_state.setdefault("ema_skipped_iters", 0)
-
-        updates = context.user_state.get("ema_updates", 0)
-        skips = context.user_state.get("ema_skipped_iters", 0)
-
-        if updates == 0 and context.state.train_state.step > self.start_step:
-            inferred_updates = max(0, context.state.train_state.step - self.start_step - skips)
-            context.user_state["ema_updates"] = inferred_updates
 
         where = "CPU" if self.store_on_cpu else "same-device"
         print_rank_0(
@@ -144,3 +158,34 @@ class EMACallback(Callback):
             f"[EMA] training finished | total_updates={context.user_state.get('ema_updates', 0)} "
             f"| total_skipped={context.user_state.get('ema_skipped_iters', 0)}"
         )
+    
+    def on_checkpoint_save(self, context: CheckpointCallbackContext) -> None:
+        if context.checkpoint_type == CheckpointType.LOCAL:
+            return
+
+        if not has_ema_state(context.user_state):
+            return
+
+        if context.state.cfg.checkpoint.async_save:
+            raise NotImplementedError(
+                "EMACallback checkpoint persistence does not yet support async_save=True."
+            )
+
+        save_ema_user_state(context.checkpoint_name, context.user_state)
+        
+    def on_checkpoint_load(self, context: CheckpointCallbackContext) -> None:
+        if context.checkpoint_type not in (CheckpointType.GLOBAL, CheckpointType.FSDP_DTENSOR):
+            return
+
+        if context.state.cfg.checkpoint.finetune:
+            return
+
+        if context.state.train_state.step <= 0:
+            return
+
+        restored = load_ema_user_state(context.checkpoint_name, context.user_state)
+        if not restored:
+            print_rank_0(
+                f"No EMA sidecar found in {context.checkpoint_name}; "
+                "EMA will be re-initialized on train start."
+            )

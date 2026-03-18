@@ -199,7 +199,13 @@ class TestPretrainWithEMA:
             assert payload["ema_updates"] > 0
 
         finally:
-            clear_directories(tmp_path)
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
+                if torch.distributed.get_rank() == 0:
+                    clear_directories(shared_base_dir)
+                torch.distributed.barrier()
+            else:
+                clear_directories(shared_base_dir)
 
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_resume_with_ema(self, tmp_path):
@@ -246,6 +252,9 @@ class TestPretrainWithEMA:
             first_payload = torch.load(first_ema_path, map_location="cpu", weights_only=False)
             first_updates = first_payload["ema_updates"]
 
+            first_key = next(iter(first_payload["ema_state"]))
+            first_tensor = first_payload["ema_state"][first_key].clone()
+
             callbacks_resume = [
                 EMACallback(
                     decay=0.95,
@@ -273,8 +282,16 @@ class TestPretrainWithEMA:
 
             resumed_payload = torch.load(resumed_ema_path, map_location="cpu", weights_only=False)
 
-            assert resumed_payload["ema_updates"] >= first_updates
+            assert resumed_payload["ema_updates"] == first_updates + (resumed_total_iters - first_total_iters)
+            assert first_key in resumed_payload["ema_state"]
             assert len(resumed_payload["ema_state"]) > 0
+            assert not torch.equal(resumed_payload["ema_state"][first_key], first_tensor)
 
         finally:
-            clear_directories(tmp_path)
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
+                if torch.distributed.get_rank() == 0:
+                    clear_directories(shared_base_dir)
+                torch.distributed.barrier()
+            else:
+                clear_directories(shared_base_dir)
