@@ -1002,25 +1002,34 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     @pytest.mark.parametrize(
-        "gpu_major, moe_enable_deepep, expect_error",
+        "gpu_major, gpu_name, moe_enable_deepep, expect_error",
         [
-            (8, True, False),  # Ampere GPU with DeepEP enabled - should pass
-            (9, True, False),  # Hopper GPU with DeepEP enabled - should pass
-            (7, True, True),  # Volta GPU with DeepEP enabled - should raise ValueError
-            (6, True, True),  # Pascal GPU with DeepEP enabled - should raise ValueError
-            (10, True, True),  # Future unsupported GPU with DeepEP enabled - should raise ValueError
-            (7, False, False),  # Volta GPU with DeepEP disabled - should pass
-            (6, False, False),  # Pascal GPU with DeepEP disabled - should pass
+            (8, "NVIDIA A100", True, False),  # Ampere GPU with DeepEP enabled - should pass
+            (9, "NVIDIA H100", True, False),  # Hopper GPU with DeepEP enabled - should pass
+            (10, "NVIDIA B200", True, False),  # Blackwell B200 GPU with DeepEP enabled - should pass
+            (10, "NVIDIA B200 SXM6 AC", True, False),  # Blackwell B200 variant with DeepEP enabled - should pass
+            (10, "NVIDIA B300", True, False),  # Blackwell B300 GPU with DeepEP enabled - should pass
+            (7, "NVIDIA V100", True, True),  # Volta GPU with DeepEP enabled - should raise ValueError
+            (6, "NVIDIA P100", True, True),  # Pascal GPU with DeepEP enabled - should raise ValueError
+            (
+                10,
+                "NVIDIA B100",
+                True,
+                True,
+            ),  # Unsupported Blackwell variant with DeepEP enabled - should raise ValueError
+            (7, "NVIDIA V100", False, False),  # Volta GPU with DeepEP disabled - should pass
+            (6, "NVIDIA P100", False, False),  # Pascal GPU with DeepEP disabled - should pass
         ],
     )
     @patch("torch.cuda.get_device_properties")
     def test_deepep_validation(
-        self, mock_get_device_properties, monkeypatch, gpu_major, moe_enable_deepep, expect_error
+        self, mock_get_device_properties, monkeypatch, gpu_major, gpu_name, moe_enable_deepep, expect_error
     ):
         """Test DeepEP validation during config container validation."""
         # Mock GPU device properties
         mock_properties = MagicMock()
         mock_properties.major = gpu_major
+        mock_properties.name = gpu_name
         mock_get_device_properties.return_value = mock_properties
 
         # Create a GPT model config with MoE settings
@@ -1036,7 +1045,7 @@ class TestConfigContainerValidation:
 
         try:
             if expect_error:
-                with pytest.raises(ValueError, match="DeepEP is supported for Ampere"):
+                with pytest.raises(ValueError, match="DeepEP is supported for Ampere, Hopper, and Blackwell"):
                     container.validate()
             else:
                 container.validate()  # Should pass without error
