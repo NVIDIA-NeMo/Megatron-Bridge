@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Tuple
 
+import torch
 import torch.distributed as dist
 
 if TYPE_CHECKING:
@@ -70,3 +71,65 @@ def get_mimo_dp_info(
         needs_data = pp_rank == 0
 
     return dp_rank, dp_size, needs_data, my_module
+
+
+def slice_batch_for_mimo(
+    batch: Dict[str, Any],
+    dp_rank: int,
+    dp_size: int,
+) -> Dict[str, Any]:
+    """Slice a global batch for this rank's DP shard.
+    
+    Takes a global batch (same data on all ranks) and returns the portion
+    that this rank should process based on its DP rank and size.
+    
+    Used by both training and evaluation to ensure consistent data sharding
+    across heterogeneous MIMO modules.
+    
+    Args:
+        batch: Global batch dictionary with tensors of shape [global_batch, ...].
+        dp_rank: This rank's position in its DP group.
+        dp_size: Total size of the DP group.
+        
+    Returns:
+        Dict[str, Any]: Sliced batch with tensors of shape [local_batch, ...].
+        
+    Example:
+        >>> # Global batch of 16 samples, DP size 4, this is DP rank 1
+        >>> global_batch = {'tokens': torch.randn(16, 2048)}
+        >>> local_batch = slice_batch_for_mimo(global_batch, dp_rank=1, dp_size=4)
+        >>> local_batch['tokens'].shape  # torch.Size([4, 2048])
+    """
+    if dp_size == 1:
+        return batch
+    
+    sliced = {}
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            # Slice along batch dimension (dim=0)
+            batch_size = value.size(0)
+            if batch_size % dp_size != 0:
+                raise ValueError(
+                    f"Batch size {batch_size} for key '{key}' is not divisible "
+                    f"by DP size {dp_size}"
+                )
+            local_batch_size = batch_size // dp_size
+            start_idx = dp_rank * local_batch_size
+            end_idx = start_idx + local_batch_size
+            sliced[key] = value[start_idx:end_idx]
+        elif isinstance(value, list) and len(value) > 0:
+            # Handle list values (e.g., metadata lists)
+            list_len = len(value)
+            if list_len % dp_size == 0:
+                local_len = list_len // dp_size
+                start_idx = dp_rank * local_len
+                end_idx = start_idx + local_len
+                sliced[key] = value[start_idx:end_idx]
+            else:
+                # Keep as-is if not evenly divisible (global metadata)
+                sliced[key] = value
+        else:
+            # Keep non-tensor, non-list values as-is
+            sliced[key] = value
+    
+    return sliced
