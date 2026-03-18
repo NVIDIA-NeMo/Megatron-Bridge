@@ -74,72 +74,36 @@ def get_mimo_dp_info(
     return dp_rank, dp_size, needs_data, my_module
 
 
-def get_mimo_sampling_info(
-    mimo_cfg: "MimoParallelismConfig",
-    grids: Dict[str, "HyperCommGrid"],
-) -> Tuple[int, int, bool]:
-    """Get sampler DP rank, size, and data-loading flag for MIMO.
-
-    In heterogeneous MIMO, modules may have different DP sizes.  The data
-    loader must give every data-loading rank the **same global micro-batch**
-    so that :func:`slice_batch_for_mimo` (called in the forward step) can
-    sub-shard it consistently with the :class:`BridgeCommunicator` fan-in /
-    fan-out routing.
-
-    This function therefore returns ``dp_size=1, dp_rank=0`` for all ranks,
-    disabling DP sharding at the sampler level.  Per-module DP sharding is
-    deferred to :func:`slice_batch_for_mimo`.
-
-    Args:
-        mimo_cfg: MIMO parallelism configuration.
-        grids: Module name to HyperCommGrid mapping.
-
-    Returns:
-        Tuple of (sampler_dp_rank, sampler_dp_size, needs_data).
-    """
-    my_grid, my_module = _find_rank_module(grids)
-    if my_grid is None or my_module is None:
-        return 0, 1, False
-
-    needs_data = _needs_data_for_module(my_grid, my_module)
-    # All data-loading ranks use the same sampler settings so they load
-    # identical global micro-batches.  Module-local DP slicing happens later
-    # in forward_step via slice_batch_for_mimo.
-    return 0, 1, needs_data
-
-
 def slice_batch_for_mimo(
     batch: Dict[str, Any],
     dp_rank: int,
     dp_size: int,
 ) -> Dict[str, Any]:
-    """Slice a global micro-batch for this rank's module-local DP shard.
-
-    All data-loading ranks receive the same global micro-batch (the sampler
-    uses ``dp_size=1``).  This function contiguously slices it so that each
-    module-local DP replica processes the correct subset.  The slicing is
-    contiguous to match the :class:`BridgeCommunicator`'s batch-dimension
-    split / concatenate logic for fan-out and fan-in routing.
-
-    Handles nested dicts (e.g. ``modality_inputs``) by recursing.
-
+    """Slice a global batch for this rank's DP shard.
+    
+    Takes a global batch (same data on all ranks) and returns the portion
+    that this rank should process based on its DP rank and size.
+    
+    Used by both training and evaluation to ensure consistent data sharding
+    across heterogeneous MIMO modules.
+    
     Args:
         batch: Global batch dictionary with tensors of shape [global_batch, ...].
-            May contain nested dicts (e.g. modality_inputs → encoder → kwargs).
-        dp_rank: This rank's position in its **module-local** DP group.
-        dp_size: Size of the module-local DP group.
-
+        dp_rank: This rank's position in its DP group.
+        dp_size: Total size of the DP group.
+        
     Returns:
-        Dict with tensors sliced to shape [global_batch // dp_size, ...].
-
+        Dict[str, Any]: Sliced batch with tensors of shape [local_batch, ...].
+        
     Example:
-        >>> global_batch = {'tokens': torch.randn(12, 2048)}
-        >>> local_batch = slice_batch_for_mimo(global_batch, dp_rank=1, dp_size=3)
+        >>> # Global batch of 16 samples, DP size 4, this is DP rank 1
+        >>> global_batch = {'tokens': torch.randn(16, 2048)}
+        >>> local_batch = slice_batch_for_mimo(global_batch, dp_rank=1, dp_size=4)
         >>> local_batch['tokens'].shape  # torch.Size([4, 2048])
     """
     if dp_size == 1:
         return batch
-
+    
     sliced = {}
     for key, value in batch.items():
         if isinstance(value, torch.Tensor):
@@ -148,17 +112,14 @@ def slice_batch_for_mimo(
             if batch_size % dp_size != 0:
                 raise ValueError(
                     f"Batch size {batch_size} for key '{key}' is not divisible "
-                    f"by DP size {dp_size}. Ensure micro_batch_size is divisible "
-                    f"by every module's data_parallel_size."
+                    f"by DP size {dp_size}"
                 )
             local_batch_size = batch_size // dp_size
             start_idx = dp_rank * local_batch_size
             end_idx = start_idx + local_batch_size
             sliced[key] = value[start_idx:end_idx]
-        elif isinstance(value, dict):
-            # Recurse into nested dicts (e.g. modality_inputs)
-            sliced[key] = slice_batch_for_mimo(value, dp_rank, dp_size)
         elif isinstance(value, list) and len(value) > 0:
+            # Handle list values (e.g., metadata lists)
             list_len = len(value)
             if list_len % dp_size == 0:
                 local_len = list_len // dp_size
@@ -171,5 +132,5 @@ def slice_batch_for_mimo(
         else:
             # Keep non-tensor, non-list values as-is
             sliced[key] = value
-
+    
     return sliced

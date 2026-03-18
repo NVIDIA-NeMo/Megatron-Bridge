@@ -37,7 +37,7 @@ def _make_mimo_infra(*, num_active_pgs: int = 1) -> Mock:
     for i in range(num_active_pgs):
         pgs[f"module_{i}"] = Mock()
     infra.pg_collections = pgs
-    infra.module_to_grid_map = {"language": Mock()}
+    infra.module_to_grid_map = {"llm": Mock()}
     infra.topology = Mock()
     return infra
 
@@ -251,9 +251,9 @@ class TestPretrainMimoSetup:
 
         provider = Mock()
         infra = Mock()
-        infra.module_to_grid_map = {"language": Mock()}
+        infra.module_to_grid_map = {"llm": Mock()}
         infra.topology = Mock()
-        infra.pg_collections = {"language": Mock()}
+        infra.pg_collections = {"llm": Mock()}
         provider.build_infra.return_value = infra
         provider.provide_distributed_model.return_value = [Mock()]
 
@@ -380,8 +380,8 @@ class TestTrainMimoCheckpointIntegration:
 
         pg = Mock()
         infra = Mock()
-        infra.pg_collections = {"language": pg}
-        infra.module_to_grid_map = {"language": Mock()}
+        infra.pg_collections = {"llm": pg}
+        infra.module_to_grid_map = {"llm": Mock()}
         infra.topology = Mock()
 
         mock_build_pg.return_value = Mock(spec=[])  # not a list
@@ -394,7 +394,7 @@ class TestTrainMimoCheckpointIntegration:
             forward_step_func=Mock(),
             model=Mock(),
             optimizer=Mock(),
-            schedulers={"language": _make_scheduler_mock()},
+            schedulers={"llm": _make_scheduler_mock()},
             train_data_iterator=train_iter,
             valid_data_iterator=None,
             global_state=state,
@@ -441,8 +441,8 @@ class TestTrainMimoCheckpointIntegration:
         mock_get_config.return_value = mock_config
 
         infra = Mock()
-        infra.pg_collections = {"language": Mock()}
-        infra.module_to_grid_map = {"language": Mock()}
+        infra.pg_collections = {"llm": Mock()}
+        infra.module_to_grid_map = {"llm": Mock()}
         infra.topology = Mock()
         mock_build_pg.return_value = Mock(spec=[])
 
@@ -452,7 +452,7 @@ class TestTrainMimoCheckpointIntegration:
             forward_step_func=Mock(),
             model=Mock(),
             optimizer=Mock(),
-            schedulers={"language": _make_scheduler_mock()},
+            schedulers={"llm": _make_scheduler_mock()},
             train_data_iterator=Mock(),
             valid_data_iterator=None,
             global_state=state,
@@ -496,8 +496,8 @@ class TestTrainMimoCheckpointIntegration:
         mock_get_config.return_value = mock_config
 
         infra = Mock()
-        infra.pg_collections = {"language": Mock()}
-        infra.module_to_grid_map = {"language": Mock()}
+        infra.pg_collections = {"llm": Mock()}
+        infra.module_to_grid_map = {"llm": Mock()}
         infra.topology = Mock()
         mock_build_pg.return_value = Mock(spec=[])
 
@@ -507,7 +507,7 @@ class TestTrainMimoCheckpointIntegration:
             forward_step_func=Mock(),
             model=Mock(),
             optimizer=Mock(),
-            schedulers={"language": _make_scheduler_mock()},
+            schedulers={"llm": _make_scheduler_mock()},
             train_data_iterator=Mock(),
             valid_data_iterator=None,
             global_state=state,
@@ -519,8 +519,12 @@ class TestTrainMimoCheckpointIntegration:
         # 2 non-blocking calls (top of each iteration) + 1 blocking call (shutdown)
         assert mock_async_finalize.call_count == 3
 
-        non_blocking_calls = [c for c in mock_async_finalize.call_args_list if c.kwargs.get("blocking") is False]
-        blocking_calls = [c for c in mock_async_finalize.call_args_list if c.kwargs.get("blocking") is True]
+        non_blocking_calls = [
+            c for c in mock_async_finalize.call_args_list if c.kwargs.get("blocking") is False
+        ]
+        blocking_calls = [
+            c for c in mock_async_finalize.call_args_list if c.kwargs.get("blocking") is True
+        ]
         assert len(non_blocking_calls) == 2
         assert len(blocking_calls) == 1
         assert blocking_calls[0].kwargs.get("terminate") is True
@@ -558,8 +562,8 @@ class TestTrainMimoCheckpointIntegration:
         mock_get_config.return_value = mock_config
 
         infra = Mock()
-        infra.pg_collections = {"language": Mock()}
-        infra.module_to_grid_map = {"language": Mock()}
+        infra.pg_collections = {"llm": Mock()}
+        infra.module_to_grid_map = {"llm": Mock()}
         infra.topology = Mock()
         mock_build_pg.return_value = Mock(spec=[])
 
@@ -570,7 +574,7 @@ class TestTrainMimoCheckpointIntegration:
                 forward_step_func=Mock(),
                 model=Mock(),
                 optimizer=Mock(),
-                schedulers={"language": _make_scheduler_mock()},
+                schedulers={"llm": _make_scheduler_mock()},
                 train_data_iterator=Mock(),
                 valid_data_iterator=None,
                 global_state=state,
@@ -601,7 +605,7 @@ def _make_setup_output_for_load(
 ) -> SimpleNamespace:
     """Create a MimoSetupOutput-like namespace suitable for pretrain_mimo load tests."""
     if pg_collections is None:
-        pg_collections = {"language": Mock()}
+        pg_collections = {"llm": Mock()}
 
     train_state = SimpleNamespace(
         step=train_state_step,
@@ -619,7 +623,7 @@ def _make_setup_output_for_load(
     return SimpleNamespace(
         model=MagicMock(),
         mimo_infra=SimpleNamespace(
-            module_to_grid_map={"language": Mock()},
+            module_to_grid_map={"llm": Mock()},
             pg_collections=pg_collections,
             topology=Mock(),
         ),
@@ -711,7 +715,7 @@ def _run_pretrain_mimo(
         m_dist.get_rank.return_value = 0
         m_dist.get_world_size.return_value = 2
         m_unwrap.return_value = MagicMock(
-            mimo_config=SimpleNamespace(module_to_grid_map={"language": Mock()}),
+            mimo_config=SimpleNamespace(module_to_grid_map={"llm": Mock()}, language_module_key="llm"),
         )
         mock_optimizer = MagicMock()
         mock_optimizer.module_infos = {}
@@ -771,9 +775,7 @@ class TestPretrainMimoLoadCheckpoint:
         cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
         setup_output = _make_setup_output_for_load()
         mocks = _run_pretrain_mimo(
-            cfg=cfg,
-            setup_output=setup_output,
-            checkpoint_exists_return=True,
+            cfg=cfg, setup_output=setup_output, checkpoint_exists_return=True,
         )
         _, kwargs = mocks["load_checkpoint"].call_args
         assert isinstance(kwargs["model"], list)
@@ -782,12 +784,10 @@ class TestPretrainMimoLoadCheckpoint:
 
     def test_load_forwards_explicit_pg_collection(self):
         pg = Mock()
-        setup_output = _make_setup_output_for_load(pg_collections={"language": pg})
+        setup_output = _make_setup_output_for_load(pg_collections={"llm": pg})
         cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
         mocks = _run_pretrain_mimo(
-            cfg=cfg,
-            setup_output=setup_output,
-            checkpoint_exists_return=True,
+            cfg=cfg, setup_output=setup_output, checkpoint_exists_return=True,
         )
         _, kwargs = mocks["load_checkpoint"].call_args
         assert kwargs["pg_collection"] is pg
@@ -796,9 +796,7 @@ class TestPretrainMimoLoadCheckpoint:
         setup_output = _make_setup_output_for_load()
         cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
         mocks = _run_pretrain_mimo(
-            cfg=cfg,
-            setup_output=setup_output,
-            checkpoint_exists_return=True,
+            cfg=cfg, setup_output=setup_output, checkpoint_exists_return=True,
         )
         _, kwargs = mocks["load_checkpoint"].call_args
         assert kwargs["checkpointing_context"] is setup_output.checkpointing_context
@@ -806,12 +804,10 @@ class TestPretrainMimoLoadCheckpoint:
     def test_load_forwards_first_scheduler(self):
         sched_a = _make_scheduler_mock()
         sched_b = _make_scheduler_mock()
-        schedulers = {"language": sched_a, "vision": sched_b}
+        schedulers = {"llm": sched_a, "vision": sched_b}
         cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
         mocks = _run_pretrain_mimo(
-            cfg=cfg,
-            schedulers=schedulers,
-            checkpoint_exists_return=True,
+            cfg=cfg, schedulers=schedulers, checkpoint_exists_return=True,
         )
         _, kwargs = mocks["load_checkpoint"].call_args
         assert kwargs["opt_param_scheduler"] is sched_a
@@ -830,21 +826,17 @@ class TestPretrainMimoLoadPgGuard:
         cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
         with pytest.raises(AssertionError, match="exactly one active ProcessGroupCollection"):
             _run_pretrain_mimo(
-                cfg=cfg,
-                setup_output=setup_output,
-                checkpoint_exists_return=True,
+                cfg=cfg, setup_output=setup_output, checkpoint_exists_return=True,
             )
 
     def test_rejects_multiple_active_pgs_in_pretrain(self):
         setup_output = _make_setup_output_for_load(
-            pg_collections={"language": Mock(), "vision": Mock()},
+            pg_collections={"llm": Mock(), "vision": Mock()},
         )
         cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
         with pytest.raises(AssertionError, match="exactly one active ProcessGroupCollection"):
             _run_pretrain_mimo(
-                cfg=cfg,
-                setup_output=setup_output,
-                checkpoint_exists_return=True,
+                cfg=cfg, setup_output=setup_output, checkpoint_exists_return=True,
             )
 
 
@@ -865,7 +857,7 @@ class TestSchedulerV1Fanout:
         sched_b = MagicMock()
         sched_b.optimizer.param_groups = [{"lr": 1e-4}]
 
-        schedulers = {"language": sched_a, "vision": sched_b}
+        schedulers = {"llm": sched_a, "vision": sched_b}
         cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
 
         # Simulate load succeeding and setting step > 0 via side_effect.
@@ -884,7 +876,7 @@ class TestSchedulerV1Fanout:
         sched.optimizer.param_groups = [{"lr": 1e-4}]
         sched.state_dict.return_value = {"step": 50}
 
-        schedulers = {"language": sched}
+        schedulers = {"llm": sched}
         cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
         _run_pretrain_mimo(cfg=cfg, schedulers=schedulers, checkpoint_exists_return=True)
 
@@ -919,6 +911,7 @@ class TestIteratorResumeSemanticsLoad:
         """When resuming (step > 0), builder receives train_state kwarg."""
         build_fn = MagicMock(return_value=(iter([]), None))
         # Give mock the train_state parameter so inspect.signature finds it
+        import types
 
         def _sig_fn(cfg, mimo_infra, *, train_state=None):
             pass
@@ -977,7 +970,7 @@ class TestMimoOptimizerLoadCompat:
         opt_b = MagicMock()
 
         module_infos = {
-            "language": ModuleOptimizerInfo(optimizer=opt_a, grid=Mock(), pg_collection=Mock(), is_active=True),
+            "llm": ModuleOptimizerInfo(optimizer=opt_a, grid=Mock(), pg_collection=Mock(), is_active=True),
             "vision": ModuleOptimizerInfo(optimizer=opt_b, grid=Mock(), pg_collection=Mock(), is_active=True),
         }
         config = MagicMock()
@@ -985,14 +978,14 @@ class TestMimoOptimizerLoadCompat:
 
     def test_load_state_dict_dispatches_per_module(self):
         mimo_opt, opt_a, opt_b = self._make_mimo_optimizer()
-        state = {"language": {"param": 1}, "vision": {"param": 2}}
+        state = {"llm": {"param": 1}, "vision": {"param": 2}}
         mimo_opt.load_state_dict(state)
         opt_a.load_state_dict.assert_called_once_with({"param": 1})
         opt_b.load_state_dict.assert_called_once_with({"param": 2})
 
     def test_load_state_dict_skips_missing_keys(self):
         mimo_opt, opt_a, opt_b = self._make_mimo_optimizer()
-        state = {"language": {"param": 1}}
+        state = {"llm": {"param": 1}}
         mimo_opt.load_state_dict(state)
         opt_a.load_state_dict.assert_called_once()
         opt_b.load_state_dict.assert_not_called()
@@ -1003,9 +996,9 @@ class TestMimoOptimizerLoadCompat:
         opt_b.sharded_state_dict.return_value = {"b": "sharded_b"}
 
         result = mimo_opt.sharded_state_dict({}, is_loading=True)
-        assert "language" in result
+        assert "llm" in result
         assert "vision" in result
-        assert result["language"] == {"a": "sharded_a"}
+        assert result["llm"] == {"a": "sharded_a"}
         assert result["vision"] == {"b": "sharded_b"}
 
     def test_reload_model_params_delegates_to_all_active(self):
@@ -1018,7 +1011,7 @@ class TestMimoOptimizerLoadCompat:
         from megatron.core.models.mimo.optimizer import MimoOptimizer, ModuleOptimizerInfo
 
         module_infos = {
-            "language": ModuleOptimizerInfo(optimizer=None, grid=Mock(), pg_collection=Mock(), is_active=False),
+            "llm": ModuleOptimizerInfo(optimizer=None, grid=Mock(), pg_collection=Mock(), is_active=False),
         }
         mimo_opt = MimoOptimizer(module_infos, MagicMock())
         assert mimo_opt.is_stub_optimizer is True
@@ -1059,9 +1052,7 @@ class TestTrainStateRestorationSmoke:
         setup_output = _make_setup_output_for_load(floating_point_operations_so_far=99999)
         cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
         mocks = _run_pretrain_mimo(
-            cfg=cfg,
-            setup_output=setup_output,
-            checkpoint_exists_return=True,
+            cfg=cfg, setup_output=setup_output, checkpoint_exists_return=True,
         )
         _, kwargs = mocks["train_mimo"].call_args
         assert kwargs["global_state"].train_state.floating_point_operations_so_far == 99999

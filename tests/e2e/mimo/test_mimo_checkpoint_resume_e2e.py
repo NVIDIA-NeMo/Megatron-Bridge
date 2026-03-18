@@ -51,7 +51,6 @@ from megatron.bridge.training.pretrain_mimo import pretrain_mimo
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
-
 logger = logging.getLogger(__name__)
 
 SAVE_STEPS = 5
@@ -71,15 +70,9 @@ _PATCH_DIM = 16
 
 def _make_vision_config() -> TransformerConfig:
     cfg = TransformerConfig(
-        num_layers=2,
-        hidden_size=64,
-        ffn_hidden_size=256,
-        num_attention_heads=4,
-        use_cpu_initialization=True,
-        pipeline_dtype=torch.bfloat16,
-        bf16=True,
-        variable_seq_lengths=True,
-        moe_token_dispatcher_type="alltoall",
+        num_layers=2, hidden_size=64, ffn_hidden_size=256, num_attention_heads=4,
+        use_cpu_initialization=True, pipeline_dtype=torch.bfloat16, bf16=True,
+        variable_seq_lengths=True, moe_token_dispatcher_type="alltoall",
     )
     cfg.add_bias_linear = True
     cfg.add_qkv_bias = True
@@ -98,15 +91,9 @@ def _make_vision_config() -> TransformerConfig:
 
 def _make_language_config() -> TransformerConfig:
     return TransformerConfig(
-        num_layers=2,
-        hidden_size=64,
-        ffn_hidden_size=256,
-        num_attention_heads=4,
-        use_cpu_initialization=True,
-        pipeline_dtype=torch.bfloat16,
-        bf16=True,
-        variable_seq_lengths=True,
-        moe_token_dispatcher_type="alltoall",
+        num_layers=2, hidden_size=64, ffn_hidden_size=256, num_attention_heads=4,
+        use_cpu_initialization=True, pipeline_dtype=torch.bfloat16, bf16=True,
+        variable_seq_lengths=True, moe_token_dispatcher_type="alltoall",
         cross_entropy_loss_fusion=True,
     )
 
@@ -120,14 +107,11 @@ def _build_model_specs():
         params={
             "transformer_config": vision_config,
             "transformer_layer_spec": get_vit_layer_with_transformer_engine_spec(),
-            "patch_dim": _PATCH_DIM,
-            "img_h": _IMG_SIZE,
-            "img_w": _IMG_SIZE,
+            "patch_dim": _PATCH_DIM, "img_h": _IMG_SIZE, "img_w": _IMG_SIZE,
         },
     )
     vision_submodule_spec = ModuleSpec(
-        module=VisionModalitySubmodules,
-        params={},
+        module=VisionModalitySubmodules, params={},
         submodules={"encoders": {"clip": vision_encoder}},
     )
     language_model_spec = ModuleSpec(
@@ -135,8 +119,7 @@ def _build_model_specs():
         params={
             "config": language_config,
             "transformer_layer_spec": get_gpt_layer_with_transformer_engine_spec(),
-            "vocab_size": _VOCAB_SIZE,
-            "max_sequence_length": _SEQ_LENGTH,
+            "vocab_size": _VOCAB_SIZE, "max_sequence_length": _SEQ_LENGTH,
         },
     )
     return language_model_spec, {"vision": vision_submodule_spec}, {"vision": _SPECIAL_TOKEN_ID}
@@ -151,7 +134,7 @@ def _build_parallelism_config() -> MimoParallelismConfig:
     """
     return MimoParallelismConfig(
         module_parallelisms={
-            "language": ModuleParallelismConfig(
+            "llm": ModuleParallelismConfig(
                 tensor_model_parallel_size=int(os.environ.get("MIMO_LLM_TP", "4")),
                 pipeline_model_parallel_size=int(os.environ.get("MIMO_LLM_PP", "1")),
                 data_parallel_size=int(os.environ.get("MIMO_LLM_DP", "1")),
@@ -251,9 +234,7 @@ def _build_config(
     max_dp = max(p.data_parallel_size for p in par_cfg.module_parallelisms.values())
 
     train_cfg = TrainingConfig(
-        micro_batch_size=1,
-        global_batch_size=max_dp,
-        train_iters=train_iters,
+        micro_batch_size=1, global_batch_size=max_dp, train_iters=train_iters,
     )
     train_cfg.num_microbatches = 1
     train_cfg.grad_reduce_in_fp32 = False
@@ -265,7 +246,7 @@ def _build_config(
     logger_cfg = LoggerConfig()
     logger_cfg.log_interval = 1
 
-    llm_pp = par_cfg.module_parallelisms["language"].pipeline_model_parallel_size
+    llm_pp = par_cfg.module_parallelisms["llm"].pipeline_model_parallel_size
     ckpt_cfg = CheckpointConfig(
         save_interval=save_interval,
         save=ckpt_dir,
@@ -314,7 +295,7 @@ def _run_phase_save(ckpt_dir: str) -> None:
         modality_submodules_spec=modality_specs,
         special_token_ids=special_tokens,
         mimo_parallelism_config=_build_parallelism_config(),
-        topology={"vision": ["language"], "language": []},
+        topology={"vision": ["llm"], "llm": []},
         use_cpu_initialization=True,
     )
     if not hasattr(mimo_provider, "num_moe_experts"):
@@ -325,33 +306,22 @@ def _run_phase_save(ckpt_dir: str) -> None:
     mock_data = _build_mock_data_provider()
     bridge_opt = BridgeOptimizerConfig(lr=1e-4, use_distributed_optimizer=True)
     mcore_opt = MCoreOptimizerConfig(
-        optimizer="adam",
-        lr=1e-4,
-        min_lr=0.0,
-        weight_decay=0.01,
-        clip_grad=1.0,
-        bf16=True,
-        use_distributed_optimizer=True,
+        optimizer="adam", lr=1e-4, min_lr=0.0, weight_decay=0.01,
+        clip_grad=1.0, bf16=True, use_distributed_optimizer=True,
     )
 
     cfg = _build_config(
-        mimo_provider,
-        mock_data,
-        bridge_opt,
-        ckpt_dir,
-        train_iters=SAVE_STEPS,
-        save_interval=SAVE_STEPS,
+        mimo_provider, mock_data, bridge_opt, ckpt_dir,
+        train_iters=SAVE_STEPS, save_interval=SAVE_STEPS,
     )
 
     global_state = GlobalState()
 
     pretrain_mimo(
-        cfg=cfg,
-        mimo_provider=mimo_provider,
+        cfg=cfg, mimo_provider=mimo_provider,
         forward_step_func=mimo_forward_step,
         build_data_iterators_fn=_build_data_iterators,
-        opt_config=mcore_opt,
-        schedulers={},
+        opt_config=mcore_opt, schedulers={},
         global_state=global_state,
     )
 
@@ -390,7 +360,7 @@ def _run_phase_resume(ckpt_dir: str) -> None:
         modality_submodules_spec=modality_specs,
         special_token_ids=special_tokens,
         mimo_parallelism_config=_build_parallelism_config(),
-        topology={"vision": ["language"], "language": []},
+        topology={"vision": ["llm"], "llm": []},
         use_cpu_initialization=True,
     )
     if not hasattr(mimo_provider, "num_moe_experts"):
@@ -401,22 +371,13 @@ def _run_phase_resume(ckpt_dir: str) -> None:
     mock_data = _build_mock_data_provider()
     bridge_opt = BridgeOptimizerConfig(lr=1e-4, use_distributed_optimizer=True)
     mcore_opt = MCoreOptimizerConfig(
-        optimizer="adam",
-        lr=1e-4,
-        min_lr=0.0,
-        weight_decay=0.01,
-        clip_grad=1.0,
-        bf16=True,
-        use_distributed_optimizer=True,
+        optimizer="adam", lr=1e-4, min_lr=0.0, weight_decay=0.01,
+        clip_grad=1.0, bf16=True, use_distributed_optimizer=True,
     )
 
     cfg = _build_config(
-        mimo_provider,
-        mock_data,
-        bridge_opt,
-        ckpt_dir,
-        train_iters=TOTAL_STEPS,
-        save_interval=TOTAL_STEPS,
+        mimo_provider, mock_data, bridge_opt, ckpt_dir,
+        train_iters=TOTAL_STEPS, save_interval=TOTAL_STEPS,
         load_dir=ckpt_dir,
     )
     # Save phase used train_iters=SAVE_STEPS, so checkpoint scheduler state
@@ -429,12 +390,10 @@ def _run_phase_resume(ckpt_dir: str) -> None:
     global_state = GlobalState()
 
     pretrain_mimo(
-        cfg=cfg,
-        mimo_provider=mimo_provider,
+        cfg=cfg, mimo_provider=mimo_provider,
         forward_step_func=mimo_forward_step,
         build_data_iterators_fn=_build_data_iterators,
-        opt_config=mcore_opt,
-        schedulers={},
+        opt_config=mcore_opt, schedulers={},
         global_state=global_state,
     )
 
@@ -443,7 +402,9 @@ def _run_phase_resume(ckpt_dir: str) -> None:
     _log(f"Phase RESUME complete: step={ts.step}, consumed_train_samples={ts.consumed_train_samples}")
 
     # Verify step continuity
-    assert ts.step == TOTAL_STEPS, f"Step continuity failed: expected {TOTAL_STEPS}, got {ts.step}"
+    assert ts.step == TOTAL_STEPS, (
+        f"Step continuity failed: expected {TOTAL_STEPS}, got {ts.step}"
+    )
 
     # Verify consumed_train_samples did not reset to 0
     assert ts.consumed_train_samples >= saved_marker["consumed_train_samples"], (

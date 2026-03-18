@@ -29,6 +29,7 @@ from megatron.core.pipeline_parallel.schedules import forward_backward_pipelinin
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save
+from megatron.bridge.training.train import checkpoint_and_decide_exit, save_checkpoint_and_time
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
