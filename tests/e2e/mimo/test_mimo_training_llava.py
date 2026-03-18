@@ -686,6 +686,12 @@ def main():
         cfg.checkpoint.save = args.checkpoint_dir
     if args.load_checkpoint is not None:
         cfg.checkpoint.load = args.load_checkpoint
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.dist_ckpt_optim_fully_reshardable = True
+    # MiMo RNG save is not yet supported: each module produces ShardedObject
+    # with key "rng_state" using module-local PP/TP/DP ranks, causing
+    # duplicate shard keys across modules.  Disable until upstream fix.
+    cfg.checkpoint.save_rng = False
 
     # 7. Run training
     _log("launching pretrain_mimo")
