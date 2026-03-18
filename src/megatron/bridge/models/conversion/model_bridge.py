@@ -315,27 +315,23 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("mscale_all_dim", "mscale_all_dim"),
     ]
 
-    # Shared activation function mapping (hf_name <-> megatron_func).
-    # Single source of truth lives in megatron.bridge.utils.activation_map.
-    ACTIVATION_MAPPING = ACTIVATION_FUNC_MAP
-
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):
         """Convert HF activation name string to Megatron activation function."""
-        if hidden_act not in cls.ACTIVATION_MAPPING:
+        if hidden_act not in ACTIVATION_FUNC_MAP:
             raise ValueError(
-                f"Unsupported activation function: {hidden_act}. Supported: {list(cls.ACTIVATION_MAPPING.keys())}"
+                f"Unsupported activation function: {hidden_act}. Supported: {list(ACTIVATION_FUNC_MAP.keys())}"
             )
-        return cls.ACTIVATION_MAPPING[hidden_act]
+        return ACTIVATION_FUNC_MAP[hidden_act]
 
     @classmethod
     def megatron_to_hf_activation(cls, activation_func) -> str:
         """Convert Megatron activation function to HF activation name string."""
-        for hf_name, megatron_func in cls.ACTIVATION_MAPPING.items():
+        for hf_name, megatron_func in ACTIVATION_FUNC_MAP.items():
             if activation_func is megatron_func:
                 return hf_name
         raise ValueError(
-            f"Unsupported activation function: {activation_func}. Supported: {list(cls.ACTIVATION_MAPPING.values())}"
+            f"Unsupported activation function: {activation_func}. Supported: {list(ACTIVATION_FUNC_MAP.values())}"
         )
 
     def hf_config_to_provider_kwargs(self, hf_config) -> dict:
