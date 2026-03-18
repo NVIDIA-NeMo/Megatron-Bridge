@@ -67,6 +67,7 @@ def slurm_executor(
     custom_bash_cmds: List[List[str]] = None,
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
+    packager: str = "git",
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -148,7 +149,7 @@ def slurm_executor(
         time=time_limit,
         mem="0",
         exclusive=True,
-        packager=run.GitArchivePackager(include_submodules=False),
+        packager=run.GitArchivePackager(include_submodules=False) if packager == "git" else run.Packager(),
         segment=segment,
         network=network,
         launcher=launcher,
