@@ -771,7 +771,17 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             merged = torch.stack([grouped_buffers[group_key][i] for i in range(num_experts)], dim=0)
 
             if getattr(task.mapping, "transpose_on_export", False):
-                merged = merged.transpose(-1, -2).contiguous()
+                if group_key in hf_state_dict:
+                    # Adaptive: only transpose when the stacked shape doesn't match the original HF
+                    # shape but the transposed shape does.  This handles configurations where the
+                    # per-expert weight is already in [out, in] (PyTorch) rather than [in, out]
+                    # (TE) layout — e.g. when explicit_expert_comm=False (etp=1, ep=1).
+                    expected = tuple(hf_state_dict[group_key].shape)
+                    transposed = merged.transpose(-1, -2).contiguous()
+                    if tuple(merged.shape) != expected and tuple(transposed.shape) == expected:
+                        merged = transposed
+                else:
+                    merged = merged.transpose(-1, -2).contiguous()
 
             del grouped_buffers[group_key]
             return {group_key: merged}
