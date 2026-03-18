@@ -129,6 +129,16 @@ class Qwen25VLModel(MegatronModule):
         if is_transformers_min_version("5.3.0"):
             self.get_vision_position_ids = types.MethodType(Qwen2_5_VLModel.get_vision_position_ids, self)
 
+    @property
+    def decoder(self):
+        """Expose language model decoder for mcore inference compatibility.
+
+        mcore's MambaInferenceStateConfig.from_model() calls get_attr_wrapped_model(model, "decoder"),
+        which only traverses .module wrappers. VLM models store the decoder under language_model.decoder,
+        so we expose it here to allow the Mamba check to run and correctly return None.
+        """
+        return getattr(self.language_model, "decoder", None)
+
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
         self.language_model.set_input_tensor(input_tensor)

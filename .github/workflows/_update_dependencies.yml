@@ -115,6 +115,7 @@ jobs:
           commit-message: ${{ env.title }}
           signoff: true
           committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          labels: needs-more-tests
 
       - name: Post /ok to test comment
         env:
