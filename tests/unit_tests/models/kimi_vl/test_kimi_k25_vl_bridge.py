@@ -207,17 +207,13 @@ class TestKimiK25VLBridgeMappingRegistry:
         for mapping in registry.mappings:
             if isinstance(mapping, AutoMapping):
                 if "vision_tower" not in mapping.hf_param and "mm_projector" not in mapping.hf_param:
-                    assert "language_model" in mapping.hf_param, (
-                        f"Language mapping missing prefix: {mapping.hf_param}"
-                    )
+                    assert "language_model" in mapping.hf_param, f"Language mapping missing prefix: {mapping.hf_param}"
 
     def test_mapping_registry_has_vision_mappings(self, kimi_bridge):
         """Test registry includes vision tower and projector mappings."""
         registry = kimi_bridge.mapping_registry()
 
-        replicated_params = [
-            m.megatron_param for m in registry.mappings if isinstance(m, ReplicatedMapping)
-        ]
+        replicated_params = [m.megatron_param for m in registry.mappings if isinstance(m, ReplicatedMapping)]
         assert "vision_tower.**" in replicated_params
         assert "mm_projector.**" in replicated_params
 
@@ -225,9 +221,7 @@ class TestKimiK25VLBridgeMappingRegistry:
         """Test registry includes expert bias mapping."""
         registry = kimi_bridge.mapping_registry()
 
-        auto_hf_params = [
-            m.hf_param for m in registry.mappings if isinstance(m, AutoMapping)
-        ]
+        auto_hf_params = [m.hf_param for m in registry.mappings if isinstance(m, AutoMapping)]
         assert any("e_score_correction_bias" in p for p in auto_hf_params)
 
 

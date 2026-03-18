@@ -377,37 +377,6 @@ def _is_kimi_processor(processor) -> bool:
     return processor is not None and type(processor).__name__ == "KimiK25Processor"
 
 
-def _generate_synthetic_vision_inputs(tokenizer, prompt: str, tp_size: int = 1):
-    """Create random pixel_values and grid_thws for VL testing without a processor.
-
-    Generates a synthetic 4x4-patch "image" (patch_size=14 → 56x56 pixels) and
-    builds input_ids that contain the text prompt followed by a single image
-    placeholder token, which the model's merge function will expand.
-
-    Returns the same tuple as process_inputs: (input_ids, pixel_values, grid_thws, messages).
-    """
-    PATCH_SIZE = 14
-    GRID_H, GRID_W, GRID_T = 4, 4, 1
-    MEDIA_PLACEHOLDER_TOKEN_ID = 163605
-
-    total_patches = GRID_T * GRID_H * GRID_W
-    # Use a fixed seed so all TP/EP ranks generate identical synthetic inputs
-    rng = torch.Generator().manual_seed(42)
-    pixel_values = torch.randn(total_patches, 3, PATCH_SIZE, PATCH_SIZE, dtype=torch.bfloat16, generator=rng)
-    grid_thws = torch.tensor([[GRID_T, GRID_H, GRID_W]], dtype=torch.long)
-
-    text_ids = tokenizer.encode(prompt, add_special_tokens=True)
-    ids = text_ids + [MEDIA_PLACEHOLDER_TOKEN_ID]
-    input_ids = torch.tensor([ids], dtype=torch.long)
-    input_ids = pad_input_ids_to_tp_multiple(input_ids, tp_size, tokenizer.pad_token_id or 0)
-
-    print_rank_0(
-        f"Synthetic vision inputs: pixel_values={pixel_values.shape}, "
-        f"grid_thws={grid_thws.tolist()}, input_ids={input_ids.shape}"
-    )
-    return input_ids, pixel_values, grid_thws, None
-
-
 def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str, is_vl_model: bool, tp_size: int = 1):
     """Process inputs for both vision-language and regular LLM models.
 
@@ -425,7 +394,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         from the Kimi processor.
     """
     if is_vl_model and image_path:
-        if _is_kimi_processor(processor):
+        if type(processor).__name__ == "KimiK25Processor":
             # Kimi K2.5: use processor(messages=messages) directly
             messages = [
                 {
@@ -465,10 +434,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
             return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
         else:
-            # Processor unavailable -- generate synthetic vision inputs so we
-            # can still exercise the vision forward path with random data.
-            print_rank_0("Processor unavailable; generating synthetic vision inputs for testing.")
-            return _generate_synthetic_vision_inputs(tokenizer, prompt, tp_size)
+            raise ValueError("Processor unavailable, please check your environment and try again.")
     else:
         # Text-only processing for both VL models without images and regular LLMs
         if is_vl_model and processor:

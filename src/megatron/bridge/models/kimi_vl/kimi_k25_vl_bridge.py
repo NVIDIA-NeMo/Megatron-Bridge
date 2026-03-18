@@ -12,12 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 from typing import Dict, Mapping
 
 import torch
-import torch.nn.functional as F
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
@@ -28,20 +25,12 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.kimi_vl.utils import (
-    get_common_configs,
     dequantize_int4,
     quantize_to_int4,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
-
-try:
-    import transformer_engine  # noqa: F401
-
-    HAVE_TE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TE = False
 
 
 @MegatronModelBridge.register_bridge(
@@ -64,28 +53,12 @@ class KimiK25VLBridge(MegatronModelBridge):
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
 
-        # TODO remove get_common_configs later, need to ensure all params are set correctly.
-        # Temporarily swap to text_config for get_common_configs (which reads
-        # hf_pretrained.config), then restore the original VL config so that
-        # save_artifacts later writes the full config (including auto_map).
-        hf_pretrained.config = text_config
-        configs = get_common_configs(hf_pretrained)
         hf_pretrained.config = hf_config
-
-        configs["make_vocab_size_divisible_by"] = 1280
-        configs["moe_router_score_function"] = "sigmoid"
-        configs["moe_router_enable_expert_bias"] = True
-        # aux_loss_alpha is on text_config, not the top-level KimiK25Config
-        if hasattr(text_config, "aux_loss_alpha"):
-            configs["moe_aux_loss_coeff"] = text_config.aux_loss_alpha
 
         # media_placeholder_token_id is on the top-level KimiK25Config, not on text_config
         media_placeholder_token_id = getattr(hf_config, "media_placeholder_token_id", 163605)
 
         provider = KimiK25VLModelProvider(
-            # Text configuration (extracted from HF text config)
-            **configs,
-            # Vision configuration (raw HF KimiK25VisionConfig)
             vision_config=vision_config,
             # VL-specific token IDs
             bos_token_id=getattr(text_config, "bos_token_id", 163584),
@@ -102,47 +75,11 @@ class KimiK25VLBridge(MegatronModelBridge):
             hf_model_path=hf_pretrained._model_name_or_path,
         )
 
-        # Kimi K2 language model defaults (previously in KimiK2Provider, now set here
-        # following main's pattern where bridge configures the provider).
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
-        provider.normalization = "RMSNorm"
-        provider.activation_func = F.silu
-        provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
-        provider.add_bias_linear = False
-        provider.share_embeddings_and_output_weights = False
-        provider.qk_layernorm = True
-        provider.multi_latent_attention = True
-
-        provider.moe_grouped_gemm = True
-        provider.moe_router_pre_softmax = True
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_router_load_balancing_type = "seq_aux_loss"
-        provider.moe_shared_expert_overlap = True
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_dtype = "fp32"
-        provider.moe_permute_fusion = True
-
-        provider.apply_rope_fusion = False
-        provider.bias_activation_fusion = True
-        provider.bias_dropout_fusion = True
-        provider.cross_entropy_fusion_impl = "te"
-        provider.cross_entropy_loss_fusion = True
-        provider.masked_softmax_fusion = True
-        provider.persist_layer_norm = True
-        provider.async_tensor_model_parallel_allreduce = True
-
-        provider.hidden_dropout = 0.0
-        provider.attention_softmax_in_fp32 = False
-
-        provider.make_vocab_size_divisible_by = 1280
-        provider.seq_length = 4096
-
+        # Dynamic configs derived from HF text_config (not in provider defaults)
         provider.moe_layer_freq = [0] * text_config.first_k_dense_replace + [1] * (
             text_config.num_hidden_layers - text_config.first_k_dense_replace
         )
-        provider.moe_shared_expert_intermediate_size = text_config.moe_intermediate_size * text_config.n_shared_experts
-        provider.moe_aux_loss_coeff = 1e-3
+        provider.async_tensor_model_parallel_allreduce = True
 
         return provider
 

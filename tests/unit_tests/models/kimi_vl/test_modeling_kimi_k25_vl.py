@@ -36,7 +36,9 @@ class MergeTestHelper:
         self.config.pad_token_id = PAD_TOKEN_ID
         self.config.ignore_index = IGNORE_INDEX
 
-    def merge(self, image_features, inputs_embeds, input_ids, attention_mask=None, labels=None, target_seq_length=None):
+    def merge(
+        self, image_features, inputs_embeds, input_ids, attention_mask=None, labels=None, target_seq_length=None
+    ):
         from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 
         return KimiK25VLModel._merge_input_ids_with_image_features(
@@ -99,7 +101,9 @@ class TestMergePreExpanded:
     def test_multi_image(self, helper):
         """Multiple images with pre-expanded placeholders."""
         # 2 images: 3 features + 2 features = 5 placeholders
-        input_ids = torch.tensor([[100, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 200, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 300]])
+        input_ids = torch.tensor(
+            [[100, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 200, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 300]]
+        )
         inputs_embeds = torch.zeros(1, 8, HIDDEN_DIM)
 
         feat1 = torch.ones(3, HIDDEN_DIM) * 1.0
@@ -144,10 +148,12 @@ class TestMergePreExpanded:
     def test_batch_size_2(self, helper):
         """Pre-expanded mode with batch_size=2."""
         # Each sample has 2 image placeholders
-        input_ids = torch.tensor([
-            [100, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 200],
-            [300, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 400],
-        ])
+        input_ids = torch.tensor(
+            [
+                [100, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 200],
+                [300, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 400],
+            ]
+        )
         inputs_embeds = torch.zeros(2, 4, HIDDEN_DIM)
 
         feat1 = torch.ones(2, HIDDEN_DIM) * 1.0
@@ -284,9 +290,7 @@ class TestMergeDynamicExpansion:
         inputs_embeds = torch.randn(1, 3, HIDDEN_DIM)
 
         feat = _make_image_features(4)
-        embedding, attn_mask, _, _ = helper.merge(
-            [feat], inputs_embeds, input_ids, target_seq_length=target
-        )
+        embedding, attn_mask, _, _ = helper.merge([feat], inputs_embeds, input_ids, target_seq_length=target)
 
         assert embedding.shape == (1, target, HIDDEN_DIM)
         assert attn_mask.shape == (1, target)
