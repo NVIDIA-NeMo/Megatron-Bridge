@@ -15,6 +15,7 @@
 import argparse
 import logging
 import os
+import re
 from pathlib import Path
 
 from nemo_run.config import get_nemorun_home
@@ -32,6 +33,8 @@ NUM_GPUS_PER_NODE_MAP = {
     "b300": 8,
     "gb200": 4,
     "gb300": 4,
+    "vr200": 4,
+    "r100": 1,
 }
 
 
@@ -55,6 +58,20 @@ def list_of_ints(arg):
 def to_dict(arg):
     """Split a comma-separated string into a dictionary of key-value pairs."""
     return dict(item.split("=") for item in arg.split(","))
+
+
+def parse_kv(s: str):
+    """Parse a key-value pair from a string."""
+    KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")  # Useful check for errors like hyphen in var names
+    if "=" not in s:
+        raise argparse.ArgumentTypeError(f"Expected KEY=VALUE, got {s!r}")
+
+    key, value = s.split("=", 1)
+
+    if not KEY_RE.match(key):
+        raise argparse.ArgumentTypeError(f"Invalid env var name: {key!r}")
+
+    return key, value
 
 
 def lower_str(arg):
@@ -421,6 +438,15 @@ def parse_cli_args():
         default={},
     )
     slurm_args.add_argument(
+        "-E",
+        "--env",
+        action="append",
+        type=parse_kv,
+        metavar="KEY=VALUE",
+        help="Set environment variable (repeatable arg). This is an alternative to --custom_env_vars \
+        (--custom_env_vars is preferred for most cases). Example: -E var1=value1,value2 -E var2=value3",
+    )
+    slurm_args.add_argument(
         "-cs",
         "--custom_srun_args",
         type=list_of_strings,
@@ -520,6 +546,14 @@ def parse_cli_args():
         help="Compute precision. Options- bf16 or fp8. Defaults to bf16",
         required=False,
         default="bf16",
+    )
+    performance_args.add_argument(
+        "--optimizer_type",
+        type=str,
+        choices=["adam", "muon"],
+        help="Optimizer type for recipes that support it (e.g. Kimi-K2). Defaults to muon.",
+        required=False,
+        default="muon",
     )
     performance_args.add_argument(
         "-vb",
@@ -763,6 +797,18 @@ def parse_cli_args():
     )
     testing_args.add_argument(
         "--memory_threshold", type=float, default=0.05, help="Memory validation threshold (default: 0.05 = 5%%)"
+    )
+    testing_args.add_argument(
+        "--eval_time_start_step",
+        type=int,
+        default=None,
+        help="Start step (0-indexed, inclusive) for timing average window. Overrides skip_first_percent_time when set.",
+    )
+    testing_args.add_argument(
+        "--eval_time_end_step",
+        type=int,
+        default=None,
+        help="End step (0-indexed, exclusive) for timing average window. If None, averages to end.",
     )
 
     return parser

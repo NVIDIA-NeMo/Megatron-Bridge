@@ -1,0 +1,44 @@
+# WAN Pretrain Mock Data Test Configuration
+# Converted from L2_Function_Tests_GPU_Wan_Mock_Data.sh
+
+model:
+  tensor_model_parallel_size: 1
+  pipeline_model_parallel_size: 1
+  context_parallel_size: 1
+  crossattn_emb_size: 1536
+  hidden_size: 1536
+  ffn_hidden_size: 8960
+  num_attention_heads: 12
+  num_layers: 3
+  qkv_format: thd
+  seq_length: 2048
+
+train:
+  eval_iters: 0
+  train_iters: 10
+  global_batch_size: 2
+  micro_batch_size: 1
+
+optimizer:
+  lr: 5.0e-6
+  min_lr: 5.0e-6
+
+scheduler:
+  lr_decay_style: constant
+  lr_warmup_iters: 0
+
+checkpoint:
+  save: ${oc.env:CHECKPOINT_DIR,null}
+  load: ${oc.env:CHECKPOINT_DIR,null}
+  load_optim: false
+  save_interval: 200
+
+dataset:
+  path: ${oc.env:DATASET_PATH,null}
+  seq_length: 2048
+  global_batch_size: 2
+  micro_batch_size: 1
+  packing_buffer_size: 50
+
+logger:
+  log_interval: 1
