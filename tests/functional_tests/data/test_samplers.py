@@ -58,9 +58,9 @@ class TestDataSamplers:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
-                    from megatron.bridge.models.llama.llama_provider import Llama3ModelProvider
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
 
-                    return Llama3ModelProvider()
+                    return GPTModelProvider()
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
@@ -102,9 +102,9 @@ class TestDataSamplers:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
-                    from megatron.bridge.models.llama.llama_provider import Llama3ModelProvider
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
 
-                    return Llama3ModelProvider()
+                    return GPTModelProvider()
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
@@ -155,9 +155,9 @@ class TestDataSamplers:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
-                    from megatron.bridge.models.llama.llama_provider import Llama3ModelProvider
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
 
-                    return Llama3ModelProvider()
+                    return GPTModelProvider()
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
@@ -579,9 +579,9 @@ class TestBatchDataloaderIntegration:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
-                    from megatron.bridge.models.llama.llama_provider import Llama3ModelProvider
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
 
-                    return Llama3ModelProvider()
+                    return GPTModelProvider()
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
@@ -617,9 +617,9 @@ class TestBatchDataloaderIntegration:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
-                    from megatron.bridge.models.llama.llama_provider import Llama3ModelProvider
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
 
-                    return Llama3ModelProvider()
+                    return GPTModelProvider()
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()

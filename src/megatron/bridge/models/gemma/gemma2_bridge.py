@@ -56,13 +56,11 @@ class Gemma2Bridge(MegatronModelBridge):
         provider.normalization = "RMSNorm"
         provider.activation_func = fast_gelu
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.attention_dropout = 0.0
         provider.hidden_dropout = 0.0
         provider.share_embeddings_and_output_weights = True
         provider.layernorm_zero_centered_gamma = True
-        provider.gradient_accumulation_fusion = False
 
         return provider
 
