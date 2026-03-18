@@ -405,26 +405,6 @@ def pretrain_mimo(
     else:
         train_data_iterator, valid_data_iterator = build_data_iterators_fn(cfg, setup_output.mimo_infra)
 
-    # Load checkpoint if configured
-    from megatron.bridge.training.checkpointing import load_checkpoint
-    from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
-
-    should_load_checkpoint = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
-    if should_load_checkpoint:
-        timers = setup_output.global_state._timers
-        # Use first scheduler (all modules share the same LR schedule)
-        first_scheduler = next(iter(schedulers.values()), None) if schedulers else None
-        timers("load-checkpoint", log_level=0).start(barrier=True)
-        load_checkpoint(
-            setup_output.global_state,
-            [setup_output.model],
-            optimizer,
-            first_scheduler,
-        )
-        timers("load-checkpoint").stop(barrier=True)
-        timers.log(["load-checkpoint"])
-        logger.info(f"Rank {dist.get_rank()}: Checkpoint loaded from {cfg.checkpoint.load}")
-
     logger.info(f"Rank {dist.get_rank()}: Starting training loop")
 
     # Run training loop

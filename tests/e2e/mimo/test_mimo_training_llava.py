@@ -391,16 +391,18 @@ def _wrap_iter(loader_iter):
         yield batch
 
 
-def _build_data_iterators(cfg, _mimo_infra):
+def _build_data_iterators(cfg, _mimo_infra, *, train_state=None):
     """Build data iterators compatible with setup_mimo's build_data_iterators_fn.
 
-    Signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
+    Signature: (cfg, mimo_infra, *, train_state=None) -> (train_iter, valid_iter)
     Uses build_mimo_data_loaders which auto-detects MIMO path via cfg.model.
+    Accepts optional train_state for resume support.
     """
     from megatron.bridge.data.mimo.loaders import build_mimo_data_loaders
     from megatron.bridge.training.state import TrainState
 
-    train_state = TrainState()
+    if train_state is None:
+        train_state = TrainState()
 
     # Compute sample counts
     train_samples = cfg.train.train_iters * cfg.train.global_batch_size
@@ -687,6 +689,7 @@ def main():
     if args.load_checkpoint is not None:
         cfg.checkpoint.load = args.load_checkpoint
     cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.fully_parallel_save = True
     cfg.checkpoint.dist_ckpt_optim_fully_reshardable = True
     # MiMo RNG save is not yet supported: each module produces ShardedObject
     # with key "rng_state" using module-local PP/TP/DP ranks, causing
