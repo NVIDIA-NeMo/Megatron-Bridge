@@ -16,11 +16,14 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional
 
+import torch
 import torch.distributed as dist
 from megatron.core.models.mimo import MimoModel
 from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.training.checkpointing import init_checkpointing_context, load_checkpoint
+from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
@@ -55,6 +58,8 @@ class MimoSetupOutput:
         train_data_iterator: Training data iterator.
         valid_data_iterator: Validation data iterator (optional).
         global_state: GlobalState containing timers, config, train_state.
+        checkpointing_context: Dictionary holding checkpoint-related state
+            (save strategy cache, LocalCheckpointManager for local saves).
     """
 
     model: "MimoModel"
@@ -65,6 +70,7 @@ class MimoSetupOutput:
     train_data_iterator: Iterator
     valid_data_iterator: Optional[Iterator]
     global_state: GlobalState
+    checkpointing_context: Dict[str, Any]
 
 
 def setup_mimo(
@@ -108,9 +114,10 @@ def setup_mimo(
         )
         train_state = TrainState()
         global_state = GlobalState()
-        global_state.cfg = cfg
         global_state._timers = timers
         global_state.train_state = train_state
+
+    global_state.cfg = cfg
 
     logger.info(f"Rank {dist.get_rank()}: Setting up MIMO training")
 
@@ -182,6 +189,17 @@ def setup_mimo(
         logger.info(f"Rank {dist.get_rank()}: Building data iterators")
         train_data_iterator, valid_data_iterator = build_data_iterators_fn(cfg, mimo_infra)
 
+    # Initialize async checkpoint worker (idempotent if already initialized).
+    global_state.initialize_async_checkpoint_worker()
+
+    # Initialize checkpointing context (save strategy cache + LocalCheckpointManager).
+    checkpointing_context = init_checkpointing_context(cfg.checkpoint)
+
+    # Align start_time across ranks so duration-based exit is consistent.
+    start_time_tensor = torch.tensor([global_state.start_time], dtype=torch.double, device="cuda")
+    dist.all_reduce(start_time_tensor, op=dist.ReduceOp.MIN)
+    global_state.start_time = start_time_tensor.item()
+
     logger.info(f"Rank {dist.get_rank()}: MIMO setup complete")
 
     return MimoSetupOutput(
@@ -193,6 +211,7 @@ def setup_mimo(
         train_data_iterator=train_data_iterator,
         valid_data_iterator=valid_data_iterator,
         global_state=global_state,
+        checkpointing_context=checkpointing_context,
     )
 
 
@@ -235,21 +254,27 @@ def pretrain_mimo(
     # Initialize num-microbatches calculator if not already set.
     from megatron.core import num_microbatches_calculator as nmc
 
+    rampup_batch_size = getattr(cfg.train, "rampup_batch_size", None)
+    assert rampup_batch_size is None, (
+        "Microbatch rampup is not supported in MiMo training. "
+        "Set rampup_batch_size to None."
+    )
+
     if nmc._GLOBAL_NUM_MICROBATCHES_CALCULATOR is None:
         nmc.init_num_microbatches_calculator(
             dist.get_rank(),
-            getattr(cfg.train, "rampup_batch_size", None),
+            rampup_batch_size,
             cfg.train.global_batch_size,
             cfg.train.micro_batch_size,
             cfg.data_parallel_size,
             getattr(cfg.train, "decrease_batch_size_if_needed", False),
         )
 
-    # Setup MIMO components
+    # Setup MIMO components (iterators deferred until after checkpoint load)
     setup_output = setup_mimo(
         cfg=cfg,
         mimo_provider=mimo_provider,
-        build_data_iterators_fn=build_data_iterators_fn,
+        build_data_iterators_fn=None,
         global_state=global_state,
     )
 
@@ -298,6 +323,85 @@ def pretrain_mimo(
                 )
         logger.info(f"Rank {dist.get_rank()}: Auto-created schedulers for modules: {list(schedulers.keys())}")
 
+    # Select rank-local PG collection for non-colocated MiMo.
+    # Each rank participates in exactly one module, so "first non-None" is unambiguous.
+    active_pgs = [pg for pg in setup_output.mimo_infra.pg_collections.values() if pg is not None]
+    assert len(active_pgs) == 1, (
+        f"Non-colocated MiMo requires exactly one active ProcessGroupCollection per rank, "
+        f"got {len(active_pgs)}. Colocated MiMo is not supported by this code path."
+    )
+    local_pg_collection = active_pgs[0]
+
+    # Bridge MiMo's per-module process groups into Megatron's global parallel
+    # state.  MiMo intentionally skips global MPU init (see
+    # MimoModelProvider.initialize_model_parallel), but checkpoint save/load
+    # paths (sharded_state_dict, ensure_metadata_has_dp_cp_group) rely on the
+    # globals.  For non-colocated MiMo every rank is active in exactly one
+    # module, so we can safely set the globals from that module's collection.
+    from megatron.core import parallel_state as mpu
+
+    mpu._TENSOR_MODEL_PARALLEL_GROUP = local_pg_collection.tp
+    mpu._DATA_PARALLEL_GROUP = local_pg_collection.dp
+    mpu._DATA_PARALLEL_GROUP_WITH_CP = getattr(local_pg_collection, "dp_cp", local_pg_collection.dp)
+    if hasattr(local_pg_collection, "pp"):
+        mpu._PIPELINE_MODEL_PARALLEL_GROUP = local_pg_collection.pp
+
+    first_scheduler = next(iter(schedulers.values()), None) if schedulers else None
+
+    # Broadened load-intent gating: includes non-persistent resume intent
+    has_persistent = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
+    has_pretrained = (
+        cfg.checkpoint.pretrained_checkpoint is not None
+        and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
+    )
+    wants_non_persistent = cfg.checkpoint.non_persistent_ckpt_type is not None
+    should_load = has_persistent or has_pretrained or wants_non_persistent
+
+    if should_load:
+        timers = setup_output.global_state.timers
+        timers("load-checkpoint", log_level=0).start(barrier=True)
+        load_checkpoint(
+            setup_output.global_state,
+            model=[setup_output.model],
+            optimizer=optimizer,
+            opt_param_scheduler=first_scheduler,
+            checkpointing_context=setup_output.checkpointing_context,
+            pg_collection=local_pg_collection,
+        )
+        timers("load-checkpoint").stop(barrier=True)
+        timers.log(["load-checkpoint"])
+
+        # Fan out loaded scheduler state to all active module schedulers.
+        # v1: checkpoints contain a single scheduler blob (first_scheduler).
+        if first_scheduler is not None and len(schedulers) > 1:
+            loaded_state = first_scheduler.state_dict()
+            for sched in schedulers.values():
+                if sched is not first_scheduler:
+                    sched.load_state_dict(loaded_state)
+
+    # Build data iterators after load decision (resume-safe ordering).
+    # When resuming, train_state has restored consumed-sample offsets that
+    # the iterator builder must honor to avoid replaying data from sample 0.
+    train_state = setup_output.global_state.train_state
+    is_resuming = train_state.step > 0
+
+    if is_resuming:
+        import inspect
+
+        sig = inspect.signature(build_data_iterators_fn)
+        if "train_state" in sig.parameters:
+            train_data_iterator, valid_data_iterator = build_data_iterators_fn(
+                cfg, setup_output.mimo_infra, train_state=train_state,
+            )
+        else:
+            raise RuntimeError(
+                "Resuming from checkpoint but build_data_iterators_fn does not accept "
+                "'train_state' argument. The iterator builder must support a train_state "
+                "keyword argument to honor restored consumed-sample offsets during resume."
+            )
+    else:
+        train_data_iterator, valid_data_iterator = build_data_iterators_fn(cfg, setup_output.mimo_infra)
+
     logger.info(f"Rank {dist.get_rank()}: Starting training loop")
 
     # Run training loop
@@ -306,11 +410,12 @@ def pretrain_mimo(
         model=setup_output.model,
         optimizer=optimizer,
         schedulers=schedulers,
-        train_data_iterator=setup_output.train_data_iterator,
-        valid_data_iterator=setup_output.valid_data_iterator,
+        train_data_iterator=train_data_iterator,
+        valid_data_iterator=valid_data_iterator,
         global_state=setup_output.global_state,
         mimo_infra=setup_output.mimo_infra,
         multimodule_communicator=setup_output.multimodule_communicator,
+        checkpointing_context=setup_output.checkpointing_context,
     )
 
     logger.info("MIMO pretraining completed")
