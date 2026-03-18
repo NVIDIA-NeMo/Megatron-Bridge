@@ -160,7 +160,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         prompt: Text prompt
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, messages)
+        Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, messages)
     """
     if image_path:
         # Create messages with image and text
@@ -303,7 +303,7 @@ def main(args) -> None:
 
     # Process inputs (text and image if provided)
     prompt = args.prompt
-    input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, messages = process_image_inputs(
+    input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, _messages = process_image_inputs(
         processor, args.image_path, prompt
     )
 

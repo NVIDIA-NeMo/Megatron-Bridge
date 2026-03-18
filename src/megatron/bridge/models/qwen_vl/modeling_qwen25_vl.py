@@ -161,6 +161,8 @@ class Qwen25VLModel(MegatronModule):
             The temporal, height and width of feature shape of each video in LLM.
         second_per_grid_ts (`torch.Tensor` of shape `(num_videos)`, *optional*):
             The time interval (in seconds) for each grid along the temporal dimension in the 3D position IDs.
+        mm_token_type_ids (`torch.IntTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Token type IDs distinguishing text (0) from multimodal (1) tokens. Required by transformers >= 5.3.0.
         """
 
         if self.pre_process:
