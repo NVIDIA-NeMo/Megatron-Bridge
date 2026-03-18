@@ -17,7 +17,16 @@ from typing import Dict, List
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
-from nemo_run.core.execution.kuberay import KubeRayExecutor, KubeRayWorkerGroup
+
+
+try:
+    from nemo_run.core.execution.kuberay import KubeRayExecutor, KubeRayWorkerGroup
+
+    HAVE_KUBERNETES = True
+except ImportError:
+    KubeRayExecutor = None
+    KubeRayWorkerGroup = None
+    HAVE_KUBERNETES = False
 
 
 def slurm_executor(
@@ -82,6 +91,10 @@ def kuberay_executor(
     Kuberay cluster definition with appropriate cluster params and NeMo container params needed for pre-training
     and fine-tuning experiments
     """
+    if not HAVE_KUBERNETES:
+        raise ImportError(
+            "KubeRayExecutor is not available. Please install nemo-run with Kubernetes support: pip install nemo-run[ray]"
+        )
 
     env_vars = {
         "TORCH_HOME": "/nemo-workspace/.cache",
