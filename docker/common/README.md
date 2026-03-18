@@ -11,7 +11,7 @@
 
 ---
 
-## Installed Packged
+## Installed Packages
 
 Pip installed packages:
 
@@ -61,22 +61,31 @@ docker run -v <local-folder-path>:<container-folder-path> <container-image>
 
 ### Installing packages inside the container
 
-Packages can be installed into the uv virtualenv (`/opt/venv/`) from two locations:
+All packages share a single uv virtualenv (`/opt/venv/`). The *location* you install
+from determines which resolution rules apply — use the guide below.
 
-#### From `/opt/NeMo-FW` (default)
+#### Which code needs this package?
 
-Use this when unsure, or when the dependency is not specific to Megatron:
+**Megatron-Bridge/Megatron-LM** (training, model architecture):
+
+```bash
+cd /opt/Megatron-Bridge
+uv pip install <package>
+```
+
+**NeMo toolkit, Export-Deploy, Run, or Evaluator**:
 
 ```bash
 cd /opt/NeMo-FW
 uv pip install <package>
 ```
 
-#### From `/opt/Megatron-Bridge`
+This is safe to use for general packages — MBridge-managed packages
+(TransformerEngine, nvidia-resiliency-ext, nvidia-modelopt, etc.) are protected
+and will not be overwritten.
 
-Use this only for Megatron-specific dependencies:
+**vllm, tensorrt-llm, or tensorrt**:
 
-```bash
-cd /opt/Megatron-Bridge
-uv pip install <package>
-```
+These are built from source and baked into the container at build time (see
+`docker/Dockerfile.fw_base`). They cannot be managed via `uv pip install`.
+To change them, rebuild the container.
