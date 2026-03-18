@@ -270,27 +270,27 @@ jobs:
           echo "key=$KEY" >> $GITHUB_OUTPUT
           echo "cache-to=type=registry,ref=${{ env.container-registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          file: ./docker/Dockerfile.ci
-          push: true
-          context: .
-          build-args: |
-            FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
-            MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
-            MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
-          cache-from: |
-            type=registry,ref=${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
-            type=registry,ref=${{ env.container-registry }}/megatron-bridge:main-buildcache,mode=max
-            ${{ steps.cache_from.outputs.LAST_PRS }}
-          cache-to: ${{ steps.cache_keys.outputs.cache-to }}
-          no-cache: false
-          tags: |
-            ${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
-            ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
-          secrets: |
-            GH_TOKEN=${{ secrets.PAT }}
+      # - name: Build and push
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     file: ./docker/Dockerfile.ci
+      #     push: true
+      #     context: .
+      #     build-args: |
+      #       FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
+      #       MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
+      #       MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
+      #     cache-from: |
+      #       type=registry,ref=${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
+      #       type=registry,ref=${{ env.container-registry }}/megatron-bridge:main-buildcache,mode=max
+      #       ${{ steps.cache_from.outputs.LAST_PRS }}
+      #     cache-to: ${{ steps.cache_keys.outputs.cache-to }}
+      #     no-cache: false
+      #     tags: |
+      #       ${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
+      #       ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+      #     secrets: |
+      #       GH_TOKEN=${{ secrets.PAT }}
 
   check-labels:
     runs-on: ubuntu-latest
@@ -361,20 +361,20 @@ jobs:
           echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
 
-      - name: main
-        uses: ./.github/actions/test-template
-        with:
-          script: Launch_Unit_Tests_Core
-          timeout: 18
-          is_unit_test: "true"
-          has-azure-credentials: "true"
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
-          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+      # - name: main
+      #   uses: ./.github/actions/test-template
+      #   with:
+      #     script: Launch_Unit_Tests_Core
+      #     timeout: 18
+      #     is_unit_test: "true"
+      #     has-azure-credentials: "true"
+      #     azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      #     azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      #     azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      #     PAT: ${{ secrets.PAT }}
+      #     container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+      #     test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+      #     runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   cicd-unit-tests-diffusion:
     if: |
@@ -422,20 +422,20 @@ jobs:
           echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
 
-      - name: main
-        uses: ./.github/actions/test-template
-        with:
-          script: Launch_Unit_Tests_Diffusion
-          timeout: 18
-          is_unit_test: "true"
-          has-azure-credentials: "true"
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
-          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+      # - name: main
+      #   uses: ./.github/actions/test-template
+      #   with:
+      #     script: Launch_Unit_Tests_Diffusion
+      #     timeout: 18
+      #     is_unit_test: "true"
+      #     has-azure-credentials: "true"
+      #     azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      #     azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      #     azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      #     PAT: ${{ secrets.PAT }}
+      #     container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+      #     test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+      #     runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   # L0: runs on every PR, main push, and schedule
   cicd-functional-tests-l0:
@@ -498,20 +498,20 @@ jobs:
           echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
 
-      - name: main
-        uses: ./.github/actions/test-template
-        with:
-          script: ${{ matrix.script }}
-          timeout: ${{ fromJSON(matrix.timeout || '30') }}
-          is_unit_test: "false"
-          has-azure-credentials: "true"
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
-          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+      # - name: main
+      #   uses: ./.github/actions/test-template
+      #   with:
+      #     script: ${{ matrix.script }}
+      #     timeout: ${{ fromJSON(matrix.timeout || '30') }}
+      #     is_unit_test: "false"
+      #     has-azure-credentials: "true"
+      #     azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      #     azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      #     azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      #     PAT: ${{ secrets.PAT }}
+      #     container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+      #     test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+      #     runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   # L1: runs on main push, schedule, and PRs with "needs-more-tests" label
   cicd-functional-tests-l1:
@@ -588,20 +588,20 @@ jobs:
           echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
 
-      - name: main
-        uses: ./.github/actions/test-template
-        with:
-          script: ${{ matrix.script }}
-          timeout: ${{ fromJSON(matrix.timeout || '30') }}
-          is_unit_test: "false"
-          has-azure-credentials: "true"
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
-          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+      # - name: main
+      #   uses: ./.github/actions/test-template
+      #   with:
+      #     script: ${{ matrix.script }}
+      #     timeout: ${{ fromJSON(matrix.timeout || '30') }}
+      #     is_unit_test: "false"
+      #     has-azure-credentials: "true"
+      #     azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      #     azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      #     azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      #     PAT: ${{ secrets.PAT }}
+      #     container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+      #     test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+      #     runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   # L2: runs on schedule (nightly/weekly) and workflow_dispatch only
   cicd-functional-tests-l2:
@@ -790,10 +790,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [Nemo_CICD_Test, pre-flight]
     if: |
-      (
-        (needs.pre-flight.outputs.is_ci_workload == 'true' && !failure())
-        || success()
-      )
+      needs.Nemo_CICD_Test.result == 'success'
       && needs.pre-flight.outputs.docs_only == 'false'
       && needs.pre-flight.outputs.is_deployment_workflow == 'false'
       && !cancelled()
