@@ -20,7 +20,7 @@ Edit the variables at the top of `slurm_conversion.sh`:
 
 ```bash
 CONTAINER_IMAGE="/path/to/container.sqsh"
-CONTAINER_MOUNTS="/lustre:/lustre,/path/to/project:/opt/Megatron-Bridge"
+CONTAINER_MOUNTS="/path/to/project:/opt/Megatron-Bridge"
 # Optional:
 export HF_TOKEN="hf_your_token_here"
 export HF_HOME="/path/to/shared/HF_HOME"
@@ -58,7 +58,7 @@ Edit the variables at the top of `slurm_inference.sh`:
 
 ```bash
 CONTAINER_IMAGE="/path/to/container.sqsh"
-CONTAINER_MOUNTS="/lustre:/lustre,/path/to/project:/opt/Megatron-Bridge"
+CONTAINER_MOUNTS="/path/to/project:/opt/Megatron-Bridge"
 export HF_TOKEN="hf_your_token_here"
 ```
 
@@ -72,9 +72,7 @@ sbatch examples/models/minimax_m2/slurm_inference.sh
 
 ```
 ======== GENERATED TEXT OUTPUT ========
-Prompt: What is artificial intelligence?
-Generated: What is artificial intelligence? Artificial intelligence (AI) is the simulation of...
+Prompt: What is 2+2?
+Generated: What is 2+2? The answer is 4.
 =======================================
 ```
-
-Verified with prompt `"What is 2+2?"` → generates `"The answer is 4."`.
