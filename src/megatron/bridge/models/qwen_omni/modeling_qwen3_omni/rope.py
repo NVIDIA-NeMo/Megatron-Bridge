@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Qwen3-Omni multimodal RoPE helpers ported from the HF thinker implementation."""
+
 import torch
 
 
@@ -57,7 +59,11 @@ def get_rope_index(
     audio_seqlens: torch.LongTensor | None = None,
     second_per_grids: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Port of HF Qwen3OmniMoePreTrainedModelForConditionalGeneration.get_rope_index."""
+    """Build multimodal RoPE ids for text, image, video, and audio token layouts.
+
+    This mirrors the HF Qwen3-Omni thinker implementation so local Megatron smoke
+    tests exercise the same placeholder ordering and audio/image position handling.
+    """
     del seconds_per_chunk
 
     mrope_position_deltas = []

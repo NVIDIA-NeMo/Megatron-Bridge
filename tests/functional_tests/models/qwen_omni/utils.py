@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Shared helpers for Qwen3-Omni smoke-model generation and local E2E test inputs."""
+
 import io
 import json
 import os
@@ -67,11 +69,16 @@ _MERGER_PATTERN = re.compile(r"^thinker\.visual\.merger_list\.(\d+)\.")
 
 
 def smoke_assets_available() -> bool:
+    """Return whether the local source checkpoint and OmniBench parquet are available."""
     return SOURCE_MODEL_PATH.exists() and SOURCE_DATA_PATH.exists()
 
 
 def create_qwen3_omni_smoke_model(output_dir: Path) -> Path:
-    """Create a single-GPU Qwen3-Omni smoke model by vertically trimming thinker layers only."""
+    """Create or reuse a single-GPU Qwen3-Omni smoke checkpoint in `output_dir`.
+
+    The smoke model keeps the original hidden dimensions so the HF config stays compatible,
+    while trimming only thinker layer counts to fit a single 48 GB GPU.
+    """
     if (output_dir / "config.json").exists() and (output_dir / "model.safetensors").exists():
         return output_dir
 
@@ -129,7 +136,7 @@ def create_qwen3_omni_smoke_model(output_dir: Path) -> Path:
 
 
 def build_real_sample_inputs(model_path: str | Path) -> dict[str, torch.Tensor]:
-    """Build one multimodal sample using the local OmniBench parquet and the model processor."""
+    """Build one real image+audio sample from local OmniBench data with the model processor."""
     row = pd.read_parquet(SOURCE_DATA_PATH).iloc[0]
     image = Image.open(io.BytesIO(row["images"][0]["bytes"])).convert("RGB")
     audio = np.asarray(row["audios"][0], dtype=np.float32)
@@ -153,6 +160,7 @@ def move_inputs_to_device(
     device: torch.device | str,
     dtype: torch.dtype | None = None,
 ) -> dict[str, torch.Tensor]:
+    """Move a processor batch to `device` and cast multimodal float tensors when needed."""
     moved = {}
     for key, value in batch.items():
         if hasattr(value, "to"):
@@ -164,6 +172,7 @@ def move_inputs_to_device(
 
 
 def _keep_smoke_weight(key: str) -> bool:
+    """Return whether a checkpoint tensor should be kept in the reduced smoke checkpoint."""
     if not key.startswith("thinker."):
         return False
 
