@@ -201,8 +201,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin ${{ env.TARGET_BRANCH }}
-          git restore --source=origin/${{ env.TARGET_BRANCH }} -- 3rdparty/Megatron-LM
-          git add 3rdparty/Megatron-LM
+          git restore --source=origin/${{ env.TARGET_BRANCH }} -- 3rdparty/Megatron-LM uv.lock
+          git add 3rdparty/Megatron-LM uv.lock
           git commit -m "Revert submodule bump for dev branch"
           git push origin ${{ env.SOURCE_BRANCH }}
 
