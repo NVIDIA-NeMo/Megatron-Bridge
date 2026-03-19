@@ -20,6 +20,8 @@ Uses toy-sized configs to keep tests fast (<5s each).
 
 import datetime
 import os
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -234,3 +236,76 @@ class TestQwen3ASRModel:
 
         model = self._build_model(thinker_config, pre_process=False)
         model.set_input_tensor([test_tensor])
+
+    def test_get_audio_features(self, thinker_config):
+        """Smoke test: get_audio_features returns correct shape and dtype."""
+        model = self._build_model(thinker_config)
+        device = next(model.parameters()).device
+        dtype = next(model.thinker.audio_model.parameters()).dtype
+
+        batch, num_tokens = 2, 5
+        # Mock the audio encoder to return a known tensor, avoiding the
+        # complex conv/attention pipeline that needs realistic mel inputs.
+        fake_audio_out = torch.randn(batch, num_tokens, HIDDEN_SIZE, device=device, dtype=dtype)
+        with patch.object(
+            model.thinker.audio_model,
+            "forward",
+            side_effect=lambda input_feature, feature_lens=None, **kw: SimpleNamespace(
+                last_hidden_state=fake_audio_out[: input_feature.shape[0]]
+            ),
+        ):
+            input_features = torch.randn(batch, 32, 100, device=device)
+            audio_feature_lengths = torch.tensor([100, 80], device=device)
+
+            out = model.thinker.get_audio_features(input_features, audio_feature_lengths=audio_feature_lengths)
+
+        assert out.shape[-1] == HIDDEN_SIZE
+        assert out.dtype == dtype
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="TransformerEngine requires CUDA")
+    @pytest.mark.timeout(120)
+    def test_forward_smoke(self, thinker_config):
+        """Smoke test: forward pass produces output with correct shape."""
+        model = self._build_model(thinker_config)
+        model.to("cuda")
+        device = next(model.parameters()).device
+
+        batch, seq_len = 1, 16
+        num_audio_tokens = 4
+        vocab_size = thinker_config.text_config.vocab_size
+
+        # The toy config uses audio_token_id=151646 which exceeds vocab_size=1000.
+        # Temporarily set audio_token_id to a value within vocab range for this test.
+        audio_token_id = vocab_size - 1
+        model.thinker.audio_token_id = audio_token_id
+
+        input_ids = torch.randint(0, vocab_size - 1, (batch, seq_len), device=device)
+        input_ids[:, 2 : 2 + num_audio_tokens] = audio_token_id
+
+        labels = torch.randint(0, vocab_size, (batch, seq_len), device=device)
+        attention_mask = torch.ones(batch, seq_len, dtype=torch.long, device=device)
+
+        # Mock audio encoder to return embeddings matching the number of audio tokens
+        audio_dtype = next(model.thinker.audio_model.parameters()).dtype
+        fake_audio_embeds = torch.randn(batch, num_audio_tokens, HIDDEN_SIZE, device=device, dtype=audio_dtype)
+        with patch.object(
+            model.thinker.audio_model,
+            "forward",
+            side_effect=lambda input_feature, feature_lens=None, **kw: SimpleNamespace(
+                last_hidden_state=fake_audio_embeds[: input_feature.shape[0]]
+            ),
+        ):
+            input_features = torch.randn(batch, 32, 100, device=device)
+            audio_feature_lengths = torch.tensor([100], device=device)
+
+            output = model(
+                input_ids=input_ids,
+                input_features=input_features,
+                labels=labels,
+                attention_mask=attention_mask,
+                audio_feature_lengths=audio_feature_lengths,
+            )
+
+        # With labels + parallel_output=True, output is per-token logits [batch, seq_len]
+        assert output.shape == (batch, seq_len), f"Unexpected output shape: {output.shape}"
+        assert output.dtype == torch.float32
