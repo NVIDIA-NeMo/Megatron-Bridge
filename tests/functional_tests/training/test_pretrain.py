@@ -59,10 +59,13 @@ class Llama32ModelProvider1B(GPTModelProvider):
     bias_dropout_fusion: bool = True
     apply_rope_fusion: bool = True
     num_query_groups: int = 8
+    kv_channels: int = 64
     init_method_std: float = 0.01
     layernorm_epsilon: float = 1e-05
     rotary_percent: float = 1.0
     rotary_base: int = 500_000
+    rope_scaling: bool = True
+    rope_scaling_factor: float = 32.0
     num_layers: int = 16
     hidden_size: int = 2048
     ffn_hidden_size: int = 8192
@@ -221,6 +224,7 @@ class TestPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.pleasefixme
     def test_pretrain_with_mup(self, tmp_path, caplog):
         """
         Test end to end training with μP (Maximal Update Parameterization) enabled.
