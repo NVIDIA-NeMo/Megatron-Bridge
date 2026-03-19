@@ -203,15 +203,17 @@ def _assert_configs_equal(old, new):
     diffs.extend(mp_diffs)
 
     if old.comm_overlap is not None and new.comm_overlap is not None:
-        for f in ["tp_comm_overlap", "defer_embedding_wgrad_compute"]:
-            ov = getattr(old.comm_overlap, f, "MISSING")
-            nv = getattr(new.comm_overlap, f, "MISSING")
-            if ov != nv:
-                diffs.append(f"comm_overlap.{f}: old={ov!r}  new={nv!r}")
-        if old.comm_overlap.tp_comm_overlap_cfg != new.comm_overlap.tp_comm_overlap_cfg:
-            diffs.append("comm_overlap.tp_comm_overlap_cfg: objects differ")
+        diffs.extend(_compare_dataclass(old.comm_overlap, new.comm_overlap, "comm_overlap"))
     elif (old.comm_overlap is None) != (new.comm_overlap is None):
         diffs.append(f"comm_overlap: old={old.comm_overlap!r}  new={new.comm_overlap!r}")
+
+    diffs.extend(_compare_dataclass(old.dataset, new.dataset, "dataset"))
+    diffs.extend(_compare_dataclass(old.optimizer, new.optimizer, "optimizer"))
+    diffs.extend(_compare_dataclass(old.dist, new.dist, "dist"))
+    diffs.extend(_compare_dataclass(old.profiling, new.profiling, "profiling"))
+
+    if old.peft is not None or new.peft is not None:
+        diffs.extend(_compare_dataclass(old.peft, new.peft, "peft"))
 
     if old.rerun_state_machine.check_for_nan_in_loss != new.rerun_state_machine.check_for_nan_in_loss:
         diffs.append(
@@ -274,11 +276,8 @@ _QWEN_VL_FNS = _collect_perf_fns(qwen_vl, ["qwen3_vl_235b_a22b_pretrain_", "qwen
 def _make_cases(fn_list):
     cases = []
     for name, fn in fn_list:
-        try:
-            model, task, variant, num_gpus, gpu, prec = _parse_recipe_name(name)
-            cases.append(pytest.param(fn, model, task, variant, gpu, prec, id=name.removesuffix("_config")))
-        except ValueError:
-            pass
+        model, task, variant, _num_gpus, gpu, prec = _parse_recipe_name(name)
+        cases.append(pytest.param(fn, model, task, variant, gpu, prec, id=name.removesuffix("_config")))
     return cases
 
 
