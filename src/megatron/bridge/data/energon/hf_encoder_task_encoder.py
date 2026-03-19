@@ -20,6 +20,7 @@ in a single ``processor()`` call (e.g. Gemma3-VL, Ministral3, GLM-4.5V).
 
 import dataclasses
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -136,6 +137,22 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
 
         # 2. Normalize conversation
         conversation = cook_chatml_sample(sample.conversation)
+
+        # 2b. Convert <image> placeholders to structured multimodal content
+        #     so that apply_chat_template inserts model-specific image tokens.
+        has_images = images_pil is not None
+        if has_images:
+            for turn in conversation:
+                text = turn["content"]
+                if "<image>" in text:
+                    parts = re.split(r"(<image>)", text)
+                    content_parts: list = []
+                    for part in parts:
+                        if part == "<image>":
+                            content_parts.append({"type": "image"})
+                        elif part.strip():
+                            content_parts.append({"type": "text", "text": part.strip()})
+                    turn["content"] = content_parts
 
         # 3. Get the full prompt text from chat template (not tokenized)
         prompt_text = self._tokenizer.apply_chat_template(conversation, tokenize=False)

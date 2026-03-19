@@ -206,12 +206,14 @@ class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
     __sample_type__ = ChatMLSample
 
     def __init__(self, path: EPath, *, auto_decode: bool = True, **kwargs):
-        super().__init__(path, auto_decode=auto_decode, **kwargs)
+        # Remove 'decoder' from kwargs to avoid conflicts with parent signature.
+        kwargs.pop("decoder", None)
+        super().__init__(path, decoder=None, **kwargs)
         if auto_decode:
             self._decoder = Decoder(
                 [
-                    imagehandler(self.image_decode),
-                    videohandler(self.image_decode),
+                    imagehandler("torchrgb"),
+                    videohandler("torchrgb"),
                 ]
             )
 
