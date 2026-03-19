@@ -7,5 +7,4 @@ torchrun --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_vlm.py \
     --prompt "Describe this image." \
     --tp 1 \
     --ep 4 \
-    --pp 1 \
-    --num_layers 4
+    --pp 1

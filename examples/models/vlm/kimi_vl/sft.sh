@@ -6,11 +6,6 @@ torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
     --step_func vlm_step \
     --hf_path moonshotai/Kimi-K2.5 \
     model.seq_length=2048 \
-    model.num_layers=2 \
-    model.hidden_size=7168 \
-    model.ffn_hidden_size=1024 \
-    model.num_moe_experts=16 \
-    model.moe_ffn_hidden_size=64 \
     model.tensor_model_parallel_size=2 \
     model.sequence_parallel=true \
     model.pipeline_model_parallel_size=1 \
@@ -19,7 +14,6 @@ torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
     model.hf_model_path=moonshotai/Kimi-K2.5 \
     model.freeze_vision_model=true \
     model.freeze_vision_projection=true \
-    model.moe_layer_freq=1 \
     model.calculate_per_token_loss=true \
     train.train_iters=5000 \
     model.cross_entropy_loss_fusion=false \
