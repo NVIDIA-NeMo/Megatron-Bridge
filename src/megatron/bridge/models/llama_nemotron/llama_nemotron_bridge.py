@@ -24,7 +24,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_scaling_factor_from_hf, rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider
 from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
 
 
@@ -59,7 +58,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Llama31ModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LlamaNemotronHeterogeneousProvider:
         hf_config = hf_pretrained.config
         # Validate heterogeneous DeciLM (NAS) config and select provider
         if not (hasattr(hf_config, "block_configs") and hf_config.block_configs):

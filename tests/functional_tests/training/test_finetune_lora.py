@@ -14,14 +14,16 @@
 
 import os
 from dataclasses import dataclass
+from typing import Callable
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.hf_processors.squad import process_squad_example
-from megatron.bridge.models.llama import Llama3ModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -49,9 +51,26 @@ from tests.functional_tests.utils import (
 
 
 @dataclass
-class Llama3ModelProvider145M(Llama3ModelProvider):
+class Llama3ModelProvider145M(GPTModelProvider):
     """Smaller Llama3 config used previously for functional tests."""
 
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    position_embedding_type: str = "rope"
+    add_bias_linear: bool = False
+    attention_dropout: float = 0.0
+    hidden_dropout: float = 0.0
+    share_embeddings_and_output_weights: bool = False
+    bias_activation_fusion: bool = True
+    masked_softmax_fusion: bool = True
+    persist_layer_norm: bool = True
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
+    num_query_groups: int = 8
+    init_method_std: float = 0.01
+    layernorm_epsilon: float = 1e-05
+    rotary_percent: float = 1.0
     rotary_base: int = 500_000
     num_layers: int = 2
     hidden_size: int = 768
