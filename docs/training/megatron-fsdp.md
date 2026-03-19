@@ -16,11 +16,14 @@ through `use_megatron_fsdp`.
 
 Compared with other data-parallel strategies:
 
-| Strategy | Parameters | Optimizer state | Gradients | Typical tradeoff |
-|---|---|---|---|---|
-| DDP | replicated | replicated | replicated | simplest, highest memory use |
-| Distributed optimizer | replicated | sharded | sharded | good balance of memory and performance |
-| Megatron FSDP | sharded | sharded | sharded | strongest model-state memory savings |
+| Feature | DDP | Distributed Optimizer | Megatron FSDP |
+|---|---|---|---|
+| Parameter Storage | Replicated | Replicated | Sharded |
+| Optimizer States | Replicated | Sharded | Sharded |
+| Gradient Communication | All-reduce | Reduce-scatter | Reduce-scatter |
+| Parameter Communication | None | All-gather (after update) | All-gather (on-demand) |
+| Memory Efficiency | Baseline | High | Highest |
+| Communication Overhead | Low | Medium | Medium-High |
 
 The practical consequence is that Megatron FSDP is most useful when model-state
 memory, rather than activation memory, is the main bottleneck.
@@ -48,15 +51,17 @@ Megatron FSDP in Bridge requires:
 - checkpoint format `fsdp_dtensor`
 - standard rank initialization order
 
-The `fsdp_dtensor` format uses PyTorch DTensor to store sharded parameters
-and optimizer state. It is **not interchangeable** with `torch_dist` or `zarr`
-checkpoints — you cannot load an `fsdp_dtensor` checkpoint into a non-FSDP run
-or vice versa.
+The `fsdp_dtensor` format uses PyTorch DTensor and
+`torch.distributed.checkpoint` (DCP) to store sharded parameters and optimizer
+state. It is **not interchangeable** with `torch_dist` or `zarr` checkpoints —
+you cannot load an `fsdp_dtensor` checkpoint into a non-FSDP run or vice versa.
 
-`fsdp_dtensor` is compatible with tensor parallelism, pipeline parallelism,
-context parallelism, and expert parallelism. The one unsupported combination is
-`use_tp_pp_dp_mapping=True`, which uses an alternative rank-initialization order
-that conflicts with FSDP sharding.
+`fsdp_dtensor` is compatible with 5D parallelism (TP + PP + DP + CP + EP).
+Because DCP stores DTensor placement metadata, checkpoints saved under one
+parallelism layout can be loaded under a different layout (e.g., change TP or PP
+size between runs) — DCP handles the shard remapping automatically. The one
+unsupported combination is `use_tp_pp_dp_mapping=True`, which uses an
+alternative rank-initialization order that conflicts with FSDP sharding.
 
 Important stable constraints:
 
