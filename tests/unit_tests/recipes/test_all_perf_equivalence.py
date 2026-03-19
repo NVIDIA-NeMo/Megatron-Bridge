@@ -226,8 +226,10 @@ def _assert_configs_equal(old, new):
     diffs.extend(_compare_dataclass(old.dist, new.dist, "dist"))
     diffs.extend(_compare_dataclass(old.profiling, new.profiling, "profiling"))
 
-    if old.peft is not None or new.peft is not None:
+    if old.peft is not None and new.peft is not None:
         diffs.extend(_compare_dataclass(old.peft, new.peft, "peft"))
+    elif (old.peft is None) != (new.peft is None):
+        diffs.append(f"peft: old={old.peft!r}  new={new.peft!r}")
 
     if old.rerun_state_machine.check_for_nan_in_loss != new.rerun_state_machine.check_for_nan_in_loss:
         diffs.append(
