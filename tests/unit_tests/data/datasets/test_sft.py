@@ -297,6 +297,7 @@ class TestDataGPTSFTChatDataset:
 
         assert dataset._maybe_validate_prompt_template() == None
 
+    @pytest.mark.timeout(30)
     def test_collate_fn(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path, dataset_type="chat")
         batch = [

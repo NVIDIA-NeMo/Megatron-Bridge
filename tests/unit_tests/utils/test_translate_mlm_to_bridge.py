@@ -401,7 +401,7 @@ class TestTranslateSkippedAndUnknown:
     def test_skip_mock_data(self):
         """--mock-data is translated to dataset.mock=true override."""
         r = translate({"mock-data": True})
-        assert "dataset.mock=true" in r.overrides
+        assert r.overrides["dataset.mock"] is True
 
     def test_unknown_arg(self):
         """Unrecognised arg goes to result.unknown."""
