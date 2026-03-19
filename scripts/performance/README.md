@@ -151,9 +151,10 @@ python scripts/performance/setup_experiment.py
 - `-a/--account`: Slurm account to use for experiment.
 - `-p/--partition`: Slurm partition to use for experiment.
 - `-t/--time_limit`: Maximum time limit before the Slurm job is cancelled. Format `HH:MM:SS`. Default `00:30:00`.
-- `-gn/--gpus_per_node`: GPUs per node. Default `8`.
+- `-gn/--gpus_per_node`: GPUs per node. Default `None`. If not provided, will be inferred from the GPU type.
 - `-cm/--custom_mounts`: Comma-separated list of host mounts to expose inside the container.
 - `-ce/--custom_env_vars`: Comma-separated string of environment variables (format: `key1=value1,key2=value2`).
+- `-E/--env`: Set environment variable (repeatable arg). This is an alternative to `--custom_env_vars`. (`--custom_env_vars` is preferred for most cases). Example: `-E var1=value1,value2 -E var2=value3"`.
 - `-cs/--custom_srun_args`: Comma-separated string of srun arguments.
 - `--gres`: Slurm generic resources to request (e.g., `gpu:4`).
 - `--additional_slurm_params`: Additional SLURM parameters as key=value pairs. Use semicolons (`;`) to separate parameters when values contain commas. Examples: `nodelist=node001,node002;constraint=gpu` or `reservation=my_res;exclusive`.

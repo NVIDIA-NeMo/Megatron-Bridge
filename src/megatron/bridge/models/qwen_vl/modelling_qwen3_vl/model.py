@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Optional
+
 import torch
 from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.extensions.transformer_engine import (
@@ -81,10 +83,13 @@ class Qwen3VLModel(MegatronModule):
         add_encoder: bool = True,
         add_decoder: bool = True,
         pg_collection: ProcessGroupCollection = None,
+        mtp_block_spec: Optional[ModuleSpec] = None,
+        vp_stage: Optional[int] = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
-        language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
+        if hasattr(language_transformer_layer_spec, "submodules"):
+            language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -104,6 +109,8 @@ class Qwen3VLModel(MegatronModule):
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
         # process groups
+        if pg_collection is None:
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         self.pg_collection = pg_collection
         self.cp_group = pg_collection.cp
         self.tp_group = pg_collection.tp
@@ -142,6 +149,7 @@ class Qwen3VLModel(MegatronModule):
                 vision_patch_merger_spec,
                 pre_process=True,
                 post_process=True,
+                pg_collection=pg_collection,
             )
 
         self.language_model = Qwen3VLGPTModel(
@@ -158,14 +166,15 @@ class Qwen3VLModel(MegatronModule):
             fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
             share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
+            mtp_block_spec=mtp_block_spec,
+            vp_stage=vp_stage,
             pg_collection=pg_collection,
         )
         if pre_process:
-            assert len(vision_transformer_config.deepstack_visual_indexes) <= len(
-                self.language_model.decoder.layers
-            ), (
+            deepstack_indexes = getattr(vision_transformer_config, "deepstack_visual_indexes", [])
+            assert len(deepstack_indexes) <= len(self.language_model.decoder.layers), (
                 "the deepstack_visual_embeds should on the first pp-stage of language model",
-                f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
+                f"got {len(deepstack_indexes)} deepstack_visual_indexes, "
                 f" {len(self.language_model.decoder.layers)} language model layers",
             )
 
@@ -182,6 +191,16 @@ class Qwen3VLModel(MegatronModule):
         if self.add_decoder:
             return self.language_model.shared_embedding_or_output_weight()
         return None
+
+    @property
+    def decoder(self):
+        """Expose language model decoder for mcore inference compatibility.
+
+        mcore's MambaInferenceStateConfig.from_model() calls get_attr_wrapped_model(model, "decoder"),
+        which only traverses .module wrappers. VLM models store the decoder under language_model.decoder,
+        so we expose it here to allow the Mamba check to run and correctly return None.
+        """
+        return getattr(self.language_model, "decoder", None)
 
     def set_input_tensor(self, input_tensor) -> None:
         # This is usually handled in schedules.py but some inference code still
@@ -249,6 +268,8 @@ class Qwen3VLModel(MegatronModule):
         video_input_mask: torch.Tensor = None,
         cp_img_num: list[int] = None,
         images_padded: list[bool] = None,
+        inference_context: object | None = None,
+        runtime_gather_output: bool | None = None,
         **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
@@ -272,6 +293,7 @@ class Qwen3VLModel(MegatronModule):
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
+        del inference_context, runtime_gather_output  # Unused, kept for API compatibility
         assert inference_params is None, "not support inference"
 
         vision_grid_thw = None
@@ -286,6 +308,12 @@ class Qwen3VLModel(MegatronModule):
 
         cp_rank = self.pg_collection.cp.rank()
         cp_size = self.pg_collection.cp.size()
+
+        # input_ids to pass to the language model for MTP (Multi-Token Prediction).
+        # MTP's _get_embeddings rolls input_ids to generate future-token embeddings,
+        # so it must be a real tensor. For packed sequences we use the THD-format
+        # input_ids_thd (updated below); for regular sequences we use input_ids as-is.
+        lm_input_ids = input_ids
 
         if self.pre_process:
             # can reorganize_inputs at dataset
@@ -373,6 +401,7 @@ class Qwen3VLModel(MegatronModule):
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
+                lm_input_ids = input_ids_thd
                 _, _, vision_mask_thd = reorganize_inputs(
                     input_ids=input_ids_thd,
                     pixel_values=pixel_values,
@@ -420,6 +449,14 @@ class Qwen3VLModel(MegatronModule):
 
         else:
             combined_embeddings = None
+            # On non-pre_process PP stages (e.g. the last stage where MTP runs),
+            # convert lm_input_ids to THD format so it matches position_ids.
+            if packed_seq_params is not None:
+                if attention_mask is None:
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
+                lm_input_ids, _ = preprocess_packed_seqs(
+                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
+                )
 
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
@@ -476,7 +513,7 @@ class Qwen3VLModel(MegatronModule):
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
 
         output = self.language_model(
-            input_ids=None,
+            input_ids=lm_input_ids,
             position_ids=position_ids,  # None in encoder
             attention_mask=attention_mask,  # None in encoder
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage

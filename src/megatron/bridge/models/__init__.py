@@ -26,16 +26,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.deepseek import (
-    DeepSeekModelProvider,
-    DeepSeekProvider,
-    DeepSeekV2LiteModelProvider,
-    DeepSeekV2LiteProvider,
-    DeepSeekV2ModelProvider,
-    DeepSeekV2Provider,
-    DeepSeekV3ModelProvider,
-    DeepSeekV3Provider,
-    MoonlightModelProvider16B,
-    MoonlightProvider,
+    DeepSeekV2Bridge,
+    DeepSeekV3Bridge,
 )
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,
@@ -59,10 +51,7 @@ from megatron.bridge.models.gemma_vl import (
     Gemma3VLModelProvider,
 )
 from megatron.bridge.models.glm import (
-    GLM45AirModelProvider106B,
     GLM45Bridge,
-    GLM45ModelProvider355B,
-    GLMMoEModelProvider,
 )
 from megatron.bridge.models.glm_vl import (
     GLM45VBridge,
@@ -70,38 +59,12 @@ from megatron.bridge.models.glm_vl import (
 )
 from megatron.bridge.models.gpt_oss import (
     GPTOSSBridge,
-    GPTOSSProvider,
-    GPTOSSProvider20B,
-    GPTOSSProvider120B,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama import (
-    CodeLlamaModelProvider7B,
-    CodeLlamaModelProvider13B,
-    CodeLlamaModelProvider34B,
-    CodeLlamaModelProvider70B,
-    Llama2ModelProvider7B,
-    Llama2ModelProvider13B,
-    Llama2ModelProvider70B,
-    Llama3ModelProvider,
-    Llama3ModelProvider8B,
-    Llama3ModelProvider70B,
-    Llama4Experts16ModelProvider,
-    Llama4Experts128ModelProvider,
-    Llama4ModelProvider,
-    Llama31ModelProvider,
-    Llama31ModelProvider8B,
-    Llama31ModelProvider70B,
-    Llama31ModelProvider405B,
-    Llama32ModelProvider1B,
-    Llama32ModelProvider3B,
-    LlamaModelProvider,
+    LlamaBridge,
 )
 from megatron.bridge.models.llama_nemotron import (
-    Llama31Nemotron70BProvider,
-    Llama31NemotronNano8BProvider,
-    Llama31NemotronUltra253BProvider,
-    Llama33NemotronSuper49BProvider,
     LlamaNemotronBridge,
     LlamaNemotronHeterogeneousProvider,
 )
@@ -120,35 +83,15 @@ from megatron.bridge.models.mistral import (
     MistralSmall3ModelProvider24B,
 )
 from megatron.bridge.models.nemotron import (
-    Nemotron3ModelProvider4B,
-    Nemotron3ModelProvider8B,
-    Nemotron3ModelProvider22B,
-    Nemotron4ModelProvider15B,
-    Nemotron4ModelProvider340B,
     NemotronBridge,
-    NemotronModelProvider,
 )
 from megatron.bridge.models.nemotron_vl import (
-    NemotronNano12Bv2Provider,
     NemotronNano12Bv2VLModelProvider,
     NemotronVLBridge,
     NemotronVLModel,
 )
-from megatron.bridge.models.nemotronh.nemotron_h_provider import (
-    Nemotron3NanoProvider,
-    NemotronHModel4BProvider,
-    NemotronHModel8BProvider,
-    NemotronHModel47BProvider,
-    NemotronHModel56BProvider,
-    NemotronHModelProvider,
-    NemotronHModelProvider4B,
-    NemotronHModelProvider8B,
-    NemotronHModelProvider47B,
-    NemotronHModelProvider56B,
-    NemotronNano9Bv2Provider,
-    NemotronNano12Bv2Provider,
-    NemotronNanoModelProvider9Bv2,
-    NemotronNanoModelProvider12Bv2,
+from megatron.bridge.models.nemotronh import (
+    NemotronHBridge,
 )
 from megatron.bridge.models.olmoe import (
     OlMoEBridge,
@@ -178,10 +121,19 @@ from megatron.bridge.models.qwen import (
     Qwen25ModelProvider72B,
     Qwen25ModelProvider500M,
 )
+from megatron.bridge.models.qwen_omni import (
+    Qwen25OmniBridge,
+    Qwen25OmniModel,
+    Qwen25OmniModelProvider,
+)
 from megatron.bridge.models.qwen_vl import (
     Qwen25VLBridge,
     Qwen25VLModel,
     Qwen25VLModelProvider,
+    Qwen35VLBridge,
+    Qwen35VLModelProvider,
+    Qwen35VLMoEBridge,
+    Qwen35VLMoEModelProvider,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
     Qwen3VLBridge,
@@ -194,6 +146,10 @@ from megatron.bridge.models.encoder_provider import (
     EncoderProvider,
     EncoderTransformerConfig,
     GenericVisionEncoderProvider,
+)
+from megatron.bridge.models.sarvam import (
+    SarvamMLABridge,
+    SarvamMoEBridge,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
 
@@ -209,6 +165,9 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    # DeepSeek Models
+    "DeepSeekV2Bridge",
+    "DeepSeekV3Bridge",
     "Gemma3ModelProvider",
     "Gemma3ModelProvider1B",
     "Gemma3ModelProvider4B",
@@ -223,46 +182,18 @@ __all__ = [
     "Gemma2ModelProvider2B",
     "Gemma2ModelProvider9B",
     "Gemma2ModelProvider27B",
-    "GLMMoEModelProvider",
-    "GLM45ModelProvider355B",
-    "GLM45AirModelProvider106B",
     "GLM45Bridge",
     "GLM45VBridge",
     "GLM45VModelProvider",
     "GPTModelProvider",
     "GPTOSSBridge",
-    "GPTOSSProvider",
-    "GPTOSSProvider20B",
-    "GPTOSSProvider120B",
     "T5ModelProvider",
     "EncoderProvider",
     "EncoderTransformerConfig",
     "GenericVisionEncoderProvider",
-    "LlamaModelProvider",
-    "Llama2ModelProvider7B",
-    "Llama2ModelProvider13B",
-    "Llama2ModelProvider70B",
-    "Llama3ModelProvider",
-    "Llama3ModelProvider8B",
-    "Llama3ModelProvider70B",
-    "Llama31ModelProvider",
-    "Llama31ModelProvider8B",
-    "Llama31ModelProvider70B",
-    "Llama31ModelProvider405B",
-    "Llama32ModelProvider1B",
-    "Llama32ModelProvider3B",
-    "CodeLlamaModelProvider7B",
-    "CodeLlamaModelProvider13B",
-    "CodeLlamaModelProvider34B",
-    "CodeLlamaModelProvider70B",
-    "Llama4ModelProvider",
-    "Llama4Experts16ModelProvider",
-    "Llama4Experts128ModelProvider",
+    "LlamaBridge",
     "LlamaNemotronHeterogeneousProvider",
-    "Llama31NemotronNano8BProvider",
-    "Llama31Nemotron70BProvider",
-    "Llama31NemotronUltra253BProvider",
-    "Llama33NemotronSuper49BProvider",
+    "LlamaNemotronBridge",
     "MistralModelProvider",
     "MistralSmall3ModelProvider24B",
     # Ministral 3 Models
@@ -296,40 +227,11 @@ __all__ = [
     "Qwen3MoEModelProvider",
     "Qwen3MoEModelProvider30B_A3B",
     "Qwen3MoEModelProvider235B_A22B",
-    "DeepSeekModelProvider",
-    "DeepSeekProvider",
-    "DeepSeekV2LiteModelProvider",
-    "DeepSeekV2LiteProvider",
-    "DeepSeekV2ModelProvider",
-    "DeepSeekV2Provider",
-    "DeepSeekV3ModelProvider",
-    "DeepSeekV3Provider",
-    "MoonlightModelProvider16B",
-    "MoonlightProvider",
-    "NemotronHModelProvider",
-    "NemotronHModelProvider4B",
-    "NemotronHModelProvider8B",
-    "NemotronHModelProvider47B",
-    "NemotronHModelProvider56B",
-    "NemotronNanoModelProvider9Bv2",
-    "NemotronNanoModelProvider12Bv2",
-    "NemotronHModel4BProvider",
-    "NemotronHModel8BProvider",
-    "NemotronHModel47BProvider",
-    "NemotronHModel56BProvider",
-    "NemotronNano9Bv2Provider",
-    "NemotronNano12Bv2Provider",
-    "Nemotron3NanoProvider",
+    "NemotronHBridge",
     "MambaModelProvider",
     "MimoBridge",
     # Nemotron Models
     "NemotronBridge",
-    "NemotronModelProvider",
-    "Nemotron3ModelProvider4B",
-    "Nemotron3ModelProvider8B",
-    "Nemotron3ModelProvider22B",
-    "Nemotron4ModelProvider15B",
-    "Nemotron4ModelProvider340B",
     # VL Models
     "Qwen25VLModel",
     "Qwen25VLBridge",
@@ -339,11 +241,20 @@ __all__ = [
     "Qwen3VLMoEModelProvider",
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
+    "Qwen35VLBridge",
+    "Qwen35VLModelProvider",
+    "Qwen35VLMoEBridge",
+    "Qwen35VLMoEModelProvider",
     "Gemma3VLBridge",
     "Gemma3VLModel",
     "Gemma3VLModelProvider",
     "NemotronVLModel",
     "NemotronVLBridge",
-    "NemotronNano12Bv2Provider",
     "NemotronNano12Bv2VLModelProvider",
+    # Omni Models
+    "Qwen25OmniModel",
+    "Qwen25OmniBridge",
+    "Qwen25OmniModelProvider",
+    "SarvamMLABridge",
+    "SarvamMoEBridge",
 ]

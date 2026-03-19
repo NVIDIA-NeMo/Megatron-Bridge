@@ -19,8 +19,8 @@ import pytest
 import torch
 from megatron.core.transformer.enums import CudaGraphScope
 
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekModelProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
@@ -76,8 +76,8 @@ def create_test_gpt_config(**kwargs: Any) -> GPTModelProvider:
     return GPTModelProvider(**defaults)
 
 
-def create_test_deepseek_config(**kwargs: Any) -> DeepSeekModelProvider:
-    """Creates an instance of DeepSeekModelProvider for testing."""
+def create_test_deepseek_config(**kwargs: Any) -> MLAModelProvider:
+    """Creates an instance of MLAModelProvider for testing."""
     defaults = {
         "num_layers": 1,
         "hidden_size": 128,
@@ -86,7 +86,7 @@ def create_test_deepseek_config(**kwargs: Any) -> DeepSeekModelProvider:
         "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
-    return DeepSeekModelProvider(**defaults)
+    return MLAModelProvider(**defaults)
 
 
 def create_test_t5_config(**kwargs: Any) -> T5ModelProvider:
@@ -1796,6 +1796,28 @@ class TestCheckpointConfig:
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_pretrained_checkpoint_none_skips_validation(self):
+        """Test that finalize succeeds when pretrained_checkpoint is None (no file existence check)."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint=None)
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+
+    @patch("megatron.bridge.training.utils.checkpoint_utils.file_exists", return_value=True)
+    def test_pretrained_checkpoint_exists_passes(self, mock_file_exists):
+        """Test that finalize succeeds when pretrained_checkpoint path exists."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint="/path/to/valid/checkpoint")
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+        mock_file_exists.assert_called_once_with("/path/to/valid/checkpoint")
+
+    @patch("megatron.bridge.training.utils.checkpoint_utils.file_exists", return_value=False)
+    def test_pretrained_checkpoint_not_exists_raises(self, mock_file_exists):
+        """Test that finalize raises AssertionError when pretrained_checkpoint path does not exist."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint="/path/to/missing/checkpoint")
+        with pytest.raises(AssertionError, match="Pretrained checkpoint /path/to/missing/checkpoint does not exist"):
+            ckpt_cfg.finalize()
+        mock_file_exists.assert_called_once_with("/path/to/missing/checkpoint")
 
 
 class TestMixedPrecisionConsistencyValidation:

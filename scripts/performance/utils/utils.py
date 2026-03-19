@@ -177,7 +177,15 @@ def get_exp_name_config(
         else base_config.expert_tensor_parallel_size
     )
     mbs_size = args.micro_batch_size if args.micro_batch_size is not None else base_config.micro_batch_size
-    gbs_size = args.global_batch_size if args.global_batch_size is not None else base_config.global_batch_size
+
+    if args.global_batch_size is not None:
+        gbs_size = args.global_batch_size
+    elif num_gpus != base_config.num_gpus:
+        # Scale GBS with num_gpus so experiment name matches the scaled GBS applied in set_post_overrides
+        gbs_size = int(base_config.gbs_scaling_factor * num_gpus)
+    else:
+        gbs_size = base_config.global_batch_size
+
     exp_config = f"gpus{num_gpus}_tp{tp_size}_pp{pp_size}_cp{cp_size}_vp{vp_size}_ep{ep_size}_etp{etp_size}_mbs{mbs_size}_gbs{gbs_size}"
     return exp_config
 
@@ -230,6 +238,7 @@ def get_perf_optimized_recipe(
     compute_dtype: str,
     mock: bool = True,
     config_variant: str = "v1",
+    optimizer_type: Optional[str] = None,
 ):
     """Get the performance optimized recipe."""
     module_name = f"configs.{model_family_name}"
@@ -246,7 +255,10 @@ def get_perf_optimized_recipe(
         raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
 
     if train_task == "pretrain":
-        return recipe_builder(precision=compute_dtype, mock=mock, config_variant=config_variant)
+        kwargs = {"precision": compute_dtype, "mock": mock, "config_variant": config_variant}
+        if optimizer_type is not None and model_family_name == "kimi":
+            kwargs["optimizer_type"] = optimizer_type
+        return recipe_builder(**kwargs)
     else:
         return recipe_builder(precision=compute_dtype, config_variant=config_variant)
 
@@ -270,10 +282,10 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
 
     if model_recipe_name == "deepseek_v3_32nodes" and train_task == "pretrain":
         model_recipe_name = "deepseek_v3_pretrain_config_32nodes"
-    elif train_task == "pretrain":
-        model_recipe_name = f"{model_recipe_name}_{train_task}_config"
+    elif train_task in ("lora", "peft"):
+        model_recipe_name = f"{model_recipe_name}_peft_config"
     else:
-        model_recipe_name = f"{model_recipe_name}_finetune_config"
+        model_recipe_name = f"{model_recipe_name}_{train_task}_config"
 
     recipe_builder = getattr(family_pkg, model_recipe_name)
 

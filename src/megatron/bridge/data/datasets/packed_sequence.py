@@ -13,11 +13,14 @@
 # limitations under the License.
 import json
 import logging
+import multiprocessing as mp
 from dataclasses import dataclass
+from multiprocessing import Pool
 from pathlib import Path
 
 import numpy as np
 from megatron.core.msc_utils import MultiStorageClientFeature
+from tqdm import tqdm
 
 from megatron.bridge.data.datasets.packing_utils import create_hist, create_packing_strategy, fill_packing_strategy
 from megatron.bridge.data.datasets.sft import create_sft_dataset
@@ -25,6 +28,25 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
 logger = logging.getLogger(__name__)
+
+_shared_dataset = None
+
+
+def _tokenize_get_item(i):
+    return _shared_dataset[i]
+
+
+def _tokenize_init_worker(dataset):
+    global _shared_dataset
+    _shared_dataset = dataset
+
+
+def _retrieve_tokenized(dataset, num_workers):
+    if num_workers == 1:
+        return np.array([dataset[i] for i in tqdm(range(len(dataset)))])
+    num_workers = num_workers if num_workers > 0 else mp.cpu_count()
+    with Pool(num_workers, initializer=_tokenize_init_worker, initargs=(dataset,)) as pool:
+        return np.array(list(tqdm(pool.imap(_tokenize_get_item, range(len(dataset))), total=len(dataset))))
 
 
 def tokenize_dataset(
@@ -34,6 +56,7 @@ def tokenize_dataset(
     seed: int,
     dataset_kwargs: dict | None = None,
     pad_seq_to_mult: int | None = 1,
+    num_tokenizer_workers: int = -1,
 ):
     """
     Tokenizes a dataset from the provided path using the specified tokenizer
@@ -88,7 +111,7 @@ def tokenize_dataset(
     pad_id = dataset.tokenizer.eod
     pad_seq_length_to_mult = dataset.pad_seq_length_to_mult
     max_seq_length = dataset.max_seq_length
-    dataset = np.array([dataset[i] for i in range(len(dataset))])
+    dataset = _retrieve_tokenized(dataset, num_tokenizer_workers)
 
     if pad_seq_to_mult > 1:
 
@@ -132,6 +155,7 @@ def prepare_packed_sequence_data(
     packing_algorithm: str = "first_fit_shuffle",
     dataset_kwargs: dict | None = None,
     pad_seq_to_mult: int | None = 1,
+    num_tokenizer_workers: int = -1,
 ):
     """
     Prepares a packed sequence dataset from a given input file and saves it to an output file.
@@ -162,6 +186,7 @@ def prepare_packed_sequence_data(
         seed,
         dataset_kwargs,
         pad_seq_to_mult=pad_seq_to_mult,
+        num_tokenizer_workers=num_tokenizer_workers,
     )
     sequences, histogram = create_hist(dataset, max_seq_length)
 
@@ -218,6 +243,12 @@ class PackedSequenceSpecs:
     """
     Keep track of tokenizer model name, since each tokenizer produces a different packed sequence dataset file.
     This field is set by llm.finetune api.
+    """
+
+    num_tokenizer_workers: int = -1
+    """
+    The number of worker processes to use for tokenization when preparing the packed sequence dataset.
+    If -1, the number of workers will be set to the number of CPU cores available
     """
 
     packed_train_data_path: str = None

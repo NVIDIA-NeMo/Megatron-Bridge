@@ -21,6 +21,7 @@ Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 from typing import Literal, Optional
 
 import torch
+from megatron.core import tensor_parallel
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
@@ -88,6 +89,7 @@ class Qwen3VLGPTModel(GPTModel):
             rotary_interleaved=self.config.rotary_interleaved,
             seq_len_interpolation_factor=seq_len_interpolation_factor,
             rotary_base=rotary_base,
+            cp_group=self.pg_collection.cp,
         )
         self.mrope_section = self.config.mrope_section
         assert self.mrope_section is not None, (
@@ -173,7 +175,23 @@ class Qwen3VLGPTModel(GPTModel):
             **(extra_block_kwargs or {}),
         )
 
-        return self._postprocess(
+        # MTP calls self.embedding directly (bypassing the manual SP scatter that
+        # model.py does for the combined VL embeddings). Temporarily wrap the embedding
+        # to apply the SP scatter so its output shape matches hidden_states.
+        # We write to self.__dict__ directly to bypass nn.Module.__setattr__'s type
+        # check, which rejects non-Module values for registered child modules.
+        _shadow_embedding = False
+        if self.mtp_process and self.config.sequence_parallel:
+            _original_embedding = self.embedding
+
+            def _sp_scatter_embedding(input_ids, position_ids):
+                out = _original_embedding(input_ids=input_ids, position_ids=position_ids)
+                return tensor_parallel.scatter_to_sequence_parallel_region(out)
+
+            self.__dict__["embedding"] = _sp_scatter_embedding
+            _shadow_embedding = True
+
+        result = self._postprocess(
             hidden_states=hidden_states,
             input_ids=input_ids,
             position_ids=position_ids,
@@ -192,3 +210,8 @@ class Qwen3VLGPTModel(GPTModel):
             extra_block_kwargs=extra_block_kwargs,
             inference_context=inference_context,
         )
+
+        if _shadow_embedding:
+            del self.__dict__["embedding"]
+
+        return result

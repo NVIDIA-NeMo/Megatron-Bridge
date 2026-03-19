@@ -107,9 +107,60 @@ When loading distributed checkpoints, there may be mismatches between the keys i
 
 ## Checkpoint Format
 
+Megatron Bridge supports multiple checkpoint formats optimized for different use cases:
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `ckpt_format` | `Literal["torch_dist"]` | `"torch_dist"` | Checkpoint format (PyTorch distributed checkpoint format) |
+| `ckpt_format` | `Literal["torch_dist", "zarr", "fsdp_dtensor"]` | `"torch_dist"` | Checkpoint format to use |
+
+### Available Formats
+
+**`torch_dist`** (Default)
+- PyTorch distributed checkpoint format
+- Compatible with most parallelism strategies (DP, TP, PP, CP, EP)
+- Supports asynchronous saving when `async_save=True`
+- Recommended for general use
+
+**`zarr`**
+- Zarr-based checkpoint format
+- Alternative to `torch_dist` for certain use cases
+- Compatible with distributed parallelism strategies
+
+**`fsdp_dtensor`**
+- Specialized format for Megatron FSDP (Fully Sharded Data Parallel)
+- **Required when using `use_megatron_fsdp=True`**
+- Optimized for sharded parameter layouts
+- Not compatible with other FSDP implementations
+
+### Format Selection
+
+Choose your checkpoint format based on your training configuration:
+
+```python
+from megatron.bridge.training.config import CheckpointConfig
+
+# Standard distributed training (DDP, TP, PP)
+checkpoint = CheckpointConfig(
+    ckpt_format="torch_dist",  # Default, works for most cases
+    save="/path/to/checkpoints",
+)
+
+# Megatron FSDP training
+checkpoint = CheckpointConfig(
+    ckpt_format="fsdp_dtensor",  # Required for FSDP
+    save="/path/to/checkpoints",
+)
+```
+
+### Format Compatibility
+
+| Format | DDP | Distributed Optimizer | Megatron FSDP | Torch FSDP2 | Async Save |
+|--------|-----|----------------------|---------------|-------------|------------|
+| `torch_dist` | ✅ | ✅ | ❌ | ✅ | ✅ |
+| `zarr` | ✅ | ✅ | ❌ | ✅ | ❌ |
+| `fsdp_dtensor` | ❌ | ❌ | ✅ | ❌ | ❌ |
+
+**Important**: When using Megatron FSDP (`use_megatron_fsdp=True`), you must set `ckpt_format="fsdp_dtensor"`. Other formats are not compatible with FSDP's sharded parameter layout. See {doc}`megatron-fsdp` for complete FSDP configuration details.
 
 ## Performance Optimizations
 
@@ -225,3 +276,9 @@ Local checkpointing leverages the [NVIDIA Resiliency Extension](https://nvidia.g
 |-----------|------|---------|-------------|
 | `dist_ckpt_optim_fully_reshardable` | `bool` | `False` | Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as opposed to plain DP reshardability |
 | `distrib_optim_fully_reshardable_mem_efficient` | `bool` | `False` | Use as little memory as possible during save and load by using Gloo. Has affect only with `dist_ckpt_optim_fully_reshardable` flag |
+
+## Related Documentation
+
+- {doc}`megatron-fsdp` - Megatron FSDP configuration and `fsdp_dtensor` format requirements
+- {doc}`../parallelisms` - Understanding data and model parallelism strategies
+- {doc}`config-container-overview` - Complete configuration reference

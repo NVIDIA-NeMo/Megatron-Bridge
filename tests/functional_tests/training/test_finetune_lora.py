@@ -14,14 +14,16 @@
 
 import os
 from dataclasses import dataclass
+from typing import Callable
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.hf_processors.squad import process_squad_example
-from megatron.bridge.models.llama import Llama3ModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -49,9 +51,26 @@ from tests.functional_tests.utils import (
 
 
 @dataclass
-class Llama3ModelProvider145M(Llama3ModelProvider):
+class Llama3ModelProvider145M(GPTModelProvider):
     """Smaller Llama3 config used previously for functional tests."""
 
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    position_embedding_type: str = "rope"
+    add_bias_linear: bool = False
+    attention_dropout: float = 0.0
+    hidden_dropout: float = 0.0
+    share_embeddings_and_output_weights: bool = False
+    bias_activation_fusion: bool = True
+    masked_softmax_fusion: bool = True
+    persist_layer_norm: bool = True
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
+    num_query_groups: int = 8
+    init_method_std: float = 0.01
+    layernorm_epsilon: float = 1e-05
+    rotary_percent: float = 1.0
     rotary_base: int = 500_000
     num_layers: int = 2
     hidden_size: int = 768
@@ -87,14 +106,24 @@ class TestLoRAFinetune:
                 pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
             )
             pretrain(pretrain_cfg, forward_step)
-            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+            verify_checkpoint_files(
+                pretrain_checkpoint_dir,
+                pretrain_iters,
+                ckpt_format=pretrain_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=pretrain_cfg.checkpoint.storage_writers_per_rank,
+            )
 
             # Create LoRA config and run finetuning
             lora_cfg = self._create_lora_config(
                 lora_iters, lora_checkpoint_dir, lora_tensorboard_dir, pretrain_checkpoint_dir, seq_length
             )
             finetune(lora_cfg, forward_step)
-            verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
+            verify_checkpoint_files(
+                lora_checkpoint_dir,
+                lora_iters,
+                ckpt_format=lora_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=lora_cfg.checkpoint.storage_writers_per_rank,
+            )
             verify_peft_checkpoint_smaller(pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, lora_iters)
 
         finally:
@@ -129,7 +158,12 @@ class TestLoRAFinetune:
             # Run pretrain
             pretrain(pretrain_cfg, forward_step)
 
-            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+            verify_checkpoint_files(
+                pretrain_checkpoint_dir,
+                pretrain_iters,
+                ckpt_format=pretrain_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=pretrain_cfg.checkpoint.storage_writers_per_rank,
+            )
 
             # Second run: LoRA finetuning initial phase (will be "interrupted")
 
@@ -146,7 +180,12 @@ class TestLoRAFinetune:
             # Run initial LoRA finetuning (simulate job getting interrupted)
             finetune(lora_initial_cfg, forward_step)
 
-            verify_checkpoint_files(lora_checkpoint_dir, initial_lora_iters)
+            verify_checkpoint_files(
+                lora_checkpoint_dir,
+                initial_lora_iters,
+                ckpt_format=lora_initial_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=lora_initial_cfg.checkpoint.storage_writers_per_rank,
+            )
 
             # Third run: Resume LoRA finetuning from checkpoint (adapter-only states)
             lora_resume_cfg = self._create_lora_config(
@@ -165,7 +204,12 @@ class TestLoRAFinetune:
             # Run resumed LoRA finetuning (should continue from iteration 6 to 12)
             finetune(lora_resume_cfg, forward_step)
 
-            verify_checkpoint_files(lora_checkpoint_dir, total_lora_iters)
+            verify_checkpoint_files(
+                lora_checkpoint_dir,
+                total_lora_iters,
+                ckpt_format=lora_resume_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=lora_resume_cfg.checkpoint.storage_writers_per_rank,
+            )
             verify_peft_checkpoint_smaller(
                 pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, initial_lora_iters
             )
@@ -198,7 +242,12 @@ class TestLoRAFinetune:
                 pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
             )
             pretrain(pretrain_cfg, forward_step)
-            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+            verify_checkpoint_files(
+                pretrain_checkpoint_dir,
+                pretrain_iters,
+                ckpt_format=pretrain_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=pretrain_cfg.checkpoint.storage_writers_per_rank,
+            )
 
             # Create LoRA config with packed sequences and run finetuning
             lora_cfg = self._create_lora_config(
@@ -214,7 +263,12 @@ class TestLoRAFinetune:
             lora_cfg.validation.eval_iters = 2
 
             finetune(lora_cfg, forward_step)
-            verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
+            verify_checkpoint_files(
+                lora_checkpoint_dir,
+                lora_iters,
+                ckpt_format=lora_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=lora_cfg.checkpoint.storage_writers_per_rank,
+            )
             verify_peft_checkpoint_smaller(pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, lora_iters)
 
         finally:

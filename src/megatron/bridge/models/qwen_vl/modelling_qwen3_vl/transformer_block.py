@@ -22,13 +22,14 @@ from contextlib import nullcontext
 from typing import Optional, Union
 
 import torch
-from megatron.core import parallel_state, tensor_parallel
+from megatron.core import tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.dist_checkpointing.utils import replace_prefix_for_sharding
 from megatron.core.enums import Fp8Recipe
 from megatron.core.fp8_utils import get_fp8_context
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
@@ -64,9 +65,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         post_layer_norm: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
-        # model_comm_pgs: ModelCommProcessGroups = None,
         vp_stage: Optional[int] = None,
         patch_merger_spec: ModuleSpec = None,
+        pg_collection: Optional[ProcessGroupCollection] = None,
     ):
         assert post_process and pre_process, "not support pp for deepstack_merger_list"
         super().__init__(
@@ -75,9 +76,16 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             post_layer_norm=post_layer_norm,
             pre_process=pre_process,
             post_process=post_process,
-            # model_comm_pgs=model_comm_pgs,
             vp_stage=vp_stage,
+            pg_collection=pg_collection,
         )
+        if pg_collection is None:
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        self.pg_collection = pg_collection
+        self.cp_group = pg_collection.cp
+        self.tp_group = pg_collection.tp
+        self.pp_group = pg_collection.pp
+
         self.deepstack_visual_indexes = config.deepstack_visual_indexes
         self.deepstack_merger_list = nn.ModuleList(
             [
@@ -141,7 +149,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     forward_func,
                     self.config.distribute_saved_activations,
                     tensor_parallel.random.get_cuda_rng_tracker,
-                    parallel_state.get_tensor_model_parallel_group(),
+                    self.tp_group,
                     hidden_states,
                     attention_mask,
                     context,
@@ -391,7 +399,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         layer_prefix = f"{prefix}layers."
         num_layers = self.config.num_layers
         for layer in self.layers:
-            offset = get_transformer_layer_offset(self.config, self.vp_stage)
+            offset = get_transformer_layer_offset(self.config, self.vp_stage, pp_rank=self.pp_group.rank())
 
             global_layer_offset = layer.layer_number - 1  # self.layer_number starts at 1
             state_dict_prefix = f"{layer_prefix}{global_layer_offset - offset}."  # module list index in TransformerBlock # pylint: disable=line-too-long
@@ -435,6 +443,32 @@ class Qwen3VLTransformerBlock(TransformerBlock):
     """
     Transformer Block for Qwen3VL model.
     """
+
+    def __init__(
+        self,
+        config: Qwen3VLTransformerConfig,
+        spec: Union[TransformerBlockSubmodules, ModuleSpec],
+        post_layer_norm: bool = True,
+        pre_process: bool = True,
+        post_process: bool = True,
+        vp_stage: Optional[int] = None,
+        pg_collection: Optional[ProcessGroupCollection] = None,
+    ):
+        super().__init__(
+            config=config,
+            spec=spec,
+            post_layer_norm=post_layer_norm,
+            pre_process=pre_process,
+            post_process=post_process,
+            vp_stage=vp_stage,
+            pg_collection=pg_collection,
+        )
+        if pg_collection is None:
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        self.pg_collection = pg_collection
+        self.cp_group = pg_collection.cp
+        self.tp_group = pg_collection.tp
+        self.pp_group = pg_collection.pp
 
     def _checkpointed_forward(
         self,
@@ -503,7 +537,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     forward_func,
                     self.config.distribute_saved_activations,
                     tensor_parallel.random.get_cuda_rng_tracker,
-                    parallel_state.get_tensor_model_parallel_group(),
+                    self.tp_group,
                     hidden_states,
                     attention_mask,
                     context,

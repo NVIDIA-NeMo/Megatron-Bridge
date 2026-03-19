@@ -32,6 +32,7 @@ from megatron.bridge.models.gemma.gemma3_provider import (
     TERowParallelLinearLayerNorm,
     _is_local_attn_layer,
 )
+from megatron.bridge.utils.fusions import can_enable_gradient_accumulation_fusion
 
 
 class TestGemma3ModelProvider:
@@ -76,7 +77,7 @@ class TestGemma3ModelProvider:
         # Check other settings
         assert provider.is_vision_language is False
         assert provider.flash_decode is False
-        assert provider.gradient_accumulation_fusion is False
+        assert provider.gradient_accumulation_fusion is can_enable_gradient_accumulation_fusion()
         assert provider.scatter_embedding_sequence_parallel is True
 
         # Check data type settings

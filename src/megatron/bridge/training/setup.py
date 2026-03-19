@@ -242,6 +242,15 @@ def setup(
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
 
+    # Check if a local (non-persistent) checkpoint is available.  Local
+    # checkpoints are independent of global ones — they don't write
+    # latest_train_state.pt to load_dir, so checkpoint_exists() won't
+    # find them.
+    has_local_checkpoint = (
+        "local_checkpoint_manager" in checkpointing_context
+        and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
+    )
+
     # For PEFT, the pretrained checkpoint is loaded in the pre-wrap hook
     if cfg.peft is not None:
         should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load))
@@ -250,7 +259,11 @@ def setup(
             # This is switched off here in order to load these states from the checkpoint
             cfg.checkpoint.finetune = False
     else:
-        should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)) or (cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint))
+        should_load_checkpoint = (
+            (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load))
+            or (cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint))
+            or has_local_checkpoint
+        )
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
@@ -287,6 +300,10 @@ def setup(
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
     if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
         train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
+    if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
+        train_valid_test_datasets_provider = partial(
+            train_valid_test_datasets_provider, pg_collection=pg_collection
+        )
 
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,

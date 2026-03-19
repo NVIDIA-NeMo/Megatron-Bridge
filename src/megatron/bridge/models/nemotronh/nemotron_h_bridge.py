@@ -75,6 +75,9 @@ class NemotronHBridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
+        # Mamba doesn't use position embeddings; override the base class default of "rope"
+        provider.position_embedding_type = "none"
+
         # Nemotron-H specific defaults
         provider.activation_func = squared_relu
         provider.masked_softmax_fusion = True
@@ -84,8 +87,11 @@ class NemotronHBridge(MegatronModelBridge):
         provider.first_last_layers_bf16 = True
         provider.is_hybrid_model = True
 
-        # MoE-specific defaults (only if MoE is enabled)
-        if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts > 0:
+        # Handle kv_channels from head_dim or attention_head_dim
+        kv_channels = getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None)
+        if kv_channels is not None:
+            provider.kv_channels = kv_channels
+
             provider.moe_aux_loss_coeff = 0.0001
             provider.moe_router_score_function = "sigmoid"
             provider.moe_router_enable_expert_bias = True
@@ -97,6 +103,15 @@ class NemotronHBridge(MegatronModelBridge):
             provider.moe_shared_expert_overlap = True
 
         return provider
+
+    @classmethod
+    def get_hf_tokenizer_kwargs(cls) -> dict:
+        """Return HuggingFace tokenizer kwargs for Nemotron-H models.
+
+        Nemotron-H models only provide a fast tokenizer (tokenizer.json),
+        so use_fast=True is required.
+        """
+        return {"use_fast": True}
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
