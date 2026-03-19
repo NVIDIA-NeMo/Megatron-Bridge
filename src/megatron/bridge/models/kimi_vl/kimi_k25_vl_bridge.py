@@ -91,14 +91,13 @@ class KimiK25VLBridge(MegatronModelBridge):
         packed_key = f"{base}.weight_packed"
         if (
             packed_key in hf_state_dict
-            and f"{base}.weight_scale" in hf_state_dict
-            and f"{base}.weight_shape" in hf_state_dict
         ):
+            assert f"{base}.weight_scale" in hf_state_dict and f"{base}.weight_shape" in hf_state_dict, f"Missing weight scale or shape for quantized weight {key}"
             weight = dequantize_int4(
                 hf_state_dict[packed_key],
                 hf_state_dict[f"{base}.weight_scale"],
                 hf_state_dict[f"{base}.weight_shape"],
-                device="cpu",
+                device="cuda",
             )
         else:
             weight = hf_state_dict[key]

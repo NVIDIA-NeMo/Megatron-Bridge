@@ -77,6 +77,17 @@ def get_common_configs(hf_config: PreTrainedCausalLM, hf_pretrained) -> dict:
     return configs
 
 
+_INT4_SHIFTS: dict[str, torch.Tensor] = {}
+
+
+def _get_int4_shifts(device: torch.device) -> torch.Tensor:
+    """Return cached shift constants for INT4 unpacking on the given device."""
+    key = str(device)
+    if key not in _INT4_SHIFTS:
+        _INT4_SHIFTS[key] = torch.arange(8, device=device, dtype=torch.int32) * 4
+    return _INT4_SHIFTS[key]
+
+
 def dequantize_int4(
     weight_packed: torch.Tensor,
     weight_scale: torch.Tensor,
@@ -98,15 +109,6 @@ def dequantize_int4(
         device: Target device for computation
     """
 
-    is_packed_dtensor = hasattr(weight_packed, "device_mesh")
-    is_scale_dtensor = hasattr(weight_scale, "device_mesh")
-
-    if is_packed_dtensor:
-        weight_packed = weight_packed.to_local()
-
-    if is_scale_dtensor:
-        weight_scale = weight_scale.to_local()
-
     local_out, local_packed_in = weight_packed.shape
     local_in = local_packed_in * 8  # 8 INT4 values per int32
 
@@ -117,18 +119,14 @@ def dequantize_int4(
         weight_scale = weight_scale.cuda()
 
     # Unpack INT4: [out, packed_in] -> [out, packed_in, 8] -> [out, in_features]
-    shifts = torch.arange(8, device=weight_packed.device) * 4
+    shifts = _get_int4_shifts(weight_packed.device)
 
-    packed_unsqueezed = weight_packed.unsqueeze(-1)
-    unpacked = ((packed_unsqueezed >> shifts) & 0xF).float()
-    unpacked = unpacked.reshape(local_out, local_in)
+    # Unpack, convert to signed, and cast to float in one fused expression
+    unpacked = (((weight_packed.unsqueeze(-1) >> shifts) & 0xF).to(torch.float32) - 8.0).reshape(
+        local_out, local_in
+    )
 
-    # Convert unsigned 4-bit (0-15) to signed (-8 to 7) using OFFSET BINARY
-    # This matches compressed-tensors library which packs as: value + 8
-    # So unpack as: value - 8
-    unpacked = unpacked - 8
-
-    # Apply scale - both are now local tensors with corresponding slices
+    # Apply per-group scale using broadcast (no repeat_interleave allocation)
     scale = weight_scale.float()
     if scale.ndim == 1:
         local_num_groups = scale.numel() // local_out
@@ -139,20 +137,13 @@ def dequantize_int4(
     local_num_groups = scale.shape[1]
     elements_per_group = local_in // local_num_groups
 
-    # repeat_interleave expands [local_out, local_num_groups] -> [local_out, local_in]
-    scale_expanded = scale.repeat_interleave(elements_per_group, dim=1)
+    # Reshape unpacked to [out, num_groups, elements_per_group], multiply by
+    # scale [out, num_groups, 1] via broadcast, then flatten back — avoids
+    # the expensive repeat_interleave allocation.
+    unpacked = unpacked.view(local_out, local_num_groups, elements_per_group)
+    result = (unpacked * scale.unsqueeze(-1)).reshape(local_out, local_in)
 
-    if scale_expanded.shape[1] < local_in:
-        # Pad if needed
-        scale_expanded = torch.nn.functional.pad(
-            scale_expanded, (0, local_in - scale_expanded.shape[1]), value=scale_expanded[:, -1:].mean()
-        )
-    scale_expanded = scale_expanded[:, :local_in]
-    result = unpacked * scale_expanded
-
-    result = result.to(torch.bfloat16)
-
-    return result
+    return result.to(torch.bfloat16)
 
 
 def quantize_to_int4(
@@ -185,9 +176,9 @@ def quantize_to_int4(
     scale_expanded = scale.unsqueeze(-1).expand_as(w_grouped)
     w_q = (w_grouped / scale_expanded).round().clamp(-8, 7)
 
-    # Convert signed [-8, 7] to unsigned [0, 15] for packing
+    # Convert signed [-8, 7] to unsigned [0, 15] using offset binary
     w_q = w_q.view(out_features, -1)[:, :in_features]
-    w_q = torch.where(w_q < 0, w_q + 16, w_q).to(torch.uint8)
+    w_q = (w_q + 8).to(torch.uint8)
 
     # Pack 8 INT4 values into each int32 along the in_features dimension
     # HF format: [out_features, in_features//8] - 2D packed tensor
@@ -201,7 +192,7 @@ def quantize_to_int4(
     for i in range(8):
         packed |= (w_q_grouped[:, :, i] & 0xF) << (i * 4)
 
-    weight_packed = packed.cpu()
-    weight_scale = scale.to(torch.float16).cpu()
+    weight_packed = packed
+    weight_scale = scale.to(torch.float16)
 
     return weight_packed, weight_scale, weight_shape
