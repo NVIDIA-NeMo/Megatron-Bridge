@@ -204,9 +204,6 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
         labels_np = labels_np[:max_len]
         loss_mask_np = loss_mask_np[:max_len]
 
-        if len(input_ids_np) > max_len:
-            logging.warning(f"Sequence length {len(input_ids_np)} exceeds seq_length {max_len}, truncated.")
-
         # 8. Collect visual tensors
         visual_tensors: Dict[str, torch.Tensor] = {}
         for key in self.visual_keys:
