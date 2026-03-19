@@ -45,13 +45,13 @@ This distinction affects:
 
 ### File structure
 
-**LLM** — Reference: GPT-OSS (`src/megatron/bridge/models/gpt_oss/`)
+**LLM** — Reference: Qwen2 (`src/megatron/bridge/models/qwen/qwen2_bridge.py`)
 
 ```
 src/megatron/bridge/models/<model>/
 ├── __init__.py
 ├── <model>_bridge.py      # Config + weight mappings
-└── <model>_provider.py    # Megatron config + model construction
+└── <model>_provider.py    # (optional) Only if custom provide() or recipe presets needed
 ```
 
 **VLM** — Reference: Qwen3.5-VL (`src/megatron/bridge/models/qwen_vl/`)
@@ -78,9 +78,19 @@ src/megatron/bridge/models/<model>/
 
 ### Implementation order
 
-1. **Provider** — Map HF config to Megatron-Core transformer config
-2. **Bridge** — Register bridge, implement `provider_bridge()` and `mapping_registry()`
-3. **Model class** (VLM only) — Combine vision encoder + language decoder
+**LLM:**
+1. **Bridge** — Register bridge, implement `provider_bridge()` and `mapping_registry()`.
+   The bridge calls `super().provider_bridge()` to get a `GPTModelProvider` from `CONFIG_MAPPING`,
+   then sets model-specific attributes on it. No separate provider file needed for most models.
+2. **Provider** (optional) — Only if the model needs extra dataclass fields for serialization,
+   custom `provide()` logic, or predefined size variants for recipes.
+
+**VLM:**
+1. **Provider** — VLMs always need a custom provider subclass with a custom `provide()` that
+   instantiates the combined vision+language model.
+2. **Bridge** — Register bridge with `provider=MyVLModelProvider`. The bridge manually calls
+   `hf_config_to_provider_kwargs(text_config)` and instantiates the custom provider.
+3. **Model class** — Combine vision encoder + language decoder.
 
 For detailed patterns, see:
 - VLM: [vlm-patterns.md](vlm-patterns.md)
@@ -129,7 +139,7 @@ For detailed recipe patterns, see [recipe-patterns.md](recipe-patterns.md).
 tests/unit_tests/models/<model>/
 ├── __init__.py
 ├── test_<model>_bridge.py    # Mock HF config → verify provider mapping
-└── test_<model>_provider.py  # Direct provider instantiation → verify defaults
+└── test_<model>_provider.py  # (optional) Only if custom provider subclass exists
 ```
 
 ### Functional tests (GPU)
@@ -237,7 +247,7 @@ User wants to add a model
 │   ├─ Has Megatron vision encoder? ──→ Megatron encoder (Qwen3.5 pattern)
 │   └─ No Megatron encoder ──→ HF encoder (Gemma3 pattern)
 │
-└─ No vision config ──→ LLM path (GPT-OSS pattern)
-    ├─ Standard GPT-style? ──→ Minimal provider + bridge
-    └─ Custom components? ──→ Add modeling module
+└─ No vision config ──→ LLM path (Qwen2 / GPT-OSS pattern)
+    ├─ Standard GPT-style? ──→ Bridge only (no provider subclass needed)
+    └─ Custom components? ──→ Bridge + custom provider or modeling module
 ```

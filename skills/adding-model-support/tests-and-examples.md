@@ -47,7 +47,7 @@ class TestMyModelBridgeProviderBridge:
 
     def test_provider_type(self, bridge, mock_pretrained):
         provider = bridge.provider_bridge(mock_pretrained)
-        assert isinstance(provider, MyModelProvider)
+        assert isinstance(provider, GPTModelProvider)  # or custom provider class if one exists
 
     def test_config_mapping(self, bridge, mock_pretrained):
         provider = bridge.provider_bridge(mock_pretrained)
@@ -75,9 +75,10 @@ class TestMyModelBridgeMappingRegistry:
         assert any("output_layer" in p for p in megatron_params)
 ```
 
-### Provider Unit Test
+### Provider Unit Test (only if custom provider subclass exists)
 
-Direct instantiation, verify defaults and validation:
+Skip this if the bridge uses `GPTModelProvider` directly (most LLM bridges).
+Only needed for VLM providers or LLM providers with custom fields/`provide()` logic.
 
 ```python
 class TestMyModelProvider:
