@@ -1306,6 +1306,22 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
     result = ReverseTranslationResult()
     consumed: set[str] = set()
 
+    # --- Preamble: always-required MLM flags that have no Bridge equivalent ----
+    # Bridge always uses Megatron-Core models and TransformerEngine; MLM needs
+    # both flags explicitly because its defaults are "legacy" (non-mcore, local).
+    result.add_arg("use-mcore-models")
+    result.add_arg("transformer-impl", "transformer_engine")
+
+    # --- Special: model.num_query_groups → --num-query-groups + --group-query-attention
+    # MLM requires the --group-query-attention flag to actually enable GQA; without it
+    # num_query_groups is silently reset to None even if --num-query-groups is passed.
+    num_qg = overrides.get("model.num_query_groups")
+    num_ah = overrides.get("model.num_attention_heads")
+    if num_qg is not None and num_qg != num_ah:
+        # Emit the flag unconditionally when GQA is active; the value arg will be
+        # emitted by the normal _REVERSE_ARG_MAP loop below.
+        result.add_arg("group-query-attention")
+
     # --- Special: activation_func + gated_linear_unit → --swiglu ---------
     act_func = overrides.get("model.activation_func")
     gated = overrides.get("model.gated_linear_unit", False)
@@ -1396,6 +1412,17 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
         else:
             result.add_arg("split", str(split))
 
+    # --- Special: training.cuda_graph_scope → --cuda-graph-scope + --cuda-graph-impl
+    # MLM's --cuda-graph-impl defaults to "none", which disables CUDA graphs even when
+    # --cuda-graph-scope is provided.  Emit --cuda-graph-impl transformer_engine whenever
+    # the scope is non-empty so graphs are actually activated.
+    cuda_scope = overrides.get("training.cuda_graph_scope")
+    if cuda_scope is not None and cuda_scope not in ([], "", None):
+        consumed.add("training.cuda_graph_scope")
+        scope_str = " ".join(cuda_scope) if isinstance(cuda_scope, (list, tuple)) else str(cuda_scope)
+        result.add_arg("cuda-graph-scope", scope_str)
+        result.add_arg("cuda-graph-impl", "transformer_engine")
+
     # --- Special: model.seq_length / dataset.sequence_length → --seq-length
     seq_len = overrides.get("model.seq_length", overrides.get("dataset.sequence_length"))
     if seq_len is not None:
@@ -1404,10 +1431,14 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
         result.add_arg("seq-length", seq_len)
 
     # --- Special: model.max_position_embeddings → --max-position-embeddings
+    # MLM asserts max_position_embeddings >= seq_length; fall back to seq_len if not set.
     max_pos = overrides.get("model.max_position_embeddings")
     if max_pos is not None:
         consumed.add("model.max_position_embeddings")
         result.add_arg("max-position-embeddings", max_pos)
+    elif seq_len is not None:
+        result.add_arg("max-position-embeddings", seq_len)
+        result.add_note("max-position-embeddings not set; defaulting to seq-length for MLM assert")
 
     # --- Main loop -------------------------------------------------------
     for bridge_key, val in overrides.items():
