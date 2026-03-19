@@ -40,6 +40,10 @@ python scripts/translate_mlm_to_bridge.py --reverse \
 # From Bridge overrides only (no recipe)
 python scripts/translate_mlm_to_bridge.py --reverse \
     --args "model.num_layers=32 model.activation_func=silu model.gated_linear_unit=true"
+
+# From a Bridge YAML/OmegaConf config file (e.g. exported ConfigContainer)
+python scripts/translate_mlm_to_bridge.py --reverse \
+    --yaml bridge_config.yaml
 ```
 
 ### Key mappings
@@ -54,6 +58,7 @@ python scripts/translate_mlm_to_bridge.py --reverse \
 | `--seq-length N` | `model.seq_length=N dataset.sequence_length=N` | Dual mapping |
 | `--swiglu` | `model.gated_linear_unit=true model.activation_func=silu` | Expanded to two keys |
 | `--squared-relu` | `model.activation_func=squared_relu` | |
+| `--data-path PATH [W PATH...]` | `dataset.data_path=PATH` | Space-separated paths (and optional weights) |
 | `--bf16` | `mixed_precision=bf16_mixed` | |
 | `--fp16` | `mixed_precision=16-mixed` | |
 | `--disable-bias-linear` | `model.add_bias_linear=false` | Inverted flag |
@@ -85,6 +90,8 @@ python scripts/translate_mlm_to_bridge.py --reverse \
 | `--mock-data` | `dataset.mock=true` | Use synthetic data (no files needed) |
 
 Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`) are silently skipped with a comment. `--mock-data` translates to `dataset.mock=true`. Unknown flags are listed in a separate section so you can handle them manually.
+
+> **Activation function CLI overrides**: `model.activation_func` can now be set via Hydra CLI string override (e.g. `model.activation_func=silu`, `model.activation_func=gelu`). The string is resolved to the callable in `TransformerConfig.finalize()`. This makes `--swiglu` → `model.gated_linear_unit=true model.activation_func=silu` round-trippable from the CLI.
 
 ## Quick start
 
