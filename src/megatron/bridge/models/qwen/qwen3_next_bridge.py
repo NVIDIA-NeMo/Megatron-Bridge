@@ -51,7 +51,7 @@ class Qwen3NextBridge(MegatronModelBridge):
 
     PROVIDER_CLASS = Qwen3NextModelProvider
 
-    def provider_bridge(self, hf_pretrained):
+    def provider_bridge(self, hf_pretrained: Qwen3NextForCausalLM) -> Qwen3NextModelProvider:
         """Convert HuggingFace Qwen3-Next config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
