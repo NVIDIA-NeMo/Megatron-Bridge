@@ -262,9 +262,16 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "no-check-for-nan-in-loss-and-grad": ("ddp.check_for_nan_in_grad",        "flag_invert"),
     "grad-reduce-in-fp32":               ("ddp.grad_reduce_in_fp32",          "flag"),
 
-    # ── Precision ───────────────────────────────────────────────────────
+    # ── Precision / FP8 ─────────────────────────────────────────────────
     "bf16":                              ("mixed_precision._bf16",             "flag"),
     "fp16":                              ("mixed_precision._fp16",             "flag"),
+    "fp8-format":                        ("mixed_precision.fp8",               None),
+    "fp8-recipe":                        ("mixed_precision.fp8_recipe",        None),
+    "fp8-margin":                        ("mixed_precision.fp8_margin",        None),
+    "fp8-amax-history-len":             ("mixed_precision.fp8_amax_history_len", None),
+    "fp8-amax-compute-algo":            ("mixed_precision.fp8_amax_compute_algo", None),
+    "no-fp8-wgrad":                      ("mixed_precision.fp8_wgrad",         "flag_invert"),
+    "fp8-param-gather":                  ("mixed_precision.fp8_param_gather",  "flag"),
 
     # ── Logger ──────────────────────────────────────────────────────────
     "log-interval":                      ("logger.log_interval",               None),
@@ -289,6 +296,26 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
 
     # ── RNG ──────────────────────────────────────────────────────────────
     "seed":                              ("rng.seed",                           None),
+
+    # ── CUDA graph ──────────────────────────────────────────────────────
+    "cuda-graph-impl":                   ("model.cuda_graph_impl",              None),
+    "cuda-graph-warmup-steps":           ("model.cuda_graph_warmup_steps",      None),
+    # cuda-graph-scope maps to model.cuda_graph_scope (list of CudaGraphScope
+    # enums) which cannot be set via a simple string CLI override in Bridge.
+    "cuda-graph-scope":                  (None,                                 "skip"),
+
+    # ── Checkpoint (extra) ──────────────────────────────────────────────
+    "use-persistent-ckpt-worker":        ("checkpoint.use_persistent_ckpt_worker", "flag"),
+
+    # ── Parallelism (extra) ─────────────────────────────────────────────
+    "microbatch-group-size-per-virtual-pipeline-stage": ("model.microbatch_group_size_per_vp_stage", None),
+
+    # ── RNG / TE ────────────────────────────────────────────────────────
+    "te-rng-tracker":                    ("model.use_te_rng_tracker",           "flag"),
+
+    # ── Tokenizer (extra) ───────────────────────────────────────────────
+    "tiktoken-num-special-tokens":       ("tokenizer.tiktoken_num_special_tokens", None),
+    "vocab-extra-ids":                   ("tokenizer.vocab_extra_ids",          None),
 
     # ── Misc (informational / noop in Bridge) ───────────────────────────
     "use-mcore-models":                  (None,                                 "skip"),
@@ -388,8 +415,14 @@ def parse_raw_args(args_str: str) -> tuple[dict[str, Any], dict[str, str]]:
                 parsed[key] = True
                 i += 1
             elif i + 1 < len(tokens) and not tokens[i + 1].startswith("--"):
-                parsed[key] = _try_parse_value(tokens[i + 1])
-                i += 2
+                # Greedily collect all consecutive non-flag tokens to support
+                # multi-value args like --cuda-graph-scope moe_router moe_preprocess
+                j = i + 1
+                while j < len(tokens) and not tokens[j].startswith("--"):
+                    j += 1
+                values = tokens[i + 1 : j]
+                parsed[key] = _try_parse_value(values[0]) if len(values) == 1 else values
+                i = j
             else:
                 parsed[key] = True
                 i += 1
