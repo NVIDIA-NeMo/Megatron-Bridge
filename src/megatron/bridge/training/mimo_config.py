@@ -1,8 +1,10 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Literal, Optional
-import warnings
 
 
 @dataclass
@@ -18,12 +20,7 @@ class ModuleParallelismConfig:
 
     @property
     def total_model_parallel_size(self) -> int:
-        return (
-            self.tensor_parallel
-            * self.pipeline_parallel
-            * self.context_parallel
-            * self.expert_parallel
-        )
+        return self.tensor_parallel * self.pipeline_parallel * self.context_parallel * self.expert_parallel
 
     @property
     def total_ranks(self) -> int:

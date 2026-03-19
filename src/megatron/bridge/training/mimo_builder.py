@@ -1,9 +1,17 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mimo_config import MIMOConfig
+
+
+if TYPE_CHECKING:
+    from megatron.core.hyper_comm_grid import HyperCommGrid
+    from megatron.core.models.mimo.config.base_configs import ColocatedCommConfig, MimoModelConfig
+    from megatron.core.transformer.spec_utils import ModuleSpec
 
 
 def build_hypercomm_grids(cfg: ConfigContainer) -> Dict[str, "HyperCommGrid"]:
@@ -40,9 +48,7 @@ def _default_topology(mimo_cfg: MIMOConfig) -> Dict[str, list[str]]:
     return {name: [llm] for name in mimo_cfg.module_names if name != llm} | {llm: []}
 
 
-def build_colocated_comm_config(
-    mimo_cfg: MIMOConfig, grids: Dict[str, "HyperCommGrid"]
-) -> "ColocatedCommConfig":
+def build_colocated_comm_config(mimo_cfg: MIMOConfig, grids: Dict[str, "HyperCommGrid"]) -> "ColocatedCommConfig":
     """Build ColocatedCommConfig with default encoder-to-LLM topology."""
     from megatron.core.models.mimo.config.base_configs import ColocatedCommConfig
 

@@ -241,7 +241,9 @@ def build_train_valid_test_data_loaders(
                 global_batch_size=cfg.train.global_batch_size,
             )
         elif cfg.validation.eval_iters > 0:
-            val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
+            val_dataloader_type = (
+                "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
+            )
             valid_dataloader = build_pretraining_data_loader(
                 valid_ds,
                 train_state.consumed_valid_samples,
@@ -290,7 +292,9 @@ def build_train_valid_test_data_loaders(
     return train_dataloader, valid_dataloader, test_dataloader
 
 
-def _resolve_data_loader_builder(cfg: ConfigContainer) -> Optional[Callable[..., tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]]]:
+def _resolve_data_loader_builder(
+    cfg: ConfigContainer,
+) -> Optional[Callable[..., tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]]]:
     """Resolve an optional model-specific data loader builder.
 
     This acts as a lightweight dispatch registry so model-specific loader logic

@@ -29,6 +29,11 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
 )
+from megatron.bridge.models.encoder_provider import (
+    EncoderProvider,
+    EncoderTransformerConfig,
+    GenericVisionEncoderProvider,
+)
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,
     CodeGemmaModelProvider7B,
@@ -141,11 +146,6 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
     Qwen3VLModelProvider,
     Qwen3VLMoEBridge,
     Qwen3VLMoEModelProvider,
-)
-from megatron.bridge.models.encoder_provider import (
-    EncoderProvider,
-    EncoderTransformerConfig,
-    GenericVisionEncoderProvider,
 )
 from megatron.bridge.models.sarvam import (
     SarvamMLABridge,

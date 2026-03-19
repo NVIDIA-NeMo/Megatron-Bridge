@@ -37,16 +37,16 @@ from megatron.core.transformer.transformer_config import TransformerConfig as MC
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+from megatron.bridge.models.encoder_provider import EncoderProvider
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
+from megatron.bridge.training.mimo_config import MIMOConfig
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
-from megatron.bridge.models.encoder_provider import EncoderProvider
-from megatron.bridge.training.mimo_config import MIMOConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
@@ -1492,10 +1492,7 @@ class ConfigContainer(Container):
             if actual is None:
                 continue
             if actual != expected:
-                raise ValueError(
-                    f"MIMO LLM parallelism mismatch for {attr_name}: "
-                    f"model={actual}, mimo={expected}."
-                )
+                raise ValueError(f"MIMO LLM parallelism mismatch for {attr_name}: model={actual}, mimo={expected}.")
 
         module_names = set(self.mimo.module_parallelisms.keys())
         expected_encoders = module_names - {self.mimo.llm_module_name}
@@ -1515,9 +1512,7 @@ class ConfigContainer(Container):
 
         for module_name, parallelism in self.mimo.module_parallelisms.items():
             if parallelism.data_parallel is None:
-                raise ValueError(
-                    f"data_parallel must be set for module '{module_name}' before validation."
-                )
+                raise ValueError(f"data_parallel must be set for module '{module_name}' before validation.")
             if self.train.global_batch_size % parallelism.data_parallel != 0:
                 raise ValueError(
                     f"Invalid MIMO batch config for module '{module_name}': "

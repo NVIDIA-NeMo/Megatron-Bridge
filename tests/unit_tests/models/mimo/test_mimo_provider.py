@@ -575,6 +575,7 @@ class TestEmbeddingGroupHelpers:
         assert pos_embd_pg is None
         assert embd_pg is None
 
+
 class TestProcessGroupCollectionWithEmbeddingGroups:
     """Test that ProcessGroupCollection includes embedding groups."""
 
