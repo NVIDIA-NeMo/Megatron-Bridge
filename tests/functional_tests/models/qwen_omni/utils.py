@@ -32,18 +32,15 @@ from safetensors.torch import save_file
 from transformers import Qwen3OmniMoeProcessor
 
 
-SOURCE_MODEL_PATH = Path(
-    os.environ.get("QWEN3_OMNI_SOURCE_MODEL_PATH", "/nfs/volume-1615-2/models/Qwen3-Omni-30B-A3B-Instruct")
-)
-SOURCE_DATA_PATH = Path(
-    os.environ.get("QWEN3_OMNI_SOURCE_DATA_PATH", "/home/luban/liuwei/omni/ref/projects/Omni_Bench_fix_simple/test.parquet")
-)
-SMOKE_MODEL_CACHE_PATH = Path(
-    os.environ.get("QWEN3_OMNI_SMOKE_MODEL_CACHE_PATH", "/nfs/ofs-llab-hdd/users/liuwei/models/qwen3_omni_smoke")
-)
-SMOKE_LOCK_DIR = Path(
-    os.environ.get("QWEN3_OMNI_SMOKE_LOCK_DIR", "/nfs/ofs-llab-hdd/users/liuwei/models/.hf_config_locks")
-)
+_SOURCE_MODEL_PATH = os.environ.get("QWEN3_OMNI_SOURCE_MODEL_PATH")
+_SOURCE_DATA_PATH = os.environ.get("QWEN3_OMNI_SOURCE_DATA_PATH")
+_SMOKE_MODEL_CACHE_PATH = os.environ.get("QWEN3_OMNI_SMOKE_MODEL_CACHE_PATH", ".cache/qwen3_omni_smoke")
+_SMOKE_LOCK_DIR = os.environ.get("QWEN3_OMNI_SMOKE_LOCK_DIR", ".cache/qwen3_omni_locks")
+
+SOURCE_MODEL_PATH = Path(_SOURCE_MODEL_PATH) if _SOURCE_MODEL_PATH else None
+SOURCE_DATA_PATH = Path(_SOURCE_DATA_PATH) if _SOURCE_DATA_PATH else None
+SMOKE_MODEL_CACHE_PATH = Path(_SMOKE_MODEL_CACHE_PATH)
+SMOKE_LOCK_DIR = Path(_SMOKE_LOCK_DIR)
 
 SMOKE_TEXT_LAYERS = 2
 SMOKE_VISION_DEPTH = 2
@@ -70,7 +67,12 @@ _MERGER_PATTERN = re.compile(r"^thinker\.visual\.merger_list\.(\d+)\.")
 
 def smoke_assets_available() -> bool:
     """Return whether the local source checkpoint and OmniBench parquet are available."""
-    return SOURCE_MODEL_PATH.exists() and SOURCE_DATA_PATH.exists()
+    return (
+        SOURCE_MODEL_PATH is not None
+        and SOURCE_MODEL_PATH.exists()
+        and SOURCE_DATA_PATH is not None
+        and SOURCE_DATA_PATH.exists()
+    )
 
 
 def create_qwen3_omni_smoke_model(output_dir: Path) -> Path:
