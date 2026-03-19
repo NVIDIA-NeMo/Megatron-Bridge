@@ -39,6 +39,22 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
 
 For development installation and additional details, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md).
 
+### Megatron-Core Submodule (main & dev)
+
+Megatron Bridge pins [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) as a git submodule at `3rdparty/Megatron-LM`. The repository tracks two pinned commits — one from the upstream **main** branch (default) and one from **dev** — managed by `scripts/switch_mcore.sh`.
+
+The submodule committed to the repo always points to the **main** commit. Use the **dev** commit when you need a Megatron-Core feature or fix that has not yet landed on main, or to validate forward-compatibility with upcoming MCore changes:
+
+```bash
+./scripts/switch_mcore.sh status   # Show current commit
+./scripts/switch_mcore.sh dev      # Switch to dev; then run: uv sync
+./scripts/switch_mcore.sh main     # Switch back; then run: uv sync --locked
+```
+
+> **Note:** `uv.lock` is generated against the main commit. After switching to dev, use `uv sync` (without `--locked`). After switching back to main, use `uv sync --locked`.
+
+The dev branch follows Megatron-LM's upstream [dev branch philosophy](https://github.com/NVIDIA/Megatron-LM) — features are experimental, follow a streamlined review process, and must graduate to stable within 6 months or be deprecated.
+
 ## ⚡ Quickstart
 
 To get started, install Megatron Bridge or download a NeMo Framework container as described [above](#-installation).
