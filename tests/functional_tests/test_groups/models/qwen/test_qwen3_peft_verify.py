@@ -38,7 +38,7 @@ from megatron.bridge.training.model_load_save import temporary_distributed_conte
 peft = pytest.importorskip("peft", reason="peft library not installed")
 
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent.parent
 
 HF_QWEN3_TOY_CONFIG = {
     "attention_dropout": 0.0,

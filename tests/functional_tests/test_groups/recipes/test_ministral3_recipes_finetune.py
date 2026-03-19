@@ -19,7 +19,7 @@ import pytest
 from megatron.bridge.recipes.ministral3.ministral3 import (
     ministral3_3b_sft_config,
 )
-from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
 
 MINISTRAL3_FINETUNE_RECIPES = [

@@ -56,7 +56,7 @@ class TestGenerateVLMFromHF:
             cmd,
             capture_output=True,
             text=True,
-            cwd=Path(__file__).parent.parent.parent.parent,
+            cwd=Path(__file__).parent.parent.parent.parent.parent,
         )
 
         if result.returncode != 0:

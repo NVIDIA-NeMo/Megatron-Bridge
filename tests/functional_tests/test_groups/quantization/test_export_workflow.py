@@ -170,7 +170,9 @@ class TestExportWorkflow:
         if pp > 1:
             cmd.extend(["--pp", str(pp)])
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+        )
         return result, output_dir
 
     def _run_export(self, checkpoint_dir, export_dir, hf_model_id, tp=1, pp=1, ep=1, etp=1):
@@ -227,7 +229,9 @@ class TestExportWorkflow:
         if etp > 1:
             cmd.extend(["--etp", str(etp)])
 
-        return subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
+        return subprocess.run(
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+        )
 
     @pytest.mark.run_only_on("GPU")
     def test_export_single_gpu(self, tmp_path):

@@ -22,7 +22,7 @@ from megatron.bridge.recipes.qwen import (
 from megatron.bridge.recipes.qwen import (
     qwen25_500m_pretrain_config as qwen25_500m_config,
 )
-from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_test
 
 
 QWEN_PRETRAIN_RECIPES = [

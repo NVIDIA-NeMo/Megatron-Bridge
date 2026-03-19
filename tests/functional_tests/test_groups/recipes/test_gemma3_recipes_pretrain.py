@@ -19,7 +19,10 @@ import pytest
 from megatron.bridge.recipes.gemma import (
     gemma3_1b_pretrain_config as gemma3_1b_config,
 )
-from tests.functional_tests.recipes.utils import run_pretrain_config_override_test, run_pretrain_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import (
+    run_pretrain_config_override_test,
+    run_pretrain_recipe_test,
+)
 
 
 GEMMA3_PRETRAIN_RECIPES = [

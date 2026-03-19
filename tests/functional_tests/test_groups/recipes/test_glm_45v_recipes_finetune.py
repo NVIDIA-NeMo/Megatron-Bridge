@@ -19,7 +19,7 @@ import pytest
 from megatron.bridge.recipes.glm_vl.glm_45v import (
     glm_45v_sft_config,
 )
-from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
 
 GLM_45V_FINETUNE_RECIPES = [

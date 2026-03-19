@@ -28,7 +28,7 @@ Run with:
 import pytest
 
 from megatron.bridge.recipes.qwen_vl.qwen3_vl import qwen3_vl_8b_sft_config
-from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
 
 QWEN3_VL_FINETUNE_RECIPES = [

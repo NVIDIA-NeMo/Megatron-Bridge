@@ -17,7 +17,7 @@
 import pytest
 
 from megatron.bridge.recipes.gpt_oss.gpt_oss import gpt_oss_20b_pretrain_config
-from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_test
 
 
 GPT_OSS_PRETRAIN_RECIPES = [

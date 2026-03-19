@@ -19,7 +19,7 @@ import pytest
 from megatron.bridge.recipes.deepseek import (
     deepseek_v2_lite_pretrain_config as deepseek_v2_lite_config,
 )
-from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_test
 
 
 DEEPSEEK_PRETRAIN_RECIPES = [

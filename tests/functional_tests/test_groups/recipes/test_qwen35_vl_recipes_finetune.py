@@ -27,7 +27,7 @@ Run with:
 import pytest
 
 from megatron.bridge.recipes.qwen_vl.qwen35_vl import qwen35_vl_27b_sft_config
-from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
 
 pytestmark = pytest.mark.integration

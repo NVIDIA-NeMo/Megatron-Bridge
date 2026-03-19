@@ -26,7 +26,7 @@ from pathlib import Path
 
 
 # Add the performance scripts to the path for testing
-SCRIPTS_PERF_PATH = Path(__file__).parents[3] / "scripts" / "performance"
+SCRIPTS_PERF_PATH = Path(__file__).parents[4] / "scripts" / "performance"
 sys.path.insert(0, str(SCRIPTS_PERF_PATH))
 
 

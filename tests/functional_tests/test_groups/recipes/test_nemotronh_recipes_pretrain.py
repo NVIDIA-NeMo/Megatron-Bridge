@@ -21,7 +21,7 @@ from megatron.bridge.recipes.nemotronh import (
     nemotron_nano_9b_v2_pretrain_config,
     nemotronh_4b_pretrain_config,
 )
-from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_test
 
 
 NEMOTRONH_PRETRAIN_RECIPES = [

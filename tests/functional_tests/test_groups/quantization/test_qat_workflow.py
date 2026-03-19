@@ -95,7 +95,9 @@ class TestQATWorkflow:
         if pp > 1:
             cmd.extend(["--pp", str(pp)])
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+        )
         return result, output_dir
 
     def _run_pretrain_from_quantized_checkpoint(
@@ -175,7 +177,9 @@ class TestQATWorkflow:
         cmd.append(f"model.pipeline_model_parallel_size={pp}")
         cmd.append(f"model.context_parallel_size={cp}")
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+        )
         return result, final_iteration
 
     @pytest.mark.run_only_on("GPU")

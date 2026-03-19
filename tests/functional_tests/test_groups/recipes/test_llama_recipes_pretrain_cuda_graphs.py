@@ -19,7 +19,7 @@ import pytest
 from megatron.bridge.recipes.llama import (
     llama32_1b_pretrain_config as llama32_1b_config,
 )
-from tests.functional_tests.recipes.utils import run_pretrain_recipe_perf_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_perf_test
 
 
 LLAMA_PRETRAIN_RECIPES = [

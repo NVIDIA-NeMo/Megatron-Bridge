@@ -76,7 +76,9 @@ class TestQuantizationWorkflow:
         if pp > 1:
             cmd.extend(["--pp", str(pp)])
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+        )
         return result, output_dir
 
     def _run_generation(self, checkpoint_dir, tp=1, pp=1):
@@ -123,7 +125,9 @@ class TestQuantizationWorkflow:
         if pp > 1:
             cmd.extend(["--pp", str(pp)])
 
-        return subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
+        return subprocess.run(
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+        )
 
     @pytest.mark.run_only_on("GPU")
     def test_quantization_and_generation_single_gpu(self, tmp_path):

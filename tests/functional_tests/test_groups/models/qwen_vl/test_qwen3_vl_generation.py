@@ -341,7 +341,7 @@ class TestQwen3VLGeneration:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=Path(__file__).parent.parent.parent.parent.parent,
+                cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
             )
 
             # Print output for debugging
@@ -390,7 +390,7 @@ class TestQwen3VLGeneration:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=Path(__file__).parent.parent.parent.parent.parent,
+                cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
             )
 
             # Print output for debugging

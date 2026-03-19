@@ -19,7 +19,7 @@ import pytest
 from megatron.bridge.recipes.gemma3_vl.gemma3_vl import (
     gemma3_vl_4b_sft_config,
 )
-from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
 
 GEMMA3_VL_FINETUNE_RECIPES = [

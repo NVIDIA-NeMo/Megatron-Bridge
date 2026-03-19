@@ -20,7 +20,7 @@ from megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl import (
     nemotron_nano_v2_vl_12b_sft_config,
 )
 from megatron.bridge.training import llava_step
-from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
 
 NEMOTRON_VL_FINETUNE_RECIPES = [

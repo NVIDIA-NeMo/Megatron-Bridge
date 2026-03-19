@@ -163,7 +163,7 @@ class TestQwen3MoeQuantizationWorkflow:
             cmd.extend(["--etp", str(etp)])
 
         result = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent.parent
         )
         return result, output_dir
 
@@ -218,7 +218,7 @@ class TestQwen3MoeQuantizationWorkflow:
             cmd.extend(["--etp", str(etp)])
 
         return subprocess.run(
-            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent.parent
         )
 
     @pytest.mark.run_only_on("GPU")

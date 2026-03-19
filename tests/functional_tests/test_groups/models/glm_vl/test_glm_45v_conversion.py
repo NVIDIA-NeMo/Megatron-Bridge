@@ -253,7 +253,7 @@ class TestGLM45VConversion:
         ]
 
         result = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
         )
         print(cmd)
 
@@ -335,7 +335,7 @@ class TestGLM45VConversion:
         ]
 
         result = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
         )
         print(cmd)
 

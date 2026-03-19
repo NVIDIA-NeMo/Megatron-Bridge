@@ -55,7 +55,7 @@ class TestCheckpointConversion:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
+                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
             )
 
             # Check that the import completed successfully
@@ -121,7 +121,7 @@ class TestCheckpointConversion:
             ]
 
             import_result = subprocess.run(
-                import_cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
+                import_cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
             )
 
             if import_result.returncode != 0:
@@ -150,7 +150,7 @@ class TestCheckpointConversion:
             ]
 
             export_result = subprocess.run(
-                export_cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
+                export_cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
             )
 
             # Check that the export completed successfully
@@ -233,7 +233,7 @@ class TestCheckpointConversion:
                 cmd.extend(["--device-map", device_map])
 
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
+                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
             )
 
             # Check that the import completed successfully
