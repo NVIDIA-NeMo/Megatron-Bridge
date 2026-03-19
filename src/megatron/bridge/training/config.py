@@ -1468,26 +1468,17 @@ class ConfigContainer(Container):
         # Enable deterministic algorithms in torch
         torch.use_deterministic_algorithms(True)
 
-    def finalize(self) -> None:
-        """Finalize configuration: propagate cross-config flags and validate.
-
-        This is the top-level entry point that should be called after all external
-        configuration modifications (mixed precision, comm overlap, etc.) are applied.
-        It propagates flags between sub-configs and then runs full validation.
-        """
-        # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
-        # can enable variable_seq_lengths for pipeline parallelism.
-        if getattr(self.dataset, "pack_sequences_in_batch", False):
-            self.model._pack_sequences_in_batch = True
-
-        self.validate()
-
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+
+        # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
+        # can enable variable_seq_lengths for pipeline parallelism.
+        if getattr(self.dataset, "pack_sequences_in_batch", False):
+            self.model._pack_sequences_in_batch = True
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
@@ -1952,7 +1943,7 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
         cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     # Validate configuration after all modifications
-    cfg.finalize()
+    cfg.validate()
 
 
 def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -> None:
