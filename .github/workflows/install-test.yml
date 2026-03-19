@@ -61,6 +61,7 @@ jobs:
     with:
       default_runner_prefix: ${{ vars.INSTALL_TEST_DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.INSTALL_TEST_NON_NVIDIA_RUNNER_PREFIX }}
+      sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
     secrets:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
