@@ -11,15 +11,14 @@ from datasets import load_dataset
 from torch.utils.data import Dataset
 from transformers import AutoProcessor, AutoTokenizer
 
-from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
 from megatron.bridge.data.mimo.collate import mimo_collate_fn
 from megatron.bridge.data.mimo.dataset import MimoDataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.config import DatasetBuildContext
+from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 @dataclass(kw_only=True)
-class HFMimoDatasetProvider(MimoDatasetProvider):
+class HFMimoDatasetProvider(DatasetProvider):
     """DatasetProvider for MIMO models using HuggingFace datasets.
 
     Loads datasets from HuggingFace Hub and applies per-modality processors

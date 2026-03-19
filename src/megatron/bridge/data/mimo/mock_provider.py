@@ -16,10 +16,9 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 import numpy as np
 from PIL import Image
 
-from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
 from megatron.bridge.data.mimo.dataset import MimoDataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.config import DatasetBuildContext
+from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 def _generate_random_image(width: int, height: int, rng: np.random.Generator) -> Image.Image:
@@ -36,7 +35,7 @@ def _generate_random_audio(duration_sec: float, sample_rate: int, rng: np.random
 
 
 @dataclass(kw_only=True)
-class MockMimoProvider(MimoDatasetProvider):
+class MockMimoProvider(DatasetProvider):
     """DatasetProvider for mock MIMO datasets with synthetic multimodal data.
 
     Generates synthetic multimodal inputs (random images, audio, etc.) and uses

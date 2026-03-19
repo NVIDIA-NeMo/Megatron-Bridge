@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Tuple
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Dict
 
 import torch.distributed as dist
 
@@ -14,10 +15,20 @@ if TYPE_CHECKING:
     from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 
 
+@dataclass(frozen=True)
+class MimoDpInfo:
+    """Data-parallel loader metadata for the current rank in MIMO training."""
+
+    dp_rank: int
+    dp_size: int
+    needs_data: bool
+    loader_module: str
+
+
 def get_mimo_dp_info(
     mimo_cfg: "MimoParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
-) -> Tuple[int, int, bool, str]:
+) -> MimoDpInfo:
     """Get DP rank, size, data-loading responsibility, and loader module for MIMO.
 
     Determines which module's DP settings to use for data loading based on
@@ -30,7 +41,7 @@ def get_mimo_dp_info(
         grids: Module name to HyperCommGrid mapping from build_hypercomm_grids().
 
     Returns:
-        Tuple of (dp_rank, dp_size, needs_data, loader_module):
+        MimoDpInfo with:
         - dp_rank: This rank's position in DP group.
         - dp_size: Size of DP group for data sharding.
         - needs_data: Whether this rank needs to load data (first/last PP stage).
@@ -39,11 +50,12 @@ def get_mimo_dp_info(
     Example:
         >>> from megatron.bridge.models.mimo.mimo_builder import build_hypercomm_grids
         >>> grids = build_hypercomm_grids(mimo_cfg)
-        >>> dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
-        >>> if needs_data:
+        >>> dp_info = get_mimo_dp_info(mimo_cfg, grids)
+        >>> if dp_info.needs_data:
         ...     # Build data loader with dp_rank and dp_size
-        ...     sampler = DistributedSampler(dataset, num_replicas=dp_size, rank=dp_rank)
+        ...     sampler = DistributedSampler(dataset, num_replicas=dp_info.dp_size, rank=dp_info.dp_rank)
     """
+    del mimo_cfg
     current_rank = dist.get_rank()
 
     # Heterogeneous: find which module this rank belongs to
@@ -57,7 +69,7 @@ def get_mimo_dp_info(
 
     if my_grid is None or my_module is None:
         # Rank doesn't participate in any module
-        return 0, 1, False, "llm"
+        return MimoDpInfo(dp_rank=0, dp_size=1, needs_data=False, loader_module="llm")
 
     dp_rank = my_grid.get_pg(["dp"]).rank()
     dp_size = my_grid.get_pg(["dp"]).size()
@@ -71,4 +83,9 @@ def get_mimo_dp_info(
     else:
         needs_data = pp_rank == 0
 
-    return dp_rank, dp_size, needs_data, my_module
+    return MimoDpInfo(
+        dp_rank=dp_rank,
+        dp_size=dp_size,
+        needs_data=needs_data,
+        loader_module=my_module,
+    )

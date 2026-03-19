@@ -57,12 +57,12 @@ def test_get_mimo_dp_info_encoder_first_pp(monkeypatch):
         "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
     }
 
-    dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
+    dp_info = get_mimo_dp_info(mimo_cfg, grids)
 
-    assert loader_module == "vision"
-    assert dp_rank == 0
-    assert dp_size == 2
-    assert needs_data is True  # First PP stage
+    assert dp_info.loader_module == "vision"
+    assert dp_info.dp_rank == 0
+    assert dp_info.dp_size == 2
+    assert dp_info.needs_data is True  # First PP stage
 
 
 def test_get_mimo_dp_info_encoder_non_first_pp(monkeypatch):
@@ -75,10 +75,10 @@ def test_get_mimo_dp_info_encoder_non_first_pp(monkeypatch):
         "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
     }
 
-    dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
+    dp_info = get_mimo_dp_info(mimo_cfg, grids)
 
-    assert loader_module == "vision"
-    assert needs_data is False  # Not first PP stage
+    assert dp_info.loader_module == "vision"
+    assert dp_info.needs_data is False  # Not first PP stage
 
 
 def test_get_mimo_dp_info_llm_first_pp(monkeypatch):
@@ -91,10 +91,10 @@ def test_get_mimo_dp_info_llm_first_pp(monkeypatch):
         "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=2),
     }
 
-    dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
+    dp_info = get_mimo_dp_info(mimo_cfg, grids)
 
-    assert loader_module == "llm"
-    assert needs_data is True  # First PP stage
+    assert dp_info.loader_module == "llm"
+    assert dp_info.needs_data is True  # First PP stage
 
 
 def test_get_mimo_dp_info_llm_last_pp(monkeypatch):
@@ -107,10 +107,10 @@ def test_get_mimo_dp_info_llm_last_pp(monkeypatch):
         "llm": FakeGrid(4, 4, dp_rank=1, dp_size=4, pp_rank=1, pp_size=2),
     }
 
-    dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
+    dp_info = get_mimo_dp_info(mimo_cfg, grids)
 
-    assert loader_module == "llm"
-    assert needs_data is True  # Last PP stage
+    assert dp_info.loader_module == "llm"
+    assert dp_info.needs_data is True  # Last PP stage
 
 
 def test_get_mimo_dp_info_non_participating_rank(monkeypatch):
@@ -123,7 +123,7 @@ def test_get_mimo_dp_info_non_participating_rank(monkeypatch):
         "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
     }
 
-    dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
+    dp_info = get_mimo_dp_info(mimo_cfg, grids)
 
-    assert needs_data is False
-    assert loader_module == "llm"  # Default to LLM
+    assert dp_info.needs_data is False
+    assert dp_info.loader_module == "llm"  # Default to LLM

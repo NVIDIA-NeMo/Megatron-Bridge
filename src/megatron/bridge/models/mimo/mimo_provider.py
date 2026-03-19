@@ -107,8 +107,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     # Parallelism config (Bridge's value-add)
     mimo_parallelism_config: Optional[MimoParallelismConfig] = None
 
-    # Cached grids after build_model() - used by data loading
-    _grids: Optional[Dict[str, "HyperCommGrid"]] = field(default=None, repr=False)
+    # Cached infrastructure for reuse across model/data setup
+    _cached_infra: Optional[MimoModelInfra] = field(default=None, repr=False)
 
     # Freezing options
     freeze_language_model: bool = False
@@ -151,8 +151,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         """Build MIMO parallelism infrastructure.
 
         This method builds HyperCommGrids, ProcessGroupCollections, and topology
-        for MIMO's heterogeneous parallelism. It is idempotent and does not
-        mutate provider state (results are not cached).
+        for MIMO's heterogeneous parallelism. It does not mutate provider state.
+        Use get_or_build_infra() when cached reuse is desired.
 
         Can be called before or after provide(). Call finalize() first to
         validate the parallelism configuration.
@@ -171,9 +171,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             pg_collections = {}
             topology = {}
 
-        # Cache grids for later use (e.g., data loading)
-        object.__setattr__(self, "_grids", grids)
-
         participating_modules = [name for name, pg in pg_collections.items() if pg is not None]
 
         return MimoModelInfra(
@@ -182,6 +179,12 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             pg_collections=pg_collections,
             participating_modules=participating_modules,
         )
+
+    def get_or_build_infra(self) -> MimoModelInfra:
+        """Return cached MIMO infrastructure, building it once if needed."""
+        if self._cached_infra is None:
+            object.__setattr__(self, "_cached_infra", self.build_infra())
+        return self._cached_infra
 
     def _get_pg_collections_from_grids(
         self,
@@ -299,7 +302,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                 (indicates invalid parallelism configuration).
         """
         # Build infrastructure
-        infra = self.build_infra()
+        infra = self.get_or_build_infra()
 
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
@@ -407,8 +410,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         # Finalize parallelism config
         self.finalize()
 
-        # Build infrastructure
-        infra = self.build_infra()
+        # Build infrastructure once and reuse in provide()
+        infra = self.get_or_build_infra()
 
         # Get the model
         model = self.provide()
@@ -548,3 +551,5 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         if self.mimo_parallelism_config is not None:
             world_size = dist.get_world_size() if dist.is_initialized() else None
             self.mimo_parallelism_config.finalize(world_size)
+        # Invalidate cached infra in case parallelism config changed.
+        object.__setattr__(self, "_cached_infra", None)

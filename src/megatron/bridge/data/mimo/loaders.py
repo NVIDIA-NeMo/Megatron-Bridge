@@ -70,22 +70,19 @@ def build_mimo_data_loaders(
     if cfg.model.mimo_parallelism_config is None:
         raise ValueError("mimo_parallelism_config must be set for MIMO data loading.")
 
-    if cfg.model._grids is None:
-        raise ValueError(
-            "MimoModelProvider._grids is None. Ensure build_model() is called before building data loaders."
-        )
-
     print_rank_0("> building MIMO train, validation, and test datasets ...")
 
-    # Use cached grids from build_model()
-    grids = cfg.model._grids
-    dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(cfg.model.mimo_parallelism_config, grids)
+    # Reuse cached infrastructure (build once if needed).
+    infra = cfg.model.get_or_build_infra()
+    grids = infra.module_to_grid_map
+    dp_info = get_mimo_dp_info(cfg.model.mimo_parallelism_config, grids)
 
     print_rank_0(
-        f"  MIMO DP info: dp_rank={dp_rank}, dp_size={dp_size}, needs_data={needs_data}, loader_module={loader_module}"
+        f"  MIMO DP info: dp_rank={dp_info.dp_rank}, dp_size={dp_info.dp_size}, "
+        f"needs_data={dp_info.needs_data}, loader_module={dp_info.loader_module}"
     )
 
-    if not needs_data:
+    if not dp_info.needs_data:
         return None, None, None
 
     # Build datasets
@@ -112,8 +109,8 @@ def build_mimo_data_loaders(
             return None
         sampler = torch.utils.data.DistributedSampler(
             dataset,
-            num_replicas=dp_size,
-            rank=dp_rank,
+            num_replicas=dp_info.dp_size,
+            rank=dp_info.dp_rank,
             shuffle=shuffle,
         )
         return DataLoader(

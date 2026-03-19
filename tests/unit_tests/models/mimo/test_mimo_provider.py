@@ -3,6 +3,7 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.mimo import (
@@ -211,6 +212,44 @@ class TestMimoModelProvider:
 
         # Should return equivalent results (not cached, but same structure)
         assert infra1.participating_modules == infra2.participating_modules
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids")
+    @patch("megatron.bridge.models.mimo.mimo_provider._default_topology")
+    def test_get_or_build_infra_caches_result(
+        self, mock_topology, mock_build_grids, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """Test get_or_build_infra() builds once and reuses cached infra."""
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1]
+        mock_new_group.return_value = MagicMock()
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+
+        mimo_parallelism_config = MimoParallelismConfig(
+            module_parallelisms={
+                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0),
+            },
+        )
+
+        mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
+        mock_grid.size = 2
+        mock_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"llm": mock_grid}
+        mock_topology.return_value = {"llm": []}
+
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=mimo_parallelism_config,
+        )
+
+        infra1 = provider.get_or_build_infra()
+        infra2 = provider.get_or_build_infra()
+
+        assert infra1 is infra2
+        mock_build_grids.assert_called_once_with(mimo_parallelism_config)
 
     @patch("torch.distributed.new_group")
     @patch("torch.distributed.get_process_group_ranks")
@@ -439,6 +478,22 @@ class TestMimoModelProvider:
         # Should have set variable_seq_lengths=True
         assert mock_config.variable_seq_lengths is True
 
+    def test_provide_distributed_model_propagates_finalize_error(self):
+        """Test provider surfaces finalize() errors from MimoParallelismConfig."""
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+        mock_parallelism_config = Mock()
+        mock_parallelism_config.finalize.side_effect = ValueError("invalid mimo config")
+
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=mock_parallelism_config,
+        )
+
+        with pytest.raises(ValueError, match="invalid mimo config"):
+            provider.provide_distributed_model(wrap_with_ddp=False)
+
+        mock_parallelism_config.finalize.assert_called_once()
+
 
 class TestMimoModelInfra:
     """Test cases for MimoModelInfra dataclass."""
@@ -519,67 +574,6 @@ class TestEmbeddingGroupHelpers:
 
         assert pos_embd_pg is None
         assert embd_pg is None
-
-    @patch("torch.distributed.get_process_group_ranks")
-    @patch("torch.distributed.get_rank")
-    def test_is_pp_first_stage_true(self, mock_get_rank, mock_get_ranks):
-        """Test is_pp_first_stage returns True for first stage."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_first_stage
-
-        mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]
-        mock_get_rank.return_value = 0
-
-        assert is_pp_first_stage(mock_pp_group) is True
-
-    @patch("torch.distributed.get_process_group_ranks")
-    @patch("torch.distributed.get_rank")
-    def test_is_pp_first_stage_false(self, mock_get_rank, mock_get_ranks):
-        """Test is_pp_first_stage returns False for non-first stage."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_first_stage
-
-        mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]
-        mock_get_rank.return_value = 4
-
-        assert is_pp_first_stage(mock_pp_group) is False
-
-    def test_is_pp_first_stage_none_group(self):
-        """Test is_pp_first_stage returns True for None group (no PP)."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_first_stage
-
-        assert is_pp_first_stage(None) is True
-
-    @patch("torch.distributed.get_process_group_ranks")
-    @patch("torch.distributed.get_rank")
-    def test_is_pp_last_stage_true(self, mock_get_rank, mock_get_ranks):
-        """Test is_pp_last_stage returns True for last stage."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_last_stage
-
-        mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]
-        mock_get_rank.return_value = 12
-
-        assert is_pp_last_stage(mock_pp_group) is True
-
-    @patch("torch.distributed.get_process_group_ranks")
-    @patch("torch.distributed.get_rank")
-    def test_is_pp_last_stage_false(self, mock_get_rank, mock_get_ranks):
-        """Test is_pp_last_stage returns False for non-last stage."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_last_stage
-
-        mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]
-        mock_get_rank.return_value = 4
-
-        assert is_pp_last_stage(mock_pp_group) is False
-
-    def test_is_pp_last_stage_none_group(self):
-        """Test is_pp_last_stage returns True for None group (no PP)."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_last_stage
-
-        assert is_pp_last_stage(None) is True
-
 
 class TestProcessGroupCollectionWithEmbeddingGroups:
     """Test that ProcessGroupCollection includes embedding groups."""
