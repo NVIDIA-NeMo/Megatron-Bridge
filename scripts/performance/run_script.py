@@ -16,8 +16,7 @@ import logging
 
 import torch
 from argument_parser import parse_cli_args
-from utils.overrides import set_cli_overrides, set_post_overrides, set_user_overrides
-from utils.utils import get_perf_optimized_recipe
+from utils.overrides import set_cli_overrides, set_user_overrides
 
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.gpt_step import forward_step
@@ -29,10 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision, config_variant="v1"):
-    """Load a flat perf recipe from megatron.bridge.recipes by convention name.
-
-    Returns None if no matching recipe is found (falls back to old path).
-    """
+    """Load a flat perf recipe from megatron.bridge.recipes by convention name."""
     import importlib
 
     precision_map = {
@@ -65,17 +61,15 @@ def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision, c
 
     family = family_map.get(model_recipe_name)
     if not family:
-        return None
+        raise ValueError(
+            f"Unknown model_recipe_name {model_recipe_name!r}. Add it to family_map in get_perf_recipe_by_name."
+        )
 
-    try:
-        mod = importlib.import_module(f"megatron.bridge.recipes.{family}")
-        recipe_fn = getattr(mod, name, None)
-        if recipe_fn is not None:
-            return recipe_fn()
-    except (ImportError, ModuleNotFoundError):
-        pass
-
-    return None
+    mod = importlib.import_module(f"megatron.bridge.recipes.{family}")
+    recipe_fn = getattr(mod, name, None)
+    if recipe_fn is None:
+        raise ValueError(f"No perf recipe {name!r} found in megatron.bridge.recipes.{family}.")
+    return recipe_fn()
 
 
 def main():
@@ -93,35 +87,9 @@ def main():
         precision=args.compute_dtype,
         config_variant=args.config_variant,
     )
-    using_flat_recipe = recipe is not None
-
-    if recipe is None:
-        recipe = get_perf_optimized_recipe(
-            model_family_name=args.model_family_name,
-            model_recipe_name=args.model_recipe_name,
-            train_task=args.task,
-            gpu=args.gpu,
-            compute_dtype=args.compute_dtype,
-            mock=args.data == "mock",
-            config_variant=args.config_variant,
-            optimizer_type=getattr(args, "optimizer_type", None),
-        )
 
     recipe = set_cli_overrides(recipe, cli_overrides)
     recipe = set_user_overrides(recipe, args)
-
-    if not using_flat_recipe:
-        recipe = set_post_overrides(
-            recipe,
-            args.model_family_name,
-            args.model_recipe_name,
-            args.gpu,
-            args.num_gpus,
-            args.compute_dtype,
-            args.task,
-            user_gbs=args.global_batch_size,
-            config_variant=args.config_variant,
-        )
 
     # Select forward step function based on the model family name.
     if args.domain == "vlm":
