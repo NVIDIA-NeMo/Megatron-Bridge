@@ -74,8 +74,8 @@ def parse_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--config-file",
         type=str,
-        default=None,
-        help=f"Path to YAML config file (optional). Default: {DEFAULT_CONFIG_FILE}",
+        default=str(DEFAULT_CONFIG_FILE),
+        help=f"Path to YAML config file. Default: {DEFAULT_CONFIG_FILE}",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
