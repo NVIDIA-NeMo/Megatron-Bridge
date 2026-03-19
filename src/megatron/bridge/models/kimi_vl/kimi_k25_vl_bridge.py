@@ -30,6 +30,7 @@ from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 from megatron.bridge.models.kimi_vl.utils import (
     dequantize_int4,
     quantize_to_int4,
+    get_common_configs,
 )
 
 
@@ -53,12 +54,13 @@ class KimiK25VLBridge(MegatronModelBridge):
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
 
-        hf_pretrained.config = hf_config
+        common_configs = get_common_configs(text_config, hf_pretrained)
 
         # media_placeholder_token_id is on the top-level KimiK25Config, not on text_config
         media_placeholder_token_id = getattr(hf_config, "media_placeholder_token_id", 163605)
 
         provider = KimiK25VLModelProvider(
+            **common_configs,
             vision_config=vision_config,
             # VL-specific token IDs
             bos_token_id=getattr(text_config, "bos_token_id", 163584),

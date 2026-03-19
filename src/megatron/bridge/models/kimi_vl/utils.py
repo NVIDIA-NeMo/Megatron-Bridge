@@ -26,11 +26,10 @@ except ImportError:
     HAVE_APEX = False
 
 
-def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
+def get_common_configs(hf_config: PreTrainedCausalLM, hf_pretrained) -> dict:
     """
     Returns a dictionary of common configurations for the DeepSeek family of models.
     """
-    hf_config = hf_pretrained.config
 
     configs = {}
 
