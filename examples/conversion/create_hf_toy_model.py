@@ -35,7 +35,6 @@ import torch
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
-    AutoProcessor,
     AutoTokenizer,
 )
 
@@ -105,55 +104,37 @@ def _adjust_config(
     num_experts_per_tok: Optional[int],
     moe_intermediate_size: Optional[int],
 ) -> None:
-    """Mutate config(s) in-place so they match requested layer/expert topology."""
+    """Mutate the config in-place so it matches the requested toy topology."""
 
-    def _adjust_one(cfg) -> None:
-        cfg.num_hidden_layers = num_hidden_layers
+    config.num_hidden_layers = num_hidden_layers
 
-        if hasattr(cfg, "max_window_layers"):
-            cfg.max_window_layers = min(cfg.max_window_layers, num_hidden_layers)
+    if hasattr(config, "max_window_layers"):
+        config.max_window_layers = min(config.max_window_layers, num_hidden_layers)
 
-        if hasattr(cfg, "layer_types"):
-            cfg.layer_types = cfg.layer_types[:num_hidden_layers]
+    if hasattr(config, "layer_types"):
+        config.layer_types = config.layer_types[:num_hidden_layers]
 
-        mlp_only_layers = getattr(cfg, "mlp_only_layers", [])
-        if isinstance(mlp_only_layers, (list, tuple)):
-            cfg.mlp_only_layers = [layer for layer in mlp_only_layers if layer < num_hidden_layers]
+    mlp_only_layers = getattr(config, "mlp_only_layers", [])
+    if isinstance(mlp_only_layers, (list, tuple)):
+        config.mlp_only_layers = [layer for layer in mlp_only_layers if layer < num_hidden_layers]
 
-        # Kimi-style configs may use n_routed_experts while many others use num_experts.
-        for field in ("num_experts", "n_routed_experts"):
-            if hasattr(cfg, field):
-                setattr(cfg, field, num_experts)
+    config.num_experts = num_experts
+    config.num_experts_per_tok = (
+        num_experts_per_tok
+        if num_experts_per_tok is not None
+        else min(num_experts, getattr(config, "num_experts_per_tok", num_experts))
+    )
 
-        if hasattr(cfg, "num_experts_per_tok"):
-            cfg.num_experts_per_tok = (
-                num_experts_per_tok
-                if num_experts_per_tok is not None
-                else min(num_experts, getattr(cfg, "num_experts_per_tok", num_experts))
-            )
+    if hasattr(config, "router_top_k"):
+        config.router_top_k = min(config.num_experts, config.num_experts_per_tok)
 
-        if hasattr(cfg, "router_top_k"):
-            cfg.router_top_k = min(num_experts, getattr(cfg, "num_experts_per_tok", num_experts))
-
-        if moe_intermediate_size is not None and hasattr(cfg, "moe_intermediate_size"):
-            cfg.moe_intermediate_size = moe_intermediate_size
-
-    _adjust_one(config)
-    text_config = getattr(config, "text_config", None)
-    if text_config is not None:
-        _adjust_one(text_config)
+    if moe_intermediate_size is not None:
+        config.moe_intermediate_size = moe_intermediate_size
 
 
 def _save_tokenizer(output_dir: Path, tokenizer_id: str, *, trust_remote_code: bool) -> None:
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_id, trust_remote_code=trust_remote_code)
     tokenizer.save_pretrained(output_dir)
-
-
-def _save_processor(output_dir: Path, model_id: str, *, trust_remote_code: bool) -> None:
-    """Save the AutoProcessor alongside the model so VL toy models can process images."""
-    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=trust_remote_code)
-    processor.save_pretrained(output_dir)
-    print(f"  Processor ({type(processor).__name__}) saved to {output_dir}")
 
 
 def main() -> None:
@@ -188,15 +169,10 @@ def main() -> None:
 
     _save_tokenizer(output_dir, tokenizer_id, trust_remote_code=trust_remote_code)
 
-    # For VL models, save the processor so image inputs work with the toy model.
-    if getattr(config, "vision_config", None) is not None:
-        _save_processor(output_dir, args.hf_model_id, trust_remote_code=trust_remote_code)
-
     print(f"Toy HuggingFace checkpoint saved to: {output_dir}")
     print(f"  hidden_layers={args.num_hidden_layers}")
     print(f"  num_experts={args.num_experts}")
-    effective_cfg = getattr(config, "text_config", config)
-    print(f"  num_experts_per_tok={getattr(effective_cfg, 'num_experts_per_tok', 'N/A')}")
+    print(f"  num_experts_per_tok={config.num_experts_per_tok}")
     print(f"  tokenizer_source={tokenizer_id}")
 
 

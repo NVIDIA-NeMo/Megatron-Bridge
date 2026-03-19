@@ -25,7 +25,6 @@ Example:
 
   # Load from Megatron checkpoint:
   uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
-
 """
 
 import argparse
@@ -142,24 +141,7 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(image_path)
 
 
-def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0):
-    """Pad input_ids so sequence length is divisible by tp_size.
-
-    This is needed for sequence parallel, which is required for MoE models
-    when using tensor parallel and expert parallel together.
-    """
-    seq_len = input_ids.shape[1]
-    remainder = seq_len % tp_size
-    if remainder != 0:
-        pad_len = tp_size - remainder
-        padding = torch.full(
-            (input_ids.shape[0], pad_len), pad_token_id, dtype=input_ids.dtype, device=input_ids.device
-        )
-        input_ids = torch.cat([input_ids, padding], dim=1)
-    return input_ids
-
-
-def process_image_inputs(processor, image_path: Optional[str], prompt: str, tp_size: int = 1):
+def process_image_inputs(processor, image_path: Optional[str], prompt: str):
     """Process image inputs for vision-language model.
 
     Args:
@@ -171,56 +153,42 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str, tp_s
         Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, messages)
     """
     if image_path:
-        is_kimi = type(processor).__name__ == "KimiK25Processor"
+        # Create messages with image and text
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image_path},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
 
-        if is_kimi:
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image_url": load_image(image_path)},
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ]
-            inputs = processor(messages=messages)
-        else:
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": image_path},
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ]
+        # Process vision info
+        image_inputs, video_inputs = process_vision_info(messages)
 
-            image_inputs, video_inputs = process_vision_info(messages)
-            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = processor(
-                text=[text],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
-            )
-        image_grid_thw = (
-            getattr(inputs, "image_grid_thw", None)
-            if getattr(inputs, "image_grid_thw", None) is not None
-            else getattr(inputs, "grid_thws", None)
+        # Apply chat template
+        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+        # Process inputs
+        inputs = processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
         )
         return (
             inputs.input_ids,
             inputs.pixel_values,
-            image_grid_thw,
+            getattr(inputs, "image_grid_thw", None),
             getattr(inputs, "image_sizes", None),
             messages,
         )
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")
-        input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, 0)
-        return input_ids, None, None, None, None
+        return inputs.input_ids, None, None, None, None
 
 
 def main(args) -> None:
@@ -247,7 +215,7 @@ def main(args) -> None:
 
         # We still need HF config for tokenizer, but we'll load the model from Megatron checkpoint
         # Create bridge from HF config only (no weights)
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
 
         # Initialize model parallel before loading
         model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -274,7 +242,7 @@ def main(args) -> None:
     else:
         # Load from HuggingFace and convert to Megatron
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -325,7 +293,7 @@ def main(args) -> None:
     # Process inputs (text and image if provided)
     prompt = args.prompt
     input_ids, pixel_values, image_grid_thw, image_sizes, messages = process_image_inputs(
-        processor, args.image_path, prompt, tp_size=tp
+        processor, args.image_path, prompt
     )
 
     # Move to GPU
