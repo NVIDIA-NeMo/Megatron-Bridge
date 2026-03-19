@@ -192,6 +192,16 @@ class Qwen3VLModel(MegatronModule):
             return self.language_model.shared_embedding_or_output_weight()
         return None
 
+    @property
+    def decoder(self):
+        """Expose language model decoder for mcore inference compatibility.
+
+        mcore's MambaInferenceStateConfig.from_model() calls get_attr_wrapped_model(model, "decoder"),
+        which only traverses .module wrappers. VLM models store the decoder under language_model.decoder,
+        so we expose it here to allow the Mamba check to run and correctly return None.
+        """
+        return getattr(self.language_model, "decoder", None)
+
     def set_input_tensor(self, input_tensor) -> None:
         # This is usually handled in schedules.py but some inference code still
         # gives us non-lists or None
@@ -260,6 +270,7 @@ class Qwen3VLModel(MegatronModule):
         images_padded: list[bool] = None,
         inference_context: object | None = None,
         runtime_gather_output: bool | None = None,
+        mm_token_type_ids: torch.Tensor = None,
         **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
@@ -278,12 +289,14 @@ class Qwen3VLModel(MegatronModule):
                 combined_seq_len].
             labels (torch.Tensor): Optional target text labels [batch, combined_seq_len].
             inference_params (InferenceParams): Inference-time parameters including KV cache.
+            mm_token_type_ids (torch.Tensor): Token type IDs from transformers >= 5.3.0 processors.
+                Not used by Qwen3VL (which computes its own rope positions).
 
         Returns:
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
-        del inference_context, runtime_gather_output  # Unused, kept for API compatibility
+        del inference_context, runtime_gather_output, mm_token_type_ids  # Unused, kept for API compatibility
         assert inference_params is None, "not support inference"
 
         vision_grid_thw = None
