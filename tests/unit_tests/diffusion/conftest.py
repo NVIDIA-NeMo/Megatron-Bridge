@@ -11,4 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-CUDA_VISIBLE_DEVICES="0,1" pytest tests/functional_tests/diffusion/recipes -m "not pleasefixme" --with_downloads -v
+
+import torch.multiprocessing as mp
+
+
+# Force "spawn" start method instead of "fork". With fork, child processes
+# inherit coverage's atexit handler from the parent. When dozens of forked
+# children all try to write to the same .coverage file on exit, they deadlock
+# on a futex and the test suite hangs until the timeout kills it.
+mp.set_start_method("spawn", force=True)
