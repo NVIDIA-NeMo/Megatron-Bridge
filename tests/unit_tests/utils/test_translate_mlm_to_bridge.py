@@ -399,10 +399,9 @@ class TestTranslateSkippedAndUnknown:
         assert "use-flash-attn" in names
 
     def test_skip_mock_data(self):
-        """--mock-data is skipped."""
+        """--mock-data is translated to dataset.mock=true override."""
         r = translate({"mock-data": True})
-        names = [name for name, _ in r.skipped]
-        assert "mock-data" in names
+        assert "dataset.mock=true" in r.overrides
 
     def test_unknown_arg(self):
         """Unrecognised arg goes to result.unknown."""
