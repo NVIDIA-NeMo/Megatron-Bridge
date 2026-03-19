@@ -15,13 +15,16 @@
 
 set -euo pipefail
 
-WORKSPACE=${WORKSPACE:-/nfs/ml-training-ssd/users/liuwei/qwen3_omni_examples}
-SAMPLE_PARQUET=${SAMPLE_PARQUET:-/home/luban/liuwei/omni/ref/projects/Omni_Bench_fix_simple/test.parquet}
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd -- "${SCRIPT_DIR}/../../../.." && pwd)
+
+WORKSPACE=${WORKSPACE:-${ROOT_DIR}/.cache/qwen3_omni_examples}
+SAMPLE_PARQUET=${SAMPLE_PARQUET:-}
 SMOKE_MODEL_NAME=${SMOKE_MODEL_NAME:-Qwen3-Omni-30B-A3B-Instruct-smoke}
 TMPDIR=${TMPDIR:-${WORKSPACE}/tmp}
 HF_HOME=${HF_HOME:-${WORKSPACE}/hf_home}
 PYTHON=${PYTHON:-python}
-PYTHONPATH=${PYTHONPATH:-src}
+PYTHONPATH=${PYTHONPATH:-${ROOT_DIR}/src:${ROOT_DIR}/3rdparty/Megatron-LM}
 
 HF_SMOKE_PATH=${HF_SMOKE_PATH:-${WORKSPACE}/hf/${SMOKE_MODEL_NAME}}
 MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-${WORKSPACE}/megatron/${SMOKE_MODEL_NAME}/iter_0000000}
@@ -29,6 +32,12 @@ HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/export/${SMOKE_MODEL_NAME}}
 
 export TMPDIR HF_HOME PYTHONPATH
 mkdir -p "${TMPDIR}" "${HF_HOME}"
+cd "${ROOT_DIR}"
+
+if [[ -z "${SAMPLE_PARQUET}" ]]; then
+  echo "SAMPLE_PARQUET must point to a local parquet file with multimodal examples." >&2
+  exit 1
+fi
 
 "${PYTHON}" examples/conversion/hf_to_megatron_qwen3_omni_smoke.py \
   --hf-model-path "${HF_SMOKE_PATH}" \
