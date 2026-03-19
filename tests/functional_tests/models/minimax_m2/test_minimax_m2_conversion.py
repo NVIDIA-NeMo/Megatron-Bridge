@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from transformers import AutoTokenizer
 
 
 try:
@@ -79,6 +80,13 @@ class TestMiniMaxM2Conversion:
         model = MiniMaxM2ForCausalLM(config).bfloat16()
 
         model.save_pretrained(model_dir, safe_serialization=True)
+
+        # Save a surrogate tokenizer (gpt2) since the toy model has no real tokenizer
+        try:
+            tokenizer = AutoTokenizer.from_pretrained("gpt2")
+            tokenizer.save_pretrained(model_dir)
+        except Exception:
+            pass
 
         config_path = model_dir / "config.json"
         with open(config_path, "w") as f:
