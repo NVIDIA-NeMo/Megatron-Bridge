@@ -480,8 +480,8 @@ the primary scaling dimension.
 
 For operational details on configuring combined parallelism, troubleshooting
 layouts, and memory estimation, see the
-[parallelism strategies skill](../skills/perf-techniques/parallelism-strategies/SKILL.md).
-[parallelism strategies skill](../skills/perf-techniques/parallelism-strategies/SKILL.md).
+[parallelism strategies skill](skills/perf-techniques/parallelism-strategies/SKILL.md).
+[parallelism strategies skill](skills/perf-techniques/parallelism-strategies/SKILL.md).
 ## Configuration Guidelines
 
 ### Memory Optimization
@@ -507,7 +507,7 @@ layouts, and memory estimation, see the
 
 ## Related Artifacts
 
-- **Operational skill**: [skills/perf-techniques/parallelism-strategies/SKILL.md](../skills/perf-techniques/parallelism-strategies/SKILL.md) — enablement, pitfalls, memory estimation, verification
+- **Operational skill**: [skills/perf-techniques/parallelism-strategies/SKILL.md](skills/perf-techniques/parallelism-strategies/SKILL.md) — enablement, pitfalls, memory estimation, verification
 - **Knowledge card**: [skills/perf-techniques/parallelism-strategies/card.yaml](../skills/perf-techniques/parallelism-strategies/card.yaml) — structured metadata and validation status
 
 ## Resources

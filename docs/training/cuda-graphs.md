@@ -1,13 +1,31 @@
 # CUDA Graphs
 
-## Overview
-
 CUDA graphs capture a sequence of GPU operations once and replay them with
 minimal host overhead, eliminating repeated kernel-launch and driver costs on
 every training step. Megatron Bridge supports two capture implementations and
 fine-grained scope selection to balance performance gain against memory cost.
 
-## When to Use
+This page is the stable overview for what CUDA graphs are, when to use them,
+and which constraints are durable. For operational setup, code anchors, and
+verification commands, see
+[skills/perf-techniques/cuda-graphs/SKILL.md](../skills/perf-techniques/cuda-graphs/SKILL.md).
+
+## What It Is
+
+CUDA graphs work by recording a sequence of GPU operations (kernels, memory
+copies, etc.) into a graph during a capture phase, then replaying that graph
+on subsequent steps. This eliminates per-step host-side overhead such as
+kernel launch latency and driver API calls.
+
+In Bridge, there are two capture implementations:
+
+| `cuda_graph_impl` | Mechanism | Scope support |
+|---|---|---|
+| `"local"` | MCore `CudaGraphManager` / `FullCudaGraphWrapper` | `full_iteration` (whole fwd+bwd) |
+| `"transformer_engine"` | TE `make_graphed_callables()` per layer | `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, `mamba` |
+| `"none"` (default) | Disabled | — |
+
+## When to Use It
 
 CUDA graphs are most effective when:
 
@@ -19,14 +37,6 @@ CUDA graphs are most effective when:
 - **Memory budget allows it** — graph capture allocates static buffers,
   typically adding a few GB. Models with `PP > 1` can consume over 10 GB
   of additional memory.
-
-## Implementations
-
-| `cuda_graph_impl` | Mechanism | Scope support |
-|---|---|---|
-| `"local"` | MCore `CudaGraphManager` / `FullCudaGraphWrapper` | `full_iteration` (whole fwd+bwd) |
-| `"transformer_engine"` | TE `make_graphed_callables()` per layer | `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, `mamba` |
-| `"none"` (default) | Disabled | — |
 
 ### Local full-iteration graphs
 
@@ -77,8 +87,8 @@ Expect a few GB of additional memory. With `PP > 1`, memory overhead can
 exceed 10 GB due to pipeline-stage buffering. Plan activation memory
 accordingly.
 
-## Related
+## Related Docs
 
-- Operational details: [skills/perf-techniques/cuda-graphs/SKILL.md](../../skills/perf-techniques/cuda-graphs/SKILL.md)
-- Performance guide: [docs/performance-guide.md](../performance-guide.md)
-- Communication overlap interaction: [docs/training/communication-overlap.md](communication-overlap.md)
+- [docs/performance-guide.md](../performance-guide.md)
+- [docs/training/communication-overlap.md](communication-overlap.md)
+- [skills/perf-techniques/cuda-graphs/SKILL.md](../skills/perf-techniques/cuda-graphs/SKILL.md)

@@ -7,7 +7,7 @@ plain Distributed Data Parallel (DDP) or the distributed optimizer path.
 
 This page is the stable overview for what Megatron FSDP is, when to use it, and
 what constraints matter. For operational enablement, code anchors, and
-verification commands, see [skills/perf-techniques/megatron-fsdp/SKILL.md](../../skills/perf-techniques/megatron-fsdp/SKILL.md).
+verification commands, see [skills/perf-techniques/megatron-fsdp/SKILL.md](../skills/perf-techniques/megatron-fsdp/SKILL.md).
 
 ## What It Is
 
@@ -107,5 +107,5 @@ The stable recommendation today is:
 - [docs/training/checkpointing.md](checkpointing.md)
 - [docs/training/cpu-offloading.md](cpu-offloading.md)
 - [docs/performance-guide.md](../performance-guide.md)
-- [skills/perf-techniques/megatron-fsdp/SKILL.md](../../skills/perf-techniques/megatron-fsdp/SKILL.md)
+- [skills/perf-techniques/megatron-fsdp/SKILL.md](../skills/perf-techniques/megatron-fsdp/SKILL.md)
 - [skills/perf-techniques/megatron-fsdp/card.yaml](../../skills/perf-techniques/megatron-fsdp/card.yaml)
