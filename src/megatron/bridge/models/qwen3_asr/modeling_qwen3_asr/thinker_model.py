@@ -18,13 +18,13 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
-from qwen_asr.core.transformers_backend.configuration_qwen3_asr import (
+
+from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr import (
     Qwen3ASRThinkerConfig as Qwen3ASRThinkerConfigHF,
 )
-from qwen_asr.core.transformers_backend.modeling_qwen3_asr import (
+from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.modeling_qwen3_asr import (
     Qwen3ASRAudioEncoder as Qwen3ASRAudioEncoderHF,
 )
-
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.rope import get_rope_index
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.transformer_config import Qwen3ASRTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention

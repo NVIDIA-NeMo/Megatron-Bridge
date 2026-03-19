@@ -23,11 +23,11 @@ from dataclasses import dataclass, field
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
-from qwen_asr.core.transformers_backend.configuration_qwen3_asr import (
-    Qwen3ASRThinkerConfig,
-)
 
 from megatron.bridge.models.qwen.qwen_provider import Qwen3ModelProvider
+from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr import (
+    Qwen3ASRThinkerConfig,
+)
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRModel
 
 

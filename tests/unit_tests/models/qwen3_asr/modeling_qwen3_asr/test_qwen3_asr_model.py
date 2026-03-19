@@ -29,11 +29,11 @@ from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from qwen_asr.core.transformers_backend.configuration_qwen3_asr import (
+
+from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr import (
     Qwen3ASRAudioEncoderConfig,
     Qwen3ASRThinkerConfig,
 )
-
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRModel
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.transformer_config import Qwen3ASRTransformerConfig
 
