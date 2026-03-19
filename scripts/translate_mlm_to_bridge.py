@@ -1346,9 +1346,7 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
     # Form (b): flattened MixedPrecisionConfig fields
     # Consume all mixed_precision.* keys up front so they are not silently
     # dropped by the BRIDGE_IGNORE_KEYS prefix check in the main loop.
-    mp_flat: dict[str, Any] = {
-        k: v for k, v in overrides.items() if k.startswith("mixed_precision.")
-    }
+    mp_flat: dict[str, Any] = {k: v for k, v in overrides.items() if k.startswith("mixed_precision.")}
     for k in mp_flat:
         consumed.add(k)
     if mp_flat:
