@@ -69,7 +69,7 @@ class Qwen3OmniBridge(MegatronModelBridge):
             gated_linear_unit=True,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(text_config.vocab_size),
             rotary_base=getattr(text_config, "rope_theta", 1000000.0),
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
             vocab_size=text_config.vocab_size,
             seq_length=text_config.max_position_embeddings,
             max_position_embeddings=text_config.max_position_embeddings,
