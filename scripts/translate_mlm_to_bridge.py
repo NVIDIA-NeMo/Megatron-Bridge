@@ -1286,11 +1286,16 @@ class ReverseTranslationResult:
         self.mlm_args: OrderedDict[str, Any] = OrderedDict()
         self.skipped: list[tuple[str, Any]] = []
         self.unknown: list[tuple[str, Any]] = []
+        self.unsupported: list[tuple[str, str]] = []
         self.notes: list[str] = []
 
     def add_arg(self, mlm_name: str, value: Any = None):
         """Add an MLM arg. ``value=None`` means a boolean flag (no value)."""
         self.mlm_args[mlm_name] = value
+
+    def add_unsupported(self, bridge_key: str, reason: str):
+        """Record a Bridge key that has an MLM mapping but cannot be translated."""
+        self.unsupported.append((bridge_key, reason))
 
     def add_note(self, note: str):
         self.notes.append(note)
@@ -1323,7 +1328,11 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
     if "model.gated_linear_unit" in overrides and "model.gated_linear_unit" not in consumed:
         consumed.add("model.gated_linear_unit")
 
-    # --- Special: mixed_precision → --bf16 / --fp16 ----------------------
+    # --- Special: mixed_precision → --bf16 / --fp16 / --fp8-* ------------
+    # Handles two forms depending on how the YAML was serialised:
+    #   a) flat string: mixed_precision="bf16_mixed"  (from --args or recipe)
+    #   b) nested dict: mixed_precision.bf16=true, mixed_precision.fp8="hybrid", ...
+    #      (from ConfigContainer.yaml via OmegaConf serialisation of MixedPrecisionConfig)
     mp = overrides.get("mixed_precision")
     if mp is not None:
         consumed.add("mixed_precision")
@@ -1333,6 +1342,33 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
             result.add_arg("fp16")
         else:
             result.add_note(f"mixed_precision={mp}: unknown precision mode")
+
+    # Form (b): flattened MixedPrecisionConfig fields
+    # Consume all mixed_precision.* keys up front so they are not silently
+    # dropped by the BRIDGE_IGNORE_KEYS prefix check in the main loop.
+    mp_flat: dict[str, Any] = {
+        k: v for k, v in overrides.items() if k.startswith("mixed_precision.")
+    }
+    for k in mp_flat:
+        consumed.add(k)
+    if mp_flat:
+        mp_bf16 = mp_flat.get("mixed_precision.bf16")
+        mp_fp16 = mp_flat.get("mixed_precision.fp16")
+        mp_fp8 = mp_flat.get("mixed_precision.fp8")
+        mp_fp8_recipe = mp_flat.get("mixed_precision.fp8_recipe")
+        mp_fp8_wgrad = mp_flat.get("mixed_precision.fp8_wgrad")
+        # Only emit precision flags if not already emitted via the string form
+        if mp is None:
+            if mp_bf16:
+                result.add_arg("bf16")
+            elif mp_fp16:
+                result.add_arg("fp16")
+        if mp_fp8:
+            result.add_arg("fp8-format", mp_fp8)
+            if mp_fp8_recipe and mp_fp8_recipe != "tensorwise":
+                result.add_arg("fp8-recipe", mp_fp8_recipe)
+            if mp_fp8_wgrad is False:
+                result.add_arg("no-fp8-wgrad")
 
     # --- Special: dataset.data_path → --data-path --------------------------
     data_path = overrides.get("dataset.data_path")
@@ -1390,13 +1426,19 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
                 if not val:
                     result.add_arg(mlm_name)
             else:
-                result.add_arg(mlm_name, val)
+                if val is not None:
+                    result.add_arg(mlm_name, val)
+                else:
+                    result.add_unsupported(bridge_key, f"mapped to --{mlm_name} but value is None (not set)")
             continue
 
         # 2. Check extra direct-value map
         if bridge_key in BRIDGE_TO_MLM_EXTRA:
             mlm_name = BRIDGE_TO_MLM_EXTRA[bridge_key]
-            result.add_arg(mlm_name, val)
+            if val is not None:
+                result.add_arg(mlm_name, val)
+            else:
+                result.add_unsupported(bridge_key, f"mapped to --{mlm_name} but value is None (not set)")
             continue
 
         # 3. Check extra boolean maps
@@ -1458,6 +1500,11 @@ def emit_mlm_args(result: ReverseTranslationResult) -> str:
         frag = _to_flag_and_value(mlm_name, True if val is None else val)
         if frag:
             lines.append(f"  {frag} \\")
+
+    if result.unsupported:
+        lines.append("\n# ── Not supported: mapped keys with no value (set explicitly to use) ──")
+        for key, reason in result.unsupported:
+            lines.append(f"#   {key}: {reason}")
 
     if result.unknown:
         lines.append("\n# ── Unknown Bridge keys (not mapped) ─────────────────────")
@@ -1572,6 +1619,10 @@ def main():
         if cli_args.recipe:
             print(f"#   Recipe:     {cli_args.recipe}", file=sys.stderr)
         print(f"#   Translated: {len(result.mlm_args)} MLM args", file=sys.stderr)
+        if result.unsupported:
+            print(f"#   Not supported: {len(result.unsupported)} (mapped but value is None)", file=sys.stderr)
+            for key, reason in result.unsupported:
+                print(f"#     {key}: {reason}", file=sys.stderr)
         if result.skipped:
             print(f"#   Skipped:    {len(result.skipped)} (Bridge-only, no MLM equivalent)", file=sys.stderr)
         if result.unknown:
@@ -1611,13 +1662,43 @@ def main():
                 print(f"#   Note: {note}", file=sys.stderr)
 
 
+def _resolve_target_dict(d: dict[str, Any]) -> str | None:
+    """Resolve a Hydra ``_target_`` dict to a simple string value.
+
+    ``{_target_: torch.nn.functional.silu, _call_: false}`` → ``"silu"``
+    ``{_target_: megatron.bridge.training.mixed_precision.bf16_mixed, _call_: true}`` → ``"bf16_mixed"``
+
+    Returns the last component of ``_target_`` (function/class name) when the dict
+    has no other meaningful keys beyond Hydra internal keys (``_target_``, ``_call_``,
+    ``_partial_``, ``_args_``).  Returns ``None`` when the dict contains real data
+    fields (e.g. a full ``MixedPrecisionConfig`` serialised without ``_target_``).
+    """
+    target = d.get("_target_")
+    if not isinstance(target, str):
+        return None
+    # Only treat as a simple callable reference when no user data fields are present
+    hydra_keys = {"_target_", "_call_", "_partial_", "_args_", "_recursive_", "_convert_"}
+    if all(k in hydra_keys for k in d):
+        return target.rsplit(".", 1)[-1] if "." in target else target
+    return None
+
+
 def _flatten_dict(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-    """Flatten a nested dict into dot-separated keys."""
+    """Flatten a nested dict into dot-separated keys.
+
+    Hydra ``_target_``/``_call_`` dicts that represent a callable reference with no
+    additional data fields are resolved to a simple string (the last component of the
+    target path) rather than being recursively flattened into dead sub-keys.
+    """
     out: dict[str, Any] = {}
     for k, v in d.items():
         key = f"{prefix}.{k}" if prefix else k
         if isinstance(v, dict):
-            out.update(_flatten_dict(v, key))
+            resolved = _resolve_target_dict(v)
+            if resolved is not None:
+                out[key] = resolved
+            else:
+                out.update(_flatten_dict(v, key))
         else:
             out[key] = v
     return out
