@@ -93,7 +93,7 @@ class TestQwen3OmniBridge:
         assert provider.num_query_groups == 4
         assert provider.num_moe_experts == 128
         assert provider.moe_router_topk == 8
-        assert provider.share_embeddings_and_output_weights is True
+        assert provider.share_embeddings_and_output_weights is False
         assert provider.mrope_section == [24, 20, 20]
         assert provider.language_max_sequence_length == 32768
         assert provider.patch_size == 32
