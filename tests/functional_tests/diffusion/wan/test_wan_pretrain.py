@@ -14,7 +14,7 @@
 
 """Functional smoke tests for Mcore WAN pretrain mock runs.
 
-Uses the generic run_recipe.py entry point with wan_1_3B_pretrain_config and wan_pretrain_step.
+Uses the generic run_recipe.py entry point with wan_1_3B_pretrain_config and wan_step.
 Mock/synthetic data is used when dataset.path is not set (no --mock flag).
 """
 
@@ -59,7 +59,7 @@ class TestMcoreWanPretrain:
             "--recipe",
             "wan_1_3B_pretrain_config",
             "--step_func",
-            "wan_pretrain_step",
+            "wan_step",
             "model.tensor_model_parallel_size=1",
             "model.pipeline_model_parallel_size=1",
             "model.context_parallel_size=1",

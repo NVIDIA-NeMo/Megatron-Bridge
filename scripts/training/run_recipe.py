@@ -37,12 +37,12 @@ Usage:
     Diffusion (WAN 1.3B) pretrain:
         torchrun --nproc_per_node=8 run_recipe.py \
             --recipe wan_1_3B_pretrain_config \
-            --step_func wan_pretrain_step
+            --step_func wan_step
 
     Diffusion (WAN 1.3B) finetune:
         torchrun --nproc_per_node=8 run_recipe.py \
             --recipe wan_1_3B_finetune_config \
-            --step_func wan_finetune_step
+            --step_func wan_step
 
     With CLI overrides:
         torchrun --nproc_per_node=8 run_recipe.py \
@@ -93,23 +93,8 @@ STEP_FUNCTIONS: dict[str, Callable] = {
     "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
     "flux_step": FluxForwardStep(),
-    # WAN uses different flow-matching hyperparameters for pretrain vs finetune
-    "wan_pretrain_step": WanForwardStep(
-        timestep_sampling="logit_normal",
-        logit_std=1.5,
-        flow_shift=2.5,
-        mix_uniform_ratio=0.2,
-        sigma_min=0.0,
-        sigma_max=1.0,
-    ),
-    "wan_finetune_step": WanForwardStep(
-        timestep_sampling="uniform",
-        logit_std=1.0,
-        flow_shift=3.0,
-        mix_uniform_ratio=0.1,
-        sigma_min=0.0,
-        sigma_max=1.0,
-    ),
+    # WAN step is instantiated at runtime with mode-specific hyperparameters from _WAN_MODE_DEFAULTS
+    "wan_step": WanForwardStep,
 }
 
 TRAIN_MODES = {
@@ -151,7 +136,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default="gpt_step",
         choices=sorted(STEP_FUNCTIONS.keys()),
         help="Step function: gpt_step (text-only), vlm_step (vision-language), llava_step (LLaVA), "
-        "flux_step (FLUX diffusion), wan_pretrain_step / wan_finetune_step (WAN diffusion)",
+        "flux_step (FLUX diffusion), wan_step (WAN diffusion, hyperparameters selected by --mode/recipe name)",
     )
     parser.add_argument(
         "--peft_scheme",
@@ -249,12 +234,15 @@ def load_recipe(
         return config_builder()
 
 
-def load_forward_step(step_type: str) -> Callable:
+def load_forward_step(step_type: str, mode: str | None = None) -> Callable:
     """Load forward_step function based on the requested step type."""
     step_key = step_type.lower()
     if step_key not in STEP_FUNCTIONS:
         raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))
-    return STEP_FUNCTIONS[step_key]
+    step = STEP_FUNCTIONS[step_key]
+    if step_key == "wan_step":
+        return step(mode=mode)
+    return step
 
 
 def infer_train_mode(recipe_name: str) -> str:
@@ -286,7 +274,7 @@ def main() -> None:
 
     mode = args.mode or infer_train_mode(args.recipe)
 
-    forward_step = load_forward_step(args.step_func)
+    forward_step = load_forward_step(args.step_func, mode=mode)
     train_func = TRAIN_MODES[mode]
     train_func(config=config, forward_step_func=forward_step)
 
