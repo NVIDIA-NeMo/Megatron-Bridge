@@ -15,8 +15,11 @@
 
 set -euo pipefail
 
-WORKSPACE=${WORKSPACE:-/nfs/ml-training-ssd/users/liuwei/qwen3_omni_examples}
-SOURCE_HF_MODEL=${SOURCE_HF_MODEL:-/nfs/volume-1615-2/models/Qwen3-Omni-30B-A3B-Instruct}
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd -- "${SCRIPT_DIR}/../../../.." && pwd)
+
+WORKSPACE=${WORKSPACE:-${ROOT_DIR}/.cache/qwen3_omni_examples}
+SOURCE_HF_MODEL=${SOURCE_HF_MODEL:-}
 SMOKE_MODEL_NAME=${SMOKE_MODEL_NAME:-Qwen3-Omni-30B-A3B-Instruct-smoke}
 TEXT_LAYERS=${TEXT_LAYERS:-2}
 VISION_DEPTH=${VISION_DEPTH:-2}
@@ -24,7 +27,7 @@ AUDIO_LAYERS=${AUDIO_LAYERS:-2}
 TMPDIR=${TMPDIR:-${WORKSPACE}/tmp}
 HF_HOME=${HF_HOME:-${WORKSPACE}/hf_home}
 PYTHON=${PYTHON:-python}
-PYTHONPATH=${PYTHONPATH:-src}
+PYTHONPATH=${PYTHONPATH:-${ROOT_DIR}/src:${ROOT_DIR}/3rdparty/Megatron-LM}
 
 HF_SMOKE_PATH=${HF_SMOKE_PATH:-${WORKSPACE}/hf/${SMOKE_MODEL_NAME}}
 MEGATRON_PATH=${MEGATRON_PATH:-${WORKSPACE}/megatron/${SMOKE_MODEL_NAME}}
@@ -32,6 +35,12 @@ HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/export/${SMOKE_MODEL_NAME}}
 
 export TMPDIR HF_HOME PYTHONPATH
 mkdir -p "${WORKSPACE}/hf" "${WORKSPACE}/megatron" "${WORKSPACE}/export" "${TMPDIR}" "${HF_HOME}"
+cd "${ROOT_DIR}"
+
+if [[ -z "${SOURCE_HF_MODEL}" ]]; then
+  echo "SOURCE_HF_MODEL must point to a local HF Qwen3-Omni checkpoint or model id." >&2
+  exit 1
+fi
 
 "${PYTHON}" examples/models/vlm/qwen3_omni/create_smoke_checkpoint.py \
   --source-model-path "${SOURCE_HF_MODEL}" \

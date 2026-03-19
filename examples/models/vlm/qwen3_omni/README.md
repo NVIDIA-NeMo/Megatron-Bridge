@@ -22,10 +22,10 @@ These examples do **not** cover:
 
 ## Workspace Configuration
 
-All scripts default to a large shared workspace under:
+All scripts default to a repo-local cache workspace:
 
 ```bash
-export WORKSPACE=/nfs/ml-training-ssd/users/liuwei/qwen3_omni_examples
+export WORKSPACE=$PWD/.cache/qwen3_omni_examples
 ```
 
 You can override it if needed. The default directory structure is:
@@ -41,8 +41,8 @@ You can override it if needed. The default directory structure is:
 These examples assume the following local assets are available:
 
 ```bash
-export SOURCE_HF_MODEL=/nfs/volume-1615-2/models/Qwen3-Omni-30B-A3B-Instruct
-export SAMPLE_PARQUET=/home/luban/liuwei/omni/ref/projects/Omni_Bench_fix_simple/test.parquet
+export SOURCE_HF_MODEL=/path/to/Qwen3-Omni-30B-A3B-Instruct
+export SAMPLE_PARQUET=/path/to/multimodal_eval_samples.parquet
 ```
 
 The example smoke checkpoint keeps the original hidden dimensions intact and only trims layer counts, which keeps the HF config compatible while making single-GPU validation practical.
@@ -52,6 +52,7 @@ The example smoke checkpoint keeps the original hidden dimensions intact and onl
 Run the full local smoke conversion flow:
 
 ```bash
+export SOURCE_HF_MODEL=/path/to/Qwen3-Omni-30B-A3B-Instruct
 bash examples/models/vlm/qwen3_omni/conversion.sh
 ```
 
@@ -66,6 +67,7 @@ This script will:
 Run local single-rank multimodal thinker smoke inference:
 
 ```bash
+export SAMPLE_PARQUET=/path/to/multimodal_eval_samples.parquet
 bash examples/models/vlm/qwen3_omni/inference.sh
 ```
 
