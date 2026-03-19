@@ -175,83 +175,83 @@ RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | XDG_BIN_HOME=/usr
     sed -i '1s|#!/usr/bin/python|#!/usr/bin/env python|' /usr/local/bin/torchrun; \
     fi
 
-##############################################################################
-##
-## Upgrade AWS-OFI-NCCL from v1.17.0 to v1.17.3
-##
-## IMPORTANT: Do NOT remove ibverbs/libmlx5 packages — they are required for
-## InfiniBand/RDMA transport on Slurm clusters with Mellanox ConnectX adapters.
-## The EFA stack is installed alongside (not replacing) the existing IB stack.
-##
-##############################################################################
+# ##############################################################################
+# ##
+# ## Upgrade AWS-OFI-NCCL from v1.17.0 to v1.17.3
+# ##
+# ## IMPORTANT: Do NOT remove ibverbs/libmlx5 packages — they are required for
+# ## InfiniBand/RDMA transport on Slurm clusters with Mellanox ConnectX adapters.
+# ## The EFA stack is installed alongside (not replacing) the existing IB stack.
+# ##
+# ##############################################################################
 
-RUN apt-get update -y
+# RUN apt-get update -y
 
-#################################################
-## Remove existing EFA and aws-ofi-nccl only (preserve ibverbs/mlx5)
-RUN rm -rf /opt/amazon
+# #################################################
+# ## Remove existing EFA and aws-ofi-nccl only (preserve ibverbs/mlx5)
+# RUN rm -rf /opt/amazon
 
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated \
-    autoconf \
-    automake \
-    build-essential \
-    check \
-    cmake \
-    curl \
-    git \
-    gcc \
-    libtool \
-    pkg-config
+# RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated \
+#     autoconf \
+#     automake \
+#     build-essential \
+#     check \
+#     cmake \
+#     curl \
+#     git \
+#     gcc \
+#     libtool \
+#     pkg-config
 
-## Install EFA installer (coexists with Mellanox IB stack)
-ARG EFA_INSTALLER_VERSION=1.46.0
-RUN cd $HOME \
-&& curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \
-&& tar -xf $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \
-&& cd aws-efa-installer \
-&& ./efa_installer.sh -y -g -d --skip-kmod --skip-limit-conf --no-verify \
-&& rm -rf $HOME/aws-efa-installer
+# ## Install EFA installer (coexists with Mellanox IB stack)
+# ARG EFA_INSTALLER_VERSION=1.46.0
+# RUN cd $HOME \
+# && curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \
+# && tar -xf $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \
+# && cd aws-efa-installer \
+# && ./efa_installer.sh -y -g -d --skip-kmod --skip-limit-conf --no-verify \
+# && rm -rf $HOME/aws-efa-installer
 
-## EFA installer re-creates /opt/amazon/ofi-nccl with an EFA-specific libnccl-net.so
-## and registers it via 100_ofinccl.conf in ldconfig. On Slurm, this causes NCCL to
-## load the EFA plugin instead of /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
-## (HPC-X RDMA SHARP), which has no Mellanox IB support → 18% regression.
-## Remove it so Slurm gets the HPC-X plugin. AWS uses LD_LIBRARY_PATH in settings.sh.
-RUN rm -rf /opt/amazon/ofi-nccl \
-    && rm -f /etc/ld.so.conf.d/100_ofinccl.conf \
-    && ldconfig
+# ## EFA installer re-creates /opt/amazon/ofi-nccl with an EFA-specific libnccl-net.so
+# ## and registers it via 100_ofinccl.conf in ldconfig. On Slurm, this causes NCCL to
+# ## load the EFA plugin instead of /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+# ## (HPC-X RDMA SHARP), which has no Mellanox IB support → 18% regression.
+# ## Remove it so Slurm gets the HPC-X plugin. AWS uses LD_LIBRARY_PATH in settings.sh.
+# RUN rm -rf /opt/amazon/ofi-nccl \
+#     && rm -f /etc/ld.so.conf.d/100_ofinccl.conf \
+#     && ldconfig
 
-## Reinstall ibverbs/mlx5 packages in case EFA installer overwrote them
-RUN apt-get update && apt-get install -y --allow-change-held-packages \
-    ibverbs-utils \
-    libibverbs-dev \
-    libibverbs1 \
-    libmlx5-1 \
-    && apt-get clean
+# ## Reinstall ibverbs/mlx5 packages in case EFA installer overwrote them
+# RUN apt-get update && apt-get install -y --allow-change-held-packages \
+#     ibverbs-utils \
+#     libibverbs-dev \
+#     libibverbs1 \
+#     libmlx5-1 \
+#     && apt-get clean
 
-## Build aws-ofi-nccl v1.17.3 WITHOUT --enable-platform-aws so it works on
-## both AWS EFA and Slurm IB infrastructure. The FI_PROVIDER=efa env var in
-## settings.sh already ensures EFA is selected on AWS at runtime.
-ENV AWS_OFI_NCCL_VERSION=v1.17.3
-RUN export LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/openmpi/lib:${LD_LIBRARY_PATH} && \
-    export PATH=/opt/amazon/efa/bin:/opt/amazon/openmpi/bin:${PATH} && \
-    rm -rf /opt/amazon/aws-ofi-nccl && \
-    apt-get update && \
-    apt-get install -y libhwloc-dev && \
-    apt-get clean && \
-    curl -OL https://github.com/aws/aws-ofi-nccl/releases/download/${AWS_OFI_NCCL_VERSION}/aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz \
-    && tar -xf aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz \
-    && cd aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v} \
-    && ./configure --prefix=/opt/amazon/aws-ofi-nccl \
-        --with-mpi=/usr/local/mpi \
-        --with-libfabric=/opt/amazon/efa \
-        --with-cuda=/usr/local/cuda \
-        --disable-nccl-net-library \
-    && make -j $(nproc) install \
-    && rm -f /opt/amazon/aws-ofi-nccl/lib/lib*.la /opt/amazon/aws-ofi-nccl/lib/libnccl-ofi-tuner.so \
-    && cd .. \
-    && rm -rf aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v} \
-    && rm aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz
+# ## Build aws-ofi-nccl v1.17.3 WITHOUT --enable-platform-aws so it works on
+# ## both AWS EFA and Slurm IB infrastructure. The FI_PROVIDER=efa env var in
+# ## settings.sh already ensures EFA is selected on AWS at runtime.
+# ENV AWS_OFI_NCCL_VERSION=v1.17.3
+# RUN export LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/openmpi/lib:${LD_LIBRARY_PATH} && \
+#     export PATH=/opt/amazon/efa/bin:/opt/amazon/openmpi/bin:${PATH} && \
+#     rm -rf /opt/amazon/aws-ofi-nccl && \
+#     apt-get update && \
+#     apt-get install -y libhwloc-dev && \
+#     apt-get clean && \
+#     curl -OL https://github.com/aws/aws-ofi-nccl/releases/download/${AWS_OFI_NCCL_VERSION}/aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz \
+#     && tar -xf aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz \
+#     && cd aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v} \
+#     && ./configure --prefix=/opt/amazon/aws-ofi-nccl \
+#         --with-mpi=/usr/local/mpi \
+#         --with-libfabric=/opt/amazon/efa \
+#         --with-cuda=/usr/local/cuda \
+#         --disable-nccl-net-library \
+#     && make -j $(nproc) install \
+#     && rm -f /opt/amazon/aws-ofi-nccl/lib/lib*.la /opt/amazon/aws-ofi-nccl/lib/libnccl-ofi-tuner.so \
+#     && cd .. \
+#     && rm -rf aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v} \
+#     && rm aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz
 
 ##############################################################################
 ##
