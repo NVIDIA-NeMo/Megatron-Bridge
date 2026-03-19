@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import torch
 
 from megatron.bridge.data.energon.task_encoder_utils import (
     IGNORE_INDEX,
-    ChatMLSample,
     _images_to_pil,
     _tensor_to_pil,
     _videos_to_pil,
@@ -89,7 +88,11 @@ class TestGetLtorMasksAndPositionIds(unittest.TestCase):
     def test_no_attention_mask(self):
         data = torch.tensor([[1, 2]], dtype=torch.long)
         att_mask, _, _ = get_ltor_masks_and_position_ids(
-            data, eod_token=99, eod_mask_loss=False, reset_attention_mask=False, reset_position_ids=False,
+            data,
+            eod_token=99,
+            eod_mask_loss=False,
+            reset_attention_mask=False,
+            reset_position_ids=False,
             compute_attention_mask=False,
         )
         self.assertIsNone(att_mask)
@@ -138,10 +141,12 @@ class TestVideosToPil(unittest.TestCase):
 
 class TestCookChatmlSample(unittest.TestCase):
     def test_role_content_format(self):
-        conv = json.dumps([
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi!"},
-        ])
+        conv = json.dumps(
+            [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi!"},
+            ]
+        )
         result = cook_chatml_sample(conv)
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["role"], "user")
@@ -150,10 +155,12 @@ class TestCookChatmlSample(unittest.TestCase):
         self.assertEqual(result[1]["content"], "Hi!")
 
     def test_from_value_format(self):
-        conv = json.dumps([
-            {"from": "human", "value": "What is this?"},
-            {"from": "gpt", "value": "A cat."},
-        ])
+        conv = json.dumps(
+            [
+                {"from": "human", "value": "What is this?"},
+                {"from": "gpt", "value": "A cat."},
+            ]
+        )
         result = cook_chatml_sample(conv)
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["role"], "user")
@@ -162,31 +169,37 @@ class TestCookChatmlSample(unittest.TestCase):
         self.assertEqual(result[1]["content"], "A cat.")
 
     def test_system_turn(self):
-        conv = json.dumps([
-            {"role": "system", "content": "You are helpful."},
-            {"role": "user", "content": "Hi"},
-            {"role": "assistant", "content": "Hello"},
-        ])
+        conv = json.dumps(
+            [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello"},
+            ]
+        )
         result = cook_chatml_sample(conv)
         self.assertEqual(len(result), 3)
         self.assertEqual(result[0]["role"], "system")
 
     def test_dict_wrapper(self):
-        conv = {"conversations": [
-            {"from": "human", "value": "Q"},
-            {"from": "gpt", "value": "A"},
-        ]}
+        conv = {
+            "conversations": [
+                {"from": "human", "value": "Q"},
+                {"from": "gpt", "value": "A"},
+            ]
+        }
         result = cook_chatml_sample(conv)
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["role"], "user")
 
     def test_multi_turn(self):
-        conv = json.dumps([
-            {"role": "user", "content": "Q1"},
-            {"role": "assistant", "content": "A1"},
-            {"role": "user", "content": "Q2"},
-            {"role": "assistant", "content": "A2"},
-        ])
+        conv = json.dumps(
+            [
+                {"role": "user", "content": "Q1"},
+                {"role": "assistant", "content": "A1"},
+                {"role": "user", "content": "Q2"},
+                {"role": "assistant", "content": "A2"},
+            ]
+        )
         result = cook_chatml_sample(conv)
         self.assertEqual(len(result), 4)
         self.assertEqual(result[2]["role"], "user")
@@ -194,10 +207,12 @@ class TestCookChatmlSample(unittest.TestCase):
 
     def test_preserves_content_string(self):
         """Content with <image>/<video> tags should be left as-is (no Qwen formatting)."""
-        conv = json.dumps([
-            {"role": "user", "content": "Look at <image> please"},
-            {"role": "assistant", "content": "Nice image!"},
-        ])
+        conv = json.dumps(
+            [
+                {"role": "user", "content": "Look at <image> please"},
+                {"role": "assistant", "content": "Nice image!"},
+            ]
+        )
         result = cook_chatml_sample(conv)
         self.assertEqual(result[0]["content"], "Look at <image> please")
 

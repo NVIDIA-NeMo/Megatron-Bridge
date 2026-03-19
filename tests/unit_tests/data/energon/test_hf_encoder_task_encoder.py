@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -95,10 +95,12 @@ class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
         encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128)
 
         sample = _make_chatml_sample(
-            conversation=json.dumps([
-                {"role": "user", "content": "Hi"},
-                {"role": "assistant", "content": "Hello"},
-            ]),
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": "Hi"},
+                    {"role": "assistant", "content": "Hello"},
+                ]
+            ),
         )
 
         encoded = encoder.encode_sample(sample)
@@ -115,15 +117,15 @@ class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
             pixel_values=pv,
             encode_return=[12, 13],
         )
-        encoder = HFEncoderVLMTaskEncoder(
-            processor=processor, seq_length=128, visual_keys=("pixel_values",)
-        )
+        encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128, visual_keys=("pixel_values",))
 
         sample = _make_chatml_sample(
-            conversation=json.dumps([
-                {"role": "user", "content": "Describe <image>"},
-                {"role": "assistant", "content": "A photo"},
-            ]),
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": "Describe <image>"},
+                    {"role": "assistant", "content": "A photo"},
+                ]
+            ),
             imgs=[torch.rand(3, 4, 4)],
         )
 
@@ -137,10 +139,12 @@ class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
         encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=50)
 
         sample = _make_chatml_sample(
-            conversation=json.dumps([
-                {"role": "user", "content": "long prompt"},
-                {"role": "assistant", "content": "answer"},
-            ]),
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": "long prompt"},
+                    {"role": "assistant", "content": "answer"},
+                ]
+            ),
         )
         encoded = encoder.encode_sample(sample)
         self.assertEqual(encoded.input_ids.shape[0], 50)
@@ -155,10 +159,12 @@ class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
         encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128)
 
         sample = _make_chatml_sample(
-            conversation=json.dumps([
-                {"role": "user", "content": "Q"},
-                {"role": "assistant", "content": "A B"},
-            ]),
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": "Q"},
+                    {"role": "assistant", "content": "A B"},
+                ]
+            ),
         )
         encoded = encoder.encode_sample(sample)
         self.assertTrue(encoded.loss_mask.sum() > 0, "loss_mask should have nonzero entries for assistant tokens")
