@@ -22,12 +22,10 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
     nemotron_3_super_finetune_config as finetune_config,
 )
-from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
@@ -71,14 +69,12 @@ def main() -> None:
     Entry point for the Nemotron 3 Super QAT script.
     """
     args, cli_overrides = parse_cli_args()
-    
+
     # Check if the checkpoint path exists
     if not os.path.exists(args.megatron_load_path):
-        console.print(f"[red]Error: Quantized checkpoint path {megatron_load_path} does not exist![/red]")
-        console.print("[yellow]Please run the quantization process first:[/yellow]")
-        console.print(
-            f"[yellow]torchrun examples/models/quantize.py --megatron-save-path {megatron_load_path}[/yellow]"
-        )
+        print(f"[red]Error: Quantized checkpoint path {args.megatron_load_path} does not exist![/red]")
+        print("[yellow]Please run the quantization process first:[/yellow]")
+        print(f"[yellow]torchrun examples/models/quantize.py --megatron-save-path {args.megatron_load_path}[/yellow]")
         sys.exit(1)
 
     cfg: ConfigContainer = finetune_config(
@@ -96,8 +92,10 @@ def main() -> None:
         # ModelOpt quantization does not support gradient accumulation fusion
         cfg.model.gradient_accumulation_fusion = False
     else:
-        raise logger.error("No ModelOpt state found in checkpoint! Cannot start QAT. \
-        Please create a quantized checkpoint using quantize.py first.")
+        raise logger.error(
+            "No ModelOpt state found in checkpoint! Cannot start QAT. \
+        Please create a quantized checkpoint using quantize.py first."
+        )
         sys.exit(1)
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging

@@ -23,11 +23,11 @@ import torch
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
-    nemotron_3_super_pretrain_config as pretrain_config,
+    nemotron_3_super_finetune_config as finetune_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
-from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
@@ -41,15 +41,18 @@ logger: logging.Logger = logging.getLogger(__name__)
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     """Parse command line arguments, separating known script args from OmegaConf overrides."""
     parser = argparse.ArgumentParser(
-        description="Pretrain Llama3 8B model using Megatron-Bridge with YAML and CLI overrides",
+        description="Finetune Nemotron 3 Super model using Megatron-Bridge with YAML and CLI overrides",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
         "--config-file",
         type=str,
-        help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_pretrain_override_example.yaml",
+        help="Path to the YAML OmegaConf override file.",
     )
-    parser.add_argument("--per-split-data-args-path", type=str, help="Path to the per split data args file.")
+    parser.add_argument("--peft", type=str, help="Type of PEFT to use")
+    parser.add_argument("--packed-sequence", action="store_true", help="Whether to use sequence packing")
+    # TODO(liding): remove this default value
+    parser.add_argument("--seq-length", type=int, default=8192, help="Sequence length")
 
     # Parse known args for the script, remaining will be treated as overrides
     args, cli_dotlist_overrides = parser.parse_known_args()
@@ -58,19 +61,14 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
 def main() -> None:
     """
-    Entry point for the Mamba 8B pretraining script.
+    Entry point for the Nemotron 3 Super finetuning script.
     """
     args, cli_overrides = parse_cli_args()
 
-    cfg: ConfigContainer = pretrain_config(
-        per_split_data_args_path=args.per_split_data_args_path,
+    cfg: ConfigContainer = finetune_config(
+        seq_length=args.seq_length, peft=args.peft, packed_sequence=args.packed_sequence
     )
-
-
-    # TODO(liding): cuda graph
-    # --enable-cuda-graph \
-    # --cuda-graph-scope mamba attn moe_router \
-
+    cfg.model.seq_length = args.seq_length
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
@@ -98,8 +96,8 @@ def main() -> None:
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
 
     # Start training
-    logger.debug("Starting pretraining...")
-    pretrain(config=cfg, forward_step_func=forward_step)
+    logger.debug("Starting finetuning...")
+    finetune(config=cfg, forward_step_func=forward_step)
 
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()

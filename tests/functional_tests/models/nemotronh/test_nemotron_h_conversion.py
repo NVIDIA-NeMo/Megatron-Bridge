@@ -25,6 +25,18 @@ from torch import nn
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, dynamic_module_utils
 
 
+try:
+    from transformers.conversion_mapping import (
+        MergeModulelist,
+        WeightConverter,
+        WeightRenaming,
+    )
+
+    has_conversion_mapping = True
+except ImportError:
+    has_conversion_mapping = False
+
+
 def _fix_tied_weights_keys(model: nn.Module):
     """Convert _tied_weights_keys from list to dict for transformers 5.x compatibility."""
     for module in model.modules():
@@ -624,6 +636,24 @@ class TestNemotron3SuperConversion:
         _fix_tied_weights_keys(model)
 
         # Save model, config, and modeling code to directory
+        if has_conversion_mapping:
+            model._weight_conversions = [
+                WeightRenaming("backbone.", "model."),
+                WeightConverter(
+                    source_patterns=[
+                        "mixer.experts.*.up_proj.weight",
+                    ],
+                    target_patterns="mixer.experts.up_proj",
+                    operations=[MergeModulelist(dim=0)],
+                ),
+                WeightConverter(
+                    source_patterns=[
+                        "mixer.experts.*.down_proj.weight",
+                    ],
+                    target_patterns="mixer.experts.down_proj",
+                    operations=[MergeModulelist(dim=0)],
+                ),
+            ]
         model.save_pretrained(model_dir, safe_serialization=True)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)

@@ -22,6 +22,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
 
 # Nemotron 3 Super models
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
+    nemotron_3_super_debug_pretrain_config,
     nemotron_3_super_finetune_config,
     nemotron_3_super_pretrain_config,
 )
@@ -78,5 +79,6 @@ __all__ = [
     "nemotron_3_nano_peft_config",
     # Nemotron 3 Super models
     "nemotron_3_super_pretrain_config",
+    "nemotron_3_super_debug_pretrain_config",
     "nemotron_3_super_finetune_config",
 ]
