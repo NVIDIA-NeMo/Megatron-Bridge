@@ -59,6 +59,7 @@ from modelopt.torch.opt.plugins import (
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
+from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -477,6 +478,7 @@ def save_checkpoint(
     preprocess_common_state_dict_fn: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
     prebuilt_state_dict: Optional[dict[str, Any]] = None,
     pg_collection: Optional[ProcessGroupCollection] = None,
+    callback_manager: Optional[CallbackManager] = None,
 ) -> None:
     """Save a model checkpoint.
 
@@ -841,6 +843,25 @@ def save_checkpoint(
         else:
             wandb_finalize_fn()
             mlflow_finalize_fn()
+
+    if should_fire(callback_manager, "on_checkpoint_save"):
+        def fire_callback():
+            callback_manager.fire(
+                "on_checkpoint_save",
+                CallbackContext(
+                    state=state,
+                    model=model,
+                    user_state=callback_manager.user_state,
+                    optimizer=optimizer,
+                ),
+            )
+
+        if ckpt_cfg.async_save:
+            assert async_save_request is not None
+            async_save_request.add_finalize_fn(fire_callback)
+
+        else:
+            fire_callback()
 
     if ckpt_cfg.async_save:
         schedule_async_save(state, async_save_request)
