@@ -270,6 +270,7 @@ class Qwen3VLModel(MegatronModule):
         images_padded: list[bool] = None,
         inference_context: object | None = None,
         runtime_gather_output: bool | None = None,
+        mm_token_type_ids: torch.Tensor = None,
         **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
@@ -288,12 +289,14 @@ class Qwen3VLModel(MegatronModule):
                 combined_seq_len].
             labels (torch.Tensor): Optional target text labels [batch, combined_seq_len].
             inference_params (InferenceParams): Inference-time parameters including KV cache.
+            mm_token_type_ids (torch.Tensor): Token type IDs from transformers >= 5.3.0 processors.
+                Not used by Qwen3VL (which computes its own rope positions).
 
         Returns:
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
-        del inference_context, runtime_gather_output  # Unused, kept for API compatibility
+        del inference_context, runtime_gather_output, mm_token_type_ids  # Unused, kept for API compatibility
         assert inference_params is None, "not support inference"
 
         vision_grid_thw = None
