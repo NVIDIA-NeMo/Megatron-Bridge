@@ -2798,13 +2798,15 @@ class TestLoadCheckpointFromPathDirectIterDir:
             mock_is_iter_dir.assert_called_once_with("/ckpt/iter_0001000")
 
 
+@pytest.mark.unit
 class TestLayerWiseOptimizerCheckpointing:
     """Tests for LayerWiseDistributedOptimizer checkpoint save/load guards.
 
     Covers the fix for https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/2805:
     - save_checkpoint must NOT write layer_wise_optimizer_*.pt for torch_dist/fsdp_dtensor
       formats because the optimizer state is already embedded in the distributed checkpoint.
-    - load_checkpoint must load layer_wise_optimizer_*.pt for LOCAL checkpoints.
+    - load_checkpoint must load layer_wise_optimizer_*.pt from the local checkpoint base
+      directory for LOCAL checkpoints.
     """
 
     # -----------------------------------------------------------------------
@@ -2867,7 +2869,6 @@ class TestLayerWiseOptimizerCheckpointing:
         """
         from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOptimizer
 
-        # Build a mock that passes isinstance checks
         mock_layer_wise_optim = Mock(spec=LayerWiseDistributedOptimizer)
         mock_layer_wise_optim.__class__ = LayerWiseDistributedOptimizer
         mock_layer_wise_optim.is_stub_optimizer = False
@@ -2954,8 +2955,8 @@ class TestLayerWiseOptimizerCheckpointing:
         """load_checkpoint must call load_state_dict_from_file for LOCAL checkpoints.
 
         For local (non-persistent) checkpoints the LayerWiseDistributedOptimizer state is
-        saved to a separate per-rank file rather than embedded in the distributed checkpoint.
-        The load path must read that file back.
+        saved to a separate per-rank file in the local checkpoint base directory.
+        The load path must read that file back from local_checkpoint_manager.local_ckpt_dir.
         """
         from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOptimizer
 
@@ -3000,17 +3001,22 @@ class TestLayerWiseOptimizerCheckpointing:
         # Return CheckpointType.LOCAL to trigger the LayerWise load path
         mock_load_base.return_value = (mock_state_dict, "/ckpts/local_ckpt_id", False, CheckpointType.LOCAL)
 
-        load_dir = "/ckpts"
-        load_checkpoint_fixtures["mock_cfg"].checkpoint.load = load_dir
+        local_ckpt_dir = "/ckpts/local_nonpersistent"
+        mock_local_ckpt_manager = Mock()
+        mock_local_ckpt_manager.local_ckpt_dir = local_ckpt_dir
+        checkpointing_context = {"local_checkpoint_manager": mock_local_ckpt_manager}
+
+        load_checkpoint_fixtures["mock_cfg"].checkpoint.load = "/ckpts"
 
         load_checkpoint(
             load_checkpoint_fixtures["mock_state"],
             load_checkpoint_fixtures["mock_model"],
             mock_layer_wise_optim,
             load_checkpoint_fixtures["mock_scheduler"],
+            checkpointing_context=checkpointing_context,
         )
 
-        expected_path = f"{load_dir}/layer_wise_optimizer_2.pt"
+        expected_path = f"{local_ckpt_dir}/layer_wise_optimizer_2.pt"
         mock_layer_wise_optim.load_state_dict_from_file.assert_called_once_with(expected_path)
 
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
@@ -3099,6 +3105,8 @@ class TestLayerWiseOptimizerCheckpointing:
         # GLOBAL checkpoint - optimizer is in state_dict["optimizer"]
         mock_load_base.return_value = (mock_state_dict, "/ckpts/iter_0001000", False, CheckpointType.GLOBAL)
 
+        load_checkpoint_fixtures["mock_cfg"].checkpoint.load = "/ckpts"
+
         load_checkpoint(
             load_checkpoint_fixtures["mock_state"],
             load_checkpoint_fixtures["mock_model"],
@@ -3106,7 +3114,6 @@ class TestLayerWiseOptimizerCheckpointing:
             load_checkpoint_fixtures["mock_scheduler"],
         )
 
-        # Must NOT call the per-rank file loader for global checkpoints.
+        # Standard load_state_dict must be called; per-rank file loader must NOT be called.
+        mock_layer_wise_optim.load_state_dict.assert_called_once_with(mock_state_dict["optimizer"])
         mock_layer_wise_optim.load_state_dict_from_file.assert_not_called()
-        # Must use the standard load_state_dict path instead.
-        mock_layer_wise_optim.load_state_dict.assert_called_once_with({"param_groups": []})
