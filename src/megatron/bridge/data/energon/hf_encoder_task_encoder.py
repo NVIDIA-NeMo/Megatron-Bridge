@@ -54,17 +54,15 @@ class HFEncoderTaskSample:
 
 @dataclass
 class HFEncoderTaskBatch(Batch):
-    """Batched format for a generic HF-encoder VLM.
+    """Batched format for a generic HF-encoder VLM."""
 
-    Inherits ``__key__``, ``__restore_key__``, ``__subflavors__`` from
-    :class:`Batch`.
-    """
-
-    input_ids: torch.Tensor  # [B, seq_len]
-    labels: torch.Tensor  # [B, seq_len]
-    loss_mask: torch.Tensor  # [B, seq_len]
-    attention_mask: torch.Tensor  # [B, 1, seq_len, seq_len]
-    position_ids: torch.Tensor  # [B, seq_len]
+    __keys__: List[str] = field(default_factory=list)
+    __subflavors__: List[Dict] = field(default_factory=list)
+    input_ids: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
+    labels: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
+    loss_mask: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
+    attention_mask: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, 1, seq_len, seq_len]
+    position_ids: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
     visual_tensors: Dict[str, Optional[torch.Tensor]] = field(default_factory=dict)
 
 
@@ -155,7 +153,9 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
                     turn["content"] = content_parts
 
         # 3. Get the full prompt text from chat template (not tokenized)
-        prompt_text = self._tokenizer.apply_chat_template(conversation, tokenize=False)
+        # Use processor (not tokenizer) because conversation may contain
+        # structured multimodal content dicts that only the processor can handle.
+        prompt_text = self.processor.apply_chat_template(conversation, tokenize=False)
 
         # 4. Run processor for joint tokenization + vision preprocessing
         proc_kwargs = {"text": prompt_text, "return_tensors": "pt"}
@@ -275,8 +275,7 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
                 batched_visual[key] = None
 
         return HFEncoderTaskBatch(
-            __key__=[s.__key__ for s in samples],
-            __restore_key__=(),
+            __keys__=[s.__key__ for s in samples],
             __subflavors__=[s.__subflavors__ for s in samples],
             input_ids=tokens,
             labels=labels,
@@ -295,7 +294,7 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
         raw = dataclasses.asdict(batch)
 
         # Remove Batch base-class metadata not needed downstream
-        for meta_key in ("__key__", "__restore_key__", "__subflavors__", "__sources__"):
+        for meta_key in ("__keys__", "__restore_key__", "__subflavors__", "__sources__"):
             raw.pop(meta_key, None)
 
         # Replace the raw visual_tensors dict with a GenericVisualInputs container

@@ -64,6 +64,7 @@ def _make_chatml_sample(conversation, imgs=None, videos=None, key="k1"):
     return ChatMLSample(
         __key__=key,
         __restore_key__=(),
+        __subflavor__=None,
         __subflavors__={},
         imgs=imgs,
         videos=videos,
@@ -234,8 +235,7 @@ class TestHFEncoderVLMTaskEncoderEncodeBatch(unittest.TestCase):
 
         pv = torch.randn(2, 3, 4, 4)
         batch = HFEncoderTaskBatch(
-            __key__=["k1", "k2"],
-            __restore_key__=(),
+            __keys__=["k1", "k2"],
             __subflavors__=[{}, {}],
             input_ids=torch.tensor([[1, 2], [3, 4]]),
             labels=torch.tensor([[2, -100], [4, -100]]),
@@ -258,8 +258,7 @@ class TestHFEncoderVLMTaskEncoderEncodeBatch(unittest.TestCase):
         encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128)
 
         batch = HFEncoderTaskBatch(
-            __key__=["k1"],
-            __restore_key__=(),
+            __keys__=["k1"],
             __subflavors__=[{}],
             input_ids=torch.tensor([[1, 2]]),
             labels=torch.tensor([[2, -100]]),
