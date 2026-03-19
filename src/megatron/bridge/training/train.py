@@ -1131,6 +1131,15 @@ def save_checkpoint_and_time(
     )
     if should_force_param_sync:
         force_param_sync(model)
+
+    # Free overlap param-gather buffers and release cached GPU memory so
+    # that the async checkpoint worker process has enough GPU headroom for
+    # D2H tensor transfers.
+    for model_chunk in model:
+        if hasattr(model_chunk, "free_overlap_buffers"):
+            model_chunk.free_overlap_buffers()
+    torch.cuda.empty_cache()
+
     save_checkpoint(
         state,
         model,
