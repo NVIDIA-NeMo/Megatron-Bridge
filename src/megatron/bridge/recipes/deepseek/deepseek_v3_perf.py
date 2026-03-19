@@ -486,6 +486,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
+    cfg.ddp.overlap_grad_reduce = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|(tt|)*30mL")
@@ -521,6 +522,7 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
+    cfg.ddp.overlap_grad_reduce = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|(tt|)*30mL")
@@ -981,6 +983,7 @@ def deepseek_v3_pretrain_v2_1024gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
+    cfg.ddp.overlap_grad_reduce = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|(tt|)*30mL")
@@ -1016,6 +1019,7 @@ def deepseek_v3_pretrain_v2_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
+    cfg.ddp.overlap_grad_reduce = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
     cfg.model.pipeline_model_parallel_layout = None
