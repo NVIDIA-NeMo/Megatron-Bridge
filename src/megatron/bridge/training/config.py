@@ -37,13 +37,11 @@ from megatron.core.transformer.transformer_config import TransformerConfig as MC
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
-from megatron.bridge.models.encoder_provider import EncoderProvider
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
-from megatron.bridge.training.mimo_config import MIMOConfig
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -251,6 +249,9 @@ class DataloaderConfig:
 
     pin_memory: bool = True
     """Whether to pin memory during data loading for faster GPU training."""
+
+    drop_last: bool = True
+    """Whether to drop the last incomplete batch."""
 
     persistent_workers: bool = True
     """Whether to keep data loading workers persistent across epochs.
@@ -1395,8 +1396,6 @@ class ConfigContainer(Container):
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
     model: GPTModelProvider | T5ModelProvider | MambaModelProvider | MimoModelProvider
-    mimo: Optional[MIMOConfig] = None
-    encoder_providers: Optional[dict[str, EncoderProvider]] = None
     optimizer: OptimizerConfig
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
         default_factory=OptimizerConfigOverrideProvider
@@ -1419,27 +1418,8 @@ class ConfigContainer(Container):
     tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
 
-    @property
-    def is_mimo(self) -> bool:
-        return self.mimo is not None
-
-    @property
-    def is_colocated_mimo(self) -> bool:
-        return self.mimo is not None and self.mimo.deployment_mode == "colocated"
-
-    @property
-    def is_homogeneous_mimo(self) -> bool:
-        return self.mimo is not None and self.mimo.deployment_mode == "homogeneous"
-
-    @property
-    def is_heterogeneous_mimo(self) -> bool:
-        return self.mimo is not None and self.mimo.deployment_mode == "heterogeneous"
-
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
-        if self.mimo is not None:
-            self.mimo.finalize(world_size if world_size and world_size > 1 else None)
-            return self.mimo.get_parallelism(self.mimo.llm_module_name).data_parallel
         model_cfg = self.model
         total_model_size = (
             model_cfg.tensor_model_parallel_size
@@ -1464,61 +1444,6 @@ class ConfigContainer(Container):
         # Set data_parallel_size on comm_overlap config if present
         if self.comm_overlap is not None:
             self.comm_overlap.data_parallel_size = self.data_parallel_size
-
-    def get_module_data_parallel_size(self, module_name: str) -> int:
-        """Return data parallel size for a specific MIMO module."""
-        if self.mimo is None:
-            raise ValueError("MIMO configuration is not set.")
-        world_size = get_world_size_safe()
-        self.mimo.finalize(world_size if world_size and world_size > 1 else None)
-        return self.mimo.get_parallelism(module_name).data_parallel
-
-    def _validate_mimo(self) -> None:
-        """Validate MIMO-specific configuration invariants."""
-        if self.mimo is None:
-            return
-        world_size = get_world_size_safe()
-        self.mimo.finalize(world_size if world_size and world_size > 1 else None)
-
-        llm_parallelism = self.mimo.get_parallelism(self.mimo.llm_module_name)
-        parallelism_checks = {
-            "tensor_model_parallel_size": llm_parallelism.tensor_parallel,
-            "pipeline_model_parallel_size": llm_parallelism.pipeline_parallel,
-            "context_parallel_size": llm_parallelism.context_parallel,
-            "expert_model_parallel_size": llm_parallelism.expert_parallel,
-        }
-        for attr_name, expected in parallelism_checks.items():
-            actual = getattr(self.model, attr_name, None)
-            if actual is None:
-                continue
-            if actual != expected:
-                raise ValueError(f"MIMO LLM parallelism mismatch for {attr_name}: model={actual}, mimo={expected}.")
-
-        module_names = set(self.mimo.module_parallelisms.keys())
-        expected_encoders = module_names - {self.mimo.llm_module_name}
-        if expected_encoders:
-            if self.encoder_providers is None:
-                raise ValueError("encoder_providers must be set when MIMO encoders are configured.")
-            provided = set(self.encoder_providers.keys())
-            unknown = provided - expected_encoders
-            missing = expected_encoders - provided
-            if unknown:
-                raise ValueError(f"encoder_providers contains unknown modules: {sorted(unknown)}")
-            if missing:
-                raise ValueError(f"encoder_providers missing modules: {sorted(missing)}")
-
-        if self.train.global_batch_size is None:
-            raise ValueError("train.global_batch_size must be set when MIMO is enabled.")
-
-        for module_name, parallelism in self.mimo.module_parallelisms.items():
-            if parallelism.data_parallel is None:
-                raise ValueError(f"data_parallel must be set for module '{module_name}' before validation.")
-            if self.train.global_batch_size % parallelism.data_parallel != 0:
-                raise ValueError(
-                    f"Invalid MIMO batch config for module '{module_name}': "
-                    f"global_batch_size ({self.train.global_batch_size}) must be divisible by "
-                    f"data_parallel ({parallelism.data_parallel})."
-                )
 
     def _validate_and_apply_deterministic_mode(self) -> None:
         """Apply and validate deterministic mode requirements.
@@ -1595,7 +1520,6 @@ class ConfigContainer(Container):
         self._validate_and_apply_deterministic_mode()
 
         # Run validations
-        self._validate_mimo()
         _validate_and_sync_distributed_optimizer_settings(self)
         _validate_mixed_precision_consistency(self)
         _validate_fine_grained_activation_offloading(self)

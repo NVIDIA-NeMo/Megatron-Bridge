@@ -29,11 +29,6 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
 )
-from megatron.bridge.models.encoder_provider import (
-    EncoderProvider,
-    EncoderTransformerConfig,
-    GenericVisionEncoderProvider,
-)
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,
     CodeGemmaModelProvider7B,
@@ -188,9 +183,6 @@ __all__ = [
     "GPTModelProvider",
     "GPTOSSBridge",
     "T5ModelProvider",
-    "EncoderProvider",
-    "EncoderTransformerConfig",
-    "GenericVisionEncoderProvider",
     "LlamaBridge",
     "LlamaNemotronHeterogeneousProvider",
     "LlamaNemotronBridge",
