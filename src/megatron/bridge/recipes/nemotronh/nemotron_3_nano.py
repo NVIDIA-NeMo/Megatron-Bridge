@@ -154,15 +154,16 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Optimizer hyperparameters
-    cfg.optimizer.lr = 1.6e-3
+    cfg.optimizer.lr = 1e-3
     cfg.optimizer.weight_decay = 0.1
 
     # Scheduler hyperparameters
     cfg.scheduler.lr_decay_style = "WSD"
-    cfg.scheduler.min_lr = 1.6e-5
-    cfg.scheduler.warmup_iters = 333
-    cfg.scheduler.lr_wsd_decay_iters = 7947
-
+    cfg.scheduler.lr_wsd_decay_style = "minus_sqrt"
+    cfg.scheduler.min_lr = 1e-5
+    cfg.scheduler.warmup_iters = 333  # Linear warmup over 333x3072x8192 = 8.38B tokens
+    cfg.scheduler.lr_wsd_decay_iters = 7947  # WSD decay over 7947 / 39735 = 20% of training
+    
     # Communication Overlap
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_bootstrap_backend="nccl",
