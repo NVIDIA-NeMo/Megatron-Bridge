@@ -113,4 +113,4 @@ The stable recommendation today is:
 - [docs/training/cpu-offloading.md](cpu-offloading.md)
 - [docs/performance-guide.md](../performance-guide.md)
 - [skills/perf-techniques/megatron-fsdp/SKILL.md](../skills/perf-techniques/megatron-fsdp/SKILL.md)
-- [skills/perf-techniques/megatron-fsdp/card.yaml](../../skills/perf-techniques/megatron-fsdp/card.yaml)
+- [skills/perf-techniques/megatron-fsdp/card.yaml](../skills/perf-techniques/megatron-fsdp/card.yaml)

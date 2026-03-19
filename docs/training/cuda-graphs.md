@@ -7,8 +7,7 @@ fine-grained scope selection to balance performance gain against memory cost.
 
 This page is the stable overview for what CUDA graphs are, when to use them,
 and which constraints are durable. For operational setup, code anchors, and
-verification commands, see
-[skills/perf-techniques/cuda-graphs/SKILL.md](../skills/perf-techniques/cuda-graphs/SKILL.md).
+verification commands, see [skills/perf-techniques/cuda-graphs/SKILL.md](../skills/perf-techniques/cuda-graphs/SKILL.md).
 
 ## What It Is
 

@@ -110,4 +110,4 @@ all Bridge initialization modes.
 - [docs/performance-guide.md](../performance-guide.md)
 - [docs/training/communication-overlap.md](communication-overlap.md)
 - [skills/perf-techniques/hybrid-context-parallel/SKILL.md](../skills/perf-techniques/hybrid-context-parallel/SKILL.md)
-- [skills/perf-techniques/hybrid-context-parallel/card.yaml](../../skills/perf-techniques/hybrid-context-parallel/card.yaml)
+- [skills/perf-techniques/hybrid-context-parallel/card.yaml](../skills/perf-techniques/hybrid-context-parallel/card.yaml)
