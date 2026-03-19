@@ -1,43 +1,70 @@
 # LLM Bridge Patterns
 
-Reference implementation: GPT-OSS (`src/megatron/bridge/models/gpt_oss/`)
+Reference implementations:
+- Simple dense: Qwen2 (`src/megatron/bridge/models/qwen/qwen2_bridge.py`)
+- MoE: GLM-4.5 (`src/megatron/bridge/models/glm/glm45_bridge.py`)
+- MoE with custom layer spec: OLMoE (`src/megatron/bridge/models/olmoe/olmoe_bridge.py`)
+- Advanced (YARN, MoE, provider re-wrap): GPT-OSS (`src/megatron/bridge/models/gpt_oss/`)
 
 ## Provider Pattern
 
-Subclass `GPTModelProvider` with model-specific fields.
+Most bridges do **not** need a custom provider subclass. The base `provider_bridge()` uses
+`CONFIG_MAPPING` to auto-create a `GPTModelProvider` from HF config. The bridge then sets
+model-specific attributes directly on the returned provider instance.
+
+```python
+def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
+    provider = super().provider_bridge(hf_pretrained)
+
+    provider.normalization = "RMSNorm"
+    provider.gated_linear_unit = True
+    provider.position_embedding_type = "rope"
+    provider.add_bias_linear = False
+    provider.hidden_dropout = 0.0
+    provider.autocast_dtype = torch.bfloat16
+
+    # MoE settings (if applicable)
+    provider.moe_grouped_gemm = True
+    provider.moe_token_dispatcher_type = "alltoall"
+
+    return provider
+```
+
+### When you DO need a provider subclass
+
+Create a `GPTModelProvider` subclass only when:
+
+1. **Extra dataclass fields** — The provider has fields not on `GPTModelProvider` (e.g., YARN
+   RoPE params, custom MoE fields) that need to serialize into `run_config.yaml`.
+2. **Custom `provide()` logic** — The model needs special instantiation (e.g., TE version
+   checks, sink attention, custom layer specs that require runtime logic).
+3. **Predefined size variants for recipes** — Hardcoded configs like `LlamaModelProvider8B`
+   used by recipe functions (not by the bridge itself).
 
 ```python
 @dataclass
 class MyModelProvider(GPTModelProvider):
-    # Model-specific fields beyond what GPTModelProvider provides
-    # Examples from GPT-OSS:
-    normalization: str = "RMSNorm"
-    gated_linear_unit: bool = True
-    add_bias_linear: bool = False
-    share_embeddings_and_output_weights: bool = False
-
-    # YARN RoPE (if applicable)
-    position_embedding_type: str = "rope"
-    rotary_base: float = 10000.0
     yarn_rotary_scaling_factor: Optional[float] = None
     yarn_original_max_position_embeddings: Optional[int] = None
 
-    # MoE (if applicable)
-    moe_router_topk: int = 2
-    moe_grouped_gemm: bool = True
-    moe_token_dispatcher_type: str = "alltoall"
-
-    # Sliding window (if applicable)
-    window_size: Optional[Tuple[int, int]] = None
-
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
-        # Override only if custom logic needed (e.g. TE version checks)
+        # Custom logic only if needed
         return super().provide(pre_process, post_process, vp_stage)
 ```
 
-### Predefined size variants
+If the bridge uses a custom provider, re-wrap the base provider in `provider_bridge()`:
 
-Create size-specific subclasses with hardcoded defaults:
+```python
+def provider_bridge(self, hf_pretrained) -> MyModelProvider:
+    provider = super().provider_bridge(hf_pretrained)
+    provider = MyModelProvider(**{f.name: getattr(provider, f.name) for f in fields(provider)})
+    provider.yarn_rotary_scaling_factor = ...
+    return provider
+```
+
+### Predefined size variants (for recipes only)
+
+Size-specific subclasses are used by recipes, not by the bridge:
 
 ```python
 @dataclass
@@ -48,12 +75,6 @@ class MyModelProvider7B(MyModelProvider):
     num_query_groups: int = 8
     ffn_hidden_size: int = 14336
     vocab_size: int = 128256
-
-@dataclass
-class MyModelProvider70B(MyModelProvider):
-    num_layers: int = 80
-    hidden_size: int = 8192
-    # ...
 ```
 
 ## Bridge Pattern
@@ -63,6 +84,7 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping, GatedMLPMapping
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 @MegatronModelBridge.register_bridge(
@@ -72,21 +94,15 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 )
 class MyModelBridge(MegatronModelBridge):
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MyModelProvider:
-        # Option A: Use base class CONFIG_MAPPING (simplest)
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         provider = super().provider_bridge(hf_pretrained)
 
-        # Option B: Manual mapping
-        cfg = hf_pretrained.config
-        provider_kwargs = self.hf_config_to_provider_kwargs(cfg)
-        provider = MyModelProvider(**provider_kwargs)
-
-        # Set model-specific fields not in CONFIG_MAPPING
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        # YARN/RoPE scaling
-        if hasattr(cfg, "rope_scaling") and cfg.rope_scaling:
-            self._apply_rope_scaling(provider, cfg.rope_scaling)
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.hidden_dropout = 0.0
+        provider.autocast_dtype = torch.bfloat16
 
         return provider
 
