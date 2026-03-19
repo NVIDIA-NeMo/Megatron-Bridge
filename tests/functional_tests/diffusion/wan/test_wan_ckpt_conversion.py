@@ -92,8 +92,7 @@ class TestWanCkptConversion:
         hf_ckpt_dir = _get_hf_ckpt_dir()
 
         assert Path(MEGATRON_CKPT_DIR).exists(), (
-            f"Megatron checkpoint not found at {MEGATRON_CKPT_DIR}. "
-            "Run test_hf_to_megatron first."
+            f"Megatron checkpoint not found at {MEGATRON_CKPT_DIR}. Run test_hf_to_megatron first."
         )
 
         # Locate the iter_* directory produced by the import step
@@ -103,8 +102,7 @@ class TestWanCkptConversion:
             key=lambda d: int(d.name.replace("iter_", "")),
         )
         assert len(iter_dirs) > 0, (
-            f"No iter_* directory found in {ckpt_path}. "
-            "Ensure test_hf_to_megatron completed successfully."
+            f"No iter_* directory found in {ckpt_path}. Ensure test_hf_to_megatron completed successfully."
         )
         megatron_iter_path = iter_dirs[-1]
 

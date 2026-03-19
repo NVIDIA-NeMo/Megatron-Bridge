@@ -13,10 +13,10 @@
 # limitations under the License.
 
 from megatron.bridge.diffusion.recipes.wan.wan import (
-    wan_14B_finetune_config,
-    wan_14B_pretrain_config,
     wan_1_3B_finetune_config,
     wan_1_3B_pretrain_config,
+    wan_14B_finetune_config,
+    wan_14B_pretrain_config,
 )
 
 

@@ -18,8 +18,6 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from torch import int_repr
-
 from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 from megatron.bridge.diffusion.data.common.diffusion_energon_datamodule import (
     DiffusionDataModule,

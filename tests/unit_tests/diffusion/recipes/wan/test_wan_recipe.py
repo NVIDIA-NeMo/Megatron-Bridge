@@ -17,10 +17,10 @@ import pytest
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider1_3B, WanModelProvider14B
 from megatron.bridge.diffusion.recipes.wan.wan import (
-    wan_14B_finetune_config,
-    wan_14B_pretrain_config,
     wan_1_3B_finetune_config,
     wan_1_3B_pretrain_config,
+    wan_14B_finetune_config,
+    wan_14B_pretrain_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 
