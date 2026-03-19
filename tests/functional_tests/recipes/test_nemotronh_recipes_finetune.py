@@ -196,7 +196,7 @@ class TestNemotronNanoV2FinetuneRecipes:
                 "nemotron_nano_9b_v2_lora",
                 {
                     "num_layers": 4,  # Match toy model
-                    "hybrid_override_pattern": "M*M-",  # Match toy model
+                    "hybrid_layer_pattern": "M*M-",  # Match toy model
                     "hidden_size": 640,  # Match toy model
                     "ffn_hidden_size": 2240,  # Match toy model
                     "num_attention_heads": 8,  # Match toy model
@@ -215,7 +215,7 @@ class TestNemotronNanoV2FinetuneRecipes:
                 "nemotron_nano_9b_v2_full",
                 {
                     "num_layers": 4,  # Match toy model
-                    "hybrid_override_pattern": "M*M-",  # Match toy model
+                    "hybrid_layer_pattern": "M*M-",  # Match toy model
                     "hidden_size": 640,  # Match toy model
                     "ffn_hidden_size": 2240,  # Match toy model
                     "num_attention_heads": 8,  # Match toy model
@@ -320,8 +320,8 @@ HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES = {
 }
 
 MEGATRON_NEMOTRON_3_NANO_OVERRIDES = {
+    "hybrid_layer_pattern": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["hybrid_override_pattern"],
     "num_layers": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["num_hidden_layers"],
-    "hybrid_override_pattern": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["hybrid_override_pattern"],
     "hidden_size": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["hidden_size"],
     "num_moe_experts": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["n_routed_experts"],
     "tensor_model_parallel_size": 1,

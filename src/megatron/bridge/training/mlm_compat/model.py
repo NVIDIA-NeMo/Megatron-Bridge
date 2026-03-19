@@ -159,12 +159,12 @@ def _mamba_provider(
 
     sep = Symbols.MTP_SEPARATOR
     if (
-        getattr(args, 'mtp_hybrid_override_pattern', None) is not None
+        getattr(args, "mtp_hybrid_override_pattern", None) is not None
         and args.mtp_num_layers is not None
         and args.mtp_num_layers > 0
         and (args.hybrid_override_pattern is None or sep not in args.hybrid_override_pattern)
     ):
-        main_pattern = args.hybrid_override_pattern or ''
+        main_pattern = args.hybrid_override_pattern or ""
         mtp_pattern = args.mtp_hybrid_override_pattern
         args.hybrid_override_pattern = main_pattern + sep + sep.join([mtp_pattern] * args.mtp_num_layers)
         args.mtp_hybrid_override_pattern = None
@@ -182,7 +182,7 @@ def _mamba_provider(
                     f"--mtp-num-layers ({args.mtp_num_layers}) conflicts with "
                     f"MTP depth count ({inferred_mtp_num_layers}) in pattern '{args.hybrid_override_pattern}'. "
                     f"Using the inferred value ({inferred_mtp_num_layers}).",
-                    args.rank
+                    args.rank,
                 )
                 args.mtp_num_layers = inferred_mtp_num_layers
 
@@ -200,9 +200,7 @@ def _mamba_provider(
         vocab_size=args.padded_vocab_size,
         max_sequence_length=args.max_position_embeddings,
         pre_process=pre_process,
-        hybrid_attention_ratio=args.hybrid_attention_ratio,
-        hybrid_mlp_ratio=args.hybrid_mlp_ratio,
-        hybrid_override_pattern=args.hybrid_override_pattern,
+        hybrid_layer_pattern=args.hybrid_layer_pattern,
         post_process=post_process,
         fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
         parallel_output=True,

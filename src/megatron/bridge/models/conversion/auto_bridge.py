@@ -12,15 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import dataclasses
 from functools import cached_property, partial
 from pathlib import Path
-from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
+import torch
 import torch.distributed as dist
 import transformers
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.peft.base import PEFT
+
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
+from modelopt.torch.quantization.utils import is_quantized
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
@@ -46,7 +55,16 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForCausalLM",
     "ForConditionalGeneration",
     "NemotronH_Nano_VL_V2",
+    "Qwen2_5OmniModel",
 )
+
+# Mapping from non-standard HF architecture names to their actual transformers class names.
+# Some HF model configs report architecture names that don't follow the standard
+# 'ForCausalLM'/'ForConditionalGeneration' convention and don't directly map to a
+# transformers class. This dict resolves those aliases.
+HF_ARCHITECTURE_ALIASES: dict[str, str] = {
+    "Qwen2_5OmniModel": "Qwen2_5OmniForConditionalGeneration",
+}
 
 # Preformatted display string for error/help messages
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
@@ -410,6 +428,98 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
         )
 
+    def save_hf_adapter(
+        self,
+        model: list[MegatronModelT],
+        path: str | Path,
+        peft_config: "PEFT",
+        base_model_name_or_path: Optional[str] = None,
+        show_progress: bool = True,
+    ) -> None:
+        """Save LoRA adapter weights as a HuggingFace PEFT-compatible directory.
+
+        The output directory contains ``adapter_config.json`` and
+        ``adapter_model.safetensors`` and can be loaded directly with
+        ``peft.PeftModel.from_pretrained(base_model, path)``.
+
+        Args:
+            model: Megatron model instance or list of instances.
+            path: Directory path where the adapter files will be saved.
+            peft_config: The LoRA / DoRA config used during training (provides
+                ``dim``, ``alpha``, ``dropout``, etc.).
+            base_model_name_or_path: HuggingFace model identifier or local path
+                of the base model this adapter was trained on.  If *None*, the
+                value is inferred from ``hf_pretrained.model_name_or_path``.
+            show_progress: Display progress bar during export.
+
+        Example:
+            >>> bridge.save_hf_adapter(
+            ...     megatron_model,
+            ...     "./my-lora-adapter",
+            ...     peft_config=lora,
+            ...     base_model_name_or_path="Qwen/Qwen3-4B",
+            ... )
+            >>> # Load with HuggingFace PEFT
+            >>> from peft import PeftModel
+            >>> from transformers import AutoModelForCausalLM
+            >>> base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-4B")
+            >>> model = PeftModel.from_pretrained(base, "./my-lora-adapter")
+
+        Note:
+            This method is collective -- all ranks must call it.  Only rank 0
+            writes files to disk; the other ranks participate in the generator
+            to gather distributed (TP/PP/EP) tensors.
+        """
+        import json
+
+        from safetensors.torch import save_file
+
+        from megatron.bridge.models.conversion.peft_bridge import (
+            build_adapter_config_dict,
+            infer_target_modules_from_adapter_weights,
+        )
+
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
+
+        adapter_state: dict[str, torch.Tensor] = {}
+        for name, tensor in self.export_adapter_weights(model, cpu=True, show_progress=show_progress):
+            adapter_state[f"base_model.model.{name}"] = tensor.clone().float()
+
+        if not adapter_state:
+            raise RuntimeError(
+                "No adapter weights were found on the model. "
+                "Ensure the model has PEFT adapters applied before calling save_hf_adapter()."
+            )
+
+        is_rank0 = not (dist.is_available() and dist.is_initialized()) or dist.get_rank() == 0
+        if is_rank0:
+            save_dir = Path(path)
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            if base_model_name_or_path is None:
+                base_model_name_or_path = str(
+                    getattr(self.hf_pretrained, "model_name_or_path", "")
+                    or getattr(self.hf_pretrained, "name_or_path", "")
+                )
+
+            target_modules = infer_target_modules_from_adapter_weights(adapter_state.keys())
+            adapter_config = build_adapter_config_dict(
+                peft_config,
+                target_modules=target_modules,
+                base_model_name_or_path=base_model_name_or_path,
+            )
+
+            config_path = save_dir / "adapter_config.json"
+            with open(config_path, "w") as f:
+                json.dump(adapter_config, f, indent=2)
+
+            weights_path = save_dir / "adapter_model.safetensors"
+            save_file(adapter_state, str(weights_path))
+
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
+
     def save_hf_pretrained(
         self,
         model: list[MegatronModelT],
@@ -563,6 +673,19 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
             merge_adapter_weights=merge_adapter_weights,
         )
+        model_instance = self._get_model_instance(model)
+        quant_tensors = None
+        if is_quantized(model_instance):
+            quant_tensors = {}
+
+            def _filter_quant(gen):
+                for name, tensor in gen:
+                    if "_quantizer." in name:
+                        quant_tensors[name] = tensor
+                        continue
+                    yield name, tensor
+
+            generator = _filter_quant(generator)
 
         # Check if the state source is SafeTensorsStateSource for streaming save.
         if (
@@ -579,6 +702,15 @@ class AutoBridge(Generic[MegatronModelT]):
             )
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
+
+        # Save quantizer/amax sidecar after the main generator is consumed (rank 0 only).
+        if quant_tensors:
+            is_distributed = dist.is_available() and dist.is_initialized()
+            rank = dist.get_rank() if is_distributed else 0
+            if rank == 0 and quant_tensors:
+                sidecar_path = Path(path) / "modelopt_weights.pt"
+                sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(quant_tensors, sidecar_path)
 
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
@@ -846,6 +978,127 @@ class AutoBridge(Generic[MegatronModelT]):
                 strict=strict,
             )
 
+    def export_adapter_ckpt(
+        self,
+        peft_checkpoint: str | Path,
+        output_path: str | Path,
+        show_progress: bool = True,
+    ) -> None:
+        """Export LoRA adapter weights from a Megatron PEFT checkpoint to HuggingFace PEFT format.
+
+        This convenience method loads a Megatron-Bridge fine-tuning checkpoint,
+        reconstructs the LoRA adapter structure from ``run_config.yaml``, and
+        writes a HuggingFace PEFT-compatible directory containing
+        ``adapter_config.json`` and ``adapter_model.safetensors``.
+
+        The bridge must be created with ``from_hf_pretrained`` so that
+        base weights are available for the conversion mapping.
+
+        Args:
+            peft_checkpoint: Path to the Megatron-Bridge distributed checkpoint
+                that contains LoRA adapter weights (produced by a PEFT
+                fine-tuning run).  May point at the top-level run directory
+                (containing ``iter_*`` folders) or directly at an iteration
+                directory.
+            output_path: Directory where the adapter files will be saved.
+            show_progress: Display progress bar during export.
+
+        Example:
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+            >>> bridge.export_adapter_ckpt(
+            ...     "/path/to/finetune_ckpt",
+            ...     "./my_adapter",
+            ... )
+            >>> # Load with HuggingFace PEFT
+            >>> from peft import PeftModel
+            >>> from transformers import AutoModelForCausalLM
+            >>> base = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
+            >>> model = PeftModel.from_pretrained(base, "./my_adapter")
+        """
+        import logging
+
+        from megatron.core import dist_checkpointing
+
+        from megatron.bridge.peft.lora import LoRA, VLMLoRA
+        from megatron.bridge.training.checkpointing import (
+            _generate_model_state_dict,
+            apply_peft_adapter_filter_to_state_dict,
+        )
+        from megatron.bridge.training.model_load_save import temporary_distributed_context
+        from megatron.bridge.training.utils.checkpoint_utils import read_run_config
+
+        _logger = logging.getLogger(__name__)
+
+        ckpt_path = Path(peft_checkpoint).expanduser().resolve()
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"PEFT checkpoint not found: {ckpt_path}")
+
+        peft_class: type = LoRA
+        peft_cfg: dict = {}
+        cfg_file = ckpt_path / "run_config.yaml"
+        if not cfg_file.exists() and ckpt_path.parent != ckpt_path:
+            cfg_file = ckpt_path.parent / "run_config.yaml"
+        if cfg_file.exists():
+            try:
+                run_cfg_dict = read_run_config(str(cfg_file))
+                peft_cfg = run_cfg_dict.get("peft", {}) or {}
+                if "VLMLoRA" in peft_cfg.get("_target_", ""):
+                    peft_class = VLMLoRA
+                allowed_keys = {
+                    "target_modules",
+                    "dim",
+                    "alpha",
+                    "dropout",
+                    "dropout_position",
+                    "freeze_language_model",
+                    "freeze_vision_model",
+                    "freeze_vision_projection",
+                }
+                peft_cfg = {k: v for k, v in peft_cfg.items() if k in allowed_keys}
+            except Exception as err:
+                _logger.warning(f"Failed to read LoRA settings from {cfg_file}: {err}. Using defaults.")
+        else:
+            _logger.warning("run_config.yaml not found in PEFT checkpoint; using default LoRA settings.")
+
+        lora = peft_class(**peft_cfg)
+
+        # Materialise model with base weights + LoRA structure.
+        # Use float32 so adapter weights are exported at full precision;
+        # bfloat16 matmul in downstream PEFT merges causes ~1e-3 weight
+        # errors that compound into large logit diffs.
+        provider = self.to_megatron_provider(load_weights=True)
+        provider.pipeline_dtype = torch.float32
+        provider.params_dtype = torch.float32
+        provider.finalize()
+        provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
+
+        with temporary_distributed_context(backend="gloo"):
+            model = provider.provide_distributed_model(
+                wrap_with_ddp=False,
+                use_cpu_initialization=True,
+                init_model_with_meta_device=False,
+            )
+
+            # Load adapter weights from the PEFT checkpoint
+            sharded_state_dict = _generate_model_state_dict(model, {})
+            sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora)
+            loaded_sd = dist_checkpointing.load(sharded_state_dict, str(ckpt_path))
+            model_key = "model" if "model" in loaded_sd else next(k for k in loaded_sd if k.startswith("model"))
+            model[0].load_state_dict(loaded_sd[model_key], strict=False)
+
+            # Export
+            base_model_name = str(
+                getattr(self.hf_pretrained, "model_name_or_path", "")
+                or getattr(self.hf_pretrained, "name_or_path", "")
+            )
+            self.save_hf_adapter(
+                model,
+                path=output_path,
+                peft_config=lora,
+                base_model_name_or_path=base_model_name,
+                show_progress=show_progress,
+            )
+
     def push_to_hub(self, path: str | Path) -> None: ...
 
     def to_megatron_model(
@@ -1111,11 +1364,14 @@ class AutoBridge(Generic[MegatronModelT]):
             # For auto_map models, return the class name as a string
             return cls_name
 
+        # Resolve non-standard architecture names via alias mapping
+        resolved_arch = HF_ARCHITECTURE_ALIASES.get(causal_lm_arch, causal_lm_arch)
+
         try:
-            return getattr(transformers, causal_lm_arch)
+            return getattr(transformers, resolved_arch)
         except AttributeError:
             raise ValueError(
-                f"\n✗ Architecture class '{causal_lm_arch}' not found in transformers\n\n"
+                f"\n✗ Architecture class '{resolved_arch}' not found in transformers\n\n"
                 f"This could mean:\n"
                 f"1. The model requires a newer version of transformers\n"
                 f"2. The model uses a custom modeling file not in the standard library\n"
@@ -1152,8 +1408,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 # For auto_map models, use class-name string
                 arch_key = arch_name
             else:
+                # Resolve non-standard architecture names via alias mapping
+                resolved_arch = HF_ARCHITECTURE_ALIASES.get(architecture, architecture)
                 try:
-                    arch_class = getattr(transformers, architecture)
+                    arch_class = getattr(transformers, resolved_arch)
                     arch_key = arch_class
                 except AttributeError:
                     # Fall back to name-based registration

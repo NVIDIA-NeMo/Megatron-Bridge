@@ -73,6 +73,7 @@ def check_training_finished(log_file_paths: List[str]) -> bool:
                         "StopIteration" in line
                         or "after training is done" in line
                         or "exiting program at iteration" in line
+                        or "AssertionError: no samples left to consume:" in line
                     )
                 )
     return any(all_lines)
@@ -132,6 +133,8 @@ def build_performance_config(args) -> Optional[Dict[str, Any]]:
     performance_params = {
         "timing_threshold": args.timing_threshold,
         "skip_first_percent_time": args.skip_first_percent_time,
+        "eval_time_start_step": args.eval_time_start_step,
+        "eval_time_end_step": args.eval_time_end_step,
     }
 
     for key, value in performance_params.items():
@@ -366,6 +369,11 @@ def main(
         )
 
     if enable_nsys:
+        if nsys_trace is None:
+            logger.warning("Using `cuda-sw` trace mode for profiling")
+            logger.warning("Profiling results might not be accurate due to software tracing limitations.")
+            # TODO: Remove this once the associated functional issues are resolved.
+            nsys_trace = ["cuda-sw", "nvtx"]
         plugins.append(
             NsysPlugin(
                 profile_step_start=profiling_start_step,
@@ -565,6 +573,10 @@ if __name__ == "__main__":
     if unknown_args:
         logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
 
+    env = dict(args.env or [])
+    custom_env_vars = args.custom_env_vars
+    custom_env_vars.update(env)
+
     # Handle --list_config_variants: show available variants and interactively select
     config_variant = args.config_variant
     if args.list_config_variants:
@@ -617,7 +629,7 @@ if __name__ == "__main__":
         time_limit=args.time_limit,
         container_image=args.container_image,
         custom_mounts=args.custom_mounts,
-        custom_env_vars=args.custom_env_vars,
+        custom_env_vars=custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
         nccl_ub=args.nccl_ub,
@@ -639,6 +651,8 @@ if __name__ == "__main__":
         performance_params={
             "timing_threshold": args.timing_threshold,
             "skip_first_percent_time": args.skip_first_percent_time,
+            "eval_time_start_step": args.eval_time_start_step,
+            "eval_time_end_step": args.eval_time_end_step,
         },
         memory_params={
             "memory_threshold": args.memory_threshold,

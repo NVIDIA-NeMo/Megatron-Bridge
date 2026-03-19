@@ -31,7 +31,7 @@ NEMOTRONH_PRETRAIN_RECIPES = [
         nemotronh_4b_pretrain_config,
         "nemotronh_4b",
         {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1},
-        {"num_layers": 3, "hybrid_override_pattern": "M*-"},
+        {"num_layers": 3, "hybrid_layer_pattern": "M*-"},
     ),
 ]
 
@@ -42,7 +42,7 @@ NEMOTRON_NANO_V2_PRETRAIN_RECIPES = [
         nemotron_nano_9b_v2_pretrain_config,
         "nemotron_nano_9b_v2",
         {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1},
-        {"num_layers": 3, "hybrid_override_pattern": "M*-", "sequence_parallel": False},
+        {"num_layers": 3, "hybrid_layer_pattern": "M*-", "sequence_parallel": False},
     ),
 ]
 
@@ -56,7 +56,7 @@ NEMOTRON_3_NANO_PRETRAIN_RECIPES = [
         {
             "hidden_size": 672,
             "num_layers": 3,
-            "hybrid_override_pattern": "M*E",
+            "hybrid_layer_pattern": "M*E",
             "num_moe_experts": 16,
             "moe_token_dispatcher_type": "alltoall",
             "moe_shared_expert_overlap": True,

@@ -288,7 +288,7 @@ def build_and_load_model(
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
 
             # Generate the unpadded vocab size based on the tokenizer from the checkpoint
-            cfg = _tokenizer_config_from_args(megatron_args)
+            _cfg = _tokenizer_config_from_args(megatron_args)
             # tokenizer = build_tokenizer(cfg)
             # vocab_size = tokenizer.vocab_size
             vocab_size = 131072
@@ -390,6 +390,8 @@ def load_megatron_model(
     model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
     model_cfg.hierarchical_context_parallel_sizes = None
+    model_cfg.overlap_moe_expert_parallel_comm = False  # Required with EP=1
+    model_cfg.delay_wgrad_compute = False  # Required with overlap=False
     if use_cpu_init:
         model_cfg.fp8 = None
         model_cfg.fp8_param = False
