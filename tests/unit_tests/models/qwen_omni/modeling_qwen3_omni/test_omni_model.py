@@ -318,3 +318,24 @@ class TestQwen3OmniModel:
 
         assert position_ids.shape == (3, 1, input_ids.shape[1])
         assert mrope_position_deltas.shape == (1, 1)
+
+    def test_video_rope_index_requires_second_per_grid(self):
+        input_ids = torch.tensor([[VISION_START_TOKEN_ID, VIDEO_TOKEN_ID, VIDEO_TOKEN_ID, 17, 18]])
+        video_grid_thw = torch.tensor([[1, 1, 2]])
+        video_second_per_grid = torch.tensor([2.0])
+
+        position_ids, mrope_position_deltas = get_rope_index(
+            spatial_merge_size=1,
+            image_token_id=IMAGE_TOKEN_ID,
+            video_token_id=VIDEO_TOKEN_ID,
+            audio_token_id=AUDIO_TOKEN_ID,
+            vision_start_token_id=VISION_START_TOKEN_ID,
+            audio_start_token_id=AUDIO_START_TOKEN_ID,
+            position_id_per_seconds=25,
+            input_ids=input_ids,
+            video_grid_thw=video_grid_thw,
+            second_per_grids=video_second_per_grid,
+        )
+
+        assert position_ids.shape == (3, 1, input_ids.shape[1])
+        assert mrope_position_deltas.shape == (1, 1)

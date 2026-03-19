@@ -50,7 +50,6 @@ def get_rope_index(
     vision_start_token_id: int,
     audio_start_token_id: int,
     position_id_per_seconds: int,
-    seconds_per_chunk: int = 2,
     input_ids: torch.LongTensor | None = None,
     image_grid_thw: torch.LongTensor | None = None,
     video_grid_thw: torch.LongTensor | None = None,
@@ -64,7 +63,6 @@ def get_rope_index(
     This mirrors the HF Qwen3-Omni thinker implementation so local Megatron smoke
     tests exercise the same placeholder ordering and audio/image position handling.
     """
-    del seconds_per_chunk
 
     mrope_position_deltas = []
     if input_ids is not None and (
