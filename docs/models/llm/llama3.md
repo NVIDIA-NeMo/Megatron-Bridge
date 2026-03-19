@@ -90,11 +90,17 @@ See: [bridge.recipes.llama.llama3](../../apidocs/bridge/bridge.recipes.llama.lla
   - `llama3_70b_pretrain_config`, `llama3_70b_16k_pretrain_config`, `llama3_70b_64k_pretrain_config`: Llama 3 70B (8K/16K/64K context)
   - `llama31_8b_pretrain_config`, `llama31_70b_pretrain_config`, `llama31_405b_pretrain_config`: Llama 3.1 (8B/70B/405B, 128K context)
 
-- **Finetune recipes**:
-  - `llama32_1b_finetune_config`, `llama32_3b_finetune_config`: Llama 3.2 with PEFT support
-  - `llama3_8b_finetune_config`, `llama31_8b_finetune_config`: Llama 3/3.1 8B with PEFT support
-  - `llama3_70b_finetune_config`, `llama31_70b_finetune_config`: Llama 3/3.1 70B with PEFT support
-  - `llama31_405b_finetune_config`: Llama 3.1 405B with PEFT support
+- **SFT recipes**:
+  - `llama32_1b_sft_config`, `llama32_3b_sft_config`: Llama 3.2 full SFT
+  - `llama3_8b_sft_config`, `llama31_8b_sft_config`: Llama 3/3.1 8B full SFT
+  - `llama3_70b_sft_config`, `llama31_70b_sft_config`: Llama 3/3.1 70B full SFT
+  - `llama31_405b_sft_config`: Llama 3.1 405B full SFT
+
+- **PEFT recipes** (LoRA, DoRA):
+  - `llama32_1b_peft_config`, `llama32_3b_peft_config`: Llama 3.2 PEFT
+  - `llama3_8b_peft_config`, `llama31_8b_peft_config`: Llama 3/3.1 8B PEFT
+  - `llama3_70b_peft_config`, `llama31_70b_peft_config`: Llama 3/3.1 70B PEFT
+  - `llama31_405b_peft_config`: Llama 3.1 405B PEFT
 
 ### Parallelism Configurations
 
@@ -159,12 +165,11 @@ config = llama3_8b_pretrain_config(
 #### Full Finetuning (Llama 3 8B)
 
 ```python
-from megatron.bridge.recipes.llama import llama3_8b_finetune_config
+from megatron.bridge.recipes.llama import llama3_8b_sft_config
 
-cfg = llama3_8b_finetune_config(
+cfg = llama3_8b_sft_config(
     name="llama3_8b_full_sft",
     pretrained_checkpoint="/results/llama3_8b/checkpoints/iter_0500000",
-    peft=None,  # Full supervised finetuning
     train_iters=1000,
     global_batch_size=64,
     finetune_lr=5e-6,
@@ -172,15 +177,15 @@ cfg = llama3_8b_finetune_config(
 )
 ```
 
-#### LoRA Finetuning
+#### LoRA Finetuning (8B)
 
 ```python
-from megatron.bridge.recipes.llama import llama3_8b_finetune_config
+from megatron.bridge.recipes.llama import llama3_8b_peft_config
 
-cfg = llama3_8b_finetune_config(
+cfg = llama3_8b_peft_config(
     name="llama3_8b_lora",
     pretrained_checkpoint="/results/llama3_8b/checkpoints/iter_0500000",
-    peft="lora",  # or "dora" for DoRA
+    peft_scheme="lora",  # or "dora" for DoRA
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
@@ -188,15 +193,15 @@ cfg = llama3_8b_finetune_config(
 )
 ```
 
-#### LoRA Finetuning
+#### LoRA Finetuning (70B)
 
 ```python
-from megatron.bridge.recipes.llama import llama3_70b_finetune_config
+from megatron.bridge.recipes.llama import llama3_70b_peft_config
 
-cfg = llama3_70b_finetune_config(
+cfg = llama3_70b_peft_config(
     name="llama3_70b_lora",
     pretrained_checkpoint="/results/llama3_70b/checkpoints/iter_0500000",
-    peft="lora",
+    peft_scheme="lora",
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
