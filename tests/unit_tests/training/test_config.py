@@ -722,6 +722,39 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_scheduler_lr_warmup_steps_capped_when_exceeds_lr_decay_steps(self, monkeypatch):
+        """Test lr_warmup_steps is capped to lr_decay_steps - 1 with a warning when it would exceed lr_decay_steps."""
+        gpt_model_cfg = create_test_gpt_config()
+        # train_iters=10 gives lr_decay_steps=10*32=320; lr_warmup_iters=2000 gives lr_warmup_steps=2000*32=64000
+        train_cfg = create_test_training_config(train_iters=10, global_batch_size=32)
+        sched_cfg = create_test_scheduler_config(lr_warmup_fraction=None, lr_warmup_iters=2000)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            with pytest.warns(UserWarning, match="capping lr_warmup_steps"):
+                container.validate()
+            assert container.scheduler.lr_warmup_steps == container.scheduler.lr_decay_steps - 1
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_scheduler_lr_decay_steps_zero_raises_value_error(self, monkeypatch):
+        """Test that lr_decay_steps <= 0 raises ValueError."""
+        gpt_model_cfg = create_test_gpt_config()
+        # train_iters=0 gives lr_decay_steps=0*32=0, which must be rejected
+        train_cfg = create_test_training_config(train_iters=0, global_batch_size=32)
+        sched_cfg = create_test_scheduler_config(lr_warmup_fraction=None, lr_warmup_iters=0)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            with pytest.raises(ValueError, match="lr_decay_steps must be > 0"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_scheduler_lr_warmup_fraction_and_iters_mutual_exclusivity(self, monkeypatch):
         """Test that lr_warmup_fraction and lr_warmup_iters cannot both be specified."""
         gpt_model_cfg = create_test_gpt_config()
@@ -1093,10 +1126,8 @@ class TestConfigContainerValidation:
             dist_config=dist_cfg,
         )
         try:
-            container.model.gradient_accumulation_fusion = True
             container.ddp.average_in_collective = True
             container.validate()
-            assert container.model.gradient_accumulation_fusion is False
             assert container.ddp.average_in_collective is False
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)

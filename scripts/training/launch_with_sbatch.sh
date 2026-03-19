@@ -54,7 +54,7 @@ TRAINING_SCRIPT="run_recipe.py"
 RECIPE="llama32_1b_pretrain_config"
 # Examples:
 # RECIPE="gemma3_1b_pretrain_config"
-# RECIPE="qwen3_8b_finetune_config"
+# RECIPE="qwen3_8b_sft_config"
 # RECIPE="llama3_8b_pretrain_config"
 # RECIPE="qwen25_vl_pretrain_config"  # For VLM models
 
