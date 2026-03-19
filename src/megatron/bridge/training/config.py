@@ -1570,11 +1570,6 @@ class ConfigContainer(Container):
                 print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
                 self.ddp.average_in_collective = False
 
-            # TODO: This can be removed once NVIDIA/TransformerEngine#2371 is available to use
-            if self.model.gradient_accumulation_fusion:
-                print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
-                self.model.gradient_accumulation_fusion = False
-
             # reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP
             if self.ddp.reuse_grad_buf_for_mxfp8_param_ag:
                 print_rank_0("reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP, setting to False")
@@ -1766,6 +1761,25 @@ class ConfigContainer(Container):
                 self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
             else:
                 self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
+
+        # Enforce the Megatron Core invariant: lr_warmup_steps must be < lr_decay_steps.
+        # This can be violated when train_iters is small (e.g. smoke runs) while
+        # lr_warmup_iters is tuned for a full-length training run.
+        if self.scheduler.lr_decay_steps <= 0:
+            raise ValueError(
+                f"lr_decay_steps must be > 0, got {self.scheduler.lr_decay_steps}. "
+                "Please increase train_iters/train_samples or lr_decay_iters/lr_decay_samples."
+            )
+        if self.scheduler.lr_warmup_steps >= self.scheduler.lr_decay_steps:
+            capped = self.scheduler.lr_decay_steps - 1
+            warnings.warn(
+                f"lr_warmup_steps ({self.scheduler.lr_warmup_steps}) >= lr_decay_steps "
+                f"({self.scheduler.lr_decay_steps}); capping lr_warmup_steps to {capped}. "
+                "Reduce lr_warmup_iters (or lr_warmup_samples) for short training runs.",
+                UserWarning,
+                stacklevel=2,
+            )
+            self.scheduler.lr_warmup_steps = capped
 
     def log_non_default_values(self) -> None:
         """Log configuration values that differ from Megatron Core defaults.
