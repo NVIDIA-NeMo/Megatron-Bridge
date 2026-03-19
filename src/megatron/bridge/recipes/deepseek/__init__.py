@@ -18,6 +18,7 @@ from .deepseek_v3 import (
 
 # DeepSeek V3 perf recipes
 from .deepseek_v3_perf import (
+    # V1 — 256 GPU
     deepseek_v3_pretrain_256gpu_b200_bf16_config,
     deepseek_v3_pretrain_256gpu_b200_fp8cs_config,
     deepseek_v3_pretrain_256gpu_b200_fp8mx_config,
@@ -27,13 +28,13 @@ from .deepseek_v3_perf import (
     deepseek_v3_pretrain_256gpu_gb200_bf16_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8cs_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_config,
-    # V1 — 256 GPU
     deepseek_v3_pretrain_256gpu_gb300_bf16_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8cs_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
     deepseek_v3_pretrain_1024gpu_h100_bf16_config,
     deepseek_v3_pretrain_1024gpu_h100_fp8cs_config,
+    # V2 — 256 GPU
     deepseek_v3_pretrain_v2_256gpu_b200_bf16_config,
     deepseek_v3_pretrain_v2_256gpu_b200_fp8cs_config,
     deepseek_v3_pretrain_v2_256gpu_b200_fp8mx_config,
@@ -43,7 +44,6 @@ from .deepseek_v3_perf import (
     deepseek_v3_pretrain_v2_256gpu_gb200_bf16_config,
     deepseek_v3_pretrain_v2_256gpu_gb200_fp8cs_config,
     deepseek_v3_pretrain_v2_256gpu_gb200_fp8mx_config,
-    # V2 — 256 GPU
     deepseek_v3_pretrain_v2_256gpu_gb300_bf16_config,
     deepseek_v3_pretrain_v2_256gpu_gb300_fp8cs_config,
     deepseek_v3_pretrain_v2_256gpu_gb300_fp8mx_config,
