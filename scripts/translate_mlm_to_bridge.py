@@ -1115,8 +1115,7 @@ BRIDGE_TO_MLM_EXTRA: dict[str, str] = {
     "training.sequence_parallel": "sequence-parallel",
     "training.recompute_modules": "recompute-modules",
     "training.recompute_granularity": "recompute-granularity",
-    "training.cuda_graph_scope": "cuda-graph-scope",
-    "training.cuda_graph_warmup_steps": "cuda-graph-warmup-steps",
+    "model.cuda_graph_warmup_steps": "cuda-graph-warmup-steps",
     "logging.tensorboard_dir": "tensorboard-dir",
     "checkpoint.save_dir": "save",
     "checkpoint.save_interval": "save-interval",
@@ -1412,16 +1411,51 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
         else:
             result.add_arg("split", str(split))
 
-    # --- Special: training.cuda_graph_scope → --cuda-graph-scope + --cuda-graph-impl
-    # MLM's --cuda-graph-impl defaults to "none", which disables CUDA graphs even when
-    # --cuda-graph-scope is provided.  Emit --cuda-graph-impl transformer_engine whenever
-    # the scope is non-empty so graphs are actually activated.
-    cuda_scope = overrides.get("training.cuda_graph_scope")
-    if cuda_scope is not None and cuda_scope not in ([], "", None):
-        consumed.add("training.cuda_graph_scope")
-        scope_str = " ".join(cuda_scope) if isinstance(cuda_scope, (list, tuple)) else str(cuda_scope)
+    # --- Special: model.cuda_graph_impl / model.cuda_graph_scope ----------
+    # MLM's --cuda-graph-impl defaults to "none", which disables CUDA graphs
+    # even when --cuda-graph-scope is provided.  Emit --cuda-graph-impl
+    # whenever it is explicitly set, and co-emit --cuda-graph-scope.
+    #
+    # The scope may arrive as:
+    #   a) a plain string/list  (from simple CLI override)
+    #   b) a list of flattened CudaGraphScope enum dicts from a YAML export
+    #      (e.g., model.cuda_graph_scope.0._name_ = "moe_router", …)
+    #      In that case extract the _name_ values and consume all sub-keys.
+    cuda_impl = overrides.get("model.cuda_graph_impl")
+    # Collect _name_ values from flattened CudaGraphScope enum entries.
+    scope_name_keys = sorted(k for k in overrides if k.startswith("model.cuda_graph_scope.") and k.endswith("._name_"))
+    cuda_scope = overrides.get("model.cuda_graph_scope")
+    if scope_name_keys:
+        # Consume all model.cuda_graph_scope.* sub-keys so nothing leaks.
+        for k in list(overrides):
+            if k.startswith("model.cuda_graph_scope."):
+                consumed.add(k)
+        scope_names = [overrides[k] for k in scope_name_keys]
+        result.add_arg("cuda-graph-scope", " ".join(scope_names))
+        impl = cuda_impl or "transformer_engine"
+        result.add_arg("cuda-graph-impl", impl)
+        if cuda_impl is not None:
+            consumed.add("model.cuda_graph_impl")
+    elif cuda_scope is not None and cuda_scope not in ([], "", None):
+        consumed.add("model.cuda_graph_scope")
+        # cuda_graph_scope may be a list of CudaGraphScope dicts (from YAML export)
+        # or a plain string/list of strings (from a simple CLI override).
+        if isinstance(cuda_scope, (list, tuple)) and cuda_scope and isinstance(cuda_scope[0], dict):
+            # Extract _name_ from each enum-dict entry (Hydra serialised CudaGraphScope)
+            names = [item["_name_"] for item in cuda_scope if "_name_" in item]
+            scope_str = " ".join(names)
+        elif isinstance(cuda_scope, (list, tuple)):
+            scope_str = " ".join(str(s) for s in cuda_scope)
+        else:
+            scope_str = str(cuda_scope)
         result.add_arg("cuda-graph-scope", scope_str)
-        result.add_arg("cuda-graph-impl", "transformer_engine")
+        impl = cuda_impl or "transformer_engine"
+        result.add_arg("cuda-graph-impl", impl)
+        if cuda_impl is not None:
+            consumed.add("model.cuda_graph_impl")
+    elif cuda_impl is not None:
+        consumed.add("model.cuda_graph_impl")
+        result.add_arg("cuda-graph-impl", cuda_impl)
 
     # --- Special: model.seq_length / dataset.sequence_length → --seq-length
     seq_len = overrides.get("model.seq_length", overrides.get("dataset.sequence_length"))
