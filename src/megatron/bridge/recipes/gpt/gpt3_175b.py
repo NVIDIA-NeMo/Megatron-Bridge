@@ -30,7 +30,6 @@ def gpt3_175b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config - uses GPTProvider175B
     cfg.model = GPTProvider175B(
         tensor_model_parallel_size=4,
         pipeline_model_parallel_size=8,
