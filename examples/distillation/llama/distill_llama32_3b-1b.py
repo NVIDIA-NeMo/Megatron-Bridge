@@ -63,6 +63,7 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.distillation_provider import convert_to_distillation_provider
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config, llama32_3b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
@@ -145,9 +146,15 @@ def main() -> None:
     logger.info("Megatron-Bridge Llama3.2 3B-1B Distillation Script with YAML & CLI Overrides")
     logger.info("------------------------------------------------------------------")
 
-    # Load base configurations as recipes and wrap provider for distillation mode
-    cfg: ConfigContainer = llama32_1b_pretrain_config(load_weights=True)
-    teacher_cfg = llama32_3b_pretrain_config(load_weights=True)
+    # Load base configurations as recipes and wrap provider for distillation mode.
+    # The recipe functions do not accept a load_weights argument; use AutoBridge
+    # directly to create providers that load HuggingFace weights.
+    cfg: ConfigContainer = llama32_1b_pretrain_config()
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=True)
+    teacher_cfg = llama32_3b_pretrain_config()
+    teacher_cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-3B").to_megatron_provider(
+        load_weights=True
+    )
     kd_config = ModelOptDistillConfig()
     cfg.model = convert_to_distillation_provider(cfg.model, teacher_cfg.model, kd_config)
     logger.info("Loaded base student and teacher configurations")
