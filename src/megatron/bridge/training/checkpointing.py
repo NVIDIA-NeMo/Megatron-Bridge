@@ -1483,7 +1483,6 @@ def _process_state_dict_for_glu_interleaving(
             and "experts" in key
             and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
         )
-        print (f"key: {key}, is_swiglu_fc1: {is_swiglu_fc1}")
         if is_swiglu_fc1:
             if "linear_fc1.weight" in key:
                 if interleave:
