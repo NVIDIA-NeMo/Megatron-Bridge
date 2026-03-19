@@ -793,6 +793,7 @@ jobs:
       needs.Nemo_CICD_Test.result == 'success'
       && needs.pre-flight.outputs.docs_only == 'false'
       && needs.pre-flight.outputs.is_deployment_workflow == 'false'
+      && github.event.inputs.mcore_ref == ''
       && !cancelled()
     strategy:
       matrix:
