@@ -449,6 +449,7 @@ jobs:
           - script: L0_Launch_converter
           - script: L0_Launch_data
           - script: L0_Launch_models_deepseek
+          - script: L0_Launch_models_minimax_m2
           - script: L0_Launch_models_qwen3
           - script: L0_Launch_recipes_llama_1b
           - script: L0_Launch_utils
