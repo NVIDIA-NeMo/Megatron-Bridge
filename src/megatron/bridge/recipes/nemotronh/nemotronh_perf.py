@@ -32,7 +32,6 @@ from megatron.bridge.recipes.common import _benchmark_common
 from megatron.bridge.recipes.llama.llama3_perf import _perf_precision
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -186,7 +185,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -212,7 +211,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -238,7 +237,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -269,7 +268,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -295,7 +294,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -321,7 +320,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -352,7 +351,7 @@ def nemotron_3_nano_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -378,7 +377,7 @@ def nemotron_3_nano_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -404,7 +403,7 @@ def nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -435,7 +434,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -461,7 +460,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -487,7 +486,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -520,7 +519,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["moe", "layernorm"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
@@ -548,7 +547,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "moe_act"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
     return cfg
