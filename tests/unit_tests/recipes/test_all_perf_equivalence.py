@@ -208,7 +208,7 @@ def _assert_configs_equal(old, new):
             nv = getattr(new.comm_overlap, f, "MISSING")
             if ov != nv:
                 diffs.append(f"comm_overlap.{f}: old={ov!r}  new={nv!r}")
-        if old.comm_overlap.tp_comm_overlap_cfg is not new.comm_overlap.tp_comm_overlap_cfg:
+        if old.comm_overlap.tp_comm_overlap_cfg != new.comm_overlap.tp_comm_overlap_cfg:
             diffs.append("comm_overlap.tp_comm_overlap_cfg: objects differ")
     elif (old.comm_overlap is None) != (new.comm_overlap is None):
         diffs.append(f"comm_overlap: old={old.comm_overlap!r}  new={new.comm_overlap!r}")
