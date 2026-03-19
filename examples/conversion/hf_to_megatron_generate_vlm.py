@@ -37,9 +37,8 @@ import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from PIL import Image
-from transformers import AutoProcessor, AutoTokenizer
 from qwen_vl_utils import process_vision_info
-
+from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo

@@ -66,8 +66,8 @@ from megatron.bridge.models.kimi import (
 )
 from megatron.bridge.models.kimi_vl import (
     KimiK25VLBridge,
-    KimiK25VLModelProvider,
     KimiK25VLModel,
+    KimiK25VLModelProvider,
 )
 from megatron.bridge.models.llama import (
     LlamaBridge,

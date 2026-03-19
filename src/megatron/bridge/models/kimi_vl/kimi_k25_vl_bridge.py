@@ -24,13 +24,13 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
+from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
+from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 from megatron.bridge.models.kimi_vl.utils import (
     dequantize_int4,
     quantize_to_int4,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
-from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 
 
 @MegatronModelBridge.register_bridge(

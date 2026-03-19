@@ -14,9 +14,9 @@
 
 
 import torch
-import math
-from typing import Mapping
+
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
 
 try:
     import apex  # noqa: F401
@@ -206,13 +206,3 @@ def quantize_to_int4(
     weight_scale = scale.to(torch.float16).cpu()
 
     return weight_packed, weight_scale, weight_shape
-
-
-def is_quantized_expert_key(key: str) -> bool:
-    if "mlp.experts." in key and ".weight" in key:
-        if "shared_experts" in key:
-            return False
-        if ".layers.0." in key:
-            return False
-        return True
-    return False

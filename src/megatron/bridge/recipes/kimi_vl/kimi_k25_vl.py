@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import torch
-# Converted to Kimi-K2.5-VL recipe file for Kimi-K2.5-VL, compatible with the Kimi-K2.5-VL provider/model API.
 
+# Converted to Kimi-K2.5-VL recipe file for Kimi-K2.5-VL, compatible with the Kimi-K2.5-VL provider/model API.
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import (

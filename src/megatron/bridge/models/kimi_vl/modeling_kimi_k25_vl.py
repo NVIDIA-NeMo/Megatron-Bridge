@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import types
-from typing import Optional, List
 import logging
+from typing import List, Optional
 
 import torch
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
-from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+
 
 logger = logging.getLogger(__name__)
 

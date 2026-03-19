@@ -16,9 +16,8 @@
 Collation utilities for building VLM training batches from conversation examples.
 """
 
-from typing import Any
-
 import warnings
+from typing import Any
 
 import torch
 import torch.nn.functional as F

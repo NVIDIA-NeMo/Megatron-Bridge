@@ -87,7 +87,7 @@ class TestMergePreExpanded:
         """Image features should replace placeholder embeddings exactly."""
         batch_size, num_features = 1, 4
         input_ids = torch.tensor([[100, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 200]])
-        inputs_embeds = torch.zeros(1, 6, HIDDEN_DIM)
+        inputs_embeds = torch.zeros(batch_size, 6, HIDDEN_DIM)
 
         feat = torch.ones(num_features, HIDDEN_DIM) * 42.0
         embedding, _, _, _ = helper.merge([feat], inputs_embeds, input_ids)

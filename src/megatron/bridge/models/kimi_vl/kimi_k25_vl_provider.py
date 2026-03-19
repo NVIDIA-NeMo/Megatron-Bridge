@@ -11,17 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import torch
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Optional
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Union
 
+import torch
+import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from megatron.bridge.models.mla_provider import MLAModelProvider
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-import torch.nn.functional as F
+from megatron.bridge.models.mla_provider import MLAModelProvider
+
 
 try:
     import transformer_engine  # type: ignore  # noqa: F401
