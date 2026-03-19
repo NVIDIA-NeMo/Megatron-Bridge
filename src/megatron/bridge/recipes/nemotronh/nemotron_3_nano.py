@@ -161,7 +161,7 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
     cfg.scheduler.lr_decay_style = "WSD"
     cfg.scheduler.lr_wsd_decay_style = "minus_sqrt"
     cfg.scheduler.min_lr = 1e-5
-    cfg.scheduler.warmup_iters = 333  # Linear warmup over 333x3072x8192 = 8.38B tokens
+    cfg.scheduler.lr_warmup_iters = 333  # Linear warmup over 333x3072x8192 = 8.38B tokens
     cfg.scheduler.lr_wsd_decay_iters = 7947  # WSD decay over 7947 / 39735 = 20% of training
     
     # Communication Overlap
