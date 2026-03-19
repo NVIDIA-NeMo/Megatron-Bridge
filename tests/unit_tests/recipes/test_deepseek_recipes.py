@@ -79,10 +79,14 @@ def _assert_basic_config(cfg):
 
 @pytest.mark.parametrize("recipe_func", _DEEPSEEK_RECIPE_FUNCS)
 def test_each_deepseek_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    # Monkeypatch AutoBridge in the specific module where the recipe function is defined
+    # Always patch AutoBridge in the base deepseek_v3 module (where base configs call it)
+    deepseek_v3_mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v3")
+    monkeypatch.setattr(deepseek_v3_mod, "AutoBridge", _FakeBridge)
+    # Also patch in the recipe's own module if it directly imports AutoBridge
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    if hasattr(mod, "AutoBridge"):
+        monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
     # DeepSeek recipes are all pretrain configs - call without parameters
     cfg = recipe_func()
