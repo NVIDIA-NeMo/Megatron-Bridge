@@ -298,6 +298,7 @@ jobs:
     needs: [pre-flight]
     outputs:
       needs_more_tests: ${{ steps.check.outputs.needs_more_tests }}
+      full_test_suite: ${{ steps.check.outputs.full_test_suite }}
     steps:
       - name: Check PR labels
         id: check
@@ -312,8 +313,14 @@ jobs:
             else
               echo "needs_more_tests=false" >> $GITHUB_OUTPUT
             fi
+            if echo "$LABELS" | grep -q "full-test-suite"; then
+              echo "full_test_suite=true" >> $GITHUB_OUTPUT
+            else
+              echo "full_test_suite=false" >> $GITHUB_OUTPUT
+            fi
           else
             echo "needs_more_tests=false" >> $GITHUB_OUTPUT
+            echo "full_test_suite=false" >> $GITHUB_OUTPUT
           fi
 
   cicd-unit-tests-core:
@@ -551,7 +558,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true')
+      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true' || needs.check-labels.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
     name: ${{ matrix.script }}
     environment: nemo-ci
@@ -631,7 +638,7 @@ jobs:
           - script: L2_Launch_recipes_qwen_vl
           - script: L2_Launch_models_flux
           - script: L2_Launch_models_wan
-    needs: [pre-flight, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    needs: [pre-flight, cicd-unit-tests-core, cicd-unit-tests-diffusion, check-labels]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
       (
@@ -640,7 +647,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
     name: ${{ matrix.script }}
     environment: nemo-ci
