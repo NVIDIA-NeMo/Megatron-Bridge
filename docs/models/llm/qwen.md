@@ -100,7 +100,7 @@ python examples/conversion/hf_to_megatron_generate_text.py \
 
 #### Available Recipes
 - `qwen3_next_80b_a3b_pretrain_config`: Pre-training for Qwen3-Next-80B-A3B
-- `qwen3_next_80b_a3b_finetune_config`: Finetuning for Qwen3-Next-80B-A3B (Full SFT only)
+- `qwen3_next_80b_a3b_sft_config`: Finetuning for Qwen3-Next-80B-A3B (Full SFT only)
 
 #### Parallelism Configuration
 
@@ -128,12 +128,11 @@ config = qwen3_next_80b_a3b_pretrain_config(
 #### Finetuning Example
 
 ```python
-from megatron.bridge.recipes.qwen import qwen3_next_80b_a3b_finetune_config
+from megatron.bridge.recipes.qwen import qwen3_next_80b_a3b_sft_config
 
-config = qwen3_next_80b_a3b_finetune_config(
+config = qwen3_next_80b_a3b_sft_config(
     name="qwen3_next_80b_full_sft",
     pretrained_checkpoint="/results/qwen3_next_80b/checkpoints/iter_0500000",
-    peft=None,  # Full supervised finetuning
     train_iters=1000,
     global_batch_size=64,
     finetune_lr=5e-6,
@@ -210,8 +209,10 @@ python examples/conversion/hf_to_megatron_generate_text.py \
 #### Available Recipes
 - `qwen3_30b_a3b_pretrain_config`: Pre-training for Qwen3-30B-A3B (30B parameters, 3B activated)
 - `qwen3_235b_a22b_pretrain_config`: Pre-training for Qwen3-235B-A22B (235B parameters, 22B activated)
-- `qwen3_30b_a3b_finetune_config`: Finetuning for Qwen3-30B-A3B with PEFT support
-- `qwen3_235b_a22b_finetune_config`: Finetuning for Qwen3-235B-A22B with PEFT support
+- `qwen3_30b_a3b_sft_config`: Full SFT for Qwen3-30B-A3B
+- `qwen3_30b_a3b_peft_config`: PEFT for Qwen3-30B-A3B (LoRA, DoRA)
+- `qwen3_235b_a22b_sft_config`: Full SFT for Qwen3-235B-A22B
+- `qwen3_235b_a22b_peft_config`: PEFT for Qwen3-235B-A22B (LoRA, DoRA)
 
 #### Parallelism Configuration
 
@@ -263,12 +264,11 @@ config = qwen3_235b_a22b_pretrain_config(
 **Full Finetuning (30B):**
 
 ```python
-from megatron.bridge.recipes.qwen import qwen3_30b_a3b_finetune_config
+from megatron.bridge.recipes.qwen import qwen3_30b_a3b_sft_config
 
-config = qwen3_30b_a3b_finetune_config(
+config = qwen3_30b_a3b_sft_config(
     name="qwen3_30b_a3b_full_sft",
     pretrained_checkpoint="/results/qwen3_30b_a3b/checkpoints/iter_0500000",
-    peft=None,
     train_iters=1000,
     global_batch_size=64,
     finetune_lr=5e-6,
@@ -279,12 +279,12 @@ config = qwen3_30b_a3b_finetune_config(
 **LoRA Finetuning (30B):**
 
 ```python
-from megatron.bridge.recipes.qwen import qwen3_30b_a3b_finetune_config
+from megatron.bridge.recipes.qwen import qwen3_30b_a3b_peft_config
 
-config = qwen3_30b_a3b_finetune_config(
+config = qwen3_30b_a3b_peft_config(
     name="qwen3_30b_a3b_lora",
     pretrained_checkpoint="/results/qwen3_30b_a3b/checkpoints/iter_0500000",
-    peft="lora",  # or "dora"
+    peft_scheme="lora",  # or "dora"
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
@@ -357,7 +357,8 @@ python examples/conversion/hf_to_megatron_generate_text.py \
 
 #### Available Recipes
 - **Pretrain recipes**: `qwen3_600m_pretrain_config`, `qwen3_1p7b_pretrain_config`, `qwen3_4b_pretrain_config`, `qwen3_8b_pretrain_config`, `qwen3_14b_pretrain_config`, `qwen3_32b_pretrain_config`
-- **Finetune recipes**: `qwen3_600m_finetune_config`, `qwen3_1p7b_finetune_config`, `qwen3_4b_finetune_config`, `qwen3_8b_finetune_config`, `qwen3_14b_finetune_config`, `qwen3_32b_finetune_config` (all with PEFT support)
+- **SFT recipes**: `qwen3_600m_sft_config`, `qwen3_1p7b_sft_config`, `qwen3_4b_sft_config`, `qwen3_8b_sft_config`, `qwen3_14b_sft_config`, `qwen3_32b_sft_config`
+- **PEFT recipes** (LoRA, DoRA): `qwen3_600m_peft_config`, `qwen3_1p7b_peft_config`, `qwen3_4b_peft_config`, `qwen3_8b_peft_config`, `qwen3_14b_peft_config`, `qwen3_32b_peft_config`
 
 #### Parallelism Configuration
 
@@ -394,12 +395,11 @@ config = qwen3_8b_pretrain_config(
 **Full Finetuning (8B):**
 
 ```python
-from megatron.bridge.recipes.qwen import qwen3_8b_finetune_config
+from megatron.bridge.recipes.qwen import qwen3_8b_sft_config
 
-config = qwen3_8b_finetune_config(
+config = qwen3_8b_sft_config(
     name="qwen3_8b_full_sft",
     pretrained_checkpoint="/results/qwen3_8b/checkpoints/iter_0500000",
-    peft=None,
     train_iters=1000,
     global_batch_size=64,
     finetune_lr=5e-6,
@@ -410,12 +410,12 @@ config = qwen3_8b_finetune_config(
 **LoRA Finetuning (8B):**
 
 ```python
-from megatron.bridge.recipes.qwen import qwen3_8b_finetune_config
+from megatron.bridge.recipes.qwen import qwen3_8b_peft_config
 
-config = qwen3_8b_finetune_config(
+config = qwen3_8b_peft_config(
     name="qwen3_8b_lora",
     pretrained_checkpoint="/results/qwen3_8b/checkpoints/iter_0500000",
-    peft="lora",  # or "dora"
+    peft_scheme="lora",  # or "dora"
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
@@ -488,8 +488,10 @@ python examples/conversion/hf_to_megatron_generate_text.py \
 #### Available Recipes
 - **Qwen2 Pretrain**: `qwen2_500m_pretrain_config`, `qwen2_1p5b_pretrain_config`, `qwen2_7b_pretrain_config`, `qwen2_72b_pretrain_config`
 - **Qwen2.5 Pretrain**: `qwen25_500m_pretrain_config`, `qwen25_1p5b_pretrain_config`, `qwen25_7b_pretrain_config`, `qwen25_14b_pretrain_config`, `qwen25_32b_pretrain_config`, `qwen25_72b_pretrain_config`
-- **Qwen2 Finetune**: `qwen2_500m_finetune_config`, `qwen2_1p5b_finetune_config`, `qwen2_7b_finetune_config`, `qwen2_72b_finetune_config` (all with PEFT support)
-- **Qwen2.5 Finetune**: `qwen25_500m_finetune_config`, `qwen25_1p5b_finetune_config`, `qwen25_7b_finetune_config`, `qwen25_14b_finetune_config`, `qwen25_32b_finetune_config`, `qwen25_72b_finetune_config` (all with PEFT support)
+- **Qwen2 SFT**: `qwen2_500m_sft_config`, `qwen2_1p5b_sft_config`, `qwen2_7b_sft_config`, `qwen2_72b_sft_config`
+- **Qwen2 PEFT** (LoRA, DoRA): `qwen2_500m_peft_config`, `qwen2_1p5b_peft_config`, `qwen2_7b_peft_config`, `qwen2_72b_peft_config`
+- **Qwen2.5 SFT**: `qwen25_500m_sft_config`, `qwen25_1p5b_sft_config`, `qwen25_7b_sft_config`, `qwen25_14b_sft_config`, `qwen25_32b_sft_config`, `qwen25_72b_sft_config`
+- **Qwen2.5 PEFT** (LoRA, DoRA): `qwen25_500m_peft_config`, `qwen25_1p5b_peft_config`, `qwen25_7b_peft_config`, `qwen25_14b_peft_config`, `qwen25_32b_peft_config`, `qwen25_72b_peft_config`
 
 #### Parallelism Configuration
 
@@ -529,12 +531,11 @@ config = qwen25_7b_pretrain_config(
 **Full Finetuning (7B):**
 
 ```python
-from megatron.bridge.recipes.qwen import qwen25_7b_finetune_config
+from megatron.bridge.recipes.qwen import qwen25_7b_sft_config
 
-config = qwen25_7b_finetune_config(
+config = qwen25_7b_sft_config(
     name="qwen25_7b_full_sft",
     pretrained_checkpoint="/results/qwen25_7b/checkpoints/iter_0500000",
-    peft=None,
     train_iters=1000,
     global_batch_size=64,
     finetune_lr=5e-6,
@@ -545,12 +546,12 @@ config = qwen25_7b_finetune_config(
 **LoRA Finetuning (7B):**
 
 ```python
-from megatron.bridge.recipes.qwen import qwen25_7b_finetune_config
+from megatron.bridge.recipes.qwen import qwen25_7b_peft_config
 
-config = qwen25_7b_finetune_config(
+config = qwen25_7b_peft_config(
     name="qwen25_7b_lora",
     pretrained_checkpoint="/results/qwen25_7b/checkpoints/iter_0500000",
-    peft="lora",  # or "dora"
+    peft_scheme="lora",  # or "dora"
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
