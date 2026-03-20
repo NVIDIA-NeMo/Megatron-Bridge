@@ -537,6 +537,45 @@ def _create_pg_collection(
     return pg_collection
 
 
+def _setup_flight_recorder_env(dist_config: DistributedInitConfig) -> None:
+    """Set flight recorder env vars based on config or pre-existing environment.
+
+    Priority: pre-existing env var > config value. If no dump path is provided
+    (either via config or env), no env vars are set.
+    """
+    _fr_path = (
+        os.environ.get("TORCH_FR_DUMP_TEMP_FILE")
+        or os.environ.get("TORCH_NCCL_DEBUG_INFO_TEMP_FILE")
+        or dist_config.flight_recorder_dump_path
+    )
+    if _fr_path is None:
+        return
+
+    _fr_env_defaults = {
+        "TORCH_FR_DUMP_TEMP_FILE": _fr_path,
+        "TORCH_NCCL_DEBUG_INFO_TEMP_FILE": _fr_path,
+        "TORCH_NCCL_TRACE_BUFFER_SIZE": str(dist_config.flight_recorder_trace_buffer_size),
+        "TORCH_NCCL_DUMP_ON_TIMEOUT": str(int(dist_config.flight_recorder_dump_on_timeout)),
+        "TORCH_INCLUDE_STACK_TRACE": str(int(dist_config.flight_recorder_include_stack_trace)),
+        "TORCH_INCLUDE_ONLY_ACTIVE": str(int(dist_config.flight_recorder_include_only_active)),
+        "TORCH_NCCL_EXTRA_DUMP_ON_EXEC": str(int(dist_config.flight_recorder_extra_dump_on_exec)),
+    }
+    for _var, _default in _fr_env_defaults.items():
+        if _var in os.environ:
+            warnings.warn(
+                f"Flight recorder: env var {_var} is already set to "
+                f"'{os.environ[_var]}'; ignoring config value '{_default}'.",
+                stacklevel=2,
+            )
+        else:
+            os.environ[_var] = _default
+    if get_rank_safe() == 0:
+        print(
+            "Flight recorder env vars:\n" + "\n".join(f"  {k}={os.environ[k]}" for k in _fr_env_defaults),
+            flush=True,
+        )
+
+
 def _initialize_distributed(
     model_config: TransformerConfig,
     dist_config: DistributedInitConfig,
@@ -577,6 +616,8 @@ def _initialize_distributed(
             os.environ["MASTER_ADDR"] = get_master_addr_safe()
         if "MASTER_PORT" not in os.environ:
             os.environ["MASTER_PORT"] = str(get_master_port_safe())
+
+        _setup_flight_recorder_env(dist_config)
 
         # Call the init process
         init_process_group_kwargs = {
