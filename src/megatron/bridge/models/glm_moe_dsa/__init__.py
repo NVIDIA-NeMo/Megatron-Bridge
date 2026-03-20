@@ -13,10 +13,8 @@
 # limitations under the License.
 
 from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
-from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider
 
 
 __all__ = [
     "GLM5Bridge",
-    "GLM5ModelProvider",
 ]
