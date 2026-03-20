@@ -1049,7 +1049,13 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
-            converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
+            megatron_weights = task.param_weight
+            megatron_module = task.megatron_module
+            if self._should_skip_mtp_duplicate_embedding_export(task, megatron_model):
+                megatron_weights = None
+                megatron_module = None
+
+            converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, megatron_module)
 
             # --- Grouped export path: accumulate per-expert weights, yield when complete ---
             if getattr(task.mapping, "is_grouped_export", False):
@@ -1262,6 +1268,29 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 torch.distributed.broadcast(embd_weights, src=embd_group_ranks[0], group=embd_group)
                 if hasattr(unwrapped_model, "output_layer"):
                     unwrapped_model.output_layer.weight.data.copy_(embd_weights)
+
+    def _should_skip_mtp_duplicate_embedding_export(
+        self,
+        task: WeightConversionTask,
+        megatron_model: List[MegatronModel],
+    ) -> bool:
+        """Treat duplicate MTP embedding copies as PP receivers during export."""
+        if task.vp_stage is None or not 0 <= task.vp_stage < len(megatron_model):
+            return False
+
+        if not task.global_param_name.endswith("embedding.word_embeddings.weight"):
+            return False
+
+        model_chunk = unwrap_model(megatron_model[task.vp_stage])
+        model_config = getattr(model_chunk, "config", None)
+        if getattr(model_config, "pipeline_model_parallel_size", 1) <= 1:
+            return False
+
+        if getattr(model_chunk, "pre_process", False):
+            return False
+
+        inner_model = getattr(model_chunk, "language_model", model_chunk)
+        return bool(getattr(inner_model, "mtp_process", False))
 
     def build_conversion_tasks(
         self,
