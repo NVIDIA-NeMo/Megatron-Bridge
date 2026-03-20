@@ -41,6 +41,7 @@ training/optimizer-scheduler.md
 training/logging.md
 training/profiling.md
 training/checkpointing.md
+training/megatron-fsdp.md
 training/resiliency.md
 training/mixed-precision.md
 training/communication-overlap.md

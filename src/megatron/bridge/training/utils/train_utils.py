@@ -763,7 +763,7 @@ def training_log(
         for key in total_loss_dict:
             if key not in [advanced_iters_key, skipped_iters_key, nan_iters_key]:
                 avg = total_loss_dict[key].item() / float(max(1, total_loss_dict[advanced_iters_key]))
-                if avg > 0.0:
+                if avg >= 0.0:
                     log_string += " {}: {:.6E} |".format(key, avg)
                 total_loss_dict[key] = torch.tensor([0.0], dtype=torch.float, device="cuda")
         log_string += f" loss scale: {loss_scale:.1f} |"
