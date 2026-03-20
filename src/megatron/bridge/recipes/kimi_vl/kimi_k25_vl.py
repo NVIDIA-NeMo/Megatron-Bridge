@@ -51,7 +51,7 @@ def _get_kimi_k25_vl_pipeline_layout(pp_size: int, vp_size: int):
     return layout
 
 
-def kimi_k25_vl_sft_config(hf_path: str = "moonshotai/Kimi-K2.5", optimizer_type: str = "adam") -> ConfigContainer:
+def kimi_k25_vl_sft_config(hf_path: str = "moonshotai/Kimi-K2.5", optimizer_type: str = "muon") -> ConfigContainer:
     """Return a pre-training config for Kimi-K2.5-VL (1T).
 
     Recommended parallelism: TP=2, PP=16, EP=32
