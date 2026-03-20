@@ -94,7 +94,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1 = replace(
     pipeline_model_parallel_size=16,
     expert_model_parallel_size=8,
     global_batch_size=2048,
-    recompute_modules=["moe_act"],
+    recompute_modules=["mla_up_proj"],
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
 )
@@ -173,7 +173,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2,
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=None,
-    recompute_modules=["moe_act"],
+    recompute_modules=["mla_up_proj"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS_V2
