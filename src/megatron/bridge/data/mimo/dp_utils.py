@@ -12,8 +12,6 @@ import torch.distributed as dist
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
-    from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
-
 
 @dataclass(frozen=True)
 class MimoDpInfo:

@@ -47,16 +47,22 @@ def test_build_mimo_data_loaders_raises_when_model_not_mimo(monkeypatch):
     provider = FakeProvider()
 
     with pytest.raises(ValueError, match="cfg.model must be MimoModelProvider"):
-        build_mimo_data_loaders(cfg, train_state=None, mimo_provider=provider, train_samples=4, valid_samples=2, test_samples=2)
+        build_mimo_data_loaders(
+            cfg, train_state=None, mimo_provider=provider, train_samples=4, valid_samples=2, test_samples=2
+        )
 
 
 def test_build_mimo_data_loaders_raises_when_parallelism_missing(monkeypatch):
     _patch_mimo_provider_class(monkeypatch)
-    cfg = SimpleNamespace(model=FakeMimoModelProvider(mimo_parallelism_config=None), train=SimpleNamespace(micro_batch_size=2))
+    cfg = SimpleNamespace(
+        model=FakeMimoModelProvider(mimo_parallelism_config=None), train=SimpleNamespace(micro_batch_size=2)
+    )
     provider = FakeProvider()
 
     with pytest.raises(ValueError, match="mimo_parallelism_config must be set"):
-        build_mimo_data_loaders(cfg, train_state=None, mimo_provider=provider, train_samples=4, valid_samples=2, test_samples=2)
+        build_mimo_data_loaders(
+            cfg, train_state=None, mimo_provider=provider, train_samples=4, valid_samples=2, test_samples=2
+        )
 
 
 def test_build_mimo_data_loaders_happy_path(monkeypatch):
