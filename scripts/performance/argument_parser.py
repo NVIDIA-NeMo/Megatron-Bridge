@@ -15,6 +15,7 @@
 import argparse
 import logging
 import os
+import re
 from pathlib import Path
 
 from nemo_run.config import get_nemorun_home
@@ -57,6 +58,20 @@ def list_of_ints(arg):
 def to_dict(arg):
     """Split a comma-separated string into a dictionary of key-value pairs."""
     return dict(item.split("=") for item in arg.split(","))
+
+
+def parse_kv(s: str):
+    """Parse a key-value pair from a string."""
+    KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")  # Useful check for errors like hyphen in var names
+    if "=" not in s:
+        raise argparse.ArgumentTypeError(f"Expected KEY=VALUE, got {s!r}")
+
+    key, value = s.split("=", 1)
+
+    if not KEY_RE.match(key):
+        raise argparse.ArgumentTypeError(f"Invalid env var name: {key!r}")
+
+    return key, value
 
 
 def lower_str(arg):
@@ -421,6 +436,15 @@ def parse_cli_args():
         type=to_dict,
         help="Comma separated string of environment variables",
         default={},
+    )
+    slurm_args.add_argument(
+        "-E",
+        "--env",
+        action="append",
+        type=parse_kv,
+        metavar="KEY=VALUE",
+        help="Set environment variable (repeatable arg). This is an alternative to --custom_env_vars \
+        (--custom_env_vars is preferred for most cases). Example: -E var1=value1,value2 -E var2=value3",
     )
     slurm_args.add_argument(
         "-cs",
