@@ -29,8 +29,7 @@ NEMOTRON_VL_FINETUNE_RECIPES = [
         nemotron_nano_v2_vl_12b_sft_config,
         "nemotron_vl_nano_v2_sft",
         {
-            "num_layers": 3,
-            "hybrid_override_pattern": "M*-",
+            "hybrid_layer_pattern": "M*-",
             "tensor_model_parallel_size": 1,
             "pipeline_model_parallel_size": 1,
         },

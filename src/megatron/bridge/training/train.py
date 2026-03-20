@@ -588,6 +588,27 @@ def train(
         if should_exit:
             break
 
+    # Save final checkpoint when training completes normally and the last
+    # step wasn't already persisted by the interval-based save inside
+    # checkpoint_and_decide_exit.
+    if not should_exit:
+        ckpt_config = config.checkpoint
+        if (
+            ckpt_config.save
+            and global_state.train_state.step != 0
+            and ckpt_config.save_interval != 0
+            and (ckpt_config.save_interval is None or global_state.train_state.step % ckpt_config.save_interval != 0)
+        ):
+            save_checkpoint_and_time(
+                global_state,
+                model,
+                optimizer,
+                scheduler,
+                num_floating_point_operations_so_far,
+                checkpointing_context,
+                train_data_iterator=train_data_iterator,
+            )
+
     _delete_cuda_graphs(cuda_graph_helper)
 
     # Flush TensorBoard, WandB writers and one-logger.
@@ -1110,6 +1131,15 @@ def save_checkpoint_and_time(
     )
     if should_force_param_sync:
         force_param_sync(model)
+
+    # Free overlap param-gather buffers and release cached GPU memory so
+    # that the async checkpoint worker process has enough GPU headroom for
+    # D2H tensor transfers.
+    for model_chunk in model:
+        if hasattr(model_chunk, "free_overlap_buffers"):
+            model_chunk.free_overlap_buffers()
+    torch.cuda.empty_cache()
+
     save_checkpoint(
         state,
         model,

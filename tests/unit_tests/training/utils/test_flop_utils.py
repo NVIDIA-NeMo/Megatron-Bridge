@@ -39,7 +39,7 @@ class MockModelConfig:
     tensor_model_parallel_size: int = 1
     # Hybrid model settings
     is_hybrid_model: bool = False
-    hybrid_override_pattern: str | None = None
+    hybrid_layer_pattern: str | None = None
     hybrid_attention_ratio: float = 0
     hybrid_mlp_ratio: float = 0
     # Mamba settings
@@ -97,7 +97,7 @@ class TestMoELayerFlops:
 
         model_cfg = MockModelConfig(
             is_hybrid_model=True,
-            hybrid_override_pattern="E",  # Single MoE layer
+            hybrid_layer_pattern="E",  # Single MoE layer
             num_layers=1,
             hidden_size=hidden_size,
             seq_length=seq_len,
@@ -147,7 +147,7 @@ class TestMoELayerFlops:
 
         model_cfg = MockModelConfig(
             is_hybrid_model=True,
-            hybrid_override_pattern="E",
+            hybrid_layer_pattern="E",
             num_layers=1,
             hidden_size=hidden_size,
             seq_length=seq_len,
@@ -188,7 +188,7 @@ class TestMoELayerFlops:
 
         base_config = dict(
             is_hybrid_model=True,
-            hybrid_override_pattern="E",
+            hybrid_layer_pattern="E",
             num_layers=1,
             hidden_size=hidden_size,
             seq_length=seq_len,
@@ -240,7 +240,7 @@ class TestHybridMoEFlops:
 
         model_cfg = MockModelConfig(
             is_hybrid_model=True,
-            hybrid_override_pattern="EE",
+            hybrid_layer_pattern="EE",
             num_layers=num_moe_layers,
             hidden_size=hidden_size,
             seq_length=seq_len,
@@ -293,7 +293,7 @@ class TestHybridLayerCounting:
 
         model_cfg = MockModelConfig(
             is_hybrid_model=True,
-            hybrid_override_pattern=pattern,
+            hybrid_layer_pattern=pattern,
             num_layers=len(pattern),
             hidden_size=hidden_size,
             seq_length=seq_len,
@@ -342,7 +342,7 @@ class TestHybridLayerCounting:
 
         base_config = dict(
             is_hybrid_model=True,
-            hybrid_override_pattern="E",
+            hybrid_layer_pattern="E",
             num_layers=1,
             hidden_size=hidden_size,
             seq_length=seq_len,
@@ -392,7 +392,7 @@ class TestHybridMtpPatternParsing:
 
         base_cfg = dict(
             is_hybrid_model=True,
-            hybrid_override_pattern="M*/MM/MM",
+            hybrid_layer_pattern="M*/MM/MM",
             num_layers=2,
             hidden_size=hidden_size,
             seq_length=seq_len,

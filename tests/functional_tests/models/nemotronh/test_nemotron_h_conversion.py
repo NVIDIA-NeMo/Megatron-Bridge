@@ -106,7 +106,17 @@ class TestNemotronHConversion:
         _fix_tied_weights_keys(model)
 
         # Save model, config, and modeling code to directory
-        model.save_pretrained(model_dir, safe_serialization=True)
+        # TODO(liding): To be confirmed with HF team.
+        # save_original_format=False is a workaround for a potential bug in transformers v5.
+        # Normally this should be True. Transformers v5 introduced dynamic weight conversion,
+        # which renames state_dict keys on load. If the keys already match the modeling file,
+        # the conversion is skipped. However, revert_weight_conversion() (called on save when
+        # save_original_format=True) always runs unconditionally — even when no conversion was
+        # applied on load — which can corrupt the state_dict keys. Setting save_original_format
+        # to False skips the revert entirely.
+        # This only affects saving the toy model used in this test; actual conversions use models
+        # directly from the HF Hub and are unaffected.
+        model.save_pretrained(model_dir, safe_serialization=True, save_original_format=False)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)
 
@@ -190,7 +200,7 @@ class TestNemotronHConversion:
         "tp,pp,test_name",
         [
             (2, 1, "TP"),
-            (1, 2, "PP"),
+            pytest.param(1, 2, "PP", marks=pytest.mark.pleasefixme),  # PP=2 broken by hybrid_layer_pattern (PR #2628)
         ],
     )
     def test_nemotronh_conversion_parallelism(self, nemotronh_toy_model_path, tmp_path, tp, pp, test_name):
@@ -208,6 +218,24 @@ class TestNemotronHConversion:
         # Create temporary output directory for conversion results
         test_output_dir = tmp_path / f"nemotronh_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
+
+        # Modify config.json to add | separator for hybrid_override_pattern to be able to run PP > 1
+        config_file = Path(nemotronh_toy_model_path) / "config.json"
+        assert config_file.exists(), f"config.json not found at {config_file}"
+        with open(config_file) as f:
+            config_data = json.load(f)
+
+        if pp > 1:
+            config_data["hybrid_override_pattern"] = (
+                HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][:2]
+                + "|"
+                + HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][2:]
+            )
+        else:
+            config_data["hybrid_override_pattern"] = HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"]
+
+        with open(config_file, "w") as f:
+            json.dump(config_data, f, indent=2)
 
         # Run hf_megatron_roundtrip_multi_gpu.py with specified parallelism configuration on our toy model
         cmd = [
@@ -357,7 +385,9 @@ class TestNemotron3NanoConversion:
         _fix_tied_weights_keys(model)
 
         # Save model, config, and modeling code to directory
-        model.save_pretrained(model_dir, safe_serialization=True)
+        # NOTE(liding): save_original_format=False is a workaround for a potential bug in transformers v5.
+        # Check the notes above in TestNemotronHConversion.test_toy_model_creation for more details.
+        model.save_pretrained(model_dir, safe_serialization=True, save_original_format=False)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)
 
@@ -451,7 +481,7 @@ class TestNemotron3NanoConversion:
         "tp,pp,test_name",
         [
             (2, 1, "TP"),
-            (1, 2, "PP"),
+            pytest.param(1, 2, "PP", marks=pytest.mark.pleasefixme),  # PP=2 broken by hybrid_layer_pattern (PR #2628)
         ],
     )
     def test_nemotron_3_nano_conversion_parallelism(

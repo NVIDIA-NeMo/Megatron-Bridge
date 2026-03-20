@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 
 from __future__ import annotations
 
@@ -86,17 +86,47 @@ class MimoParallelismConfig:
     def _validate_heterogeneous(self) -> None:
         """Validate heterogeneous deployment: no overlapping rank ranges."""
         ranges = []
-        for parallelism in self.module_parallelisms.values():
+        for name, parallelism in self.module_parallelisms.items():
             if parallelism.data_parallel_size is None:
                 raise ValueError("data_parallel_size must be set for heterogeneous deployment.")
-            ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks))
+            ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks, name))
 
-        ranges.sort()
+        ranges.sort(key=lambda x: x[0])
         for idx in range(1, len(ranges)):
             prev_end = ranges[idx - 1][1]
             cur_start = ranges[idx][0]
             if cur_start < prev_end:
                 raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
+
+        # Check for gaps between modules (likely misconfiguration)
+        # Gaps in the middle are errors; leading gaps (rank_offset > 0) are warnings
+        if ranges:
+            min_rank = ranges[0][0]  # Already sorted by rank_offset
+            max_rank = ranges[-1][1]
+
+            # Collect all covered ranks
+            covered_ranks = set()
+            for parallelism in self.module_parallelisms.values():
+                start = parallelism.rank_offset
+                end = start + parallelism.total_ranks
+                covered_ranks.update(range(start, end))
+
+            # Check for gaps between min and max (error - likely misconfiguration)
+            expected_middle = set(range(min_rank, max_rank))
+            gaps_in_middle = expected_middle - covered_ranks
+            if gaps_in_middle:
+                raise ValueError(
+                    f"Ranks {sorted(gaps_in_middle)} are not assigned to any module in heterogeneous "
+                    f"deployment. This creates a gap between modules which is not allowed."
+                )
+
+            # Check for leading gap (ranks 0 to min_rank-1 unused) - warning only
+            if min_rank > 0:
+                warnings.warn(
+                    f"Ranks {list(range(min_rank))} (before first module) are not assigned to any "
+                    f"module in heterogeneous deployment. These ranks will be idle during training.",
+                    stacklevel=3,
+                )
 
     def finalize(self, world_size: Optional[int]) -> None:
         """Finalize parallelism config: compute data_parallel_size and validate."""
