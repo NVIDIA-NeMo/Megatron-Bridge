@@ -53,6 +53,9 @@ from megatron.bridge.models.gemma_vl import (
 from megatron.bridge.models.glm import (
     GLM45Bridge,
 )
+from megatron.bridge.models.glm_moe_dsa import (
+    GLM5Bridge,
+)
 from megatron.bridge.models.glm_vl import (
     GLM45VBridge,
     GLM45VModelProvider,
@@ -70,6 +73,9 @@ from megatron.bridge.models.llama_nemotron import (
 )
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
+from megatron.bridge.models.minimax_m2 import (
+    MiniMaxM2Bridge,
+)
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
@@ -178,6 +184,7 @@ __all__ = [
     "Gemma2ModelProvider9B",
     "Gemma2ModelProvider27B",
     "GLM45Bridge",
+    "GLM5Bridge",
     "GLM45VBridge",
     "GLM45VModelProvider",
     "GPTModelProvider",
@@ -195,6 +202,7 @@ __all__ = [
     "Ministral3ModelProvider3B",
     "Ministral3ModelProvider8B",
     "Ministral3ModelProvider14B",
+    "MiniMaxM2Bridge",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "Qwen2ModelProvider",
