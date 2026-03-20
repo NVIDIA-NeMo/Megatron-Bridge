@@ -130,16 +130,17 @@ def pack_batch_sequences(
     batch_size, seq_len = tokens.shape
     device = tokens.device
 
-    # Find actual sequence lengths (excluding padding)
-    # Assuming padding is at the end and uses pad_token_id (0)
+    # Find actual sequence lengths (excluding collator padding).
+    # The collator pads all sequences to max-in-batch using a model-specific pad token
+    # (e.g., token 11 for Ministral3, not 0). Detect the pad token from the last position
+    # of each sequence, which is always a collator pad token when sequences differ in length.
     seq_lengths = []
     valid_sequences = []
 
     for i in range(batch_size):
-        # Find first padding token or use full length
-        non_pad_mask = tokens[i] != pad_token_id
+        collator_pad_token = tokens[i, -1].item()
+        non_pad_mask = tokens[i] != collator_pad_token
         if non_pad_mask.any():
-            # Find the last non-padding token
             last_valid_idx = non_pad_mask.nonzero(as_tuple=True)[0][-1].item() + 1
         else:
             # Empty sequence, skip
@@ -304,10 +305,25 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
 
     visual_inputs = batch.get("visual_inputs")
     cp_size = pg_collection.cp.size() if pg_collection is not None and pg_collection.cp is not None else 1
+    tp_size = pg_collection.tp.size() if pg_collection is not None and pg_collection.tp is not None else 1
+    has_sp = getattr(cfg.model, "sequence_parallel", False)
 
     if enable_packing:
         # Pack sequences
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
+
+        # Compute pad_to_multiple_of for CP + SP compatibility.
+        # Each packed sequence's padded length must be divisible by 2*cp_size (THD zigzag)
+        # and the total per-CP-rank tokens must be divisible by tp_size (SP reduce_scatter).
+        # Minimum: lcm(2*cp_size, cp_size*tp_size) = cp_size * tp_size when tp_size >= 2.
+        # Reference: megatron/core/models/multimodal/context_parallel.py:get_padding()
+        if cp_size > 1 and has_sp and tp_size > 1:
+            pad_multiple = cp_size * tp_size
+        elif cp_size > 1:
+            pad_multiple = cp_size * 2
+        else:
+            pad_multiple = 1
+
         (
             packed_tokens,
             packed_labels,
@@ -323,7 +339,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
             attention_mask=batch.get("attention_mask"),
             position_ids=batch.get("position_ids"),
             pad_token_id=0,
-            pad_to_multiple_of=cp_size * 2 if cp_size > 1 else 1,
+            pad_to_multiple_of=pad_multiple,
         )
 
         # Update batch dict with packed tensors
