@@ -719,6 +719,45 @@ class TestSaveMegatronModel:
             num_floating_point_operations_so_far=0,
         )
 
+    @patch("megatron.bridge.training.model_load_save.save_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.get_model_config")
+    @patch("megatron.bridge.training.model_load_save.GlobalState")
+    @patch("megatron.bridge.training.model_load_save.ConfigContainer")
+    @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
+    @patch("megatron.bridge.training.model_load_save.LoggerConfig")
+    @patch("megatron.bridge.training.model_load_save.CheckpointConfig")
+    def test_save_megatron_model_with_model_config(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_model_config,
+        mock_save_checkpoint,
+    ):
+        """Test saving megatron model when config is a ModelConfig instance."""
+        mock_model = Mock()
+
+        mock_model_config = Mock(spec=GPTModelConfig)
+        mock_get_model_config.return_value = mock_model_config
+
+        mock_state = Mock()
+        mock_global_state.return_value = mock_state
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", low_memory_save=False)
+
+        mock_get_model_config.assert_called_once_with(mock_model)
+        mock_global_state.assert_called_once()
+        mock_save_checkpoint.assert_called_once_with(
+            state=mock_state,
+            model=[mock_model],
+            optimizer=None,
+            opt_param_scheduler=None,
+            num_floating_point_operations_so_far=0,
+        )
+
     @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
     @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
     @patch("megatron.bridge.training.model_load_save.build_tokenizer")
@@ -861,6 +900,16 @@ class TestSaveMegatronModel:
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
         )
+
+    @patch("megatron.bridge.training.model_load_save.get_model_config")
+    def test_save_megatron_model_rejects_unsupported_config(self, mock_get_model_config):
+        """Test that save_megatron_model rejects configs that are neither ModelProviderMixin nor ModelConfig."""
+        mock_model = Mock()
+        mock_get_model_config.return_value = Mock()  # plain Mock, not ModelProviderMixin or ModelConfig
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with pytest.raises(TypeError, match="Expected model config to be an instance of"):
+                save_megatron_model([mock_model], temp_dir)
 
 
 class TestDtypeFromStr:
