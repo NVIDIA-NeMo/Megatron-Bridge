@@ -29,6 +29,18 @@ from transformers import AutoConfig, AutoTokenizer, dynamic_module_utils
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 
 
+try:
+    from transformers.conversion_mapping import (
+        MergeModulelist,
+        WeightConverter,
+        WeightRenaming,
+    )
+
+    has_conversion_mapping = True
+except ImportError:
+    has_conversion_mapping = False
+
+
 def _fix_tied_weights_keys(model: nn.Module):
     """Convert _tied_weights_keys from list to dict for transformers 5.x compatibility."""
     for module in model.modules():
@@ -612,6 +624,10 @@ MEGATRON_NEMOTRON_3_SUPER_OVERRIDES = {
     "mtp_num_layers": 0,
     "mtp_hybrid_override_pattern": "",
     "moe_router_topk": 2,
+    # Disable CUDA graphs for toy model tests — TE's make_graphed_callables has
+    # RNG state incompatibility with MCore's CudaRNGStatesTracker in small-model CI.
+    "cuda_graph_impl": "none",
+    "cuda_graph_scope": [],
 }
 
 
@@ -675,9 +691,6 @@ class TestNemotron3SuperFinetuneRecipes:
         # Reinitialize weights of all NemotronHTopkRouter modules if present
         for module in model.modules():
             if module.__class__.__name__ == "NemotronHTopkRouter":
-                print(
-                    "---------------------------------Reinitialize weights of all NemotronHTopkRouter modules if present---------------------------------"
-                )
                 torch.nn.init.normal_(module.weight, mean=0.0, std=config.initializer_range)
                 torch.nn.init.zeros_(module.e_score_correction_bias)
 
@@ -689,6 +702,25 @@ class TestNemotron3SuperFinetuneRecipes:
         tokenizer.save_pretrained(model_dir)
 
         _fix_tied_weights_keys(model)
+
+        if has_conversion_mapping:
+            model._weight_conversions = [
+                WeightRenaming("backbone.", "model."),
+                WeightConverter(
+                    source_patterns=[
+                        "mixer.experts.*.up_proj.weight",
+                    ],
+                    target_patterns="mixer.experts.up_proj",
+                    operations=[MergeModulelist(dim=0)],
+                ),
+                WeightConverter(
+                    source_patterns=[
+                        "mixer.experts.*.down_proj.weight",
+                    ],
+                    target_patterns="mixer.experts.down_proj",
+                    operations=[MergeModulelist(dim=0)],
+                ),
+            ]
         model.save_pretrained(model_dir, safe_serialization=True)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)

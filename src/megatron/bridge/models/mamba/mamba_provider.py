@@ -259,7 +259,14 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
         # Derive the hybrid override pattern from the saved hybrid_override_pattern,
         # mtp_hybrid_override_pattern, and mtp_num_layers.
         # This allows us to use a different mtp_num_layers than the one saved in the checkpoint.
-        main_pattern = self.hybrid_override_pattern.split(sep)[0]
+        # NOTE: finalize() migrates hybrid_override_pattern → hybrid_layer_pattern and nulls the
+        # former. When provide() runs after finalize() (e.g. via AutoBridge), fall back to
+        # hybrid_layer_pattern so the pattern is still available.
+        # If hybrid_override_pattern was set after finalize() (e.g. by test overrides),
+        # re-derive num_layers from it so the model shape stays consistent.
+        _pattern = self.hybrid_override_pattern or self.hybrid_layer_pattern
+        main_pattern = _pattern.split(sep)[0]
+        self.num_layers = _get_hybrid_total_layer_count(main_pattern)
         # When mtp_use_repeated_layer=True, the shared MTP layer always exists in the
         # model and mtp_num_layers is the number of times the MTP layer is repeated in the forward pass.
         # In this case, include the pattern at least once so the MTP block (and its weights) are
@@ -271,6 +278,9 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
         self.hybrid_override_pattern = (
             main_pattern + sep + sep.join([self.mtp_hybrid_override_pattern] * num_pattern_copies)
         )
+        # Keep hybrid_layer_pattern in sync — MCoreMambaModel receives it as kwarg below,
+        # so it must reflect the full pattern including MTP.
+        self.hybrid_layer_pattern = self.hybrid_override_pattern
 
         if self.hybrid_override_pattern and sep in self.hybrid_override_pattern:
             parsed = parse_hybrid_pattern(self.hybrid_override_pattern)

@@ -27,7 +27,7 @@ import tempfile
 
 import pytest
 
-from megatron.bridge.models.nemotronh import Nemotron3SuperProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
     nemotron_3_super_finetune_config,
     nemotron_3_super_pretrain_config,
@@ -48,7 +48,7 @@ class TestNemotron3SuperPretrain:
         config = nemotron_3_super_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Nemotron3SuperProvider)
+        assert isinstance(config.model, MambaModelProvider)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 4
@@ -131,7 +131,7 @@ class TestNemotron3SuperFinetune:
         config = nemotron_3_super_finetune_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Nemotron3SuperProvider)
+        assert isinstance(config.model, MambaModelProvider)
 
         # Check default parallelism for LoRA
         assert config.model.tensor_model_parallel_size == 1
@@ -160,7 +160,7 @@ class TestNemotron3SuperFinetune:
         config = nemotron_3_super_finetune_config(peft=None)
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Nemotron3SuperProvider)
+        assert isinstance(config.model, MambaModelProvider)
 
         # Check parallelism for full SFT
         assert config.model.tensor_model_parallel_size == 1
@@ -270,7 +270,7 @@ class TestNemotron3SuperCommon:
         config = recipe_fn()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Nemotron3SuperProvider)
+        assert isinstance(config.model, MambaModelProvider)
 
         # Check required sections exist
         assert config.train is not None

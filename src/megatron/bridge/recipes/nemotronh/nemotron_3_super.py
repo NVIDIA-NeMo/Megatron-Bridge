@@ -15,12 +15,16 @@
 
 import torch
 
-from megatron.bridge.models.nemotronh import Nemotron3SuperDebugProvider, Nemotron3SuperProvider
+from megatron.bridge import AutoBridge
+from megatron.bridge.models.nemotronh import Nemotron3SuperDebugProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.training.config import ConfigContainer
+
+
+NEMOTRON_3_SUPER_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
 
 
 def nemotron_3_super_pretrain_config() -> ConfigContainer:
@@ -34,18 +38,20 @@ def nemotron_3_super_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model Configuration (LatentMoE with MTP)
-    cfg.model = Nemotron3SuperProvider(
-        tensor_model_parallel_size=4,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        sequence_parallel=True,
-        expert_tensor_parallel_size=1,
-        expert_model_parallel_size=8,
-        seq_length=8192,
-    )
+    # Model Configuration (LatentMoE with MTP) — derived from HF config via AutoBridge
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+
+    # Parallelism Settings
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.seq_length = 8192
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
@@ -55,9 +61,6 @@ def nemotron_3_super_pretrain_config() -> ConfigContainer:
     cfg.dataset.blend = None
     cfg.dataset.num_workers = 1
     cfg.dataset.mmap_bin_files = False
-
-    # Parallelism Settings
-    cfg.model.pipeline_model_parallel_layout = None
 
     # MoE Token Dispatcher Settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -87,7 +90,9 @@ def nemotron_3_super_pretrain_config() -> ConfigContainer:
     cfg.model.cross_entropy_fusion_impl = "te"
     cfg.model.use_te_rng_tracker = True
 
-    # MTP Settings
+    # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
+    # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)
+    cfg.model.mtp_num_layers = 2
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.calculate_per_token_loss = True
     cfg.model.mtp_loss_scaling_factor = 0.3
@@ -157,30 +162,28 @@ def nemotron_3_super_finetune_config(
     else:
         cfg = _peft_common()
 
-    # Model config
-    cfg.model = Nemotron3SuperProvider(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        sequence_parallel=True,
-        expert_tensor_parallel_size=1,
-        expert_model_parallel_size=8 if is_full_sft else 1,
-        apply_rope_fusion=False,
-        attention_backend="fused",
-        gradient_accumulation_fusion=True,
-        init_method_std=0.014,
-        use_fused_weighted_squared_relu=True,
-        seq_length=2048,
-        calculate_per_token_loss=True,
-    )
+    # Model config — derived from HF config via AutoBridge
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
 
     # Parallelism settings
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8 if is_full_sft else 1
     cfg.model.pipeline_model_parallel_layout = None
-
-    # Sequence length
     cfg.model.seq_length = 2048
+
+    # Training-specific model overrides
+    cfg.model.apply_rope_fusion = False
+    cfg.model.attention_backend = "fused"
+    cfg.model.gradient_accumulation_fusion = True
+    cfg.model.init_method_std = 0.014
+    cfg.model.use_fused_weighted_squared_relu = True
+    cfg.model.calculate_per_token_loss = True
 
     # MoE Token Dispatcher Settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -193,7 +196,9 @@ def nemotron_3_super_finetune_config(
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # MTP Settings
+    # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
+    # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)
+    cfg.model.mtp_num_layers = 2
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
