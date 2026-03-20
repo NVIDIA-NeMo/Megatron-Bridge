@@ -30,7 +30,6 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
-from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
@@ -49,9 +48,7 @@ class Qwen3NextBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    PROVIDER_CLASS = Qwen3NextModelProvider
-
-    def provider_bridge(self, hf_pretrained: Qwen3NextForCausalLM) -> Qwen3NextModelProvider:
+    def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace Qwen3-Next config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
@@ -65,6 +62,7 @@ class Qwen3NextBridge(MegatronModelBridge):
         provider.hidden_dropout = 0.0
         provider.qk_layernorm = True
         provider.autocast_dtype = torch.bfloat16
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
 
         # MoE settings
         provider.moe_grouped_gemm = True

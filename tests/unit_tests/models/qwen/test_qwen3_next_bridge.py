@@ -22,9 +22,9 @@ import pytest
 import torch
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_next_bridge import Qwen3NextBridge
-from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
 
 
 class TestQwen3NextBridge:
@@ -92,8 +92,9 @@ class TestQwen3NextBridge:
             # Alternative MoE expert count attrs (would overwrite num_experts=512)
             "n_routed_experts",
             "num_local_experts",
-            # MTP attr (not used by Qwen3-Next, but truthy in Mock)
+            # MTP attrs (not used by Qwen3-Next, but truthy in Mock)
             "num_nextn_predict_layers",
+            "mtp_num_hidden_layers",
         ):
             setattr(config, null_attr, None)
         return config
@@ -120,8 +121,8 @@ class TestQwen3NextBridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3_next)
 
-        # Check that it returns a Qwen3NextModelProvider instance
-        assert isinstance(result, Qwen3NextModelProvider)
+        # Check that it returns a GPTModelProvider instance (not a model-specific subclass)
+        assert isinstance(result, GPTModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == mock_qwen3_next_config.num_hidden_layers
