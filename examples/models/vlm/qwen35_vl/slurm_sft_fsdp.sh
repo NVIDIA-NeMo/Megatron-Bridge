@@ -15,96 +15,40 @@ set -euo pipefail
 # limitations under the License.
 
 # ==============================================================================
-# Qwen3.5 VL Full Supervised Fine-Tuning (SFT)
+# Qwen3.5-VL 35B-A3B Full SFT with Megatron FSDP
 #
-# Supports all Qwen3.5 VL models (dense and MoE).
-# For smaller setups, use LoRA/DoRA instead (see slurm_peft.sh).
+# Uses Megatron FSDP for memory-efficient training with AG/RS overlap.
+# Requires fsdp_dtensor checkpoint format (convert offline with
+# checkpoint_inspector.py convert-torch-dist-to-fsdp-dtensor).
+#
+# For standard 3D parallelism (no FSDP), use slurm_sft.sh instead.
 #
 # Usage:
-#   sbatch slurm_sft.sh <model>
-#
-#   model: 0.8B | 2B | 4B | 9B | 27B | 35B-A3B | 122B-A10B | 397B-A17B
-#
-# Recommended parallelism (recipe defaults for full SFT):
-#   0.8B (dense):    TP=1, PP=1         (1 node)
-#   2B (dense):      TP=1, PP=1         (1 node)
-#   4B (dense):      TP=2, PP=1         (1 node)
-#   9B (dense):      TP=4, PP=1         (1 node)
-#   27B (dense):     TP=4, PP=4         (2 nodes)
-#   35B-A3B (MoE):   TP=2, PP=1, EP=16  (2 nodes)
-#   122B-A10B (MoE): TP=2, PP=6, EP=8   (4 nodes)
-#   397B-A17B (MoE): TP=2, PP=4, EP=32  (16 nodes)
-#
-# Examples:
-#   sbatch slurm_sft.sh 4B
-#   sbatch --nodes=2 slurm_sft.sh 27B
-#   sbatch --nodes=16 slurm_sft.sh 397B-A17B
+#   sbatch slurm_sft_fsdp.sh
+#   sbatch --nodes=4 slurm_sft_fsdp.sh
 # ==============================================================================
 
-#SBATCH --job-name=qwen35vl-sft
-#SBATCH --nodes=1
+#SBATCH --job-name=qwen35vl-sft-fsdp
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=24:00:00
 #SBATCH --partition=gpu
 #SBATCH --account=my_account
-#SBATCH --output=qwen35vl_sft_%j.out
-#SBATCH --error=qwen35vl_sft_%j.err
+#SBATCH --output=qwen35vl_sft_fsdp_%j.out
+#SBATCH --error=qwen35vl_sft_fsdp_%j.err
 #SBATCH --exclusive
-
-# ==============================================================================
-# Parse arguments
-# ==============================================================================
-
-MODEL_SIZE="${1:?Usage: sbatch $0 <model>  (model: 0.8B|2B|4B|9B|27B|35B-A3B|122B-A10B|397B-A17B)}"
-
-# Map model size to HF name and recipe
-case "$MODEL_SIZE" in
-    0.8B)
-        HF_MODEL_NAME="Qwen3.5-0.8B"
-        RECIPE="qwen35_vl_800m_sft_config"
-        ;;
-    2B)
-        HF_MODEL_NAME="Qwen3.5-2B"
-        RECIPE="qwen35_vl_2b_sft_config"
-        ;;
-    4B)
-        HF_MODEL_NAME="Qwen3.5-4B"
-        RECIPE="qwen35_vl_4b_sft_config"
-        ;;
-    9B)
-        HF_MODEL_NAME="Qwen3.5-9B"
-        RECIPE="qwen35_vl_9b_sft_config"
-        ;;
-    27B)
-        HF_MODEL_NAME="Qwen3.5-27B"
-        RECIPE="qwen35_vl_27b_sft_config"
-        ;;
-    35B-A3B)
-        HF_MODEL_NAME="Qwen3.5-35B-A3B"
-        RECIPE="qwen35_vl_35b_a3b_sft_config"
-        ;;
-    122B-A10B)
-        HF_MODEL_NAME="Qwen3.5-122B-A10B"
-        RECIPE="qwen35_vl_122b_a10b_sft_config"
-        ;;
-    397B-A17B)
-        HF_MODEL_NAME="Qwen3.5-397B-A17B"
-        RECIPE="qwen35_vl_397b_a17b_sft_config"
-        ;;
-    *)
-        echo "ERROR: Unknown model '$MODEL_SIZE'. Must be one of: 0.8B, 2B, 4B, 9B, 27B, 35B-A3B, 122B-A10B, 397B-A17B"
-        exit 1
-        ;;
-esac
 
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
 
+RECIPE="qwen35_vl_35b_a3b_fsdp_sft_config"
+HF_MODEL_NAME="Qwen3.5-35B-A3B"
+
 WORKSPACE=${WORKSPACE:-/workspace}
 
-PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen/${HF_MODEL_NAME}
+PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen/${HF_MODEL_NAME}-fsdp-dtensor
 DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
 TRAIN_ITERS=500
@@ -141,7 +85,7 @@ export PYTHONWARNINGS="ignore::FutureWarning:torch.cuda,ignore::UserWarning:mode
 # ==============================================================================
 
 echo "======================================"
-echo "Qwen3.5-VL Full SFT Training Job"
+echo "Qwen3.5-VL FSDP SFT Training Job"
 echo "======================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
@@ -154,6 +98,8 @@ echo "======================================"
 
 CLI_OVERRIDES="\
     checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
+    checkpoint.ckpt_format=fsdp_dtensor \
+    checkpoint.fully_parallel_load=true \
     model.seq_length=$SEQ_LENGTH \
     train.train_iters=$TRAIN_ITERS \
     train.global_batch_size=$GLOBAL_BATCH_SIZE \
@@ -165,9 +111,6 @@ CLI_OVERRIDES="\
     dataset.maker_name=make_${DATASET_NAME}_dataset \
     dataset.seq_length=$SEQ_LENGTH"
 
-# For multinode runs, the recipe's online HF path can be unstable. Pass --hf_path
-# with a local model directory for more reliable config loading, e.g.:
-#   --hf_path ${WORKSPACE}/models/Qwen/${HF_MODEL_NAME}
 CMD="uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
     --step_func vlm_step \

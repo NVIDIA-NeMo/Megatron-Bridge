@@ -37,6 +37,7 @@ _QWEN35_VL_SFT_FUNCS = [
     _qwen35_vl_module.qwen35_vl_9b_sft_config,
     _qwen35_vl_module.qwen35_vl_27b_sft_config,
     _qwen35_vl_module.qwen35_vl_35b_a3b_sft_config,
+    _qwen35_vl_module.qwen35_vl_35b_a3b_fsdp_sft_config,
     _qwen35_vl_module.qwen35_vl_122b_a10b_sft_config,
     _qwen35_vl_module.qwen35_vl_397b_a17b_sft_config,
 ]
@@ -371,8 +372,35 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 16
     assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.moe_grouped_gemm is True
+    assert cfg.model.moe_permute_fusion is True
     assert cfg.peft is None
     assert cfg.optimizer.lr == 2e-5
+
+
+def test_qwen35_vl_35b_a3b_fsdp_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """35B-A3B FSDP SFT should have FSDP-specific parallelism and settings."""
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_fsdp_sft_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 2
+    assert cfg.peft is None
+    assert cfg.optimizer.lr == 2e-5
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.fsdp_double_buffer is True
+    assert cfg.ddp.nccl_ub is False
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.ddp.num_distributed_optimizer_instances == 1
 
 
 def test_qwen35_vl_35b_a3b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -556,7 +584,7 @@ def test_qwen35_vl_training_config(monkeypatch: pytest.MonkeyPatch):
     _assert_basic_config(cfg)
     assert cfg.train.train_iters == 300000
     assert cfg.train.global_batch_size == 32
-    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.micro_batch_size == 4
     assert cfg.train.manual_gc is True
     assert cfg.train.manual_gc_interval == 100
 
@@ -590,6 +618,7 @@ def test_qwen35_vl_kernel_settings(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
     assert cfg.model.attention_backend == "auto"
+    assert cfg.model.gradient_accumulation_fusion is True
     assert cfg.model.cross_entropy_loss_fusion is True
     assert cfg.model.cross_entropy_fusion_impl == "native"
 
