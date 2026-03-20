@@ -1,4 +1,4 @@
-# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,49 +12,75 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional smoke tests for WAN checkpoint conversion (HF <-> Megatron)."""
+"""
+Functional tests for WAN HF <-> Megatron checkpoint conversion.
 
-import shutil
+Uses a tiny randomly initialized diffusers WanTransformer3DModel saved under a local
+``transformer/`` layout (same as Wan2.1-T2V) and drives
+``examples/diffusion/recipes/wan/conversion/convert_checkpoints.py``.
+"""
+
+from __future__ import annotations
+
 import subprocess
 from pathlib import Path
 
 import pytest
-from huggingface_hub import snapshot_download
+import torch
 
 
-WAN_HF_MODEL_ID = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+diffusers = pytest.importorskip("diffusers")
+WanTransformer3DModel = diffusers.WanTransformer3DModel
 
-BASE_DIR = "/workspace/test_ckpts/wan_conversion"
-MEGATRON_CKPT_DIR = f"{BASE_DIR}/megatron"
-HF_EXPORT_DIR = f"{BASE_DIR}/hf_export"
-
+# Repo root: tests/functional_tests/diffusion/wan -> five parents
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 CONVERT_SCRIPT = "examples/diffusion/recipes/wan/conversion/convert_checkpoints.py"
-REPO_ROOT = Path(__file__).parent.parent.parent.parent.parent
 
 
-def _get_hf_ckpt_dir() -> str:
-    """Download the WAN HF checkpoint if not already cached and return the local path."""
-    return snapshot_download(WAN_HF_MODEL_ID)
+def _build_toy_wan_hf_root(base: Path) -> Path:
+    """
+    Create ``base`` as a WAN-style HF root with weights under ``base/transformer/``.
+
+    Dimensions are chosen to be minimal while satisfying WAN's RoPE constraint
+    (``attention_head_dim`` must be divisible by 6 so the t/h/w splits are integers).
+    """
+    hf_root = base / "wan_toy_hf"
+    transformer_dir = hf_root / "transformer"
+    transformer_dir.mkdir(parents=True, exist_ok=True)
+
+    model = WanTransformer3DModel(
+        patch_size=(1, 2, 2),
+        num_attention_heads=2,
+        attention_head_dim=12,
+        in_channels=4,
+        out_channels=4,
+        text_dim=64,
+        freq_dim=16,
+        ffn_dim=64,
+        num_layers=1,
+    )
+    model = model.to(dtype=torch.bfloat16)
+    model.save_pretrained(transformer_dir, safe_serialization=True)
+    return hf_root
 
 
-def _run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
-    if result.returncode != 0:
-        print(f"STDOUT:\n{result.stdout}")
-        print(f"STDERR:\n{result.stderr}")
-    return result
+class TestWanCheckpointConversion:
+    """HF WAN transformer (diffusers) <-> Megatron via convert_checkpoints.py."""
 
+    @pytest.fixture(scope="class")
+    def wan_toy_hf_root(self, tmp_path_factory: pytest.TempPathFactory) -> Path:
+        base = tmp_path_factory.mktemp("wan_conv_toy")
+        return _build_toy_wan_hf_root(Path(base))
 
-class TestWanCkptConversion:
-    """Functional tests for WAN checkpoint conversion (HF <-> Megatron)."""
+    @pytest.fixture(scope="class")
+    def wan_megatron_ckpt_dir(self, wan_toy_hf_root: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+        """
+        Run ``convert_checkpoints.py import`` once for the class.
 
-    @pytest.mark.run_only_on("GPU")
-    def test_hf_to_megatron(self):
-        """Import a WAN HF checkpoint into Megatron format."""
-        hf_ckpt_dir = _get_hf_ckpt_dir()
-
-        Path(MEGATRON_CKPT_DIR).mkdir(parents=True, exist_ok=True)
-
+        The export test reuses this shared checkpoint to avoid repeating the import.
+        """
+        megatron_out = Path(tmp_path_factory.mktemp("wan_megatron_shared"))
+        megatron_out.mkdir(parents=True, exist_ok=True)
         cmd = [
             "python",
             "-m",
@@ -66,49 +92,41 @@ class TestWanCkptConversion:
             CONVERT_SCRIPT,
             "import",
             "--hf-model",
-            hf_ckpt_dir,
+            str(wan_toy_hf_root),
             "--megatron-path",
-            MEGATRON_CKPT_DIR,
+            str(megatron_out),
+            "--torch-dtype",
+            "bfloat16",
         ]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
+        if result.returncode != 0:
+            print("STDOUT:", result.stdout)
+            print("STDERR:", result.stderr)
+            pytest.fail(f"WAN import (class fixture) failed with exit code {result.returncode}")
+        assert "Successfully imported model to:" in result.stdout
+        assert any(megatron_out.iterdir()), f"Megatron output empty: {megatron_out}"
+        return megatron_out
 
-        result = _run_cmd(cmd)
-        assert result.returncode == 0, f"HF->Megatron conversion failed (rc={result.returncode})"
-        assert "Successfully imported model to:" in result.stdout, (
-            f"Success message not found in output:\n{result.stdout}"
-        )
+    def test_toy_wan_layout(self, wan_toy_hf_root: Path) -> None:
+        tdir = wan_toy_hf_root / "transformer"
+        assert tdir.is_dir()
+        assert (tdir / "config.json").is_file()
+        assert (tdir / "diffusion_pytorch_model.safetensors").is_file() or (
+            tdir / "diffusion_pytorch_model.bin"
+        ).is_file()
 
-        # Verify checkpoint directory contains at least one iter_* directory or files
-        ckpt_path = Path(MEGATRON_CKPT_DIR)
-        assert ckpt_path.exists(), f"Megatron checkpoint directory not created: {ckpt_path}"
-        contents = list(ckpt_path.iterdir())
-        assert len(contents) > 0, f"Megatron checkpoint directory is empty: {ckpt_path}"
+    def test_import_hf_to_megatron(self, wan_megatron_ckpt_dir: Path) -> None:
+        """Asserts the shared class import produced a non-empty Megatron checkpoint."""
+        assert wan_megatron_ckpt_dir.is_dir()
+        assert any(wan_megatron_ckpt_dir.iterdir())
 
-        print(f"Megatron checkpoint saved at: {ckpt_path}")
-        print(f"Contents: {[item.name for item in contents]}")
+    def test_export_megatron_to_hf_roundtrip(
+        self, wan_toy_hf_root: Path, wan_megatron_ckpt_dir: Path, tmp_path: Path
+    ) -> None:
+        hf_export = tmp_path / "hf_export"
+        hf_export.mkdir(parents=True, exist_ok=True)
 
-    @pytest.mark.run_only_on("GPU")
-    def test_megatron_to_hf(self):
-        """Export the previously imported Megatron checkpoint back to HF format."""
-        hf_ckpt_dir = _get_hf_ckpt_dir()
-
-        assert Path(MEGATRON_CKPT_DIR).exists(), (
-            f"Megatron checkpoint not found at {MEGATRON_CKPT_DIR}. Run test_hf_to_megatron first."
-        )
-
-        # Locate the iter_* directory produced by the import step
-        ckpt_path = Path(MEGATRON_CKPT_DIR)
-        iter_dirs = sorted(
-            [d for d in ckpt_path.iterdir() if d.is_dir() and d.name.startswith("iter_")],
-            key=lambda d: int(d.name.replace("iter_", "")),
-        )
-        assert len(iter_dirs) > 0, (
-            f"No iter_* directory found in {ckpt_path}. Ensure test_hf_to_megatron completed successfully."
-        )
-        megatron_iter_path = iter_dirs[-1]
-
-        Path(HF_EXPORT_DIR).mkdir(parents=True, exist_ok=True)
-
-        cmd = [
+        export_cmd = [
             "python",
             "-m",
             "coverage",
@@ -119,38 +137,22 @@ class TestWanCkptConversion:
             CONVERT_SCRIPT,
             "export",
             "--hf-model",
-            hf_ckpt_dir,
+            str(wan_toy_hf_root),
             "--megatron-path",
-            str(megatron_iter_path),
+            str(wan_megatron_ckpt_dir),
             "--hf-path",
-            HF_EXPORT_DIR,
+            str(hf_export),
             "--no-progress",
         ]
+        er = subprocess.run(export_cmd, capture_output=True, text=True, cwd=REPO_ROOT)
+        if er.returncode != 0:
+            print("EXPORT STDOUT:", er.stdout)
+            print("EXPORT STDERR:", er.stderr)
+            pytest.fail(f"WAN export failed with exit code {er.returncode}")
 
-        result = _run_cmd(cmd)
-        assert result.returncode == 0, f"Megatron->HF conversion failed (rc={result.returncode})"
-        assert "Successfully exported model to:" in result.stdout, (
-            f"Success message not found in output:\n{result.stdout}"
-        )
-
-        # Verify exported transformer/ directory and config.json exist
-        export_path = Path(HF_EXPORT_DIR)
-        assert export_path.exists(), f"HF export directory not created: {export_path}"
-
-        transformer_dir = export_path / "transformer"
-        assert transformer_dir.exists(), f"transformer/ subdirectory not found in {export_path}"
-
-        config_file = transformer_dir / "config.json"
-        assert config_file.exists(), f"config.json not found in {transformer_dir}"
-
-        # At least one safetensors shard should be present
-        safetensors_files = list(transformer_dir.glob("*.safetensors"))
-        assert len(safetensors_files) > 0, f"No safetensors files found in {transformer_dir}"
-
-        print(f"HF export saved at: {export_path}")
-        print(f"Transformer contents: {[item.name for item in transformer_dir.iterdir()]}")
-
-    def test_remove_artifacts(self):
-        """Remove artifacts created by the conversion tests."""
-        shutil.rmtree(BASE_DIR, ignore_errors=True)
-        assert not Path(BASE_DIR).exists(), f"Failed to remove {BASE_DIR}"
+        assert "Successfully exported model to:" in er.stdout
+        transformer_out = hf_export / "transformer"
+        assert transformer_out.is_dir(), f"Missing {transformer_out}"
+        assert (transformer_out / "config.json").is_file()
+        safetensors = list(transformer_out.glob("*.safetensors"))
+        assert len(safetensors) > 0, f"No safetensors files found under {transformer_out}"
