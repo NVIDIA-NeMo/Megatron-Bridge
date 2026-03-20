@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import megatron.bridge.models.qwen3_asr.hf_qwen3_asr  # triggers AutoConfig.register("qwen3_asr", ...)
-from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRModel
-from megatron.bridge.models.qwen3_asr.qwen3_asr_bridge import Qwen3ASRBridge
-from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelProvider
+#!/bin/bash
+set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+export CUDA_VISIBLE_DEVICES="0,1"
 
-__all__ = [
-    "Qwen3ASRBridge",
-    "Qwen3ASRModel",
-    "Qwen3ASRModelProvider",
-]
+uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
+  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  tests/functional_tests/models/qwen3_asr/test_qwen3_asr_conversion.py
+coverage combine -q
