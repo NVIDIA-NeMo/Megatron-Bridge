@@ -4,7 +4,6 @@
 import torch.distributed as dist
 
 from megatron.bridge.data.mimo.dp_utils import get_mimo_dp_info
-from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 
 
 class FakePG:
@@ -36,20 +35,8 @@ class FakeGrid:
         return self._pgs[tuple(dims)]
 
 
-def _make_mimo_cfg() -> MimoParallelismConfig:
-    """Create test MIMO config for heterogeneous deployment."""
-    module_parallelisms = {
-        "vision": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0),
-        "llm": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=4),
-    }
-    return MimoParallelismConfig(
-        module_parallelisms=module_parallelisms,
-    )
-
-
 def test_get_mimo_dp_info_encoder_first_pp(monkeypatch):
     """Test heterogeneous mode, rank in encoder module, first PP stage."""
-    mimo_cfg = _make_mimo_cfg()
     monkeypatch.setattr(dist, "get_rank", lambda: 0)
 
     grids = {
@@ -57,7 +44,7 @@ def test_get_mimo_dp_info_encoder_first_pp(monkeypatch):
         "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
     }
 
-    dp_info = get_mimo_dp_info(mimo_cfg, grids)
+    dp_info = get_mimo_dp_info(grids)
 
     assert dp_info.loader_module == "vision"
     assert dp_info.dp_rank == 0
@@ -67,7 +54,6 @@ def test_get_mimo_dp_info_encoder_first_pp(monkeypatch):
 
 def test_get_mimo_dp_info_encoder_non_first_pp(monkeypatch):
     """Test heterogeneous mode, rank in encoder module, not first PP stage."""
-    mimo_cfg = _make_mimo_cfg()
     monkeypatch.setattr(dist, "get_rank", lambda: 1)
 
     grids = {
@@ -75,7 +61,7 @@ def test_get_mimo_dp_info_encoder_non_first_pp(monkeypatch):
         "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
     }
 
-    dp_info = get_mimo_dp_info(mimo_cfg, grids)
+    dp_info = get_mimo_dp_info(grids)
 
     assert dp_info.loader_module == "vision"
     assert dp_info.needs_data is False  # Not first PP stage
@@ -83,7 +69,6 @@ def test_get_mimo_dp_info_encoder_non_first_pp(monkeypatch):
 
 def test_get_mimo_dp_info_llm_first_pp(monkeypatch):
     """Test heterogeneous mode, rank in LLM module, first PP stage."""
-    mimo_cfg = _make_mimo_cfg()
     monkeypatch.setattr(dist, "get_rank", lambda: 4)
 
     grids = {
@@ -91,7 +76,7 @@ def test_get_mimo_dp_info_llm_first_pp(monkeypatch):
         "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=2),
     }
 
-    dp_info = get_mimo_dp_info(mimo_cfg, grids)
+    dp_info = get_mimo_dp_info(grids)
 
     assert dp_info.loader_module == "llm"
     assert dp_info.needs_data is True  # First PP stage
@@ -99,7 +84,6 @@ def test_get_mimo_dp_info_llm_first_pp(monkeypatch):
 
 def test_get_mimo_dp_info_llm_last_pp(monkeypatch):
     """Test heterogeneous mode, rank in LLM module, last PP stage."""
-    mimo_cfg = _make_mimo_cfg()
     monkeypatch.setattr(dist, "get_rank", lambda: 5)
 
     grids = {
@@ -107,7 +91,7 @@ def test_get_mimo_dp_info_llm_last_pp(monkeypatch):
         "llm": FakeGrid(4, 4, dp_rank=1, dp_size=4, pp_rank=1, pp_size=2),
     }
 
-    dp_info = get_mimo_dp_info(mimo_cfg, grids)
+    dp_info = get_mimo_dp_info(grids)
 
     assert dp_info.loader_module == "llm"
     assert dp_info.needs_data is True  # Last PP stage
@@ -115,7 +99,6 @@ def test_get_mimo_dp_info_llm_last_pp(monkeypatch):
 
 def test_get_mimo_dp_info_non_participating_rank(monkeypatch):
     """Test heterogeneous mode, rank not in any module."""
-    mimo_cfg = _make_mimo_cfg()
     monkeypatch.setattr(dist, "get_rank", lambda: 10)  # Outside all grids
 
     grids = {
@@ -123,7 +106,7 @@ def test_get_mimo_dp_info_non_participating_rank(monkeypatch):
         "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
     }
 
-    dp_info = get_mimo_dp_info(mimo_cfg, grids)
+    dp_info = get_mimo_dp_info(grids)
 
     assert dp_info.needs_data is False
     assert dp_info.loader_module == "llm"  # Default to LLM

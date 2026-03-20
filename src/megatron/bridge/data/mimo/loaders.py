@@ -35,7 +35,7 @@ def build_mimo_data_loaders(
     Args:
         cfg: Configuration container with MimoModelProvider as cfg.model.
         train_state: Current training state.
-        mimo_provider: MIMO dataset provider (e.g., MockMimoDatasetProvider)
+        mimo_provider: MIMO dataset provider (e.g., MockMimoProvider)
             with get_collate_fn() method.
         train_samples: Number of training samples.
         valid_samples: Number of validation samples.
@@ -75,7 +75,7 @@ def build_mimo_data_loaders(
     # Reuse cached infrastructure (build once if needed).
     infra = cfg.model.get_or_build_infra()
     grids = infra.module_to_grid_map
-    dp_info = get_mimo_dp_info(cfg.model.mimo_parallelism_config, grids)
+    dp_info = get_mimo_dp_info(grids)
 
     print_rank_0(
         f"  MIMO DP info: dp_rank={dp_info.dp_rank}, dp_size={dp_info.dp_size}, "

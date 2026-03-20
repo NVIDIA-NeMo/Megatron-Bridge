@@ -26,7 +26,6 @@ class MimoDpInfo:
 
 
 def get_mimo_dp_info(
-    mimo_cfg: "MimoParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
 ) -> MimoDpInfo:
     """Get DP rank, size, data-loading responsibility, and loader module for MIMO.
@@ -37,7 +36,6 @@ def get_mimo_dp_info(
     In heterogeneous mode, each rank uses its own module's DP settings.
 
     Args:
-        mimo_cfg: MIMO parallelism configuration.
         grids: Module name to HyperCommGrid mapping from build_hypercomm_grids().
 
     Returns:
@@ -50,12 +48,11 @@ def get_mimo_dp_info(
     Example:
         >>> from megatron.bridge.models.mimo.mimo_builder import build_hypercomm_grids
         >>> grids = build_hypercomm_grids(mimo_cfg)
-        >>> dp_info = get_mimo_dp_info(mimo_cfg, grids)
+        >>> dp_info = get_mimo_dp_info(grids)
         >>> if dp_info.needs_data:
         ...     # Build data loader with dp_rank and dp_size
         ...     sampler = DistributedSampler(dataset, num_replicas=dp_info.dp_size, rank=dp_info.dp_rank)
     """
-    del mimo_cfg
     current_rank = dist.get_rank()
 
     # Heterogeneous: find which module this rank belongs to
