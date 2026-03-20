@@ -448,6 +448,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             ModelProviderTarget: A configured model provider instance
         """
         from megatron.bridge.models.gpt_provider import GPTModelProvider
+        from megatron.bridge.models.mla_provider import MLAModelProvider
 
         hf_config = hf_pretrained.config
 
@@ -458,22 +459,25 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         # Use specified provider class, defaulting to GPTModelProvider
         provider_class = self.PROVIDER_CLASS if self.PROVIDER_CLASS is not None else GPTModelProvider
+        is_mla_provider = issubclass(provider_class, MLAModelProvider)
         # Filter kwargs to only fields the provider dataclass accepts, so that MLA-only None
         # values (q_lora_rank, kv_lora_rank, …) are silently dropped for non-MLA providers
         # while still being passed through for MLA providers that declare them as fields.
         valid_fields = provider_class.__dataclass_fields__
         provider = provider_class(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
 
-        # All models that flow through the base provider_bridge use RoPE.
-        # YARN is already handled above (hf_config_to_provider_kwargs sets
-        # position_embedding_type="yarn"), so we only need to guard against
-        # overwriting it here.  Every other rope_type value (None, "default",
-        # "llama3", "longrope", …) means plain RoPE.
+        # Determine position_embedding_type from HF rope_scaling.
+        # For GPT providers: rope_type=="yarn" → "yarn"; everything else → "rope".
+        # For MLA providers: always "rope" — YaRN scaling parameters are applied
+        # separately via mla_rope_params (rotary_scaling_factor, mscale, etc.) and
+        # position_embedding_type="yarn" is not a valid MLA config value.
         hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
         rope_type = None
         if hf_rope_scaling:
             rope_type = hf_rope_scaling.get("type") or hf_rope_scaling.get("rope_type")
-        if rope_type != "yarn":
+        if rope_type == "yarn" and not is_mla_provider:
+            provider.position_embedding_type = "yarn"
+        else:
             provider.position_embedding_type = "rope"
 
         # Apply MLA rope params via setattr (for MLA models like DeepSeek, Kimi)
