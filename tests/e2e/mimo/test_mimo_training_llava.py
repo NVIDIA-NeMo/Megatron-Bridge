@@ -296,16 +296,16 @@ def _build_parallelism_config() -> MimoParallelismConfig:
     return MimoParallelismConfig(
         module_parallelisms={
             "llm": ModuleParallelismConfig(
-                tensor_model_parallel_size=4,
-                pipeline_model_parallel_size=1,
-                data_parallel_size=1,
-                rank_offset=0,
+                tensor_model_parallel_size=int(os.environ.get("MIMO_LLM_TP", 4)),
+                pipeline_model_parallel_size=int(os.environ.get("MIMO_LLM_PP", 1)),
+                data_parallel_size=int(os.environ.get("MIMO_LLM_DP", 1)),
+                rank_offset=int(os.environ.get("MIMO_LLM_OFFSET", 0)),
             ),
             "images": ModuleParallelismConfig(
-                tensor_model_parallel_size=4,
-                pipeline_model_parallel_size=1,
-                data_parallel_size=1,
-                rank_offset=4,
+                tensor_model_parallel_size=int(os.environ.get("MIMO_VISION_TP", 4)),
+                pipeline_model_parallel_size=int(os.environ.get("MIMO_VISION_PP", 1)),
+                data_parallel_size=int(os.environ.get("MIMO_VISION_DP", 1)),
+                rank_offset=int(os.environ.get("MIMO_VISION_OFFSET", 4)),
             ),
         },
     )
