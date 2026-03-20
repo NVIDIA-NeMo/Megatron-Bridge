@@ -3319,6 +3319,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+parquet = [
+    { name = "pyarrow" },
+]
 recipes = [
     { name = "nemo-run", version = "0.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "nemo-run", version = "0.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
@@ -3388,6 +3391,7 @@ requires-dist = [
     { name = "open-clip-torch", specifier = ">=3.2.0" },
     { name = "peft", specifier = ">=0.18.0" },
     { name = "peft", specifier = ">=0.18.1" },
+    { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=14.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "qwen-vl-utils" },
     { name = "regex", specifier = ">=2024.11.6" },
@@ -3402,7 +3406,7 @@ requires-dist = [
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.25.0" },
 ]
-provides-extras = ["recipes", "tensor-inspect"]
+provides-extras = ["recipes", "parquet", "tensor-inspect"]
 
 [package.metadata.requires-dev]
 build = [
