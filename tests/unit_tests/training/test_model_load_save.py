@@ -874,6 +874,7 @@ class TestDtypeFromStr:
             ("16", torch.float16),
             ("16-mixed", torch.float16),
             ("bfloat16", torch.bfloat16),
+            ("bf16", torch.bfloat16),
             ("bf16-mixed", torch.bfloat16),
             ("float32", torch.float32),
             ("unknown", torch.float32),

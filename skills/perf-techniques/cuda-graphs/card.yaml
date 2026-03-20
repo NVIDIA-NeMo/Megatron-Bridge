@@ -1,0 +1,74 @@
+title: cuda_graphs
+validated_on: "2026-03-17"
+summary: >
+  Megatron Bridge supports CUDA graph capture through two implementations:
+  local full-iteration graphs (MCore FullCudaGraphWrapper) and Transformer
+  Engine scoped graphs (TECudaGraphHelper) for fine-grained capture of
+  attention, MLP, and MoE router modules. Requires static tensor shapes
+  and TE RNG tracker.
+validation_status:
+  config_validation:
+    - code_verified  # config.py:1524-1531
+  te_rng_tracker_requirement:
+    - code_verified  # gpt_provider.py:213-217
+  full_iteration_nan_check_constraint:
+    - code_verified  # config.py:1525-1529
+  te_scoped_graph_capture:
+    - code_verified  # train.py:231-255, 338-350
+  delayed_wgrad_cuda_graph_interaction:
+    - code_verified  # comm_overlap.py:522-555
+  moe_moe_router_mutual_exclusion:
+    - code_verified  # MCore transformer_config.py:1928-1931
+  cpu_offloading_incompatible:
+    - code_verified  # MCore transformer_config.py:1907-1908
+  nccl_graph_register_env:
+    - code_verified  # MCore cuda_graphs.py:1428-1435, 1697-1703
+  graph_cleanup:
+    - code_verified  # train.py:1414-1443
+  perf_harness_override:
+    - code_verified  # overrides.py:102-124
+  test_functions_exist:
+    - code_verified  # grep confirmed test function names in test files
+  end_to_end_functional_smoke:
+    - unclear  # test file exists but tests were not executed
+  memory_overhead_numbers:
+    - doc_only  # from performance-guide.md prose, not measured
+feature_meaning:
+  cuda_graph_impl: >
+    Which graph capture backend to use: local (MCore), transformer_engine (TE), or none.
+  cuda_graph_scope: >
+    Which modules to capture: full_iteration, attn, mlp, moe, moe_router, moe_preprocess, mamba.
+  cuda_graph_warmup_steps: >
+    Number of eager warmup steps before graph capture begins (default 3).
+recommended_path:
+  model.cuda_graph_impl: transformer_engine_for_scoped_or_local_for_full
+  model.cuda_graph_scope: attn_plus_moe_router_moe_preprocess_for_moe_models
+  rng.te_rng_tracker: true
+  model.use_te_rng_tracker: true
+known_constraints:
+  - use_te_rng_tracker must be True when cuda_graph_impl is not none (gpt_provider.py:213).
+  - full_iteration scope only works with cuda_graph_impl local (MCore transformer_config.py:1704).
+  - full_iteration requires check_for_nan_in_loss False (config.py:1525).
+  - moe scope and moe_router scope are mutually exclusive (MCore transformer_config.py:1928).
+  - moe_preprocess scope requires moe_router scope (MCore transformer_config.py:1934).
+  - CPU offloading incompatible with CUDA graphs (MCore transformer_config.py:1907).
+  - With expandable_segments, NCCL_GRAPH_REGISTER=0 required (MCore cuda_graphs.py:1428, 1697).
+  - MoE recompute unsupported with moe_router scope + TE impl (MCore transformer_config.py:1977).
+known_limitations:
+  - Most public recipes default to cuda_graph_impl none.
+  - Memory overhead of a few GB for static buffers; 10+ GB with PP > 1 (from docs, not measured).
+  - Tensor shapes must be static; variable-length sequences break graph replay (from docs).
+evidence:
+  - docs/training/cuda-graphs.md
+  - docs/performance-guide.md
+  - src/megatron/bridge/training/config.py
+  - src/megatron/bridge/training/train.py
+  - src/megatron/bridge/models/gpt_provider.py
+  - src/megatron/bridge/training/initialize.py
+  - src/megatron/bridge/training/comm_overlap.py
+  - scripts/performance/utils/overrides.py
+  - tests/unit_tests/training/test_config.py
+  - tests/functional_tests/recipes/test_llama_recipes_pretrain_cuda_graphs.py
+follow_up_validation:
+  - Benchmark throughput improvement for representative dense and MoE configs.
+  - Validate memory overhead numbers on multi-PP configs.
