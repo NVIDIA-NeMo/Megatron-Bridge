@@ -144,7 +144,6 @@ class TestMiniMaxM2Conversion:
         test_output_dir.mkdir(exist_ok=True)
 
         repo_root = Path(__file__).resolve().parents[4]
-        coverage_file = tmp_path / ".coverage"
         cmd = [
             sys.executable,
             "-m",
@@ -154,7 +153,7 @@ class TestMiniMaxM2Conversion:
             "-m",
             "coverage",
             "run",
-            f"--data-file={coverage_file}",
+            "--data-file=/opt/Megatron-Bridge/.coverage",
             f"--source={repo_root}",
             "--parallel-mode",
             str(repo_root / "examples/conversion/hf_megatron_roundtrip_multi_gpu.py"),
