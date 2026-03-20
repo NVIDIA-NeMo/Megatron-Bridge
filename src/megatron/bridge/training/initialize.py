@@ -42,6 +42,9 @@ from megatron.core.utils import (
 )
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
@@ -149,7 +152,7 @@ def initialize_megatron(
 
 
 def torch_dist_init(
-    model_config: GPTModelProvider | T5ModelProvider,
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
     dist_config: DistributedInitConfig,
     rng_config: RNGConfig,
     micro_batch_size: int,
@@ -184,7 +187,9 @@ def torch_dist_init(
     def finish_mpu_init() -> ProcessGroupCollection:
         # Pytorch distributed.
         pg_collection = _initialize_distributed(
-            model_config=model_config,
+            model_config=model_config.transformer
+            if isinstance(model_config, (GPTModelConfig, MambaModelConfig))
+            else model_config,
             dist_config=dist_config,
             num_distributed_optimizer_instances=num_distributed_optimizer_instances,
             get_embedding_ranks=get_embedding_ranks,
@@ -267,7 +272,9 @@ def init_rerun_state(rerun_state_machine_config: RerunStateMachineConfig) -> Non
     rsm.spiky_loss_factor = rerun_state_machine_config.spiky_loss_factor
 
 
-def set_jit_fusion_options(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
+def set_jit_fusion_options(
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig, micro_batch_size: int
+) -> None:
     """Set PyTorch JIT layer fusion options and warmup JIT functions.
 
     Configures the JIT fuser (nvFuser or legacy) based on the PyTorch version
@@ -296,7 +303,10 @@ def set_jit_fusion_options(model_config: GPTModelProvider | T5ModelProvider, mic
         torch._C._jit_override_can_fuse_on_cpu(True)
         torch._C._jit_override_can_fuse_on_gpu(True)
 
-    _warmup_jit_function(model_config, micro_batch_size)
+    _warmup_jit_function(
+        model_config.transformer if isinstance(model_config, (GPTModelConfig, MambaModelConfig)) else model_config,
+        micro_batch_size,
+    )
 
 
 def destroy_global_state() -> None:
@@ -313,7 +323,9 @@ def destroy_global_state() -> None:
     destroy_rerun_state_machine()
 
 
-def _initialize_tp_communicators(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
+def _initialize_tp_communicators(
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig, micro_batch_size: int
+) -> None:
     """initializing the communicators with user buffers for high-performance tensor-model-parallel
     communication overlap"""
 
@@ -382,7 +394,7 @@ def _initialize_tp_communicators(model_config: GPTModelProvider | T5ModelProvide
 
 
 def _create_pg_collection(
-    model_config: GPTModelProvider | T5ModelProvider,
+    model_config: TransformerConfig,
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
@@ -526,7 +538,7 @@ def _create_pg_collection(
 
 
 def _initialize_distributed(
-    model_config: GPTModelProvider | T5ModelProvider,
+    model_config: TransformerConfig,
     dist_config: DistributedInitConfig,
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
@@ -692,7 +704,7 @@ def _set_random_seed(
         )
 
 
-def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
+def _warmup_jit_function(model_config: TransformerConfig, micro_batch_size: int) -> None:
     """Compilie JIT functions before the main training steps"""
     if model_config.bf16:
         dtype = torch.bfloat16

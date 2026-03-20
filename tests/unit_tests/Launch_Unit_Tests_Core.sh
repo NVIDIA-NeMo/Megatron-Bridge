@@ -16,7 +16,7 @@
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 echo "=================================================="
-echo "🧪 UNIT TESTS"
+echo "🧪 UNIT TESTS (core)"
 echo "=================================================="
 
 # Display MCore commit SHA if triggered from MCore CI
@@ -36,4 +36,6 @@ CUDA_VISIBLE_DEVICES="0,1" uv run coverage run -a --data-file=/opt/Megatron-Brid
     -o log_cli=true \
     -o log_cli_level=INFO \
     --disable-warnings \
-    -vs tests/unit_tests -m "not pleasefixme"
+    -vs tests/unit_tests \
+    --ignore=tests/unit_tests/diffusion \
+    -m "not pleasefixme"

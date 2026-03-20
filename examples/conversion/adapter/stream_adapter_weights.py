@@ -35,12 +35,12 @@ streaming and merge-back paths are mathematically consistent.
 
 Run the example:
 
-    uv run python examples/conversion/stream_adapter_weights.py \
+    uv run python examples/conversion/adapter/stream_adapter_weights.py \
         --output ./adapters/demo.safetensors
 
 Multi-GPU launch (torchrun) with tensor/pipeline/expert parallelism:
 
-    uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/stream_adapter_weights.py \
+    uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/adapter/stream_adapter_weights.py \
         --tensor-model-parallel-size 2 \
         --pipeline-model-parallel-size 2 \
         --expert-model-parallel-size 1 \
