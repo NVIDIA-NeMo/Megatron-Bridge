@@ -43,7 +43,7 @@
 CONTAINER_IMAGE=""
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 CONTAINER_MOUNTS=""
-# CONTAINER_MOUNTS="/lustre:/lustre,/path/to/project:/opt/Megatron-Bridge"
+# CONTAINER_MOUNTS="/path/to/shared/storage:/mnt/storage,/path/to/project:/opt/Megatron-Bridge"
 WORKDIR="/opt/Megatron-Bridge"
 
 # ── Tokens / Caches ──────────────────────────────────────────────────────
