@@ -210,6 +210,13 @@ def _load_tp_rank_weights(
     saved = torch.load(ckpt_file, map_location="cpu", weights_only=True)
     state_dict = {k: v for k, v in saved["model"].items() if v is not None}
 
+    # With pipeline parallelism (PP > 1), each PP stage only holds a subset of
+    # layers (e.g. stage 0 has embeddings, stage N-1 has output_layer/final_layernorm).
+    # Filter the checkpoint to keys the module actually owns so that weights
+    # belonging to other PP stages are silently skipped rather than flagged as unexpected.
+    module_keys = set(module.state_dict().keys())
+    state_dict = {k: v for k, v in state_dict.items() if k in module_keys}
+
     incompat = module.load_state_dict(state_dict, strict=False)
     unexpected = [k for k in incompat.unexpected_keys if "_extra_state" not in k]
     missing = [k for k in incompat.missing_keys if "_extra_state" not in k]
@@ -495,7 +502,12 @@ def _build_config(
         tokenizer=TokenizerConfig(),
         checkpoint=CheckpointConfig(),
     )
-    cfg.data_parallel_size = 1
+    # Use the LLM module's DP size for the global microbatch calculator.
+    # The schedule runs the same num_microbatches on all ranks, determined by
+    # global_batch_size / (micro_batch_size * data_parallel_size).  Using DP=1
+    # when actual DP > 1 over-counts microbatches, exhausting the data iterator.
+    llm_dp = mimo_provider.mimo_parallelism_config.module_parallelisms["llm"].data_parallel_size
+    cfg.data_parallel_size = llm_dp
     return cfg
 
 
