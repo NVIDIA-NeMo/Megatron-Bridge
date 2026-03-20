@@ -52,7 +52,9 @@ def is_dataset_built_on_rank(pg_collection: ProcessGroupCollection) -> bool:
 
 
 def pretrain_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: BlendedMegatronDatasetConfig
+    train_val_test_num_samples: list[int],
+    dataset_config: BlendedMegatronDatasetConfig,
+    **kwargs: Any,
 ) -> tuple[GPTDataset, GPTDataset, GPTDataset]:
     """Build pretraining train, validation, and test datasets.
 
@@ -87,7 +89,10 @@ def pretrain_train_valid_test_datasets_provider(
 
 
 def hf_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: HFDatasetConfig, tokenizer: MegatronTokenizer
+    train_val_test_num_samples: list[int],
+    dataset_config: HFDatasetConfig,
+    tokenizer: MegatronTokenizer,
+    **kwargs: Any,
 ) -> tuple[Any, Any, Any]:
     """Build train, validation, and test datasets from a Hugging Face dataset.
 
@@ -124,7 +129,10 @@ def hf_train_valid_test_datasets_provider(
 
 
 def finetuning_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: FinetuningDatasetConfig, tokenizer: MegatronTokenizer
+    train_val_test_num_samples: list[int],
+    dataset_config: FinetuningDatasetConfig,
+    tokenizer: MegatronTokenizer,
+    **kwargs: Any,
 ) -> tuple[Any, Any, Any]:
     """Build finetuning train, validation, and test datasets.
 
