@@ -95,7 +95,6 @@ try:
     from megatron.core.transformer.fsdp_dtensor_checkpoint import (
         handle_experts_in_state_dict,
         handle_fp8_extra_state_case,
-        handle_gdn_in_state_dict,
         handle_swiglu_in_state_dict,
         print_diff_in_state_dicts,
     )
@@ -103,6 +102,11 @@ try:
     HAVE_MEGATRON_FSDP = True
 except ImportError:
     HAVE_MEGATRON_FSDP = False
+
+try:
+    from megatron.core.transformer.fsdp_dtensor_checkpoint import handle_gdn_in_state_dict
+except ImportError:
+    handle_gdn_in_state_dict = None
 
 TRACKER_PREFIX = "latest"
 _CHECKPOINT_VERSION = None
@@ -1197,6 +1201,7 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     Handles:
     - FP8 extra state
     - SWiGLU weight splitting
+    - GDN (Gated DeltaNet) fused projection splitting (in_proj / conv1d)
     - Expert parameter reindexing for Expert Parallel
     - Uneven DTensor preprocessing
 
@@ -1232,15 +1237,18 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
 
     # Handle GDN (Gated DeltaNet) fused projections — split in_proj / conv1d
     # into per-component sub-tensors for TP-correct checkpoint resharding.
-    if "optimizer" in state_dict:
-        model_state_dict, optimizer_state_dict = handle_gdn_in_state_dict(
-            model, state_dict["model"], state_dict["optimizer"]
-        )
-        state_dict["model"] = model_state_dict
-        state_dict["optimizer"] = optimizer_state_dict
-    else:
-        model_state_dict, _ = handle_gdn_in_state_dict(model, state_dict["model"], None)
-        state_dict["model"] = model_state_dict
+    # No-op when handle_gdn_in_state_dict is unavailable (older megatron-core)
+    # or when the model contains no GDN layers.
+    if handle_gdn_in_state_dict is not None:
+        if "optimizer" in state_dict:
+            model_state_dict, optimizer_state_dict = handle_gdn_in_state_dict(
+                model, state_dict["model"], state_dict["optimizer"]
+            )
+            state_dict["model"] = model_state_dict
+            state_dict["optimizer"] = optimizer_state_dict
+        else:
+            model_state_dict, _ = handle_gdn_in_state_dict(model, state_dict["model"], None)
+            state_dict["model"] = model_state_dict
 
     # Handle expert parameters for Expert Parallel (DeepSeek-v3 style MoE)
     num_experts = getattr(model_config, "num_moe_experts", None)
