@@ -191,9 +191,9 @@ def test_each_llama_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
     if "llama3" in recipe_func.__name__.lower():
-        # Pretrain configs use "te", SFT/PEFT configs use "native"
+        # Pretrain configs use "te", SFT/PEFT/LoRA/DoRA configs use "native"
         expected_impl = (
-            "native" if ("sft" in recipe_func.__name__.lower() or "peft" in recipe_func.__name__.lower()) else "te"
+            "native" if any(kw in recipe_func.__name__.lower() for kw in ("sft", "peft", "lora", "dora")) else "te"
         )
         assert cfg.model.cross_entropy_fusion_impl == expected_impl
 
