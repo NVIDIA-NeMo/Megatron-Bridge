@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Mapping
+from typing import Dict, List, Mapping
 
 import torch
 from diffusers import FluxTransformer2DModel
@@ -27,6 +27,23 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     RowParallelMapping,
 )
+
+
+def _flux_axes_dims_rope(hf_config) -> List[int]:
+    """Normalize diffusers tuple/list config to ``List[int]`` for :class:`FluxProvider`."""
+    raw = hf_config.axes_dims_rope
+    if isinstance(raw, (list, tuple)):
+        return [int(x) for x in raw]
+    raise TypeError(f"Unexpected axes_dims_rope type: {type(raw)}")
+
+
+def _flux_ffn_hidden_size(hf_config, hidden_size: int) -> int:
+    """Match HF / diffusers FFN width to Megatron ``ffn_hidden_size``."""
+    explicit = getattr(hf_config, "ffn_dim", None) or getattr(hf_config, "intermediate_size", None)
+    if explicit is not None:
+        return int(explicit)
+    mlp_ratio = getattr(hf_config, "mlp_ratio", 4)
+    return int(mlp_ratio * hidden_size)
 
 
 @MegatronModelBridge.register_bridge(source=FluxTransformer2DModel, target=Flux)
@@ -45,19 +62,24 @@ class FluxBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedFlux) -> FluxProvider:
         hf_config = hf_pretrained.config
 
+        # Diffusers FLUX width is heads * per-head dim; defaults were wrong if we only set attention fields.
+        hidden_size = hf_config.num_attention_heads * hf_config.attention_head_dim
+        ffn_hidden_size = _flux_ffn_hidden_size(hf_config, hidden_size)
+
         provider = FluxProvider(
             in_channels=hf_config.in_channels,
             patch_size=hf_config.patch_size,
             num_joint_layers=hf_config.num_layers,
             num_single_layers=hf_config.num_single_layers,
             num_attention_heads=hf_config.num_attention_heads,
-            # out_channels: None
-            # joint_attention_dim: 4096
+            hidden_size=hidden_size,
+            ffn_hidden_size=ffn_hidden_size,
+            context_dim=hf_config.joint_attention_dim,
             kv_channels=hf_config.attention_head_dim,
             num_query_groups=hf_config.num_attention_heads,
             vec_in_dim=hf_config.pooled_projection_dim,
             guidance_embed=hf_config.guidance_embeds,
-            axes_dims_rope=hf_config.axes_dims_rope,
+            axes_dims_rope=_flux_axes_dims_rope(hf_config),
             bf16=False,
             params_dtype=torch.float32,
         )
