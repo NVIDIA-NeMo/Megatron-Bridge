@@ -189,7 +189,22 @@ class PreTrainedBase(ABC):
         for name in self.OPTIONAL_ARTIFACTS:
             artifact = getattr(self, name, None)
             if artifact is not None and hasattr(artifact, "save_pretrained"):
-                artifact.save_pretrained(save_path)
+                try:
+                    artifact.save_pretrained(save_path)
+                except ValueError as e:
+                    # Some models (e.g. GLM-5) have generation_config.json with fields that
+                    # newer transformers versions consider invalid (e.g. top_p without do_sample).
+                    # Fall back to copying the original file directly to preserve it as-is.
+                    logger.warning(
+                        f"Could not save {name} via save_pretrained ({e}). Attempting direct file copy from source."
+                    )
+                    src_dir = getattr(self, "model_name_or_path", None)
+                    if src_dir is not None:
+                        src_file = Path(str(src_dir)) / f"{name}.json"
+                        if src_file.exists():
+                            shutil.copy(src_file, Path(save_path) / f"{name}.json")
+                        else:
+                            logger.warning(f"Source file {src_file} not found; skipping {name}.")
 
         # Download/copy additional files if specified
         if additional_files:
