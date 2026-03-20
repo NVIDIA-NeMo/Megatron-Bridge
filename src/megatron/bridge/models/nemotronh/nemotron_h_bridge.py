@@ -351,9 +351,6 @@ class NemotronHBridge(MegatronModelBridge):
             # MoE layers
             "decoder.layers.*.mlp.router.weight": "backbone.layers.*.mixer.gate.weight",
             "decoder.layers.*.mlp.router.expert_bias": "backbone.layers.*.mixer.gate.e_score_correction_bias",
-            # TODO(liding): check compatibility: if model does not have `fc1_latent_proj` and `fc2_latent_proj` layer
-            # in megatron model: nano v3 does not have these layers, but super v3 does
-            # in hf model: both variants have these layers (nano v3 has nn.Identity, super v3 has nn.Linear)
             "decoder.layers.*.mlp.fc1_latent_proj.weight": "backbone.layers.*.mixer.fc1_latent_proj.weight",
             "decoder.layers.*.mlp.fc2_latent_proj.weight": "backbone.layers.*.mixer.fc2_latent_proj.weight",
             # GroupedMLP (moe_grouped_gemm=True): expert weights are stored as weight0, weight1, ...

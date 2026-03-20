@@ -15,7 +15,7 @@
 import inspect
 import logging
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Literal, Optional, Union
 
 import torch
@@ -178,13 +178,6 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     mtp_num_layers: int = 0
     mtp_hybrid_override_pattern: Optional[str] = None
     keep_mtp_spec_in_bf16: bool = False
-
-    # Additional parameters that might be needed
-    # TODO(liding): double check these
-    use_te_rng_tracker: bool = False
-    enable_cuda_graph: bool = False
-    cuda_graph_impl: str = "none"
-    cuda_graph_scope: list[str] = field(default_factory=list)
 
     """Optional HuggingFace model identifier associated with this provider."""
 

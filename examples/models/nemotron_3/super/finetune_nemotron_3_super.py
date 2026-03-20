@@ -51,7 +51,6 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     )
     parser.add_argument("--peft", type=str, help="Type of PEFT to use")
     parser.add_argument("--packed-sequence", action="store_true", help="Whether to use sequence packing")
-    # TODO(liding): remove this default value
     parser.add_argument("--seq-length", type=int, default=8192, help="Sequence length")
 
     # Parse known args for the script, remaining will be treated as overrides
