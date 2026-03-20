@@ -21,7 +21,10 @@ Reference: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
 """
 
 from dataclasses import dataclass, field
+from typing import Callable, Optional
 
+import torch
+import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import (
@@ -30,15 +33,15 @@ from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import (
     Qwen2_5OmniToken2WavConfig,
 )
 
-from megatron.bridge.models import Qwen2ModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.model import Qwen25OmniModel
 
 
 @dataclass
-class Qwen25OmniModelProvider(Qwen2ModelProvider):
+class Qwen25OmniModelProvider(GPTModelProvider):
     """
     Base model provider for Qwen2.5 Omni Models.
-    Inherits language model configuration from Qwen2ModelProvider (dense, Qwen2 architecture).
+    Inherits language model configuration from GPTModelProvider (dense, Qwen2 architecture).
 
     Key differences from Qwen3OmniMoeModelProvider:
     - Dense LLM (Qwen2), not MoE
@@ -49,6 +52,19 @@ class Qwen25OmniModelProvider(Qwen2ModelProvider):
     - patch_size: 14 (not 16)
     - Uses HF vision model directly (ReplicatedMapping)
     """
+
+    # Qwen2 architecture defaults
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    add_bias_linear: bool = False
+    hidden_dropout: float = 0.0
+    vocab_size: int = 151936
+    share_embeddings_and_output_weights: Optional[bool] = False
+    layernorm_epsilon: float = 1e-6
+    autocast_dtype: torch.dtype = torch.bfloat16
+    params_dtype: torch.dtype = torch.bfloat16
+    bf16: bool = True
 
     thinker_config: Qwen2_5OmniThinkerConfig = field(default_factory=lambda: Qwen2_5OmniThinkerConfig())
     talker_config: Qwen2_5OmniTalkerConfig | None = None

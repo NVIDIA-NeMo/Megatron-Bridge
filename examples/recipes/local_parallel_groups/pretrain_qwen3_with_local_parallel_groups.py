@@ -15,7 +15,7 @@
 
 """
 ==============================================================================
-Example: Qwen3 Pretraining with Decentralized Process Groups (Advanced/Manual)
+Example: Qwen3 Pretraining with Local Parallel Groups (Advanced/Manual)
 ==============================================================================
 
 This example demonstrates how to MANUALLY create process groups using
@@ -37,14 +37,16 @@ see `pretrain_qwen3_simple.py`.
 How to Run
 ----------
 # 8 GPUs: TP2 x PP2 x DP2
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py
+torchrun --nproc_per_node=8 examples/recipes/local_parallel_groups/pretrain_qwen3_with_local_parallel_groups.py
+
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/local_parallel_groups/pretrain_qwen3_with_local_parallel_groups.py
 
 # 4 GPUs: TP2 x PP2 x DP1
-uv run python -m torch.distributed.run --nproc_per_node=4 examples/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py \
+torchrun --nproc_per_node=4 examples/recipes/local_parallel_groups/pretrain_qwen3_with_local_parallel_groups.py \
     --tp-size 2 --pp-size 2
 
 # 2 GPUs: TP2 x PP1 x DP1
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py \
+torchrun --nproc_per_node=2 examples/recipes/local_parallel_groups/pretrain_qwen3_with_local_parallel_groups.py \
     --tp-size 2 --pp-size 1
 """
 
@@ -93,7 +95,7 @@ from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Qwen3 Pretraining with Manual Decentralized Process Groups")
+    parser = argparse.ArgumentParser(description="Qwen3 Pretraining with Manual Local Parallel Groups")
 
     # Parallelism settings
     parser.add_argument("--tp-size", type=int, default=2, help="Tensor parallel size (default: 2)")
@@ -290,7 +292,7 @@ def create_process_group_collection(
     # Build the ProcessGroupCollection
     # ===========================================================================
     # This is the single object that contains ALL process groups and gets
-    # passed through function calls in decentralized process groups mode.
+    # passed through function calls in local parallel groups mode.
     pg_collection = ProcessGroupCollection(
         # Core parallelism groups
         tp=tp_pg,
@@ -418,7 +420,7 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     # ===========================================================================
     # Create output directories
     # ===========================================================================
-    base_dir = tempfile.mkdtemp(prefix="mbridge_decentralized_pg_")
+    base_dir = tempfile.mkdtemp(prefix="mbridge_local_pg_")
     checkpoint_dir = os.path.join(base_dir, "checkpoints")
     tensorboard_dir = os.path.join(base_dir, "tensorboard")
 
@@ -511,7 +513,7 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     # managing process groups ourselves via pg_collection
     dist_cfg = DistributedInitConfig(
         use_decentralized_pg=True,
-        use_gloo_process_groups=False,  # Gloo not supported with decentralized PG
+        use_gloo_process_groups=False,  # Gloo not supported with local PG
     )
 
     dataset_cfg = MockGPTDatasetConfig(
@@ -648,7 +650,7 @@ def main() -> None:
     args = parse_args()
 
     print_rank_0("=" * 70)
-    print_rank_0("Qwen3 Pretraining with MANUALLY Created Decentralized Process Groups")
+    print_rank_0("Qwen3 Pretraining with MANUALLY Created Local Parallel Groups")
     print_rank_0("=" * 70)
     print_rank_0("")
     print_rank_0("This example shows how to:")
