@@ -37,6 +37,8 @@ from megatron.core.transformer.transformer_config import TransformerConfig as MC
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 from megatron.bridge.peft.base import PEFT
@@ -1392,7 +1394,9 @@ class ConfigContainer(Container):
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
-    model: GPTModelProvider | T5ModelProvider | MambaModelProvider | MimoModelProvider
+    model: (
+        GPTModelProvider | T5ModelProvider | MambaModelProvider | MimoModelProvider | GPTModelConfig | MambaModelConfig
+    )
     optimizer: OptimizerConfig
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
         default_factory=OptimizerConfigOverrideProvider
@@ -1551,11 +1555,6 @@ class ConfigContainer(Container):
                 print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
                 self.ddp.average_in_collective = False
 
-            # TODO: This can be removed once NVIDIA/TransformerEngine#2371 is available to use
-            if self.model.gradient_accumulation_fusion:
-                print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
-                self.model.gradient_accumulation_fusion = False
-
             # reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP
             if self.ddp.reuse_grad_buf_for_mxfp8_param_ag:
                 print_rank_0("reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP, setting to False")
@@ -1677,7 +1676,10 @@ class ConfigContainer(Container):
                 )
 
         # Validate DeepEP or HybridEP is supported for the current GPU architecture
-        validate_flex_dispatcher_backend(self.model)
+        if isinstance(self.model, (GPTModelConfig, MambaModelConfig)):
+            validate_flex_dispatcher_backend(self.model.transformer)
+        else:
+            validate_flex_dispatcher_backend(self.model)
 
         for f in fields(ValidationConfig):
             train_val = getattr(self.train, f.name)
@@ -1777,15 +1779,19 @@ class ConfigContainer(Container):
         For configs that don't inherit from Mcore, key values are logged via
         `_get_key_config_values`, which excludes None values and callables.
         """
+        if isinstance(self.model, (GPTModelConfig, MambaModelConfig)):
+            transformer_cfg = self.model.transformer
+        else:
+            transformer_cfg = self.model
         # Determine the correct Mcore parent class for the model config
         # Some models (e.g., DeepSeek) use MLATransformerConfig instead of TransformerConfig
-        model_mcore_class = _get_mcore_transformer_parent(self.model)
+        model_mcore_class = _get_mcore_transformer_parent(transformer_cfg)
 
         # Map of config names to their (config object, Mcore parent class or None)
         mcore_configs = [
             ("optimizer", self.optimizer, MCoreOptimizerConfig),
             ("ddp", self.ddp, MCoreDistributedDataParallelConfig),
-            ("model", self.model, model_mcore_class),
+            ("model", transformer_cfg, model_mcore_class),
         ]
 
         # Non-Mcore configs - log all values
