@@ -66,7 +66,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.0.0,<=5.2.0",
+    "transformers>=5.0.0,<=5.3.0",
     "peft>=0.18.1",
     "datasets>=2.20.0",
     "accelerate",
@@ -95,6 +95,7 @@ dependencies = [
     "timm",
     "open-clip-torch>=3.2.0",
     "mlflow>=3.5.0",
+    "comet-ml>=3.50.0",
     "torch>=2.6.0",
 ]
 

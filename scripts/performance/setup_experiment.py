@@ -369,10 +369,10 @@ def main(
         )
 
     if enable_nsys:
-        if compute_dtype == "fp8_mx" and nsys_trace is None:
-            logger.warning("Using `cuda-sw` trace mode for MXFP8 profiling")
-            logger.warning("MXFP8 profiling results might not be accurate due to software tracing limitations.")
-            # TODO: Remove this once the functional issues associated with PyT 26.02 are resolved.
+        if nsys_trace is None:
+            logger.warning("Using `cuda-sw` trace mode for profiling")
+            logger.warning("Profiling results might not be accurate due to software tracing limitations.")
+            # TODO: Remove this once the associated functional issues are resolved.
             nsys_trace = ["cuda-sw", "nvtx"]
         plugins.append(
             NsysPlugin(
@@ -573,6 +573,10 @@ if __name__ == "__main__":
     if unknown_args:
         logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
 
+    env = dict(args.env or [])
+    custom_env_vars = args.custom_env_vars
+    custom_env_vars.update(env)
+
     # Handle --list_config_variants: show available variants and interactively select
     config_variant = args.config_variant
     if args.list_config_variants:
@@ -625,7 +629,7 @@ if __name__ == "__main__":
         time_limit=args.time_limit,
         container_image=args.container_image,
         custom_mounts=args.custom_mounts,
-        custom_env_vars=args.custom_env_vars,
+        custom_env_vars=custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
         nccl_ub=args.nccl_ub,
