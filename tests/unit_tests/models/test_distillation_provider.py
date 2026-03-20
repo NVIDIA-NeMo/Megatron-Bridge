@@ -20,7 +20,7 @@ import torch
 from megatron.bridge.models.distillation_provider import DistillationProvider, convert_to_distillation_provider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
-from megatron.bridge.models.gpt_provider import GPTModelProvider as Qwen3MoEModelProvider  # noqa: N814
+from megatron.bridge.models.qwen import Qwen3MoEModelProvider
 from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 
 
@@ -337,7 +337,7 @@ class TestDistillationProvider:
             converted = convert_to_distillation_provider(student, teacher)
             cfg_dict = converted.to_cfg_dict()
 
-            assert cfg_dict["_target_"] == "megatron.bridge.models.gpt_provider.GPTModelProvider"
+            assert cfg_dict["_target_"] == "megatron.bridge.models.qwen.qwen_provider.Qwen3MoEModelProvider"
 
             # Verify GPTModelProvider-level fields are present and match the student config.
             assert cfg_dict["vocab_size"] == student.vocab_size

@@ -69,7 +69,7 @@ from megatron.core.utils import get_pg_rank
 # ==============================================================================
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.data.utils import get_dataset_provider
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.qwen import Qwen3ModelProvider4B
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -435,27 +435,12 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     # IMPORTANT: When use_decentralized_pg=True, the setup functions
     # expect pg_collection to be passed explicitly rather than reading from mpu.
 
-    model_cfg = GPTModelProvider(
+    model_cfg = Qwen3ModelProvider4B(
         # Parallelism - must match what we used to create pg_collection
         tensor_model_parallel_size=args.tp_size,
         pipeline_model_parallel_size=args.pp_size,
         context_parallel_size=args.cp_size,
         sequence_parallel=(args.tp_size > 1),
-        # Qwen3 4B architecture defaults
-        hidden_size=2560,
-        num_attention_heads=32,
-        num_query_groups=8,
-        ffn_hidden_size=9728,
-        kv_channels=128,
-        normalization="RMSNorm",
-        gated_linear_unit=True,
-        add_bias_linear=False,
-        add_qkv_bias=False,
-        qk_layernorm=True,
-        hidden_dropout=0.0,
-        layernorm_epsilon=1e-6,
-        rotary_base=1000000.0,
-        params_dtype=torch.bfloat16,
         # Model architecture (scaled down for demo)
         num_layers=args.num_layers,
         seq_length=args.seq_length,

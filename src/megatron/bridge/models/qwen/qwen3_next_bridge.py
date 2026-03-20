@@ -30,7 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
@@ -49,7 +49,9 @@ class Qwen3NextBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: Qwen3NextForCausalLM) -> GPTModelProvider:
+    PROVIDER_CLASS = Qwen3NextModelProvider
+
+    def provider_bridge(self, hf_pretrained: Qwen3NextForCausalLM) -> Qwen3NextModelProvider:
         """Convert HuggingFace Qwen3-Next config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
