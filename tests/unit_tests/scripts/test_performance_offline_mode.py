@@ -169,3 +169,35 @@ def test_slurm_executor_hf_token_enables_online_transformers(import_performance_
     assert executor.env_vars["HF_TOKEN"] == "hf_test_token"
     assert executor.env_vars["TRANSFORMERS_OFFLINE"] == "0"
     assert executor.env_vars["HF_HUB_OFFLINE"] == "0"
+
+
+def test_slurm_executor_no_state_leakage_between_calls(import_performance_module):
+    """Calling slurm_executor twice must not leak env vars from the first call into the second."""
+    executors = import_performance_module("scripts.performance.utils.executors")
+
+    # First call: with hf_token and wandb_key
+    first = executors.slurm_executor(
+        gpu="h100",
+        account="test_account",
+        partition="test_partition",
+        log_dir="/tmp/log_dir",
+        nodes=1,
+        num_gpus_per_node=8,
+        hf_token="hf_secret",
+        wandb_key="wandb_secret",
+    )
+    assert first.env_vars["HF_TOKEN"] == "hf_secret"
+    assert first.env_vars["WANDB_API_KEY"] == "wandb_secret"
+
+    # Second call: no token, no wandb — should get clean defaults
+    second = executors.slurm_executor(
+        gpu="h100",
+        account="test_account",
+        partition="test_partition",
+        log_dir="/tmp/log_dir",
+        nodes=1,
+        num_gpus_per_node=8,
+    )
+    assert "HF_TOKEN" not in second.env_vars
+    assert "WANDB_API_KEY" not in second.env_vars
+    assert second.env_vars["TRANSFORMERS_OFFLINE"] == "1"
