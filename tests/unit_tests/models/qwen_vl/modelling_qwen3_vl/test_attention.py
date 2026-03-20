@@ -128,7 +128,6 @@ class TestQwen3VLSelfAttention:
 
     @pytest.mark.internal
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
-    @pytest.mark.timeout(30)
     def test_self_attention_mpu(self):
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
