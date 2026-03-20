@@ -62,7 +62,7 @@ class TestMcoreWanPretrain:
             "wan_step",
             "model.tensor_model_parallel_size=1",
             "model.pipeline_model_parallel_size=1",
-            "model.context_parallel_size=1",
+            "model.context_parallel_size=2",
             "model.crossattn_emb_size=1536",
             "model.hidden_size=1536",
             "model.ffn_hidden_size=8960",

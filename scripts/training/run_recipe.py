@@ -93,7 +93,6 @@ STEP_FUNCTIONS: dict[str, Callable] = {
     "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
     "flux_step": FluxForwardStep(),
-    # WAN step is instantiated at runtime with mode-specific hyperparameters from _WAN_MODE_DEFAULTS
     "wan_step": WanForwardStep,
 }
 
@@ -240,7 +239,7 @@ def load_forward_step(step_type: str, mode: str | None = None) -> Callable:
     if step_key not in STEP_FUNCTIONS:
         raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))
     step = STEP_FUNCTIONS[step_key]
-    if step_key == "wan_step":
+    if inspect.isclass(step) and "mode" in inspect.signature(step.__init__).parameters:
         return step(mode=mode)
     return step
 

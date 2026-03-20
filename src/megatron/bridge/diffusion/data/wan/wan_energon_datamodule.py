@@ -130,4 +130,6 @@ class WanDataModuleConfig(DiffusionDataModuleConfig):  # noqa: D101
         self.sequence_length = self.dataset.seq_length
 
     def build_datasets(self, context: DatasetBuildContext):
+        if context.pg_collection is not None:
+            self.dataset.pg_collection = context.pg_collection
         return self.dataset.train_dataloader(), self.dataset.val_dataloader(), self.dataset.val_dataloader()
