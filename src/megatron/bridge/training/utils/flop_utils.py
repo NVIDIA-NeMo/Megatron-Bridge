@@ -382,6 +382,52 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 )
             )
 
+        # Handle GDN (Gated DeltaNet) hybrid attention variant.
+        # When experimental_attention_variant is "gated_delta_net", a fraction of the
+        # layers use GDN instead of standard attention. Override self_attn_term with a
+        # weighted sum of GDN and standard-attention per-layer costs.
+        experimental_attention_variant = getattr(cfg.model, "experimental_attention_variant", None)
+        if experimental_attention_variant == "gated_delta_net":
+            linear_attention_freq = getattr(cfg.model, "linear_attention_freq", None)
+            if linear_attention_freq is not None:
+                if isinstance(linear_attention_freq, int):
+                    linear_attention_pattern = [
+                        0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(num_layers)
+                    ]
+                elif isinstance(linear_attention_freq, list):
+                    linear_attention_pattern = list(linear_attention_freq)
+                else:
+                    linear_attention_pattern = [1] * num_layers
+
+                num_gdn_layers = sum(linear_attention_pattern)
+                num_standard_attn_layers = num_layers - num_gdn_layers
+
+                standard_self_attn_per_layer = self_attn_term / num_layers if num_layers > 0 else 0
+
+                qk_head_dim = getattr(cfg.model, "linear_key_head_dim", 128)
+                v_head_dim = getattr(cfg.model, "linear_value_head_dim", 128)
+                num_qk_heads = getattr(cfg.model, "linear_num_key_heads", 16)
+                num_v_heads = getattr(cfg.model, "linear_num_value_heads", 48)
+                conv_kernel_dim = getattr(cfg.model, "linear_conv_kernel_dim", 4)
+
+                qk_dim = qk_head_dim * num_qk_heads
+                v_dim = v_head_dim * num_v_heads
+
+                gdn_self_attn_per_layer = (
+                    3
+                    * 2
+                    * (
+                        cfg.model.hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                        + conv_kernel_dim * (2 * qk_dim + v_dim)
+                        + num_v_heads * (v_head_dim**2) * 4
+                        + cfg.model.hidden_size * v_dim
+                    )
+                )
+
+                self_attn_term = (
+                    gdn_self_attn_per_layer * num_gdn_layers + standard_self_attn_per_layer * num_standard_attn_layers
+                )
+
         padded_vocab_size = calculate_padded_vocab_size(
             cfg.model.vocab_size,
             cfg.model.make_vocab_size_divisible_by,
