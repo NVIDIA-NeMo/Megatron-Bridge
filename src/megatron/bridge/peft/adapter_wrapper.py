@@ -204,7 +204,7 @@ class AdapterWrapper(nn.Module):
             The combined sharded state dictionary.
         """
         adapter_sharded_state_dict_kwargs = {}
-        if isinstance(self.adapter, ParallelLinearAdapter) and "in_proj" in self.adapter.base_linear_name:
+        if isinstance(self.adapter, ParallelLinearAdapter) and "mixer.in_proj" in self.adapter.base_linear_name:
             adapter_sharded_state_dict_kwargs["mamba_dim_info"] = _compute_mamba_dim_info(self.to_wrap)
 
         sharded_state_dict = {}
