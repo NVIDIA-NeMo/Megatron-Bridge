@@ -1035,25 +1035,34 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     @pytest.mark.parametrize(
-        "gpu_major, moe_enable_deepep, expect_error",
+        "gpu_major, gpu_name, moe_enable_deepep, expect_error",
         [
-            (8, True, False),  # Ampere GPU with DeepEP enabled - should pass
-            (9, True, False),  # Hopper GPU with DeepEP enabled - should pass
-            (7, True, True),  # Volta GPU with DeepEP enabled - should raise ValueError
-            (6, True, True),  # Pascal GPU with DeepEP enabled - should raise ValueError
-            (10, True, True),  # Future unsupported GPU with DeepEP enabled - should raise ValueError
-            (7, False, False),  # Volta GPU with DeepEP disabled - should pass
-            (6, False, False),  # Pascal GPU with DeepEP disabled - should pass
+            (8, "NVIDIA A100", True, False),  # Ampere GPU with DeepEP enabled - should pass
+            (9, "NVIDIA H100", True, False),  # Hopper GPU with DeepEP enabled - should pass
+            (10, "NVIDIA B200", True, False),  # Blackwell B200 GPU with DeepEP enabled - should pass
+            (10, "NVIDIA B200 SXM6 AC", True, False),  # Blackwell B200 variant with DeepEP enabled - should pass
+            (10, "NVIDIA B300", True, False),  # Blackwell B300 GPU with DeepEP enabled - should pass
+            (7, "NVIDIA V100", True, True),  # Volta GPU with DeepEP enabled - should raise ValueError
+            (6, "NVIDIA P100", True, True),  # Pascal GPU with DeepEP enabled - should raise ValueError
+            (
+                10,
+                "NVIDIA B100",
+                True,
+                True,
+            ),  # Unsupported Blackwell variant with DeepEP enabled - should raise ValueError
+            (7, "NVIDIA V100", False, False),  # Volta GPU with DeepEP disabled - should pass
+            (6, "NVIDIA P100", False, False),  # Pascal GPU with DeepEP disabled - should pass
         ],
     )
     @patch("torch.cuda.get_device_properties")
     def test_deepep_validation(
-        self, mock_get_device_properties, monkeypatch, gpu_major, moe_enable_deepep, expect_error
+        self, mock_get_device_properties, monkeypatch, gpu_major, gpu_name, moe_enable_deepep, expect_error
     ):
         """Test DeepEP validation during config container validation."""
         # Mock GPU device properties
         mock_properties = MagicMock()
         mock_properties.major = gpu_major
+        mock_properties.name = gpu_name
         mock_get_device_properties.return_value = mock_properties
 
         # Create a GPT model config with MoE settings
@@ -1069,7 +1078,7 @@ class TestConfigContainerValidation:
 
         try:
             if expect_error:
-                with pytest.raises(ValueError, match="DeepEP is supported for Ampere"):
+                with pytest.raises(ValueError, match="DeepEP is supported for Ampere, Hopper, and Blackwell"):
                     container.validate()
             else:
                 container.validate()  # Should pass without error
@@ -2876,3 +2885,54 @@ class TestLoggerConfigFinalize:
         # Mock mlflow import to avoid slow actual import
         with patch("importlib.import_module"):
             config.finalize()  # Should not raise
+
+    def test_finalize_no_comet_settings(self):
+        """Test finalize succeeds when no Comet settings are configured."""
+        config = LoggerConfig()
+        config.finalize()
+
+    def test_finalize_with_comet_project_only_raises_error(self):
+        """Test finalize raises error when comet_project is set but comet_experiment_name is missing."""
+        config = LoggerConfig(comet_project="my_project")
+
+        with pytest.raises(ValueError, match="comet_experiment_name"):
+            config.finalize()
+
+    def test_finalize_with_comet_project_and_empty_experiment_name_raises_error(self):
+        """Test finalize raises error when comet_experiment_name is empty string."""
+        config = LoggerConfig(comet_project="my_project", comet_experiment_name="")
+
+        with pytest.raises(ValueError, match="comet_experiment_name"):
+            config.finalize()
+
+    def test_finalize_with_comet_project_and_experiment_name_succeeds(self):
+        """Test finalize succeeds when both comet_project and comet_experiment_name are set."""
+        config = LoggerConfig(comet_project="my_project", comet_experiment_name="my_experiment")
+        with patch("importlib.import_module"):
+            config.finalize()
+
+    def test_finalize_comet_not_installed_raises_module_not_found(self):
+        """Test finalize raises ModuleNotFoundError when comet_ml is configured but not installed."""
+        config = LoggerConfig(comet_project="my_project", comet_experiment_name="my_experiment")
+
+        with patch("importlib.import_module", side_effect=ModuleNotFoundError("No module named 'comet_ml'")):
+            with pytest.raises(ModuleNotFoundError, match="comet_ml"):
+                config.finalize()
+
+    def test_finalize_with_comet_workspace_only(self):
+        """Test finalize with only comet_workspace triggers Comet validation."""
+        config = LoggerConfig(comet_workspace="my_workspace")
+        with patch("importlib.import_module"):
+            config.finalize()
+
+    def test_finalize_with_all_comet_settings(self):
+        """Test finalize with all Comet settings configured."""
+        config = LoggerConfig(
+            comet_project="my_project",
+            comet_experiment_name="my_experiment",
+            comet_workspace="my_workspace",
+            comet_api_key="my_key",
+            comet_tags=["sft", "qwen3"],
+        )
+        with patch("importlib.import_module"):
+            config.finalize()

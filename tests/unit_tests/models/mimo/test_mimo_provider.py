@@ -216,6 +216,44 @@ class TestMimoModelProvider:
     @patch("torch.distributed.new_group")
     @patch("torch.distributed.get_process_group_ranks")
     @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids")
+    @patch("megatron.bridge.models.mimo.mimo_provider._default_topology")
+    def test_get_or_build_infra_caches_result(
+        self, mock_topology, mock_build_grids, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """Test get_or_build_infra() builds once and reuses cached infra."""
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1]
+        mock_new_group.return_value = MagicMock()
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+
+        mimo_parallelism_config = MimoParallelismConfig(
+            module_parallelisms={
+                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0),
+            },
+        )
+
+        mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
+        mock_grid.size = 2
+        mock_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"llm": mock_grid}
+        mock_topology.return_value = {"llm": []}
+
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=mimo_parallelism_config,
+        )
+
+        infra1 = provider.get_or_build_infra()
+        infra2 = provider.get_or_build_infra()
+
+        assert infra1 is infra2
+        mock_build_grids.assert_called_once_with(mimo_parallelism_config)
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
     @patch("megatron.bridge.models.mimo.mimo_provider.MimoModel")
     @patch("megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids")
     @patch("megatron.bridge.models.mimo.mimo_provider._default_topology")
@@ -261,59 +299,6 @@ class TestMimoModelProvider:
         infra = provider.build_infra()
         assert "llm" in infra.module_to_grid_map
         assert "llm" in infra.pg_collections
-
-    @patch("torch.distributed.is_initialized")
-    @patch("torch.distributed.get_world_size")
-    @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids")
-    def test_non_participating_rank_raises_error(
-        self, mock_build_grids, mock_get_rank, mock_get_world_size, mock_is_initialized
-    ):
-        """Test that non-participating ranks raise ValueError during finalize().
-
-        This tests the gap scenario: world_size=12, but modules only cover
-        ranks 0-3 and 8-11, leaving ranks 4-7 as non-participating.
-        """
-        mock_is_initialized.return_value = True
-        mock_get_world_size.return_value = 12  # World has 12 ranks
-        mock_get_rank.return_value = 5  # Rank 5 is in the gap
-
-        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
-        # Create config with a gap: llm at 0-3, encoder at 8-11, gap at 4-7
-        mimo_parallelism_config = MimoParallelismConfig(
-            module_parallelisms={
-                "llm": ModuleParallelismConfig(
-                    tensor_model_parallel_size=2,
-                    data_parallel_size=2,
-                    rank_offset=0,  # ranks 0-3
-                ),
-                "encoder": ModuleParallelismConfig(
-                    tensor_model_parallel_size=2,
-                    data_parallel_size=2,
-                    rank_offset=8,  # ranks 8-11
-                ),
-            },
-        )
-
-        # Mock grids with the gap (ranks 4-7 not covered)
-        llm_grid = MagicMock()
-        llm_grid.rank_offset = 0
-        llm_grid.size = 4  # ranks 0-3
-
-        encoder_grid = MagicMock()
-        encoder_grid.rank_offset = 8
-        encoder_grid.size = 4  # ranks 8-11
-
-        mock_build_grids.return_value = {"llm": llm_grid, "encoder": encoder_grid}
-
-        provider = MimoModelProvider(
-            language_model_spec=language_spec,
-            mimo_parallelism_config=mimo_parallelism_config,
-        )
-
-        # Should raise ValueError because ranks 4-7 are a gap between modules
-        with pytest.raises(ValueError, match="not assigned to any module"):
-            provider.finalize()
 
     def test_inject_pg_collection_into_language_spec(self):
         """Test that pg_collection is injected into language specs."""
@@ -493,6 +478,22 @@ class TestMimoModelProvider:
         # Should have set variable_seq_lengths=True
         assert mock_config.variable_seq_lengths is True
 
+    def test_provide_distributed_model_propagates_finalize_error(self):
+        """Test provider surfaces finalize() errors from MimoParallelismConfig."""
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+        mock_parallelism_config = Mock()
+        mock_parallelism_config.finalize.side_effect = ValueError("invalid mimo config")
+
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=mock_parallelism_config,
+        )
+
+        with pytest.raises(ValueError, match="invalid mimo config"):
+            provider.provide_distributed_model(wrap_with_ddp=False)
+
+        mock_parallelism_config.finalize.assert_called_once()
+
 
 class TestMimoModelInfra:
     """Test cases for MimoModelInfra dataclass."""
@@ -573,62 +574,6 @@ class TestEmbeddingGroupHelpers:
 
         assert pos_embd_pg is None
         assert embd_pg is None
-
-    def test_is_pp_first_stage_true(self):
-        """Test is_pp_first_stage returns True when group rank is 0."""
-        from megatron.core.pipeline_parallel.utils import is_pp_first_stage
-
-        mock_pp_group = MagicMock()
-        mock_pp_group.rank.return_value = 0
-        mock_pp_group.size.return_value = 4
-
-        with patch("torch.distributed.is_initialized", return_value=True):
-            assert is_pp_first_stage(mock_pp_group) is True
-
-    def test_is_pp_first_stage_false(self):
-        """Test is_pp_first_stage returns False when group rank is not 0."""
-        from megatron.core.pipeline_parallel.utils import is_pp_first_stage
-
-        mock_pp_group = MagicMock()
-        mock_pp_group.rank.return_value = 1
-        mock_pp_group.size.return_value = 4
-
-        with patch("torch.distributed.is_initialized", return_value=True):
-            assert is_pp_first_stage(mock_pp_group) is False
-
-    def test_is_pp_first_stage_none_group(self):
-        """Test is_pp_first_stage returns True for None group (treated as rank 0, no PP)."""
-        from megatron.core.pipeline_parallel.utils import is_pp_first_stage
-
-        assert is_pp_first_stage(None) is True
-
-    def test_is_pp_last_stage_true(self):
-        """Test is_pp_last_stage returns True when group rank is last."""
-        from megatron.core.pipeline_parallel.utils import is_pp_last_stage
-
-        mock_pp_group = MagicMock()
-        mock_pp_group.rank.return_value = 3
-        mock_pp_group.size.return_value = 4
-
-        with patch("torch.distributed.is_initialized", return_value=True):
-            assert is_pp_last_stage(mock_pp_group) is True
-
-    def test_is_pp_last_stage_false(self):
-        """Test is_pp_last_stage returns False when group rank is not last."""
-        from megatron.core.pipeline_parallel.utils import is_pp_last_stage
-
-        mock_pp_group = MagicMock()
-        mock_pp_group.rank.return_value = 1
-        mock_pp_group.size.return_value = 4
-
-        with patch("torch.distributed.is_initialized", return_value=True):
-            assert is_pp_last_stage(mock_pp_group) is False
-
-    def test_is_pp_last_stage_none_group(self):
-        """Test is_pp_last_stage returns True for None group (treated as rank 0 == size-1 == 0, no PP)."""
-        from megatron.core.pipeline_parallel.utils import is_pp_last_stage
-
-        assert is_pp_last_stage(None) is True
 
 
 class TestProcessGroupCollectionWithEmbeddingGroups:

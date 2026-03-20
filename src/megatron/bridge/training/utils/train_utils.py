@@ -380,6 +380,7 @@ def training_log(
     writer = global_state.tensorboard_logger
     wandb_writer = global_state.wandb_logger
     mlflow_logger = global_state.mlflow_logger
+    comet_logger = global_state.comet_logger
     energy_monitor = global_state.energy_monitor
     logger_config = config.logger
     train_config = config.train
@@ -464,6 +465,8 @@ def training_log(
             timers.write_to_wandb(timers_to_log, wandb_writer, iteration, normalizer=total_iterations, reset=True)
         if hasattr(timers, "write_to_mlflow"):
             timers.write_to_mlflow(timers_to_log, mlflow_logger, iteration, normalizer=total_iterations, reset=True)
+        if hasattr(timers, "write_to_comet"):
+            timers.write_to_comet(timers_to_log, comet_logger, iteration, normalizer=total_iterations, reset=True)
 
     if config.profiling:
         if config.profiling.record_memory_history and get_rank_safe() in config.profiling.profile_ranks:
@@ -495,6 +498,8 @@ def training_log(
                 wandb_writer.log(throughput_report, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(throughput_report), step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics(throughput_report, step=iteration)
         if logger_config.log_memory_to_tensorboard:
             memory_report = report_memory(memory_keys=logger_config.memory_keys)
             memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
@@ -505,6 +510,8 @@ def training_log(
                 wandb_writer.log(memory_report, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(memory_report), step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics(memory_report, step=iteration)
         if logger_config.log_runtime_to_tensorboard:
             runtime_report = report_runtime(
                 train_state=train_state,
@@ -520,6 +527,8 @@ def training_log(
                 wandb_writer.log(runtime_report, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(runtime_report), step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics(runtime_report, step=iteration)
 
         # l2 grad norm
         if logger_config.log_l2_norm_grad_to_tensorboard:
@@ -531,6 +540,8 @@ def training_log(
                 wandb_writer.log(l2_report, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(l2_report), step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics(l2_report, step=iteration)
         if wandb_writer:
             wandb_writer.log({"samples vs steps": train_state.consumed_train_samples}, iteration)
         if mlflow_logger:
@@ -545,6 +556,8 @@ def training_log(
                 wandb_writer.log({"learning-rate": learning_rate}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"learning-rate": learning_rate}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"learning-rate": learning_rate}, step=iteration)
 
         # decoupled lr
         if config.optimizer.decoupled_lr is not None:
@@ -562,6 +575,11 @@ def training_log(
                     {"skipped-train-samples": global_state.train_state.skipped_train_samples},
                     step=iteration,
                 )
+            if comet_logger:
+                comet_logger.log_metrics(
+                    {"skipped-train-samples": global_state.train_state.skipped_train_samples},
+                    step=iteration,
+                )
 
         # batch size
         if writer:
@@ -571,6 +589,8 @@ def training_log(
             wandb_writer.log({"batch-size": batch_size}, iteration)
         if mlflow_logger:
             mlflow_logger.log_metrics({"batch-size": batch_size}, step=iteration)
+        if comet_logger:
+            comet_logger.log_metrics({"batch-size": batch_size}, step=iteration)
 
         # loss dict
         for key in loss_dict:
@@ -582,6 +602,8 @@ def training_log(
         if mlflow_logger:
             loss_metrics = {key: float(val) for key, val in loss_dict.items()}
             mlflow_logger.log_metrics(loss_metrics, step=iteration)
+        if comet_logger:
+            comet_logger.log_metrics({key: float(val) for key, val in loss_dict.items()}, step=iteration)
 
         # loss scale
         if logger_config.log_loss_scale_to_tensorboard:
@@ -592,6 +614,8 @@ def training_log(
                 wandb_writer.log({"loss-scale": loss_scale}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"loss-scale": loss_scale}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"loss-scale": loss_scale}, step=iteration)
 
         # world size
         if logger_config.log_world_size_to_tensorboard:
@@ -604,6 +628,8 @@ def training_log(
                 wandb_writer.log({"world-size": get_world_size_safe()}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"world-size": get_world_size_safe()}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"world-size": get_world_size_safe()}, step=iteration)
 
         # grad norm
         if grad_norm is not None:
@@ -614,6 +640,8 @@ def training_log(
                 wandb_writer.log({"grad-norm": grad_norm}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"grad-norm": grad_norm}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"grad-norm": grad_norm}, step=iteration)
 
         # num zeros in grad
         if num_zeros_in_grad is not None:
@@ -626,6 +654,8 @@ def training_log(
                 wandb_writer.log({"num-zeros": num_zeros_in_grad}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"num-zeros": num_zeros_in_grad}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"num-zeros": num_zeros_in_grad}, step=iteration)
 
         # params norm
         if params_norm is not None:
@@ -638,6 +668,8 @@ def training_log(
                 wandb_writer.log({"params-norm": params_norm}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"params-norm": params_norm}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"params-norm": params_norm}, step=iteration)
 
         # max attention logit
         if log_max_attention_logit is not None:
@@ -652,6 +684,8 @@ def training_log(
                 wandb_writer.log({"max-attention-logit": log_max_attention_logit}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"max-attention-logit": log_max_attention_logit}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"max-attention-logit": log_max_attention_logit}, step=iteration)
 
     if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
@@ -717,7 +751,14 @@ def training_log(
                     },
                     step=iteration,
                 )
-
+            if comet_logger:
+                comet_logger.log_metrics(
+                    {
+                        "throughput/tflops/device": per_gpu_tf,
+                        "throughput/tflops": per_gpu_tf * get_world_size_safe(),
+                    },
+                    step=iteration,
+                )
         # timers
         if logger_config.log_timers_to_tensorboard:
             if writer:
@@ -726,6 +767,8 @@ def training_log(
                 wandb_writer.log({"iteration-time": elapsed_time_per_iteration}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"iteration-time": elapsed_time_per_iteration}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"iteration-time": elapsed_time_per_iteration}, step=iteration)
 
         log_string = f" [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
         log_string += " iteration {:8d}/{:8d} |".format(iteration, train_config.train_iters)
@@ -753,6 +796,8 @@ def training_log(
                     _sanitize_mlflow_metrics({"iter-energy/gpu": float(energy), "power/gpu": float(power)}),
                     step=iteration,
                 )
+            if comet_logger:
+                comet_logger.log_metrics({"iter-energy/gpu": float(energy), "power/gpu": float(power)}, step=iteration)
 
         # Decoupled_learning_rate should be not None only on first and last pipeline stage.
         log_string += f" learning rate: {learning_rate:.6E} |"

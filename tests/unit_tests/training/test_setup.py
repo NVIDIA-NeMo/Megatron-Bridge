@@ -13,11 +13,32 @@
 # limitations under the License.
 
 
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from megatron.bridge.training.setup import _validate_and_set_vocab_size, maybe_log_and_save_config
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.training.setup import (
+    _build_distributed_model,
+    _register_pre_wrap_hook,
+    _validate_and_set_vocab_size,
+    maybe_log_and_save_config,
+)
+
+
+def _make_transformer(**kwargs):
+    defaults = dict(num_layers=2, hidden_size=128, num_attention_heads=1)
+    defaults.update(kwargs)
+    return TransformerConfig(**defaults)
+
+
+def _make_gpt_model_config(**kwargs):
+    tc_kwargs = kwargs.pop("transformer_kwargs", {})
+    defaults = dict(transformer=_make_transformer(**tc_kwargs), vocab_size=32000)
+    defaults.update(kwargs)
+    return GPTModelConfig(**defaults)
 
 
 class TestValidateAndSetVocabSize:
@@ -105,3 +126,77 @@ class TestMaybeLogAndSaveConfig:
         mock_print.assert_called_once()
         assert "Error saving config" in mock_print.call_args[0][0]
         cfg.log_non_default_values.assert_called_once()
+
+
+class TestRegisterPreWrapHook:
+    """Test cases for the _register_pre_wrap_hook function."""
+
+    def test_register_hook_on_model_config(self):
+        """Test that a hook is appended to pre_wrap_hooks on a ModelConfig instance."""
+        cfg = _make_gpt_model_config()
+        hook = lambda models: models  # noqa: E731
+        _register_pre_wrap_hook(cfg, hook)
+        assert hook in cfg.pre_wrap_hooks
+
+    def test_register_hook_on_provider(self):
+        """Test that register_pre_wrap_hook is called on a provider-style object."""
+        mock_provider = MagicMock(spec=GPTModelProvider)
+        hook = lambda models: models  # noqa: E731
+        _register_pre_wrap_hook(mock_provider, hook)
+        mock_provider.register_pre_wrap_hook.assert_called_once_with(hook)
+
+
+class TestBuildDistributedModel:
+    """Test cases for the _build_distributed_model function."""
+
+    def _make_cfg_with_model_config(self):
+        """Create a mock cfg whose .model is a real GPTModelConfig."""
+        model_cfg = _make_gpt_model_config()
+        cfg = MagicMock()
+        cfg.model = model_cfg
+        cfg.ddp = MagicMock()
+        cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+        cfg.dist.use_megatron_fsdp = False
+        cfg.dist.use_torch_fsdp2 = False
+        cfg.rng.data_parallel_random_init = False
+        return cfg, model_cfg
+
+    @patch("megatron.bridge.training.setup.GPTModelConfig")
+    def test_build_with_model_config(self, _mock_gpt_cls):
+        """Test that builder.build_distributed_models is called for ModelConfig."""
+        cfg, model_cfg = self._make_cfg_with_model_config()
+
+        mock_builder_cls = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        mock_dist_model = [MagicMock()]
+        mock_builder.build_distributed_models.return_value = mock_dist_model
+
+        with patch.object(type(model_cfg), "get_builder_cls", return_value=mock_builder_cls):
+            result = _build_distributed_model(cfg, pg_collection=MagicMock())
+
+        mock_builder.build_distributed_models.assert_called_once()
+        assert result == mock_dist_model
+
+    def test_build_with_provider(self):
+        """Test that provide_distributed_model is called for providers."""
+        mock_provider = MagicMock()
+        # Ensure isinstance(mock_provider, ModelConfig) is False
+        mock_provider.__class__ = type("FakeProvider", (), {})
+
+        mock_dist_model = [MagicMock()]
+        mock_provider.provide_distributed_model.return_value = mock_dist_model
+
+        cfg = MagicMock()
+        cfg.model = mock_provider
+        cfg.ddp = MagicMock()
+        cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+        cfg.dist.use_megatron_fsdp = False
+        cfg.dist.use_torch_fsdp2 = False
+        cfg.rng.data_parallel_random_init = False
+
+        result = _build_distributed_model(cfg, pg_collection=MagicMock())
+
+        mock_provider.provide_distributed_model.assert_called_once()
+        assert result == mock_dist_model

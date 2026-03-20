@@ -338,6 +338,7 @@ def evaluate_and_print_results(
 
     wandb_writer = state.wandb_logger
     mlflow_writer = state.mlflow_logger
+    comet_logger = state.comet_logger
 
     if should_fire(callback_manager, start_event):
         callback_manager.fire(
@@ -396,6 +397,12 @@ def evaluate_and_print_results(
                 mlflow_writer.log_metrics(
                     _sanitize_mlflow_metrics({f"val/{key} ppl": ppl}), step=state.train_state.step
                 )
+        if comet_logger and is_last_rank():
+            comet_logger.log_metrics(
+                {"{} validation".format(key): total_loss_dict[key].item()}, step=state.train_state.step
+            )
+            if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                comet_logger.log_metrics({"{} validation ppl".format(key): ppl}, step=state.train_state.step)
 
     if process_non_loss_data_func is not None and writer and is_last_rank():
         process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)
