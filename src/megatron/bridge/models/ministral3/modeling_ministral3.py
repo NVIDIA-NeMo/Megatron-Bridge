@@ -262,6 +262,12 @@ class Ministral3Model(MegatronModule):
             pg_collection=self.config._pg_collection,
         )
 
+        # Apply SP scatter after CP slice
+        if self.config.sequence_parallel and inputs_embeds is not None:
+            from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
+
+            inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+
         # Forward through Megatron language model
         outputs = self.language_model.forward(
             input_ids=None,
