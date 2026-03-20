@@ -271,6 +271,9 @@ class DataloaderConfig:
     pin_memory: bool = True
     """Whether to pin memory during data loading for faster GPU training."""
 
+    drop_last: bool = True
+    """Whether to drop the last incomplete batch."""
+
     persistent_workers: bool = True
     """Whether to keep data loading workers persistent across epochs.
     Automatically set to False when num_workers is 0."""
