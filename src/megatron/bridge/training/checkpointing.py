@@ -855,6 +855,7 @@ def save_checkpoint(
             comet_finalize_fn()
 
     if should_fire(callback_manager, "on_checkpoint_save"):
+
         def fire_callback():
             callback_manager.fire(
                 "on_checkpoint_save",
