@@ -1334,7 +1334,7 @@ def llama3_8b_sft_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = ["mlp"]
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1362,7 +1362,7 @@ def llama3_8b_sft_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = ["mlp"]
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1392,7 +1392,7 @@ def llama3_8b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1420,7 +1420,7 @@ def llama3_8b_sft_8gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = ["mlp"]
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1461,7 +1461,7 @@ def llama3_70b_sft_32gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1497,7 +1497,7 @@ def llama3_70b_sft_32gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1538,7 +1538,7 @@ def llama3_70b_sft_32gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1574,7 +1574,7 @@ def llama3_70b_sft_32gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1612,7 +1612,7 @@ def llama3_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1648,7 +1648,7 @@ def llama3_70b_sft_32gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1687,7 +1687,7 @@ def llama3_70b_lora_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1721,7 +1721,7 @@ def llama3_70b_lora_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1755,7 +1755,7 @@ def llama3_70b_lora_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1794,7 +1794,7 @@ def llama3_70b_lora_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1828,7 +1828,7 @@ def llama3_70b_lora_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1862,7 +1862,7 @@ def llama3_70b_lora_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1901,7 +1901,7 @@ def llama3_70b_lora_8gpu_b300_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1935,7 +1935,7 @@ def llama3_70b_lora_8gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -1969,7 +1969,7 @@ def llama3_70b_lora_8gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -2008,7 +2008,7 @@ def llama3_70b_lora_8gpu_b200_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -2042,7 +2042,7 @@ def llama3_70b_lora_8gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -2076,7 +2076,7 @@ def llama3_70b_lora_8gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -2117,7 +2117,7 @@ def llama3_70b_lora_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
 
 
@@ -2148,5 +2148,5 @@ def llama3_70b_lora_8gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg

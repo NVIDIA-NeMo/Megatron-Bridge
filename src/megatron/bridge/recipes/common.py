@@ -34,7 +34,7 @@ from megatron.bridge.training.config import (
 )
 
 
-def _benchmark_common(cfg: ConfigContainer) -> None:
+def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> None:
     """Apply benchmark-mode defaults that prioritize throughput measurement over convergence.
 
     Intended for performance benchmark recipes only. Sets short training runs,
@@ -65,7 +65,7 @@ def _benchmark_common(cfg: ConfigContainer) -> None:
     if hasattr(cfg.model, "use_transformer_engine_op_fuser") and cfg.model.use_transformer_engine_op_fuser:
         cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.apply_rope_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = cross_entropy_impl
 
     if not isinstance(cfg.mixed_precision, str):
         cfg.mixed_precision.grad_reduce_in_fp32 = False
