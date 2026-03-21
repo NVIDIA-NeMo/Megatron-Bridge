@@ -835,7 +835,7 @@ class StragglerDetectionConfig(MTrainStragglerDetectionConfig):
     """Configuration settings for detecting and logging GPU stragglers."""
 
     enable_straggler_on_startup: bool = True
-    """If set, StragglerDetector is disabled on startup."""
+    """If set, StragglerDetector is enabled on startup."""
 
 
 @dataclass
