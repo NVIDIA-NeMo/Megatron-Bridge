@@ -35,6 +35,7 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig as
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 from megatron.training.config import CheckpointConfig as MTrainCheckpointConfig
 from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
+from megatron.training.config import LoggerConfig as MTrainLoggerConfig
 from megatron.training.config import ProfilingConfig as MTrainProfilingConfig
 from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
 from megatron.training.config import RNGConfig, ValidationConfig
@@ -663,33 +664,11 @@ class CheckpointConfig(MTrainCheckpointConfig):
 
 
 @dataclass(kw_only=True)
-class LoggerConfig:
+class LoggerConfig(MTrainLoggerConfig):
     """Configuration settings for logging, including TensorBoard and WandB."""
-
-    # ---------------- Logging config. ----------------
 
     skip_train_metrics_log: bool = False
     """Skips logging of training metrics to all logging backends and to the console as well."""
-
-    log_interval: int = 100
-    """Report loss and timing interval."""
-
-    log_params_norm: bool = False
-    """If set, calculate and log parameters norm."""
-
-    log_throughput: bool = False
-    """If set, calculate and log throughput per GPU."""
-
-    log_throughput_to_tensorboard: bool = False
-    """Enable throughput logging to tensorboard."""
-
-    throughput_window_size: int = 100
-    """Number of batches to use for a rolling average of throughput."""
-
-    log_progress: bool = False
-    """If set, log progress (in terms of number of processed tokens and number of floating-point operations)
-    to progress.txt file in checkpoint directory.
-    """
 
     timing_log_level: Literal[-1, 0, 1, 2] = 0
     """Granularity level to measure and report timing.
@@ -700,63 +679,6 @@ class LoggerConfig:
     2: report timing for operations that migh be executed numerous times during each iteration.
     Note that setting the level to 1 or 2 might cause increase in iteration time.
     """
-
-    timing_log_option: Literal["max", "minmax", "all"] = "minmax"
-    """Options for logging timing:
-    max: report the max timing across all ranks
-    minmax: report min and max timings across all ranks
-    all: report timings of all ranks.
-    """
-
-    tensorboard_dir: Optional[str] = None
-    """Write TensorBoard logs to this directory."""
-
-    tensorboard_log_interval: int = 1
-    """Report to tensorboard interval."""
-
-    tensorboard_queue_size: int = 1000
-    """Size of the tensorboard queue for pending events and summaries
-    before one of the 'add' calls forces a flush to disk.
-    """
-
-    log_timers_to_tensorboard: bool = False
-    """If set, write timers to tensorboard."""
-
-    log_loss_scale_to_tensorboard: bool = True
-    """Disable loss-scale logging to tensorboard."""
-
-    log_validation_ppl_to_tensorboard: bool = False
-    """If set, write validation perplexity to tensorboard."""
-
-    log_memory_to_tensorboard: bool = False
-    """Enable memory logging to tensorboard."""
-
-    memory_keys: dict[str, str] | None = None
-    """Names of memory statistics to log from `torch.cuda.memory_stats()`"""
-
-    log_l2_norm_grad_to_tensorboard: bool = False
-    """Enable gradients logging to tensorboard."""
-
-    log_runtime_to_tensorboard: bool = False
-    """Enable runtime metrics logging to tensorboard."""
-
-    runtime_time_unit: str = "hours"
-    """ Time unit to use for time logging. """
-
-    log_world_size_to_tensorboard: bool = False
-    """Enable world size logging to tensorboard."""
-
-    wandb_project: Optional[str] = None
-    """The wandb project name. Ignore wandb by default."""
-
-    wandb_exp_name: Optional[str] = None
-    """The wandb experiment name."""
-
-    wandb_save_dir: Optional[str] = None
-    """Path to save the wandb results locally."""
-
-    wandb_entity: Optional[str] = None
-    """The wandb entity name."""
 
     mlflow_experiment: Optional[str] = None
     """The MLFlow experiment name."""
@@ -787,21 +709,6 @@ class LoggerConfig:
 
     logging_level: int = logging.INFO
     """Set default logging level"""
-
-    filter_warnings: bool = True
-    """Filter out warning messages"""
-
-    modules_to_filter: Optional[list[str]] = None
-    """List of modules to filter out from the logs"""
-
-    set_level_for_all_loggers: bool = False
-    """Set the logging level for all loggers. If False, only level for NeMo loggers will be set."""
-
-    log_energy: bool = False
-    """If set, log energy consumption (in Joules)."""
-
-    save_config_filepath: Optional[str] = None
-    """If set, save the task configuration (ConfigContainer) to this file."""
 
     def finalize(self) -> None:
         """Validate logger settings and optional MLFlow dependency."""
