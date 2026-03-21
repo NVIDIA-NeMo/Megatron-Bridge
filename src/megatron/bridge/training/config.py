@@ -35,6 +35,7 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig as
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 from megatron.training.config import CheckpointConfig as MTrainCheckpointConfig
 from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
+from megatron.training.config import ProfilingConfig as MTrainProfilingConfig
 from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
 from megatron.training.config import RNGConfig, ValidationConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
@@ -853,51 +854,8 @@ class LoggerConfig:
 
 
 @dataclass(kw_only=True)
-class ProfilingConfig:
+class ProfilingConfig(MTrainProfilingConfig):
     """Configuration settings for profiling the training process."""
-
-    # ---------------- Profiling config. ----------------
-
-    use_nsys_profiler: bool = False
-    """Enable nsys profiling. When using this option, nsys options should be specified in
-    commandline. An example nsys commandline is
-    `nsys profile -s none -t nvtx,cuda -o <path/to/output_file> --force-overwrite true
-    --capture-range=cudaProfilerApi --capture-range-end=stop`.
-    """
-
-    profile_step_start: int = 10
-    """Global step to start profiling."""
-
-    profile_step_end: int = 12
-    """Global step to stop profiling."""
-
-    use_pytorch_profiler: bool = False
-    """Use the built-in pytorch profiler. Useful if you wish to view profiles in tensorboard."""
-
-    pytorch_profiler_collect_shapes: bool = False
-    """Collect tensor shape in pytorch profiler."""
-
-    pytorch_profiler_collect_callstack: bool = False
-    """Collect callstack in pytorch profiler."""
-
-    pytorch_profiler_collect_chakra: bool = False
-    """Collect chakra trace in pytorch profiler."""
-
-    profile_ranks: list[int] = field(default_factory=lambda: [])
-    """Global ranks to profile."""
-
-    record_memory_history: bool = False
-    """Record memory history in last rank."""
-
-    memory_snapshot_path: str = "snapshot.pickle"
-    """Specifies where to dump the memory history pickle."""
-
-    record_shapes: bool = False
-    """Record shapes of tensors."""
-
-    nvtx_ranges: bool = False
-    """Enable NVTX range annotations for profiling. When enabled, inserts NVTX markers
-    to categorize execution in profiler output."""
 
     def finalize(self) -> None:
         """Validate profiling configuration."""
