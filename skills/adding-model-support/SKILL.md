@@ -41,6 +41,42 @@ This distinction affects:
 - Where to read config fields from (`text_config` vs top-level for VLMs)
 - Test patterns (VLMs need vision inputs in functional tests)
 
+### Step 4 — Check for quantized weights (FP8 / FP4)
+
+Inspect the HF checkpoint's `model.safetensors` (or `model.safetensors.index.json`) for quantized
+weight dtypes such as `float8_e4m3fn` (FP8) or `uint8`/`uint4` with accompanying `*_scale_inv` or
+`*_scale` tensors. Common signs:
+
+- `config.json` mentions `quantization_config` or dtype fields like `"torch_dtype": "float8_e4m3fn"`
+- Safetensors contain `weight_scale_inv` keys alongside the main weight keys
+- The model card mentions FP8/FP4/INT4 weights
+
+**Why this matters:** The bridge's `import_ckpt` path does **not** automatically dequantize — it
+loads raw quantized values as-is. This produces a silently broken model (random-level loss, huge
+grad norms) instead of raising an error.
+
+**Fix:** Dequantize before conversion. Two approaches:
+
+1. **Standalone script** (recommended for user-facing models) — Write a
+   `dequant_fp8_for_bridge.py` in the model's examples folder.
+   Reference: `examples/models/vlm/ministral3/dequant_fp8_for_bridge.py`.
+   The pattern is: `w_bf16 = fp8_weight.to(bfloat16) * weight_scale_inv`.
+
+2. **In-bridge hook** — Override `maybe_modify_loaded_hf_weight()` in the bridge class to
+   dequantize on the fly during import:
+
+   ```python
+   def maybe_modify_loaded_hf_weight(self, hf_param, hf_state_dict):
+       weight = hf_state_dict[hf_param]
+       scale_key = hf_param + "_scale_inv"
+       if weight.dtype == torch.float8_e4m3fn and scale_key in hf_state_dict:
+           return weight.to(torch.bfloat16) * hf_state_dict[scale_key].to(torch.bfloat16)
+       return weight
+   ```
+
+Always add a sanity check in the verification workflow (e.g., print `std` of a weight tensor —
+quantized models typically have `std ≈ 13` before dequantization vs `std ≈ 0.006` after).
+
 ## Phase 2: Bridge Support
 
 ### File structure
@@ -110,6 +146,38 @@ When reading HF config for VLMs, check whether each field is in:
 - `hf_config` (top-level) — e.g. `tie_word_embeddings`, `image_token_id`, `video_token_id`
 - `hf_config.text_config` — e.g. `num_hidden_layers`, `hidden_size`, etc.
 - `hf_config.vision_config` — e.g. vision encoder dimensions
+
+### Update FLOPs calculator for new architectural blocks
+
+If the model introduces a new computational block that differs from standard attention or MLP
+(e.g., Gated DeltaNet / GDN linear attention, Multi-Token Prediction / MTP heads, Mamba SSM layers),
+update the FLOPs calculator in `src/megatron/bridge/training/utils/flop_utils.py` so that
+training throughput metrics (TFLOPs/GPU) are accurate.
+
+**When to update:** Any time the new block has different FLOPs-per-token than standard self-attention
+or standard MLP. Common cases:
+- Linear attention variants (GDN, RetNet, RWKV) — replace the `O(s²)` attention term with the
+  block's actual operation count
+- MTP / speculative decoding heads — add FLOPs for the extra projection and norm layers
+- SSM layers (Mamba) — different recurrence FLOPs than attention
+- Novel MoE routing — may change the effective expert count
+
+**How to update:**
+
+1. Read the existing `transformer_flops()` function in `flop_utils.py` to understand the structure.
+2. Add a conditional block gated on a config attribute (e.g., `experimental_attention_variant`,
+   `mtp_num_layers`). Follow the existing MoE pattern for config validation — raise on invalid
+   types, assert list lengths, and use direct attribute access instead of `getattr` with fallback
+   defaults so that misconfigurations fail explicitly.
+3. Compute the per-layer FLOPs for the new block and blend it with the standard attention term
+   based on the layer pattern.
+4. Add unit tests in `tests/unit_tests/training/utils/test_flop_utils.py` that verify:
+   - New-block FLOPs differ from pure-attention baseline
+   - Exact formula matches hand-computed expected values
+   - Varying the block ratio (e.g., `linear_attention_freq`) changes FLOPs
+
+Reference PR: [#2925 — GDN FLOPs calculator](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/2925)
+adds GDN support with both the calculator code and comprehensive tests.
 
 ## Phase 3: Recipe Support
 
