@@ -38,6 +38,7 @@ from megatron.training.config import DistributedInitConfig as MTrainDistributedI
 from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
 from megatron.training.config import RNGConfig, ValidationConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
+from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -974,23 +975,11 @@ class FaultToleranceConfig:
     """Base delay before simulated fault thread is started. A small random delay is added to this."""
 
 
-@dataclass
-class StragglerDetectionConfig:
+@dataclass(kw_only=True)
+class StragglerDetectionConfig(MTrainStragglerDetectionConfig):
     """Configuration settings for detecting and logging GPU stragglers."""
 
-    log_straggler: bool = False
-    """If set, tracks and logs straggler per GPU."""
-
     enable_straggler_on_startup: bool = True
-    """If set, StragglerDetector is disabled on startup."""
-
-    straggler_ctrlr_port: int = 65535
-    """Port number to toggle StragglerDetector on/off at runtime"""
-
-    straggler_minmax_count: int = 1
-    """Number of ranks to report with high/low estimated throughput"""
-
-    disable_straggler_on_startup: bool = False
     """If set, StragglerDetector is disabled on startup."""
 
 
