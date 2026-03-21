@@ -35,6 +35,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
+from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
 from megatron.training.config import RNGConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -143,26 +144,13 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
         self.enable_gloo_process_groups = value
 
 
-@dataclass
-class RerunStateMachineConfig:
+@dataclass(kw_only=True)
+class RerunStateMachineConfig(MTrainRerunStateMachineConfig):
     """Configuration for the rerun state machine used for result validation or stats."""
-
-    error_injection_rate: int = 0
-    """Rate at which to inject unexpected results, e.g. 1000 means
-    once every 1000 result validations"""
-
-    error_injection_type: Literal["correct_result", "transient_error", "persistent_error"] = "transient_error"
-    """Type of error to inject. """
 
     rerun_mode: Literal["disabled", "validate_results", "report_determinism_stats"] = "disabled"
     """Use re-run engine to validate results (default) or to emit stats
     on variability of computations due to non-deterministic algorithms."""
-
-    check_for_nan_in_loss: bool = True
-    """Check for NaN in the loss."""
-
-    check_for_spiky_loss: bool = False
-    """Check for spiky loss."""
 
     spiky_loss_factor: float = 10.0
     """Factor for detecting spiky loss. A loss is considered spiky if it exceeds
