@@ -3561,7 +3561,7 @@ wheels = [
 
 [[package]]
 name = "multi-storage-client"
-version = "0.44.0"
+version = "0.45.0"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
     { name = "filelock" },
@@ -3579,18 +3579,18 @@ dependencies = [
     { name = "xattr" },
 ]
 wheels = [
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:28e68b3ac8475fbc373707eb279e8f3bdfc297df836794ed986ddd6b6ae52a05" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7120603e9b1936c1919493bfdbfc80084f08d2411b82f09e6384525338666451" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3d9c163d1c5c870df1adbc993d58f884006fcd62727fb90b4a5c429373f62778" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:fa900ac3b781707feba16c8da2562ec84ca4f1b7d99c7bce88b6311882e0cb22" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2d06c99da4cbfb2f600d4ca6ae0f6daf9c6842f5f162e5fedb0f9cbd75c29d5f" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:81581731532dba0a40ea5ff0bb04e512b3ca458db69306902ffa1c047e02bfe0" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:045a1973602b8eaacb1ab86d363c58d901d8768c6b0bb79c0088e417b3aabb0f" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2f3d5456acfac890fd5291a4776ab57c38ffecceb160ede324836c2a02427d18" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8a0a0f8951d722b719cb7d68cd36d639bad3664cf5ac823611b83056541e7b8f" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:f82f58b71dbcb07516fa1732ebd7df53cd62e65a9e50d694a1db6bb0cb5fbd29" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2dd49feebdcd513a0f35701b8af03eb653f1b0efac7e8d686ee6c1bcdc40cbe5" },
-    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.44.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:17612cc379be566d6abb81a6e3a4732ee73a30717a6e2d3432db071c7b4e3d13" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:d8d5ba6383441bd3305c4426ccd539189484069494bcbb2cc4e483e14a23e05a" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:73b7788f3b03d9bdf087d8694a81547513be5950f7e5445f6b3dedfa6808cb62" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b4517037051147f73de486193f8fb3142dd0d6418d73b10121465101937b777e" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:4df24806b3a35877acd303dd6c85abc1aede6367f600ddd9e69f780e72aeecec" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:10f52c40b6bae1b3f581cbdb5218ede3e91bf6d52701c3141532377e75e459d1" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f2993fbc79251ad56376a6a43e86ba01f48f47a010e673b5d1b1eaa11b10cbb9" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:2ce402eb5fbcb0a45de82d26a8ebabcf41bd73de528868511dba9efd806e2ac5" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f555987548994ee248ba6be9b798afe45bab4295932e0172f04563fa9044bcdb" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:55e53afee3ff45b9d8bfb542829281d8bf8ec6927690f316f4bb121264b36715" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:bed3ae0c0cb8645dd69fdabd2d03aa0bd11434406c5f8630db7ce7260c091a1c" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7e9c92c5593217afb2e6d6b29fee9eef81cb5c3d9ee6c07e0d3a4f2bd276de0f" },
+    { url = "https://pypi.nvidia.com/multi-storage-client/multi_storage_client-0.45.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6d620ca0cbe832ab39651f03774565f912624a2d5c9da34141c7d873d13c17b1" },
 ]
 
 [[package]]
