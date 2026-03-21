@@ -668,8 +668,6 @@ class TestNemotron3NanoConversion:
         orig_logits, export_logits = orig_out.logits.cpu(), export_out.logits.cpu()
         max_diff = (orig_logits - export_logits).abs().max().item()
         print(f"Nemotron-3-Nano toy model auto-config max logit difference: {max_diff}")
-        assert torch.allclose(orig_logits, export_logits, atol=1e-2), (
-            f"Forward pass mismatch: max diff {max_diff}"
-        )
+        assert torch.allclose(orig_logits, export_logits, atol=1e-2), f"Forward pass mismatch: max diff {max_diff}"
 
         shutil.rmtree(tmp_path, ignore_errors=True)
