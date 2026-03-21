@@ -34,6 +34,7 @@ from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
+from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
 from megatron.training.config import RNGConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -107,68 +108,8 @@ class OptimizerConfig(MCoreOptimizerConfig):
 
 
 @dataclass(kw_only=True)
-class DistributedInitConfig:
+class DistributedInitConfig(MTrainDistributedInitConfig):
     """Configuration settings for distributed training initialization."""
-
-    # ---------------- Distributed config. ----------------
-
-    distributed_backend: Literal["nccl", "gloo"] = "nccl"
-    """Which backend to use for distributed training."""
-
-    distributed_timeout_minutes: int = 10
-    """Timeout minutes for torch.distributed."""
-
-    align_grad_reduce: bool = True
-    """If not set, all PP stages will launch gradient reduces simultaneously.
-    Otherwise, each PP stage will independently launch as needed.
-    """
-
-    local_rank: int = field(default_factory=lambda: int(os.getenv("LOCAL_RANK", "0")))
-    """local rank passed from distributed launcher."""
-
-    lazy_init: bool = False
-    """If set to True, initialize_megatron() skips DDP initialization and returns function to complete it instead.
-    Also turns on --use-cpu-initialization flag. This is for external DDP manager."""
-
-    use_megatron_fsdp: bool = False
-    """Use Megatron's Fully Sharded Data Parallel. Cannot be used together with use_torch_fsdp2."""
-
-    use_torch_fsdp2: bool = False
-    """Use the torch FSDP2 implementation. FSDP2 is not currently working with Pipeline Parallel.
-    It is still not in a stable release stage, and may therefore contain bugs or other
-    potential issues."""
-
-    nccl_communicator_config_path: Optional[str] = None
-    """Path to the yaml file with NCCL communicator configurations. The number of min/max thread
-    groups and thread group cluster size of each communicator can be configured by setting
-    `min_ctas`, `max_ctas`, and `cga_cluster_size`."""
-
-    use_tp_pp_dp_mapping: bool = False
-    """If set, distributed ranks initialize order is changed from tp-dp-pp to tp-pp-dp.
-    Make sure EP and CP aren't used with this option enabled.
-    """
-
-    use_gloo_process_groups: bool = True
-    """If set, create Gloo process groups for communications."""
-
-    use_sharp: bool = False
-    """Set the use of SHARP for the collective communications of data-parallel process groups.
-    When `True`, run barrier within each data-parallel process group,
-    which specifies the SHARP application target groups.
-    """
-
-    sharp_enabled_group: Optional[Literal["dp", "dp_replica"]] = None
-    """IB SHARP can be enabled from only one communication group.
-    By default, it is enabled from dp group if not specified and use_sharp=True.
-    Available options: [dp, dp_replica]
-    """
-
-    high_priority_stream_groups: Optional[list[str]] = None
-    """Specify which communicator groups should use high priority streams during creation.
-    Assigning high priority to communication streams ensures that communication kernels
-    are scheduled with higher priority, minimizing the exposed communication when it is
-    overlapped with other computation kernels.
-    """
 
     external_gpu_device_mapping: bool = False
     """If True, indicates that GPU device mapping has been externally managed
@@ -180,35 +121,26 @@ class DistributedInitConfig:
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
 
-    distributed_timeout_seconds_after_init: int | None = None
-    """Timeout in seconds for process groups after initialization. This timeout is applied to all process groups after initialization and the first iteration completes."""
-
-    flight_recorder_dump_path: str | None = None
-    """Path for NCCL flight recorder trace dumps. Sets TORCH_FR_DUMP_TEMP_FILE and
-    TORCH_NCCL_DEBUG_INFO_TEMP_FILE env variables before distributed init."""
-
-    flight_recorder_trace_buffer_size: int = 2000
-    """Size of the NCCL flight recorder trace buffer (TORCH_NCCL_TRACE_BUFFER_SIZE)."""
-
-    flight_recorder_dump_on_timeout: bool = True
-    """Dump flight recorder traces on NCCL timeout (TORCH_NCCL_DUMP_ON_TIMEOUT)."""
-
-    flight_recorder_include_stack_trace: bool = False
-    """Include stack traces in flight recorder dumps (TORCH_INCLUDE_STACK_TRACE)."""
-
-    flight_recorder_include_only_active: bool = True
-    """Include only active operations in flight recorder dumps (TORCH_INCLUDE_ONLY_ACTIVE)."""
-
-    flight_recorder_extra_dump_on_exec: bool = True
-    """Enable extra flight recorder dump on execution (TORCH_NCCL_EXTRA_DUMP_ON_EXEC)."""
-
-    disable_jit_fuser: bool = False
-    """Disable the JIT fuser."""
-
     use_decentralized_pg: bool = False
     """Use ProcessGroupCollection passed through functions instead of relying on mcore's
     global parallel state (mpu) variables. When True, parallel groups are obtained from
     the pg_collection object rather than the global megatron.core.parallel_state module."""
+
+    @property
+    def lazy_init(self) -> bool:
+        return self.lazy_mpu_init
+
+    @lazy_init.setter
+    def lazy_init(self, value: bool) -> None:
+        self.lazy_mpu_init = value
+
+    @property
+    def use_gloo_process_groups(self) -> bool:
+        return self.enable_gloo_process_groups
+
+    @use_gloo_process_groups.setter
+    def use_gloo_process_groups(self, value: bool) -> None:
+        self.enable_gloo_process_groups = value
 
 
 @dataclass
