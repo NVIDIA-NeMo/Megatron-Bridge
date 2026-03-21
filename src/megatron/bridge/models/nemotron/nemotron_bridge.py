@@ -61,7 +61,6 @@ class NemotronBridge(MegatronModelBridge):
 
         provider.normalization = "LayerNorm"
         provider.activation_func = squared_relu
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.hidden_dropout = 0.0
         provider.attention_dropout = 0.0

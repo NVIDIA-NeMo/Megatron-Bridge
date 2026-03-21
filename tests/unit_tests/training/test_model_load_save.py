@@ -20,6 +20,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training.config import TokenizerConfig
 from megatron.bridge.training.model_load_save import (
@@ -236,6 +237,84 @@ class TestLoadMegatronModel:
         mock_instantiate.assert_called_once_with(mock_run_cfg_dict["model"])
         mock_cpu_context.assert_called_once()
         mock_model_cfg.provide_distributed_model.assert_called_once()
+        mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
+        assert mock_model_cfg.params_dtype == torch.bfloat16
+
+        result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
+        assert result == [mock_model]
+        mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
+
+    @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
+    @patch("megatron.bridge.training.model_load_save.dist")
+    @patch("megatron.bridge.training.model_load_save.ProcessGroupCollection")
+    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    def test_load_mbridge_saved_model_config(
+        self,
+        mock_from_dict,
+        mock_pg_collection,
+        mock_dist,
+        mock_cpu_context,
+        mock_run_config_fname,
+        mock_run_config,
+        mock_load_weights,
+        mock_temp_dist,
+    ):
+        """Test loading a model when config yaml contains a serialized ModelConfig instance."""
+        # Setup mocks
+        mock_dist.is_available.return_value = False
+        mock_dist.is_initialized.return_value = False
+
+        mock_run_cfg_dict = {
+            "model": {"tensor_model_parallel_size": 1, "_builder_": "import.path.to.SomeModelBuilder"}
+        }
+        mock_run_config.return_value = mock_run_cfg_dict
+
+        mock_model = Mock()
+
+        # Create a mock that passes isinstance(mock_model_cfg, ModelConfig) check
+        mock_model_cfg = Mock(spec=GPTModelConfig)
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = True
+        mock_model_cfg.fp16 = False
+        mock_model_cfg.use_cpu_initialization = False
+        mock_model_cfg.finalize = Mock()
+
+        # Setup the builder chain: get_builder_cls() returns a class, calling it returns a builder
+        mock_builder = Mock()
+        mock_builder.build_distributed_models.return_value = [mock_model]
+        mock_builder_cls = Mock(return_value=mock_builder)
+        mock_model_cfg.get_builder_cls = Mock(return_value=mock_builder_cls)
+
+        mock_from_dict.return_value = mock_model_cfg
+
+        mock_mpu_pgs = Mock()
+        mock_pg_collection.use_mpu_process_groups.return_value = mock_mpu_pgs
+
+        expected_result = {"layer.weight": torch.randn(2, 2)}
+        mock_load_weights.return_value = expected_result
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
+
+        assert isinstance(result, dict)
+        assert result == expected_result
+        mock_run_config_fname.assert_called_once_with(ckpt_path)
+        mock_run_config.assert_called_once()
+        mock_from_dict.assert_called_once_with(mock_run_cfg_dict["model"])
+        mock_cpu_context.assert_called_once()
+        mock_model_cfg.finalize.assert_called_once()
+        mock_model_cfg.get_builder_cls.assert_called_once()
+        mock_builder_cls.assert_called_once_with(mock_model_cfg)
+        mock_builder.build_distributed_models.assert_called_once_with(
+            mock_mpu_pgs,
+            wrap_with_ddp=False,
+        )
         mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
         assert mock_model_cfg.params_dtype == torch.bfloat16
 
@@ -795,6 +874,7 @@ class TestDtypeFromStr:
             ("16", torch.float16),
             ("16-mixed", torch.float16),
             ("bfloat16", torch.bfloat16),
+            ("bf16", torch.bfloat16),
             ("bf16-mixed", torch.bfloat16),
             ("float32", torch.float32),
             ("unknown", torch.float32),
