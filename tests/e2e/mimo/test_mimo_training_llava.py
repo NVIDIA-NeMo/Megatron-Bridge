@@ -502,12 +502,11 @@ def _build_config(
         tokenizer=TokenizerConfig(),
         checkpoint=CheckpointConfig(),
     )
-    # Use the LLM module's DP size for the global microbatch calculator.
-    # The schedule runs the same num_microbatches on all ranks, determined by
-    # global_batch_size / (micro_batch_size * data_parallel_size).  Using DP=1
-    # when actual DP > 1 over-counts microbatches, exhausting the data iterator.
-    llm_dp = mimo_provider.mimo_parallelism_config.module_parallelisms["llm"].data_parallel_size
-    cfg.data_parallel_size = llm_dp
+    # data_parallel_size=1 because the sampler does not shard by DP.
+    # All data-loading ranks receive identical global micro-batches;
+    # per-module DP sub-sharding is handled by slice_batch_for_mimo in the
+    # forward step.  num_microbatches = global_batch_size / micro_batch_size.
+    cfg.data_parallel_size = 1
     return cfg
 
 
