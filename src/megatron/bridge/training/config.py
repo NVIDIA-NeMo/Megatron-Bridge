@@ -35,7 +35,7 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig as
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
 from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
-from megatron.training.config import RNGConfig
+from megatron.training.config import RNGConfig, ValidationConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 
@@ -573,23 +573,6 @@ class TrainingConfig(MTrainTrainingConfig):
             # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
             self.train_iters = self.train_samples // self.global_batch_size
             print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
-
-
-@dataclass(kw_only=True)
-class ValidationConfig:
-    """Configuration settings related to validation during or after model training."""
-
-    eval_iters: int | None = 100
-    """Number of iterations to run for evaluation. Used for both validation and test. If not set,
-    evaluation will not run."""
-
-    eval_interval: int | None = None
-    """Interval between running evaluation on validation set. If not set, evaluation will not run
-    during training.
-    """
-
-    skip_train: bool = False
-    """If set, bypass the training loop, perform evaluation for validation/test, and exit."""
 
 
 @dataclass(kw_only=True)
