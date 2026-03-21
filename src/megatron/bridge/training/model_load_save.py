@@ -731,11 +731,11 @@ def dtype_from_str(dtype: str) -> torch.dtype:
     if not isinstance(dtype, str):
         raise TypeError(f"Expected str, got {type(dtype)}")
 
-    if dtype in ("float16", "fp16", "16", "16-mixed"):
-        return torch.float16
-    elif dtype in ("bfloat16", "bf16-mixed"):
-        return torch.bfloat16
-    else:
+    from megatron.bridge.utils.activation_map import str_to_dtype
+
+    try:
+        return str_to_dtype(dtype)
+    except ValueError:
         return torch.float32
 
 

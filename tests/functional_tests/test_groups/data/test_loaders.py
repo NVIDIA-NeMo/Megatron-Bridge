@@ -218,6 +218,40 @@ class TestDataLoaders:
         assert valid_dataloader is None
         assert test_dataloader is None
 
+    @mock.patch("torch.distributed.broadcast")
+    def test_build_train_valid_test_data_loaders_specialized_dispatch_updates_flags(self, mock_broadcast):
+        cfg = create_simple_test_config()
+        train_state = TrainState()
+        dp_group = object()
+        dataset_provider = mock.Mock()
+
+        fake_builder = mock.Mock(return_value=(object(), None, None))
+
+        with mock.patch("megatron.bridge.data.loaders._resolve_data_loader_builder", return_value=fake_builder):
+            train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
+                cfg=cfg,
+                train_state=train_state,
+                build_train_valid_test_datasets_provider=dataset_provider,
+                dp_group=dp_group,
+            )
+
+        fake_builder.assert_called_once_with(
+            cfg=cfg,
+            train_state=train_state,
+            build_train_valid_test_datasets_provider=dataset_provider,
+            dp_group=dp_group,
+        )
+        mock_broadcast.assert_called_once_with(mock.ANY, 0)
+        actual_flags = mock_broadcast.call_args[0][0]
+        expected_flags = torch.tensor([1, 0, 0], dtype=torch.long, device="cuda")
+        assert torch.equal(actual_flags, expected_flags)
+        assert train_state.do_train == 1
+        assert train_state.do_valid == 0
+        assert train_state.do_test == 0
+        assert train_dataloader is not None
+        assert valid_dataloader is None
+        assert test_dataloader is None
+
 
 class TestSampleBasedDataLoaders:
     """Tests for sample-based training data loader functionality."""

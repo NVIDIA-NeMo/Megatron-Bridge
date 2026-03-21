@@ -34,9 +34,7 @@ from typing import (
 )
 
 import torch
-import torch.nn.functional as F
 from megatron.core import parallel_state
-from megatron.core.activations import fast_gelu, squared_relu
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
@@ -61,6 +59,7 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.utils.activation_map import ACTIVATION_FUNC_MAP
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
@@ -316,33 +315,23 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("mscale_all_dim", "mscale_all_dim"),
     ]
 
-    # Common bidirectional activation function mapping: hf_name <-> megatron_func
-    ACTIVATION_MAPPING = {
-        "silu": F.silu,
-        "gelu": F.gelu,
-        "relu": F.relu,
-        "relu2": squared_relu,
-        "tanh": torch.tanh,
-        "gelu_pytorch_tanh": fast_gelu,
-    }
-
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):
         """Convert HF activation name string to Megatron activation function."""
-        if hidden_act not in cls.ACTIVATION_MAPPING:
+        if hidden_act not in ACTIVATION_FUNC_MAP:
             raise ValueError(
-                f"Unsupported activation function: {hidden_act}. Supported: {list(cls.ACTIVATION_MAPPING.keys())}"
+                f"Unsupported activation function: {hidden_act}. Supported: {list(ACTIVATION_FUNC_MAP.keys())}"
             )
-        return cls.ACTIVATION_MAPPING[hidden_act]
+        return ACTIVATION_FUNC_MAP[hidden_act]
 
     @classmethod
     def megatron_to_hf_activation(cls, activation_func) -> str:
         """Convert Megatron activation function to HF activation name string."""
-        for hf_name, megatron_func in cls.ACTIVATION_MAPPING.items():
+        for hf_name, megatron_func in ACTIVATION_FUNC_MAP.items():
             if activation_func is megatron_func:
                 return hf_name
         raise ValueError(
-            f"Unsupported activation function: {activation_func}. Supported: {list(cls.ACTIVATION_MAPPING.values())}"
+            f"Unsupported activation function: {activation_func}. Supported: {list(ACTIVATION_FUNC_MAP.values())}"
         )
 
     def hf_config_to_provider_kwargs(self, hf_config) -> dict:
@@ -1060,7 +1049,13 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
-            converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
+            megatron_weights = task.param_weight
+            megatron_module = task.megatron_module
+            if self._should_skip_mtp_duplicate_embedding_export(task, megatron_model):
+                megatron_weights = None
+                megatron_module = None
+
+            converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, megatron_module)
 
             # --- Grouped export path: accumulate per-expert weights, yield when complete ---
             if getattr(task.mapping, "is_grouped_export", False):
@@ -1097,7 +1092,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 final_tensor = tensor.cpu() if cpu else tensor
 
                 if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
-                    hf_name = hf_name[: -len("weight")] + "base_layer.weight"
+                    suffix_pos = hf_name.rfind(".")
+                    if suffix_pos == -1:
+                        hf_name = hf_name + ".base_layer"
+                    else:
+                        hf_name = hf_name[:suffix_pos] + ".base_layer" + hf_name[suffix_pos:]
 
                 # Handle tied embeddings case
                 # TODO(yuya): fix this hard coded naming
@@ -1158,8 +1157,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     def dtype_from_str(self, dtype: str) -> torch.dtype:
         """Convert a string precision identifier to equivalent torch dtype.
 
-        This utility method handles various string representations of PyTorch
-        data types, including common abbreviations and mixed precision formats.
+        Delegates to ``megatron.bridge.utils.activation_map.str_to_dtype``.
+        Defaults to ``torch.float32`` for unrecognized strings.
 
         Args:
             dtype (str): String representation of dtype (e.g., "float16", "fp16",
@@ -1167,27 +1166,12 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         Returns:
             torch.dtype: Corresponding PyTorch dtype (defaults to float32 if unknown).
-
-        Supported formats:
-            - float16/fp16/16/16-mixed → torch.float16
-            - bfloat16/bf16-mixed → torch.bfloat16
-            - Others → torch.float32 (default)
-
-        Example:
-            .. code-block:: python
-
-                dtype = bridge.dtype_from_str("fp16")
-                print(dtype)  # torch.float16
-
-                dtype = bridge.dtype_from_str("bf16-mixed")
-                print(dtype)  # torch.bfloat16
         """
-        assert isinstance(dtype, str)
-        if dtype in ["float16", "fp16", "16", "16-mixed"]:
-            return torch.float16
-        elif dtype in ["bfloat16", "bf16-mixed"]:
-            return torch.bfloat16
-        else:
+        from megatron.bridge.utils.activation_map import str_to_dtype
+
+        try:
+            return str_to_dtype(dtype)
+        except ValueError:
             return torch.float32
 
     def make_vocab_size_divisible_by(self, vocab_size: int) -> int:
@@ -1288,6 +1272,29 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 torch.distributed.broadcast(embd_weights, src=embd_group_ranks[0], group=embd_group)
                 if hasattr(unwrapped_model, "output_layer"):
                     unwrapped_model.output_layer.weight.data.copy_(embd_weights)
+
+    def _should_skip_mtp_duplicate_embedding_export(
+        self,
+        task: WeightConversionTask,
+        megatron_model: List[MegatronModel],
+    ) -> bool:
+        """Treat duplicate MTP embedding copies as PP receivers during export."""
+        if task.vp_stage is None or not 0 <= task.vp_stage < len(megatron_model):
+            return False
+
+        if not task.global_param_name.endswith("embedding.word_embeddings.weight"):
+            return False
+
+        model_chunk = unwrap_model(megatron_model[task.vp_stage])
+        model_config = getattr(model_chunk, "config", None)
+        if getattr(model_config, "pipeline_model_parallel_size", 1) <= 1:
+            return False
+
+        if getattr(model_chunk, "pre_process", False):
+            return False
+
+        inner_model = getattr(model_chunk, "language_model", model_chunk)
+        return bool(getattr(inner_model, "mtp_process", False))
 
     def build_conversion_tasks(
         self,
