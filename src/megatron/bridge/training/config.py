@@ -33,6 +33,7 @@ from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
+from megatron.training.config import CheckpointConfig as MTrainCheckpointConfig
 from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
 from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
 from megatron.training.config import RNGConfig, ValidationConfig
@@ -576,63 +577,8 @@ class TrainingConfig(MTrainTrainingConfig):
 
 
 @dataclass(kw_only=True)
-class CheckpointConfig:
+class CheckpointConfig(MTrainCheckpointConfig):
     """Configuration settings for model checkpointing (saving and loading)."""
-
-    # ---------------- Checkpointing config. ----------------
-
-    save: Optional[str] = None
-    """Output directory to save checkpoints to."""
-
-    save_interval: Optional[int] = None
-    """Number of iterations between persistent checkpoint saves."""
-
-    most_recent_k: Optional[int] = -1
-    """Number of latest checkpoint to be saved."""
-
-    save_optim: bool = True
-    """Do not save current optimizer."""
-
-    save_rng: bool = True
-    """Do not save current rng state."""
-
-    load: Optional[str] = None
-    """Directory containing a model checkpoint."""
-
-    load_optim: bool = True
-    """Do not load optimizer when loading checkpoint."""
-
-    load_main_params_from_ckpt: bool = False
-    """Load main parameters from checkpoint. When loading a model from a checkpoint without loading
-    the optimizer, the model parameters are updated but for fp16 optimizer with main parameters,
-    the main parameters need to also be updated.
-    """
-
-    load_rng: bool = True
-    """Do not load rng state when loading checkpoint."""
-
-    non_persistent_save_interval: Optional[int] = None
-    """Number of iterations between non-persistent saves."""
-
-    non_persistent_ckpt_type: Optional[Literal["global", "local", "in_memory", "None"]] = None
-    """Type of non-persistent model checkpoints.
-    "global" - Saved as a standard checkpoint (e.g., on Lustre) with old checkpoints being removed.
-    "local" - [TBD] Each rank saves a portion of the checkpoint locally (e.g., on SSD/ramdisk).
-    "in_memory" - [TBD] A special kind of local checkpoint that avoids serialization.
-    None - No non-persistent checkpointing (default option)."""
-
-    non_persistent_global_ckpt_dir: Optional[str] = None
-    """Directory containing global non-persistent model checkpoints."""
-
-    non_persistent_local_ckpt_dir: Optional[str] = None
-    """Directory containing local non-persistent model checkpoints."""
-
-    non_persistent_local_ckpt_algo: Literal["fully_parallel", "atomic"] = "fully_parallel"
-    """Algorithm for local non-persistent checkpointing."""
-
-    finetune: bool = False
-    """Load model for finetuning. Do not load optimizer or rng state from checkpoint and set iteration to 0.
-    Assumed when loading a release checkpoint."""
 
     pretrained_checkpoint: Optional[str] = None
     """Directory containing a pretrained model checkpoint for finetuning.
@@ -646,86 +592,33 @@ class CheckpointConfig:
         checkpoint payload (``run_config.yaml``, weight shards, etc.).
     """
 
-    ckpt_step: Optional[int] = None
-    """Checkpoint step to load model from."""
-
-    use_checkpoint_args: bool = False
-    """Override any command line arguments with arguments from the checkpoint"""
-
     storage_writers_per_rank: int = 1
     """Number of storage writers per rank for torch_dist checkpoint format.
     Affects the number of checkpoint files: saving_ranks * storage_writers_per_rank."""
-
-    exit_on_missing_checkpoint: bool = False
-    """If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of random initialization."""
-
-    ckpt_format: Literal["torch_dist", "zarr", "fsdp_dtensor"] = "torch_dist"
-    """Checkpoint format to use."""
-
-    ckpt_convert_format: Optional[Literal["torch", "torch_dist", "zarr"]] = None
-    """Checkpoint format for conversion."""
-
-    ckpt_convert_save: Optional[str] = None
-    """Save directory for converted checkpoint."""
-
-    fully_parallel_save: bool = True
-    """Disable applying full save parallelization across DP for distributed checkpoints.
-    Depending on ckpt format might decrease the number of files in the checkpoint.
-    Makes DistributedOptimizer checkpoint non-reshardable."""
-
-    async_save: bool = False
-    """Apply async checkpointing save. Currently works only with `torch_dist` distributed checkpoint format."""
 
     use_persistent_ckpt_worker: bool = True
     """Use a persistent background worker for async checkpoint saves. When enabled, creates a dedicated
     worker thread/process for handling async saves. When disabled, uses temporal workers that are
     created and destroyed for each save operation."""
 
-    fully_parallel_load: bool = False
-    """Apply full load parallelization across DP for distributed checkpoints."""
-
-    ckpt_assume_constant_structure: bool = False
-    """Assume the checkpoint structure is constant across saves to enable optimizations."""
-
     strict_fsdp_dtensor_load: bool = False
     """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
 
-    dist_ckpt_strictness: Literal[
-        "assume_ok_unexpected",
-        "log_unexpected",
-        "log_all",
-        "raise_unexpected",
-        "raise_all",
-        "return_unexpected",
-        "return_all",
-        "ignore_all",
-    ] = "assume_ok_unexpected"
-    """Determine handling of key mismatch during checkpoint load. Check StrictHandling docs for flags meaning.
-    NOTE: This flag controls only distributed checkpoint load from storage, not loading state dict into the model."""
+    @property
+    def fully_parallel_save(self) -> bool:
+        return self.ckpt_fully_parallel_save
 
-    dist_ckpt_optim_fully_reshardable: bool = False
-    """Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as opposed to plain DP reshardability."""
+    @fully_parallel_save.setter
+    def fully_parallel_save(self, value: bool) -> None:
+        self.ckpt_fully_parallel_save = value
 
-    distrib_optim_fully_reshardable_mem_efficient: bool = False
-    """During distributed optimizer checkpoint save and load tries to use as little memory as possible
-    by using Gloo (instead of NCCL) and only one rank for saving. Turn on only if experiencing host or device memory
-    issues. Has affect only with `dist_ckpt_optim_fully_reshardable` flag."""
+    @property
+    def fully_parallel_load(self) -> bool:
+        return self.ckpt_fully_parallel_load
 
-    save_tokenizer_assets: bool = True
-    """Save tokenizer files to checkpoint directory. When enabled, saves all tokenizer artifacts
-    (vocab files, special tokens, tokenizer config) to make checkpoints self-contained and portable.
-    Set to False for performance-sensitive scenarios where tokenizer files are not needed."""
-
-    replication: bool = False
-    """If set, replication of local checkpoints is enabled. Needs to be enabled on all ranks."""
-
-    replication_jump: Optional[int] = None
-    """Specifies `J`, the spacing between ranks storing replicas of a given rank's data. Replicas
-    for rank `n` may be on ranks `n+J`, `n+2J`, ..., or `n-J`, `n-2J`, etc. This flag has an
-    effect only if --replication is used. and must be consistent across all ranks."""
-
-    replication_factor: int = 2
-    """Number of machines storing the replica of a given rank's data."""
+    @fully_parallel_load.setter
+    def fully_parallel_load(self, value: bool) -> None:
+        self.ckpt_fully_parallel_load = value
 
     custom_manager_class: str | None = None
     """Fully qualified class name for a custom CheckpointManager implementation.
