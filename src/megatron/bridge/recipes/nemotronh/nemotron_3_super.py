@@ -261,6 +261,7 @@ def nemotron_3_super_finetune_config(
     return cfg
 
 
+# TODO(liding): remove debug provider
 def nemotron_3_super_debug_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Nemotron 3 Super Debug (small, 1-node).
 
