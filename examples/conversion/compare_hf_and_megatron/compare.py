@@ -446,7 +446,7 @@ def _load_hf_model(args, is_vl_model: bool):
     hf_model = model_class.from_pretrained(
         args.hf_model_path,
         torch_dtype=torch.bfloat16,
-        device_map="cuda",
+        device_map="auto",
         trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
@@ -579,7 +579,7 @@ def _load_megatron_model(args):
 
     if args.megatron_model_path:
         # Load from Megatron checkpoint
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
         model_provider = bridge.to_megatron_provider(load_weights=False)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -595,6 +595,7 @@ def _load_megatron_model(args):
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                "sequence_parallel": True,
             },
             wrap_with_ddp=False,
         )
@@ -613,6 +614,7 @@ def _load_megatron_model(args):
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.sequence_parallel = True
         model_provider.finalize()
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
@@ -652,6 +654,8 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+
+    tokenizer.padding_side = "left"
 
     processor = None
     if is_vl_model:

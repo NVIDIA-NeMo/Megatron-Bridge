@@ -447,6 +447,142 @@ class TestCreateSFTDataset:
         # Verify GPTSFTPackedDataset was called (not GPTSFTChatDataset)
         mock_packed_class.assert_called_once()
 
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_create_packed_parquet_dataset_idx_parquet(self, mock_parquet_class):
+        """Test that .idx.parquet files create GPTSFTPackedParquetDataset."""
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("test.idx.parquet"),
+            tokenizer=mock_tokenizer,
+        )
+
+        # Verify GPTSFTPackedParquetDataset was called
+        mock_parquet_class.assert_called_once()
+
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_create_packed_parquet_dataset_idx_pq(self, mock_parquet_class):
+        """Test that .idx.pq files create GPTSFTPackedParquetDataset."""
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("test.idx.pq"),
+            tokenizer=mock_tokenizer,
+        )
+
+        # Verify GPTSFTPackedParquetDataset was called
+        mock_parquet_class.assert_called_once()
+
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_create_packed_parquet_dataset_priority_over_chat(self, mock_parquet_class):
+        """Test that packed Parquet files take precedence over chat=True."""
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("test.idx.parquet"),
+            tokenizer=mock_tokenizer,
+            chat=True,  # Should be ignored for packed Parquet files
+            use_hf_tokenizer_chat_template=True,
+        )
+
+        # Verify GPTSFTPackedParquetDataset was called (not GPTSFTChatDataset)
+        mock_parquet_class.assert_called_once()
+
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_regular_parquet_also_routed_to_packed(self, mock_parquet_class):
+        """Test that all .parquet files route to GPTSFTPackedParquetDataset.
+
+        is_packed_parquet_spec matches any .parquet/.pq file; schema validation
+        inside GPTSFTPackedParquetDataset fast-fails if columns don't match.
+        """
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("test.parquet"),  # No .idx. prefix — still routed to packed
+            tokenizer=mock_tokenizer,
+            chat=True,
+            use_hf_tokenizer_chat_template=True,
+        )
+
+        # All .parquet files go through GPTSFTPackedParquetDataset
+        mock_parquet_class.assert_called_once()
+
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_create_packed_parquet_glob_pattern(self, mock_parquet_class):
+        """Test that glob patterns like data*.idx.parquet route to GPTSFTPackedParquetDataset."""
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("data/shard_*.idx.parquet"),  # Glob pattern
+            tokenizer=mock_tokenizer,
+        )
+
+        # Verify GPTSFTPackedParquetDataset was called
+        mock_parquet_class.assert_called_once()
+
+
+class TestIsPackedParquetFile:
+    """Test cases for is_packed_parquet_file utility function."""
+
+    def test_single_file_idx_parquet(self):
+        """Test detection of single .idx.parquet file."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("data.idx.parquet") is True
+        assert is_packed_parquet_file("/path/to/data.idx.parquet") is True
+
+    def test_single_file_idx_pq(self):
+        """Test detection of single .idx.pq file."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("data.idx.pq") is True
+        assert is_packed_parquet_file("/path/to/data.idx.pq") is True
+
+    def test_glob_pattern_idx_parquet(self):
+        """Test detection of glob patterns for .idx.parquet."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("data*.idx.parquet") is True
+        assert is_packed_parquet_file("shard_?.idx.parquet") is True
+        assert is_packed_parquet_file("/path/to/data*.idx.parquet") is True
+
+    def test_glob_pattern_idx_pq(self):
+        """Test detection of glob patterns for .idx.pq."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("data*.idx.pq") is True
+        assert is_packed_parquet_file("shard_?.idx.pq") is True
+
+    def test_regular_parquet_not_detected(self):
+        """Test that regular .parquet files are not detected as packed."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("data.parquet") is False
+        assert is_packed_parquet_file("data*.parquet") is False
+        assert is_packed_parquet_file("/path/to/data.parquet") is False
+
+    def test_case_insensitive(self):
+        """Test case-insensitive detection."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("DATA.IDX.PARQUET") is True
+        assert is_packed_parquet_file("Data.Idx.Pq") is True
+
 
 class TestPackedDatasetNaNFix:
     """Test cases for NaN fix in packed dataset collate_fn."""
