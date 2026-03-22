@@ -69,6 +69,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.moe_aux_loss_coeff = 0.0001
 
         provider.apply_rope_fusion = False
+        provider.gradient_accumulation_fusion = True
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True
         provider.cross_entropy_fusion_impl = "te"
