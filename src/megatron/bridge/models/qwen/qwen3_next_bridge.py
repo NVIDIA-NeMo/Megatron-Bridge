@@ -13,10 +13,7 @@
 # limitations under the License.
 
 import torch
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    get_transformer_block_with_experimental_attention_variant_spec,
-)
-from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.mamba import MambaModel
 from transformers import Qwen3NextForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -30,18 +27,23 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
-from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
+from megatron.bridge.models.qwen.qwen_provider import Qwen3NextMambaModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
+@MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=MambaModel, model_type="qwen3_next")
 class Qwen3NextBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3-Next Causal LM.
 
     This bridge handles the conversion between HuggingFace Qwen3NextForCausalLM
-    and Megatron-Core GPTModel formats. Qwen3-Next uses a hybrid architecture
+    and Megatron-Core MambaModel formats. Qwen3-Next uses a hybrid architecture
     combining gated delta net linear attention with standard softmax attention,
     mixture of experts with shared experts, and zero-centered RMSNorm.
+
+    In MambaModel, attention and MLP are separate physical layers. Each HuggingFace
+    logical layer N maps to two physical layers:
+      - Physical layer 2*N:   attention (GDN or standard softmax)
+      - Physical layer 2*N+1: MoE FFN
 
     Example:
         >>> from megatron.bridge import AutoBridge
@@ -49,14 +51,14 @@ class Qwen3NextBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    PROVIDER_CLASS = Qwen3NextModelProvider
+    PROVIDER_CLASS = Qwen3NextMambaModelProvider
 
     def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace Qwen3-Next config to GPTModelProvider."""
+        """Convert HuggingFace Qwen3-Next config to MambaModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        # Standard GPT settings (shared with Qwen3 MoE)
+        # Architecture
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"
@@ -77,154 +79,205 @@ class Qwen3NextBridge(MegatronModelBridge):
         provider.moe_router_dtype = "fp32"
         provider.moe_shared_expert_intermediate_size = hf_config.shared_expert_intermediate_size
 
-        # Qwen3-Next: zero-centered RMSNorm and gated attention
+        # Qwen3-Next specific
         provider.layernorm_zero_centered_gamma = True
         provider.attention_output_gate = True
 
-        # Qwen3-Next: hybrid gated delta net + standard attention
-        provider.transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec
-        provider.experimental_attention_variant = "gated_delta_net"
-        provider.linear_attention_freq = hf_config.full_attention_interval
+        # GDN linear attention parameters
         provider.linear_conv_kernel_dim = hf_config.linear_conv_kernel_dim
         provider.linear_key_head_dim = hf_config.linear_key_head_dim
         provider.linear_value_head_dim = hf_config.linear_value_head_dim
         provider.linear_num_key_heads = hf_config.linear_num_key_heads
         provider.linear_num_value_heads = hf_config.linear_num_value_heads
 
+        # Build hybrid_override_pattern from HF config.
+        # Each HF layer becomes 2 physical layers: attention (G or *) + MLP (E).
+        num_hf_layers = hf_config.num_hidden_layers
+        full_attn_interval = hf_config.full_attention_interval
+        pattern_chars = []
+        for n in range(num_hf_layers):
+            pattern_chars.append("*" if (n + 1) % full_attn_interval == 0 else "G")
+            pattern_chars.append("E")
+        main_pattern = "".join(pattern_chars)
+
+        # Append MTP suffix if the HF model has MTP weights.
+        # Qwen3-Next MTP uses standard attention (not GDN), so the pattern is "*E".
+        # The HF config doesn't expose num_mtp_layers, so we detect it from the
+        # safetensors index (no model load / GPU memory needed).
+        has_mtp = self._hf_model_has_mtp(hf_pretrained)
+        provider.hybrid_override_pattern = main_pattern + ("/*E" if has_mtp else "")
+        provider.num_layers = num_hf_layers * 2
+        if has_mtp:
+            provider.mtp_num_layers = 1
+
         # Heterogeneous checkpointing for mixed attention layers
         provider.hetereogenous_dist_checkpoint = True
 
         return provider
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _hf_model_has_mtp(hf_pretrained) -> bool:
+        """Detect MTP by checking the safetensors index without loading model weights."""
+        import json
+        from pathlib import Path
+
+        from huggingface_hub import hf_hub_download
+
+        model_id = getattr(hf_pretrained, 'model_name_or_path', None)
+        if model_id is None:
+            config = getattr(hf_pretrained, 'config', hf_pretrained)
+            model_id = getattr(config, 'name_or_path', None)
+        if not model_id:
+            return False
+
+        # Try local path first, then download from hub
+        local_path = Path(str(model_id)) / "model.safetensors.index.json"
+        if local_path.exists():
+            index_path = local_path
+        else:
+            index_path = Path(hf_hub_download(str(model_id), "model.safetensors.index.json"))
+
+        with open(index_path) as f:
+            weight_map = json.load(f).get("weight_map", {})
+        return any(k.startswith("mtp.") for k in weight_map)
+
+    @staticmethod
+    def _gdn_attention_mappings(p, h):
+        """GDN (Gated Delta Net) linear attention mappings.
+
+        Args:
+            p: Megatron layer prefix (e.g. "decoder.layers.4").
+            h: HuggingFace layer prefix (e.g. "model.layers.2").
+        """
+        return [
+            AutoMapping(f"{p}.self_attention.in_proj.layer_norm_weight", f"{h}.input_layernorm.weight"),
+            GDNLinearMapping(
+                f"{p}.self_attention.in_proj.weight",
+                qkvz=f"{h}.linear_attn.in_proj_qkvz.weight",
+                ba=f"{h}.linear_attn.in_proj_ba.weight",
+            ),
+            GDNConv1dMapping(f"{p}.self_attention.conv1d.weight", f"{h}.linear_attn.conv1d.weight"),
+            AutoMapping(f"{p}.self_attention.out_proj.weight", f"{h}.linear_attn.out_proj.weight"),
+            AutoMapping(f"{p}.self_attention.A_log", f"{h}.linear_attn.A_log"),
+            AutoMapping(f"{p}.self_attention.dt_bias", f"{h}.linear_attn.dt_bias"),
+            RMSNorm2ZeroCenteredRMSNormMapping(
+                f"{p}.self_attention.out_norm.weight", f"{h}.linear_attn.norm.weight"
+            ),
+        ]
+
+    @staticmethod
+    def _standard_attention_mappings(p, h):
+        """Standard softmax attention mappings.
+
+        Args:
+            p: Megatron layer prefix (e.g. "decoder.layers.6").
+            h: HuggingFace layer prefix (e.g. "model.layers.3").
+        """
+        return [
+            AutoMapping(f"{p}.self_attention.linear_qkv.layer_norm_weight", f"{h}.input_layernorm.weight"),
+            QKVMapping(
+                f"{p}.self_attention.linear_qkv.weight",
+                q=f"{h}.self_attn.q_proj.weight",
+                k=f"{h}.self_attn.k_proj.weight",
+                v=f"{h}.self_attn.v_proj.weight",
+            ),
+            AutoMapping(f"{p}.self_attention.linear_proj.weight", f"{h}.self_attn.o_proj.weight"),
+            AutoMapping(f"{p}.self_attention.q_layernorm.weight", f"{h}.self_attn.q_norm.weight"),
+            AutoMapping(f"{p}.self_attention.k_layernorm.weight", f"{h}.self_attn.k_norm.weight"),
+        ]
+
+    @staticmethod
+    def _moe_mappings(p, h):
+        """MoE FFN mappings (router, routed experts, shared expert, gate).
+
+        Args:
+            p: Megatron layer prefix (e.g. "decoder.layers.5").
+            h: HuggingFace layer prefix (e.g. "model.layers.2").
+        """
+        return [
+            AutoMapping(f"{p}.mlp.router.weight", f"{h}.mlp.gate.weight"),
+            AutoMapping(f"{p}.pre_mlp_layernorm.weight", f"{h}.post_attention_layernorm.weight"),
+            GatedMLPMapping(
+                f"{p}.mlp.experts.linear_fc1.weight*",
+                gate=f"{h}.mlp.experts.*.gate_proj.weight",
+                up=f"{h}.mlp.experts.*.up_proj.weight",
+            ),
+            AutoMapping(
+                megatron_param=f"{p}.mlp.experts.linear_fc2.weight*",
+                hf_param=f"{h}.mlp.experts.*.down_proj.weight",
+            ),
+            GatedMLPMapping(
+                f"{p}.mlp.shared_experts.linear_fc1.weight",
+                gate=f"{h}.mlp.shared_expert.gate_proj.weight",
+                up=f"{h}.mlp.shared_expert.up_proj.weight",
+            ),
+            AutoMapping(
+                megatron_param=f"{p}.mlp.shared_experts.linear_fc2.weight",
+                hf_param=f"{h}.mlp.shared_expert.down_proj.weight",
+            ),
+            ReplicatedMapping(
+                megatron_param=f"{p}.mlp.shared_experts.gate_weight",
+                hf_param=f"{h}.mlp.shared_expert_gate.weight",
+            ),
+        ]
+
+    # ------------------------------------------------------------------
+    # Mapping registry
+    # ------------------------------------------------------------------
+
     def mapping_registry(self) -> MegatronMappingRegistry:
-        # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
-        # First create simple 1:1 parameter mappings using a dictionary for readability
+        """Build parameter mappings with MambaModel physical layer indexing.
 
-        # Dictionary maps Megatron parameter names -> HF parameter names
-        # Supports wildcard (*) patterns for layer-specific parameters
-        param_mappings = {
-            # Embedding and output
-            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
-            "output_layer.weight": "lm_head.weight",
-            "decoder.final_layernorm.weight": "model.norm.weight",
-            # MoE
-            "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
-            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
-            # Standard attention
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
-            "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
-            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            # Linear attention
-            "decoder.layers.*.self_attention.in_proj.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.self_attention.out_proj.weight": "model.layers.*.linear_attn.out_proj.weight",
-            "decoder.layers.*.self_attention.A_log": "model.layers.*.linear_attn.A_log",
-            "decoder.layers.*.self_attention.dt_bias": "model.layers.*.linear_attn.dt_bias",
-            # MTP projection and norms
-            "mtp.layers.0.eh_proj.weight": "mtp.fc.weight",
-            "mtp.layers.0.enorm.weight": "mtp.pre_fc_norm_embedding.weight",
-            "mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
-            "mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
-            # MTP MoE
-            "mtp.layers.0.transformer_layer.mlp.router.weight": "mtp.layers.0.mlp.gate.weight",
-            "mtp.layers.0.transformer_layer.pre_mlp_layernorm.weight": "mtp.layers.0.post_attention_layernorm.weight",
-            # MTP standard attention
-            "mtp.layers.0.transformer_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
-        }
+        HuggingFace logical layer N maps to:
+          - Physical layer 2*N:   attention (GDN or standard)
+          - Physical layer 2*N+1: MoE FFN
+        """
+        num_hf_layers = self.hf_config.num_hidden_layers
+        full_attn_interval = self.hf_config.full_attention_interval
 
-        mapping_list = []
-        # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
-        for megatron_param, hf_param in param_mappings.items():
-            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+        mapping_list = [
+            AutoMapping("embedding.word_embeddings.weight", "model.embed_tokens.weight"),
+            AutoMapping("output_layer.weight", "lm_head.weight"),
+            AutoMapping("decoder.final_norm.weight", "model.norm.weight"),
+        ]
+
         AutoMapping.register_module_type("SharedExpertMLP", "column")
         AutoMapping.register_module_type("GatedDeltaNet", "column")
 
-        # Add special mappings that require parameter concatenation/transformation
-        mapping_list.extend(
-            [
-                # QKV: Combine separate Q, K, V matrices into single QKV matrix
-                # Note: Qwen3 MoE does NOT have bias in QKV projections
-                QKVMapping(
-                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                    q="model.layers.*.self_attn.q_proj.weight",
-                    k="model.layers.*.self_attn.k_proj.weight",
-                    v="model.layers.*.self_attn.v_proj.weight",
-                ),
-                QKVMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.self_attention.linear_qkv.weight",
-                    q="mtp.layers.*.self_attn.q_proj.weight",
-                    k="mtp.layers.*.self_attn.k_proj.weight",
-                    v="mtp.layers.*.self_attn.v_proj.weight",
-                ),
-                # GDNLinear: Combine separate QKVZ_proj and BA_proj into single in_proj for GDN
-                # Note: Qwen3-Next does NOT have bias in the input linear projections
-                GDNConv1dMapping(
-                    megatron_param="decoder.layers.*.self_attention.conv1d.weight",
-                    hf_param="model.layers.*.linear_attn.conv1d.weight",
-                ),
-                GDNLinearMapping(
-                    megatron_param="decoder.layers.*.self_attention.in_proj.weight",
-                    qkvz="model.layers.*.linear_attn.in_proj_qkvz.weight",
-                    ba="model.layers.*.linear_attn.in_proj_ba.weight",
-                ),
-                # Gated MLP of experts
-                GatedMLPMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    gate="model.layers.*.mlp.experts.*.gate_proj.weight",
-                    up="model.layers.*.mlp.experts.*.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
-                ),
-                GatedMLPMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.experts.linear_fc1.weight*",
-                    gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
-                    up="mtp.layers.*.mlp.experts.*.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.experts.linear_fc2.weight*",
-                    hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
-                ),
-                # Gated MLP of shared expert
-                GatedMLPMapping(
-                    megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                    gate="model.layers.*.mlp.shared_expert.gate_proj.weight",
-                    up="model.layers.*.mlp.shared_expert.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc2.weight",
-                    hf_param="model.layers.*.mlp.shared_expert.down_proj.weight",
-                ),
-                GatedMLPMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.shared_experts.linear_fc1.weight",
-                    gate="mtp.layers.*.mlp.shared_expert.gate_proj.weight",
-                    up="mtp.layers.*.mlp.shared_expert.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.shared_experts.linear_fc2.weight",
-                    hf_param="mtp.layers.*.mlp.shared_expert.down_proj.weight",
-                ),
-                # Shared expert gate
-                ReplicatedMapping(
-                    megatron_param="decoder.layers.*.mlp.shared_experts.gate_weight",
-                    hf_param="model.layers.*.mlp.shared_expert_gate.weight",
-                ),
-                ReplicatedMapping(
-                    megatron_param="mtp.layers.0.transformer_layer.mlp.shared_experts.gate_weight",
-                    hf_param="mtp.layers.0.mlp.shared_expert_gate.weight",
-                ),
-                # Qwen3-Next implements the output norm as a standard RMSNorm while initializing weight to ones,
-                # while other norms are regular zero-centered RMSNorms.
-                # To correctly load the output norm weight, we need to subtract 1 from it.
-                RMSNorm2ZeroCenteredRMSNormMapping(
-                    "decoder.layers.*.self_attention.out_norm.weight",
-                    "model.layers.*.linear_attn.norm.weight",
-                ),
-            ]
-        )
+        # ---- Per-layer mappings ----
+        for n in range(num_hf_layers):
+            attn_phys = 2 * n       # physical attention layer
+            mlp_phys = 2 * n + 1    # physical MLP layer
+            is_gdn = (n + 1) % full_attn_interval != 0
+
+            p_attn = f"decoder.layers.{attn_phys}"
+            p_mlp = f"decoder.layers.{mlp_phys}"
+            h = f"model.layers.{n}"
+
+            if is_gdn:
+                mapping_list.extend(self._gdn_attention_mappings(p_attn, h))
+            else:
+                mapping_list.extend(self._standard_attention_mappings(p_attn, h))
+
+            mapping_list.extend(self._moe_mappings(p_mlp, h))
+
+        # ---- MTP mappings ----
+        # MTP inner MambaStack: standard attention at physical layer 0, MoE at physical layer 1.
+        # In MambaModel MTP, the inner stack is stored as "mtp_model_layer".
+        mtp = "mtp.layers.0"
+        mtp_inner = f"{mtp}.mtp_model_layer.layers"
+
+        mapping_list.extend([
+            AutoMapping(f"{mtp}.eh_proj.weight", "mtp.fc.weight"),
+            AutoMapping(f"{mtp}.enorm.weight", "mtp.pre_fc_norm_embedding.weight"),
+            AutoMapping(f"{mtp}.hnorm.weight", "mtp.pre_fc_norm_hidden.weight"),
+            AutoMapping(f"{mtp}.final_layernorm.weight", "mtp.norm.weight"),
+        ])
+        mapping_list.extend(self._standard_attention_mappings(f"{mtp_inner}.0", mtp))
+        mapping_list.extend(self._moe_mappings(f"{mtp_inner}.1", mtp))
 
         return MegatronMappingRegistry(*mapping_list)

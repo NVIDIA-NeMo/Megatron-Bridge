@@ -562,11 +562,11 @@ class Qwen3NextMambaModelProvider80B_A3B(Qwen3NextMambaModelProvider):
         - GE = GDN attention + MoE FFN (one logical layer)
         - *E = Standard attention + MoE FFN (one logical layer)
 
-    MTP: /GE = 1 MTP depth with GDN attention + MoE FFN
+    MTP: /*E = 1 MTP depth with standard attention + MoE FFN
     """
 
-    # GEGEGE*E repeated 12 times = 96 physical layers, /GE = 1 MTP depth
-    hybrid_override_pattern: str = "GEGEGE*E" * 12 + "/GE"
+    # GEGEGE*E repeated 12 times = 96 physical layers, /*E = 1 MTP depth
+    hybrid_override_pattern: str = "GEGEGE*E" * 12 + "/*E"
     num_layers: int = 96
     hidden_size: int = 2048
     num_attention_heads: int = 16
