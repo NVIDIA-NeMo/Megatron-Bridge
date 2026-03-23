@@ -4,19 +4,17 @@
 # - uv sync (resolve/install all dependency groups)
 # - Lint: pre-commit 3.6.0
 # - Unit tests: pytest with coverage
-# - Functional tests: training (DDP; optional inprocess restart via ft_launcher), converter, models, recipes
+# - Functional tests: L0/L1/L2 tier scripts under tests/functional_tests/
 # - Coverage: combine and report
 #
-# Behavior updates:
-# - Installs PyGithub (uv pip install -U pygithub) for tests that call GitHub APIs
-# - Cleans any leftover NeMo experiment dirs to avoid interference (removes nemo_experiments/NeMo_experiments)
-# - Local mode runs all functional groups; skips only in-process restart in the first training sweep
-# - Docker mode runs functional tests directly with pytest and skips heavy suites that historically
-#   required pre-mounted test data (gemma/gemma2/gemma3/glm45) to keep CI runtime stable
+# Test tiers (cumulative — each tier includes lower tiers):
+# - L0: core smoke tests; runs on every PR
+# - L1: broader model/recipe coverage; runs on daily / merge-to-main
+# - L2: VL models, checkpoints, heavy quantization; runs nightly / weekly
 #
 # Modes:
-# - local  (default): uses system Python environment
-# - docker: builds docker/Dockerfile.ci and runs tests inside the GPU-enabled container
+# - local  (default): runs L{tier}_Launch_*.sh scripts directly
+# - docker: builds docker/Dockerfile.ci and runs inside a GPU-enabled container
 #
 # Requirements:
 # - local: Python 3.10+; GPUs + CUDA for functional tests
@@ -29,8 +27,10 @@
 # - NO_UV: if set to 1, behaves as --no-uv
 #
 # Examples:
-#   bash scripts/run_ci_tests.sh
-#   bash scripts/run_ci_tests.sh --mode docker
+#   bash scripts/run_ci_tests.sh                        # L0 only (PR mode)
+#   bash scripts/run_ci_tests.sh --tier L1              # L0 + L1
+#   bash scripts/run_ci_tests.sh --tier L2              # all tiers
+#   bash scripts/run_ci_tests.sh --mode docker --tier L1
 #   bash scripts/run_ci_tests.sh --gpus 0 --skip-functional
 #   bash scripts/run_ci_tests.sh --skip-lint --skip-unit
 set -euo pipefail
@@ -47,6 +47,7 @@ exec > >(tee -a "${LOG_FILE}") 2>&1
 echo "[log] Writing output to ${LOG_FILE}"
 
 MODE="local"           # local | docker
+TIER="L0"              # L0 | L1 | L2
 SKIP_LINT="false"
 SKIP_UNIT="false"
 SKIP_FUNCTIONAL="false"
@@ -55,7 +56,7 @@ CUDA_DEVICES_DEFAULT="0,1"
 CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-${CUDA_DEVICES_DEFAULT}}
 HF_HOME=${HF_HOME:-"${REPO_ROOT}/.hf_home"}
 
-# Track functional test failures while allowing subsequent groups to continue
+# Track functional test failures while allowing subsequent scripts to continue
 FUNC_FAIL=0
 
 usage() {
@@ -63,18 +64,24 @@ usage() {
 Usage: $(basename "$0") [options]
 
 Options:
-  --mode [local|docker]     Run tests locally (python) or inside Docker (default: local)
+  --mode [local|docker]     Run tests locally or inside Docker (default: local)
+  --tier [L0|L1|L2]         Test tier to run; each tier includes lower tiers (default: L0)
+                              L0 — core smoke tests (PR gate)
+                              L1 — L0 + broader model/recipe coverage (daily)
+                              L2 — all tests including VL, ckpts, heavy quant (nightly)
   --no-uv                   Do not use uv; use system python/pip instead
   --skip-lint               Skip lint/pre-commit step
   --skip-unit               Skip unit tests
   --skip-functional         Skip functional tests
   --gpus <ids>              Set CUDA_VISIBLE_DEVICES (default: ${CUDA_DEVICES_DEFAULT})
-  --hf-home <path>          Set HF_HOME cache directory (default: "+${REPO_ROOT}/.hf_home+")
+  --hf-home <path>          Set HF_HOME cache directory (default: ${REPO_ROOT}/.hf_home)
   -h, --help                Show this help
 
 Examples:
-  $(basename "$0")
-  $(basename "$0") --mode docker
+  $(basename "$0")                          # PR: L0 tests only
+  $(basename "$0") --tier L1               # daily: L0 + L1 tests
+  $(basename "$0") --tier L2               # nightly: all tests
+  $(basename "$0") --mode docker --tier L1
   $(basename "$0") --gpus 0 --skip-functional
 EOF
 }
@@ -83,6 +90,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode)
       MODE="${2:-}"
+      shift 2
+      ;;
+    --tier)
+      TIER="${2:-}"
       shift 2
       ;;
     --no-uv)
@@ -121,6 +132,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "${TIER}" in
+  L0|L1|L2) ;;
+  *) echo "Unknown tier: ${TIER} (expected L0, L1, or L2)" >&2; usage; exit 2 ;;
+esac
+
 export HF_HOME
 export CUDA_VISIBLE_DEVICES
 
@@ -144,6 +160,17 @@ else
   PRECOMMIT="pre-commit"
   SYNC_CMD="true"
 fi
+
+# Return a list of L{n}_Launch_*.sh glob patterns to run for a given max tier.
+# Tiers are cumulative: L1 includes L0, L2 includes L0+L1.
+tier_patterns() {
+  local max_tier="$1"
+  case "${max_tier}" in
+    L0) echo "L0" ;;
+    L1) echo "L0 L1" ;;
+    L2) echo "L0 L1 L2" ;;
+  esac
+}
 
 run_lint_local() {
   if [[ "${SKIP_LINT}" == "true" ]]; then
@@ -173,57 +200,29 @@ run_functional_local() {
     return 0
   fi
 
-  # Allow failures within this function without exiting the script immediately
+  local patterns
+  patterns=$(tier_patterns "${TIER}")
+  echo "[functional] Running tier=${TIER} (includes: ${patterns})"
+
   set +e
   FUNC_FAIL=0
-
-  echo "[functional] Training group (excluding inprocess restart)"
-  ${PYTHON} -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run -a -m pytest \
-    -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
-    tests/functional_tests/training -k "not test_inprocess_restart and not load_model"
-  if [[ $? -ne 0 ]]; then FUNC_FAIL=1; fi
-
-  if command -v ft_launcher >/dev/null 2>&1; then
-    echo "[functional] Inprocess restart with ft_launcher"
-    export TORCH_CPP_LOG_LEVEL="error"
-    export GROUP_RANK=0
-    ft_launcher \
-      --rdzv_backend=c10d --rdzv_endpoint=127.0.0.1:29500 \
-      --nnodes=1 --nproc-per-node=2 \
-      --ft-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
-      --ft-rank_out_of_section_timeout=300 \
-      --monitor-interval=5 --max-restarts=3 \
-      --ft-restart-policy=min-healthy \
-      -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
-      tests/functional_tests/training/test_inprocess_restart.py
-    if [[ $? -ne 0 ]]; then FUNC_FAIL=1; fi
-  else
-    echo "[functional] ft_launcher not found; skipping inprocess restart test"
-  fi
-
-  echo "[functional] Converter group"
-  ${COVERAGE} run -a -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
-    tests/functional_tests/converter
-  if [[ $? -ne 0 ]]; then FUNC_FAIL=1; fi
-
-  echo "[functional] Models group"
-  ${COVERAGE} run -a -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
-    tests/functional_tests/models
-  if [[ $? -ne 0 ]]; then FUNC_FAIL=1; fi
-
-  echo "[functional] Recipes group (2 GPUs)"
-  ${PYTHON} -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run -a -m pytest \
-    -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
-    tests/functional_tests/recipes
-  if [[ $? -ne 0 ]]; then FUNC_FAIL=1; fi
-
-  # Re-enable -e for the rest of the script and return success to continue pipeline
+  for tier in ${patterns}; do
+    for script in "${REPO_ROOT}"/tests/functional_tests/${tier}_Launch_*.sh; do
+      [[ -e "${script}" ]] || continue
+      echo "[functional] Running $(basename "${script}")"
+      bash "${script}"
+      if [[ $? -ne 0 ]]; then
+        echo "[functional] FAILED: $(basename "${script}")"
+        FUNC_FAIL=1
+      fi
+    done
+  done
   set -e
   return 0
 }
 
 run_local() {
-  echo "[env] Using HF_HOME=${HF_HOME} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+  echo "[env] tier=${TIER} HF_HOME=${HF_HOME} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
   ${SYNC_CMD}
   ${PIP} install -U pygithub
   rm -rf "${REPO_ROOT}/nemo_experiments" "${REPO_ROOT}/NeMo_experiments" || true
@@ -233,9 +232,9 @@ run_local() {
   echo "[coverage] Combine & report"
   ${COVERAGE} combine -q || true
   ${COVERAGE} report -i
-  # Fail overall if any functional group failed, but only after coverage is reported
+  # Fail overall if any functional script failed, but only after coverage is reported
   if [[ "${FUNC_FAIL}" -ne 0 ]]; then
-    echo "[functional] One or more functional test groups failed"
+    echo "[functional] One or more functional test scripts failed"
     exit 1
   fi
 }
@@ -256,8 +255,11 @@ run_docker() {
   if [[ "${SKIP_FUNCTIONAL}" == "true" ]]; then
     FUNC_CMD="true"
   else
-    # Discover and run all L2_* launcher scripts; continue on failure, but propagate failure at the end
-    FUNC_CMD="shopt -s nullglob; EXCLUDES=\"\${L2_EXCLUDE:-}\"; rc=0; for f in tests/functional_tests/L2_*.sh; do bn=\$(basename \"\$f\"); if [[ \",\${EXCLUDES},\" == *\",\${bn},\"* ]]; then echo \"[functional] Skipping \${bn}\"; continue; fi; echo \"[functional] Running \${bn}\"; bash \"\$f\" || rc=1; done; exit \$rc"
+    # Build the tier patterns string for the container shell
+    local patterns
+    patterns=$(tier_patterns "${TIER}")
+    # Run all L{n}_Launch_*.sh scripts for the selected tiers; continue on failure
+    FUNC_CMD="shopt -s nullglob; rc=0; for tier in ${patterns}; do for f in tests/functional_tests/\${tier}_Launch_*.sh; do echo \"[functional] Running \$(basename \"\$f\")\"; bash \"\$f\" || { echo \"[functional] FAILED: \$(basename \"\$f\")\"; rc=1; }; done; done; exit \$rc"
   fi
 
   echo "[docker] Building image from docker/Dockerfile.ci"
@@ -267,7 +269,7 @@ run_docker() {
   CONTAINER_HF_HOME="/home/TestData/HF_HOME"
   mkdir -p "${HOST_HF_HOME}"
 
-  echo "[docker] Running tests in container (HF_HOME=${CONTAINER_HF_HOME} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES})"
+  echo "[docker] Running tier=${TIER} tests in container (HF_HOME=${CONTAINER_HF_HOME} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES})"
   docker run --rm -it --gpus all \
     -e HF_HOME="${CONTAINER_HF_HOME}" \
     -e CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" \
@@ -293,5 +295,3 @@ case "${MODE}" in
 esac
 
 echo "[done]"
-
-

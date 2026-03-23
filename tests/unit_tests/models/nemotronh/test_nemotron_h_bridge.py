@@ -154,6 +154,7 @@ class TestNemotronHBridge:
         bridge = NemotronHBridge()
 
         result = bridge.provider_bridge(mock_pretrained_nemotronh)
+        result.finalize()
 
         # Check Mamba-specific configuration
         assert result.mamba_state_dim == mock_nemotronh_config.ssm_state_size
@@ -355,6 +356,20 @@ class TestNemotronHBridge:
             param_map.get("decoder.layers.*.mlp.shared_experts.linear_fc2.weight")
             == "backbone.layers.*.mixer.shared_experts.down_proj.weight"
         )
+
+
+class TestNemotronHBridgeTokenizerKwargs:
+    """Test get_hf_tokenizer_kwargs method."""
+
+    def test_tokenizer_kwargs_returns_dict(self):
+        """Test get_hf_tokenizer_kwargs returns a dict."""
+        kwargs = NemotronHBridge.get_hf_tokenizer_kwargs()
+        assert isinstance(kwargs, dict)
+
+    def test_tokenizer_kwargs_use_fast(self):
+        """Test get_hf_tokenizer_kwargs returns use_fast=True."""
+        kwargs = NemotronHBridge.get_hf_tokenizer_kwargs()
+        assert kwargs.get("use_fast") is True
 
 
 class TestAutoBridgeIntegration:
