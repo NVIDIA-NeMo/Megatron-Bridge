@@ -453,6 +453,13 @@ jobs:
       matrix_l1: ${{ steps.scan.outputs.matrix_l1 }}
       matrix_l2: ${{ steps.scan.outputs.matrix_l2 }}
       matrix_flaky: ${{ steps.scan.outputs.matrix_flaky }}
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+      )
+      && !cancelled()
     steps:
       - uses: actions/checkout@v4
       - id: scan
