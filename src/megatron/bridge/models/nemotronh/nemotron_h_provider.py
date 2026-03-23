@@ -197,24 +197,6 @@ class Nemotron3SuperProvider(NemotronHModelProvider):
     mtp_use_repeated_layer: bool = False
 
 
-# TODO(liding): remove debug provider
-@dataclass
-class Nemotron3SuperDebugProvider(Nemotron3SuperProvider):
-    """Configuration for a 3B parameter Nemotron 3 Super model."""
-
-    num_query_groups: int = 2
-    hybrid_layer_pattern: str = "MEM*EME"
-    hidden_size: int = 288
-    ffn_hidden_size: int = 384
-    num_attention_heads: int = 40
-    num_moe_experts: int = 128
-    moe_ffn_hidden_size: int = 2688
-    moe_router_topk: int = 6
-    moe_latent_size: int = 576
-    mtp_num_layers: int = 2
-    mtp_hybrid_override_pattern: str = "*E"
-
-
 # -----------------------------------------------------------------------------
 # Deprecated aliases (to be removed in a future release)
 # -----------------------------------------------------------------------------
