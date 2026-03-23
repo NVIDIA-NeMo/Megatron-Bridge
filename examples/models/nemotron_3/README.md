@@ -118,7 +118,7 @@ NEMORUN_HOME=${WORKSPACE}/.nemorun /opt/venv/bin/python /opt/Evaluator/scripts/e
     --tensor_parallelism_size 2 --expert_model_parallel_size 8 \
     --eval_task gsm8k \
     --batch_size 8 --parallel_requests 8 \
-    --server_port 1235 \
+    --server_port <port> \
     --evaluation_result_dir ${WORKSPACE}/results/eval \
     --container_image <container_image> \
     --custom_mounts "/lustre:/lustre,${WORKSPACE}/Megatron-Bridge:/opt/Megatron-Bridge" \
