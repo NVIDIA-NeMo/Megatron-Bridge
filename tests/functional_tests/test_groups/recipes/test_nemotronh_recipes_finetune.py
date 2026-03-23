@@ -29,6 +29,18 @@ from transformers import AutoConfig, AutoTokenizer, dynamic_module_utils
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 
 
+try:
+    from transformers.conversion_mapping import (
+        MergeModulelist,
+        WeightConverter,
+        WeightRenaming,
+    )
+
+    has_conversion_mapping = True
+except ImportError:
+    has_conversion_mapping = False
+
+
 def _fix_tied_weights_keys(model: nn.Module):
     """Convert _tied_weights_keys from list to dict for transformers 5.x compatibility."""
     for module in model.modules():
@@ -40,6 +52,7 @@ def _fix_tied_weights_keys(model: nn.Module):
 from megatron.bridge.recipes.nemotronh import (
     nemotron_3_nano_peft_config,
     nemotron_3_nano_sft_config,
+    nemotron_3_super_finetune_config,
     nemotron_nano_9b_v2_peft_config,
     nemotron_nano_9b_v2_sft_config,
 )
@@ -578,6 +591,265 @@ class TestNemotron3NanoFinetuneRecipes:
             finetune(config, forward_step)
 
             # Verify checkpoints were saved
+            verify_checkpoint_files(
+                config.checkpoint.save,
+                config.train.train_iters,
+                ckpt_format=config.checkpoint.ckpt_format,
+                storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+            )
+
+        finally:
+            clear_directories(tmp_path)
+
+
+HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES = {
+    "layers_block_type": ["mamba", "attention", "moe"],
+    "hidden_size": 672,
+    "n_routed_experts": 16,
+    "num_nextn_predict_layers": 0,
+}
+
+MEGATRON_NEMOTRON_3_SUPER_OVERRIDES = {
+    "num_layers": len(HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES["layers_block_type"]),
+    "hybrid_override_pattern": "M*E",
+    "hidden_size": HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES["hidden_size"],
+    "num_moe_experts": HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES["n_routed_experts"],
+    "tensor_model_parallel_size": 1,
+    "pipeline_model_parallel_size": 1,
+    "expert_tensor_parallel_size": 1,
+    "expert_model_parallel_size": 1,
+    "sequence_parallel": False,
+    "moe_token_dispatcher_type": "alltoall",
+    "moe_shared_expert_overlap": False,
+    "mtp_num_layers": 0,
+    "mtp_hybrid_override_pattern": "",
+    "moe_router_topk": 2,
+    # Disable CUDA graphs for toy model tests — TE's make_graphed_callables has
+    # RNG state incompatibility with MCore's CudaRNGStatesTracker in small-model CI.
+    "cuda_graph_impl": "none",
+    "cuda_graph_scope": [],
+}
+
+
+class TestNemotron3SuperFinetuneRecipes:
+    """Test class for Nemotron 3 Super finetune recipe functional tests."""
+
+    _TOY_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
+
+    @pytest.fixture(scope="class")
+    def temp_hf_modules(self, tmp_path_factory):
+        """Change transformers.dynamic_module_utils.HF_MODULES_CACHE to a temp path"""
+        temp_hf_modules_cache = tmp_path_factory.mktemp("hf_modules_cache")
+
+        # Store original value
+        original_cache = dynamic_module_utils.HF_MODULES_CACHE
+
+        # Patch
+        dynamic_module_utils.HF_MODULES_CACHE = temp_hf_modules_cache
+
+        yield temp_hf_modules_cache
+
+        # Restore
+        dynamic_module_utils.HF_MODULES_CACHE = original_cache
+
+    @pytest.fixture(scope="class")
+    def nemotron_3_super_toy_model_path(self, tmp_path_factory: pytest.TempPathFactory) -> str:
+        """
+        Create and save a HuggingFace Nemotron 3 Super toy model from config to a temporary directory.
+
+        Args:
+            tmp_path_factory: Pytest temporary path factory for class-scoped fixtures
+
+        Returns:
+            str: Path to the saved HuggingFace model directory
+        """
+        temp_dir = tmp_path_factory.mktemp("nemotron_3_super_toy_model")
+        model_dir = temp_dir / "nemotron_3_super_toy"
+
+        repo_id = self._TOY_MODEL_ID
+
+        config = AutoConfig.from_pretrained(repo_id, trust_remote_code=True)
+        for k, v in HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES.items():
+            setattr(config, k, v)
+
+        model_class_ref = config.auto_map["AutoModelForCausalLM"]
+        model_class = dynamic_module_utils.get_class_from_dynamic_module(
+            class_reference=model_class_ref,
+            pretrained_model_name_or_path=repo_id,
+            cache_dir=None,
+            force_download=False,
+            resume_download=True,
+            proxies=None,
+            use_auth_token=None,
+            revision=None,
+            local_files_only=False,
+            repo_id=repo_id,
+        )
+        model = model_class(config)
+        model = model.bfloat16() if hasattr(model, "bfloat16") else model
+
+        # Reinitialize weights of all NemotronHTopkRouter modules if present
+        for module in model.modules():
+            if module.__class__.__name__ == "NemotronHTopkRouter":
+                torch.nn.init.normal_(module.weight, mean=0.0, std=config.initializer_range)
+                torch.nn.init.zeros_(module.e_score_correction_bias)
+
+        for k, v in model.named_buffers():
+            if "e_score_correction_bias" in k:
+                v.data = v.data.to(torch.float32)
+
+        tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
+        tokenizer.save_pretrained(model_dir)
+
+        _fix_tied_weights_keys(model)
+
+        if has_conversion_mapping:
+            model._weight_conversions = [
+                WeightRenaming("backbone.", "model."),
+                WeightConverter(
+                    source_patterns=[
+                        "mixer.experts.*.up_proj.weight",
+                    ],
+                    target_patterns="mixer.experts.up_proj",
+                    operations=[MergeModulelist(dim=0)],
+                ),
+                WeightConverter(
+                    source_patterns=[
+                        "mixer.experts.*.down_proj.weight",
+                    ],
+                    target_patterns="mixer.experts.down_proj",
+                    operations=[MergeModulelist(dim=0)],
+                ),
+            ]
+        model.save_pretrained(model_dir, safe_serialization=True)
+        modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
+        shutil.copy(modeling_filepath, model_dir)
+
+        config_path = model_dir / "config.json"
+        with open(config_path, "w") as f:
+            json.dump(model.config.to_dict(), f, indent=2)
+
+        return str(model_dir)
+
+    @pytest.fixture(scope="class")
+    def nemotron_3_super_megatron_checkpoint(
+        self,
+        nemotron_3_super_toy_model_path: str,
+        tmp_path_factory: pytest.TempPathFactory,
+        temp_hf_modules: Path,
+    ) -> str:
+        """
+        Convert the toy HuggingFace model to Megatron checkpoint format.
+        """
+        from megatron.core import parallel_state
+        from megatron.core.rerun_state_machine import destroy_rerun_state_machine
+
+        temp_dir = tmp_path_factory.mktemp("nemotron_3_super_megatron_ckpt")
+        megatron_checkpoint_dir = temp_dir / "megatron_checkpoint"
+
+        AutoBridge.import_ckpt(
+            hf_model_id=nemotron_3_super_toy_model_path,
+            megatron_path=str(megatron_checkpoint_dir),
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+        )
+
+        if parallel_state.model_parallel_is_initialized():
+            parallel_state.destroy_model_parallel()
+        destroy_rerun_state_machine()
+
+        return str(megatron_checkpoint_dir)
+
+    def _get_finetune_config(self, checkpoint_dir: str, peft: Optional[str] = None, **kwargs) -> ConfigContainer:
+        """Wrapper to adapt Nemotron 3 Super finetune config to the test runner signature."""
+        config = nemotron_3_super_finetune_config(peft=peft)
+        config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None
+        return config
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "recipe_name,model_overrides,use_lora",
+        [
+            (
+                "nemotron_3_super_lora",
+                MEGATRON_NEMOTRON_3_SUPER_OVERRIDES,
+                True,
+            ),
+            (
+                "nemotron_3_super_full",
+                MEGATRON_NEMOTRON_3_SUPER_OVERRIDES,
+                False,
+            ),
+        ],
+    )
+    def test_nemotron_3_super_finetune_recipes(
+        self,
+        nemotron_3_super_megatron_checkpoint: str,
+        recipe_name: str,
+        model_overrides: Dict[str, Any],
+        use_lora: bool,
+        tmp_path: Any,
+    ):
+        """
+        Functional test for Nemotron 3 Super finetuning recipes with LoRA and full SFT.
+        """
+        peft_strategy = "lora" if use_lora else None
+        config = self._get_finetune_config(
+            checkpoint_dir=nemotron_3_super_megatron_checkpoint,
+            dir=str(tmp_path),
+            name=recipe_name,
+            peft=peft_strategy,
+        )
+
+        from megatron.bridge.training.config import MockGPTDatasetConfig
+
+        seq_length = 512
+        config.dataset = MockGPTDatasetConfig(
+            random_seed=5678,
+            reset_attention_mask=False,
+            reset_position_ids=False,
+            eod_mask_loss=False,
+            seq_length=seq_length,
+            num_dataset_builder_threads=1,
+            data_sharding=True,
+            dataloader_type="single",
+            num_workers=0,
+        )
+
+        for attribute_name, attribute_value in model_overrides.items():
+            setattr(config.model, attribute_name, attribute_value)
+
+        config.model.seq_length = seq_length
+        config.train.train_iters = 10
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
+        config.train.micro_batch_size = 1
+        config.train.global_batch_size = 8
+        config.scheduler.lr_warmup_iters = 2
+
+        train_samples_needed = config.train.train_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
+        test_samples_needed = 100
+        total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
+
+        train_split = train_samples_needed / total_samples
+        valid_split = eval_samples_needed / total_samples
+        test_split = test_samples_needed / total_samples
+        config.dataset.split = [train_split, valid_split, test_split]
+
+        from megatron.bridge.training.finetune import finetune
+        from megatron.bridge.training.gpt_step import forward_step
+        from tests.functional_tests.utils import (
+            clear_directories,
+            initialize_distributed,
+            verify_checkpoint_files,
+        )
+
+        initialize_distributed()
+        try:
+            finetune(config, forward_step)
+
             verify_checkpoint_files(
                 config.checkpoint.save,
                 config.train.train_iters,

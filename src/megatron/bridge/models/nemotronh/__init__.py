@@ -13,8 +13,14 @@
 # limitations under the License.
 
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
+from megatron.bridge.models.nemotronh.nemotron_h_provider import (
+    Nemotron3SuperDebugProvider,
+    Nemotron3SuperProvider,
+)
 
 
 __all__ = [
     "NemotronHBridge",
+    "Nemotron3SuperProvider",
+    "Nemotron3SuperDebugProvider",
 ]

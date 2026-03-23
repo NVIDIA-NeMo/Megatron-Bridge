@@ -17,6 +17,7 @@ import torch.nn.functional as F
 
 from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     Nemotron3NanoProvider,
+    Nemotron3SuperProvider,
     NemotronHModel4BProvider,
     NemotronHModel8BProvider,
     NemotronHModel47BProvider,
@@ -283,6 +284,10 @@ class TestNemotronHProviderInheritance:
         """Test Nemotron Nano v2 12B provider inherits from NemotronHModelProvider."""
         assert issubclass(NemotronNano12Bv2Provider, NemotronHModelProvider)
 
+    def test_nemotron_3_super_inherits_from_base(self):
+        """Test Nemotron 3 Super provider inherits from NemotronHModelProvider."""
+        assert issubclass(Nemotron3SuperProvider, NemotronHModelProvider)
+
     def test_provide_method_inherited(self):
         """Test that provide method works correctly in inherited classes."""
         # Test with Nemotron-H 4B
@@ -294,6 +299,7 @@ class TestNemotronHProviderInheritance:
             NemotronNano9Bv2Provider(),
             NemotronNano12Bv2Provider(),
             Nemotron3NanoProvider(),
+            Nemotron3SuperProvider(),
         ]
 
         for provider in providers:
@@ -457,6 +463,93 @@ class TestNemotron3NanoProvider:
         assert provider.moe_shared_expert_overlap is True
 
 
+class TestNemotron3SuperProvider:
+    """Test cases for Nemotron3SuperProvider class."""
+
+    def test_nemotron_3_super_default_configuration(self):
+        """Test Nemotron 3 Super model has correct default configuration."""
+        provider = Nemotron3SuperProvider()
+
+        # Check Nemotron 3 Super specific configuration
+        assert provider.seq_length == 262144
+        assert provider.hidden_size == 4096
+        assert provider.num_attention_heads == 32
+        assert provider.num_query_groups == 2
+        assert provider.mamba_num_heads == 128
+        assert provider.kv_channels == 128
+        assert provider.mamba_state_dim == 128
+        assert provider.ffn_hidden_size == 2688
+        assert provider.mamba_head_dim == 64
+        assert (
+            provider.hybrid_layer_pattern
+            == "MEMEMEM*EMEMEMEM*EMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEM*EMEMEMEME"
+        )
+        # num_layers is derived from hybrid_layer_pattern in finalize()
+        assert provider.num_layers is None
+        assert len(provider.hybrid_layer_pattern) == 88
+
+    def test_nemotron_3_super_moe_configuration(self):
+        """Test Nemotron 3 Super model MoE-specific configuration."""
+        provider = Nemotron3SuperProvider()
+
+        # Check MoE-specific configuration
+        assert provider.num_moe_experts == 512
+        assert provider.moe_ffn_hidden_size == 2688
+        assert provider.moe_shared_expert_intermediate_size == 5376
+        assert provider.moe_router_topk == 22
+        assert provider.moe_router_topk_scaling_factor == 5.0
+        assert provider.moe_router_num_groups == 1
+        assert provider.moe_router_group_topk == 1
+        assert provider.moe_latent_size == 1024
+        assert provider.moe_shared_expert_overlap is False
+
+    def test_nemotron_3_super_mtp_configuration(self):
+        """Test Nemotron 3 Super model MTP-specific configuration."""
+        provider = Nemotron3SuperProvider()
+
+        # Check MTP-specific configuration
+        assert provider.mtp_num_layers == 2
+        assert provider.mtp_hybrid_override_pattern == "*E"
+        assert provider.mtp_use_repeated_layer is False
+
+    def test_nemotron_3_super_override_configuration(self):
+        """Test Nemotron 3 Super model with overridden configuration."""
+        provider = Nemotron3SuperProvider(
+            seq_length=16384,
+            hidden_dropout=0.1,
+            num_moe_experts=64,
+        )
+
+        # Check overridden values
+        assert provider.seq_length == 16384
+        assert provider.hidden_dropout == 0.1
+        assert provider.num_moe_experts == 64
+
+        # Check critical defaults remain (num_layers derived from pattern in finalize())
+        assert provider.num_layers is None
+        assert len(provider.hybrid_layer_pattern) == 88
+        assert provider.hidden_size == 4096
+        assert provider.mamba_num_heads == 128
+
+    def test_nemotron_3_super_inherits_from_base(self):
+        """Test Nemotron 3 Super provider inherits from NemotronHModelProvider."""
+        assert issubclass(Nemotron3SuperProvider, NemotronHModelProvider)
+
+    def test_nemotron_3_super_inherits_moe_defaults(self):
+        """Test Nemotron 3 Super inherits MoE defaults from base class."""
+        provider = Nemotron3SuperProvider()
+
+        # Check inherited MoE defaults from NemotronHModelProvider
+        assert provider.moe_aux_loss_coeff == 0.0001
+        assert provider.moe_router_score_function == "sigmoid"
+        assert provider.moe_router_enable_expert_bias is True
+        assert provider.moe_router_load_balancing_type == "seq_aux_loss"
+        assert provider.moe_router_dtype == "fp32"
+        assert provider.moe_grouped_gemm is True
+        assert provider.moe_token_dispatcher_type == "alltoall"
+        assert provider.moe_permute_fusion is True
+
+
 class TestHybridPatterns:
     """Test hybrid override patterns of Nemotron-H providers."""
 
@@ -470,6 +563,7 @@ class TestHybridPatterns:
             NemotronNano9Bv2Provider(),
             NemotronNano12Bv2Provider(),
             Nemotron3NanoProvider(),
+            Nemotron3SuperProvider(),
         ]
 
         for provider in providers:
