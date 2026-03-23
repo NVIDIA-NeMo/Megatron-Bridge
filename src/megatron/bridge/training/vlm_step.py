@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import math
 from functools import partial
 from typing import Any, Iterable
 
@@ -94,6 +95,13 @@ def get_batch_from_iterator(
         else:
             _batch_required_keys[key] = None
 
+    # Preserve collator's 2D padding mask for sequence packing length detection.
+    # skip_getting_attention_mask_from_dataset may discard the attention_mask for model
+    # forward, but packing still needs it to identify real vs padding positions.
+    raw_attn = batch.get("attention_mask")
+    if isinstance(raw_attn, torch.Tensor) and raw_attn.dim() == 2:
+        _batch_required_keys["_padding_mask"] = raw_attn.cuda(non_blocking=True)
+
     return _batch_required_keys
 
 
@@ -105,6 +113,7 @@ def pack_batch_sequences(
     position_ids: torch.Tensor,
     pad_token_id: int = 0,
     pad_to_multiple_of: int = 1,
+    padding_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Pack sequences in a batch by concatenating them and removing padding.
@@ -115,7 +124,10 @@ def pack_batch_sequences(
         loss_mask: [batch_size, seq_len]
         attention_mask: [batch_size, 1, seq_len, seq_len] or None
         position_ids: [batch_size, seq_len]
-        pad_token_id: Token ID used for padding
+        pad_token_id: Token ID used for padding (fallback when padding_mask is unavailable)
+        pad_to_multiple_of: Pad each sequence length to a multiple of this value
+        padding_mask: [batch_size, seq_len] explicit mask from collator (1=real, 0=padding).
+            When provided, this is used instead of pad_token_id for robust length detection.
 
     Returns:
         Tuple of:
@@ -130,24 +142,24 @@ def pack_batch_sequences(
     batch_size, seq_len = tokens.shape
     device = tokens.device
 
-    # Find actual sequence lengths (excluding collator padding).
-    # The collator pads all sequences to max-in-batch using a model-specific pad token
-    # (e.g., token 11 for Ministral3, not 0). Detect the pad token from the last position
-    # of each sequence, which is always a collator pad token when sequences differ in length.
     seq_lengths = []
     valid_sequences = []
 
     for i in range(batch_size):
-        collator_pad_token = tokens[i, -1].item()
-        non_pad_mask = tokens[i] != collator_pad_token
-        if non_pad_mask.any():
-            last_valid_idx = non_pad_mask.nonzero(as_tuple=True)[0][-1].item() + 1
+        if padding_mask is not None:
+            length = int(padding_mask[i].sum().item())
         else:
-            # Empty sequence, skip
-            continue
+            non_pad_mask = tokens[i] != pad_token_id
+            if non_pad_mask.all():
+                length = seq_len
+            elif non_pad_mask.any():
+                length = non_pad_mask.nonzero(as_tuple=True)[0][-1].item() + 1
+            else:
+                length = 0
 
-        seq_lengths.append(last_valid_idx)
-        valid_sequences.append(i)
+        if length > 0:
+            seq_lengths.append(length)
+            valid_sequences.append(i)
 
     if len(valid_sequences) == 0:
         # No valid sequences, return empty packed batch
@@ -312,17 +324,13 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         # Pack sequences
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
 
-        # Compute pad_to_multiple_of for CP + SP compatibility.
-        # Each packed sequence's padded length must be divisible by 2*cp_size (THD zigzag)
-        # and the total per-CP-rank tokens must be divisible by tp_size (SP reduce_scatter).
-        # Minimum: lcm(2*cp_size, cp_size*tp_size) = cp_size * tp_size when tp_size >= 2.
-        # Reference: megatron/core/models/multimodal/context_parallel.py:get_padding()
-        if cp_size > 1 and has_sp and tp_size > 1:
-            pad_multiple = cp_size * tp_size
-        elif cp_size > 1:
-            pad_multiple = cp_size * 2
-        else:
-            pad_multiple = 1
+        # Compute pad_to_multiple_of as lcm of CP and SP constraints.
+        # CP zigzag requires divisibility by 2*cp_size; SP reduce_scatter requires
+        # the per-CP-rank length to be divisible by tp_size (i.e. total divisible by
+        # cp_size*tp_size). Reference: megatron/core/models/multimodal/context_parallel.py
+        cp_multiple = 2 * cp_size if cp_size > 1 else 1
+        sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
+        pad_multiple = math.lcm(cp_multiple, sp_multiple)
 
         (
             packed_tokens,
@@ -340,6 +348,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
             position_ids=batch.get("position_ids"),
             pad_token_id=0,
             pad_to_multiple_of=pad_multiple,
+            padding_mask=batch.get("_padding_mask"),
         )
 
         # Update batch dict with packed tensors
