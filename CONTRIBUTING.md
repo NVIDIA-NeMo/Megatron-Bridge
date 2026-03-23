@@ -263,7 +263,7 @@ This taxonomy does not replace every existing label:
 - Issues should leave triage with one `type` label and one `area` label.
 - An issue keeps `needs-triage` until a maintainer has responded or assigned it. Adding type and area labels is classification; the issue leaves `needs-triage` only when a maintainer engages (responds, assigns, or explicitly routes it).
 - After a maintainer engages, transition to `needs-follow-up` (deferred work oncall should track), `needs-author` (waiting on reporter for more info), `blocked` (external dependency), or no state label (actively being worked on).
-- PRs should not use `needs-triage`. Use `needs-author`, `blocked`, or `ready-to-merge` only when they help route work.
+- PRs should not use `needs-triage`. Use `needs-review`, `needs-author`, `blocked`, or `ready-to-merge` only when they help route work.
 - `high-complexity` starts as a manual maintainer label, not an automated heuristic.
 - `needs-follow-up` should usually point to a linked issue instead of staying on a merged PR.
 - `needs-follow-up` is the visibility label for deferred work that should stay on the oncall radar.
@@ -321,12 +321,19 @@ Unit tests are stored at `tests/unit_tests`. Please add your test to an existing
 
 ### Functional Test Launcher Scripts
 
-Functional tests that take longer to run should be placed in a `L2_Launch_*.sh` launcher script inside the [`tests/functional_tests/`](tests/functional_tests/) folder. These launcher scripts allow CI to run test groups in parallel, significantly reducing overall pipeline time.
+Functional tests are placed in tiered launcher scripts inside [`tests/functional_tests/`](tests/functional_tests/). Each tier runs in a separate CI job, allowing faster PR feedback while keeping thorough coverage on nightly runs.
 
-When adding a new `L2_Launch_*.sh` file, you **must** also update [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the `cicd-functional-tests` job matrix. Add a new entry under `matrix.include`, for example:
+| Tier | Prefix | Trigger | Purpose |
+|------|--------|---------|---------|
+| **L0** | `L0_Launch_*.sh` | Every PR, main push, schedule | Core smoke tests — must be fast and stable |
+| **L1** | `L1_Launch_*.sh` | Main push + schedule (not PRs) | Broader model/recipe coverage |
+| **L2** | `L2_Launch_*.sh` | Schedule / `workflow_dispatch` only | VL models, checkpoint conversion, heavy quantization |
+
+When adding a new launcher script, choose the appropriate tier and **also update** [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the corresponding `cicd-functional-tests-l{0,1,2}` job matrix:
 
 ```yaml
-- script: L2_Launch_your_new_test
+# Example: adding an L1 test
+- script: L1_Launch_your_new_test
 ```
 
 Without this step, your new launcher script will not be picked up by CI.

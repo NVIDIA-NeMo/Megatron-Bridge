@@ -361,7 +361,6 @@ class Gemma2ModelProvider(GPTModelProvider):
 
     window_size: tuple[int, int] = (4096, 0)
     vocab_size: int = 256000
-    gradient_accumulation_fusion: bool = False
 
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = gemma2_layer_spec
 
