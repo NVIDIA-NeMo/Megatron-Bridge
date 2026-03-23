@@ -34,9 +34,26 @@ LOG_FUSION_DISABLE = os.environ.get("MEGATRON_SUPPRESS_FUSION_WARNINGS", "0") !=
 def can_enable_gradient_accumulation_fusion() -> bool:
     """Check if gradient accumulation fusion can be enabled.
 
+    There are two independent backends that support wgrad fusion:
+    - TransformerEngine (TE): handles fuse_wgrad_accumulation internally,
+      no extra CUDA extension needed.
+    - APEX fused_weight_gradient_mlp_cuda: required for the non-TE
+      (ColumnParallelLinear) path.
+
+    In TE-based training containers (the common case for high-perf models),
+    fused_weight_gradient_mlp_cuda is not installed, so the APEX check alone
+    incorrectly returns False even though TE can perform the fusion.
+
     Returns:
-        bool: True if gradient accumulation fusion is available.
+        bool: True if gradient accumulation fusion is available via either backend.
     """
+    try:
+        import transformer_engine  # noqa: F401
+
+        return True
+    except ImportError:
+        pass
+
     try:
         import fused_weight_gradient_mlp_cuda  # noqa: F401
 
@@ -44,8 +61,9 @@ def can_enable_gradient_accumulation_fusion() -> bool:
     except ImportError:
         if LOG_FUSION_DISABLE:
             logger.warning(
-                "gradient_accumulation_fusion requires FusedLayerNorm from megatron.core.fusions "
-                "but it is not available. Fusion disabled."
+                "gradient_accumulation_fusion requires either TransformerEngine or the "
+                "fused_weight_gradient_mlp_cuda APEX extension, but neither is available. "
+                "Fusion disabled."
             )
         return False
 
