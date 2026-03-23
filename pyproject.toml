@@ -97,6 +97,7 @@ dependencies = [
     "mlflow>=3.5.0",
     "comet-ml>=3.50.0",
     "torch>=2.6.0",
+    "torchaudio",
 ]
 
 
@@ -117,6 +118,7 @@ no-build-isolation-package = [
 prerelease = "allow"
 override-dependencies = [
     "torch; sys_platform == 'never'",
+    "torchaudio; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
     "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@287770466f0f4433052260a765db5ff7b8be1320",
