@@ -15,7 +15,7 @@
 import inspect
 import logging
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional, Union
 
 import torch
@@ -29,6 +29,7 @@ from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.utils import fusions
 from megatron.bridge.utils.common_utils import get_rank_safe
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
@@ -162,6 +163,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     deallocate_pipeline_outputs: bool = True
     bias_dropout_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
+    gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
     mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec], Callable[["MambaModelProvider"], ModuleSpec]] = (
         get_default_mamba_stack_spec
     )
