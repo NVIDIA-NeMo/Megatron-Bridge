@@ -43,28 +43,75 @@ def find_first_bin_that_fits(bin_sums: List[int], s: int, bin_size: int) -> int:
     return -1
 
 
+class _SegmentTree:
+    def __init__(self, capacity: int):
+        self._n = capacity
+        self._tree = [0] * (4 * capacity)
+
+    def _push_up(self, node: int):
+        self._tree[node] = max(self._tree[2 * node], self._tree[2 * node + 1])
+
+    def _update(self, node: int, start: int, end: int, idx: int, val: int):
+        if start == end:
+            self._tree[node] = val
+            return
+        mid = (start + end) // 2
+        if idx <= mid:
+            self._update(2 * node, start, mid, idx, val)
+        else:
+            self._update(2 * node + 1, mid + 1, end, idx, val)
+        self._push_up(node)
+
+    def _query(self, node: int, start: int, end: int, need: int) -> int:
+        if self._tree[node] < need:
+            return -1
+        if start == end:
+            return start
+        mid = (start + end) // 2
+        left = self._query(2 * node, start, mid, need)
+        if left != -1:
+            return left
+        return self._query(2 * node + 1, mid + 1, end, need)
+
+    def update(self, idx: int, val: int):
+        self._update(1, 0, self._n - 1, idx, val)
+
+    def query_first_fit(self, need: int) -> int:
+        return self._query(1, 0, self._n - 1, need)
+
+
 def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
     """
-    Packs sequences of varying lengths into bins using the First-Fit algorithm.
+    Packs sequences of varying lengths into bins using the First-Fit algorithm
+    with a segment-tree index for O(N log N) performance.
 
     Args:
       seqlens: A list of integers, representing the lengths of the sequences to be packed.
       pack_size: The maximum capacity of each bin.
 
     Returns:
-      A list of lists, where each inner list represents a bin and contains the indices
-        of the sequences assigned to that bin.
+      A list of lists, where each inner list represents a bin and contains the
+        lengths of the sequences assigned to that bin.
     """
+    if not seqlens:
+        return []
+
+    n = len(seqlens)
+    tree = _SegmentTree(n)
     res = []
-    res_sums = []
-    for s in tqdm(seqlens):
-        first_bin = find_first_bin_that_fits(res_sums, s, pack_size)
-        if first_bin == -1:  # open a new bin
+    remaining = []
+
+    for s in seqlens:
+        first_bin = tree.query_first_fit(s)
+        if first_bin == -1 or first_bin >= len(res):
+            new_idx = len(res)
             res.append([s])
-            res_sums.append(s)
+            remaining.append(pack_size - s)
+            tree.update(new_idx, remaining[new_idx])
         else:
             res[first_bin].append(s)
-            res_sums[first_bin] += s
+            remaining[first_bin] -= s
+            tree.update(first_bin, remaining[first_bin])
     return res
 
 
