@@ -713,6 +713,29 @@ class TestAutoBridge:
             ):
                 bridge._causal_lm_architecture
 
+    def test_get_causal_lm_architecture_string_registered_fallback(self):
+        """Test that a string-registered architecture resolves via the _exact_types fallback."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = Mock()
+        mock_hf_model.config.architectures = ["Qwen3ASRForConditionalGeneration"]
+        mock_hf_model.config.auto_map = None
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_hf_model
+
+        with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
+            # Architecture not available in transformers
+            del mock_transformers.Qwen3ASRForConditionalGeneration
+
+            with patch("megatron.bridge.models.conversion.auto_bridge.model_bridge") as mock_model_bridge:
+                # Simulate a registry that contains the architecture as a string key
+                mock_get_bridge = Mock()
+                mock_get_bridge._exact_types = {"Qwen3ASRForConditionalGeneration": Mock()}
+                mock_model_bridge.get_model_bridge = mock_get_bridge
+
+                arch = bridge._causal_lm_architecture
+                assert arch == "Qwen3ASRForConditionalGeneration"
+
     def test_repr(self):
         """Test string representation of AutoBridge."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
