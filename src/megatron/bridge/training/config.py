@@ -829,6 +829,17 @@ class ValidationConfig:
     during training.
     """
 
+    eval_global_batch_size: int | None = None
+    """Global batch size to use during evaluation. If not set, defaults to train.global_batch_size.
+    Must be divisible by (eval_micro_batch_size * data_parallel_size).
+    """
+
+    eval_micro_batch_size: int | None = None
+    """Micro batch size to use during evaluation. If not set, defaults to train.micro_batch_size.
+    Changing this affects per-device memory usage during eval and the number of microbatches per
+    eval step.
+    """
+
     skip_train: bool = False
     """If set, bypass the training loop, perform evaluation for validation/test, and exit."""
 
@@ -1497,6 +1508,28 @@ class ConfigContainer(Container):
     tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
 
+    @property
+    def eval_global_batch_size(self) -> int:
+        """Effective global batch size for evaluation.
+
+        Returns validation.eval_global_batch_size if explicitly set,
+        otherwise falls back to train.global_batch_size.
+        """
+        if self.validation.eval_global_batch_size is not None:
+            return self.validation.eval_global_batch_size
+        return self.train.global_batch_size
+
+    @property
+    def eval_micro_batch_size(self) -> int:
+        """Effective micro batch size for evaluation.
+
+        Returns validation.eval_micro_batch_size if explicitly set,
+        otherwise falls back to train.micro_batch_size.
+        """
+        if self.validation.eval_micro_batch_size is not None:
+            return self.validation.eval_micro_batch_size
+        return self.train.micro_batch_size
+
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
         model_cfg = self.model
@@ -1594,6 +1627,16 @@ class ConfigContainer(Container):
             # Set data_parallel_size on comm_overlap config if present
             if self.comm_overlap is not None:
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
+
+        # Validate eval batch size divisibility when eval-specific sizes are set
+        if self.validation.eval_global_batch_size is not None or self.validation.eval_micro_batch_size is not None:
+            eval_mbs = self.eval_micro_batch_size
+            dp = self.data_parallel_size
+            eval_gbs = self.eval_global_batch_size
+            assert eval_gbs % (eval_mbs * dp) == 0, (
+                f"eval_global_batch_size ({eval_gbs}) must be divisible by "
+                f"eval_micro_batch_size ({eval_mbs}) * data_parallel_size ({dp}) = {eval_mbs * dp}"
+            )
 
         # Deterministic mode validations and settings
         self._validate_and_apply_deterministic_mode()
@@ -1760,7 +1803,7 @@ class ConfigContainer(Container):
             validate_flex_dispatcher_backend(self.model)
 
         for f in fields(ValidationConfig):
-            train_val = getattr(self.train, f.name)
+            train_val = getattr(self.train, f.name, None)
             if train_val is not None:
                 warnings.warn(
                     f"TrainingConfig.{f.name} is deprecated and will be removed in a future release. Use ValidationConfig.{f.name} instead.",
