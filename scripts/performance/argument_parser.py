@@ -683,6 +683,22 @@ def parse_cli_args():
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
     )
+    performance_args.add_argument(
+        "--moe_token_dispatcher_type",
+        type=str,
+        help="MoE token dispatcher type. Options- alltoall, flex. Defaults to None",
+        choices=["alltoall", "flex", "allgather"],
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--moe_flex_dispatcher_backend",
+        type=str,
+        help="MoE flex dispatcher backend. Options- deepep, hybridep. Defaults to None",
+        choices=["deepep", "hybridep"],
+        required=False,
+        default=None,
+    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")

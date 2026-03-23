@@ -31,7 +31,6 @@ from utils.utils import WorkloadBaseConfig
 
 BASE_QWEN3_235B_A22B_CONFIG = WorkloadBaseConfig(
     expert_tensor_parallel_size=1,
-    moe_flex_dispatcher_backend="deepep",
 )
 
 
@@ -39,7 +38,6 @@ BASE_QWEN3_30B_A3B_CONFIG = WorkloadBaseConfig(
     expert_model_parallel_size=8,
     expert_tensor_parallel_size=1,
     global_batch_size=512,
-    moe_flex_dispatcher_backend="deepep",
 )
 
 BASE_QWEN3_NEXT_80B_A3B_CONFIG = WorkloadBaseConfig(
@@ -118,6 +116,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
     expert_model_parallel_size=8,
     global_batch_size=1024,
     moe_a2a_overlap=False,
+    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -128,6 +127,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_CS_V1 = replace(
     expert_model_parallel_size=8,
     global_batch_size=1024,
     moe_a2a_overlap=False,
+    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -143,6 +143,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
     expert_model_parallel_size=8,
     global_batch_size=1024,
     moe_a2a_overlap=False,
+    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -153,6 +154,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_CS_V1 = replace(
     expert_model_parallel_size=8,
     global_batch_size=1024,
     moe_a2a_overlap=False,
+    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -169,6 +171,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     expert_model_parallel_size=32,
     global_batch_size=2048,
     moe_a2a_overlap=True,
+    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -181,6 +184,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     expert_model_parallel_size=32,
     global_batch_size=2048,
     moe_a2a_overlap=True,
+    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -462,6 +466,7 @@ QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     num_gpus=128,
     expert_model_parallel_size=128,
     micro_batch_size=1,
+    moe_token_dispatcher_type="alltoall",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
@@ -469,6 +474,7 @@ QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     num_gpus=128,
     expert_model_parallel_size=128,
     micro_batch_size=1,
+    moe_token_dispatcher_type="alltoall",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_FP8_MX_V1 = replace(
