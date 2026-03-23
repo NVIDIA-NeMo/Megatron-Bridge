@@ -143,8 +143,7 @@ class TestMiniMaxM2Conversion:
         test_output_dir = tmp_path / f"minimax_m2_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        repo_root = Path(__file__).resolve().parents[5]
-        coverage_file = tmp_path / ".coverage"
+        repo_root = "/opt/Megatron-Bridge"
         cmd = [
             sys.executable,
             "-m",
@@ -154,10 +153,10 @@ class TestMiniMaxM2Conversion:
             "-m",
             "coverage",
             "run",
-            f"--data-file={coverage_file}",
-            f"--source={repo_root}",
+            f"--data-file={repo_root}/.coverage",
+            f"--source={repo_root}/",
             "--parallel-mode",
-            str(repo_root / "examples/conversion/hf_megatron_roundtrip_multi_gpu.py"),
+            f"{repo_root}/examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
             toy_model_path,
             "--output-dir",
