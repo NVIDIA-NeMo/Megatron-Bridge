@@ -6,6 +6,7 @@ import pandas as pd
 
 
 def main():
+    """Preprocess OpenVid1M dataset by filtering valid videos and generating metadata JSON."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv_path", default="OpenVidHD.csv")
     parser.add_argument("--video_dir", default="OpenVidHD_part_1")
