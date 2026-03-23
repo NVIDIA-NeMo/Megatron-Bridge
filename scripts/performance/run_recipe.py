@@ -28,6 +28,7 @@ from utils.datasets import (
 )
 from utils.utils import get_library_recipe
 
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.utils.common_utils import get_rank_safe
 
 
@@ -177,9 +178,10 @@ def set_user_overrides(config, args):
 def main():
     """Main entry point for the training script."""
 
-    # Parse known args and capture unknown ones for config overrides
+    # Parse known args and capture unknown ones for Hydra-style config overrides
+    # (e.g. model.hidden_size=15360 model.num_moe_experts=8)
     parser = parse_cli_args()
-    args, _ = parser.parse_known_args()
+    args, cli_overrides = parser.parse_known_args()
 
     recipe = get_library_recipe(
         model_family_name=args.model_family_name,
@@ -189,6 +191,10 @@ def main():
     )
 
     recipe = set_user_overrides(recipe, args)
+
+    if cli_overrides:
+        logging.info(f"Applying CLI config overrides: {cli_overrides}")
+        recipe = process_config_with_overrides(recipe, cli_overrides=cli_overrides)
 
     # Log final configuration
     if get_rank_safe() == 0:
