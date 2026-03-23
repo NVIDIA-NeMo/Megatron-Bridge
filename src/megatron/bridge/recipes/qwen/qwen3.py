@@ -603,27 +603,27 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-0.6B"
 
-    # Parallelism settings: TP=2, CP=8 for 128K context (2 nodes x 8 GPUs)
-    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 4
-    cfg.model.sequence_parallel = True
+    cfg.model.context_parallel_size = 8
+    cfg.model.sequence_parallel = False
 
     # 128K sequence length (must be set on both model and dataset)
-    # cfg.model.seq_length = 131072
-    # cfg.dataset.seq_length = 131072
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
+    cfg.model.seq_length = 131072
+    cfg.dataset.seq_length = 131072
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = 131072
+    # cfg.model.seq_length = 4096
+    # cfg.dataset.seq_length = 4096
+    # cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    # Set pad_seq_to_mult for context parallelism
+    cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Batch sizes (micro_batch_size must be 1 with packed sequence)
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
-
-    # Set pad_seq_to_mult for context parallelism
-    cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # YaRN RoPE scaling (factor=3.2 extends 40960 → ~128K context)
     cfg.model.position_embedding_type = "yarn"
@@ -652,6 +652,8 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
+    # Use all-to-all (Ulysses) CP instead of p2p ring to avoid NaN gradients in backward
+    # cfg.model.cp_comm_type = "a2a"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -662,7 +664,6 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
     # Optimizer: low LR for long-context SFT fine-tuning
     cfg.optimizer.lr = 1.0e-6
     cfg.optimizer.min_lr = 1.0e-6
-    cfg.optimizer.adam_beta2 = 0.999
     cfg.optimizer.adam_eps = 1.0e-8
     cfg.optimizer.use_distributed_optimizer = False
     cfg.optimizer.use_precision_aware_optimizer = False
