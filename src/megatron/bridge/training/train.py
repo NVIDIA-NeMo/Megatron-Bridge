@@ -327,6 +327,7 @@ def train(
                     checkpointing_context,
                     non_persistent_ckpt=False,  # TODO: implement non-persistent checkpointing
                     train_data_iterator=train_data_iterator,
+                    callback_manager=callback_manager,
                 )
         num_microbatches = get_num_microbatches()
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
@@ -418,6 +419,7 @@ def train(
                 checkpointing_context,
                 train_data_iterator=train_data_iterator,
                 non_persistent_ckpt=False,  # TODO: implement non-persistent checkpointing
+                callback_manager=callback_manager,
             )
         if should_exit:
             break
@@ -584,6 +586,7 @@ def train(
             num_floating_point_operations_so_far,
             checkpointing_context,
             train_data_iterator,
+            callback_manager,
         )
         if should_exit:
             break
@@ -607,6 +610,7 @@ def train(
                 num_floating_point_operations_so_far,
                 checkpointing_context,
                 train_data_iterator=train_data_iterator,
+                callback_manager=callback_manager,
             )
 
     _delete_cuda_graphs(cuda_graph_helper)
@@ -1094,6 +1098,7 @@ def save_checkpoint_and_time(
     checkpointing_context: dict[str, Any],
     non_persistent_ckpt: bool = False,
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]] = None,
+    callback_manager: Optional[CallbackManager] = None,
 ) -> None:
     """Saves a checkpoint and logs the timing.
 
@@ -1151,6 +1156,7 @@ def save_checkpoint_and_time(
         checkpointing_context=checkpointing_context,
         non_persistent_ckpt=non_persistent_ckpt,
         train_data_iterator=train_data_iterator,
+        callback_manager=callback_manager,
     )
     if state.cfg.model.fp8 is not None:
         # Run garbage collection after checkpoint saving to free memory from
@@ -1177,6 +1183,7 @@ def checkpoint_and_decide_exit(
     num_floating_point_operations_so_far: float,
     checkpointing_context: dict[str, Any],
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    callback_manager: Optional[CallbackManager],
 ) -> bool:
     """Handles checkpointing decisions and determines if training should exit.
 
@@ -1211,6 +1218,7 @@ def checkpoint_and_decide_exit(
                     num_floating_point_operations_so_far,
                     checkpointing_context,
                     train_data_iterator=train_data_iterator,
+                    callback_manager=callback_manager,
                 )
             barrier_and_log("exiting program after receiving SIGTERM.")
 
@@ -1230,6 +1238,7 @@ def checkpoint_and_decide_exit(
             num_floating_point_operations_so_far,
             checkpointing_context,
             train_data_iterator=train_data_iterator,
+            callback_manager=callback_manager,
         )
         saved_checkpoint = True
 
@@ -1247,6 +1256,7 @@ def checkpoint_and_decide_exit(
             checkpointing_context,
             non_persistent_ckpt=True,
             train_data_iterator=train_data_iterator,
+            callback_manager=callback_manager,
         )
         saved_checkpoint = True
 
@@ -1266,6 +1276,7 @@ def checkpoint_and_decide_exit(
                     num_floating_point_operations_so_far,
                     checkpointing_context,
                     train_data_iterator=train_data_iterator,
+                    callback_manager=callback_manager,
                 )
             barrier_and_log(f"exiting program after {train_time} minutes")
 
@@ -1282,6 +1293,7 @@ def checkpoint_and_decide_exit(
                 num_floating_point_operations_so_far,
                 checkpointing_context,
                 train_data_iterator=train_data_iterator,
+                callback_manager=callback_manager,
             )
         barrier_and_log(f"exiting program at iteration {state.train_state.step}")
 
