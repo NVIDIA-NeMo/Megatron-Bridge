@@ -192,13 +192,13 @@ bridge.export_ckpt(
 
 #### LoRA Finetuning
 ```python
-from megatron.bridge.recipes.nemotronh import nemotronh_4b_finetune_config
+from megatron.bridge.recipes.nemotronh import nemotronh_4b_peft_config
 
-cfg = nemotronh_4b_finetune_config(
+cfg = nemotronh_4b_peft_config(
     tokenizer_path="nvidia/Nemotron-H-4B-Base-8K",
     name="nemotronh_4b_lora",
     pretrained_checkpoint="path/to/nemotronh/4b/checkpoint",
-    peft="lora",  # or "dora" for DoRA
+    peft_scheme="lora",  # or "dora" for DoRA
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
@@ -207,11 +207,12 @@ cfg = nemotronh_4b_finetune_config(
 
 #### Full Supervised Finetuning (SFT)
 ```python
-cfg = nemotronh_4b_finetune_config(
+from megatron.bridge.recipes.nemotronh import nemotronh_4b_sft_config
+
+cfg = nemotronh_4b_sft_config(
     tokenizer_path="nvidia/Nemotron-H-4B-Base-8K",
     name="nemotronh_4b_sft",
     pretrained_checkpoint="path/to/nemotronh/4b/checkpoint",
-    peft=None,  # Full supervised finetuning
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=5e-6,  # Lower LR for full SFT
@@ -221,14 +222,14 @@ cfg = nemotronh_4b_finetune_config(
 ### Nemotron H 8B Finetuning
 
 ```python
-from megatron.bridge.recipes.nemotronh import nemotronh_8b_finetune_config
+from megatron.bridge.recipes.nemotronh import nemotronh_8b_peft_config
 
 # LoRA finetuning
-cfg = nemotronh_8b_finetune_config(
+cfg = nemotronh_8b_peft_config(
     tokenizer_path="nvidia/Nemotron-H-8B-Base-8K",
     name="nemotronh_8b_lora",
     pretrained_checkpoint="path/to/nemotronh/8b/checkpoint",
-    peft="lora",
+    peft_scheme="lora",
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
@@ -238,14 +239,14 @@ cfg = nemotronh_8b_finetune_config(
 ### Nemotron H 47B Finetuning
 
 ```python
-from megatron.bridge.recipes.nemotronh import nemotronh_47b_finetune_config
+from megatron.bridge.recipes.nemotronh import nemotronh_47b_peft_config
 
 # LoRA finetuning (recommended for 47B)
-cfg = nemotronh_47b_finetune_config(
+cfg = nemotronh_47b_peft_config(
     tokenizer_path="nvidia/Nemotron-H-47B-Base-8K",
     name="nemotronh_47b_lora",
     pretrained_checkpoint="path/to/nemotronh/47b/checkpoint",
-    peft="lora",
+    peft_scheme="lora",
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
@@ -255,14 +256,14 @@ cfg = nemotronh_47b_finetune_config(
 ### Nemotron H 56B Finetuning
 
 ```python
-from megatron.bridge.recipes.nemotronh import nemotronh_56b_finetune_config
+from megatron.bridge.recipes.nemotronh import nemotronh_56b_peft_config
 
 # LoRA finetuning (recommended for 56B)
-cfg = nemotronh_56b_finetune_config(
+cfg = nemotronh_56b_peft_config(
     tokenizer_path="nvidia/Nemotron-H-56B-Base-8K",
     name="nemotronh_56b_lora",
     pretrained_checkpoint="path/to/nemotronh/56b/checkpoint",
-    peft="lora",
+    peft_scheme="lora",
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
@@ -272,14 +273,14 @@ cfg = nemotronh_56b_finetune_config(
 ### Nemotron Nano 9B v2 Finetuning
 
 ```python
-from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_finetune_config
+from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_peft_config
 
 # LoRA finetuning
-cfg = nemotron_nano_9b_v2_finetune_config(
+cfg = nemotron_nano_9b_v2_peft_config(
     tokenizer_path="nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base",
     name="nano_9b_v2_lora",
     pretrained_checkpoint="path/to/nano/9b/v2/checkpoint",
-    peft="lora",
+    peft_scheme="lora",
     train_iters=1000,
     global_batch_size=128,
     seq_length=2048,  # Can use up to 128K
@@ -290,14 +291,14 @@ cfg = nemotron_nano_9b_v2_finetune_config(
 ### Nemotron Nano 12B v2 Finetuning
 
 ```python
-from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_finetune_config
+from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_peft_config
 
 # LoRA finetuning
-cfg = nemotron_nano_12b_v2_finetune_config(
+cfg = nemotron_nano_12b_v2_peft_config(
     tokenizer_path="nvidia/NVIDIA-Nemotron-Nano-12B-v2-Base",
     name="nano_12b_v2_lora",
     pretrained_checkpoint="path/to/nano/12b/v2/checkpoint",
-    peft="lora",
+    peft_scheme="lora",
     train_iters=1000,
     global_batch_size=128,
     seq_length=2048,  # Can use up to 128K
