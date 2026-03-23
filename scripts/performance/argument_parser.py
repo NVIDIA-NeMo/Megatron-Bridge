@@ -684,20 +684,12 @@ def parse_cli_args():
         required=False,
     )
     performance_args.add_argument(
-        "--moe_token_dispatcher_type",
-        type=str,
-        help="MoE token dispatcher type. Options- alltoall, flex. Defaults to None",
-        choices=["alltoall", "flex", "allgather"],
-        required=False,
-        default=None,
-    )
-    performance_args.add_argument(
         "--moe_flex_dispatcher_backend",
-        type=str,
+        type=lambda x: None if x == "None" else x,
         help="MoE flex dispatcher backend. Options- deepep, hybridep. Defaults to None",
-        choices=["deepep", "hybridep"],
+        choices=["deepep", "hybridep", None],
         required=False,
-        default=None,
+        default=-1,
     )
 
     # Logging

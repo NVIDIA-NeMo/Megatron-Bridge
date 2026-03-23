@@ -116,7 +116,6 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
     expert_model_parallel_size=8,
     global_batch_size=1024,
     moe_a2a_overlap=False,
-    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -127,7 +126,6 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_CS_V1 = replace(
     expert_model_parallel_size=8,
     global_batch_size=1024,
     moe_a2a_overlap=False,
-    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -143,7 +141,6 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
     expert_model_parallel_size=8,
     global_batch_size=1024,
     moe_a2a_overlap=False,
-    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -154,7 +151,6 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_CS_V1 = replace(
     expert_model_parallel_size=8,
     global_batch_size=1024,
     moe_a2a_overlap=False,
-    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -171,7 +167,6 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     expert_model_parallel_size=32,
     global_batch_size=2048,
     moe_a2a_overlap=True,
-    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -184,7 +179,6 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     expert_model_parallel_size=32,
     global_batch_size=2048,
     moe_a2a_overlap=True,
-    moe_token_dispatcher_type="alltoall",
 )
 
 
@@ -466,7 +460,6 @@ QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     num_gpus=128,
     expert_model_parallel_size=128,
     micro_batch_size=1,
-    moe_token_dispatcher_type="alltoall",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
@@ -474,31 +467,34 @@ QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     num_gpus=128,
     expert_model_parallel_size=128,
     micro_batch_size=1,
-    moe_token_dispatcher_type="alltoall",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_FP8_MX_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=64,
     micro_batch_size=2,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=64,
     micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_FP8_MX_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=64,
     micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=64,
     micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 

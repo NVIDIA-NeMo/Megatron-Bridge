@@ -222,10 +222,10 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     )
     _set_common_perf_overrides(cfg)
 
-    if settings.moe_token_dispatcher_type is not None:
-        cfg.model.moe_token_dispatcher_type = settings.moe_token_dispatcher_type
     if settings.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)
+    else:
+        cfg.model.moe_token_dispatcher_type = "alltoall"
 
     return cfg
 
@@ -434,10 +434,10 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
 
-    if args.moe_token_dispatcher_type is not None:
-        recipe.model.moe_token_dispatcher_type = args.moe_token_dispatcher_type
     if args.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
+    else:
+        recipe.model.moe_token_dispatcher_type = "alltoall"
 
     return recipe
 

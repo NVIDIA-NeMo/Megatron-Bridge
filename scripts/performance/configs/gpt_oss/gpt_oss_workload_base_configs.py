@@ -35,7 +35,6 @@ BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=512,
     micro_batch_size=1,
-    moe_token_dispatcher_type="alltoall",
 )
 
 
