@@ -90,10 +90,6 @@ W&B report coming soon.
 
 ## Evaluation
 
-Within the NeMo Framework container, evaluation uses [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) via the NeMo Evaluator. All benchmarks supported by lm-eval can be run against a deployed Megatron-Bridge model.
-
-For full documentation, see: https://docs.nvidia.com/nemo/evaluator/latest/deployment/nemo-fw/mbridge.html
-
 ### nemo-run Script
 
 The script `evaluation_with_nemo_run.py` from the Evaluator repo submits a 2-task Slurm job: one task deploys the model via Ray Serve, the other runs lm-eval against the endpoint. Both run concurrently; the deploy stops automatically when evaluation finishes.
