@@ -51,6 +51,7 @@ training/attention-optimizations.md
 training/activation-recomputation.md
 training/cpu-offloading.md
 training/peft.md
+training/sft-dataset-formats.md
 training/packed-sequences.md
 training/multi-token-prediction.md
 training/distillation.md
@@ -101,5 +102,4 @@ models/llm/README.md
 models/vlm/README.md
 releases/README.md
 training/README.md
-modelopt/README.md
 ```
