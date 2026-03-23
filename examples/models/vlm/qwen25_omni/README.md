@@ -16,7 +16,14 @@ Audio and video processing requires `qwen-omni-utils` with `decord`. Install it 
 uv pip install qwen-omni-utils[decord]
 ```
 
-> **Note:** Audio extraction from video (`--use_audio_in_video`) additionally requires `ffmpeg` to be installed on the system (`apt-get install ffmpeg` or equivalent). Without it, audio input is skipped and the model falls back to video-only mode.
+Audio extraction from video (`--use_audio_in_video`) additionally requires `ffmpeg`. If `apt-get install ffmpeg` is unavailable (e.g. in a container), install it via `imageio-ffmpeg`:
+
+```bash
+uv pip install imageio-ffmpeg
+ln -sf $(uv run python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())") /usr/local/bin/ffmpeg
+```
+
+> **Note:** `--use_audio_in_video` requires a **local file** passed via `--video_path`. Audio extraction does not work with `--video_url` because `audioread` cannot stream audio directly from a URL.
 
 ## Workspace Configuration
 
@@ -66,7 +73,7 @@ See [inference.sh](inference.sh) for multimodal generation with:
 
 The default parallelism for 7B is `--tp 2` (2 GPUs). For larger variants scale TP accordingly.
 
-### Example: Video + Audio
+### Example: Video only
 
 ```bash
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
@@ -74,10 +81,22 @@ uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     --hf_model_path Qwen/Qwen2.5-Omni-7B \
     --video_url "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/cookbook/audio_visual.mp4" \
     --prompt "What was the first sentence the boy said when he met the girl?" \
-    --use_audio_in_video \
     --max_new_tokens 64 \
     --tp 2
 ```
 
-Pass `--use_audio_in_video` to include the audio track from the video in the model input.
-Use `--video_path` instead of `--video_url` for a local file.
+### Example: Video + Audio (requires ffmpeg and a local file)
+
+```bash
+# Download the video first
+wget -O /path/to/video.mp4 "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/cookbook/audio_visual.mp4"
+
+uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
+    examples/conversion/hf_to_megatron_generate_omni_lm.py \
+    --hf_model_path Qwen/Qwen2.5-Omni-7B \
+    --video_path /path/to/video.mp4 \
+    --prompt "What was the first sentence the boy said when he met the girl?" \
+    --use_audio_in_video \
+    --max_new_tokens 64 \
+    --tp 2
+```
