@@ -64,7 +64,6 @@ class KimiK2Bridge(MegatronModelBridge):
         provider.moe_permute_fusion = True
 
         provider.apply_rope_fusion = False
-        provider.gradient_accumulation_fusion = True
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True
         provider.cross_entropy_fusion_impl = "te"
