@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, fields
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -22,6 +22,11 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.core.utils import is_te_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+    from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 
 
 @dataclass(kw_only=True)
@@ -66,17 +71,6 @@ class MixedPrecisionConfig:
     num_layers_at_start_in_bf16: int = 0
     num_layers_at_end_in_bf16: int = 0
     reuse_grad_buf_for_mxfp8_param_ag: bool = False
-    # Megatron-FSDP MixedPrecisionPolicy
-    megatron_fsdp_main_params_dtype: str | Optional[torch.dtype] = torch.float32
-    megatron_fsdp_main_grads_dtype: str | Optional[torch.dtype] = None
-    megatron_fsdp_grad_comm_dtype: str | Optional[torch.dtype] = None
-
-    def __post_init__(self):
-        if self.grad_reduce_in_fp32:
-            if self.megatron_fsdp_main_grads_dtype is None:
-                object.__setattr__(self, "megatron_fsdp_main_grads_dtype", torch.float32)
-            if self.megatron_fsdp_grad_comm_dtype is None:
-                object.__setattr__(self, "megatron_fsdp_grad_comm_dtype", torch.float32)
 
     def __setattr__(self, name: str, value) -> None:
         # Use object.__setattr__ to avoid recursion
@@ -89,35 +83,6 @@ class MixedPrecisionConfig:
         elif name == "fp8_param" and hasattr(self, "fp8_param_gather"):
             if self.fp8_param_gather != value:
                 object.__setattr__(self, "fp8_param_gather", value)
-        if (
-            name == "grad_reduce_in_fp32"
-            and hasattr(self, "megatron_fsdp_main_grads_dtype")
-            and hasattr(self, "megatron_fsdp_grad_comm_dtype")
-        ):
-            if value:
-                # Legacy argument for Megatron-FSDP - Gradients used to be reduced in
-                # the same data-type as the main gradient data-type. Recommend using
-                # the new Megatron-FSDP mixed-precision arguments to control this!
-                object.__setattr__(self, "megatron_fsdp_main_grads_dtype", torch.float32)
-                object.__setattr__(self, "megatron_fsdp_grad_comm_dtype", torch.float32)
-            else:
-                # Default back to "auto".
-                object.__setattr__(self, "megatron_fsdp_main_grads_dtype", None)
-                object.__setattr__(self, "megatron_fsdp_grad_comm_dtype", None)
-        if name in (
-            "megatron_fsdp_main_params_dtype",
-            "megatron_fsdp_main_grads_dtype",
-            "megatron_fsdp_grad_comm_dtype",
-        ) and isinstance(value, str):
-            # Map string options to torch.dtype or None.
-            if value == "fp32":
-                object.__setattr__(self, name, torch.float32)
-            elif value == "bf16":
-                object.__setattr__(self, name, torch.bfloat16)
-            elif value == "fp16":
-                object.__setattr__(self, name, torch.float16)
-            elif value == "auto":
-                object.__setattr__(self, name, None)
 
     def finalize(self):
         # If fp8_param is None, initialize it from fp8_param_gather
@@ -137,26 +102,9 @@ class MixedPrecisionConfig:
         if self.fp4 and not is_te_min_version("2.7.0.dev0"):
             raise ValueError("fp4 requires Transformer Engine >= 2.7.0.dev0 for NVFP4BlockScaling support.")
 
-        if self.grad_reduce_in_fp32:
-            self.megatron_fsdp_main_grads_dtype = torch.float32
-            self.megatron_fsdp_grad_comm_dtype = torch.float32
-        else:
-            self.megatron_fsdp_main_grads_dtype = None
-            self.megatron_fsdp_grad_comm_dtype = None
-        for mfsdp_mp_arg in (
-            self.megatron_fsdp_main_params_dtype,
-            self.megatron_fsdp_main_grads_dtype,
-            self.megatron_fsdp_grad_comm_dtype,
-        ):
-            if isinstance(mfsdp_mp_arg, str):
-                raise ValueError(
-                    f"[MixedPrecisionConfig] Could not map {mfsdp_mp_arg} to torch.dtype or 'auto'. "
-                    "Options: 'fp32', 'fp16', 'bf16', 'auto'"
-                )
-
     def setup(
         self,
-        model_config: GPTModelProvider | T5ModelProvider,
+        model_config: "GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig",
         optimizer_config: Optional[OptimizerConfig] = None,
         ddp_config: Optional[DistributedDataParallelConfig] = None,
     ) -> None:

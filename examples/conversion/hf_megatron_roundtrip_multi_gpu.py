@@ -64,6 +64,7 @@ IGNORE_PRECISION_PARAMS = [
     "e_score_correction_bias",
     "A_log",
     "linear_attn.norm.weight",
+    "dt_bias",
 ]
 
 
@@ -167,7 +168,7 @@ def main(
             compare_original = original_param
             # Cast to float32 for params with known dtype mismatches between Megatron and HF
             # (e.g. Megatron keeps expert_bias in float32 while HF may use bfloat16)
-            if any(p in name for p in IGNORE_PRECISION_PARAMS):
+            if any(p in name for p in IGNORE_PRECISION_PARAMS) or compare_param.dtype != compare_original.dtype:
                 compare_param = param.float()
                 compare_original = original_param.float()
             match = torch.allclose(
