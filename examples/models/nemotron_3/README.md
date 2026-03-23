@@ -105,7 +105,13 @@ This is a MoE model with 32 experts. Use **TP=2, EP=8** — do not use TP=8 with
 #### SSHTunnel
 
 ```bash
-NEMORUN_HOME=${WORKSPACE}/.nemorun /opt/venv/bin/python /opt/Evaluator/scripts/evaluation_with_nemo_run.py \
+CONTAINER_IMAGE=""
+# CONTAINER_IMAGE="/path/to/container.sqsh"
+CONTAINER_MOUNTS=""
+# CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
+CUSTOM_ENV_VARS=""
+
+NEMORUN_HOME=${WORKSPACE}/.nemorun python /opt/Evaluator/scripts/evaluation_with_nemo_run.py \
     --megatron_checkpoint ${WORKSPACE}/models/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16/iter_0000000 \
     --serving_backend ray \
     --slurm \
@@ -120,9 +126,9 @@ NEMORUN_HOME=${WORKSPACE}/.nemorun /opt/venv/bin/python /opt/Evaluator/scripts/e
     --batch_size 8 --parallel_requests 8 \
     --server_port <port> \
     --evaluation_result_dir ${WORKSPACE}/results/eval \
-    --container_image <container_image> \
-    --custom_mounts "/lustre:/lustre,${WORKSPACE}/Megatron-Bridge:/opt/Megatron-Bridge" \
-    --custom_env_vars "PYTHONPATH=/opt/megatron-lm:/opt/Megatron-Bridge/src,HF_HOME=<hf_cache_dir>"
+    --container_image "${CONTAINER_IMAGE}" \
+    --custom_mounts "${CONTAINER_MOUNTS}" \
+    --custom_env_vars "${CUSTOM_ENV_VARS}"
 ```
 
 #### Benchmark Results
