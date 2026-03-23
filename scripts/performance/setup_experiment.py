@@ -242,6 +242,7 @@ def main(
     dgxc_pvc_mount_path: str,
     config_variant: str = "v1",
     gres: Optional[str] = None,
+    packager: str = "git",
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -329,6 +330,7 @@ def main(
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
             wandb_key=wandb_key,
+            packager=packager,
         )
     else:
         executor = dgxc_executor(
@@ -668,4 +670,5 @@ if __name__ == "__main__":
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
         config_variant=config_variant,
         gres=args.gres,
+        packager=args.packager,
     )
