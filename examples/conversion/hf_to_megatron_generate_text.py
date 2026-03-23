@@ -31,7 +31,7 @@ from transformers import AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
 
 
 class SingleBatchIterator:
@@ -167,13 +167,10 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
-    # TEMP FIX for inference failure when mtp_num_layers is not None
-    for m in model:
-        m.config.mtp_num_layers = None
-
     model = [m.cuda() for m in model]
     for m in model:
         m.eval()
+        disable_mtp_for_inference(m)
 
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(

@@ -74,8 +74,10 @@ See: [bridge.recipes.olmoe](../../apidocs/bridge/bridge.recipes.olmoe.md)
 - **Pretrain recipes**:
   - `olmoe_7b_pretrain_config`: Pre-training for OLMoE-7B (7B parameters, 1.3B activated per token)
 
-- **Finetune recipes**:
-  - `olmoe_7b_finetune_config`: Finetuning for OLMoE-7B with PEFT support (LoRA, DoRA)
+- **SFT recipes**:
+  - `olmoe_7b_sft_config`: Full SFT for OLMoE-7B
+- **PEFT recipes** (LoRA, DoRA):
+  - `olmoe_7b_peft_config`: PEFT for OLMoE-7B
 
 ### Parallelism Configurations
 
@@ -125,13 +127,12 @@ cfg = olmoe_7b_pretrain_config(
 #### Full Finetuning
 
 ```python
-from megatron.bridge.recipes.olmoe import olmoe_7b_finetune_config
+from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
-cfg = olmoe_7b_finetune_config(
+cfg = olmoe_7b_sft_config(
     tokenizer_path="allenai/OLMoE-1B-7B-0125",
     name="olmoe_full_sft",
     pretrained_checkpoint="path/to/olmoe/checkpoint",
-    peft=None,  # Full supervised finetuning
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=5e-6,
@@ -142,13 +143,13 @@ cfg = olmoe_7b_finetune_config(
 #### LoRA Finetuning
 
 ```python
-from megatron.bridge.recipes.olmoe import olmoe_7b_finetune_config
+from megatron.bridge.recipes.olmoe import olmoe_7b_peft_config
 
-cfg = olmoe_7b_finetune_config(
+cfg = olmoe_7b_peft_config(
     tokenizer_path="allenai/OLMoE-1B-7B-0125",
     name="olmoe_lora_finetune",
     pretrained_checkpoint="path/to/olmoe/checkpoint",
-    peft="lora",  # or "dora" for DoRA
+    peft_scheme="lora",  # or "dora" for DoRA
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,

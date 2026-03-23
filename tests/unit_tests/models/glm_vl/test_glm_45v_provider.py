@@ -41,8 +41,7 @@ class TestGLM45VModelProvider:
             vision_config=mock_vision_config,
         )
 
-        # Check inherited defaults from GLM45AirModelProvider106B
-        # These are expected values for GLM-4.5 Air 106B base model
+        # Check defaults from GLM-4.5 Air 106B base model configuration
         assert provider.normalization == "RMSNorm"
         assert provider.gated_linear_unit is True
         assert provider.add_bias_linear is False
@@ -239,17 +238,17 @@ class TestGLM45VModelProviderEdgeCases:
 
 
 class TestGLM45VModelProviderInheritance:
-    """Test inheritance behavior from GLM45AirModelProvider106B."""
+    """Test inheritance behavior from GPTModelProvider."""
 
-    def test_glm_45v_inherits_from_air_provider(self, mock_vision_config):
-        """Test GLM45VModelProvider inherits from GLM45AirModelProvider106B."""
-        from megatron.bridge.models import GLM45AirModelProvider106B
+    def test_glm_45v_inherits_from_gpt_provider(self, mock_vision_config):
+        """Test GLM45VModelProvider inherits from GPTModelProvider."""
+        from megatron.bridge.models.gpt_provider import GPTModelProvider
 
         provider = GLM45VModelProvider(
             vision_config=mock_vision_config,
         )
 
-        assert isinstance(provider, GLM45AirModelProvider106B)
+        assert isinstance(provider, GPTModelProvider)
 
     def test_glm_45v_overrides_position_embedding(self, mock_vision_config):
         """Test GLM45VModelProvider overrides position embedding type."""

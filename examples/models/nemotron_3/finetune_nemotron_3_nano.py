@@ -23,7 +23,8 @@ import torch
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
-    nemotron_3_nano_finetune_config as finetune_config,
+    nemotron_3_nano_peft_config,
+    nemotron_3_nano_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
@@ -64,10 +65,13 @@ def main() -> None:
     """
     args, cli_overrides = parse_cli_args()
 
-    cfg: ConfigContainer = finetune_config(
-        seq_length=args.seq_length, peft=args.peft, packed_sequence=args.packed_sequence
-    )
+    if args.peft:
+        cfg: ConfigContainer = nemotron_3_nano_peft_config(peft_scheme=args.peft)
+    else:
+        cfg = nemotron_3_nano_sft_config()
     cfg.model.seq_length = args.seq_length
+    if not args.packed_sequence:
+        cfg.dataset.packed_sequence_specs = None
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
