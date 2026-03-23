@@ -132,22 +132,6 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     global parallel state (mpu) variables. When True, parallel groups are obtained from
     the pg_collection object rather than the global megatron.core.parallel_state module."""
 
-    @property
-    def lazy_init(self) -> bool:
-        return self.lazy_mpu_init
-
-    @lazy_init.setter
-    def lazy_init(self, value: bool) -> None:
-        self.lazy_mpu_init = value
-
-    @property
-    def use_gloo_process_groups(self) -> bool:
-        return self.enable_gloo_process_groups
-
-    @use_gloo_process_groups.setter
-    def use_gloo_process_groups(self, value: bool) -> None:
-        self.enable_gloo_process_groups = value
-
 
 @dataclass(kw_only=True)
 class RerunStateMachineConfig(MTrainRerunStateMachineConfig):
@@ -606,22 +590,6 @@ class CheckpointConfig(MTrainCheckpointConfig):
 
     strict_fsdp_dtensor_load: bool = False
     """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
-
-    @property
-    def fully_parallel_save(self) -> bool:
-        return self.ckpt_fully_parallel_save
-
-    @fully_parallel_save.setter
-    def fully_parallel_save(self, value: bool) -> None:
-        self.ckpt_fully_parallel_save = value
-
-    @property
-    def fully_parallel_load(self) -> bool:
-        return self.ckpt_fully_parallel_load
-
-    @fully_parallel_load.setter
-    def fully_parallel_load(self, value: bool) -> None:
-        self.ckpt_fully_parallel_load = value
 
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
