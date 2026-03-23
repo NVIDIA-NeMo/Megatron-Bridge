@@ -1266,7 +1266,7 @@ class ConfigContainer(Container):
             validate_flex_dispatcher_backend(self.model)
 
         for f in fields(ValidationConfig):
-            train_val = getattr(self.train, f.name)
+            train_val = getattr(self.train, f.name, None)
             if train_val is not None:
                 warnings.warn(
                     f"TrainingConfig.{f.name} is deprecated and will be removed in a future release. Use ValidationConfig.{f.name} instead.",
