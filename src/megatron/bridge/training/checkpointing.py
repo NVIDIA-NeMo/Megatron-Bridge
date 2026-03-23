@@ -619,6 +619,31 @@ def save_checkpoint(
             pg_collection=pg_collection,
         )
 
+    # De-interleave GLU weights/biases if model has interleaved weights in memory
+    # Checkpoints are always saved in contiguous format
+    from megatron.core.utils import get_model_config
+    model_interleave_size = None
+    try:
+        if len(model) > 0:
+            model_config = get_model_config(model[0])
+            model_interleave_size = getattr(model_config, 'moe_mlp_glu_interleave_size', None)
+    except Exception:
+        model_interleave_size = getattr(cfg.model, 'moe_mlp_glu_interleave_size', None)
+    
+    if model_interleave_size is not None:
+        print_rank_0(f'[GLU Interleaving] De-interleaving GLU weights on save: model has interleaved weights (size={model_interleave_size}), converting to contiguous format for checkpoint')
+        if len(model) == 1:
+            state_dict["model"] = _process_state_dict_for_glu_interleaving(
+                state_dict["model"], model_interleave_size, interleave=False
+            )
+        else:
+            for i in range(len(model)):
+                model_key = "model%d" % i
+                if model_key in state_dict:
+                    state_dict[model_key] = _process_state_dict_for_glu_interleaving(
+                        state_dict[model_key], model_interleave_size, interleave=False
+                    )
+
     # Apply PEFT filtering to save adapter-only checkpoints
     if cfg.peft is not None:
         state_dict = apply_peft_adapter_filter_to_state_dict(state_dict, cfg.peft)
@@ -1374,6 +1399,137 @@ def load_checkpoint(
     )
 
 
+def _deinterleave_glu_weight(weight: torch.Tensor, interleave_size: int) -> torch.Tensor:
+    """
+    De-interleave GLU weight from block-interleaved format to contiguous format.
+    
+    Interleaved format (dim=0): [W0:31, V0:31, W32:63, V32:63, ...]
+    Output format: [W_all, V_all]
+    """
+    shape = weight.shape
+    weight = weight.reshape(
+        shape[0] // (2 * interleave_size),  # num_blocks
+        2,                                   # W and V interleaved
+        interleave_size,                     # block size
+        *shape[1:]                           # remaining dimensions
+    )
+    weight = weight.transpose(0, 1).contiguous()
+    weight = weight.reshape(shape)
+    return weight
+
+
+def _deinterleave_glu_bias(bias: torch.Tensor, interleave_size: int) -> torch.Tensor:
+    """
+    De-interleave GLU bias from block-interleaved format to contiguous format.
+    
+    Interleaved format: [W0:31, V0:31, W32:63, V32:63, ...]
+    Output format: [W_all, V_all]
+    """
+    shape = bias.shape
+    bias = bias.reshape(
+        shape[0] // (2 * interleave_size),  # num_blocks
+        2,                                   # W and V interleaved
+        interleave_size                      # block size
+    )
+    bias = bias.transpose(0, 1).contiguous()
+    bias = bias.reshape(shape)
+    return bias
+
+
+def _interleave_glu_weight(weight: torch.Tensor, interleave_size: int) -> torch.Tensor:
+    """
+    Interleave GLU weight from concatenated format to block-interleaved format.
+    
+    Input format: [W_all, V_all] (concatenated along dim -2 or dim 0)
+    Output format (dim 0): [W0:31, V0:31, W32:63, V32:63, ...]
+    """
+    shape = weight.shape
+    dim_to_interleave = shape[0]  # First dimension is the output dimension
+    
+    weight = weight.reshape(
+        2,                                        # W and V
+        dim_to_interleave // (2 * interleave_size),  # num_blocks
+        interleave_size,                          # block size
+        *shape[1:]                                # remaining dimensions
+    )
+    weight = weight.transpose(0, 1).contiguous()
+    weight = weight.reshape(shape)
+    return weight
+
+
+def _interleave_glu_bias(bias: torch.Tensor, interleave_size: int) -> torch.Tensor:
+    """
+    Interleave GLU bias from concatenated format to block-interleaved format.
+    
+    Input format: [W_all, V_all] (concatenated)
+    Output format: [W0:31, V0:31, W32:63, V32:63, ...]
+    """
+    shape = bias.shape
+    dim_to_interleave = shape[-1]  # Last dimension for bias
+    
+    bias = bias.reshape(
+        *shape[:-1],
+        2,                                        # W and V
+        dim_to_interleave // (2 * interleave_size),  # num_blocks
+        interleave_size                           # block size
+    )
+    bias = bias.transpose(-3, -2).contiguous()
+    bias = bias.reshape(shape)
+    return bias
+
+
+def _process_state_dict_for_glu_interleaving(
+    model_state_dict: dict[str, Any],
+    interleave_size: int,
+    interleave: bool = True,
+) -> dict[str, Any]:
+    """Process GLU weights and biases in state dict for interleaving or de-interleaving.
+    
+    Args:
+        model_state_dict: The state dict to process
+        interleave_size: The interleave size to use
+        interleave: If True, interleave from contiguous to interleaved (for loading).
+                   If False, de-interleave from interleaved to contiguous (for saving).
+    """
+    if not isinstance(model_state_dict, dict):
+        return model_state_dict
+    
+    processed_state_dict = {}
+    num_keys_processed = 0
+    operation = "interleaved" if interleave else "de-interleaved"
+    for key, value in model_state_dict.items():
+        if not isinstance(value, torch.Tensor):
+            processed_state_dict[key] = value
+            continue
+        
+        # Check if this is a SwiGLU fc1 weight or bias for local experts
+        # NOTE: Must match the condition in _zero_out_fc1_w_weights_for_testing
+        is_swiglu_fc1 = (
+            "shared_experts" not in key 
+            and "experts" in key
+            and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
+        )
+        if is_swiglu_fc1:
+            if "linear_fc1.weight" in key:
+                if interleave:
+                    processed_state_dict[key] = _interleave_glu_weight(value, interleave_size)
+                else:
+                    processed_state_dict[key] = _deinterleave_glu_weight(value, interleave_size)
+            elif "linear_fc1.bias" in key:
+                if interleave:
+                    processed_state_dict[key] = _interleave_glu_bias(value, interleave_size)
+                else:
+                    processed_state_dict[key] = _deinterleave_glu_bias(value, interleave_size)
+            num_keys_processed += 1
+        else:
+            processed_state_dict[key] = value
+    
+    if num_keys_processed > 0:
+        print_rank_0(f'[GLU Interleaving] Processed {num_keys_processed} SwiGLU fc1 keys (weights and biases): {operation} with interleave_size={interleave_size}')
+    
+    return processed_state_dict
+
+
 def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
     """Helper function to load state dict with fallback for missing extra states."""
     try:
@@ -1445,6 +1601,7 @@ def _load_checkpoint_from_path(
     load_kwargs = {}
     ignore_rng_state = False
     ignore_rerun_state = True
+    run_config = None  # Initialize for later use
 
     # Step 3: Format-specific preparation
     if ckpt_format == "torch_dist":
@@ -1721,6 +1878,36 @@ def _load_checkpoint_from_path(
 
     # Load model weights
     if not skip_load_to_model_and_opt:
+        # Process state dict for GLU interleaving if needed
+        # Assumption: checkpoints are always in contiguous (non-interleaved) format
+        from megatron.core.utils import get_model_config
+        
+        # Check if model expects interleaved weights - get from model config
+        model_interleave_size = None
+        try:
+            if len(model) > 0:
+                model_config = get_model_config(model[0])
+                model_interleave_size = getattr(model_config, 'moe_mlp_glu_interleave_size', None)
+        except Exception:
+            # Fallback to cfg if model config not available
+            model_interleave_size = getattr(cfg.model, 'moe_mlp_glu_interleave_size', None)
+        model_expects_interleaving = model_interleave_size is not None
+        
+        # Interleave if model expects interleaved weights (checkpoints are always contiguous)
+        if model_expects_interleaving:
+            print_rank_0(f'[GLU Interleaving] Interleaving GLU weights on load: model expects interleaving (size={model_interleave_size}), converting checkpoint from contiguous to interleaved format')
+            if len(model) == 1:
+                state_dict["model"] = _process_state_dict_for_glu_interleaving(
+                    state_dict["model"], model_interleave_size
+                )
+            else:
+                for i in range(len(model)):
+                    model_key = "model%d" % i
+                    if model_key in state_dict:
+                        state_dict[model_key] = _process_state_dict_for_glu_interleaving(
+                            state_dict[model_key], model_interleave_size
+                        )
+        
         # Handle PEFT resume for strict loading
         load_strict = strict
         is_peft_resume = (
