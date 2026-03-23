@@ -16,7 +16,6 @@
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.nemotronh import Nemotron3SuperDebugProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
@@ -124,7 +123,6 @@ def nemotron_3_super_pretrain_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
-    # TODO(liding): why others recipes set this to True? and can work with calc_per_token_loss?
     cfg.ddp.average_in_collective = False
 
     cfg.model.init_method_std = 0.014
@@ -257,57 +255,6 @@ def nemotron_3_super_finetune_config(
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.use_distributed_optimizer = True
-
-    return cfg
-
-
-# TODO(liding): remove debug provider
-def nemotron_3_super_debug_pretrain_config() -> ConfigContainer:
-    """Return a pre-training config for Nemotron 3 Super Debug (small, 1-node).
-
-    Uses ``Nemotron3SuperDebugProvider`` which is a small model that fits on a
-    single node with TP=1, EP=8.
-
-    Returns:
-        ConfigContainer: Pre-training configuration for Nemotron 3 Super Debug.
-    """
-    cfg = nemotron_3_super_pretrain_config()
-
-    cfg.model = Nemotron3SuperDebugProvider(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        sequence_parallel=True,
-        expert_tensor_parallel_size=1,
-        expert_model_parallel_size=8,
-        seq_length=8192,
-    )
-
-    # MoE Token Dispatcher Settings
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_shared_expert_overlap = False
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-
-    # CUDA Graph (TE impl + partial scopes: ~40% throughput gain over disabled)
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
-    cfg.model.cuda_graph_warmup_steps = 3
-
-    # Transformer Engine (TE)
-    cfg.model.transformer_impl = "transformer_engine"
-
-    # Kernel Selections
-    cfg.model.attention_backend = "fused"
-    cfg.model.cross_entropy_fusion_impl = "te"
-    cfg.model.use_te_rng_tracker = True
-
-    # MTP Settings
-    cfg.model.keep_mtp_spec_in_bf16 = True
-    cfg.model.calculate_per_token_loss = True
-    cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.mtp_use_repeated_layer = True
 
     return cfg
 
