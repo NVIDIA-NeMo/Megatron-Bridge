@@ -187,7 +187,6 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
 
     cfg.model.init_method_std = 0.0173
     cfg.model.apply_rope_fusion = False
-    cfg.model.gradient_accumulation_fusion = True
     cfg.model.use_fused_weighted_squared_relu = True
 
     return cfg
@@ -300,7 +299,6 @@ def nemotron_3_nano_sft_config() -> ConfigContainer:
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
-    cfg.model.gradient_accumulation_fusion = True
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -490,7 +488,6 @@ def nemotron_3_nano_peft_config(
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
-    cfg.model.gradient_accumulation_fusion = True
 
     # Memory saving
     cfg.model.recompute_granularity = None
