@@ -1,3 +1,4 @@
+#!/bin/bash
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,17 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.diffusion.recipes.wan.wan import (
-    wan_1_3B_finetune_config,
-    wan_1_3B_pretrain_config,
-    wan_14B_finetune_config,
-    wan_14B_pretrain_config,
-)
+set -xeuo pipefail
 
+export CUDA_VISIBLE_DEVICES="0"
 
-__all__ = [
-    "wan_1_3B_pretrain_config",
-    "wan_14B_pretrain_config",
-    "wan_1_3B_finetune_config",
-    "wan_14B_finetune_config",
-]
+TEST_FILE="tests/functional_tests/diffusion/wan/test_wan_ckpt_conversion.py"
+PYTEST_OPTS="-o log_cli=true -o log_cli_level=INFO -v -s -x -m 'not pleasefixme' --tb=short -rA"
+
+# Run all conversion tests in a single invocation so the class-scoped fixtures
+# (toy model creation, HF->Megatron import) are shared across tests.
+uv run coverage run \
+  --data-file=/opt/Megatron-Bridge/.coverage \
+  --source=/opt/Megatron-Bridge/ \
+  --parallel-mode \
+  -m pytest ${PYTEST_OPTS} \
+  ${TEST_FILE}::TestWanCheckpointConversion
+
+coverage combine -q

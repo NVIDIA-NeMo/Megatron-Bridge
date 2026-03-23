@@ -14,11 +14,11 @@
 # limitations under the License.
 
 """
-Generic Training Script for GPT-based Models
+Generic Training Script for LLM and diffusion models
 
 This script works with any model family that uses GPT-style training
-(Llama, Gemma, Qwen, GPT, etc.). It dynamically loads recipes and supports
-CLI overrides.
+(Llama, Gemma, Qwen, GPT, etc.) and with diffusion models (e.g. FLUX, WAN).
+It dynamically loads recipes and supports CLI overrides.
 
 Usage:
     Pretrain (single-GPU):
@@ -36,6 +36,21 @@ Usage:
     PEFT (LoRA/DoRA):
         uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_peft_config
+
+    Diffusion (FLUX) pretrain:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe flux_14b_pretrain_config \
+            --step_func flux_step
+
+    Diffusion (WAN 1.3B) pretrain:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe wan_1_3B_pretrain_config \
+            --step_func wan_step
+
+    Diffusion (WAN 1.3B) finetune:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe wan_1_3B_finetune_config \
+            --step_func wan_step
 
     With CLI overrides:
         uv run torchrun --nproc_per_node=8 run_recipe.py \
@@ -66,6 +81,10 @@ import inspect
 from typing import Callable
 
 import megatron.bridge.recipes as recipes
+
+# Diffusion forward steps: use class instances so they can be passed as forward_step_func
+from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
+from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
@@ -81,6 +100,8 @@ STEP_FUNCTIONS: dict[str, Callable] = {
     "vlm_step": vlm_forward_step,
     "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
+    "flux_step": FluxForwardStep(),
+    "wan_step": WanForwardStep,
 }
 
 TRAIN_MODES = {
@@ -99,7 +120,7 @@ ERR_INFER_MODE_FAILED = (
 def parse_args() -> tuple[argparse.Namespace, list[str]]:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Generic training script for GPT-based models",
+        description="Generic training script for LLM and diffusion models",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -120,7 +141,8 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         type=str,
         default="gpt_step",
         choices=sorted(STEP_FUNCTIONS.keys()),
-        help="Step function: gpt_step (text-only), vlm_step (vision-language), or llava_step (LLaVA models)",
+        help="Step function: gpt_step (text-only), vlm_step (vision-language), llava_step (LLaVA), "
+        "flux_step (FLUX diffusion), wan_step (WAN diffusion, hyperparameters selected by --mode/recipe name)",
     )
     parser.add_argument(
         "--peft_scheme",
@@ -218,12 +240,15 @@ def load_recipe(
         return config_builder()
 
 
-def load_forward_step(step_type: str) -> Callable:
+def load_forward_step(step_type: str, mode: str | None = None) -> Callable:
     """Load forward_step function based on the requested step type."""
     step_key = step_type.lower()
     if step_key not in STEP_FUNCTIONS:
         raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))
-    return STEP_FUNCTIONS[step_key]
+    step = STEP_FUNCTIONS[step_key]
+    if inspect.isclass(step) and "mode" in inspect.signature(step.__init__).parameters:
+        return step(mode=mode)
+    return step
 
 
 def infer_train_mode(recipe_name: str) -> str:
@@ -255,7 +280,7 @@ def main() -> None:
 
     mode = args.mode or infer_train_mode(args.recipe)
 
-    forward_step = load_forward_step(args.step_func)
+    forward_step = load_forward_step(args.step_func, mode=mode)
     train_func = TRAIN_MODES[mode]
     train_func(config=config, forward_step_func=forward_step)
 
