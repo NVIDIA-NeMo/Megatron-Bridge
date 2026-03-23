@@ -7,6 +7,7 @@ Sarvam models use a Mixture of Experts (MoE) architecture with QKV layernorm and
 | Model | HF ID | Architecture | Params |
 |---|---|---|---|
 | Sarvam 30B | `sarvamai/sarvam-30b` | MoE (128 experts, top-6) | 30B active 3B |
+| Sarvam 105B | `sarvamai/sarvam-105b` | MoE (128 experts, top-8) | 105B active 10.3B |
 
 ## Workspace Configuration
 
@@ -50,7 +51,7 @@ python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
     --hf-model-id sarvamai/sarvam-30b \
     --megatron-load-path ${WORKSPACE}/models/sarvam-30b/iter_0000000 \
-    --tp 2 --pp 2 \
+    --tp 2 --pp 2 --ep 2 \
     --trust-remote-code
 ```
 
