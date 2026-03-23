@@ -653,7 +653,6 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-
     processor = None
     if is_vl_model:
         try:
