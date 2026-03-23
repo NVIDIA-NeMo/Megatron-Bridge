@@ -166,6 +166,9 @@ Format your commit messages and PR titles as:
 - `ckpt` - Checkpoint conversion, loading, export, and save paths
 - `peft` - PEFT methods (LoRA, adapters) and adapter export
 - `perf` - Performance optimizations and throughput improvements
+- `distill` - Knowledge distillation
+- `prune` - Pruning and sparsity
+- `quant` - Quantization (PTQ, QAT, FP8 recipes)
 - `ci` - CI, automation, and workflow infrastructure
 - `docs` - Documentation, examples, and contributor guidance
 - `build` - Dependencies, packaging, and environment setup
@@ -188,6 +191,23 @@ Format your commit messages and PR titles as:
 [BREAKING][training] refactor: Change optimizer config structure
 [ci, build] chore: Update ruff version
 ```
+
+## 🏷️ Labeling Your PR
+
+When you create a pull request, **add labels immediately** so reviewers and CI can route it correctly. At minimum, apply:
+
+1. **One type label** — `bug`, `feature`, `docs`, or `ci`
+2. **One or more area labels** — `area:model`, `area:recipe`, `area:training`, `area:data`, `area:ckpt`, `area:peft`, `area:perf`, `area:distill`, `area:prune`, `area:quant`, `area:build`, or `area:misc`
+3. **`docs-only`** — if the PR touches only documentation (no code changes); this skips most CI jobs
+4. **`needs-review`** — when the PR is ready for review
+5. **`needs-more-tests`** — if the change needs additional test coverage; triggers both L0 and L1 CI
+6. **`high-complexity`** — if the PR is large, touches many files, or is prone to merge conflicts
+
+Add risk labels when applicable:
+- `breaking-change` — if any public API, CLI argument, config key, or function signature changes
+- `needs-more-tests` — if the change needs additional test coverage (also triggers L1 CI)
+
+Properly labeled PRs get faster reviews and avoid sitting in the triage queue.
 
 ## 🏷️ Repository Labels and Triage
 
@@ -245,6 +265,9 @@ Use one primary area label after triage:
 | `area:ckpt` | Checkpoint conversion, loading, export, and save paths |
 | `area:peft` | PEFT methods (LoRA, adapters) and adapter export |
 | `area:perf` | Performance optimizations, kernel integration, and throughput improvements |
+| `area:distill` | Knowledge distillation |
+| `area:prune` | Pruning and sparsity |
+| `area:quant` | Quantization (PTQ, QAT, FP8 recipes) |
 | `area:build` | Dependencies, packaging, images, and environment setup |
 | `area:misc` | Cross-cutting utilities, logging, helpers, and other changes that do not fit a primary domain |
 
@@ -326,10 +349,10 @@ Functional tests are placed in tiered launcher scripts inside [`tests/functional
 | Tier | Prefix | Trigger | Purpose |
 |------|--------|---------|---------|
 | **L0** | `L0_Launch_*.sh` | Every PR, main push, schedule | Core smoke tests — must be fast and stable |
-| **L1** | `L1_Launch_*.sh` | Main push + schedule (not PRs) | Broader model/recipe coverage |
+| **L1** | `L1_Launch_*.sh` | Main push + schedule; PRs labeled `needs-more-tests` | Broader model/recipe coverage |
 | **L2** | `L2_Launch_*.sh` | Schedule / `workflow_dispatch` only | VL models, checkpoint conversion, heavy quantization |
 
-When adding a new launcher script, choose the appropriate tier and **also update** [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the corresponding `cicd-functional-tests-l{0,1,2}` job matrix:
+When adding a new launcher script, always start with the **L0** tier so it runs on every PR. A maintainer will adjust the tier later if the test is too slow or better suited for nightly coverage. You must **also update** [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the corresponding job matrix:
 
 ```yaml
 # Example: adding an L1 test
@@ -343,22 +366,40 @@ Without this step, your new launcher script will not be picked up by CI.
 We use [uv](https://docs.astral.sh/uv/) for managing dependencies. For reproducible builds, our project tracks the generated `uv.lock` file in the repository.
 On a weekly basis, the CI attempts an update of the lock file to test against upstream dependencies.
 
-New required dependencies can be added by `uv add $DEPENDENCY`.
+### Adding a New Dependency
 
-New optional dependencies can be added by `uv add --optional --extra $EXTRA $DEPENDENCY`.
+**Adding required (non-optional) dependencies is strongly discouraged** and will be strictly reviewed. Every required dependency inflates the package and container image for all downstream consumers — most of whom will not need it. Prefer **optional dependencies** under an extra group whenever possible.
+
+If your feature requires a dependency that is not already in `pyproject.toml`, **submit the dependency change as a separate PR first**. Do not bundle dependency additions with feature code — this keeps reviews focused and makes CI failures easier to diagnose.
+
+1. Add the dependency to `pyproject.toml` (either via `uv add` or by editing the file directly):
+
+```bash
+# Preferred: optional dependency under an extra group
+uv add --optional --extra $EXTRA $DEPENDENCY
+
+# Required dependency (needs strong justification — affects all downstream)
+uv add $DEPENDENCY
+```
 
 `EXTRA` refers to the subgroup of extra-dependencies to which you're adding the new dependency.
 Example: For adding a TRT-LLM specific dependency, run `uv add --optional --extra trtllm $DEPENDENCY`.
 
-Alternatively, the `pyproject.toml` file can also be modified directly.
-
-Adding a new dependency will update UV's lock-file. Please check this into your branch:
+2. Regenerate the lock file:
 
 ```bash
-git add uv.lock pyproject.toml
-git commit -m "build: Adding dependencies"
+uv lock
+```
+
+3. Commit both files and open a PR:
+
+```bash
+git add pyproject.toml uv.lock
+git commit -s -m "[build] chore: Add $DEPENDENCY"
 git push
 ```
+
+4. Once the dependency PR is merged, rebase your feature branch onto `main` and open the feature PR.
 
 ### 🧹 Linting and Formatting
 
@@ -372,9 +413,16 @@ uv run ruff format .
 Note: If `ruff` is missing, please follow the [installation](#local-workstation) guide.
 
 
-## 📄 Documentation Requirement
+## 📄 Documentation and Test Requirements
 
-**Important**: All new key features (e.g., enabling a new model, enabling a new parallelism strategy) must include documentation update (either a new doc or updating an existing one). This document update should:
+### All Features
+
+**Every feature PR must evaluate whether documentation and tests need to be added or updated.** This applies to all changes, not just large features. Before submitting a PR, check:
+
+- [ ] **Docs**: Does this change need a new doc page, or does an existing doc need updating?
+- [ ] **Tests**: Does this change need new unit or functional tests, or do existing tests need updating?
+
+For new key features (e.g., enabling a new model, enabling a new parallelism strategy), documentation is **required**. The documentation should:
 
 - Explain the motivation and purpose of the feature
 - Outline the technical approach and architecture
@@ -387,6 +435,16 @@ This ensures that all significant changes are well-thought-out and properly docu
 2. **Developer Extensibility**: Enables developers to understand the internal architecture and implementation details, making it easier to modify, extend, or adapt the code for their specific use cases
 
 Quality documentation is essential for both the usability of Megatron-Bridge and its ability to be customized by the community.
+
+### Refactoring PRs
+
+Refactoring PRs that rename symbols, move files, or change paths are high risk for creating stale references. When a refactor changes any public name or path, you **must** check whether the following need corresponding updates:
+
+- [ ] **Docs**: Any docs that reference the old names, paths, config keys, or CLI arguments
+- [ ] **Docstrings**: Docstrings in the codebase that mention the old names or paths
+- [ ] **Scripts**: Example and training scripts under `scripts/` that import or reference the old names or paths
+
+A refactor PR that renames something without updating all references will break users silently. Reviewers should verify these are addressed before approving.
 
 ## ✨ Code Quality
 
