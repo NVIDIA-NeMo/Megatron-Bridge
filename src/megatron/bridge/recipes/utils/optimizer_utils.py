@@ -33,6 +33,8 @@ def distributed_muon_with_cosine_annealing(
     muon_fp32_matmul_prec: str = "medium",
     muon_num_ns_steps: int = 5,
     muon_tp_mode: str = "blockwise",
+    muon_extra_scale_factor: float = 1.0,
+    muon_scalar_optimizer: str = "adam",
     lr_warmup_iters: int = 2000,
     lr_decay_iters: int = 2000,
     weight_decay: float = 0.1,
@@ -51,6 +53,9 @@ def distributed_muon_with_cosine_annealing(
         muon_fp32_matmul_prec (str): Matmul precision for Muon optimizer ("medium", etc.).
         muon_num_ns_steps (int): Number of no-step steps for Muon optimizer.
         muon_tp_mode (str): Tensor parallel mode for Muon optimizer ("blockwise", etc.).
+        muon_extra_scale_factor (float): Additional scale factor for the muon update.
+        muon_scalar_optimizer (str): Optimizer for nonlinear parameters (embeddings, biases, norms)
+            when using muon. One of "adam" or "lion". Defaults to "adam".
         lr_warmup_iters (int): Number of warmup iterations for the learning rate scheduler.
         lr_decay_iters (int): Number of decay iterations for the learning rate scheduler.
         weight_decay (float): Amount of weight decay to apply.
@@ -85,6 +90,8 @@ def distributed_muon_with_cosine_annealing(
         muon_fp32_matmul_prec=muon_fp32_matmul_prec,
         muon_num_ns_steps=muon_num_ns_steps,
         muon_tp_mode=muon_tp_mode,
+        muon_extra_scale_factor=muon_extra_scale_factor,
+        muon_scalar_optimizer=muon_scalar_optimizer,
         clip_grad=clip_grad,
     )
     return optimizer, scheduler
