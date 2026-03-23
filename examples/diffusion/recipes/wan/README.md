@@ -74,6 +74,8 @@ energon prepare "${DATASET_PATH}"
 
 In the training config, point `dataset.path` to the processed data output directory: `dataset.path=${DATASET_PATH}`.
 
+**Note**: We provide an example instruction to process and train a small portion of OpenVid-1M dataset, at `examples/diffusion/recipes/wan/prepare_dataset/openvid1M_dataset`.
+
 ---
 
 ## 2. Checkpoint Conversion
@@ -136,16 +138,16 @@ This recipe leverages sequence packing to maximize throughput. When a batch cont
 
 ### Training mode
 
-WAN uses different flow-matching hyperparameters for pretraining vs fine-tuning. Select the appropriate step function via `--step_func`:
-- `wan_pretrain_step`: logit-normal sampling, higher `logit_std`, lower `flow_shift` — for stability and broad learning
-- `wan_finetune_step`: uniform sampling, lower `logit_std`, higher `flow_shift` — to refine details and improve quality
+WAN uses different flow-matching hyperparameters for pretraining vs fine-tuning. Always pass `--step_func wan_step`; the mode is automatically inferred from the recipe name:
+- **pretrain** (recipe contains `pretrain`): logit-normal sampling, higher `logit_std` (1.5), lower `flow_shift` (2.5) — for stability and broad learning
+- **finetune** (recipe contains `finetune`/`sft`/`peft`): uniform sampling, lower `logit_std` (1.0), higher `flow_shift` (3.0) — to refine details and improve quality
 
 ### WAN 1.3B — Mock data (no dataset path):
 
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe wan_1_3B_pretrain_config \
-  --step_func wan_pretrain_step
+  --step_func wan_step
 ```
 
 ### WAN 1.3B — Real data (WebDataset path):
@@ -153,16 +155,8 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe wan_1_3B_pretrain_config \
-  --step_func wan_pretrain_step \
+  --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan
-```
-
-### WAN 14B — Mock data:
-
-```bash
-uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe wan_14B_pretrain_config \
-  --step_func wan_pretrain_step
 ```
 
 ### With CLI overrides (iters, LR, batch size, parallelism, etc.):
@@ -170,7 +164,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 ```bash
 uv run torchrun --nproc_per_node=$NUM_GPUS scripts/training/run_recipe.py \
   --recipe wan_1_3B_pretrain_config \
-  --step_func wan_pretrain_step \
+  --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan \
   train.global_batch_size=8 \
   train.micro_batch_size=1 \
