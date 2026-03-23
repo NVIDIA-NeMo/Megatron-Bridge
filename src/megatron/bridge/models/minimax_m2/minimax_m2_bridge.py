@@ -23,8 +23,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
-    FusedExpertMapping,
-    FusedGatedExpertMapping,
+    GatedMLPMapping,
     MegatronParamMapping,
     QKVMapping,
 )
@@ -100,10 +99,14 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     Megatron Bridge for MiniMax-M2 MoE Causal LM.
 
     MiniMax-M2 is a sparse MoE model (256 experts, top-8 routing with sigmoid
-    scoring and expert bias correction). Requires the native transformers >= 5.0
-    implementation: ``mlp`` prefix with stacked ``gate_up_proj`` / ``down_proj``
-    expert tensors. Load the model without ``trust_remote_code`` to use the
-    native implementation.
+    scoring and expert bias correction). Use the native transformers >= 5.0
+    implementation (no ``trust_remote_code`` required).
+
+    On-disk checkpoint format (both the HF hub checkpoint and models saved with
+    ``save_pretrained``) uses the legacy ``block_sparse_moe`` key prefix with
+    per-expert ``w1`` (gate), ``w3`` (up), and ``w2`` (down) weight tensors.
+    The in-memory model API uses ``mlp`` / ``gate_up_proj`` / ``down_proj``
+    but serialization reverts to the legacy layout.
 
     QK normalization:
         MiniMax-M2 applies full-dimension RMSNorm to Q/K (weight shape =
@@ -193,9 +196,9 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
             # Attention o_proj
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            # MoE router and expert bias
-            "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
-            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.e_score_correction_bias",
+            # MoE router and expert bias — on-disk uses block_sparse_moe prefix
+            "decoder.layers.*.mlp.router.weight": "model.layers.*.block_sparse_moe.gate.weight",
+            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.block_sparse_moe.e_score_correction_bias",
         }
 
         mapping_list = []
@@ -227,18 +230,17 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             )
         )
 
-        # MoE expert weights — native transformers layout: stacked tensors per layer
-        #   gate_up_proj: [num_experts, 2*intermediate, hidden]
-        #   down_proj:    [num_experts, hidden, intermediate]
+        # MoE expert weights — on-disk layout: per-expert w1 (gate), w3 (up), w2 (down)
         mapping_list.extend(
             [
-                FusedGatedExpertMapping(
+                GatedMLPMapping(
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    hf_param="model.layers.*.mlp.experts.gate_up_proj",
+                    gate="model.layers.*.block_sparse_moe.experts.*.w1.weight",
+                    up="model.layers.*.block_sparse_moe.experts.*.w3.weight",
                 ),
-                FusedExpertMapping(
+                AutoMapping(
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param="model.layers.*.mlp.experts.down_proj",
+                    hf_param="model.layers.*.block_sparse_moe.experts.*.w2.weight",
                 ),
             ]
         )

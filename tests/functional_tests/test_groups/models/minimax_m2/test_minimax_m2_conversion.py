@@ -143,7 +143,7 @@ class TestMiniMaxM2Conversion:
         test_output_dir = tmp_path / f"minimax_m2_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        repo_root = Path(__file__).resolve().parents[4]
+        repo_root = Path(__file__).resolve().parents[5]
         coverage_file = tmp_path / ".coverage"
         cmd = [
             sys.executable,
