@@ -41,6 +41,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
 )
@@ -106,6 +107,7 @@ def create_test_training_config(**kwargs: Any) -> TrainingConfig:
     """Creates an instance of TrainingConfig with defaults for testing."""
     defaults = {
         "global_batch_size": 32,
+        "micro_batch_size": 1,
         "train_iters": 1000,
     }
     defaults.update(kwargs)
@@ -215,6 +217,7 @@ def create_test_config_container(
     dist_config: Optional[DistributedInitConfig] = None,
     profiling_config: Optional[ProfilingConfig] = None,
     ddp_config: Optional[DistributedDataParallelConfig] = None,
+    validation_config: Optional[ValidationConfig] = None,
 ):
     """
     Helper to create a ConfigContainer with specified or default test configurations.
@@ -261,6 +264,7 @@ def create_test_config_container(
         rng=RNGConfig(),
         rerun_state_machine=RerunStateMachineConfig(),
         profiling=profiling_config,
+        validation=validation_config or ValidationConfig(),
     )
 
     # Monkeypatch get_world_size_safe for this test
@@ -530,7 +534,9 @@ class TestConfigContainerValidation:
             pipeline_dtype=torch.bfloat16,
         )
         container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=world_size, model_config=gpt_model_cfg
+            world_size_override=world_size,
+            model_config=gpt_model_cfg,
+            validation_config=ValidationConfig(eval_global_batch_size=10, eval_micro_batch_size=1),
         )
 
         try:
@@ -1476,6 +1482,202 @@ class TestConfigContainerValidation:
         try:
             container.validate()  # Should pass without error since offloading is disabled
             assert container.model.fine_grained_activation_offloading is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+class TestEvalBatchSizeConfig:
+    """Tests for eval batch size default resolution and validation in ConfigContainer.validate()."""
+
+    def test_eval_batch_sizes_default_to_training_values(self, monkeypatch):
+        """When eval batch sizes are not set, they should be resolved from training config."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(global_batch_size=64, micro_batch_size=4)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=gpt_model_cfg, train_config=train_cfg
+        )
+        try:
+            container.validate()
+            assert container.validation.eval_global_batch_size == 64
+            assert container.validation.eval_micro_batch_size == 4
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_batch_sizes_explicit_override(self, monkeypatch):
+        """When eval batch sizes are explicitly set, they should not be overridden."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(global_batch_size=64, micro_batch_size=4)
+        val_cfg = ValidationConfig(eval_global_batch_size=16, eval_micro_batch_size=2)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            validation_config=val_cfg,
+        )
+        try:
+            container.validate()
+            assert container.validation.eval_global_batch_size == 16
+            assert container.validation.eval_micro_batch_size == 2
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_global_batch_size_partial_override(self, monkeypatch):
+        """When only eval_global_batch_size is set, eval_micro_batch_size defaults to training."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(global_batch_size=64, micro_batch_size=4)
+        val_cfg = ValidationConfig(eval_global_batch_size=32)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            validation_config=val_cfg,
+        )
+        try:
+            container.validate()
+            assert container.validation.eval_global_batch_size == 32
+            assert container.validation.eval_micro_batch_size == 4
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_micro_batch_size_partial_override(self, monkeypatch):
+        """When only eval_micro_batch_size is set, eval_global_batch_size defaults to training."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(global_batch_size=64, micro_batch_size=4)
+        val_cfg = ValidationConfig(eval_micro_batch_size=2)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            validation_config=val_cfg,
+        )
+        try:
+            container.validate()
+            assert container.validation.eval_global_batch_size == 64
+            assert container.validation.eval_micro_batch_size == 2
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_batch_size_divisibility_check_passes(self, monkeypatch):
+        """Eval GBS divisible by (eval_MBS * DP) should pass validation."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(global_batch_size=64, micro_batch_size=4)
+        # world_size=8, TP=1, PP=1 => DP=8; eval_GBS=16, eval_MBS=2 => 16 / (2*8) = 1 OK
+        val_cfg = ValidationConfig(eval_global_batch_size=16, eval_micro_batch_size=2)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            validation_config=val_cfg,
+        )
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_batch_size_divisibility_check_fails(self, monkeypatch):
+        """Eval GBS not divisible by (eval_MBS * DP) should fail validation."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(global_batch_size=64, micro_batch_size=4)
+        # world_size=8, TP=1, PP=1 => DP=8; eval_GBS=10, eval_MBS=2 => 10 / (2*8) not integer
+        val_cfg = ValidationConfig(eval_global_batch_size=10, eval_micro_batch_size=2)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            validation_config=val_cfg,
+        )
+        try:
+            with pytest.raises(AssertionError, match="eval_global_batch_size.*must be divisible by"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_default_divisibility_check_fails(self, monkeypatch):
+        """Even with defaults from training, the divisibility check should catch mismatches."""
+        gpt_model_cfg = create_test_gpt_config()
+        # global_batch_size=10, micro_batch_size=4, DP=8 => 10 / (4*8) not integer
+        train_cfg = create_test_training_config(global_batch_size=10, micro_batch_size=4)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=gpt_model_cfg, train_config=train_cfg
+        )
+        try:
+            with pytest.raises(AssertionError, match="eval_global_batch_size.*must be divisible by"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_micro_batch_size_none_without_training_value_fails(self, monkeypatch):
+        """If train.micro_batch_size is None and eval is not explicitly set, assert should fire."""
+        gpt_model_cfg = create_test_gpt_config()
+        # micro_batch_size must be explicitly None to test this path
+        train_cfg = create_test_training_config(global_batch_size=32, micro_batch_size=None)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=gpt_model_cfg, train_config=train_cfg
+        )
+        try:
+            with pytest.raises(AssertionError, match="train.micro_batch_size must be set"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_global_batch_size_none_without_training_value_fails(self, monkeypatch):
+        """If train.global_batch_size is None and eval is not explicitly set, assert should fire."""
+        gpt_model_cfg = create_test_gpt_config()
+        # global_batch_size=None with train_samples triggers assertion in TrainingConfig.finalize()
+        train_cfg = TrainingConfig(micro_batch_size=4, train_samples=1000)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=gpt_model_cfg, train_config=train_cfg
+        )
+        try:
+            with pytest.raises(AssertionError, match="global_batch_size must be set"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_global_batch_size_none_with_train_iters_fails(self, monkeypatch):
+        """If train.global_batch_size is None (train_iters mode), eval default resolution should fail."""
+        gpt_model_cfg = create_test_gpt_config()
+        # In train_iters mode, global_batch_size=None won't crash in finalize() but will
+        # fail when resolving eval defaults
+        train_cfg = TrainingConfig(micro_batch_size=4, train_iters=1000, global_batch_size=None)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=gpt_model_cfg, train_config=train_cfg
+        )
+        try:
+            with pytest.raises(AssertionError, match="train.global_batch_size must be set"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        "eval_gbs, eval_mbs, world_size, expect_error",
+        [
+            (32, 4, 8, False),  # 32 / (4*8) = 1
+            (64, 8, 8, False),  # 64 / (8*8) = 1
+            (32, 4, 4, False),  # 32 / (4*4) = 2
+            (32, 3, 8, True),  # 32 / (3*8) not integer
+            (15, 2, 8, True),  # 15 / (2*8) not integer
+        ],
+    )
+    def test_eval_batch_size_divisibility_parametrized(
+        self, monkeypatch, eval_gbs, eval_mbs, world_size, expect_error
+    ):
+        """Parametrized test for eval batch size divisibility."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(global_batch_size=64, micro_batch_size=4)
+        val_cfg = ValidationConfig(eval_global_batch_size=eval_gbs, eval_micro_batch_size=eval_mbs)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=world_size,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            validation_config=val_cfg,
+        )
+        try:
+            if expect_error:
+                with pytest.raises(AssertionError, match="eval_global_batch_size.*must be divisible by"):
+                    container.validate()
+            else:
+                container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
