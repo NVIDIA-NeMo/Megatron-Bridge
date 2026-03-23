@@ -90,4 +90,45 @@ W&B report coming soon.
 
 ## Evaluation
 
-Coming soon.
+Within the NeMo Framework container, evaluation uses [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) via the NeMo Evaluator. All benchmarks supported by lm-eval can be run against a deployed Megatron-Bridge model.
+
+For full documentation, see: https://docs.nvidia.com/nemo/evaluator/latest/deployment/nemo-fw/mbridge.html
+
+### nemo-run Script
+
+The script `evaluation_with_nemo_run.py` from the Evaluator repo submits a 2-task Slurm job: one task deploys the model via Ray Serve, the other runs lm-eval against the endpoint. Both run concurrently; the deploy stops automatically when evaluation finishes.
+
+#### Parallelism for Nemotron-3-Nano-30B-A3B
+
+This is a MoE model with 32 experts. Use **TP=2, EP=8** — do not use TP=8 without EP. TransformerEngine's grouped GEMM kernel requires Expert Parallelism to distribute experts across GPUs; high TP alone causes deadlock.
+
+#### SSHTunnel
+
+```bash
+NEMORUN_HOME=${WORKSPACE}/.nemorun /opt/venv/bin/python /opt/Evaluator/scripts/evaluation_with_nemo_run.py \
+    --megatron_checkpoint ${WORKSPACE}/models/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16/iter_0000000 \
+    --serving_backend ray \
+    --slurm \
+    --ssh_user <your_username> \
+    --ssh_host <login_node_hostname> \
+    --job_dir ${WORKSPACE}/nemo-experiments \
+    --account <slurm_account> \
+    --partition <partition> \
+    --nodes 1 --devices 8 \
+    --tensor_parallelism_size 2 --expert_model_parallel_size 8 \
+    --eval_task gsm8k \
+    --batch_size 8 --parallel_requests 8 \
+    --server_port 1235 \
+    --evaluation_result_dir ${WORKSPACE}/results/eval \
+    --container_image <container_image> \
+    --custom_mounts "/lustre:/lustre,${WORKSPACE}/Megatron-Bridge:/opt/Megatron-Bridge" \
+    --custom_env_vars "PYTHONPATH=/opt/megatron-lm:/opt/Megatron-Bridge/src,HF_HOME=<hf_cache_dir>"
+```
+
+#### Benchmark Results
+
+| Model | Benchmark | Metric | Score |
+|---|---|---|---|
+| Nemotron-3-Nano-30B-A3B-Base-BF16 | GSM8K | flexible-extract | 83.78% |
+| Nemotron-3-Nano-30B-A3B-Base-BF16 | GSM8K | strict-match | 83.47% |
+
