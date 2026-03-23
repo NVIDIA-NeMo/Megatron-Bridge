@@ -35,6 +35,8 @@ def distributed_muon_with_cosine_annealing(
     muon_tp_mode: str = "blockwise",
     muon_extra_scale_factor: float = 1.0,
     muon_scalar_optimizer: str = "adam",
+    lion_beta1: float = 0.95,
+    lion_beta2: float = 0.98,
     lr_warmup_iters: int = 2000,
     lr_decay_iters: int = 2000,
     weight_decay: float = 0.1,
@@ -56,6 +58,10 @@ def distributed_muon_with_cosine_annealing(
         muon_extra_scale_factor (float): Additional scale factor for the muon update.
         muon_scalar_optimizer (str): Optimizer for nonlinear parameters (embeddings, biases, norms)
             when using muon. One of "adam" or "lion". Defaults to "adam".
+        lion_beta1 (float): First beta coefficient for Lion optimizer (used in sign update).
+            Defaults to 0.95.
+        lion_beta2 (float): Second beta coefficient for Lion optimizer (used in momentum EMA).
+            Defaults to 0.98.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate scheduler.
         lr_decay_iters (int): Number of decay iterations for the learning rate scheduler.
         weight_decay (float): Amount of weight decay to apply.
@@ -92,6 +98,8 @@ def distributed_muon_with_cosine_annealing(
         muon_tp_mode=muon_tp_mode,
         muon_extra_scale_factor=muon_extra_scale_factor,
         muon_scalar_optimizer=muon_scalar_optimizer,
+        lion_beta1=lion_beta1,
+        lion_beta2=lion_beta2,
         clip_grad=clip_grad,
     )
     return optimizer, scheduler
