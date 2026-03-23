@@ -45,7 +45,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-
 if TYPE_CHECKING:
     import torch
     from megatron.core.optimizer import MegatronOptimizer
@@ -53,7 +52,6 @@ if TYPE_CHECKING:
     from megatron.core.transformer import MegatronModule
 
     from megatron.bridge.training.state import GlobalState
-
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -72,6 +70,8 @@ VALID_EVENTS: frozenset[str] = frozenset(
         "on_test_step_start",
         "on_test_step_end",
         "on_test_end",
+        "on_checkpoint_save",
+        "on_checkpoint_load",
     }
 )
 
@@ -117,6 +117,25 @@ class CallbackContext:
 
     # on_eval_end
     total_loss_dict: dict[str, torch.Tensor] | None = None
+
+@dataclass
+class CheckpointCallbackContext:
+    """Context passed to checkpoint lifecycle callbacks.
+
+    Attributes:
+        state: Global training state.
+        checkpoint_name: Fully resolved checkpoint path.
+        checkpoint_type: Checkpoint type enum from checkpointing.
+        user_state: Mutable dict for storing user data across callback invocations.
+    """
+    state: GlobalState
+    checkpoint_name: str
+    checkpoint_type: object
+    user_state: dict = field(default_factory=dict)
+
+   
+CallbackEventContext = CallbackContext | CheckpointCallbackContext
+CallbackFn = Callable[[CallbackEventContext], None]
 
 
 class Callback:
@@ -187,6 +206,13 @@ class Callback:
         """Called after test completes, before model.train()."""
         pass
 
+    def on_checkpoint_save(self, context: CheckpointCallbackContext) -> None:
+        """Called after a checkpoint has been successfully saved."""
+        pass
+
+    def on_checkpoint_load(self, context: CheckpointCallbackContext) -> None:
+        """Called after a checkpoint has been successfully loaded."""
+        pass
 
 class CallbackManager:
     """Manages registration and execution of training callbacks.
@@ -220,7 +246,7 @@ class CallbackManager:
 
     def __init__(self) -> None:
         """Initialize the callback manager with empty callback lists and user state."""
-        self._callbacks: dict[str, list[Callable[[CallbackContext], None]]] = {event: [] for event in VALID_EVENTS}
+        self._callbacks: dict[str, list[CallbackFn]] = {event: [] for event in VALID_EVENTS}
         self._active_events: set[str] = set()
         self._user_state: dict = {}
 
@@ -254,7 +280,7 @@ class CallbackManager:
                     self._callbacks[event_name].append(method)
                     self._active_events.add(event_name)
 
-    def register(self, event_name: str, fn: Callable[[CallbackContext], None]) -> None:
+    def register(self, event_name: str, fn: CallbackFn) -> None:
         """Register a callback function for a specific event.
 
         Args:
@@ -271,7 +297,9 @@ class CallbackManager:
                 - "on_test_step_start"
                 - "on_test_step_end"
                 - "on_test_end"
-            fn: Callback function with signature (CallbackContext) -> None.
+                - "on_checkpoint_save"
+                - "on_checkpoint_load"
+            fn: Callback function with signature (CallbackContext | CheckpointCallbackContext) -> None.
 
         Raises:
             ValueError: If event_name is not valid.
@@ -291,7 +319,7 @@ class CallbackManager:
         """Set of valid event names for registration."""
         return VALID_EVENTS
 
-    def list_callbacks(self, event_name: str) -> list[Callable[[CallbackContext], None]]:
+    def list_callbacks(self, event_name: str) -> list[CallbackFn]:
         """Return list of callbacks registered for an event.
 
         Args:
@@ -318,14 +346,14 @@ class CallbackManager:
         """
         return event_name in self._active_events
 
-    def fire(self, event_name: str, context: CallbackContext) -> None:
+    def fire(self, event_name: str, context: CallbackEventContext) -> None:
         """Execute all callbacks for an event.
 
         Exceptions from callbacks propagate to the caller.
 
         Args:
             event_name: Name of the event to fire.
-            context: CallbackContext to pass to callbacks.
+            context: CallbackContext or CheckpointCallbackContext to pass to callbacks.
         """
         for fn in self._callbacks[event_name]:
             fn(context)
