@@ -167,36 +167,6 @@ class Nemotron3NanoProvider(NemotronHModelProvider):
     moe_router_group_topk: int = 1
 
 
-@dataclass
-class Nemotron3SuperProvider(NemotronHModelProvider):
-    """Configuration for a 3B parameter Nemotron 3 Super model."""
-
-    seq_length: int = 262144
-    num_query_groups: int = 2
-    hybrid_layer_pattern: str = (
-        "MEMEMEM*EMEMEMEM*EMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEM*EMEMEMEME"
-    )
-    hidden_size: int = 4096
-    mamba_num_heads: int = 128
-    kv_channels: int = 128
-    mamba_state_dim: int = 128
-    ffn_hidden_size: int = 2688
-    num_attention_heads: int = 32
-    mamba_head_dim: int = 64
-    num_moe_experts: int = 512
-    moe_ffn_hidden_size: int = 2688
-    moe_shared_expert_intermediate_size: int = 5376
-    moe_router_topk: int = 22
-    moe_router_topk_scaling_factor: float = 5.0
-    moe_router_num_groups: int = 1
-    moe_router_group_topk: int = 1
-    moe_latent_size: int = 1024
-    moe_shared_expert_overlap: bool = False
-    mtp_num_layers: int = 2
-    mtp_hybrid_override_pattern: str = "*E"
-    mtp_use_repeated_layer: bool = False
-
-
 # -----------------------------------------------------------------------------
 # Deprecated aliases (to be removed in a future release)
 # -----------------------------------------------------------------------------

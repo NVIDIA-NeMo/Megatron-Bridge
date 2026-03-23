@@ -166,9 +166,6 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec], Callable[["MambaModelProvider"], ModuleSpec]] = (
         get_default_mamba_stack_spec
     )
-    mtp_mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec], Callable[["MambaModelProvider"], ModuleSpec]] = (
-        get_default_mamba_stack_spec
-    )
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
     hf_model_id: Optional[str] = None

@@ -311,7 +311,7 @@ class TestNemotron3SuperCommon:
         """Test MoE-specific model configuration from provider."""
         config = recipe_fn()
 
-        # Check MoE settings from Nemotron3SuperProvider
+        # Check MoE settings from AutoBridge provider
         assert config.model.num_moe_experts == 512
         assert config.model.moe_ffn_hidden_size == 2688
         assert config.model.moe_shared_expert_intermediate_size == 5376

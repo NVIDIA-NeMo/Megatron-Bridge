@@ -37,17 +37,6 @@ from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 logger = logging.getLogger(__name__)
 
 
-def _count_wildcards(pattern: str) -> int:
-    # Mirrors MegatronParamMapping._count_wildcard_groups (private there).
-    count = 0
-    remaining = pattern
-    while "**" in remaining:
-        count += 1
-        remaining = remaining.replace("**", "", 1)
-    count += remaining.count("*")
-    return count
-
-
 def _replace_wildcards(pattern: str, captures: Tuple[str, ...]) -> str:
     """Replace ** then * sequentially with captures."""
     out = pattern
@@ -108,8 +97,10 @@ class _MTPFlatteningMapping(MegatronParamMapping[torch.Tensor]):
 
         # Precompute wildcard counts to disambiguate resolve() calls coming from
         # megatron_to_hf_lookup vs hf_to_megatron_lookup.
-        self._megatron_wc = _count_wildcards(self.megatron_param)
-        self._hf_wc = _count_wildcards(self.hf_param) if isinstance(self.hf_param, str) else 0
+        self._megatron_wc = MegatronParamMapping._count_wildcard_groups(self.megatron_param)
+        self._hf_wc = (
+            MegatronParamMapping._count_wildcard_groups(self.hf_param) if isinstance(self.hf_param, str) else 0
+        )
 
     def resolve(self, captures: Tuple[str, ...]) -> MegatronParamMapping:
         # We primarily expect captures from Megatron pattern matching.
@@ -161,7 +152,9 @@ class _MTPFlatteningMapping(MegatronParamMapping[torch.Tensor]):
 
         return AutoMapping(megatron_param=resolved_megatron, hf_param=resolved_hf)
 
-    # These are never called: this mapping always resolves into an AutoMapping.
+    # Required by ABC but never called at runtime: resolve() always returns an
+    # AutoMapping, so hf_to_megatron/megatron_to_hf are invoked on that resolved
+    # instance, not on this class.
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: torch.nn.Module) -> torch.Tensor:
         raise NotImplementedError
 
@@ -189,8 +182,8 @@ class _MTPFlatteningQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self._mtp_layers_per_block = int(mtp_layers_per_block)
         if self._mtp_layers_per_block <= 0:
             raise ValueError("mtp_layers_per_block must be > 0 for MTP flattening QKV mapping.")
-        self._megatron_wc = _count_wildcards(self.megatron_param)
-        self._hf_wc = _count_wildcards(q)  # q/k/v share pattern structure here
+        self._megatron_wc = MegatronParamMapping._count_wildcard_groups(self.megatron_param)
+        self._hf_wc = MegatronParamMapping._count_wildcard_groups(q)  # q/k/v share pattern structure here
 
     def resolve(self, captures: Tuple[str, ...]) -> MegatronParamMapping:
         # Expect captures from Megatron lookup: (outer, inner)
@@ -207,6 +200,9 @@ class _MTPFlatteningQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         return QKVMapping(megatron_param=resolved_megatron, q=resolved_q, k=resolved_k, v=resolved_v)
 
+    # Required by ABC but never called at runtime: resolve() always returns a
+    # QKVMapping, so hf_to_megatron/megatron_to_hf are invoked on that resolved
+    # instance, not on this class.
     def hf_to_megatron(self, hf_weights: Dict[str, torch.Tensor], megatron_module: torch.nn.Module) -> torch.Tensor:
         raise NotImplementedError
 
