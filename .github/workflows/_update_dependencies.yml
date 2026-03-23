@@ -115,7 +115,7 @@ jobs:
           commit-message: ${{ env.title }}
           signoff: true
           committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
-          labels: needs-more-tests
+          labels: full-test-suite
 
       - name: Post /ok to test comment
         env:
@@ -198,8 +198,11 @@ jobs:
       - name: Revert submodule bump for dev branch
         if: ${{ inputs.mcore-branch == 'dev' }}
         run: |
-          git checkout 3rdparty/Megatron-LM
-          git checkout .main.commit
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin ${{ env.TARGET_BRANCH }}
+          git restore --source=origin/${{ env.TARGET_BRANCH }} -- 3rdparty/Megatron-LM uv.lock
+          git add 3rdparty/Megatron-LM uv.lock
           git commit -m "Revert submodule bump for dev branch"
           git push origin ${{ env.SOURCE_BRANCH }}
 
