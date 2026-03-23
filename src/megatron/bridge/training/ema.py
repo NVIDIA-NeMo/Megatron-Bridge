@@ -51,8 +51,8 @@ class EMACallback(Callback):
             raise RuntimeError(
                 "Loaded EMA state does not match current model shard.\n"
                 f"Missing keys: {missing[:10]}\n"
-                f"Unexpected keys: {unexpected[:10]}"
-                f"| resumed_at_step={context.state.train_state.step} "
+                f"Unexpected keys: {unexpected[:10]}\n"
+                f"| resumed_at_step={context.state.train_state.step}"
             )
 
         remapped = {}

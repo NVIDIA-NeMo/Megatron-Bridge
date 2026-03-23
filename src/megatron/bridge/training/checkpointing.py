@@ -810,7 +810,8 @@ def save_checkpoint(
             assert async_save_request is not None
             async_save_request.add_finalize_fn(train_state_finalize_fn)
         else:  # Checkpoint lifecycle callbacks are currently fired only for synchronous saves
-            train_state_finalize_fn()
+            if get_rank_safe() == 0:
+                train_state_finalize_fn()
             callback_finalize_fn() 
 
     # Ensure all ranks see a fully written checkpoint (e.g., run_config.yaml) before W&B scans.
