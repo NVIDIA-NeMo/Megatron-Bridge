@@ -577,3 +577,97 @@ class TestNemotron3NanoConversion:
         except Exception as e:
             print(f"Error during Nemotron-3-Nano {test_name} conversion test: {e}")
             raise
+
+    @pytest.mark.run_only_on("GPU")
+    def test_nemotron_3_nano_autoconfig_roundtrip(self, nemotron_3_nano_toy_model_path, tmp_path, temp_hf_modules):
+        """
+        Test auto-config export round-trip for Nemotron-3-Nano MoE model.
+
+        Validates that HF→Megatron→HF via auto-config produces bit-exact weights
+        and matching forward pass outputs.
+
+        Args:
+            nemotron_3_nano_toy_model_path: Path to the toy Nemotron-3-Nano model (from fixture)
+            tmp_path: Pytest temporary path fixture
+            temp_hf_modules: Temporary HF modules cache path (from fixture)
+        """
+        import megatron.core.parallel_state as parallel_state
+        import torch.distributed as dist
+        from transformers import PretrainedConfig
+
+        from megatron.bridge import AutoBridge
+        from megatron.bridge.models.conversion.utils import filter_hf_config_fields
+        from megatron.bridge.training.model_load_save import load_model_config
+
+        megatron_root = str(tmp_path / "megatron")
+        export_path = tmp_path / "hf_export"
+        local_model_path = nemotron_3_nano_toy_model_path
+
+        # HF → Megatron
+        AutoBridge.import_ckpt(
+            hf_model_id=local_model_path,
+            megatron_path=megatron_root,
+            trust_remote_code=True,
+        )
+
+        # Tear down distributed state between import and export
+        if parallel_state.is_initialized():
+            parallel_state.destroy_model_parallel()
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+        # Find latest iteration checkpoint
+        megatron_root_path = Path(megatron_root)
+        iter_folders = [f for f in megatron_root_path.iterdir() if f.is_dir() and f.name.startswith("iter_")]
+        if iter_folders:
+            latest = max(iter_folders, key=lambda f: int(f.name.replace("iter_", "")))
+            megatron_iter = megatron_root_path / latest.name
+        else:
+            megatron_iter = megatron_root_path
+
+        # Megatron → HF via auto-config export
+        megatron_cfg, _ = load_model_config(str(megatron_iter))
+        config = AutoConfig.from_pretrained(local_model_path, trust_remote_code=True)
+        bridge = AutoBridge.from_hf_config(config)
+        hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
+        hf_cfg_dict = filter_hf_config_fields(hf_cfg_dict, config.to_dict())
+        config = PretrainedConfig(**hf_cfg_dict)
+        config._bridge_original_dict = dict(hf_cfg_dict)
+        bridge = AutoBridge.from_hf_config(config)
+        bridge._auto_config_source_repo = local_model_path
+        bridge.export_ckpt(
+            megatron_path=str(megatron_iter),
+            hf_path=str(export_path),
+            show_progress=True,
+            strict=False,
+        )
+
+        # Copy custom modeling/configuration files needed for trust_remote_code
+        for py_file in Path(local_model_path).glob("*.py"):
+            shutil.copy(py_file, export_path)
+
+        original = AutoModelForCausalLM.from_pretrained(
+            local_model_path, trust_remote_code=True, torch_dtype=torch.bfloat16, device_map="auto"
+        )
+        exported = AutoModelForCausalLM.from_pretrained(
+            str(export_path), trust_remote_code=True, torch_dtype=torch.bfloat16, device_map="auto"
+        )
+
+        # Weight comparison
+        pure_sd = {k: v.cpu() for k, v in original.state_dict().items()}
+        conv_sd = {k: v.cpu() for k, v in exported.state_dict().items()}
+        assert pure_sd.keys() == conv_sd.keys(), f"Key mismatch: {pure_sd.keys() ^ conv_sd.keys()}"
+        for key in pure_sd:
+            assert torch.equal(pure_sd[key], conv_sd[key]), f"Mismatch at {key}"
+
+        # Forward pass comparison
+        input_ids = torch.tensor([[1, 2, 3, 4, 5]], device=original.device)
+        with torch.no_grad():
+            orig_out = original(input_ids)
+            export_out = exported(input_ids)
+        orig_logits, export_logits = orig_out.logits.cpu(), export_out.logits.cpu()
+        max_diff = (orig_logits - export_logits).abs().max().item()
+        print(f"Nemotron-3-Nano toy model auto-config max logit difference: {max_diff}")
+        assert torch.allclose(orig_logits, export_logits, atol=1e-2), f"Forward pass mismatch: max diff {max_diff}"
+
+        shutil.rmtree(tmp_path, ignore_errors=True)

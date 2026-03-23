@@ -50,6 +50,13 @@ Usage examples:
     --megatron-path ./checkpoints/custom_model \
     --hf-path ./exports/custom_model_hf \
     --no-progress
+
+  # Export using auto-config (synthesizes config from checkpoint + HF model reference)
+  uv run python examples/conversion/convert_checkpoints.py export \
+    --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 \
+    --auto-config \
+    --megatron-path ./checkpoints/nemotron_h_custom \
+    --hf-path ./exports/nemotron_h_custom_hf
 """
 
 import argparse
@@ -140,6 +147,7 @@ def export_megatron_to_hf(
     hf_model: str,
     megatron_path: str,
     hf_path: str,
+    auto_config: bool = False,
     show_progress: bool = True,
     strict: bool = True,
 ) -> None:
@@ -147,9 +155,14 @@ def export_megatron_to_hf(
     Export a Megatron checkpoint to HuggingFace format.
 
     Args:
+        hf_model: HuggingFace model ID or path (loads full model with weights).
         megatron_path: Directory path where the Megatron checkpoint is stored
         hf_path: Directory path where the HuggingFace model will be saved
+        auto_config: If True, synthesizes the HF config from run_config.yaml using
+            the model bridge class resolved from --hf-model, instead of loading
+            the full pretrained weights from HuggingFace.
         show_progress: Display progress bar during weight export
+        strict: Whether to perform strict validation during weight export
     """
     print(f"🔄 Starting export: {megatron_path} -> {hf_path}")
 
@@ -174,9 +187,26 @@ def export_megatron_to_hf(
 
     print(f"📋 Found configuration: {config_files[0]}")
 
-    # For demonstration, we'll create a bridge from a known config
-    # This would typically be extracted from the checkpoint metadata
-    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
+    # Create bridge: auto-config (synthesize from run_config.yaml) or full pretrained
+    if auto_config:
+        from transformers import AutoConfig, PretrainedConfig
+
+        from megatron.bridge.models.conversion.utils import filter_hf_config_fields
+        from megatron.bridge.training.model_load_save import load_model_config
+
+        megatron_cfg, _ = load_model_config(str(config_files[0].parent))
+        config = AutoConfig.from_pretrained(hf_model, trust_remote_code=True)
+        bridge = AutoBridge.from_hf_config(config)
+        if "megatron_to_hf_config" not in type(bridge._model_bridge).__dict__:
+            raise ValueError(f"--auto-config does not currently support {type(bridge._model_bridge).__name__}")
+        hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
+        hf_cfg_dict = filter_hf_config_fields(hf_cfg_dict, config.to_dict())
+        config = PretrainedConfig(**hf_cfg_dict)
+        config._bridge_original_dict = dict(hf_cfg_dict)
+        bridge = AutoBridge.from_hf_config(config)
+        bridge._auto_config_source_repo = hf_model
+    else:
+        bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
 
     # Export using the convenience method
     print("📤 Exporting to HuggingFace format...")
@@ -228,6 +258,11 @@ def main():
     export_parser = subparsers.add_parser("export", help="Export Megatron checkpoint to HuggingFace format")
     export_parser.add_argument("--hf-model", required=True, help="HuggingFace model ID or path to model directory")
     export_parser.add_argument(
+        "--auto-config",
+        action="store_true",
+        help="Export custom models with different architectures than the base --hf-model",
+    )
+    export_parser.add_argument(
         "--megatron-path", required=True, help="Directory path where the Megatron checkpoint is stored"
     )
     export_parser.add_argument(
@@ -237,7 +272,6 @@ def main():
     export_parser.add_argument(
         "--not-strict", action="store_true", help="Allow source and target checkpoint to have different keys"
     )
-
     args = parser.parse_args()
 
     if not args.command:
@@ -258,6 +292,7 @@ def main():
             hf_model=args.hf_model,
             megatron_path=args.megatron_path,
             hf_path=args.hf_path,
+            auto_config=args.auto_config,
             show_progress=not args.no_progress,
             strict=not args.not_strict,
         )

@@ -30,9 +30,9 @@ from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataPa
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
-from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -43,18 +43,17 @@ from megatron.bridge.training.checkpointing import (
     init_checkpointing_context,
     load_checkpoint,
 )
-from megatron.bridge.training.config import ConfigContainer, runtime_config_update
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
     initialize_tensor_inspect_pre_model_initialization,
 )
-
+from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
+from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 class SetupOutput(NamedTuple):
     """Represents the output of the main setup function.
@@ -259,7 +258,10 @@ def setup(
     else:
         should_load_checkpoint = (
             (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load))
-            or (cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint))
+            or (
+                cfg.checkpoint.pretrained_checkpoint is not None
+                and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
+            )
             or has_local_checkpoint
         )
 
@@ -487,7 +489,7 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
         if param.requires_grad:
             trainable_params += param_count
 
-    print_rank_0(f"PEFT Statistics:")
+    print_rank_0("PEFT Statistics:")
     print_rank_0(f"  Total parameters: {total_params:,}")
     print_rank_0(f"  Trainable parameters: {trainable_params:,}")
     print_rank_0(f"  Trainable percentage: {100 * trainable_params / total_params:.2f}%")
