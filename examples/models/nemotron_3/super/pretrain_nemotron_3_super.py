@@ -49,7 +49,6 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         type=str,
         help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_pretrain_override_example.yaml",
     )
-    parser.add_argument("--per-split-data-args-path", type=str, help="Path to the per split data args file.")
 
     # Parse known args for the script, remaining will be treated as overrides
     args, cli_dotlist_overrides = parser.parse_known_args()

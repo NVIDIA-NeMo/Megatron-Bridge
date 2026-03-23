@@ -58,7 +58,7 @@ def nemotron_3_super_pretrain_config_gb300(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = nemotron_3_super_pretrain_config(mock=mock)
+    cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = precision_config
     set_nemotron_3_super_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
