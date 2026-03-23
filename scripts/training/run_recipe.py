@@ -35,18 +35,18 @@ Usage:
             --step_func flux_step
 
     With CLI overrides:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config \
             train.train_iters=5000 \
             optimizer.lr=0.0003
 
     With VLM step function:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe qwen25_vl_finetune_config \
             --step_func vlm_step
 
     With packed sequences and custom sequence length:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config \
             --packed_sequence \
             --seq_length 2048
@@ -93,8 +93,7 @@ TRAIN_MODES = {
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
     "Unable to infer training mode from recipe name. "
-    "Please include 'pretrain' or 'finetune' (or 'sft'/'peft') in the recipe name, "
-    "or pass --mode explicitly."
+    "Please include 'pretrain', 'sft', 'peft', or 'finetune' in the recipe name or pass --mode explicitly."
 )
 
 
@@ -115,7 +114,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "--recipe",
         type=str,
         required=True,
-        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_finetune_config)",
+        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_sft_config, gemma3_1b_peft_config)",
     )
     parser.add_argument(
         "--step_func",
