@@ -23,7 +23,8 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
-    GatedMLPMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     MegatronParamMapping,
     QKVMapping,
 )
@@ -99,8 +100,8 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     Megatron Bridge for MiniMax-M2 MoE Causal LM.
 
     MiniMax-M2 is a sparse MoE model (256 experts, top-8 routing with sigmoid
-    scoring and expert bias correction). HF weights use per-expert format
-    with block_sparse_moe prefix (w1/w2/w3).
+    scoring and expert bias correction). HF weights use stacked expert format
+    under the ``mlp`` prefix (``gate_up_proj`` / ``down_proj``).
 
     QK normalization:
         MiniMax-M2 applies full-dimension RMSNorm to Q/K (weight shape =
@@ -191,8 +192,8 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             # Attention o_proj
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             # MoE router and expert bias
-            "decoder.layers.*.mlp.router.weight": "model.layers.*.block_sparse_moe.gate.weight",
-            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.block_sparse_moe.e_score_correction_bias",
+            "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
+            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.e_score_correction_bias",
         }
 
         mapping_list = []
@@ -224,18 +225,20 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             )
         )
 
-        # MoE expert weights (per-expert w1/w2/w3 with block_sparse_moe prefix).
-        # Uses grouped-gemm layout (weight* suffix) since moe_grouped_gemm=True.
+        # MoE expert weights — HF stores all experts as stacked tensors:
+        #   gate_up_proj: [num_experts, 2*intermediate, hidden]
+        #   down_proj:    [num_experts, hidden, intermediate]
+        # FusedGatedExpertMapping splits gate_up_proj per expert into gate+up and
+        # maps to Megatron's linear_fc1 grouped-gemm layout (weight* suffix).
         mapping_list.extend(
             [
-                GatedMLPMapping(
+                FusedGatedExpertMapping(
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    gate="model.layers.*.block_sparse_moe.experts.*.w1.weight",
-                    up="model.layers.*.block_sparse_moe.experts.*.w3.weight",
+                    hf_param="model.layers.*.mlp.experts.gate_up_proj",
                 ),
-                AutoMapping(
+                FusedExpertMapping(
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param="model.layers.*.block_sparse_moe.experts.*.w2.weight",
+                    hf_param="model.layers.*.mlp.experts.down_proj",
                 ),
             ]
         )
