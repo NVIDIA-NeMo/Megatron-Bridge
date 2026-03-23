@@ -149,11 +149,19 @@ def _tensor_to_pil(t):
 
 
 def _images_to_pil(imgs):
-    """Convert WDS tensor images to PIL to match HF flow input format.
+    """Convert WDS tensor images to PIL to match the HF flow input format.
 
-    WDS imagehandler decodes JPEG to float tensors in [0,1]. The HF flow passes
-    PIL images (uint8 [0,255]) to the processor. Converting to PIL here ensures
-    the processor applies identical rescaling and normalization in both flows.
+    WDS ``imagehandler`` decodes JPEG to float tensors in ``[0, 1]``.  The HF
+    flow passes PIL images (uint8 ``[0, 255]``) to the processor.  Converting
+    to PIL here ensures the processor applies identical rescaling and
+    normalization in both flows.
+
+    Args:
+        imgs: A single ``[C, H, W]`` tensor, a ``[N, C, H, W]`` batch tensor,
+            or a list of tensors / PIL images.
+
+    Returns:
+        A list of PIL images, or the input unchanged if it is not a tensor.
     """
     if isinstance(imgs, torch.Tensor):
         if imgs.dim() == 3:
@@ -166,7 +174,17 @@ def _images_to_pil(imgs):
 
 
 def _videos_to_pil(videos):
-    """Convert WDS video frame tensors to PIL to match HF flow input format."""
+    """Convert WDS video frame tensors to PIL to match the HF flow input format.
+
+    Args:
+        videos: A list of videos, where each video is either a list of frame
+            tensors or a ``[N, C, H, W]`` batch tensor.  ``None`` is passed
+            through unchanged.
+
+    Returns:
+        A nested list ``[[PIL.Image, ...], ...]`` with one sub-list per video,
+        or ``None`` if *videos* is ``None``.
+    """
     if videos is None:
         return None
     result = []
@@ -198,7 +216,7 @@ class ChatMLSample(Sample):
 
 
 class videohandler:
-    """Create a video handler."""
+    """Webdataset decoder handler for video fields stored as pickled frame lists."""
 
     def __init__(self, imagespec):
         self.extensions = ["jpgs", "mp4s", "videos"]
@@ -206,7 +224,7 @@ class videohandler:
         self.image_handler = imagehandler(imagespec)
 
     def __call__(self, key, data):
-        """Perform nested image decoding."""
+        """Decode pickled video data into lists of image tensors."""
         extension = re.sub(r".*[.]", "", key)
         if extension.lower() not in self.extensions:
             return None
@@ -251,8 +269,13 @@ def cook_chatml_sample(conversation) -> List[Dict]:
     (OpenAI-style) formats, with an optional leading system turn when the
     total number of turns is odd.
 
-    Returns a cleaned list of dicts with ``role`` in
-    ``{"system", "user", "assistant"}`` and ``content`` as a plain string.
+    Args:
+        conversation: A JSON string, bytes, list of turn dicts, or a dict
+            with a ``"conversations"`` key.
+
+    Returns:
+        A list of dicts with ``role`` in ``{"system", "user", "assistant"}``
+        and ``content`` as a plain string.
     """
     if isinstance(conversation, (str, bytes)):
         conversation = json.loads(conversation)
