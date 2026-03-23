@@ -1629,8 +1629,10 @@ class ConfigContainer(Container):
                     "Megatron FSDP only supports fsdp_dtensor checkpoint format"
                 )
 
-            if self.ddp.average_in_collective:
-                print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
+            if self.ddp.average_in_collective and not self.ddp.disable_symmetric_registration:
+                print_rank_0(
+                    "average_in_collective is not supported with NCCL symmetric registration, setting to False"
+                )
                 self.ddp.average_in_collective = False
 
             # reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP
