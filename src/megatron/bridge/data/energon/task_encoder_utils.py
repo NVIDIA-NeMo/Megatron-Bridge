@@ -53,10 +53,23 @@ def get_ltor_masks_and_position_ids(
 ):
     """Build masks and position ids for a left-to-right model.
 
+    Args:
+        data: Input token ids of shape ``[b, s]``.
+        eod_token: End-of-document token id.
+        eod_mask_loss: If True, zero out loss at EOD positions.
+        reset_attention_mask: If True, block cross-document attention.
+        reset_position_ids: If True, restart position ids after each EOD.
+        compute_attention_mask: If False, skip attention mask computation
+            and return ``None`` for the mask.
+
     Returns:
-        attention_mask: [att_mask_batch, 1, s, s] boolean mask (True means masked)
-        loss_mask: [b, s] float mask (1.0 to keep loss, 0.0 to drop)
-        position_ids: [b, s] positions
+        Tuple of ``(attention_mask, loss_mask, position_ids)`` where:
+
+        - **attention_mask** -- ``[att_mask_batch, 1, s, s]`` boolean mask
+          (``True`` = masked / blocked) or ``None`` when
+          *compute_attention_mask* is False.
+        - **loss_mask** -- ``[b, s]`` float mask (1.0 = keep, 0.0 = drop).
+        - **position_ids** -- ``[b, s]`` position indices.
     """
     micro_batch_size, seq_length = data.size()
 
@@ -100,7 +113,17 @@ def get_ltor_masks_and_position_ids(
 # Pattern matching
 # ---------------------------------------------------------------------------
 def find_pattern_indices(sequence: np.ndarray, pattern, start: int = 0):
-    """Find the [start, end) indices of the first occurrence of pattern in sequence from start."""
+    """Find the ``[start, end)`` indices of the first occurrence of *pattern* in *sequence*.
+
+    Args:
+        sequence: 1-D array (or list) to search in.
+        pattern: Sub-sequence to look for.
+        start: Index in *sequence* at which to begin searching.
+
+    Returns:
+        ``(start_idx, end_idx)`` of the first match, or ``(-1, -1)`` if not
+        found.
+    """
     if not isinstance(sequence, np.ndarray):
         sequence = np.array(sequence)
     pattern = np.array(pattern, dtype=sequence.dtype)
@@ -118,7 +141,7 @@ def find_pattern_indices(sequence: np.ndarray, pattern, start: int = 0):
 # PIL conversion helpers
 # ---------------------------------------------------------------------------
 def _tensor_to_pil(t):
-    """Convert a [C,H,W] float tensor in [0,1] to a PIL Image (uint8 [0,255])."""
+    """Convert a ``[C, H, W]`` float tensor in ``[0, 1]`` to a PIL Image (uint8 ``[0, 255]``)."""
     from PIL import Image
 
     img_np = (t.permute(1, 2, 0).numpy() * 255).clip(0, 255).astype(np.uint8)
