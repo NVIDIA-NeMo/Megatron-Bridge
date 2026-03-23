@@ -261,6 +261,5 @@ def nemotron_3_super_finetune_config(
 
 __all__ = [
     "nemotron_3_super_pretrain_config",
-    "nemotron_3_super_debug_pretrain_config",
     "nemotron_3_super_finetune_config",
 ]
