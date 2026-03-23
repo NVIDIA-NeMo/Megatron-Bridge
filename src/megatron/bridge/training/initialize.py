@@ -400,6 +400,14 @@ def _create_pg_collection(
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
 ) -> ProcessGroupCollection:
     """Create all process groups via HyperCommGrid and return a ProcessGroupCollection."""
+    hcp_sizes = getattr(model_config, "hierarchical_context_parallel_sizes", None)
+    if hcp_sizes is not None:
+        raise NotImplementedError(
+            "Decentralized process groups (use_decentralized_pg=True) do not support "
+            "hierarchical_context_parallel_sizes. Use cp_comm_type='a2a' or 'p2p' instead, "
+            "or set use_decentralized_pg=False to use the MPU path which supports 'a2a+p2p'."
+        )
+
     world_size = torch.distributed.get_world_size()
     tp_size = int(model_config.tensor_model_parallel_size)
     pp_size = int(model_config.pipeline_model_parallel_size)

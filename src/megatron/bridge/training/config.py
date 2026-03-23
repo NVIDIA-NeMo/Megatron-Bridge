@@ -1707,6 +1707,8 @@ class ConfigContainer(Container):
                     "When finetuning with CP>1, average_in_collective must be False"
                 )
 
+        self._validate_cp_comm_type()
+
         if (
             isinstance(self.dataset, FinetuningDatasetConfig)
             and self.dataset.packed_sequence_specs is not None
@@ -1767,6 +1769,40 @@ class ConfigContainer(Container):
                     stacklevel=2,
                 )
                 setattr(self.validation, f.name, train_val)
+
+    def _validate_cp_comm_type(self) -> None:
+        """Validate cp_comm_type and hierarchical_context_parallel_sizes consistency."""
+        cp_comm_type = getattr(self.model, "cp_comm_type", None)
+        hcp_sizes = getattr(self.model, "hierarchical_context_parallel_sizes", None)
+        cp_size = getattr(self.model, "context_parallel_size", 1)
+
+        if cp_size > 1 and cp_comm_type is not None:
+            if isinstance(cp_comm_type, list):
+                assert len(cp_comm_type) == self.model.num_layers, (
+                    f"Length of cp_comm_type ({len(cp_comm_type)}) must equal num_layers ({self.model.num_layers})."
+                )
+            else:
+                assert isinstance(cp_comm_type, str), (
+                    f"cp_comm_type must be a str or list of str, got {type(cp_comm_type)}."
+                )
+
+        cp_comm_types = cp_comm_type if isinstance(cp_comm_type, list) else [cp_comm_type or "p2p"]
+        if any("a2a+p2p" in ct for ct in cp_comm_types):
+            assert hcp_sizes is not None, (
+                "hierarchical_context_parallel_sizes must be set when cp_comm_type "
+                "contains 'a2a+p2p'. Without it, CP communication is silently disabled "
+                "and each rank attends only to its local chunk, producing artificially "
+                "high throughput but broken training. Example: for cp=16 across 4 nodes "
+                "of 8 GPUs, set hierarchical_context_parallel_sizes=[8, 2]."
+            )
+
+        if hcp_sizes is not None:
+            from math import prod
+
+            assert prod(hcp_sizes) == cp_size, (
+                f"Product of hierarchical_context_parallel_sizes {hcp_sizes} "
+                f"(={prod(hcp_sizes)}) must equal context_parallel_size (={cp_size})."
+            )
 
     def _validate_training_scheduler_compatibility(self) -> None:
         """Cross-validation between training and scheduler configs."""
