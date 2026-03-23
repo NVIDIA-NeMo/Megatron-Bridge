@@ -240,8 +240,21 @@ class videohandler:
 class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
     """Webdataset factory for multi-turn ChatML samples with multimodal support.
 
-    Extends DefaultDecoderWebdatasetFactory to decode webdataset shards into
-    ChatMLSample instances, using custom handlers for image and video fields.
+    Extends ``DefaultDecoderWebdatasetFactory`` to decode webdataset shards into
+    ``ChatMLSample`` instances, using custom handlers for image and video fields.
+
+    Args:
+        path: Root path of the webdataset shards.
+        auto_decode: Whether to install custom image/video decoders.  Passed
+            through to the parent class.
+        image_decode_spec: Decode spec forwarded to ``imagehandler`` /
+            ``videohandler`` (e.g. ``"torchrgb"``).  When ``None`` (the
+            default), falls back to the parent's ``image_decode`` attribute
+            for backward compatibility with callers that set it via
+            ``**kwargs``, and ultimately defaults to ``"torchrgb"``.
+        **kwargs: Forwarded to ``DefaultDecoderWebdatasetFactory.__init__``.
+            A ``decoder`` key, if present, is silently dropped because this
+            class installs its own decoder.
     """
 
     __sample_type__ = ChatMLSample
