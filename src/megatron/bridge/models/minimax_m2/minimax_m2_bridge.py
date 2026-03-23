@@ -25,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     FusedExpertMapping,
     FusedGatedExpertMapping,
+    GatedMLPMapping,
     MegatronParamMapping,
     QKVMapping,
 )
@@ -100,8 +101,14 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     Megatron Bridge for MiniMax-M2 MoE Causal LM.
 
     MiniMax-M2 is a sparse MoE model (256 experts, top-8 routing with sigmoid
-    scoring and expert bias correction). HF weights use stacked expert format
-    under the ``mlp`` prefix (``gate_up_proj`` / ``down_proj``).
+    scoring and expert bias correction). Two checkpoint layouts are supported
+    and auto-detected at load time:
+
+    - **Native transformers** (transformers >= 5.0, toy models): ``mlp`` prefix
+      with stacked ``gate_up_proj`` / ``down_proj`` tensors.
+    - **Legacy HF checkpoint** (``MiniMaxAI/MiniMax-M2`` with
+      ``trust_remote_code=True``): ``block_sparse_moe`` prefix with per-expert
+      ``w1`` / ``w3`` (gate/up) and ``w2`` (down) weights.
 
     QK normalization:
         MiniMax-M2 applies full-dimension RMSNorm to Q/K (weight shape =
@@ -120,6 +127,33 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M2")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    def build_conversion_tasks(self, hf_pretrained, megatron_model):
+        """Store HF state keys before mapping_registry is called (for format detection)."""
+        self._hf_state_source = hf_pretrained.state.source
+        self._hf_keys = list(self._hf_state_source.get_all_keys())
+        return super().build_conversion_tasks(hf_pretrained, megatron_model)
+
+    def _uses_native_transformers_format(self) -> bool:
+        """Return True if the HF checkpoint uses the native transformers layout.
+
+        The native transformers layout (transformers >= 5.0) uses:
+          - ``mlp`` attribute name for the MoE block
+          - stacked ``mlp.experts.gate_up_proj`` / ``mlp.experts.down_proj``
+
+        The original HuggingFace checkpoint (``MiniMaxAI/MiniMax-M2``) uses the
+        pre-merge custom code layout:
+          - ``block_sparse_moe`` attribute name
+          - per-expert ``block_sparse_moe.experts.*.w1/w3/w2.weight``
+
+        Detection falls back to native format (True) when no HF keys are available.
+        """
+        hf_keys = getattr(self, "_hf_keys", None)
+        if hf_keys:
+            return any("mlp.experts.gate_up_proj" in k for k in hf_keys) or not any(
+                "block_sparse_moe" in k for k in hf_keys
+            )
+        return True
 
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace MiniMax-M2 config to GPTModelProvider."""
@@ -181,6 +215,13 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         return w.float().to(torch.bfloat16)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
+        native = self._uses_native_transformers_format()
+        # Two checkpoint layouts exist for MiniMax-M2:
+        #   native (transformers >= 5.0): "mlp" prefix, stacked gate_up_proj/down_proj
+        #   legacy (MiniMaxAI/MiniMax-M2 HF repo, trust_remote_code=True): "block_sparse_moe"
+        #     prefix, per-expert w1/w3/w2 weights
+        moe_prefix = "mlp" if native else "block_sparse_moe"
+
         param_mappings = {
             # Global weights
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
@@ -192,8 +233,8 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             # Attention o_proj
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             # MoE router and expert bias
-            "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
-            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.e_score_correction_bias",
+            "decoder.layers.*.mlp.router.weight": f"model.layers.*.{moe_prefix}.gate.weight",
+            "decoder.layers.*.mlp.router.expert_bias": f"model.layers.*.{moe_prefix}.e_score_correction_bias",
         }
 
         mapping_list = []
@@ -225,22 +266,37 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             )
         )
 
-        # MoE expert weights — HF stores all experts as stacked tensors:
-        #   gate_up_proj: [num_experts, 2*intermediate, hidden]
-        #   down_proj:    [num_experts, hidden, intermediate]
-        # FusedGatedExpertMapping splits gate_up_proj per expert into gate+up and
-        # maps to Megatron's linear_fc1 grouped-gemm layout (weight* suffix).
-        mapping_list.extend(
-            [
-                FusedGatedExpertMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    hf_param="model.layers.*.mlp.experts.gate_up_proj",
-                ),
-                FusedExpertMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param="model.layers.*.mlp.experts.down_proj",
-                ),
-            ]
-        )
+        # MoE expert weights — two formats depending on the checkpoint:
+        if native:
+            # Native transformers layout: stacked tensors per layer
+            #   gate_up_proj: [num_experts, 2*intermediate, hidden]
+            #   down_proj:    [num_experts, hidden, intermediate]
+            mapping_list.extend(
+                [
+                    FusedGatedExpertMapping(
+                        megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                        hf_param="model.layers.*.mlp.experts.gate_up_proj",
+                    ),
+                    FusedExpertMapping(
+                        megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                        hf_param="model.layers.*.mlp.experts.down_proj",
+                    ),
+                ]
+            )
+        else:
+            # Legacy HF checkpoint layout: per-expert w1/w3 (gate/up) and w2 (down)
+            mapping_list.extend(
+                [
+                    GatedMLPMapping(
+                        megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                        gate="model.layers.*.block_sparse_moe.experts.*.w1.weight",
+                        up="model.layers.*.block_sparse_moe.experts.*.w3.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                        hf_param="model.layers.*.block_sparse_moe.experts.*.w2.weight",
+                    ),
+                ]
+            )
 
         return MegatronMappingRegistry(*mapping_list)
