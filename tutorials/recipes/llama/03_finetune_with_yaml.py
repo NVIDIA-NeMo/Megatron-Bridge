@@ -57,7 +57,7 @@ import logging
 from pathlib import Path
 from typing import Tuple
 
-from megatron.bridge.recipes.llama import llama32_1b_finetune_config
+from megatron.bridge.recipes.llama import llama32_1b_peft_config, llama32_1b_sft_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
@@ -103,7 +103,10 @@ def main() -> None:
 
     # Load base configuration from recipe
     peft_method = None if args.peft == "none" else args.peft
-    config: ConfigContainer = llama32_1b_finetune_config(peft=peft_method)
+    if peft_method is None:
+        config: ConfigContainer = llama32_1b_sft_config()
+    else:
+        config = llama32_1b_peft_config(peft_scheme=peft_method)
 
     config = process_config_with_overrides(
         config,

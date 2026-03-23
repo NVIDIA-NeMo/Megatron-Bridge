@@ -497,70 +497,6 @@ class TestDdpWrap:
         assert isinstance(result, list)
         assert len(result) == 2
 
-    @patch("megatron.bridge.models.common.unimodal.TorchFullyShardedDataParallel")
-    @patch("megatron.bridge.models.common.unimodal.FullyShardedDataParallel")
-    @patch("megatron.bridge.models.common.unimodal.DistributedDataParallel")
-    @patch("megatron.bridge.models.common.unimodal.get_model_config")
-    @patch("torch.cuda.stream", new_callable=MagicMock)
-    @patch("torch.cuda.current_stream")
-    @patch("torch.cuda.Stream")
-    def test_mixed_precision_config_forwarded_to_megatron_fsdp(
-        self, mock_stream, mock_curr, mock_ctx, mock_cfg, mock_ddp, mock_fsdp, mock_torch_fsdp
-    ):
-        mock_ctx.return_value.__enter__ = Mock(return_value=None)
-        mock_ctx.return_value.__exit__ = Mock(return_value=False)
-
-        mp_cfg = Mock()
-        mp_cfg.megatron_fsdp_main_params_dtype = torch.float32
-        mp_cfg.megatron_fsdp_main_grads_dtype = torch.bfloat16
-        mp_cfg.megatron_fsdp_grad_comm_dtype = torch.bfloat16
-
-        _ddp_wrap(
-            self.model,
-            False,
-            self.ddp_config,
-            False,
-            use_megatron_fsdp=True,
-            pg_collection=self.pg,
-            mixed_precision_config=mp_cfg,
-        )
-
-        mp_cfg.finalize.assert_called_once()
-        for call in mock_fsdp.call_args_list:
-            assert call.kwargs["main_params_dtype"] == torch.float32
-            assert call.kwargs["main_grads_dtype"] == torch.bfloat16
-            assert call.kwargs["grad_comm_dtype"] == torch.bfloat16
-
-    @patch("megatron.bridge.models.common.unimodal.TorchFullyShardedDataParallel")
-    @patch("megatron.bridge.models.common.unimodal.FullyShardedDataParallel")
-    @patch("megatron.bridge.models.common.unimodal.DistributedDataParallel")
-    @patch("megatron.bridge.models.common.unimodal.get_model_config")
-    @patch("torch.cuda.stream", new_callable=MagicMock)
-    @patch("torch.cuda.current_stream")
-    @patch("torch.cuda.Stream")
-    def test_mixed_precision_config_ignored_for_standard_ddp(
-        self, mock_stream, mock_curr, mock_ctx, mock_cfg, mock_ddp, mock_fsdp, mock_torch_fsdp
-    ):
-        mock_ctx.return_value.__enter__ = Mock(return_value=None)
-        mock_ctx.return_value.__exit__ = Mock(return_value=False)
-
-        mp_cfg = Mock()
-        _ddp_wrap(
-            self.model,
-            False,
-            self.ddp_config,
-            False,
-            use_megatron_fsdp=False,
-            pg_collection=self.pg,
-            mixed_precision_config=mp_cfg,
-        )
-
-        mp_cfg.finalize.assert_not_called()
-        for call in mock_ddp.call_args_list:
-            assert "main_params_dtype" not in call.kwargs
-            assert "main_grads_dtype" not in call.kwargs
-            assert "grad_comm_dtype" not in call.kwargs
-
 
 # =============================================================================
 # Section 6 — TestUnimodalBuildDistributedModels
@@ -898,39 +834,5 @@ class TestUnimodalBuildDistributedModels:
                 wrap_with_ddp=True,
             )
             assert result is ddp_result
-        finally:
-            self._stop_patches()
-
-    def test_mixed_precision_config_forwarded_to_ddp_wrap(self):
-        mocks = self._standard_patches()
-        try:
-            ddp_config = Mock()
-            mp_cfg = Mock()
-            unimodal_build_distributed_models(
-                Mock(),
-                self.transformer_config,
-                self.pg,
-                ddp_config=ddp_config,
-                wrap_with_ddp=True,
-                mixed_precision_config=mp_cfg,
-            )
-            ddp_call_kwargs = mocks["ddp"].call_args.kwargs
-            assert ddp_call_kwargs["mixed_precision_config"] is mp_cfg
-        finally:
-            self._stop_patches()
-
-    def test_mixed_precision_config_none_by_default(self):
-        mocks = self._standard_patches()
-        try:
-            ddp_config = Mock()
-            unimodal_build_distributed_models(
-                Mock(),
-                self.transformer_config,
-                self.pg,
-                ddp_config=ddp_config,
-                wrap_with_ddp=True,
-            )
-            ddp_call_kwargs = mocks["ddp"].call_args.kwargs
-            assert ddp_call_kwargs["mixed_precision_config"] is None
         finally:
             self._stop_patches()

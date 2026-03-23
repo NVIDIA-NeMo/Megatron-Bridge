@@ -141,7 +141,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "--recipe",
         type=str,
         required=True,
-        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_finetune_config)",
+        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_sft_config, gemma3_1b_peft_config)",
     )
     parser.add_argument(
         "--dataset",
