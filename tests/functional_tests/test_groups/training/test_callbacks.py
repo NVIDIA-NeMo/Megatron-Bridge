@@ -138,7 +138,8 @@ class TestCallbacksEndToEnd:
     """Functional tests for callbacks in the training loop."""
 
     @pytest.mark.run_only_on("GPU")
-    def test_callbacks(self, tmp_checkpoint_dir):
+    @pytest.mark.parametrize("async_save", [False, True])
+    def test_callbacks(self, async_save, tmp_checkpoint_dir):
         """Comprehensive test of callback system with both registration patterns.
 
         Tests in a single training run:
@@ -253,7 +254,11 @@ class TestCallbacksEndToEnd:
                 tokenizer_type="NullTokenizer",
                 vocab_size=10000,
             ),
-            checkpoint=CheckpointConfig(save=tmp_checkpoint_dir, save_interval=train_iters - 1),
+            checkpoint=CheckpointConfig(
+                save=tmp_checkpoint_dir,
+                save_interval=train_iters - 1,
+                async_save=async_save,
+            ),
             rng=RNGConfig(seed=1234),
         )
 
