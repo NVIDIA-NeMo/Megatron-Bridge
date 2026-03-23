@@ -90,7 +90,6 @@ CMD="$CMD --hf_model_path $HF_MODEL_ID"
 CMD="$CMD --prompt '$PROMPT'"
 CMD="$CMD --max_new_tokens $MAX_NEW_TOKENS"
 CMD="$CMD --tp $TP --ep $EP"
-CMD="$CMD --trust-remote-code"
 
 echo "Executing: $CMD"
 
