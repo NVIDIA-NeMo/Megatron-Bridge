@@ -196,7 +196,9 @@ def main():
     parser.add_argument("--seq-len", type=int, default=32, help="Token sequence length")
     parser.add_argument("--megatron-vocab-size", type=int, default=MEGATRON_VOCAB_SIZE)
     parser.add_argument(
-        "--tensor-parallel-size", type=int, default=1,
+        "--tensor-parallel-size",
+        type=int,
+        default=1,
         help="TP size (must match --nproc-per-node)",
     )
     args = parser.parse_args()

@@ -198,9 +198,7 @@ def convert_hf_llama_to_megatron(
                 gate_chunks = torch.chunk(gate, tensor_parallel_size, dim=0)
                 up_chunks = torch.chunk(up, tensor_parallel_size, dim=0)
                 for tp in range(tensor_parallel_size):
-                    new_state_dicts[tp]["model"][new_name] = torch.cat(
-                        [gate_chunks[tp], up_chunks[tp]], dim=0
-                    )
+                    new_state_dicts[tp]["model"][new_name] = torch.cat([gate_chunks[tp], up_chunks[tp]], dim=0)
                     if use_te:
                         extra_key = new_name[: new_name.rfind(".") + 1] + "_extra_state"
                         new_state_dicts[tp]["model"][extra_key] = None
@@ -325,9 +323,7 @@ def load_megatron_llm_weights(
                     g, u = s[key].chunk(2, dim=0)
                     gates.append(g)
                     ups.append(u)
-                state_dict[key] = torch.cat(
-                    [torch.cat(gates, dim=0), torch.cat(ups, dim=0)], dim=0
-                )
+                state_dict[key] = torch.cat([torch.cat(gates, dim=0), torch.cat(ups, dim=0)], dim=0)
             else:
                 state_dict[key] = torch.cat([s[key] for s in all_shards], dim=concat_dim)
 
@@ -341,10 +337,13 @@ def load_megatron_llm_weights(
                 elif "linear_fc1.weight" in key:
                     # SwiGLU: split gate and up independently, fuse per-rank
                     gate, up = tensor.chunk(2, dim=0)
-                    new_sd[key] = torch.cat([
-                        gate.chunk(tp_size, dim=0)[tp_rank],
-                        up.chunk(tp_size, dim=0)[tp_rank],
-                    ], dim=0)
+                    new_sd[key] = torch.cat(
+                        [
+                            gate.chunk(tp_size, dim=0)[tp_rank],
+                            up.chunk(tp_size, dim=0)[tp_rank],
+                        ],
+                        dim=0,
+                    )
                 else:
                     chunks = torch.chunk(tensor, tp_size, dim=concat_dim)
                     new_sd[key] = chunks[tp_rank].clone()

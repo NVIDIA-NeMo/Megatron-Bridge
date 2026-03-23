@@ -154,7 +154,9 @@ def main():
     parser.add_argument("--hf-model", default=HF_MODEL, help="HF model name or path")
     parser.add_argument("--dtype", choices=["fp32", "bf16"], default="fp32")
     parser.add_argument(
-        "--tensor-parallel-size", type=int, default=1,
+        "--tensor-parallel-size",
+        type=int,
+        default=1,
         help="TP size (must match --nproc-per-node)",
     )
     args = parser.parse_args()
