@@ -48,7 +48,7 @@ def can_enable_gradient_accumulation_fusion() -> bool:
         bool: True if gradient accumulation fusion is available via either backend.
     """
     try:
-        import transformer_engine  # noqa: F401
+        import transformer_engine.pytorch  # noqa: F401
 
         return True
     except ImportError:
