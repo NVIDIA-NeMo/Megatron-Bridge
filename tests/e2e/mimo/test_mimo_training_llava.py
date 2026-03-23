@@ -66,6 +66,8 @@ def _make_vision_config() -> TransformerConfig:
     cfg.attention_softmax_in_fp32 = True
     cfg.normalization = "LayerNorm"
     cfg.apply_rope_fusion = False
+    # CLIP uses "quick_gelu", not standard gelu
+    cfg.activation_func = lambda x: x * torch.sigmoid(1.702 * x)
     return cfg
 
 
@@ -181,6 +183,113 @@ def _build_model_specs():
 
 
 # ---------------------------------------------------------------------------
+# Per-submodule checkpoint loading
+# ---------------------------------------------------------------------------
+
+
+def _load_tp_rank_weights(
+    module: torch.nn.Module,
+    ckpt_dir: str,
+    tp_rank: int,
+    label: str,
+) -> None:
+    """Load per-TP-rank ``.pt`` weights produced by the HF→Megatron converters.
+
+    Both ``convert_hf_clip_to_megatron.py`` and ``convert_hf_llama_to_megatron.py``
+    write the same layout::
+
+        {ckpt_dir}/tp_rank_{NN}/model_weights.pt   →  {"model": {key: tensor}}
+
+    After loading, a spot-check compares up to 5 parameter tensors against the
+    file to verify the weights actually landed in the module.
+    """
+    ckpt_file = os.path.join(ckpt_dir, f"tp_rank_{tp_rank:02d}", "model_weights.pt")
+    if not os.path.exists(ckpt_file):
+        raise FileNotFoundError(f"[{label}] Checkpoint not found: {ckpt_file}")
+
+    saved = torch.load(ckpt_file, map_location="cpu", weights_only=True)
+    state_dict = {k: v for k, v in saved["model"].items() if v is not None}
+
+    # With pipeline parallelism (PP > 1), each PP stage only holds a subset of
+    # layers (e.g. stage 0 has embeddings, stage N-1 has output_layer/final_layernorm).
+    # Filter the checkpoint to keys the module actually owns so that weights
+    # belonging to other PP stages are silently skipped rather than flagged as unexpected.
+    module_keys = set(module.state_dict().keys())
+    state_dict = {k: v for k, v in state_dict.items() if k in module_keys}
+
+    incompat = module.load_state_dict(state_dict, strict=False)
+    unexpected = [k for k in incompat.unexpected_keys if "_extra_state" not in k]
+    missing = [k for k in incompat.missing_keys if "_extra_state" not in k]
+    if unexpected or missing:
+        raise RuntimeError(f"[{label}] load_state_dict mismatch.\n  Missing:    {missing}\n  Unexpected: {unexpected}")
+
+    # Spot-check: re-read module state and compare against checkpoint tensors
+    model_sd = module.state_dict()
+    checked = 0
+    for key, ref_tensor in state_dict.items():
+        if key not in model_sd or ref_tensor is None:
+            continue
+        if not torch.equal(model_sd[key].float().cpu(), ref_tensor.float().cpu()):
+            max_diff = (model_sd[key].float().cpu() - ref_tensor.float().cpu()).abs().max().item()
+            raise RuntimeError(f"[{label}] Weight verification FAILED for '{key}': max abs diff = {max_diff}")
+        checked += 1
+        if checked >= 5:
+            break
+    if checked == 0:
+        raise RuntimeError(f"[{label}] Weight verification found 0 overlapping keys to check")
+    print(f"[{label}] Loaded and verified from {ckpt_file} ({checked} keys spot-checked)")
+
+
+def _make_checkpoint_loader_hook(
+    language_model_ckpt: str | None = None,
+    vision_encoder_ckpt: str | None = None,
+):
+    """Return a ``pre_wrap_hook`` that loads per-module checkpoints.
+
+    In hetero MIMO each rank only materialises the modules it participates in
+    (``MimoModel.language_model`` is ``None`` on encoder-only ranks, and the
+    vision submodule is absent on LLM-only ranks).  The hook therefore guards
+    every load with an existence check so it is safe to call on all ranks.
+
+    Both checkpoint dirs are expected to contain per-TP-rank ``.pt`` files
+    produced by ``convert_hf_llama_to_megatron.py`` / ``convert_hf_clip_to_megatron.py``.
+    """
+
+    def _hook(model_list):
+        model = model_list[0]
+        grids = model.mimo_config.module_to_grid_map
+
+        if language_model_ckpt and model.language_model is not None:
+            tp_group = grids["llm"].get_pg(["tp"])
+            tp_rank = dist.get_rank(tp_group)
+            tp_size = dist.get_world_size(tp_group)
+            _load_tp_rank_weights(
+                model.language_model,
+                language_model_ckpt,
+                tp_rank,
+                label=f"LLM tp_rank={tp_rank}/{tp_size}",
+            )
+
+        if vision_encoder_ckpt and "images" in model.modality_submodules:
+            images_sub = model.modality_submodules["images"]
+            encoder = getattr(images_sub.encoders, "clip", None) if hasattr(images_sub, "encoders") else None
+            if encoder is not None:
+                tp_group = grids["images"].get_pg(["tp"])
+                tp_rank = dist.get_rank(tp_group)
+                tp_size = dist.get_world_size(tp_group)
+                _load_tp_rank_weights(
+                    encoder,
+                    vision_encoder_ckpt,
+                    tp_rank,
+                    label=f"CLIP tp_rank={tp_rank}/{tp_size}",
+                )
+
+        return model_list
+
+    return _hook
+
+
+# ---------------------------------------------------------------------------
 # Parallelism config (8 GPUs: TP=4 for both modules)
 # ---------------------------------------------------------------------------
 
@@ -194,16 +303,16 @@ def _build_parallelism_config() -> MimoParallelismConfig:
     return MimoParallelismConfig(
         module_parallelisms={
             "llm": ModuleParallelismConfig(
-                tensor_model_parallel_size=4,
-                pipeline_model_parallel_size=1,
-                data_parallel_size=1,
-                rank_offset=0,
+                tensor_model_parallel_size=int(os.environ.get("MIMO_LLM_TP", 4)),
+                pipeline_model_parallel_size=int(os.environ.get("MIMO_LLM_PP", 1)),
+                data_parallel_size=int(os.environ.get("MIMO_LLM_DP", 1)),
+                rank_offset=int(os.environ.get("MIMO_LLM_OFFSET", 0)),
             ),
             "images": ModuleParallelismConfig(
-                tensor_model_parallel_size=4,
-                pipeline_model_parallel_size=1,
-                data_parallel_size=1,
-                rank_offset=4,
+                tensor_model_parallel_size=int(os.environ.get("MIMO_VISION_TP", 4)),
+                pipeline_model_parallel_size=int(os.environ.get("MIMO_VISION_PP", 1)),
+                data_parallel_size=int(os.environ.get("MIMO_VISION_DP", 1)),
+                rank_offset=int(os.environ.get("MIMO_VISION_OFFSET", 4)),
             ),
         },
     )
@@ -289,16 +398,18 @@ def _wrap_iter(loader_iter):
         yield batch
 
 
-def _build_data_iterators(cfg, mimo_infra):
+def _build_data_iterators(cfg, _mimo_infra, *, train_state=None):
     """Build data iterators compatible with setup_mimo's build_data_iterators_fn.
 
-    Signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
+    Signature: (cfg, mimo_infra, *, train_state=None) -> (train_iter, valid_iter)
     Uses build_mimo_data_loaders which auto-detects MIMO path via cfg.model.
+    Accepts optional train_state for resume support.
     """
     from megatron.bridge.data.mimo.loaders import build_mimo_data_loaders
     from megatron.bridge.training.state import TrainState
 
-    train_state = TrainState()
+    if train_state is None:
+        train_state = TrainState()
 
     # Compute sample counts
     train_samples = cfg.train.train_iters * cfg.train.global_batch_size
@@ -391,6 +502,10 @@ def _build_config(
         tokenizer=TokenizerConfig(),
         checkpoint=CheckpointConfig(),
     )
+    # data_parallel_size=1 because the sampler does not shard by DP.
+    # All data-loading ranks receive identical global micro-batches;
+    # per-module DP sub-sharding is handled by slice_batch_for_mimo in the
+    # forward step.  num_microbatches = global_batch_size / micro_batch_size.
     cfg.data_parallel_size = 1
     return cfg
 
@@ -430,6 +545,18 @@ def parse_args():
     parser.add_argument("--checkpoint-interval", type=int, default=None, help="Checkpoint save interval (iterations)")
     parser.add_argument("--checkpoint-dir", type=str, default=None, help="Checkpoint output directory")
     parser.add_argument("--load-checkpoint", type=str, default=None, help="Checkpoint directory to resume from")
+    parser.add_argument(
+        "--language-model-checkpoint",
+        type=str,
+        default=None,
+        help="Path to a Megatron distributed checkpoint to load into the language model only",
+    )
+    parser.add_argument(
+        "--vision-encoder-checkpoint",
+        type=str,
+        default=None,
+        help="Path to a Megatron distributed checkpoint to load into the vision encoder only",
+    )
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--wandb-project", type=str, default="Megatron-Bridge-MIMO", help="W&B project name")
@@ -440,6 +567,11 @@ def parse_args():
         "--lr-warmup-iters", type=int, default=20, help="Number of iterations to linearly warmup learning rate"
     )
     parser.add_argument("--dataset-root", type=str, required=True, help="Root directory of the LLaVA-Pretrain dataset")
+    parser.add_argument(
+        "--save-initial-checkpoint",
+        action="store_true",
+        help="Save a checkpoint at step 0 (before any training) to checkpoint-dir",
+    )
     return parser.parse_args()
 
 
@@ -496,7 +628,23 @@ def main():
         topology={"images": ["llm"], "llm": []},
         use_cpu_initialization=True,
         bf16=True,
+        freeze_language_model=True,
+        freeze_modality_encoders={"images": True},
     )
+    # Register per-module checkpoint loading hook (runs before DDP wrapping)
+    if args.language_model_checkpoint or args.vision_encoder_checkpoint:
+        mimo_provider.register_pre_wrap_hook(
+            _make_checkpoint_loader_hook(
+                language_model_ckpt=args.language_model_checkpoint,
+                vision_encoder_ckpt=args.vision_encoder_checkpoint,
+            )
+        )
+        _log(
+            f"Registered checkpoint hooks: "
+            f"LLM={args.language_model_checkpoint}, "
+            f"vision={args.vision_encoder_checkpoint}"
+        )
+
     # Patch: training_log accesses config.model.num_moe_experts
     if not hasattr(mimo_provider, "num_moe_experts"):
         mimo_provider.num_moe_experts = None
@@ -551,6 +699,13 @@ def main():
         cfg.checkpoint.save = args.checkpoint_dir
     if args.load_checkpoint is not None:
         cfg.checkpoint.load = args.load_checkpoint
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.fully_parallel_save = True
+    cfg.checkpoint.dist_ckpt_optim_fully_reshardable = True
+    # MiMo RNG save is not yet supported: each module produces ShardedObject
+    # with key "rng_state" using module-local PP/TP/DP ranks, causing
+    # duplicate shard keys across modules.  Disable until upstream fix.
+    cfg.checkpoint.save_rng = False
 
     # 7. Run training
     _log("launching pretrain_mimo")
@@ -560,6 +715,7 @@ def main():
         forward_step_func=mimo_forward_step,
         build_data_iterators_fn=_build_data_iterators,
         opt_config=mcore_opt_config,
+        save_initial_checkpoint=args.save_initial_checkpoint,
     )
 
     _log("PASSED")

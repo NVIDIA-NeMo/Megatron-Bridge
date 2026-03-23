@@ -27,7 +27,7 @@ from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.training.checkpointing import maybe_finalize_async_save
+from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.train import checkpoint_and_decide_exit, save_checkpoint_and_time
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.mimo_parallel_utils import (
@@ -197,6 +197,7 @@ def train_mimo(
     mimo_infra: "MimoModelInfra",
     multimodule_communicator: "MultiModulePipelineCommunicator",
     checkpointing_context: Optional[Dict] = None,
+    save_initial_checkpoint: bool = False,
 ) -> None:
     """Main MIMO training loop.
 
@@ -224,6 +225,7 @@ def train_mimo(
         global_state: GlobalState containing timers, config, train_state.
         mimo_infra: MimoModelInfra with grids, topology, pg_collections.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
+        save_initial_checkpoint: If True, save a checkpoint at step 0 before training.
         checkpointing_context: Dictionary holding checkpoint-related state
             (save strategy cache, LocalCheckpointManager). Created by
             init_checkpointing_context() in pretrain_mimo.
@@ -309,6 +311,15 @@ def train_mimo(
 
     logger.info(f"Rank {dist.get_rank()}: Starting MIMO training loop")
 
+    # Track whether we need to save an initial checkpoint after the first
+    # training step.  We defer the save until after step 1 so that the
+    # optimizer has been stepped once and Adam state buffers (exp_avg,
+    # exp_avg_sq) exist, allowing full optimizer and scheduler state to be
+    # persisted.
+    _need_initial_checkpoint = (
+        save_initial_checkpoint and cfg.checkpoint.save is not None and train_state.step == 0
+    )
+
     # Main training loop
     timers("interval-time", log_level=0).start(barrier=True)
 
@@ -359,6 +370,22 @@ def train_mimo(
         # Update training state
         train_state.step += 1
         train_state.consumed_train_samples += micro_batch_size * num_microbatches * cfg.data_parallel_size
+
+        # Save initial checkpoint after the first step so that Adam state
+        # buffers exist and full optimizer + scheduler state can be persisted.
+        if _need_initial_checkpoint and train_state.step == 1:
+            _need_initial_checkpoint = False
+            logger.info(f"Rank {dist.get_rank()}: Saving initial checkpoint (after step 1)")
+            timers("save-checkpoint", log_level=0).start(barrier=True)
+            save_checkpoint(
+                state=global_state,
+                model=[model],
+                optimizer=optimizer,
+                opt_param_scheduler=first_scheduler,
+                num_floating_point_operations_so_far=0,
+                pg_collection=local_pg_collection,
+            )
+            timers("save-checkpoint").stop()
 
         # Get learning rate from first scheduler
         learning_rate = None

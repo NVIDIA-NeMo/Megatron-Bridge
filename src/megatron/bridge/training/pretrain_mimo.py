@@ -222,6 +222,7 @@ def pretrain_mimo(
     opt_config: "OptimizerConfig",
     schedulers: Optional[Dict[str, "OptimizerParamScheduler"]] = None,
     global_state: Optional[GlobalState] = None,
+    save_initial_checkpoint: bool = False,
 ) -> None:
     """Entry point for MIMO pretraining.
 
@@ -240,6 +241,7 @@ def pretrain_mimo(
         opt_config: OptimizerConfig for creating MimoOptimizer.
         schedulers: Per-module learning rate schedulers {module_name: scheduler}.
         global_state: Optional GlobalState. If not provided, creates a new one.
+        save_initial_checkpoint: If True, save a checkpoint at step 0 before training.
     """
     if schedulers is None:
         schedulers = {}
@@ -420,6 +422,7 @@ def pretrain_mimo(
         mimo_infra=setup_output.mimo_infra,
         multimodule_communicator=setup_output.multimodule_communicator,
         checkpointing_context=setup_output.checkpointing_context,
+        save_initial_checkpoint=save_initial_checkpoint,
     )
 
     logger.info("MIMO pretraining completed")
