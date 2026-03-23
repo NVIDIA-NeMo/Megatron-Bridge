@@ -6,8 +6,8 @@ Sarvam models use a Mixture of Experts (MoE) architecture with QKV layernorm and
 
 | Model | HF ID | Architecture | Params |
 |---|---|---|---|
-| Sarvam 30B | `sarvamai/sarvam-30b` | MoE (128 experts, top-6) | 30B active 3B |
-| Sarvam 105B | `sarvamai/sarvam-105b` | MoE (128 experts, top-8) | 105B active 10.3B |
+| Sarvam 30B | `sarvamai/sarvam-30b` | MoE (128 experts, top-6) | 30B total, 3B active |
+| Sarvam 105B | `sarvamai/sarvam-105b` | MoE (128 experts, top-8) | 105B total, 10.3B active |
 
 ## Workspace Configuration
 
