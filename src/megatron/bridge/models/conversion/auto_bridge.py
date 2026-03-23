@@ -17,7 +17,7 @@ from __future__ import annotations
 import dataclasses
 from functools import cached_property, partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optional, Type, TypeVar, Union
 
 import torch
 import torch.distributed as dist
@@ -119,6 +119,8 @@ class AutoBridge(Generic[MegatronModelT]):
         if not isinstance(hf_pretrained, (PreTrainedCausalLM, PretrainedConfig)):
             raise ValueError("hf_pretrained must be a PreTrainedCausalLM or PretrainedConfig instance")
         self.hf_pretrained: PreTrainedCausalLM | PretrainedConfig = hf_pretrained
+        # Data type for exporting weights
+        self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
 
     @classmethod
     def list_supported_models(cls) -> list[str]:
@@ -337,10 +339,10 @@ class AutoBridge(Generic[MegatronModelT]):
             # Preserve trust_remote_code setting from the original bridge instance
             trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
             pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
-        self._model_bridge.load_weights_hf_to_megatron(
-            pre_trained, model, allowed_mismatched_params=allowed_mismatched_params
-        )
-
+        bridge = self._model_bridge
+        bridge.load_weights_hf_to_megatron(pre_trained, model, allowed_mismatched_params=allowed_mismatched_params)
+        # Get unquantized_state_dict from the bridge instance that was used for optimizer reload
+        self.unquantized_state_dict = getattr(bridge, "unquantized_state_dict", None)
         return model
 
     def export_hf_weights(
@@ -389,6 +391,13 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     cpu=True
             ... ))
         """
+        # Build conversion tasks based on export_weight_dtype configuration
+        if conversion_tasks is None and self.export_weight_dtype == "fp8":
+            if not isinstance(model, list):
+                model = [model]
+            # Use FP8 export tasks for blockwise FP8 weights
+            conversion_tasks = self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
+
         dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         return model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance,
@@ -1304,7 +1313,9 @@ class AutoBridge(Generic[MegatronModelT]):
             else:
                 hf_config = self.hf_pretrained
 
-        return model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
+        bridge = model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
+        bridge.export_weight_dtype = self.export_weight_dtype
+        return bridge
 
     @property
     def _provider_bridge_input(self) -> PreTrainedCausalLM | _ConfigOnlyPretrainedShim:
