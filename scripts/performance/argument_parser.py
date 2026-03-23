@@ -686,7 +686,7 @@ def parse_cli_args():
     performance_args.add_argument(
         "--moe_flex_dispatcher_backend",
         type=lambda x: None if x == "None" else x,
-        help="MoE flex dispatcher backend. Options- deepep, hybridep. Defaults to None",
+        help="MoE flex dispatcher backend. Options- deepep, hybridep, None. If None, will use alltoall dispatcher.",
         choices=["deepep", "hybridep", None],
         required=False,
         default=-1,
