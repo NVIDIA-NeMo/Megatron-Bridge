@@ -495,12 +495,12 @@ def save_megatron_model(
     # Get model config from the first model instance
     model_config = get_model_config(model[0])
 
-    # Validate that the model config is a model provider
-    if not isinstance(model_config, ModelProviderMixin):
+    # Validate that the model config is a supported type
+    if not isinstance(model_config, (ModelProviderMixin, ModelConfig)):
         raise TypeError(
-            f"Expected model config to be an instance of ModelProviderMixin, "
+            f"Expected model config to be an instance of ModelProviderMixin or ModelConfig, "
             f"but got {type(model_config).__name__}. "
-            f"Model configs must inherit from ModelProviderMixin to ensure proper "
+            f"Model configs must inherit from ModelProviderMixin or ModelConfig to ensure proper "
             f"model instantiation and configuration handling."
         )
 
