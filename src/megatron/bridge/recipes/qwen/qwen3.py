@@ -653,7 +653,7 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
     # Use all-to-all (Ulysses) CP instead of p2p ring to avoid NaN gradients in backward
-    # cfg.model.cp_comm_type = "a2a"
+    cfg.model.cp_comm_type = "a2a"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
