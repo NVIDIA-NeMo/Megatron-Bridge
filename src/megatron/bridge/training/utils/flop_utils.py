@@ -398,6 +398,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(num_layers)
                 ]
             elif isinstance(linear_attention_freq, list):
+                linear_attention_pattern = linear_attention_freq
                 if len(linear_attention_pattern) != num_layers:
                     raise ValueError(
                         f"Invalid length of linear_attention_pattern: {len(linear_attention_pattern)}, "
