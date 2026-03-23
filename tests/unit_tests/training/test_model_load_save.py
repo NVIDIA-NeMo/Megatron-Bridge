@@ -607,6 +607,7 @@ class TestLoadMegatronModel:
         cfg.sequence_parallel = True
         cfg.virtual_pipeline_model_parallel_size = 2
         cfg.hierarchical_context_parallel_sizes = [2, 2]
+        cfg.moe_token_dispatcher_type = "flex"
 
         mock_load_model_config.return_value = (cfg, None)
         sentinel = object()
@@ -626,6 +627,7 @@ class TestLoadMegatronModel:
         assert cfg.sequence_parallel is False
         assert cfg.virtual_pipeline_model_parallel_size is None
         assert cfg.hierarchical_context_parallel_sizes is None
+        assert cfg.moe_token_dispatcher_type == "alltoall"
 
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
@@ -658,6 +660,39 @@ class TestLoadMegatronModel:
         assert cfg.pipeline_model_parallel_size == 3
         assert cfg.sequence_parallel is True
         assert cfg.virtual_pipeline_model_parallel_size == 4
+
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_load_megatron_model_keeps_flex_when_overrides_restore_parallelism(
+        self, mock_load_model_config, mock_build_and_load
+    ):
+        """Verify flex dispatcher is kept when mp_overrides set TP*EP > 1."""
+        cfg = Mock()
+        cfg.tensor_model_parallel_size = 2
+        cfg.pipeline_model_parallel_size = 1
+        cfg.context_parallel_size = 1
+        cfg.expert_model_parallel_size = 8
+        cfg.expert_tensor_parallel_size = 1
+        cfg.sequence_parallel = False
+        cfg.virtual_pipeline_model_parallel_size = None
+        cfg.hierarchical_context_parallel_sizes = None
+        cfg.moe_token_dispatcher_type = "flex"
+
+        mock_load_model_config.return_value = (cfg, None)
+        sentinel = object()
+        mock_build_and_load.return_value = sentinel
+
+        overrides = {
+            "tensor_model_parallel_size": 2,
+            "expert_model_parallel_size": 8,
+        }
+
+        result = load_megatron_model("/ckpt", mp_overrides=overrides)
+
+        assert result is sentinel
+        assert cfg.tensor_model_parallel_size == 2
+        assert cfg.expert_model_parallel_size == 8
+        assert cfg.moe_token_dispatcher_type == "flex"
 
 
 class TestSaveMegatronModel:

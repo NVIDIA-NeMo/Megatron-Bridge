@@ -382,6 +382,13 @@ class Qwen3MoEModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"
+    yarn_rotary_scaling_factor: float | None = None
+    yarn_original_max_position_embeddings: int | None = None
+    yarn_beta_fast: float | None = None
+    yarn_beta_slow: float | None = None
+    yarn_mscale: float | None = None
+    yarn_mscale_all_dim: float | None = None
+    yarn_correction_range_round_to_int: bool = False
     autocast_dtype: torch.dtype = torch.bfloat16
     params_dtype: torch.dtype = torch.bfloat16
     bf16: bool = True
