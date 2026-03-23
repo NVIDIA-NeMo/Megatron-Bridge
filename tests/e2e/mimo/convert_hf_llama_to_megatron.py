@@ -191,10 +191,20 @@ def convert_hf_llama_to_megatron(
                 up_key = name.replace("gate_proj", "up_proj")
                 gate = new_tensor  # [ffn_hidden, hidden]
                 up = state_dict[up_key].float()  # [ffn_hidden, hidden]
-                fused = torch.cat([gate, up], dim=0)  # [2*ffn_hidden, hidden]
                 new_name = f"{base}.mlp.linear_fc1.weight"
-                new_tensor = fused
-                chunk_dim = 0
+                # SwiGLU TP: chunk gate and up independently so each rank
+                # gets [gate_chunk; up_chunk] — Megatron splits the activation
+                # output in half (first half = gate, second half = up).
+                gate_chunks = torch.chunk(gate, tensor_parallel_size, dim=0)
+                up_chunks = torch.chunk(up, tensor_parallel_size, dim=0)
+                for tp in range(tensor_parallel_size):
+                    new_state_dicts[tp]["model"][new_name] = torch.cat(
+                        [gate_chunks[tp], up_chunks[tp]], dim=0
+                    )
+                    if use_te:
+                        extra_key = new_name[: new_name.rfind(".") + 1] + "_extra_state"
+                        new_state_dicts[tp]["model"][extra_key] = None
+                continue  # skip generic chunking below
             elif suffix == "mlp.up_proj.weight":
                 continue  # fused above
             elif suffix == "mlp.down_proj.weight":
@@ -306,21 +316,38 @@ def load_megatron_llm_weights(
         state_dict = {}
         for key in all_shards[0]:
             concat_dim = _get_llm_tp_concat_dim(key)
-            if concat_dim is not None:
-                state_dict[key] = torch.cat([s[key] for s in all_shards], dim=concat_dim)
-            else:
+            if concat_dim is None:
                 state_dict[key] = all_shards[0][key]
+            elif "linear_fc1.weight" in key:
+                # SwiGLU: each shard is [gate_chunk; up_chunk]; merge halves separately
+                gates, ups = [], []
+                for s in all_shards:
+                    g, u = s[key].chunk(2, dim=0)
+                    gates.append(g)
+                    ups.append(u)
+                state_dict[key] = torch.cat(
+                    [torch.cat(gates, dim=0), torch.cat(ups, dim=0)], dim=0
+                )
+            else:
+                state_dict[key] = torch.cat([s[key] for s in all_shards], dim=concat_dim)
 
         # If model TP > 1, re-split to get the right shard for this rank
         if tp_size > 1:
             new_sd = {}
             for key, tensor in state_dict.items():
                 concat_dim = _get_llm_tp_concat_dim(key)
-                if concat_dim is not None:
+                if concat_dim is None:
+                    new_sd[key] = tensor
+                elif "linear_fc1.weight" in key:
+                    # SwiGLU: split gate and up independently, fuse per-rank
+                    gate, up = tensor.chunk(2, dim=0)
+                    new_sd[key] = torch.cat([
+                        gate.chunk(tp_size, dim=0)[tp_rank],
+                        up.chunk(tp_size, dim=0)[tp_rank],
+                    ], dim=0)
+                else:
                     chunks = torch.chunk(tensor, tp_size, dim=concat_dim)
                     new_sd[key] = chunks[tp_rank].clone()
-                else:
-                    new_sd[key] = tensor
             state_dict = new_sd
 
     incompatible = gpt_model.load_state_dict(state_dict, strict=False)
