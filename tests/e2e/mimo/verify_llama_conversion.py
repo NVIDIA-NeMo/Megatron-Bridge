@@ -5,17 +5,28 @@
 Loads the same pretrained weights into both HF AutoModelForCausalLM and
 Megatron GPTModel, runs the same token input, and compares logits.
 
+Supports verification across different TP (tensor-parallel) sizes.
+Each TP rank loads its own weight shard; logits are compared against HF on rank 0.
+
 Usage:
-    # First convert weights (TP=1 for verification):
+    # TP=1:
     python convert_hf_llama_to_megatron.py \
         --hf-model lmsys/vicuna-7b-v1.5 \
         --output /tmp/vicuna_ckpt \
         --tensor-parallel-size 1 \
         --use-te \
         --megatron-vocab-size 32256
-
-    # Then verify:
     torchrun --nproc-per-node=1 verify_llama_conversion.py --checkpoint-dir /tmp/vicuna_ckpt
+
+    # TP=4:
+    python convert_hf_llama_to_megatron.py \
+        --hf-model lmsys/vicuna-7b-v1.5 \
+        --output /tmp/vicuna_ckpt_tp4 \
+        --tensor-parallel-size 4 \
+        --use-te \
+        --megatron-vocab-size 32256
+    torchrun --nproc-per-node=4 verify_llama_conversion.py \
+        --checkpoint-dir /tmp/vicuna_ckpt_tp4 --tensor-parallel-size 4
 """
 
 import argparse
@@ -43,19 +54,35 @@ MAX_SEQ_LENGTH = 4096
 
 
 # ---------------------------------------------------------------------------
-# Megatron single-GPU init
+# Megatron init (supports TP > 1)
 # ---------------------------------------------------------------------------
 
 
-def _init_megatron_single_gpu():
-    """Lightweight Megatron init for single-GPU inference (TP=1, PP=1)."""
+def _init_megatron(tp_size: int = 1):
+    """Initialize Megatron parallel state for the given TP size.
+
+    When tp_size > 1, expects to be launched via torchrun with
+    --nproc-per-node equal to tp_size.
+    """
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "29500")
     os.environ.setdefault("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    torch.cuda.set_device(local_rank)
+
     if not dist.is_initialized():
-        dist.init_process_group(backend="nccl", rank=0, world_size=1)
+        dist.init_process_group(backend="nccl")
+
+    world_size = dist.get_world_size()
+    if world_size != tp_size:
+        raise RuntimeError(
+            f"World size ({world_size}) must equal --tensor-parallel-size ({tp_size}). "
+            f"Use: torchrun --nproc-per-node={tp_size}"
+        )
+
     ps.initialize_model_parallel(
-        tensor_model_parallel_size=1,
+        tensor_model_parallel_size=tp_size,
         pipeline_model_parallel_size=1,
     )
 
@@ -168,19 +195,28 @@ def main():
     parser.add_argument("--dtype", choices=["fp32", "bf16"], default="fp32")
     parser.add_argument("--seq-len", type=int, default=32, help="Token sequence length")
     parser.add_argument("--megatron-vocab-size", type=int, default=MEGATRON_VOCAB_SIZE)
+    parser.add_argument(
+        "--tensor-parallel-size", type=int, default=1,
+        help="TP size (must match --nproc-per-node)",
+    )
     args = parser.parse_args()
 
+    tp_size = args.tensor_parallel_size
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float32
-    _init_megatron_single_gpu()
+    _init_megatron(tp_size)
 
-    # --- Deterministic input (create before loading any model) ---
+    rank = dist.get_rank()
+    tp_rank = ps.get_tensor_model_parallel_rank()
+
+    # --- Deterministic input (same on all ranks) ---
     torch.manual_seed(42)
     seq_len = args.seq_len
     input_ids = torch.randint(0, HF_VOCAB_SIZE, (1, seq_len), device="cuda")
     position_ids = torch.arange(seq_len, device="cuda").unsqueeze(0)
 
-    # --- Run Megatron model first, save logits, then free GPU memory ---
-    print("Building Megatron GPTModel")
+    # --- Megatron model (all ranks participate for TP communication) ---
+    if rank == 0:
+        print(f"Building Megatron GPTModel (TP={tp_size})")
     language_config = _make_language_config(dtype)
     meg_model = GPTModel(
         config=language_config,
@@ -190,35 +226,43 @@ def main():
         position_embedding_type="rope",
         parallel_output=False,
     )
-    load_megatron_llm_weights(meg_model, args.checkpoint_dir, tp_rank=0, tp_size=1)
+    load_megatron_llm_weights(meg_model, args.checkpoint_dir, tp_rank=tp_rank, tp_size=tp_size)
     meg_model.cuda().to(dtype).eval()
 
-    print(f"Running Megatron forward pass (seq_len={seq_len})...")
+    if rank == 0:
+        print(f"Running Megatron forward pass (seq_len={seq_len})...")
     with torch.no_grad():
         meg_out = meg_model(input_ids, position_ids, attention_mask=None)  # [1, seq, meg_vocab]
-    meg_out = meg_out.cpu()  # move to CPU before freeing GPU
+    meg_out_cpu = meg_out.cpu()
 
     del meg_model
     torch.cuda.empty_cache()
-    print("Megatron model freed from GPU")
 
-    # --- Now load and run HuggingFace model ---
-    print(f"Loading HF model: {args.hf_model}")
-    hf_model = AutoModelForCausalLM.from_pretrained(args.hf_model, torch_dtype=dtype)
-    hf_model.cuda().eval()
-    hf_vocab = hf_model.config.vocab_size
+    # --- HF comparison on rank 0 only ---
+    if rank == 0:
+        print("Megatron model freed from GPU")
+        print(f"Loading HF model: {args.hf_model}")
+        hf_model = AutoModelForCausalLM.from_pretrained(args.hf_model, torch_dtype=dtype)
+        hf_model.cuda().eval()
+        hf_vocab = hf_model.config.vocab_size
 
-    print(f"Running HF forward pass (seq_len={seq_len})...")
-    with torch.no_grad():
-        hf_out = hf_model(input_ids).logits  # [1, seq, hf_vocab]
-    hf_out = hf_out.cpu()
+        print(f"Running HF forward pass (seq_len={seq_len})...")
+        with torch.no_grad():
+            hf_out = hf_model(input_ids).logits  # [1, seq, hf_vocab]
+        hf_out_cpu = hf_out.cpu()
 
-    del hf_model
-    torch.cuda.empty_cache()
-    print("HF model freed from GPU")
+        del hf_model
+        torch.cuda.empty_cache()
+        print("HF model freed from GPU")
 
-    # --- Compare (both tensors on CPU) ---
-    passed = compare_outputs(hf_out, meg_out, hf_vocab, label="Vicuna-7B")
+        passed = compare_outputs(hf_out_cpu, meg_out_cpu, hf_vocab, label=f"Vicuna-7B (TP={tp_size})")
+    else:
+        passed = True
+
+    # --- Broadcast pass/fail to all ranks ---
+    result = torch.tensor([1 if passed else 0], device="cuda")
+    dist.broadcast(result, src=0)
+    passed = result.item() == 1
 
     # --- Cleanup ---
     ps.destroy_model_parallel()

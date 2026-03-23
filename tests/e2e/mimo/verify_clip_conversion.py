@@ -5,12 +5,17 @@
 Loads the same pretrained weights into both HF CLIPVisionModel and Megatron
 CLIPViTModel, runs the same input, and compares hidden-state outputs.
 
-Usage:
-    # First convert weights (TP=1 for verification):
-    python convert_hf_clip_to_megatron.py --output /tmp/clip_ckpt --tensor-parallel-size 1 --use-te
+Supports verification across different TP (tensor-parallel) sizes.
+Each TP rank loads its own weight shard; outputs are compared against HF on rank 0.
 
-    # Then verify:
+Usage:
+    # TP=1:
+    python convert_hf_clip_to_megatron.py --output /tmp/clip_ckpt --tensor-parallel-size 1 --use-te
     torchrun --nproc-per-node=1 verify_clip_conversion.py --checkpoint-dir /tmp/clip_ckpt
+
+    # TP=4:
+    python convert_hf_clip_to_megatron.py --output /tmp/clip_ckpt_tp4 --tensor-parallel-size 4 --use-te
+    torchrun --nproc-per-node=4 verify_clip_conversion.py --checkpoint-dir /tmp/clip_ckpt_tp4 --tensor-parallel-size 4
 """
 
 import argparse
@@ -28,19 +33,35 @@ from transformers import CLIPVisionModel
 
 
 # ---------------------------------------------------------------------------
-# Megatron single-GPU init
+# Megatron init (supports TP > 1)
 # ---------------------------------------------------------------------------
 
 
-def _init_megatron_single_gpu():
-    """Lightweight Megatron init for single-GPU inference (TP=1, PP=1)."""
+def _init_megatron(tp_size: int = 1):
+    """Initialize Megatron parallel state for the given TP size.
+
+    When tp_size > 1, expects to be launched via torchrun with
+    --nproc-per-node equal to tp_size.
+    """
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "29500")
     os.environ.setdefault("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    torch.cuda.set_device(local_rank)
+
     if not dist.is_initialized():
-        dist.init_process_group(backend="nccl", rank=0, world_size=1)
+        dist.init_process_group(backend="nccl")
+
+    world_size = dist.get_world_size()
+    if world_size != tp_size:
+        raise RuntimeError(
+            f"World size ({world_size}) must equal --tensor-parallel-size ({tp_size}). "
+            f"Use: torchrun --nproc-per-node={tp_size}"
+        )
+
     ps.initialize_model_parallel(
-        tensor_model_parallel_size=1,
+        tensor_model_parallel_size=tp_size,
         pipeline_model_parallel_size=1,
     )
 
@@ -132,18 +153,26 @@ def main():
     parser.add_argument("--checkpoint-dir", required=True, help="Megatron CLIP checkpoint dir")
     parser.add_argument("--hf-model", default=HF_MODEL, help="HF model name or path")
     parser.add_argument("--dtype", choices=["fp32", "bf16"], default="fp32")
+    parser.add_argument(
+        "--tensor-parallel-size", type=int, default=1,
+        help="TP size (must match --nproc-per-node)",
+    )
     args = parser.parse_args()
 
+    tp_size = args.tensor_parallel_size
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float32
-    _init_megatron_single_gpu()
+    _init_megatron(tp_size)
 
-    # --- HuggingFace model ---
-    print(f"Loading HF model: {args.hf_model}")
-    hf_model = CLIPVisionModel.from_pretrained(args.hf_model, torch_dtype=dtype)
-    hf_model.cuda().eval()
+    rank = dist.get_rank()
+    tp_rank = ps.get_tensor_model_parallel_rank()
 
-    # --- Megatron model ---
-    print("Building Megatron CLIPViTModel")
+    # --- Deterministic input (same on all ranks) ---
+    torch.manual_seed(42)
+    pixel_values = torch.randn(1, 3, IMG_SIZE, IMG_SIZE, dtype=dtype, device="cuda")
+
+    # --- Megatron model (all ranks participate for TP communication) ---
+    if rank == 0:
+        print(f"Building Megatron CLIPViTModel (TP={tp_size})")
     vision_config = _make_vision_config(dtype)
     meg_model = CLIPViTModel(
         transformer_config=vision_config,
@@ -152,22 +181,38 @@ def main():
         img_h=IMG_SIZE,
         img_w=IMG_SIZE,
     )
-    load_megatron_clip_weights(meg_model, args.checkpoint_dir, tp_rank=0, tp_size=1)
+    load_megatron_clip_weights(meg_model, args.checkpoint_dir, tp_rank=tp_rank, tp_size=tp_size)
     meg_model.cuda().to(dtype).eval()
 
-    # --- Deterministic input ---
-    torch.manual_seed(42)
-    pixel_values = torch.randn(1, 3, IMG_SIZE, IMG_SIZE, dtype=dtype, device="cuda")
-
-    # --- Forward passes ---
-    print("Running forward passes...")
+    if rank == 0:
+        print("Running Megatron forward pass...")
     with torch.no_grad():
-        hf_out = hf_model(pixel_values).last_hidden_state  # [1, 577, 1024]
         meg_out = meg_model(pixel_values)  # [1, 577, 1024]
 
-    passed = compare_outputs(hf_out, meg_out, label="CLIP ViT-L/14-336")
+    # --- HF comparison on rank 0 only ---
+    if rank == 0:
+        print(f"Loading HF model: {args.hf_model}")
+        hf_model = CLIPVisionModel.from_pretrained(args.hf_model, torch_dtype=dtype)
+        hf_model.cuda().eval()
+
+        with torch.no_grad():
+            hf_out = hf_model(pixel_values).last_hidden_state  # [1, 577, 1024]
+
+        del hf_model
+        torch.cuda.empty_cache()
+
+        passed = compare_outputs(hf_out, meg_out, label=f"CLIP ViT-L/14-336 (TP={tp_size})")
+    else:
+        passed = True
+
+    # --- Broadcast pass/fail to all ranks ---
+    result = torch.tensor([1 if passed else 0], device="cuda")
+    dist.broadcast(result, src=0)
+    passed = result.item() == 1
 
     # --- Cleanup ---
+    del meg_model
+    torch.cuda.empty_cache()
     ps.destroy_model_parallel()
     dist.destroy_process_group()
 
