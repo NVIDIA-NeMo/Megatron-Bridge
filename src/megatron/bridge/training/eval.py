@@ -100,14 +100,15 @@ def evaluate(
     total_loss_dict = {}
 
     # make validation batch size independent from training batch size
-    eval_batch_size = state.cfg.train.global_batch_size
-    eval_num_microbatches = eval_batch_size // (state.cfg.train.micro_batch_size * state.cfg.data_parallel_size)
+    eval_batch_size = state.cfg.eval_global_batch_size
+    eval_micro_batch_size = state.cfg.eval_micro_batch_size
+    eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * state.cfg.data_parallel_size)
 
     if not state.cfg.dist.use_decentralized_pg:
         adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
             model,
             seq_length=state.cfg.model.seq_length,
-            micro_batch_size=state.cfg.train.micro_batch_size,
+            micro_batch_size=eval_micro_batch_size,
             decoder_seq_length=state.cfg.model.seq_length,
         )
     else:
@@ -182,7 +183,7 @@ def evaluate(
                 model=model,
                 num_microbatches=eval_num_microbatches,
                 seq_length=seq_length,
-                micro_batch_size=state.cfg.train.micro_batch_size,
+                micro_batch_size=eval_micro_batch_size,
                 forward_only=True,
                 adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
                 p2p_communicator=p2p_communicator,
@@ -273,7 +274,7 @@ def evaluate(
                 model=model,
                 num_microbatches=get_num_microbatches(),
                 seq_length=non_loss_seq_length,
-                micro_batch_size=state.cfg.train.micro_batch_size,
+                micro_batch_size=eval_micro_batch_size,
                 forward_only=True,
                 collect_non_loss_data=True,
                 p2p_communicator=p2p_communicator,

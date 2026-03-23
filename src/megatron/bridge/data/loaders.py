@@ -131,10 +131,11 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         eval_iters = 0
     test_iters = cfg.validation.eval_iters
 
+    eval_gbs = cfg.eval_global_batch_size
     return (
         train_samples,
-        eval_iters * cfg.train.global_batch_size,
-        test_iters * cfg.train.global_batch_size,
+        eval_iters * eval_gbs,
+        test_iters * eval_gbs,
     )
 
 
@@ -250,12 +251,14 @@ def build_train_valid_test_data_loaders(
         data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
     )
+    eval_gbs = cfg.eval_global_batch_size
+    eval_mbs = cfg.eval_micro_batch_size
     if cfg.validation.skip_train and cfg.validation.eval_iters > 0:
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
             0,
             cfg.dataset.dataloader_type,
-            cfg.train.micro_batch_size,
+            eval_mbs,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
@@ -264,7 +267,7 @@ def build_train_valid_test_data_loaders(
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=dp_rank,
             data_parallel_size=dp_size,
-            global_batch_size=cfg.train.global_batch_size,
+            global_batch_size=eval_gbs,
         )
     elif cfg.validation.eval_iters > 0:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
@@ -272,7 +275,7 @@ def build_train_valid_test_data_loaders(
             valid_ds,
             train_state.consumed_valid_samples,
             val_dataloader_type,
-            cfg.train.micro_batch_size,
+            eval_mbs,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
@@ -281,7 +284,7 @@ def build_train_valid_test_data_loaders(
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=dp_rank,
             data_parallel_size=dp_size,
-            global_batch_size=cfg.train.global_batch_size,
+            global_batch_size=eval_gbs,
         )
 
     if cfg.validation.eval_iters > 0:
@@ -289,7 +292,7 @@ def build_train_valid_test_data_loaders(
             test_ds,
             0,
             cfg.dataset.dataloader_type,
-            cfg.train.micro_batch_size,
+            eval_mbs,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
@@ -298,7 +301,7 @@ def build_train_valid_test_data_loaders(
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=dp_rank,
             data_parallel_size=dp_size,
-            global_batch_size=cfg.train.global_batch_size,
+            global_batch_size=eval_gbs,
         )
 
     # Flags to know if we need to do training/validation/testing.
