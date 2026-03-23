@@ -10,9 +10,13 @@ Qwen2.5-Omni supports simultaneous processing of images, video, audio, and text 
 
 ## Prerequisites
 
+Audio and video processing requires `qwen-omni-utils` with `decord`. Install it into the project environment:
+
 ```bash
-pip install qwen-omni-utils[decord]
+uv pip install qwen-omni-utils[decord]
 ```
+
+> **Note:** Audio extraction from video (`--use_audio_in_video`) additionally requires `ffmpeg` to be installed on the system (`apt-get install ffmpeg` or equivalent). Without it, audio input is skipped and the model falls back to video-only mode.
 
 ## Workspace Configuration
 
