@@ -66,7 +66,7 @@ class TestMcoreFluxPretrain:
             "model.num_joint_layers=1",
             "model.num_single_layers=2",
             "model.hidden_size=1024",
-            "model.num_attention_heads=8",
+            "model.num_attention_heads=24",
             "model.ffn_hidden_size=4096",
             "model.in_channels=64",
             "model.context_dim=4096",
