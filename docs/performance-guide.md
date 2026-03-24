@@ -299,7 +299,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
    > 1. Megatron-Bridge supports graph capture, significantly reducing host overhead. CUDA Graph is applicable only to LLMs with a static tensor shape across training steps. For example, it supports fixed-size packed sequences but does not handle sequences with varying lengths at each step. Also, MoE models with token-dropless propagation have limited CUDA graph support, restricted to the dense modules only.
    > 2. CUDA graph requires additional memory for static buffer management, typically adding a few gigabytes for static buffers, while models with PP size > 1 may consume over 10GB. We are actively working to reduce this memory overhead.
-   > 3. `TransformerConfig.enable_cuda_graph=true`
+   > 3. See [CUDA Graphs](training/cuda-graphs.md) for configuration details (`cuda_graph_impl`, `cuda_graph_scope`).
 
 5. Bind CPU memory for GPU processes
 
@@ -677,7 +677,7 @@ python -u /home/dpsk_a2a/deepep/tests/test_internode.py
 - `TransformerConfig.cpu_offloading_num_layers`
 - `TransformerConfig.cpu_offloading_weights`
 - `GPTProvider.cross_entropy_loss_fusion`
-- `TransformerConfig.enable_cuda_graph`
+- `TransformerConfig.cuda_graph_impl` / `cuda_graph_scope` (see [CUDA Graphs](training/cuda-graphs.md))
 - `MixedPrecisionConfig.fp8_param_gather`
 - `GPTProvider.gradient_accumulation_fusion`
 - `TransformerConfig.masked_softmax_fusion`
