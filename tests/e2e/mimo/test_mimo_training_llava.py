@@ -187,6 +187,67 @@ def _build_model_specs():
 # ---------------------------------------------------------------------------
 
 
+def _get_pp_layer_offset(module: torch.nn.Module) -> int:
+    """Return the global layer offset for a module's PP stage.
+
+    Inspects the first transformer layer's ``layer_number`` attribute (1-based
+    global index set by Megatron) and compares it with the local ModuleList
+    index to derive the offset.  Returns 0 when PP=1 or for non-transformer
+    modules (e.g. the vision encoder).
+    """
+    decoder = getattr(module, "decoder", None)
+    if decoder is None:
+        return 0
+    layers = getattr(decoder, "layers", None)
+    if not layers or len(layers) == 0:
+        return 0
+    first_layer = layers[0]
+    global_layer_number = getattr(first_layer, "layer_number", None)
+    if global_layer_number is None:
+        return 0
+    # layer_number is 1-based; local index is 0-based
+    return global_layer_number - 1
+
+
+def _remap_checkpoint_for_pp(
+    state_dict: dict[str, torch.Tensor],
+    module: torch.nn.Module,
+    layer_offset: int,
+) -> dict[str, torch.Tensor]:
+    """Remap globally-numbered checkpoint layer keys to local PP stage indices.
+
+    The HF→Megatron converters produce globally-numbered keys
+    (``decoder.layers.0`` … ``decoder.layers.31``), but each PP stage stores
+    layers in a ``nn.ModuleList`` with 0-based local indices.  For PP stage 1
+    with offset=16, checkpoint key ``decoder.layers.16`` must become
+    ``decoder.layers.0`` so it matches the module's state dict.
+
+    Non-layer keys (embedding, output_layer, final_layernorm) are passed
+    through unchanged, then filtered to keys the module actually owns.
+    """
+    import re
+
+    module_keys = set(module.state_dict().keys())
+    remapped = {}
+
+    for key, value in state_dict.items():
+        m = re.match(r"^(decoder\.layers\.)(\d+)(\..*)", key)
+        if m:
+            global_idx = int(m.group(2))
+            local_idx = global_idx - layer_offset
+            if local_idx < 0:
+                continue  # belongs to an earlier PP stage
+            new_key = f"{m.group(1)}{local_idx}{m.group(3)}"
+            if new_key in module_keys:
+                remapped[new_key] = value
+        else:
+            # Non-layer key (embedding, output_layer, final_layernorm, etc.)
+            if key in module_keys:
+                remapped[key] = value
+
+    return remapped
+
+
 def _load_tp_rank_weights(
     module: torch.nn.Module,
     ckpt_dir: str,
@@ -200,6 +261,11 @@ def _load_tp_rank_weights(
 
         {ckpt_dir}/tp_rank_{NN}/model_weights.pt   →  {"model": {key: tensor}}
 
+    When pipeline parallelism (PP) > 1, checkpoint layer keys are globally
+    numbered but the module uses local 0-based indices.  We remap
+    ``decoder.layers.<global_idx>`` → ``decoder.layers.<local_idx>`` using
+    the PP stage's layer offset so each stage loads the correct layer weights.
+
     After loading, a spot-check compares up to 5 parameter tensors against the
     file to verify the weights actually landed in the module.
     """
@@ -210,12 +276,13 @@ def _load_tp_rank_weights(
     saved = torch.load(ckpt_file, map_location="cpu", weights_only=True)
     state_dict = {k: v for k, v in saved["model"].items() if v is not None}
 
-    # With pipeline parallelism (PP > 1), each PP stage only holds a subset of
-    # layers (e.g. stage 0 has embeddings, stage N-1 has output_layer/final_layernorm).
-    # Filter the checkpoint to keys the module actually owns so that weights
-    # belonging to other PP stages are silently skipped rather than flagged as unexpected.
-    module_keys = set(module.state_dict().keys())
-    state_dict = {k: v for k, v in state_dict.items() if k in module_keys}
+    # With pipeline parallelism (PP > 1), checkpoint layer keys are globally
+    # numbered (decoder.layers.0 … decoder.layers.31) but each PP stage's
+    # nn.ModuleList uses local 0-based indices.  Remap before loading.
+    layer_offset = _get_pp_layer_offset(module)
+    state_dict = _remap_checkpoint_for_pp(state_dict, module, layer_offset)
+    if layer_offset > 0:
+        print(f"[{label}] PP layer offset={layer_offset}, remapped checkpoint keys to local indices")
 
     incompat = module.load_state_dict(state_dict, strict=False)
     unexpected = [k for k in incompat.unexpected_keys if "_extra_state" not in k]
@@ -619,6 +686,14 @@ def main():
     _log("building model specs")
     language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
     mimo_parallelism_config = _build_parallelism_config()
+
+    # Propagate per-module pipeline parallelism size into the TransformerConfig
+    # so that get_num_layers_to_build() and get_transformer_layer_offset() in
+    # Megatron-LM produce the correct layer count and offset for each PP stage.
+    # Without this, config.pipeline_model_parallel_size defaults to 1 and every
+    # stage builds *all* num_layers — duplicating the model across PP stages.
+    llm_pp_size = mimo_parallelism_config.module_parallelisms["llm"].pipeline_model_parallel_size
+    language_model_spec.params["config"].pipeline_model_parallel_size = llm_pp_size
 
     mimo_provider = MimoModelProvider(
         language_model_spec=language_model_spec,
