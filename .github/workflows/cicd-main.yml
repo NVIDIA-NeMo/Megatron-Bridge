@@ -39,6 +39,9 @@ on:
         type: choice
         options:
           - "all"
+          - "L0"
+          - "L1"
+          - "L2"
           - "unit-only"
           - "functional-only"
         default: "all"
@@ -83,7 +86,7 @@ jobs:
         needs.pre-flight.outputs.is_deployment_workflow == 'false'
           && needs.pre-flight.outputs.is_ci_workload == 'false'
           && needs.pre-flight.outputs.docs_only == 'false'
-      )
+      ) || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -331,7 +334,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests_Core
@@ -392,7 +395,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests_Diffusion
@@ -505,7 +508,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
     environment: nemo-ci
     env:
@@ -573,7 +576,7 @@ jobs:
       )
       && !cancelled()
       && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true' || needs.check-labels.outputs.full_test_suite == 'true')
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
     environment: nemo-ci
     env:
@@ -641,7 +644,7 @@ jobs:
       )
       && !cancelled()
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.full_test_suite == 'true')
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
     environment: nemo-ci
     env:
