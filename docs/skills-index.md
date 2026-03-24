@@ -17,7 +17,6 @@ skills/perf-techniques/packed-sequences-long-context/SKILL
 skills/perf-techniques/sequence-packing/SKILL
 skills/perf-techniques/hybrid-context-parallel/SKILL
 skills/perf-techniques/expert-parallel-overlap/SKILL
-skills/perf-techniques/moe-comm-overlap/SKILL
 ```
 
 ```{toctree}

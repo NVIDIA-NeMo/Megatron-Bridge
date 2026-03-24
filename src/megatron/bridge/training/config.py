@@ -1557,6 +1557,11 @@ class ConfigContainer(Container):
         Ensures compatibility between different configuration settings.
         """
 
+        # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
+        # can enable variable_seq_lengths for pipeline parallelism.
+        if getattr(self.dataset, "pack_sequences_in_batch", False):
+            self.model._pack_sequences_in_batch = True
+
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
         if hasattr(self.ddp, "finalize"):
@@ -1629,8 +1634,10 @@ class ConfigContainer(Container):
                     "Megatron FSDP only supports fsdp_dtensor checkpoint format"
                 )
 
-            if self.ddp.average_in_collective:
-                print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
+            if self.ddp.average_in_collective and not self.ddp.disable_symmetric_registration:
+                print_rank_0(
+                    "average_in_collective is not supported with NCCL symmetric registration, setting to False"
+                )
                 self.ddp.average_in_collective = False
 
             # reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP
