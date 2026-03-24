@@ -114,6 +114,32 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
     def _eos_token_id(self) -> int:
         return self._tokenizer.eos_token_id
 
+    @property
+    def _image_token_id(self) -> Optional[int]:
+        """Resolve image token ID from the processor, or ``None`` if unavailable."""
+        if hasattr(self.processor, "image_token_id"):
+            return self.processor.image_token_id
+        image_token = getattr(self.processor, "image_token", None)
+        if image_token is not None:
+            return self._tokenizer.convert_tokens_to_ids(image_token)
+        return None
+
+    @staticmethod
+    def _find_contiguous_blocks(arr: np.ndarray, value: int) -> List[Tuple[int, int]]:
+        """Return ``[(start, end), ...]`` for each contiguous run of *value* in *arr*."""
+        mask = arr == value
+        blocks: List[Tuple[int, int]] = []
+        i, n = 0, len(mask)
+        while i < n:
+            if mask[i]:
+                start = i
+                while i < n and mask[i]:
+                    i += 1
+                blocks.append((start, i))
+            else:
+                i += 1
+        return blocks
+
     # ------------------------------------------------------------------
     # encode_sample
     # ------------------------------------------------------------------
@@ -200,9 +226,40 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
 
         # 7. Truncate
         max_len = self.seq_length
-        input_ids_np = input_ids_np[:max_len]
-        labels_np = labels_np[:max_len]
-        loss_mask_np = loss_mask_np[:max_len]
+        input_ids_pre_trunc = input_ids_np
+        input_ids_np = input_ids_np[:max_len].copy()
+        labels_np = labels_np[:max_len].copy()
+        loss_mask_np = loss_mask_np[:max_len].copy()
+
+        # 7b. Handle partial image token blocks caused by truncation.
+        #     If truncation split an image's token block, remove the partial
+        #     tokens (replace with pad) and track how many complete images remain
+        #     so the corresponding visual tensors can be sliced.
+        num_images = len(images_pil) if images_pil else 0
+        num_complete_images = num_images
+        if num_images > 0 and len(input_ids_np) < len(input_ids_pre_trunc):
+            image_token_id = self._image_token_id
+            if image_token_id is not None:
+                orig_blocks = self._find_contiguous_blocks(input_ids_pre_trunc, image_token_id)
+                num_complete_images = sum(1 for s, e in orig_blocks if e <= max_len)
+
+                if num_complete_images < len(orig_blocks):
+                    for start, end in orig_blocks[num_complete_images:]:
+                        s = max(start, 0)
+                        e = min(end, max_len)
+                        if s < e:
+                            input_ids_np[s:e] = self._pad_token_id
+                            labels_np[s:e] = IGNORE_INDEX
+                            loss_mask_np[s:e] = 0.0
+
+                    if num_complete_images < num_images:
+                        logging.warning(
+                            "Truncation to seq_length=%d removed %d of %d images whose "
+                            "token blocks did not fit. Consider increasing seq_length.",
+                            max_len,
+                            num_images - num_complete_images,
+                            num_images,
+                        )
 
         # 8. Collect visual tensors
         visual_tensors: Dict[str, torch.Tensor] = {}
@@ -213,6 +270,16 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
                     visual_tensors[key] = val
                 else:
                     visual_tensors[key] = torch.tensor(val)
+
+        # 8b. Slice visual tensors to keep only complete images
+        if num_complete_images < num_images:
+            for key in list(visual_tensors.keys()):
+                t = visual_tensors[key]
+                if t is not None and t.dim() >= 1 and t.shape[0] == num_images:
+                    if num_complete_images > 0:
+                        visual_tensors[key] = t[:num_complete_images]
+                    else:
+                        del visual_tensors[key]
 
         return HFEncoderTaskSample(
             __key__=sample.__key__,
@@ -274,7 +341,7 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
             else:
                 batched_visual[key] = None
 
-        return HFEncoderTaskBatch(
+        batch_kwargs: Dict = dict(
             __keys__=[s.__key__ for s in samples],
             __subflavors__=[s.__subflavors__ for s in samples],
             input_ids=tokens,
@@ -284,6 +351,14 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
             position_ids=position_ids,
             visual_tensors=batched_visual,
         )
+        # Energon Batch base class may require __key__ / __restore_key__
+        _batch_fields = {f.name for f in dataclasses.fields(HFEncoderTaskBatch)}
+        if "__key__" in _batch_fields:
+            batch_kwargs["__key__"] = samples[0].__key__
+        if "__restore_key__" in _batch_fields:
+            batch_kwargs["__restore_key__"] = ()
+
+        return HFEncoderTaskBatch(**batch_kwargs)
 
     # ------------------------------------------------------------------
     # encode_batch
@@ -294,7 +369,7 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
         raw = dataclasses.asdict(batch)
 
         # Remove Batch base-class metadata not needed downstream
-        for meta_key in ("__keys__", "__restore_key__", "__subflavors__", "__sources__"):
+        for meta_key in ("__key__", "__keys__", "__restore_key__", "__subflavors__", "__sources__"):
             raw.pop(meta_key, None)
 
         # Replace the raw visual_tensors dict with a GenericVisualInputs container
