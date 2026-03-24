@@ -14,10 +14,10 @@
 # limitations under the License.
 
 """
-Generic Training Script for GPT-based Models
+Generic Training Script for LLM and diffusion models
 
 This script works with any model family that uses GPT-style training
-(Llama, Gemma, Qwen, GPT, etc.). It dynamically loads recipes and supports
+(Llama, Gemma, Qwen, GPT, etc.) and with diffusion models (e.g. FLUX, WAN). It dynamically loads recipes and supports
 CLI overrides. The --dataset flag selects the dataset type and automatically
 infers pretrain vs finetune mode.
 
@@ -49,6 +49,16 @@ Usage:
             --recipe llama32_1b_sft_config \\
             --dataset llm-finetune-preloaded \\
             dataset.dataset_root=/data/my_finetune_data
+
+    Diffusion pretrain:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe wan_1_3B_pretrain_config \
+            --step_func wan_step
+
+    Diffusion SFT (full finetuning):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe wan_1_3B_finetune_config \
+            --step_func wan_step
 
     VLM with HF dataset:
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
@@ -83,11 +93,6 @@ Usage:
             --dataset llm-pretrain-mock \\
             train.train_iters=5000 \\
             optimizer.lr=0.0003
-    
-    Diffusion (FLUX) pretrain:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe flux_12b_pretrain_config \\
-            --step_func flux_step
 
 Recipe Arguments:
     Generic scripts call recipes with no arguments: recipe().
@@ -102,8 +107,9 @@ from typing import Callable
 
 import megatron.bridge.recipes as recipes
 
-# Diffusion (FLUX) forward step: use class instance so it can be passed as forward_step_func
+# Diffusion forward steps: use class instances so they can be passed as forward_step_func
 from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
+from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.utils.dataset_utils import (
     DATASET_TYPES,
@@ -124,7 +130,8 @@ STEP_FUNCTIONS: dict[str, Callable] = {
     "vlm_step": vlm_forward_step,
     "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
-    "flux_step": FluxForwardStep(),
+    "flux_step": FluxForwardStep,
+    "wan_step": WanForwardStep,
 }
 
 TRAIN_FUNCTIONS = {
@@ -175,7 +182,8 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         type=str,
         default="gpt_step",
         choices=sorted(STEP_FUNCTIONS.keys()),
-        help="Step function: gpt_step (text-only), vlm_step (vision-language), llava_step (LLaVA), flux_step (diffusion/FLUX)",
+        help="Step function: gpt_step (text-only), vlm_step (vision-language), llava_step (LLaVA), "
+        "flux_step (FLUX diffusion), wan_step (WAN diffusion, hyperparameters selected by --mode/recipe name)",
     )
     parser.add_argument(
         "--peft_scheme",
@@ -273,12 +281,17 @@ def load_recipe(
         return config_builder()
 
 
-def load_forward_step(step_type: str) -> Callable:
+def load_forward_step(step_type: str, mode: str | None = None) -> Callable:
     """Load forward_step function based on the requested step type."""
     step_key = step_type.lower()
     if step_key not in STEP_FUNCTIONS:
         raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))
-    return STEP_FUNCTIONS[step_key]
+    step = STEP_FUNCTIONS[step_key]
+    if inspect.isclass(step):
+        if "mode" in inspect.signature(step.__init__).parameters:
+            return step(mode=mode)
+        return step()
+    return step
 
 
 def infer_train_mode(recipe_name: str) -> str:
@@ -330,7 +343,7 @@ def main() -> None:
         if hasattr(config.dataset, "seq_length") and config.model.seq_length != config.dataset.seq_length:
             config.model.seq_length = config.dataset.seq_length
 
-    forward_step = load_forward_step(args.step_func)
+    forward_step = load_forward_step(args.step_func, mode=mode)
     train_func = TRAIN_FUNCTIONS[mode]
     train_func(config=config, forward_step_func=forward_step)
 
