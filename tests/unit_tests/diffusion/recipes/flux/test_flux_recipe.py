@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+from types import SimpleNamespace
+
 import pytest
 
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
@@ -21,6 +24,46 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 pytestmark = [pytest.mark.unit]
+
+# Recipe loads HF config via PreTrainedFlux; patch it so unit tests do not call the Hub
+# (same idea as test_llama_recipes monkeypatching AutoBridge).
+_flux_recipe_mod = importlib.import_module("megatron.bridge.diffusion.recipes.flux.flux")
+
+
+def _fake_flux_diffusers_config() -> SimpleNamespace:
+    """Shape expected by FluxBridge.provider_bridge; values match FLUX.1-dev / recipe defaults."""
+    return SimpleNamespace(
+        num_attention_heads=24,
+        attention_head_dim=128,
+        in_channels=64,
+        patch_size=1,
+        num_layers=19,
+        num_single_layers=38,
+        joint_attention_dim=4096,
+        pooled_projection_dim=768,
+        guidance_embeds=True,
+        axes_dims_rope=[16, 56, 56],
+        ffn_dim=12288,
+    )
+
+
+class _FakePreTrainedFlux:
+    def __init__(self, model_name_or_path, **kwargs):
+        self._model_name_or_path = str(model_name_or_path)
+        self._config = _fake_flux_diffusers_config()
+
+    @property
+    def model_name_or_path(self) -> str:
+        return self._model_name_or_path
+
+    @property
+    def config(self):
+        return self._config
+
+
+@pytest.fixture(autouse=True)
+def _patch_pretrained_flux_no_hub(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_flux_recipe_mod, "PreTrainedFlux", _FakePreTrainedFlux)
 
 
 class TestPretrainConfig:
