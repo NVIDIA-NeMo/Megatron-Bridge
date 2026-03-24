@@ -277,6 +277,12 @@ class PerfEnvPlugin(Plugin):
 
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
+        if model_recipe_name in ["llama3_70b"]:
+            if compute_dtype in ["fp8_cs", "fp8_mx"]:
+                if train_task in ["sft"]:
+                    if gpu in ["gb300", "h100"]:
+                        executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+                        executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
 
         del_cudnn_ln = True
         if gpu in ["h100"]:
