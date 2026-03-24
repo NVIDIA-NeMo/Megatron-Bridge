@@ -31,8 +31,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}/iter_0000000" \
-    --hf-path "${WORKSPACE}/models/${MODEL_NAME}-hf-export" \
-    --trust-remote-code
+    --hf-path "${WORKSPACE}/models/${MODEL_NAME}-hf-export"
 
 # Round-trip validation
 uv run python -m torch.distributed.run --nproc_per_node=8 \

@@ -40,8 +40,7 @@ python examples/conversion/convert_checkpoints.py import \
 python examples/conversion/convert_checkpoints.py export \
     --hf-model sarvamai/sarvam-30b \
     --megatron-path ${WORKSPACE}/models/sarvam-30b/iter_0000000 \
-    --hf-path ${WORKSPACE}/models/sarvam-30b-hf-export \
-    --trust-remote-code
+    --hf-path ${WORKSPACE}/models/sarvam-30b-hf-export
 ```
 
 ### Round-trip Validation
