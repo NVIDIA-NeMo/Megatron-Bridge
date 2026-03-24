@@ -134,7 +134,7 @@ NEMOTRON_3_SUPER_PRETRAIN_RECIPES = [
         {
             "hidden_size": 672,
             "num_layers": 3,
-            "hybrid_override_pattern": "M*E",
+            "hybrid_layer_pattern": "M*E",
             "num_moe_experts": 16,
             "mtp_num_layers": 2,
             "mtp_hybrid_override_pattern": "*E",

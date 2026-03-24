@@ -23,7 +23,7 @@ import torch
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
-    nemotron_3_super_finetune_config as finetune_config,
+    nemotron_3_super_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
@@ -77,7 +77,7 @@ def main() -> None:
         print(f"[yellow]torchrun examples/models/quantize.py --megatron-save-path {args.megatron_load_path}[/yellow]")
         sys.exit(1)
 
-    cfg: ConfigContainer = finetune_config(peft=None)
+    cfg: ConfigContainer = nemotron_3_super_sft_config()
     cfg.model.seq_length = args.seq_length
     cfg.checkpoint.pretrained_checkpoint = args.megatron_load_path
 

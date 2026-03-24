@@ -430,11 +430,11 @@ def test_nemotron_3_super_pretrain_defaults():
     assert cfg.model.expert_model_parallel_size == 8
 
 
-def test_nemotron_3_super_finetune_lora_defaults():
-    """Test that Nemotron 3 Super finetune with LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_3_super_finetune_config
+def test_nemotron_3_super_peft_lora_defaults():
+    """Test that Nemotron 3 Super PEFT with LoRA has correct default parallelism."""
+    from megatron.bridge.recipes.nemotronh import nemotron_3_super_peft_config
 
-    cfg = nemotron_3_super_finetune_config()
+    cfg = nemotron_3_super_peft_config()
 
     _assert_basic_config(cfg)
 
@@ -448,11 +448,11 @@ def test_nemotron_3_super_finetune_lora_defaults():
     assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
 
 
-def test_nemotron_3_super_finetune_full_sft_defaults():
-    """Test that Nemotron 3 Super finetune with full SFT has correct defaults."""
-    from megatron.bridge.recipes.nemotronh import nemotron_3_super_finetune_config
+def test_nemotron_3_super_sft_defaults():
+    """Test that Nemotron 3 Super SFT has correct defaults."""
+    from megatron.bridge.recipes.nemotronh import nemotron_3_super_sft_config
 
-    cfg = nemotron_3_super_finetune_config(peft=None)
+    cfg = nemotron_3_super_sft_config()
 
     _assert_basic_config(cfg)
 

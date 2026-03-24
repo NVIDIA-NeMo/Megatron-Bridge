@@ -52,7 +52,8 @@ def _fix_tied_weights_keys(model: nn.Module):
 from megatron.bridge.recipes.nemotronh import (
     nemotron_3_nano_peft_config,
     nemotron_3_nano_sft_config,
-    nemotron_3_super_finetune_config,
+    nemotron_3_super_peft_config,
+    nemotron_3_super_sft_config,
     nemotron_nano_9b_v2_peft_config,
     nemotron_nano_9b_v2_sft_config,
 )
@@ -158,14 +159,21 @@ class TestNemotronNanoV2FinetuneRecipes:
         from megatron.core import parallel_state
         from megatron.core.rerun_state_machine import destroy_rerun_state_machine
 
-        # Create a temporary directory for the Megatron checkpoint
+        from tests.functional_tests.utils import broadcast_path, initialize_distributed
+
+        # Initialize distributed early — import_ckpt uses collective checkpoint save
+        initialize_distributed()
+
+        # Create a temporary directory for the Megatron checkpoint.
+        # Broadcast rank 0's path so all ranks write to the same directory
+        # (each torchrun rank gets a different tmp_path_factory base dir).
         temp_dir = tmp_path_factory.mktemp("nemotronh_megatron_ckpt")
-        megatron_checkpoint_dir = temp_dir / "megatron_checkpoint"
+        megatron_checkpoint_dir = broadcast_path(str(temp_dir / "megatron_checkpoint"))
 
         # Import the HF model to Megatron format
         AutoBridge.import_ckpt(
             hf_model_id=nemotronh_toy_model_path,
-            megatron_path=str(megatron_checkpoint_dir),
+            megatron_path=megatron_checkpoint_dir,
             trust_remote_code=True,
             torch_dtype=torch.bfloat16,
         )
@@ -176,7 +184,7 @@ class TestNemotronNanoV2FinetuneRecipes:
             parallel_state.destroy_model_parallel()
         destroy_rerun_state_machine()
 
-        return str(megatron_checkpoint_dir)
+        return megatron_checkpoint_dir
 
     def _finetune_wrapper_lora(self, checkpoint_dir, **kwargs):
         """Wrapper to adapt Nemotron Nano v2 peft_config to the test runner signature (with LoRA).
@@ -457,14 +465,21 @@ class TestNemotron3NanoFinetuneRecipes:
         from megatron.core import parallel_state
         from megatron.core.rerun_state_machine import destroy_rerun_state_machine
 
-        # Create a temporary directory for the Megatron checkpoint
+        from tests.functional_tests.utils import broadcast_path, initialize_distributed
+
+        # Initialize distributed early — import_ckpt uses collective checkpoint save
+        initialize_distributed()
+
+        # Create a temporary directory for the Megatron checkpoint.
+        # Broadcast rank 0's path so all ranks write to the same directory
+        # (each torchrun rank gets a different tmp_path_factory base dir).
         temp_dir = tmp_path_factory.mktemp("nemotron_3_nano_megatron_ckpt")
-        megatron_checkpoint_dir = temp_dir / "megatron_checkpoint"
+        megatron_checkpoint_dir = broadcast_path(str(temp_dir / "megatron_checkpoint"))
 
         # Import the HF model to Megatron format
         AutoBridge.import_ckpt(
             hf_model_id=nemotron_3_nano_toy_model_path,
-            megatron_path=str(megatron_checkpoint_dir),
+            megatron_path=megatron_checkpoint_dir,
             trust_remote_code=True,
             torch_dtype=torch.bfloat16,
         )
@@ -474,7 +489,7 @@ class TestNemotron3NanoFinetuneRecipes:
             parallel_state.destroy_model_parallel()
         destroy_rerun_state_machine()
 
-        return str(megatron_checkpoint_dir)
+        return megatron_checkpoint_dir
 
     def _get_finetune_config(self, checkpoint_dir: str, peft: Optional[str] = None, **kwargs) -> ConfigContainer:
         """
@@ -611,7 +626,7 @@ HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES = {
 
 MEGATRON_NEMOTRON_3_SUPER_OVERRIDES = {
     "num_layers": len(HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES["layers_block_type"]),
-    "hybrid_override_pattern": "M*E",
+    "hybrid_layer_pattern": "M*E",
     "hidden_size": HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES["hidden_size"],
     "num_moe_experts": HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES["n_routed_experts"],
     "tensor_model_parallel_size": 1,
@@ -744,12 +759,20 @@ class TestNemotron3SuperFinetuneRecipes:
         from megatron.core import parallel_state
         from megatron.core.rerun_state_machine import destroy_rerun_state_machine
 
+        from tests.functional_tests.utils import broadcast_path, initialize_distributed
+
+        # Initialize distributed early — import_ckpt uses collective checkpoint save
+        initialize_distributed()
+
+        # Create a temporary directory for the Megatron checkpoint.
+        # Broadcast rank 0's path so all ranks write to the same directory
+        # (each torchrun rank gets a different tmp_path_factory base dir).
         temp_dir = tmp_path_factory.mktemp("nemotron_3_super_megatron_ckpt")
-        megatron_checkpoint_dir = temp_dir / "megatron_checkpoint"
+        megatron_checkpoint_dir = broadcast_path(str(temp_dir / "megatron_checkpoint"))
 
         AutoBridge.import_ckpt(
             hf_model_id=nemotron_3_super_toy_model_path,
-            megatron_path=str(megatron_checkpoint_dir),
+            megatron_path=megatron_checkpoint_dir,
             trust_remote_code=True,
             torch_dtype=torch.bfloat16,
         )
@@ -758,11 +781,14 @@ class TestNemotron3SuperFinetuneRecipes:
             parallel_state.destroy_model_parallel()
         destroy_rerun_state_machine()
 
-        return str(megatron_checkpoint_dir)
+        return megatron_checkpoint_dir
 
     def _get_finetune_config(self, checkpoint_dir: str, peft: Optional[str] = None, **kwargs) -> ConfigContainer:
         """Wrapper to adapt Nemotron 3 Super finetune config to the test runner signature."""
-        config = nemotron_3_super_finetune_config(peft=peft)
+        if peft is None:
+            config = nemotron_3_super_sft_config()
+        else:
+            config = nemotron_3_super_peft_config(peft_scheme=peft)
         config.checkpoint.pretrained_checkpoint = checkpoint_dir
         config.checkpoint.load = None
         return config

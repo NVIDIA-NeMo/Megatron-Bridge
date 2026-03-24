@@ -23,7 +23,8 @@ import torch
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
-    nemotron_3_super_finetune_config as finetune_config,
+    nemotron_3_super_peft_config,
+    nemotron_3_super_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
@@ -63,7 +64,10 @@ def main() -> None:
     """
     args, cli_overrides = parse_cli_args()
 
-    cfg: ConfigContainer = finetune_config(peft=args.peft)
+    if args.peft is None or (isinstance(args.peft, str) and args.peft.lower() == "none"):
+        cfg: ConfigContainer = nemotron_3_super_sft_config()
+    else:
+        cfg: ConfigContainer = nemotron_3_super_peft_config(peft_scheme=args.peft)
     cfg.model.seq_length = args.seq_length
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging

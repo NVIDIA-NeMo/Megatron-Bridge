@@ -134,31 +134,19 @@ def nemotron_3_super_pretrain_config() -> ConfigContainer:
 
 
 # =============================================================================
-# Finetune Config (handles both full SFT and PEFT)
+# SFT Config
 # =============================================================================
 
 
-def nemotron_3_super_finetune_config(
-    peft: str | PEFT | None = "lora",
-) -> ConfigContainer:
-    """Return a finetuning config for Nemotron 3 Super (120B-A12B LatentMoE).
+def nemotron_3_super_sft_config() -> ConfigContainer:
+    """Return a full SFT config for Nemotron 3 Super (120B-A12B LatentMoE).
 
-    Default parallelism:
-    - LoRA/DoRA: TP=1, PP=1, EP=1, SP=True, LR=1e-4
-    - Full SFT: TP=1, PP=1, EP=8, SP=True, LR=5e-6
-
-    Args:
-        peft: PEFT scheme - "lora", "dora", a custom PEFT instance, or None for full SFT.
+    Default parallelism: TP=1, PP=1, EP=8, SP=True
 
     Returns:
-        ConfigContainer with all settings pre-configured for Nemotron 3 Super finetuning.
+        ConfigContainer with all settings pre-configured for Nemotron 3 Super SFT.
     """
-    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
-
-    if is_full_sft:
-        cfg = _sft_common()
-    else:
-        cfg = _peft_common()
+    cfg = _sft_common()
 
     # Model config — derived from HF config via AutoBridge
     cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
@@ -171,7 +159,104 @@ def nemotron_3_super_finetune_config(
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 8 if is_full_sft else 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.seq_length = 2048
+
+    # Training-specific model overrides
+    cfg.model.apply_rope_fusion = False
+    cfg.model.attention_backend = "fused"
+    cfg.model.gradient_accumulation_fusion = True
+    cfg.model.init_method_std = 0.014
+    cfg.model.use_fused_weighted_squared_relu = True
+    cfg.model.calculate_per_token_loss = True
+
+    # MoE Token Dispatcher Settings
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+
+    # CUDA Graph (TE impl + partial scopes: ~40% throughput gain over disabled)
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
+    # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)
+    cfg.model.mtp_num_layers = 2
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.use_te_rng_tracker = True
+
+    # Optimizer overrides
+    cfg.optimizer.lr = 5e-6
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.scheduler.start_weight_decay = 0.1
+    cfg.scheduler.end_weight_decay = 0.1
+    cfg.scheduler.lr_decay_style = "cosine"
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+
+    # Checkpoint config overrides
+    cfg.checkpoint.save_interval = 200
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    cfg.checkpoint.ckpt_assume_constant_structure = True
+    cfg.checkpoint.async_save = True
+
+    # Logger config
+    cfg.logger.log_interval = 10
+
+    # RNG config
+    cfg.rng.seed = 1234
+
+    # DDP config
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    return cfg
+
+
+# =============================================================================
+# PEFT Config
+# =============================================================================
+
+
+def nemotron_3_super_peft_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for Nemotron 3 Super (120B-A12B LatentMoE).
+
+    Default parallelism: TP=1, PP=1, EP=1, SP=True
+
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+
+    Returns:
+        ConfigContainer with all settings pre-configured for Nemotron 3 Super PEFT.
+    """
+    cfg = _peft_common()
+
+    # Model config — derived from HF config via AutoBridge
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+
+    # Parallelism settings
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.seq_length = 2048
 
@@ -203,12 +288,10 @@ def nemotron_3_super_finetune_config(
 
     # PEFT config - Nemotron uses Mamba-specific target modules
     mamba_target_modules = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
-    if is_full_sft:
-        cfg.peft = None
-    elif isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
-        cfg.peft = default_peft_config(peft, target_modules=mamba_target_modules)
-    elif isinstance(peft, PEFT):
-        cfg.peft = peft
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        cfg.peft = default_peft_config(peft_scheme, target_modules=mamba_target_modules)
+    elif isinstance(peft_scheme, PEFT):
+        cfg.peft = peft_scheme
     else:
         cfg.peft = LoRA(
             target_modules=mamba_target_modules,
@@ -220,15 +303,12 @@ def nemotron_3_super_finetune_config(
             lora_B_init_method="zero",
         )
 
-    # Optimizer overrides - Nemotron uses specific optimizer settings
+    # Optimizer overrides
+    cfg.optimizer.lr = 1e-4
     cfg.optimizer.adam_beta1 = 0.9
     cfg.optimizer.adam_beta2 = 0.95
     cfg.optimizer.adam_eps = 1e-8
     cfg.optimizer.weight_decay = 0.1
-    if is_full_sft:
-        cfg.optimizer.lr = 5e-6
-    else:
-        cfg.optimizer.lr = 1e-4
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.lr_decay_style = "cosine"
@@ -261,5 +341,6 @@ def nemotron_3_super_finetune_config(
 
 __all__ = [
     "nemotron_3_super_pretrain_config",
-    "nemotron_3_super_finetune_config",
+    "nemotron_3_super_sft_config",
+    "nemotron_3_super_peft_config",
 ]
