@@ -588,12 +588,12 @@ def qwen3_600m_sft_config() -> ConfigContainer:
 
 
 def qwen3_600m_sft_128k_config() -> ConfigContainer:
-    """Return a full SFT config for Qwen3 600M with YaRN 128K context extension.
+    """Return a full SFT config for Qwen3 600M with 128K context length.
 
-    Extends the base 600M SFT config with YaRN RoPE scaling to support 128K sequence
-    length. YaRN parameters match the Qwen3-0.6B-128K HF config overrides.
+    Extends the base 600M SFT config to support 128K sequence length with
+    context parallelism.
 
-    Recommended parallelism: TP=2, CP=8 (2 nodes, 8 GPUs each)
+    Recommended parallelism: TP=1, CP=8 (minimum 8 GPUs)
     """
     cfg = _sft_common()
 

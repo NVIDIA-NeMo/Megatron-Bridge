@@ -21,19 +21,19 @@ Sequence length: 131072 (128K tokens)
 Usage
 -----
 Minimal (mock data):
-    torchrun --nproc_per_node=8 examples/long_contex/finetune_qwen3_600m_128k.py
+    torchrun --nproc_per_node=8 examples/long_context/finetune_qwen3_600m_128k.py
 
 With a blend dataset (JSON):
-    torchrun --nproc_per_node=8 examples/long_contex/finetune_qwen3_600m_128k.py \\
+    torchrun --nproc_per_node=8 examples/long_context/finetune_qwen3_600m_128k.py \\
         --per-split-data-args-path /path/to/data.json
 
 With a pretrained checkpoint:
-    torchrun --nproc_per_node=8 examples/long_contex/finetune_qwen3_600m_128k.py \\
+    torchrun --nproc_per_node=8 examples/long_context/finetune_qwen3_600m_128k.py \\
         --per-split-data-args-path /path/to/data.json \\
         checkpoint.pretrained_checkpoint=/path/to/pretrained
 
 Additional Hydra-style dot-notation overrides:
-    torchrun --nproc_per_node=8 examples/long_contex/finetune_qwen3_600m_128k.py \\
+    torchrun --nproc_per_node=8 examples/long_context/finetune_qwen3_600m_128k.py \\
         --per-split-data-args-path /path/to/data.json \\
         train.train_samples=10000 \\
         logger.wandb_project=my_project
