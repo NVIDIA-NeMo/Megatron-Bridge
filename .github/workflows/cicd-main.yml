@@ -697,7 +697,7 @@ jobs:
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   cicd-functional-tests-flaky:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
     strategy:
       fail-fast: false
       max-parallel: 16
