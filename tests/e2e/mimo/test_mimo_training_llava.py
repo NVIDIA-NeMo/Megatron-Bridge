@@ -117,7 +117,7 @@ def _make_language_config() -> TransformerConfig:
 
 def _make_projection_config(hidden_size: int = 4096) -> TransformerConfig:
     """Vision→language projection MLP config."""
-    cfg = TransformerConfig(num_layers=1, hidden_size=hidden_size, num_attention_heads=1)
+    cfg = TransformerConfig(num_layers=1, hidden_size=hidden_size, num_attention_heads=1, use_cpu_initialization=True)
     cfg.ffn_hidden_size = 4096
     cfg.bias_activation_fusion = True
     cfg.add_bias_linear = True
