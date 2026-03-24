@@ -189,6 +189,7 @@ def main(
     detach: bool,
     dryrun: bool,
     enable_vboost: bool,
+    lock_gpu_freq: Optional[int],
     enable_nsys: bool,
     pytorch_profiler: bool,
     moe_a2a_overlap: bool,
@@ -354,6 +355,7 @@ def main(
         plugins.append(
             PerfEnvPlugin(
                 enable_vboost=enable_vboost,
+                lock_gpu_freq=lock_gpu_freq,
                 moe_a2a_overlap=moe_a2a_overlap,
                 tp_size=tp_size,
                 pp_size=pp_size,
@@ -599,6 +601,7 @@ if __name__ == "__main__":
         detach=args.detach,
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
+        lock_gpu_freq=args.lock_gpu_freq,
         enable_nsys=args.enable_nsys,
         pytorch_profiler=args.pytorch_profiler,
         moe_a2a_overlap=args.moe_a2a_overlap,

@@ -563,6 +563,16 @@ def parse_cli_args():
         required=False,
     )
     performance_args.add_argument(
+        "-lgc",
+        "--lock_gpu_freq",
+        help="Lock GPU graphics clock to the specified frequency in MHz via "
+        "`sudo nvidia-smi -lgc <freq>`. Runs once per node before training. "
+        "Use `nvidia-smi -rgc` to reset after the job.",
+        type=int,
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
         "-en",
         "--enable_nsys",
         help="Enable Nsys profiling. Disabled by default",
