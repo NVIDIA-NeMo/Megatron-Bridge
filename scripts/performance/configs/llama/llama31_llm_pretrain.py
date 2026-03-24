@@ -74,9 +74,6 @@ def llama31_405b_pretrain_config_gb300(
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
-    cfg.model.should_pad_vocab = False
-    cfg.dataset.persistent_workers = False
-
     return cfg
 
 

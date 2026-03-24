@@ -130,10 +130,6 @@ def llama3_70b_sft_config_gb300(precision: str = "bf16", config_variant: str = "
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
 
-    if precision.lower() == "fp8_mx":
-        cfg.dataset.persistent_workers = False
-        cfg.dataset.num_workers = 8
-
     return cfg
 
 
@@ -194,10 +190,6 @@ def llama3_70b_sft_config_h100(precision: str = "bf16", config_variant: str = "v
         wgrad_deferral_limit=22,
     )
 
-    if precision.lower() == "fp8_cs":
-        cfg.dataset.persistent_workers = False
-        cfg.dataset.num_workers = 8
-
     return cfg
 
 
@@ -231,10 +223,6 @@ def llama3_70b_lora_config_gb300(precision: str = "bf16", config_variant: str = 
     # for CUDA graphs and avoids NaN issues in attention kernels.
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
-
-    if precision.lower() == "fp8_cs":
-        cfg.dataset.persistent_workers = False
-        cfg.dataset.num_workers = 8
 
     return cfg
 
