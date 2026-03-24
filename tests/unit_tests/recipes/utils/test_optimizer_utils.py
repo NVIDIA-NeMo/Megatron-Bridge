@@ -40,8 +40,9 @@ class TestOptimizerUtils:
         assert isinstance(optim_cfg, OptimizerConfig)
         assert optim_cfg.lr == 3e-4
         assert optim_cfg.weight_decay == 0.01
+        assert optim_cfg.adam_eps == 1e-8
         assert optim_cfg.adam_beta2 == 0.98
-        assert optim_cfg.bf16 == True
+        assert optim_cfg.bf16 is True
 
     def test_scheduler_config(self):
         """Test scheduler config."""
