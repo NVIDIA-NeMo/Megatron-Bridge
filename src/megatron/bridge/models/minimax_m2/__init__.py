@@ -12,20 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-HuggingFace dataset processors for use with HFDatasetBuilder.
-
-This module contains processing functions that conform to the ProcessExampleFn protocol
-and are designed to work with the HFDatasetConfig and HFDatasetBuilder classes.
-"""
-
-from .gsm8k import process_gsm8k_example
-from .openmathinstruct2 import process_openmathinstruct2_example
-from .squad import process_squad_example
+from megatron.bridge.models.minimax_m2.minimax_m2_bridge import MiniMaxM2Bridge  # noqa: F401
 
 
 __all__ = [
-    "process_gsm8k_example",
-    "process_openmathinstruct2_example",
-    "process_squad_example",
+    "MiniMaxM2Bridge",
 ]

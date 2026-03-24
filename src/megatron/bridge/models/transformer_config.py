@@ -117,6 +117,13 @@ class TransformerConfig(MCoreTransformerConfig):
             self.sequence_parallel = False
         MCoreTransformerConfig.__post_init__(self)
 
+        # In-batch packing produces variable-length packed sequences across microbatches,
+        # so PP stages must communicate tensor shapes dynamically instead of using static
+        # buffers.  Set *after* __post_init__ to avoid the false-positive MoE allgather
+        # dispatcher check (irrelevant for non-MoE models).
+        if getattr(self, "_pack_sequences_in_batch", False) and self.pipeline_model_parallel_size > 1:
+            self.variable_seq_lengths = True
+
     def __deepcopy__(self, memo):
         """Custom deepcopy to preserve process group handles when cloning configs.
 
@@ -184,6 +191,9 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         MCoreMLATransformerConfig.__post_init__(self)
+
+        if getattr(self, "_pack_sequences_in_batch", False) and self.pipeline_model_parallel_size > 1:
+            self.variable_seq_lengths = True
 
 
 @dataclass

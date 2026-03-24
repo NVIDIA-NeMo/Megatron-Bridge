@@ -12,20 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-HuggingFace dataset processors for use with HFDatasetBuilder.
+#!/bin/bash
+set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
-This module contains processing functions that conform to the ProcessExampleFn protocol
-and are designed to work with the HFDatasetConfig and HFDatasetBuilder classes.
-"""
+export CUDA_VISIBLE_DEVICES="0,1"
 
-from .gsm8k import process_gsm8k_example
-from .openmathinstruct2 import process_openmathinstruct2_example
-from .squad import process_squad_example
-
-
-__all__ = [
-    "process_gsm8k_example",
-    "process_openmathinstruct2_example",
-    "process_squad_example",
-]
+uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
+  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  tests/functional_tests/test_groups/models/minimax_m2
+coverage combine -q
