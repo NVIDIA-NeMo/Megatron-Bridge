@@ -17,39 +17,77 @@
 Generic Training Script for GPT-based Models
 
 This script works with any model family that uses GPT-style training
-(Llama, Gemma, Qwen, GPT, etc.) and with diffusion models (e.g. FLUX).
-It dynamically loads recipes and supports CLI overrides.
+(Llama, Gemma, Qwen, GPT, etc.). It dynamically loads recipes and supports
+CLI overrides. The --dataset flag selects the dataset type and automatically
+infers pretrain vs finetune mode.
 
 Usage:
-    LLM Pretrain:
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config
+    Pretrain (mock data):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_pretrain_config \\
+            --dataset llm-pretrain-mock
 
-    LLM Finetune:
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_finetune_config
+    Pretrain (real data):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_pretrain_config \\
+            --dataset llm-pretrain \\
+            'dataset.blend=[[/data/my_dataset_text_document],null]'
 
-    Diffusion (FLUX) pretrain:
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe flux_12b_pretrain_config \
-            --step_func flux_step
+    Finetune (SQuAD, default):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_sft_config \\
+            --dataset llm-finetune
 
-    With CLI overrides:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config \
-            train.train_iters=5000 \
+    Finetune (GSM8K):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_sft_config \\
+            --dataset llm-finetune \\
+            dataset.dataset_name=gsm8k
+
+    Finetune (user-supplied JSONL):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_sft_config \\
+            --dataset llm-finetune-preloaded \\
+            dataset.dataset_root=/data/my_finetune_data
+
+    VLM with HF dataset:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe qwen3_vl_8b_peft_config \\
+            --dataset vlm-hf \\
+            --step_func qwen3_vl_step \\
+            dataset.maker_name=cord_v2 \\
+            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
+            checkpoint.pretrained_checkpoint=/path/to/checkpoint
+
+    VLM with Energon dataset:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe qwen3_vl_8b_peft_energon_config \\
+            --dataset vlm-energon \\
+            --step_func qwen3_vl_step \\
+            dataset.path=/data/energon \\
+            checkpoint.pretrained_checkpoint=/path/to/checkpoint
+
+    VLM with preloaded JSON:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe qwen3_vl_8b_peft_config \\
+            --dataset vlm-preloaded \\
+            --step_func qwen3_vl_step \\
+            dataset.train_data_path=/data/vlm_train.json \\
+            dataset.image_folder=/data/vlm_images \\
+            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
+            checkpoint.pretrained_checkpoint=/path/to/checkpoint
+
+    With CLI overrides (Hydra-style, works for any config field):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_pretrain_config \\
+            --dataset llm-pretrain-mock \\
+            train.train_iters=5000 \\
             optimizer.lr=0.0003
-
-    With VLM step function:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe qwen25_vl_finetune_config \
-            --step_func vlm_step
-
-    With packed sequences and custom sequence length:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config \
-            --packed_sequence \
-            --seq_length 2048
+    
+    Diffusion (FLUX) pretrain:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe flux_12b_pretrain_config \\
+            --step_func flux_step
 
 Recipe Arguments:
     Generic scripts call recipes with no arguments: recipe().
@@ -67,6 +105,11 @@ import megatron.bridge.recipes as recipes
 # Diffusion (FLUX) forward step: use class instance so it can be passed as forward_step_func
 from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
+from megatron.bridge.recipes.utils.dataset_utils import (
+    DATASET_TYPES,
+    apply_dataset_override,
+    infer_mode_from_dataset,
+)
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
@@ -84,16 +127,16 @@ STEP_FUNCTIONS: dict[str, Callable] = {
     "flux_step": FluxForwardStep(),
 }
 
-TRAIN_MODES = {
+TRAIN_FUNCTIONS = {
     "pretrain": pretrain,
     "finetune": finetune,
 }
 
-# Error message constants
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
-    "Unable to infer training mode from recipe name. "
-    "Please include 'pretrain', 'sft', 'peft', or 'finetune' in the recipe name or pass --mode explicitly."
+    "Unable to infer training mode. "
+    "Pass --dataset to specify the dataset type, or include 'pretrain' or 'finetune' "
+    "(or 'sft'/'peft') in the recipe name."
 )
 
 
@@ -104,17 +147,28 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
-        "--mode",
-        type=str,
-        default=None,
-        choices=sorted(TRAIN_MODES.keys()),
-        help="Training mode (optional). If omitted, inferred from recipe name.",
-    )
-    parser.add_argument(
         "--recipe",
         type=str,
         required=True,
         help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_sft_config, gemma3_1b_peft_config)",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        choices=DATASET_TYPES,
+        help=(
+            "Dataset type. Training mode (pretrain/finetune) is inferred from this.\n"
+            "LLM datasets:\n"
+            "  llm-pretrain           GPT pretrain data (set dataset.blend=<path>)\n"
+            "  llm-pretrain-mock      Mock pretrain data for testing\n"
+            "  llm-finetune           HF finetune dataset (set dataset.dataset_name=squad|gsm8k|openmathinstruct2)\n"
+            "  llm-finetune-preloaded User-supplied JSONL (set dataset.dataset_root=<path>)\n"
+            "VLM datasets:\n"
+            "  vlm-energon            Energon multimodal (set dataset.path=<path>)\n"
+            "  vlm-hf                 HF VLM dataset (set dataset.maker_name=<name>)\n"
+            "  vlm-preloaded          User-supplied VLM JSON (set dataset.train_data_path=<path>)"
+        ),
     )
     parser.add_argument(
         "--step_func",
@@ -228,7 +282,7 @@ def load_forward_step(step_type: str) -> Callable:
 
 
 def infer_train_mode(recipe_name: str) -> str:
-    """Infer training mode from the recipe name."""
+    """Infer training mode from the recipe name (fallback when --dataset is not passed)."""
     lowered = recipe_name.lower()
     has_pretrain = "pretrain" in lowered
     has_finetune = "finetune" in lowered or "sft" in lowered or "peft" in lowered
@@ -249,15 +303,35 @@ def main() -> None:
         args.hf_path,
     )
 
+    if args.dataset is not None:
+        mode = infer_mode_from_dataset(args.dataset)
+        config = apply_dataset_override(
+            config,
+            dataset_type=args.dataset,
+            packed_sequence=args.packed_sequence,
+            seq_length=args.seq_length,
+            cli_overrides=cli_overrides,
+        )
+    else:
+        mode = infer_train_mode(args.recipe)
+
     config = process_config_with_overrides(
         config,
         cli_overrides=cli_overrides or None,
     )
 
-    mode = args.mode or infer_train_mode(args.recipe)
+    # Ensure dataset.seq_length and model.seq_length stay in sync after CLI overrides
+    if (
+        hasattr(config, "model")
+        and config.model is not None
+        and hasattr(config, "dataset")
+        and config.dataset is not None
+    ):
+        if hasattr(config.dataset, "seq_length") and config.model.seq_length != config.dataset.seq_length:
+            config.model.seq_length = config.dataset.seq_length
 
     forward_step = load_forward_step(args.step_func)
-    train_func = TRAIN_MODES[mode]
+    train_func = TRAIN_FUNCTIONS[mode]
     train_func(config=config, forward_step_func=forward_step)
 
 
