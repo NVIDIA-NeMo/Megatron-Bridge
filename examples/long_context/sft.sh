@@ -20,7 +20,7 @@ WORKSPACE=${WORKSPACE:-/workspace}
 # export WANDB_API_KEY=<your_wandb_api_key>
 # export WANDB_MODE=disabled
 
-PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen3-0.6B
+PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/Qwen3-0.6B}
 MODEL_NAME=qwen3_600m
 DATASET_NAME=squad
 SEQ_LENGTH=131072
@@ -44,6 +44,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
     validation.eval_interval=$EVAL_INTERVAL \
     scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
     checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_128k_sft \
+    checkpoint.load=${WORKSPACE}/results/${MODEL_NAME}_128k_sft \
     logger.log_interval=$LOG_INTERVAL \
     logger.wandb_project=$WANDB_PROJECT \
     logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_128k_sft
