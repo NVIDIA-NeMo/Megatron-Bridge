@@ -53,8 +53,8 @@ class TestCanEnableGradientAccumulationFusion:
         ):
 
             def side_effect(name, *args, **kwargs):
-                if name == "fused_weight_gradient_mlp_cuda":
-                    raise ImportError("No module named 'fused_weight_gradient_mlp_cuda'")
+                if name in ("fused_weight_gradient_mlp_cuda", "transformer_engine", "transformer_engine.pytorch"):
+                    raise ImportError(f"No module named '{name}'")
                 else:
                     return original_import(name, *args, **kwargs)
 
