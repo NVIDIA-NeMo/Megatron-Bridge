@@ -101,7 +101,7 @@ def get_gpt_sft(tmp_path, dataset_type="sft"):
 
 
 class TestDataGPTSFTDataset:
-    @pytest.fixture(autouse=True)
+    @pytest.fixture()
     def setup_and_teardown_parallel_state(self):
         """Setup and teardown parallel state for Megatron tests."""
 
