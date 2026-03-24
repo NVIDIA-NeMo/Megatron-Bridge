@@ -1732,6 +1732,7 @@ class TestMegatronLMCompatibility:
         mock_cfg.non_persistent_ckpt_type = None
         mock_cfg.exit_on_missing_checkpoint = False
         mock_cfg.ckpt_step = None
+        mock_cfg.ckpt_format = "torch_dist"
 
         # Create mock pg_collection
         mock_pg_collection = Mock()

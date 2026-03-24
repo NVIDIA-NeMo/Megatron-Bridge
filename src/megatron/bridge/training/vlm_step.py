@@ -100,20 +100,28 @@ def get_batch_from_iterator(
 
 def pack_batch_sequences(
     tokens: torch.Tensor,
-    labels: torch.Tensor,
-    loss_mask: torch.Tensor,
-    attention_mask: torch.Tensor,
+    labels: torch.Tensor | None,
+    loss_mask: torch.Tensor | None,
+    attention_mask: torch.Tensor | None,
     position_ids: torch.Tensor,
     pad_token_id: int = 0,
     pad_to_multiple_of: int = 1,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
     """
     Pack sequences in a batch by concatenating them and removing padding.
 
     Args:
         tokens: [batch_size, seq_len]
-        labels: [batch_size, seq_len]
-        loss_mask: [batch_size, seq_len]
+        labels: [batch_size, seq_len] or None (non-last PP stages)
+        loss_mask: [batch_size, seq_len] or None (non-last PP stages)
         attention_mask: [batch_size, 1, seq_len, seq_len] or None
         position_ids: [batch_size, seq_len]
         pad_token_id: Token ID used for padding
@@ -121,8 +129,8 @@ def pack_batch_sequences(
     Returns:
         Tuple of:
         - packed_tokens: [1, total_len] - concatenated sequences
-        - packed_labels: [1, total_len]
-        - packed_loss_mask: [1, total_len]
+        - packed_labels: [1, total_len] or None
+        - packed_loss_mask: [1, total_len] or None
         - packed_attention_mask: None (not used with packing)
         - packed_position_ids: [1, total_len]
         - cu_seqlens: [num_sequences + 1] - cumulative sequence lengths
@@ -153,12 +161,12 @@ def pack_batch_sequences(
         # No valid sequences, return empty packed batch
         logger.warning("No valid sequences found in batch, skipping packing")
         return (
-            tokens[:, :0],  # Empty tensor
-            labels[:, :0],
-            loss_mask[:, :0],
+            tokens[:, :0],
+            labels[:, :0] if labels is not None else None,
+            loss_mask[:, :0] if loss_mask is not None else None,
             attention_mask,
             position_ids[:, :0],
-            torch.tensor([0], dtype=torch.int32, device=device),  # Empty cu_seqlens
+            torch.tensor([0], dtype=torch.int32, device=device),
             torch.tensor(0, dtype=torch.int32, device=device),
         )
 
@@ -180,8 +188,10 @@ def pack_batch_sequences(
 
     # Concatenate sequences (remove padding)
     packed_tokens = torch.zeros(1, total_len, dtype=tokens.dtype, device=device)
-    packed_labels = torch.zeros(1, total_len, dtype=labels.dtype, device=device)
-    packed_loss_mask = torch.zeros(1, total_len, dtype=loss_mask.dtype, device=device)
+    packed_labels = torch.zeros(1, total_len, dtype=labels.dtype, device=device) if labels is not None else None
+    packed_loss_mask = (
+        torch.zeros(1, total_len, dtype=loss_mask.dtype, device=device) if loss_mask is not None else None
+    )
     packed_position_ids = torch.zeros(1, total_len, dtype=position_ids.dtype, device=device)
 
     offset = 0
@@ -190,13 +200,17 @@ def pack_batch_sequences(
         padded_len = padded_seq_lengths[i]
         pad_len = padded_len - length
         packed_tokens[0, offset : offset + length] = tokens[seq_idx, :length]
-        packed_labels[0, offset : offset + length] = labels[seq_idx, :length]
-        packed_loss_mask[0, offset : offset + length] = loss_mask[seq_idx, :length]
+        if packed_labels is not None:
+            packed_labels[0, offset : offset + length] = labels[seq_idx, :length]
+        if packed_loss_mask is not None:
+            packed_loss_mask[0, offset : offset + length] = loss_mask[seq_idx, :length]
         packed_position_ids[0, offset : offset + length] = position_ids[seq_idx, :length]
         if pad_len > 0:
             packed_tokens[0, offset + length : offset + padded_len] = pad_token_id
-            packed_labels[0, offset + length : offset + padded_len] = -100
-            packed_loss_mask[0, offset + length : offset + padded_len] = 0
+            if packed_labels is not None:
+                packed_labels[0, offset + length : offset + padded_len] = -100
+            if packed_loss_mask is not None:
+                packed_loss_mask[0, offset + length : offset + padded_len] = 0
             start_pos = position_ids[seq_idx, length - 1] + 1
             packed_position_ids[0, offset + length : offset + padded_len] = torch.arange(
                 start_pos,
