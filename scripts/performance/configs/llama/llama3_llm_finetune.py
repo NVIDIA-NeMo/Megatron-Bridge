@@ -235,8 +235,6 @@ def llama3_70b_lora_config_gb300(precision: str = "bf16", config_variant: str = 
     if precision.lower() == "fp8_cs":
         cfg.dataset.persistent_workers = False
         cfg.dataset.num_workers = 8
-        if cfg.model.cpu_offloading:
-            cfg.model.cpu_offloading_retain_pinned_cpu_buffers = True
 
     return cfg
 
