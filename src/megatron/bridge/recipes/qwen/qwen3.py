@@ -595,88 +595,37 @@ def qwen3_600m_sft_128k_config() -> ConfigContainer:
 
     Recommended parallelism: TP=1, CP=8 (minimum 8 GPUs)
     """
-    cfg = _sft_common()
+    cfg = qwen3_600m_sft_config()
 
-    # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-0.6B").to_megatron_provider(load_weights=False)
-
-    # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-0.6B"
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_layout = None
-    cfg.model.pipeline_dtype = None
-    cfg.model.virtual_pipeline_model_parallel_size = None
+    # 128K context parallelism
     cfg.model.context_parallel_size = 8
-    cfg.model.sequence_parallel = False
+    # Use all-to-all (Ulysses) CP instead of p2p ring to avoid NaN gradients in backward
+    cfg.model.cp_comm_type = "a2a"
 
     # 128K sequence length
     cfg.model.seq_length = 131072
     cfg.dataset.seq_length = 131072
     cfg.dataset.packed_sequence_specs.packed_sequence_size = 131072
-    # Set pad_seq_to_mult for context parallelism
     cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
-    # Batch sizes (micro_batch_size must be 1 with packed sequence)
+    # Smaller batch size to fit 128K sequences
     cfg.train.global_batch_size = 2
-    cfg.train.micro_batch_size = 1
 
-    # Training config
-    cfg.validation.eval_interval = 30
-    cfg.train.manual_gc = False
-    cfg.train.manual_gc_interval = 0
-
-    # TE (Transformer Engine)
-    cfg.model.transformer_impl = "transformer_engine"
-
-    # CUDA Graph
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = "full"
-    cfg.model.cuda_graph_warmup_steps = 3
-
-    # Kernel selections
-    cfg.model.attention_backend = None
+    # Disable cross_entropy_loss_fusion (not compatible with CP > 1)
     cfg.model.cross_entropy_loss_fusion = False
-    cfg.model.cross_entropy_fusion_impl = "native"
-    # Use all-to-all (Ulysses) CP instead of p2p ring to avoid NaN gradients in backward
-    cfg.model.cp_comm_type = "a2a"
 
-    # Memory saving (recompute & offloading)
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
-    cfg.model.fine_grained_activation_offloading = False
-    cfg.model.offload_modules = None
+    # Required for CP > 1 in SFT: avoids nan loss on CP ranks with all tokens masked
+    cfg.model.calculate_per_token_loss = True
+    cfg.ddp.average_in_collective = False  # Must be False when calculate_per_token_loss=True
 
-    # Optimizer: low LR for long-context SFT fine-tuning
+    # Lower LR for long-context SFT
     cfg.optimizer.lr = 1.0e-6
     cfg.optimizer.min_lr = 1.0e-6
-    cfg.optimizer.adam_eps = 1.0e-8
     cfg.optimizer.use_distributed_optimizer = False
-    cfg.optimizer.use_precision_aware_optimizer = False
-    cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.float32
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # Scheduler
-    cfg.scheduler.lr_decay_iters = None
+    # Fewer warmup steps for long-context SFT
     cfg.scheduler.lr_warmup_iters = 10
     cfg.scheduler.lr_warmup_init = 1.0e-11
-
-    # Checkpoint config
-    cfg.checkpoint.save_interval = 50
-
-    # Required for CP>1 in SFT: avoids nan loss on CP ranks with all tokens masked
-    cfg.model.calculate_per_token_loss = True
-
-    # DDP config
-    cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.ddp.overlap_grad_reduce = False
-    cfg.ddp.overlap_param_gather = False
-    cfg.ddp.check_for_nan_in_grad = True
-    cfg.ddp.use_distributed_optimizer = False
-    cfg.ddp.average_in_collective = False  # Must be False when calculate_per_token_loss=True
 
     return cfg
 
