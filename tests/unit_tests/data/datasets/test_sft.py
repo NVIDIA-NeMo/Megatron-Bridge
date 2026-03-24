@@ -331,7 +331,7 @@ class TestDataGPTSFTChatDataset:
         path = str(datasets_dir / "sft.jsonl")
         line = {"input": "hi how are you?", "output": "I'm fine, thanks."}
         with open(path, "w") as f:
-            for _ in range(10):
+            for _ in range(2):
                 f.write(json.dumps(line) + "\n")
 
         tokenizer = create_mock_tokenizer()
@@ -342,6 +342,7 @@ class TestDataGPTSFTChatDataset:
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
             pad_seq_length_to_mult=32,
+            memmap_workers=1,
         )
         batch = [
             {

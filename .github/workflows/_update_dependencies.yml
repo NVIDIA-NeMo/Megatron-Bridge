@@ -43,7 +43,7 @@ jobs:
       TARGET_BRANCH: ${{ inputs.target-branch }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ env.TARGET_BRANCH }}
           token: ${{ secrets.PAT }}
@@ -63,7 +63,7 @@ jobs:
           fi
 
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ env.SOURCE_BRANCH }}
           token: ${{ secrets.PAT }}
@@ -115,7 +115,7 @@ jobs:
           commit-message: ${{ env.title }}
           signoff: true
           committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
-          labels: needs-more-tests
+          labels: full-test-suite
 
       - name: Post /ok to test comment
         env:

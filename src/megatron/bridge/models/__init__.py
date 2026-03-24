@@ -70,6 +70,9 @@ from megatron.bridge.models.llama_nemotron import (
 )
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
+from megatron.bridge.models.minimax_m2 import (
+    MiniMaxM2Bridge,
+)
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
@@ -96,6 +99,11 @@ from megatron.bridge.models.nemotronh import (
 from megatron.bridge.models.olmoe import (
     OlMoEBridge,
     OlMoEModelProvider,
+)
+from megatron.bridge.models.qwen_audio import (
+    Qwen2AudioBridge,
+    Qwen2AudioModel,
+    Qwen2AudioModelProvider,
 )
 from megatron.bridge.models.qwen_omni import (
     Qwen25OmniBridge,
@@ -171,6 +179,7 @@ __all__ = [
     "Ministral3ModelProvider3B",
     "Ministral3ModelProvider8B",
     "Ministral3ModelProvider14B",
+    "MiniMaxM2Bridge",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "NemotronHBridge",
@@ -178,6 +187,10 @@ __all__ = [
     "MimoBridge",
     # Nemotron Models
     "NemotronBridge",
+    # Audio-Language Models
+    "Qwen2AudioBridge",
+    "Qwen2AudioModel",
+    "Qwen2AudioModelProvider",
     # VL Models
     "Qwen25VLModel",
     "Qwen25VLBridge",

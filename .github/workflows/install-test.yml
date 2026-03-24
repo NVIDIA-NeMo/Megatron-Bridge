@@ -89,7 +89,7 @@ jobs:
   #         apt-get install -y git
 
   #     - name: Checkout repository
-  #       uses: actions/checkout@v4
+  #       uses: actions/checkout@v6
   #       with:
   #         submodules: recursive
 
@@ -107,7 +107,7 @@ jobs:
   #       run: bash docker/common/install.sh --base-image pytorch --python-version ${{ matrix.python-version }}
 
   #     - name: Checkout check-imports
-  #       uses: actions/checkout@v4
+  #       uses: actions/checkout@v6
   #       with:
   #         repository: NVIDIA-NeMo/FW-CI-templates
   #         ref: v0.39.0
@@ -140,7 +140,7 @@ jobs:
           apt-get install -y git
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
