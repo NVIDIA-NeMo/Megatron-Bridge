@@ -395,6 +395,7 @@ class AutoBridge(Generic[MegatronModelT]):
         if conversion_tasks is None and self.export_weight_dtype == "fp8":
             if not isinstance(model, list):
                 model = [model]
+            self._validate_fp8_export_config(model)
             # Use FP8 export tasks for blockwise FP8 weights
             conversion_tasks = self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
 
@@ -1515,3 +1516,16 @@ class AutoBridge(Generic[MegatronModelT]):
             lines_for_build.append("  (model_bridge): ")  # Fallback for empty repr
 
         return f"{class_name}(\n" + "\n".join(lines_for_build) + "\n)"
+
+    def _validate_fp8_export_config(self, model: list[MegatronModelT]) -> None:
+        """Validate runtime Megatron config before enabling FP8 export tasks."""
+        model_instance = self._get_model_instance(model)
+        model_config = getattr(model_instance, "config", None)
+        fp8_recipe = getattr(model_config, "fp8_recipe", None)
+        fp8_param = getattr(model_config, "fp8_param", None)
+        if fp8_recipe != "blockwise" or not fp8_param:
+            raise ValueError(
+                "export_weight_dtype='fp8' only supports blockwise FP8 parameter export. "
+                f"Expected fp8_recipe='blockwise' and fp8_param=True, "
+                f"but got fp8_recipe={fp8_recipe!r}, fp8_param={fp8_param!r}."
+            )

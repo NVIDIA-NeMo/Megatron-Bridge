@@ -1558,7 +1558,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         mapping_registry = self.mapping_registry()
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
         pp_rank = parallel_state.get_pipeline_model_parallel_rank()
         pp_group = parallel_state.get_pipeline_model_parallel_group()
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
