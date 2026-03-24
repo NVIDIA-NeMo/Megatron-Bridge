@@ -830,7 +830,7 @@ class TestNemotron3SuperConversion:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=Path(__file__).parent.parent.parent.parent.parent,
+                cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
                 env={**os.environ, "HF_MODULES_CACHE": str(temp_hf_modules)},
             )
 
