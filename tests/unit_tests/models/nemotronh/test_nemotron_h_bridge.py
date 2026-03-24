@@ -27,7 +27,6 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import (
     NemotronHBridge,
-    _count_wildcards,
     _MTPFlatteningMapping,
     _MTPFlatteningQKVMapping,
     _replace_wildcards,
@@ -636,30 +635,6 @@ class TestAutoBridgeIntegration:
         non_causal_config = Mock()
         non_causal_config.architectures = ["NemotronHModel"]  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) == False
-
-
-class TestCountWildcards:
-    """Test _count_wildcards helper function."""
-
-    def test_no_wildcards(self):
-        assert _count_wildcards("decoder.final_norm.weight") == 0
-
-    def test_single_star(self):
-        assert _count_wildcards("decoder.layers.*.mlp.weight") == 1
-
-    def test_multiple_single_stars(self):
-        assert _count_wildcards("mtp.layers.*.mtp_model_layer.layers.*.mlp.weight") == 2
-
-    def test_double_star(self):
-        assert _count_wildcards("decoder.layers.**.weight") == 1
-
-    def test_mixed_stars(self):
-        # "**" counted first, then remaining "*"
-        assert _count_wildcards("mtp.layers.**.experts.*.weight") == 2
-
-    def test_expert_weight_pattern(self):
-        # Pattern like "decoder.layers.*.mlp.experts.linear_fc1.weight*"
-        assert _count_wildcards("decoder.layers.*.mlp.experts.linear_fc1.weight*") == 2
 
 
 class TestReplaceWildcards:
