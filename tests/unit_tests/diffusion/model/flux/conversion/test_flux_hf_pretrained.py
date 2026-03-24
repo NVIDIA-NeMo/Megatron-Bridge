@@ -97,7 +97,6 @@ def test_save_artifacts_copies_existing_files(tmp_path):
     assert json.loads((dest_tdir / "diffusion_pytorch_model.safetensors.index.json").read_text()) == index_data
 
 
-
 def test_save_artifacts_handles_export_failure(monkeypatch, tmp_path):
     class FailingFlux:
         @classmethod

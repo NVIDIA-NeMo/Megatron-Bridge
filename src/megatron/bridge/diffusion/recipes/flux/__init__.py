@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from megatron.bridge.diffusion.recipes.flux.flux import (
-    flux_12b_sft_config,
     flux_12b_pretrain_config,
+    flux_12b_sft_config,
 )
 
 
