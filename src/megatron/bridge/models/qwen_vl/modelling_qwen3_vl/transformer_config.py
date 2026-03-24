@@ -96,7 +96,7 @@ def get_vision_model_config(hf_config, megatron_config=None):
     config.spatial_merge_size = hf_config.spatial_merge_size
     config.num_position_embeddings = hf_config.num_position_embeddings
     config.out_hidden_size = hf_config.out_hidden_size
-    config.deepstack_visual_indexes = deepcopy(getattr(hf_config, "deepstack_visual_indexes", []))
+    config.deepstack_visual_indexes = deepcopy(hf_config.deepstack_visual_indexes)
 
     config.apply_rope_fusion = False
     config.gated_linear_unit = False  # no gated
