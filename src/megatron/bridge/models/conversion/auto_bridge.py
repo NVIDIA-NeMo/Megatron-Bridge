@@ -1521,11 +1521,12 @@ class AutoBridge(Generic[MegatronModelT]):
         """Validate runtime Megatron config before enabling FP8 export tasks."""
         model_instance = self._get_model_instance(model)
         model_config = getattr(model_instance, "config", None)
+        fp8 = getattr(model_config, "fp8", None)
         fp8_recipe = getattr(model_config, "fp8_recipe", None)
         fp8_param = getattr(model_config, "fp8_param", None)
-        if fp8_recipe != "blockwise" or not fp8_param:
+        if fp8 is None or fp8_recipe != "blockwise" or not fp8_param:
             raise ValueError(
                 "export_weight_dtype='fp8' only supports blockwise FP8 parameter export. "
-                f"Expected fp8_recipe='blockwise' and fp8_param=True, "
-                f"but got fp8_recipe={fp8_recipe!r}, fp8_param={fp8_param!r}."
+                f"Expected fp8 to be enabled, fp8_recipe='blockwise', and fp8_param=True, "
+                f"but got fp8={fp8!r}, fp8_recipe={fp8_recipe!r}, fp8_param={fp8_param!r}."
             )
