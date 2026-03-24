@@ -17,9 +17,9 @@ import pytest
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider1_3B, WanModelProvider14B
 from megatron.bridge.diffusion.recipes.wan.wan import (
-    wan_1_3B_finetune_config,
+    wan_1_3B_sft_config,
     wan_1_3B_pretrain_config,
-    wan_14B_finetune_config,
+    wan_14B_sft_config,
     wan_14B_pretrain_config,
 )
 from megatron.bridge.training.config import ConfigContainer
@@ -128,25 +128,25 @@ class TestWanFinetuneConfigs:
     """Tests for wan finetune config functions."""
 
     def test_1_3B_finetune_config_no_checkpoint(self):
-        config = wan_1_3B_finetune_config()
+        config = wan_1_3B_sft_config()
 
         assert isinstance(config, ConfigContainer)
         assert isinstance(config.model, WanModelProvider1_3B)
         assert config.checkpoint.pretrained_checkpoint is None
 
     def test_1_3B_finetune_config_with_checkpoint(self):
-        config = wan_1_3B_finetune_config(pretrained_checkpoint="/path/to/ckpt")
+        config = wan_1_3B_sft_config(pretrained_checkpoint="/path/to/ckpt")
 
         assert config.checkpoint.pretrained_checkpoint == "/path/to/ckpt"
 
     def test_14B_finetune_config_no_checkpoint(self):
-        config = wan_14B_finetune_config()
+        config = wan_14B_sft_config()
 
         assert isinstance(config, ConfigContainer)
         assert isinstance(config.model, WanModelProvider14B)
         assert config.checkpoint.pretrained_checkpoint is None
 
     def test_14B_finetune_config_with_checkpoint(self):
-        config = wan_14B_finetune_config(pretrained_checkpoint="/path/to/ckpt")
+        config = wan_14B_sft_config(pretrained_checkpoint="/path/to/ckpt")
 
         assert config.checkpoint.pretrained_checkpoint == "/path/to/ckpt"

@@ -53,12 +53,14 @@ Usage:
     Diffusion pretrain:
         uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe wan_1_3B_pretrain_config \
-            --step_func wan_step
+            --step_func wan_step \
+            dataset.path=/data/energon
 
     Diffusion SFT (full finetuning):
         uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe wan_1_3B_finetune_config \
+            --recipe wan_1_3B_sft_config \
             --step_func wan_step
+            dataset.path=/data/energon
 
     VLM with HF dataset:
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
@@ -343,13 +345,8 @@ def main() -> None:
         if hasattr(config.dataset, "seq_length") and config.model.seq_length != config.dataset.seq_length:
             config.model.seq_length = config.dataset.seq_length
 
-<<<<<<< HEAD
     forward_step = load_forward_step(args.step_func, mode=mode)
-    train_func = TRAIN_MODES[mode]
-=======
-    forward_step = load_forward_step(args.step_func)
     train_func = TRAIN_FUNCTIONS[mode]
->>>>>>> origin/main
     train_func(config=config, forward_step_func=forward_step)
 
 

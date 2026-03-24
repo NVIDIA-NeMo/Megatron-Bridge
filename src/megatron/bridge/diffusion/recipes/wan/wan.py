@@ -231,7 +231,7 @@ def wan_14B_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-def wan_1_3B_finetune_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def wan_1_3B_sft_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
     """
     Return a fine-tuning configuration for WAN 1.3B model.
 
@@ -254,7 +254,7 @@ def wan_1_3B_finetune_config(pretrained_checkpoint: str | None = None) -> Config
     return cfg
 
 
-def wan_14B_finetune_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def wan_14B_sft_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
     """
     Return a fine-tuning configuration for WAN 14B model.
 
