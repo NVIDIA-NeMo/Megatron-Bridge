@@ -147,9 +147,9 @@ def flux_12b_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-def flux_12b_finetune_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def flux_12b_sft_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
     """
-    Return a fine-tuning configuration for FLUX 12B model.
+    Return an SFT (supervised fine-tuning) configuration for FLUX 12B model.
 
     Uses the same defaults as flux_12b_pretrain_config() and overrides checkpoint to load from
     pretrained_checkpoint when provided.

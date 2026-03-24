@@ -16,7 +16,7 @@ import pytest
 
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
-from megatron.bridge.diffusion.recipes.flux.flux import flux_12b_pretrain_config
+from megatron.bridge.diffusion.recipes.flux.flux import flux_12b_pretrain_config, flux_12b_sft_config
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -83,3 +83,21 @@ class TestPretrainConfig:
         # FluxDatasetConfig accepts path as str; recipe default is None
         config.dataset.path = "/some/data/path"
         assert config.dataset.path == "/some/data/path"
+
+
+class TestSftConfig:
+    """Tests for flux_12b_sft_config (SFT from pretrained checkpoint)."""
+
+    def test_sft_config_matches_pretrain_except_checkpoint(self):
+        pretrain = flux_12b_pretrain_config()
+        sft = flux_12b_sft_config()
+
+        assert sft.model.num_joint_layers == pretrain.model.num_joint_layers
+        assert sft.train.train_iters == pretrain.train.train_iters
+        assert sft.checkpoint.save_interval == 20
+        assert sft.checkpoint.pretrained_checkpoint is None
+
+    def test_sft_config_accepts_pretrained_checkpoint(self):
+        ckpt = "/path/to/flux/iter_0000000"
+        sft = flux_12b_sft_config(pretrained_checkpoint=ckpt)
+        assert sft.checkpoint.pretrained_checkpoint == ckpt

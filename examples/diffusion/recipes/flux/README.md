@@ -139,7 +139,7 @@ Run FLUX fine-tuning with the generic **run_recipe** script. Set the pretrained 
 
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe flux_12b_finetune_config \
+  --recipe flux_12b_sft_config \
   --step_func flux_step \
   checkpoint.pretrained_checkpoint=${WORKSPACE}/checkpoints/flux/flux.1-dev/iter_0000000
 ```
@@ -148,7 +148,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe flux_12b_finetune_config \
+  --recipe flux_12b_sft_config \
   --step_func flux_step \
   checkpoint.pretrained_checkpoint=${WORKSPACE}/checkpoints/flux/flux.1-dev/iter_0000000 \
   dataset.path=${WORKSPACE}/data/my_flux_wds/ \
@@ -172,6 +172,6 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
    Run `scripts/training/run_recipe.py --recipe flux_12b_pretrain_config --step_func flux_step` (optionally with `dataset.path=...` for real data and CLI overrides).
 
 4. **Fine-Tuning**  
-   Run `scripts/training/run_recipe.py --recipe flux_12b_finetune_config --step_func flux_step checkpoint.pretrained_checkpoint=<path>` (optionally with `dataset.path=...` and overrides).
+   Run `scripts/training/run_recipe.py --recipe flux_12b_sft_config --step_func flux_step checkpoint.pretrained_checkpoint=<path>` (optionally with `dataset.path=...` and overrides).
 
 For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/flux/flux.py` and `scripts/training/run_recipe.py`.
