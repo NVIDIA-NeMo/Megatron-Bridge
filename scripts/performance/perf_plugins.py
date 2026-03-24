@@ -283,10 +283,6 @@ class PerfEnvPlugin(Plugin):
                     if gpu in ["gb300", "h100"]:
                         executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                         executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
-                elif train_task in ["lora"]:
-                    if gpu in ["gb300"] and compute_dtype == "fp8_cs":
-                        executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-                        executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
 
         del_cudnn_ln = True
         if gpu in ["h100"]:
