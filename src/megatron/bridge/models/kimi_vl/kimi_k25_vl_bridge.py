@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Mapping
+from functools import partial
+from typing import Dict, List, Mapping
 
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
@@ -30,8 +32,15 @@ from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 from megatron.bridge.models.kimi_vl.utils import (
     dequantize_int4,
     quantize_to_int4,
-    get_common_configs,
 )
+
+
+try:
+    import transformer_engine  # type: ignore  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
 
 
 @MegatronModelBridge.register_bridge(
@@ -54,45 +63,86 @@ class KimiK25VLBridge(MegatronModelBridge):
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
 
-        common_configs = get_common_configs(text_config, hf_pretrained)
+        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
+        valid_fields = KimiK25VLModelProvider.__dataclass_fields__
+        provider = KimiK25VLModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
 
-        # media_placeholder_token_id is on the top-level KimiK25Config, not on text_config
-        media_placeholder_token_id = getattr(hf_config, "media_placeholder_token_id", 163605)
+        # --- Language model architecture defaults (MoE + MLA) ---
+        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_bias_linear = False
+        provider.share_embeddings_and_output_weights = False
+        provider.qk_layernorm = True
+        provider.multi_latent_attention = True
+        provider.position_embedding_type = "rope"
 
-        provider = KimiK25VLModelProvider(
-            **common_configs,
-            vision_config=vision_config,
-            # VL-specific token IDs
-            bos_token_id=getattr(text_config, "bos_token_id", 163584),
-            eos_token_id=getattr(text_config, "eos_token_id", 163585),
-            image_token_id=media_placeholder_token_id,
-            media_placeholder_token_id=media_placeholder_token_id,
-            pad_token_id=getattr(hf_config, "pad_token_id", 163839),
-            ignore_index=getattr(hf_config, "ignore_index", -100),
-            # Precision configuration
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            # HF model path (needed for dynamic module loading of vision components)
-            hf_model_path=hf_pretrained._model_name_or_path,
-        )
-
-        # Dynamic configs derived from HF text_config (not in provider defaults)
+        # MoE settings
+        provider.moe_grouped_gemm = True
+        provider.moe_router_pre_softmax = True
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_router_load_balancing_type = "seq_aux_loss"
+        provider.moe_shared_expert_overlap = True
+        provider.moe_router_score_function = "sigmoid"
+        provider.moe_router_enable_expert_bias = True
+        provider.moe_router_dtype = "fp32"
+        provider.moe_permute_fusion = True
+        provider.moe_aux_loss_coeff = 1e-3
+        provider.moe_router_bias_update_rate = 1e-3
+        provider.moe_router_topk_scaling_factor = getattr(text_config, "routed_scaling_factor", 2.827)
+        provider.moe_shared_expert_intermediate_size = text_config.moe_intermediate_size * text_config.n_shared_experts
         provider.moe_layer_freq = [0] * text_config.first_k_dense_replace + [1] * (
             text_config.num_hidden_layers - text_config.first_k_dense_replace
         )
+
+        # Fusions
+        provider.apply_rope_fusion = False
+        provider.bias_activation_fusion = True
+        provider.bias_dropout_fusion = True
+        provider.cross_entropy_fusion_impl = "te"
+        provider.cross_entropy_loss_fusion = True
+        provider.masked_softmax_fusion = True
+        provider.persist_layer_norm = True
+        provider.gradient_accumulation_fusion = True
+
+        # Misc
+        provider.hidden_dropout = 0.0
+        provider.attention_dropout = 0.0
+        provider.attention_softmax_in_fp32 = False
+        provider.make_vocab_size_divisible_by = 1280
+        provider.seq_length = 4096
         provider.async_tensor_model_parallel_allreduce = True
+
+        # Precision
+        dtype = self.dtype_from_hf(hf_config, default=torch.float32)
+        provider.fp16 = dtype == torch.float16
+        provider.bf16 = dtype == torch.bfloat16
+        provider.params_dtype = dtype
+
+        # VL-specific overrides
+        provider.vision_config = vision_config
+        provider.hf_model_path = hf_pretrained._model_name_or_path
+        provider.generation_config = hf_pretrained.generation_config
+
+        # media_placeholder_token_id is on the top-level KimiK25Config, not on text_config
+        media_placeholder_token_id = getattr(hf_config, "media_placeholder_token_id", 163605)
+        provider.bos_token_id = getattr(text_config, "bos_token_id", 163584)
+        provider.eos_token_id = getattr(text_config, "eos_token_id", 163585)
+        provider.image_token_id = media_placeholder_token_id
+        provider.media_placeholder_token_id = media_placeholder_token_id
+        provider.pad_token_id = getattr(hf_config, "pad_token_id", 163839)
+        provider.ignore_index = getattr(hf_config, "ignore_index", -100)
 
         return provider
 
     def _load_and_dequantize(self, key: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
-        """Load a weight, dequantizing INT4 triplets and FP8 block-wise tensors when present."""
+        """Load a weight, dequantizing INT4 packed tensors when present."""
         base = key[:-7] if key.endswith(".weight") else key
         packed_key = f"{base}.weight_packed"
-        if (
-            packed_key in hf_state_dict
-        ):
-            assert f"{base}.weight_scale" in hf_state_dict and f"{base}.weight_shape" in hf_state_dict, f"Missing weight scale or shape for quantized weight {key}"
+        if packed_key in hf_state_dict:
+            assert f"{base}.weight_scale" in hf_state_dict and f"{base}.weight_shape" in hf_state_dict, (
+                f"Missing weight scale or shape for quantized weight {key}"
+            )
             weight = dequantize_int4(
                 hf_state_dict[packed_key],
                 hf_state_dict[f"{base}.weight_scale"],
@@ -106,7 +156,7 @@ class KimiK25VLBridge(MegatronModelBridge):
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Load HF weights, dequantizing INT4 and FP8 quantized tensors when present."""
+        """Load HF weights, dequantizing INT4 quantized tensors when present."""
         if isinstance(hf_param, str):
             return self._load_and_dequantize(hf_param, hf_state_dict)
         return {k: self._load_and_dequantize(v, hf_state_dict) for k, v in hf_param.items()}
@@ -126,25 +176,53 @@ class KimiK25VLBridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """Add rotary embedding inverse frequency parameter if needed."""
-
-        hf_state_dict = {}
+        """Re-quantize converted expert weights to INT4 format."""
+        result = {}
         for fqn, tensor in converted_weights_dict.items():
             if self._is_quantized_expert_key(fqn):
                 packed, scale, shape = quantize_to_int4(tensor)
-                hf_state_dict[f"{fqn[:-7] if fqn.endswith('.weight') else fqn}.weight_packed"] = packed
-                hf_state_dict[f"{fqn[:-7] if fqn.endswith('.weight') else fqn}.weight_scale"] = scale
-                hf_state_dict[f"{fqn[:-7] if fqn.endswith('.weight') else fqn}.weight_shape"] = shape
+                base = fqn[:-7] if fqn.endswith(".weight") else fqn
+                result[f"{base}.weight_packed"] = packed
+                result[f"{base}.weight_scale"] = scale
+                result[f"{base}.weight_shape"] = shape
             else:
-                hf_state_dict[fqn] = tensor
-        return hf_state_dict
+                result[fqn] = tensor
+        return result
+
+    def build_conversion_tasks(
+        self,
+        hf_pretrained,
+        megatron_model,
+    ) -> List:
+        """Override to synthesize virtual weight keys from INT4 quantized triplets.
+
+        The HF checkpoint stores quantized expert weights as triplets
+        (weight_packed, weight_scale, weight_shape) without a plain 'weight' key.
+        We synthesize virtual 'weight' keys so the mapping registry can find them,
+        then maybe_modify_loaded_hf_weight handles dequantization at load time.
+        """
+        original_get_all_keys = hf_pretrained.state.source.get_all_keys
+
+        def _get_all_keys_with_virtual():
+            keys = original_get_all_keys()
+            all_keys_set = set(keys)
+            virtual_keys = []
+            for key in keys:
+                if key.endswith("_packed"):
+                    base = key[:-7]  # e.g. "...weight_packed" -> "...weight"
+                    if f"{base}_scale" in all_keys_set and f"{base}_shape" in all_keys_set:
+                        virtual_keys.append(base)
+            return keys + virtual_keys
+
+        hf_pretrained.state.source.get_all_keys = _get_all_keys_with_virtual
+        try:
+            return super().build_conversion_tasks(hf_pretrained, megatron_model)
+        finally:
+            hf_pretrained.state.source.get_all_keys = original_get_all_keys
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format.
-        # Start with the common mapping list for the language model.
         mapping_list = get_common_mapping_list()
         param_mappings = {
-            # expert bias
             "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
         }
 
@@ -162,9 +240,8 @@ class KimiK25VLBridge(MegatronModelBridge):
                 mapping.hf_param["gate"] = mapping.hf_param["gate"].replace("model", "language_model.model")
                 mapping.hf_param["up"] = mapping.hf_param["up"].replace("model", "language_model.model")
 
-        # Add Vision Tower and MM Projector mappings.
-        # These use ReplicatedMapping because the vision components are not sharded
-        # across tensor parallel ranks — they are replicated on each rank.
+        # Vision Tower and MM Projector use ReplicatedMapping because
+        # vision components are not sharded across tensor parallel ranks.
         mapping_list.extend(
             [
                 ReplicatedMapping(

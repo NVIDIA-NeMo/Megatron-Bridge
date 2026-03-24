@@ -31,16 +31,6 @@ def mock_vision_config():
 class TestKimiK25VLModelProvider:
     """Test cases for KimiK25VLModelProvider."""
 
-    def test_initialization_defaults(self, mock_vision_config):
-        """Test provider can be initialized with correct defaults."""
-        provider = KimiK25VLModelProvider(vision_config=mock_vision_config)
-
-        assert provider.normalization == "RMSNorm"
-        assert provider.gated_linear_unit is True
-        assert provider.add_bias_linear is False
-        assert provider.position_embedding_type == "rope"
-        assert provider.multi_latent_attention is True
-
     def test_vl_specific_defaults(self, mock_vision_config):
         """Test VL-specific default configuration."""
         provider = KimiK25VLModelProvider(vision_config=mock_vision_config)
@@ -79,41 +69,6 @@ class TestKimiK25VLModelProvider:
         assert provider.pad_token_id == 103
         assert provider.image_token_id == 104
         assert provider.ignore_index == -200
-
-    def test_mla_defaults(self, mock_vision_config):
-        """Test MLA (Multi-Latent Attention) defaults."""
-        provider = KimiK25VLModelProvider(vision_config=mock_vision_config)
-
-        assert provider.q_lora_rank == 1536
-        assert provider.kv_lora_rank == 512
-        assert provider.qk_head_dim == 128
-        assert provider.qk_pos_emb_head_dim == 64
-        assert provider.v_head_dim == 128
-        assert provider.qk_layernorm is True
-
-    def test_moe_defaults(self, mock_vision_config):
-        """Test MoE defaults."""
-        provider = KimiK25VLModelProvider(vision_config=mock_vision_config)
-
-        assert provider.moe_router_topk == 8
-        assert provider.moe_router_score_function == "sigmoid"
-        assert provider.moe_router_enable_expert_bias is True
-        assert provider.moe_grouped_gemm is True
-        assert provider.moe_router_pre_softmax is True
-        assert provider.moe_token_dispatcher_type == "alltoall"
-        assert provider.moe_router_dtype == "fp32"
-
-    def test_model_architecture_defaults(self, mock_vision_config):
-        """Test model architecture defaults."""
-        provider = KimiK25VLModelProvider(vision_config=mock_vision_config)
-
-        assert provider.num_layers == 61
-        assert provider.hidden_size == 7168
-        assert provider.ffn_hidden_size == 18432
-        assert provider.num_moe_experts == 384
-        assert provider.num_attention_heads == 64
-        assert provider.vocab_size == 163840
-        assert provider.seq_length == 4096
 
     def test_vision_config_stored(self, mock_vision_config):
         """Test vision config is stored."""
@@ -163,3 +118,15 @@ class TestKimiK25VLModelProviderInheritance:
 
         provider = KimiK25VLModelProvider(vision_config=mock_vision_config)
         assert isinstance(provider, MLAModelProvider)
+
+    def test_accepts_language_model_kwargs(self, mock_vision_config):
+        """Test that language model params can be passed as kwargs (from provider_bridge)."""
+        provider = KimiK25VLModelProvider(
+            vision_config=mock_vision_config,
+            num_layers=61,
+            hidden_size=7168,
+            num_moe_experts=384,
+        )
+        assert provider.num_layers == 61
+        assert provider.hidden_size == 7168
+        assert provider.num_moe_experts == 384

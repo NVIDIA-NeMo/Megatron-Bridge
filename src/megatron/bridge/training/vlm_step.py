@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import math
 from functools import partial
 from typing import Any, Iterable
 
@@ -305,9 +306,9 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     visual_inputs = batch.get("visual_inputs")
     cp_size = pg_collection.cp.size() if pg_collection is not None and pg_collection.cp is not None else 1
 
-    # Assume sequence parallel size is always open.
     tp_sp_size = pg_collection.tp.size() if pg_collection is not None and pg_collection.tp is not None else 1
-    pad_to_multiple_of = tp_sp_size * (cp_size * 2 if cp_size > 1 else 1)
+    cp_multiple = cp_size * 2 if cp_size > 1 else 1
+    pad_to_multiple_of = math.lcm(tp_sp_size, cp_multiple)
 
     if enable_packing:
         # Pack sequences
