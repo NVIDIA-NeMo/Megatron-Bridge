@@ -99,7 +99,7 @@ def _make_language_config() -> TransformerConfig:
 
     cfg.num_query_groups = 32
     cfg.add_bias_linear = False
-    cfg.untie_embeddings_and_output_weights = False
+    cfg.untie_embeddings_and_output_weights = True
 
     cfg.bias_activation_fusion = True
     cfg.masked_softmax_fusion = True
