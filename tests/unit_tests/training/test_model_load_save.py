@@ -794,6 +794,7 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            callback_manager=None,
         )
 
         # Verify tokenizer was built and saved
