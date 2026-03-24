@@ -244,9 +244,10 @@ def setup(
     # checkpoints are independent of global ones — they don't write
     # latest_train_state.pt to load_dir, so checkpoint_exists() won't
     # find them.
+    _ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
     has_local_checkpoint = (
-        "local_checkpoint_manager" in checkpointing_context
-        and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
+        "local_checkpoint_manager" in _ckpt_ctx
+        and _ckpt_ctx["local_checkpoint_manager"].find_latest() != -1
     )
 
     # For PEFT, the pretrained checkpoint is loaded in the pre-wrap hook
