@@ -686,11 +686,11 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
 
         try:
             module_path, class_name = checkpoint_config.custom_manager_class.rsplit(".", 1)
-        except ValueError:
+        except ValueError as err:
             raise ValueError(
                 f"Invalid custom_manager_class format: '{checkpoint_config.custom_manager_class}'. "
                 f"Expected fully qualified class name like 'mypackage.module.ClassName'."
-            )
+            ) from err
 
         try:
             module = importlib.import_module(module_path)

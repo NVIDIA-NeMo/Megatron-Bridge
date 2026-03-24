@@ -2925,10 +2925,10 @@ class TestCheckpointManager:
                 self.checkpoint_config = checkpoint_config
                 self.initialized = True
 
-            def save(self, ctx):
+            def save(self, _ctx):
                 pass
 
-            def load(self, ctx):
+            def load(self, _ctx):
                 return (0, 0)
 
             def finalize_async_saves(self, state, blocking=False, terminate=False):
