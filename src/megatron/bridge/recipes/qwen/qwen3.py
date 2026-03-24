@@ -587,7 +587,7 @@ def qwen3_600m_sft_config() -> ConfigContainer:
     return cfg
 
 
-def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
+def qwen3_600m_sft_128k_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3 600M with YaRN 128K context extension.
 
     Extends the base 600M SFT config with YaRN RoPE scaling to support 128K sequence
@@ -611,13 +611,10 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 8
     cfg.model.sequence_parallel = False
 
-    # 128K sequence length (must be set on both model and dataset)
+    # 128K sequence length
     cfg.model.seq_length = 131072
     cfg.dataset.seq_length = 131072
     cfg.dataset.packed_sequence_specs.packed_sequence_size = 131072
-    # cfg.model.seq_length = 4096
-    # cfg.dataset.seq_length = 4096
-    # cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
     # Set pad_seq_to_mult for context parallelism
     cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
