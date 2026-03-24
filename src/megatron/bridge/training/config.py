@@ -1174,7 +1174,7 @@ class ConfigContainer(Container):
             if self.tensor_inspect.init_training_step == 0 and self.checkpoint.ckpt_step is not None:
                 self.tensor_inspect.init_training_step = int(self.checkpoint.ckpt_step)
 
-        self.model.use_cpu_initialization = self.model.use_cpu_initialization or self.dist.lazy_init
+        self.model.use_cpu_initialization = self.model.use_cpu_initialization or self.dist.lazy_mpu_init
 
         # Gloo process groups are not supported when using decentralized process groups (NCCL only).
         if self.dist.use_decentralized_pg:

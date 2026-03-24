@@ -171,7 +171,7 @@ def create_test_distributed_init_config(**kwargs: Any) -> DistributedInitConfig:
     """Creates an instance of DistributedInitConfig with defaults for testing."""
     defaults = {
         "use_gloo_process_groups": True,
-        "lazy_init": False,
+        "lazy_mpu_init": False,
     }
     defaults.update(kwargs)
     return DistributedInitConfig(**defaults)
@@ -543,9 +543,9 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_cpu_initialization_with_lazy_init(self, monkeypatch):
-        """Test `use_cpu_initialization` is True if `lazy_init` is True."""
+        """Test `use_cpu_initialization` is True if `lazy_mpu_init` is True."""
         gpt_model_cfg = create_test_gpt_config(use_cpu_initialization=False)
-        dist_cfg = create_test_distributed_init_config(lazy_init=True)
+        dist_cfg = create_test_distributed_init_config(lazy_mpu_init=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=4, model_config=gpt_model_cfg, dist_config=dist_cfg
@@ -560,8 +560,8 @@ class TestConfigContainerValidation:
         """Test `use_cpu_initialization` remains True if initially True."""
         gpt_model_cfg_true = create_test_gpt_config(use_cpu_initialization=True)
 
-        # Case 1: lazy_init is False
-        dist_cfg_lazy_false = create_test_distributed_init_config(lazy_init=False)
+        # Case 1: lazy_mpu_init is False
+        dist_cfg_lazy_false = create_test_distributed_init_config(lazy_mpu_init=False)
         container1, og1, mod1 = create_test_config_container(
             world_size_override=4, model_config=gpt_model_cfg_true, dist_config=dist_cfg_lazy_false
         )
@@ -571,8 +571,8 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og1, mod1)
 
-        # Case 2: lazy_init is True
-        dist_cfg_lazy_true = create_test_distributed_init_config(lazy_init=True)
+        # Case 2: lazy_mpu_init is True
+        dist_cfg_lazy_true = create_test_distributed_init_config(lazy_mpu_init=True)
         gpt_model_cfg_true_case2 = create_test_gpt_config(use_cpu_initialization=True)
         container2, og2, mod2 = create_test_config_container(
             world_size_override=4, model_config=gpt_model_cfg_true_case2, dist_config=dist_cfg_lazy_true
