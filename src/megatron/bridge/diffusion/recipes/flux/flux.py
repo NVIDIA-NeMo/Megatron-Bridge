@@ -17,8 +17,9 @@ import os
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
+from megatron.bridge.diffusion.conversion.flux.flux_bridge import FluxBridge
+from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrainedFlux
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
-from megatron.bridge.diffusion.models.flux.flux_provider import FluxModelProvider12B
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -49,8 +50,9 @@ def flux_12b_pretrain_config() -> ConfigContainer:
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
-    # Model configuration - use FluxModelProvider12B (19 joint + 38 single layers)
-    model_cfg = FluxModelProvider12B()
+    # TODO: Add AutoBridge support for diffusion models
+    hf = PreTrainedFlux("black-forest-labs/FLUX.1-dev")
+    model_cfg = FluxBridge().provider_bridge(hf)
     model_cfg.tensor_model_parallel_size = 2
     model_cfg.pipeline_model_parallel_size = 1
     model_cfg.pipeline_dtype = torch.bfloat16

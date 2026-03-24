@@ -31,7 +31,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 
 def _flux_axes_dims_rope(hf_config) -> List[int]:
     """Normalize diffusers tuple/list config to ``List[int]`` for :class:`FluxProvider`."""
-    raw = hf_config.axes_dims_rope
+    raw = getattr(hf_config, "axes_dims_rope", [16, 56, 56])
     if isinstance(raw, (list, tuple)):
         return [int(x) for x in raw]
     raise TypeError(f"Unexpected axes_dims_rope type: {type(raw)}")

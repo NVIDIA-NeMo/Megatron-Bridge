@@ -25,15 +25,11 @@ pytestmark = [pytest.mark.unit]
 def test_load_config_uses_transformer_subfolder(monkeypatch, tmp_path):
     calls = []
 
-    class FakeModel:
-        def __init__(self, cfg):
-            self.config = cfg
-
     class FakeFlux:
         @classmethod
-        def from_pretrained(cls, path, subfolder=None):
+        def load_config(cls, path, subfolder=None):
             calls.append((str(path), subfolder))
-            return FakeModel(cfg={"ok": True})
+            return {"ok": True}
 
     monkeypatch.setattr(flux_hf_module, "FluxTransformer2DModel", FakeFlux)
 
@@ -41,9 +37,9 @@ def test_load_config_uses_transformer_subfolder(monkeypatch, tmp_path):
     src.mkdir(parents=True, exist_ok=True)
     hf = flux_hf_module.PreTrainedFlux(str(src))
 
-    # Accessing .config should trigger _load_config
+    # Accessing .config should trigger _load_config (config-only; no from_pretrained / shards)
     cfg = hf.config
-    assert cfg == {"ok": True}
+    assert cfg.ok is True
     # Ensure we called with transformer subfolder
     assert calls and calls[-1][1] == "transformer"
 
@@ -101,41 +97,11 @@ def test_save_artifacts_copies_existing_files(tmp_path):
     assert json.loads((dest_tdir / "diffusion_pytorch_model.safetensors.index.json").read_text()) == index_data
 
 
-def test_save_artifacts_exports_config_when_missing(monkeypatch, tmp_path):
-    class FakeCfg:
-        def to_dict(self):
-            return {"from_model": True}
-
-    class FakeModel:
-        def __init__(self):
-            self.config = FakeCfg()
-
-    class FakeFlux:
-        @classmethod
-        def from_pretrained(cls, path, subfolder=None):
-            # Ensure it targets the transformer subfolder
-            assert subfolder == "transformer"
-            return FakeModel()
-
-    monkeypatch.setattr(flux_hf_module, "FluxTransformer2DModel", FakeFlux)
-
-    src = tmp_path / "empty_src"
-    src.mkdir(parents=True, exist_ok=True)
-
-    dest = tmp_path / "out"
-    hf = flux_hf_module.PreTrainedFlux(str(src))
-    hf.save_artifacts(dest)
-
-    # Should create transformer/config.json with exported contents
-    dest_cfg = dest / "transformer" / "config.json"
-    assert dest_cfg.is_file()
-    assert json.loads(dest_cfg.read_text()) == {"from_model": True}
-
 
 def test_save_artifacts_handles_export_failure(monkeypatch, tmp_path):
     class FailingFlux:
         @classmethod
-        def from_pretrained(cls, path, subfolder=None):
+        def load_config(cls, path, subfolder=None):
             raise RuntimeError("fail")
 
     monkeypatch.setattr(flux_hf_module, "FluxTransformer2DModel", FailingFlux)

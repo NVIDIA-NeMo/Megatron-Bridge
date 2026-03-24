@@ -64,7 +64,7 @@ class TestPretrainConfig:
 
         assert config.model.num_joint_layers == 19
         assert config.model.hidden_size == 3072
-        assert config.model.guidance_embed is False
+        assert config.model.guidance_embed is True
         assert config.model.tensor_model_parallel_size == 2
 
     def test_pretrain_config_default_dataset_configuration(self):

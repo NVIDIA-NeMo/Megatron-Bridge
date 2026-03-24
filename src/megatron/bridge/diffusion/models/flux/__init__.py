@@ -53,7 +53,7 @@ from megatron.bridge.diffusion.models.flux.flux_layer_spec import (
     get_flux_single_transformer_engine_spec,
 )
 from megatron.bridge.diffusion.models.flux.flux_model import Flux
-from megatron.bridge.diffusion.models.flux.flux_provider import FluxModelProvider12B, FluxProvider
+from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
 from megatron.bridge.diffusion.models.flux.layers import (
     EmbedND,
     MLPEmbedder,
@@ -66,7 +66,6 @@ from megatron.bridge.diffusion.models.flux.layers import (
 __all__ = [
     # Main model
     "Flux",
-    "FluxModelProvider12B",
     "FluxProvider",
     # Transformer layers
     "MMDiTLayer",
