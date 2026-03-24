@@ -619,18 +619,8 @@ def qwen3_600m_sft_128k_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Batch sizes (micro_batch_size must be 1 with packed sequence)
-    cfg.train.global_batch_size = 8
+    cfg.train.global_batch_size = 2
     cfg.train.micro_batch_size = 1
-
-    # YaRN RoPE scaling (factor=3.2 extends 40960 → ~128K context)
-    cfg.model.position_embedding_type = "yarn"
-    cfg.model.yarn_rotary_scaling_factor = 3.2
-    cfg.model.yarn_original_max_position_embeddings = 40960
-    cfg.model.yarn_beta_fast = 32.0
-    cfg.model.yarn_beta_slow = 1.0
-    cfg.model.yarn_mscale = 1.0
-    cfg.model.yarn_mscale_all_dim = 0.0
-    cfg.model.yarn_correction_range_round_to_int = True  # truncate=true
 
     # Training config
     cfg.validation.eval_interval = 30
