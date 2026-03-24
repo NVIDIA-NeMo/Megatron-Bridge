@@ -53,12 +53,14 @@ Usage:
     Diffusion pretrain:
         uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe wan_1_3B_pretrain_config \
-            --step_func wan_step
+            --step_func wan_step \
+            dataset.path=/data/energon
 
     Diffusion SFT (full finetuning):
         uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe wan_1_3B_finetune_config \
+            --recipe wan_1_3B_sft_config \
             --step_func wan_step
+            dataset.path=/data/energon
 
     VLM with HF dataset:
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
