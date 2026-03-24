@@ -1,3 +1,4 @@
+#!/bin/bash
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,27 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Example override file
+set -xeuo pipefail
 
-# To override a parameter, ensure the structure matches the ConfigContainer
-# and its sub-configurations (e.g., model, train, etc.)
-# Top-level ConfigContainer fields are dataclasses themselves
+export CUDA_VISIBLE_DEVICES="0"
 
-model:
-  crossattn_emb_size: 1536
-  hidden_size: 1536
-  ffn_hidden_size: 8960
-  num_attention_heads: 12
-  num_layers: 30
-  tensor_model_parallel_size: 1
-  pipeline_model_parallel_size: 1
-  context_parallel_size: 8
-  sequence_parallel: false
+TEST_FILE="tests/functional_tests/diffusion/wan/test_wan_ckpt_conversion.py"
+# Run all conversion tests in a single invocation so the class-scoped fixtures
+# (toy model creation, HF->Megatron import) are shared across tests.
+uv run coverage run \
+  --data-file=/opt/Megatron-Bridge/.coverage \
+  --source=/opt/Megatron-Bridge/ \
+  --parallel-mode \
+  -m pytest \
+  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  ${TEST_FILE}::TestWanCheckpointConversion
 
-train:
-  global_batch_size: 2
-  micro_batch_size: 1
-
-dataset:
-  global_batch_size: 2
-  micro_batch_size: 1
+coverage combine -q
