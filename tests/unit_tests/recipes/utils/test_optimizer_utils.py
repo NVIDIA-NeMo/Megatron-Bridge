@@ -19,6 +19,7 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_fused_adam_with_cosine_annealing,
     distributed_fused_adam_with_cosine_annealing_samples,
+    distributed_muon_with_cosine_annealing,
 )
 from megatron.bridge.training.config import SchedulerConfig
 
@@ -44,10 +45,79 @@ class TestOptimizerUtils:
         assert optim_cfg.adam_beta2 == 0.98
         assert optim_cfg.bf16 is True
 
+    def test_muon_optimizer_config(self):
+        """Test Muon optimizer config."""
+
+        optim_cfg, _ = distributed_muon_with_cosine_annealing(
+            muon_momentum=0.98,
+            muon_use_nesterov=False,
+            muon_extra_scale_factor=1.01,
+            weight_decay=0.01,
+            max_lr=3e-4,
+            min_lr=3e-5,
+        )
+
+        assert isinstance(optim_cfg, OptimizerConfig)
+        assert optim_cfg.lr == 3e-4
+        assert optim_cfg.weight_decay == 0.01
+        assert optim_cfg.muon_extra_scale_factor == 1.01
+        assert getattr(optim_cfg, "muon_use_nesterov", getattr(optim_cfg, "muon_nesterov", None)) is False
+        assert optim_cfg.muon_momentum == 0.98
+        assert optim_cfg.bf16 is True
+
+    def test_muon_lion_optimizer_config(self):
+        """Test Muon+Lion optimizer config."""
+
+        optim_cfg, _ = distributed_muon_with_cosine_annealing(
+            muon_momentum=0.98,
+            muon_use_nesterov=False,
+            muon_extra_scale_factor=1.01,
+            muon_scalar_optimizer="lion",
+            lion_beta2=0.95,
+            weight_decay=0.01,
+            max_lr=3e-4,
+            min_lr=3e-5,
+        )
+
+        assert isinstance(optim_cfg, OptimizerConfig)
+        assert optim_cfg.lr == 3e-4
+        assert optim_cfg.weight_decay == 0.01
+        assert optim_cfg.lion_beta2 == 0.95
+        assert optim_cfg.muon_scalar_optimizer == "lion"
+        assert optim_cfg.muon_extra_scale_factor == 1.01
+        assert getattr(optim_cfg, "muon_use_nesterov", getattr(optim_cfg, "muon_nesterov", None)) is False
+        assert optim_cfg.muon_momentum == 0.98
+        assert optim_cfg.bf16 is True
+
     def test_scheduler_config(self):
         """Test scheduler config."""
 
         _, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+            lr_warmup_iters=1999,
+            lr_decay_iters=12345,
+        )
+
+        assert isinstance(scheduler_cfg, SchedulerConfig)
+        assert scheduler_cfg.lr_warmup_iters == 1999
+        assert scheduler_cfg.lr_decay_iters == 12345
+
+    def test_muon_scheduler_config(self):
+        """Test Muon scheduler config."""
+
+        _, scheduler_cfg = distributed_muon_with_cosine_annealing(
+            lr_warmup_iters=1999,
+            lr_decay_iters=12345,
+        )
+
+        assert isinstance(scheduler_cfg, SchedulerConfig)
+        assert scheduler_cfg.lr_warmup_iters == 1999
+        assert scheduler_cfg.lr_decay_iters == 12345
+
+    def test_muon_lion_scheduler_config(self):
+        """Test Muon+Lion scheduler config."""
+
+        _, scheduler_cfg = distributed_muon_with_cosine_annealing(
+            muon_scalar_optimizer="lion",
             lr_warmup_iters=1999,
             lr_decay_iters=12345,
         )
