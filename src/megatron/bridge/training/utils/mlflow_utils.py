@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -85,4 +86,14 @@ def on_load_checkpoint_success(
 
 def _sanitize_mlflow_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     """Sanitize all metric names in a dictionary for MLFlow logging."""
-    return {key.replace("/", "_"): value for key, value in metrics.items()}
+
+    def _sanitize_key(key):
+        sanitized = key.replace("@", "_at_")
+        sanitized = re.sub(r"/+", "/", sanitized)
+        if "/" in key:
+            first, rest = sanitized.split("/", 1)
+            sanitized = first + "/" + rest.replace("/", "_")
+        sanitized = re.sub(r"[^/\w.\- :]", "_", sanitized)
+        return sanitized
+
+    return {_sanitize_key(key): value for key, value in metrics.items()}

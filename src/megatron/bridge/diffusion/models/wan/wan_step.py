@@ -75,9 +75,26 @@ def wan_data_step(qkv_format, dataloader_iter):  # noqa: D103
     return batch
 
 
+_WAN_MODE_DEFAULTS: dict[str, dict] = {
+    "pretrain": dict(
+        timestep_sampling="logit_normal",
+        logit_std=1.5,
+        flow_shift=2.5,
+        mix_uniform_ratio=0.2,
+    ),
+    "finetune": dict(
+        timestep_sampling="uniform",
+        logit_std=1.0,
+        flow_shift=3.0,
+        mix_uniform_ratio=0.1,
+    ),
+}
+
+
 class WanForwardStep:  # noqa: D101
     def __init__(
         self,
+        mode: str = "pretrain",
         use_sigma_noise: bool = True,
         timestep_sampling: str = "uniform",
         logit_mean: float = 0.0,
@@ -87,6 +104,14 @@ class WanForwardStep:  # noqa: D101
         sigma_min: float = 0.0,  # Default: no clamping (pretrain)
         sigma_max: float = 1.0,  # Default: no clamping (pretrain)
     ):
+        if mode is not None:
+            if mode not in _WAN_MODE_DEFAULTS:
+                raise ValueError(f"Unknown WAN mode '{mode}'. Choose from: {list(_WAN_MODE_DEFAULTS)}")
+            defaults = _WAN_MODE_DEFAULTS[mode]
+            timestep_sampling = defaults.get("timestep_sampling", timestep_sampling)
+            logit_std = defaults.get("logit_std", logit_std)
+            flow_shift = defaults.get("flow_shift", flow_shift)
+            mix_uniform_ratio = defaults.get("mix_uniform_ratio", mix_uniform_ratio)
         self.diffusion_pipeline = WanFlowMatchingPipeline(
             model_adapter=WanAdapter(),
             timestep_sampling=timestep_sampling,

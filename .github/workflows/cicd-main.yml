@@ -39,6 +39,9 @@ on:
         type: choice
         options:
           - "all"
+          - "L0"
+          - "L1"
+          - "L2"
           - "unit-only"
           - "functional-only"
         default: "all"
@@ -83,10 +86,10 @@ jobs:
         needs.pre-flight.outputs.is_deployment_workflow == 'false'
           && needs.pre-flight.outputs.is_ci_workload == 'false'
           && needs.pre-flight.outputs.docs_only == 'false'
-      )
+      ) || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: "recursive"
 
@@ -157,7 +160,7 @@ jobs:
           echo "main=${SHA}" | tee -a "$GITHUB_OUTPUT"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
           ref: ${{ steps.sha.outputs.main }}
@@ -200,7 +203,7 @@ jobs:
           echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
 
       - name: Setup python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: 3.12
 
@@ -331,7 +334,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests_Core
@@ -341,7 +344,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -392,7 +395,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests_Diffusion
@@ -402,7 +405,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -453,8 +456,15 @@ jobs:
       matrix_l1: ${{ steps.scan.outputs.matrix_l1 }}
       matrix_l2: ${{ steps.scan.outputs.matrix_l2 }}
       matrix_flaky: ${{ steps.scan.outputs.matrix_flaky }}
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+      )
+      && !cancelled()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: scan
         shell: bash
         run: |
@@ -498,7 +508,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
     environment: nemo-ci
     env:
@@ -507,7 +517,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -566,7 +576,7 @@ jobs:
       )
       && !cancelled()
       && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true' || needs.check-labels.outputs.full_test_suite == 'true')
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
     environment: nemo-ci
     env:
@@ -575,7 +585,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -634,7 +644,7 @@ jobs:
       )
       && !cancelled()
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.full_test_suite == 'true')
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
     environment: nemo-ci
     env:
@@ -643,7 +653,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -687,7 +697,7 @@ jobs:
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   cicd-functional-tests-flaky:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
     strategy:
       fail-fast: false
       max-parallel: 16
@@ -702,7 +712,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -767,7 +777,7 @@ jobs:
     permissions: write-all
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Get workflow result
         id: result
@@ -827,7 +837,7 @@ jobs:
       )
     steps:
       - name: Generate fake coverage report
-        uses: actions/github-script@v6
+        uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.PAT }}
           script: |
@@ -856,10 +866,10 @@ jobs:
           - e2e
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download coverage reports of current branch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: coverage-${{ matrix.flag }}-*
 
@@ -884,7 +894,7 @@ jobs:
           flags: ${{ matrix.flag }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-${{ matrix.flag }}-aggregated
           path: |

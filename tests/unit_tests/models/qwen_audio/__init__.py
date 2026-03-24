@@ -12,27 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Example override file
-
-# To override a parameter, ensure the structure matches the ConfigContainer
-# and its sub-configurations (e.g., model, train, etc.)
-# Top-level ConfigContainer fields are dataclasses themselves
-
-model:
-  crossattn_emb_size: 1536
-  hidden_size: 1536
-  ffn_hidden_size: 8960
-  num_attention_heads: 12
-  num_layers: 30
-  tensor_model_parallel_size: 1
-  pipeline_model_parallel_size: 1
-  context_parallel_size: 8
-  sequence_parallel: false
-
-train:
-  global_batch_size: 2
-  micro_batch_size: 1
-
-dataset:
-  global_batch_size: 2
-  micro_batch_size: 1
+"""Unit tests for Qwen Audio models."""
