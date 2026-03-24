@@ -37,17 +37,12 @@ Usage:
         uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_peft_config
 
-    Diffusion (FLUX) pretrain:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe flux_14b_pretrain_config \
-            --step_func flux_step
-
-    Diffusion (WAN 1.3B) pretrain:
+    Diffusion pretrain:
         uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe wan_1_3B_pretrain_config \
             --step_func wan_step
 
-    Diffusion (WAN 1.3B) finetune:
+    Diffusion SFT (full finetuning):
         uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe wan_1_3B_finetune_config \
             --step_func wan_step
@@ -100,7 +95,7 @@ STEP_FUNCTIONS: dict[str, Callable] = {
     "vlm_step": vlm_forward_step,
     "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
-    "flux_step": FluxForwardStep(),
+    "flux_step": FluxForwardStep,
     "wan_step": WanForwardStep,
 }
 
@@ -246,8 +241,10 @@ def load_forward_step(step_type: str, mode: str | None = None) -> Callable:
     if step_key not in STEP_FUNCTIONS:
         raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))
     step = STEP_FUNCTIONS[step_key]
-    if inspect.isclass(step) and "mode" in inspect.signature(step.__init__).parameters:
-        return step(mode=mode)
+    if inspect.isclass(step):
+        if "mode" in inspect.signature(step.__init__).parameters:
+            return step(mode=mode)
+        return step()
     return step
 
 

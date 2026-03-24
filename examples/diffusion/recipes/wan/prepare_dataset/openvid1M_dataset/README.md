@@ -63,14 +63,13 @@ torchrun --nproc_per_node=8 \
 
 The output directory `${DATASET_PATH}` can then be passed directly as `dataset.path` when launching Wan training.
 
-## Step 5: Launch Wan Fine-tuning
+## Step 5: Launch Wan Training
 
 Set the required environment variables and run the training script:
 
 ```bash
 DATASET_PATH=${PROCESSED_DATA_PATH}/prepared_dataset_wds
 CHECKPOINT_DIR=<path/to/save/checkpoints>
-INIT_CHECKPOINT_DIR=<path/to/pretrained/wan/checkpoint>
 EXP_NAME=<experiment_name>
 
 NVTE_FUSED_ATTN=1 torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
@@ -86,7 +85,7 @@ NVTE_FUSED_ATTN=1 torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
     dataset.packing_buffer_size=200 \
     dataset.num_workers=10 \
     checkpoint.save=${CHECKPOINT_DIR} \
-    checkpoint.load=${INIT_CHECKPOINT_DIR} \
+    checkpoint.load=${CHECKPOINT_DIR} \
     checkpoint.load_optim=false \
     checkpoint.save_interval=200 \
     optimizer.lr=5e-5 \
@@ -100,11 +99,5 @@ NVTE_FUSED_ATTN=1 torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
     train.micro_batch_size=1 \
     dataset.global_batch_size=8 \
     dataset.micro_batch_size=1 \
-    logger.log_interval=1 \
-    logger.wandb_project="wan" \
-    logger.wandb_exp_name=${EXP_NAME} \
-    logger.wandb_save_dir=${CHECKPOINT_DIR}
+    logger.log_interval=1
 ```
-
-> **Note:** With a small dataset (e.g. 200 videos), set `dataset.num_workers=1` to avoid an
-> `IndexError` in the Energon sharder caused by too few samples in the val split shard.
