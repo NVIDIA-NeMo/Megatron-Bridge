@@ -52,7 +52,6 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.share_embeddings_and_output_weights = False
         provider.qk_layernorm = True
@@ -70,13 +69,13 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.moe_aux_loss_coeff = 0.0001
 
         provider.apply_rope_fusion = False
+        provider.gradient_accumulation_fusion = True
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True
         provider.cross_entropy_fusion_impl = "te"
         provider.cross_entropy_loss_fusion = True
         provider.masked_softmax_fusion = True
         provider.persist_layer_norm = True
-        provider.gradient_accumulation_fusion = True
 
         provider.hidden_dropout = 0.0
         provider.attention_softmax_in_fp32 = False
@@ -89,13 +88,19 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         )
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
 
-        # TODO: mtp
-        provider.mtp_num_layers = None
+        provider.mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or None
 
         return provider
 
+    def build_conversion_tasks(self, hf_pretrained, megatron_model):
+        """Override to store config before mapping_registry is called."""
+        # Store config on instance for use in mapping_registry
+        self._hf_config = hf_pretrained.config
+        return super().build_conversion_tasks(hf_pretrained, megatron_model)
+
     def mapping_registry(self) -> MegatronMappingRegistry:
-        mapping_list = get_common_mapping_list()
+        hf_config = getattr(self, "_hf_config", None)
+        mapping_list = get_common_mapping_list(hf_config=hf_config)
         mapping_list.append(
             AutoMapping(
                 megatron_param="decoder.layers.*.mlp.router.expert_bias",

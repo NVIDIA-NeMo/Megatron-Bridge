@@ -587,6 +587,49 @@ def qwen3_600m_sft_config() -> ConfigContainer:
     return cfg
 
 
+def qwen3_600m_sft_128k_config() -> ConfigContainer:
+    """Return a full SFT config for Qwen3 600M with 128K context length.
+
+    Extends the base 600M SFT config to support 128K sequence length with
+    context parallelism.
+
+    Recommended parallelism: TP=1, CP=8 (minimum 8 GPUs)
+    """
+    cfg = qwen3_600m_sft_config()
+
+    # 128K context parallelism
+    cfg.model.context_parallel_size = 8
+    # Use all-to-all (Ulysses) CP instead of p2p ring to avoid NaN gradients in backward
+    cfg.model.cp_comm_type = "a2a"
+
+    # 128K sequence length
+    cfg.model.seq_length = 131072
+    cfg.dataset.seq_length = 131072
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = 131072
+    cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+
+    # Smaller batch size to fit 128K sequences
+    cfg.train.global_batch_size = 2
+
+    # Disable cross_entropy_loss_fusion (not compatible with CP > 1)
+    cfg.model.cross_entropy_loss_fusion = False
+
+    # Required for CP > 1 in SFT: avoids nan loss on CP ranks with all tokens masked
+    cfg.model.calculate_per_token_loss = True
+    cfg.ddp.average_in_collective = False  # Must be False when calculate_per_token_loss=True
+
+    # Lower LR for long-context SFT
+    cfg.optimizer.lr = 1.0e-6
+    cfg.optimizer.min_lr = 1.0e-6
+    cfg.optimizer.use_distributed_optimizer = False
+
+    # Fewer warmup steps for long-context SFT
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_warmup_init = 1.0e-11
+
+    return cfg
+
+
 def qwen3_1p7b_sft_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3 1.7B.
 

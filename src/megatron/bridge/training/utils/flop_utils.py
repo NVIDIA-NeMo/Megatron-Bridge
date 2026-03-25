@@ -36,13 +36,13 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
 
     def calculate_layer_counts():
         """Calculate the number of attention, Mamba, MLP, and MoE layers."""
-        if hasattr(cfg.model, "hybrid_override_pattern") and cfg.model.hybrid_override_pattern:
+        if hasattr(cfg.model, "hybrid_layer_pattern") and cfg.model.hybrid_layer_pattern:
             counts = {"M": 0, "*": 0, "-": 0, "E": 0}
             try:
                 parse_hybrid_pattern = importlib.import_module(
                     "megatron.core.ssm.mamba_hybrid_layer_allocation"
                 ).parse_hybrid_pattern
-                parsed = parse_hybrid_pattern(cfg.model.hybrid_override_pattern)
+                parsed = parse_hybrid_pattern(cfg.model.hybrid_layer_pattern)
                 if parsed.main_pattern:
                     for layer_type in parsed.main_pattern:
                         if layer_type in counts:
@@ -52,7 +52,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                         if layer_type in counts:
                             counts[layer_type] += parsed.mtp_num_depths
             except (ImportError, ModuleNotFoundError):
-                for layer_type in cfg.model.hybrid_override_pattern:
+                for layer_type in cfg.model.hybrid_layer_pattern:
                     if layer_type in counts:
                         counts[layer_type] += 1
             return counts["*"], counts["M"], counts["-"], counts["E"]
@@ -382,6 +382,63 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 )
             )
 
+        # Handle GDN (Gated DeltaNet) hybrid attention variant.
+        # When experimental_attention_variant is "gated_delta_net", a fraction of the
+        # layers use GDN instead of standard attention. Override self_attn_term with a
+        # weighted sum of GDN and standard-attention per-layer costs.
+        experimental_attention_variant = getattr(cfg.model, "experimental_attention_variant", None)
+        if experimental_attention_variant == "gated_delta_net":
+            linear_attention_freq = cfg.model.linear_attention_freq
+            if linear_attention_freq is None:
+                raise ValueError(
+                    "linear_attention_freq must be set when experimental_attention_variant='gated_delta_net'"
+                )
+            if isinstance(linear_attention_freq, int):
+                linear_attention_pattern = [
+                    0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(num_layers)
+                ]
+            elif isinstance(linear_attention_freq, list):
+                linear_attention_pattern = linear_attention_freq
+                if len(linear_attention_pattern) != num_layers:
+                    raise ValueError(
+                        f"Invalid length of linear_attention_pattern: {len(linear_attention_pattern)}, "
+                        f"expected {num_layers}, "
+                        f"current linear_attention_freq: {linear_attention_freq}"
+                    )
+            else:
+                raise TypeError(
+                    f"linear_attention_freq must be int or list, got {type(linear_attention_freq).__name__}"
+                )
+
+            num_gdn_layers = sum(linear_attention_pattern)
+            num_standard_attn_layers = num_layers - num_gdn_layers
+
+            standard_self_attn_per_layer = self_attn_term / num_layers if num_layers > 0 else 0
+
+            qk_head_dim = cfg.model.linear_key_head_dim
+            v_head_dim = cfg.model.linear_value_head_dim
+            num_qk_heads = cfg.model.linear_num_key_heads
+            num_v_heads = cfg.model.linear_num_value_heads
+            conv_kernel_dim = cfg.model.linear_conv_kernel_dim
+
+            qk_dim = qk_head_dim * num_qk_heads
+            v_dim = v_head_dim * num_v_heads
+
+            gdn_self_attn_per_layer = (
+                3
+                * 2
+                * (
+                    cfg.model.hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                    + conv_kernel_dim * (2 * qk_dim + v_dim)
+                    + num_v_heads * (v_head_dim**2) * 4
+                    + cfg.model.hidden_size * v_dim
+                )
+            )
+
+            self_attn_term = (
+                gdn_self_attn_per_layer * num_gdn_layers + standard_self_attn_per_layer * num_standard_attn_layers
+            )
+
         padded_vocab_size = calculate_padded_vocab_size(
             cfg.model.vocab_size,
             cfg.model.make_vocab_size_divisible_by,
@@ -431,7 +488,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         mtp_num_layers = getattr(cfg.model, "mtp_num_layers", None)
         if mtp_num_layers is None:
             # When using unified hybrid patterns, infer MTP depth count from the pattern.
-            hybrid_pattern = getattr(cfg.model, "hybrid_override_pattern", None)
+            hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
             if hybrid_pattern:
                 try:
                     parse_hybrid_pattern = importlib.import_module(
