@@ -41,5 +41,4 @@ uv run torchrun --nproc_per_node=8 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
     --hf-model-id $HF_MODEL_ID \
     --megatron-load-path ${WORKSPACE}/models/$MODEL_NAME/iter_0000000 \
-    --tp 1 --ep 8 \
-    --trust-remote-code
+    --tp 1 --ep 8
