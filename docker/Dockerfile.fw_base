@@ -330,13 +330,7 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
         # Create symlink for libnvshmem_host.so (required for DeepEP fabric handle operations)
         NVSHMEM_LIB_PATH=$(pip show nvidia-nvshmem-cu13 | grep "Location:" | cut -d' ' -f2)/nvidia/nvshmem/lib && \
         ln -sf ${NVSHMEM_LIB_PATH}/libnvshmem_host.so.3 ${NVSHMEM_LIB_PATH}/libnvshmem_host.so && \
-        apt-get update && \
-        apt-get install -y libcublas-dev-13-1 libcublaslt12 && \
-        apt-get install -y --no-install-recommends libnvidia-ml-dev && \
         TORCH_CUDA_ARCH_LIST="9.0 10.0 12.0" pip install --no-cache-dir --no-build-isolation -v . && \
-        apt-get purge -y libnvidia-ml-dev && \
-        apt-get autoremove -y && \
-        rm -rf /var/lib/apt/lists/* && \
     popd; \
     fi
 
