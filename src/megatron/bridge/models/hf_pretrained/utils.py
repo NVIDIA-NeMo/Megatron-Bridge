@@ -30,6 +30,8 @@ SAFE_REPOS: list[str] = [
     "nvidia",
     "openai",
     "Qwen",
+    "THUDM",
+    "zai-org",
 ]
 
 
