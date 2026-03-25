@@ -44,6 +44,7 @@ from .qwen35_vl import (
     qwen35_vl_9b_sft_config,
     qwen35_vl_27b_peft_config,
     qwen35_vl_27b_sft_config,
+    qwen35_vl_35b_a3b_fsdp_sft_config,
     qwen35_vl_35b_a3b_peft_config,
     qwen35_vl_35b_a3b_sft_config,
     qwen35_vl_122b_a10b_peft_config,
@@ -64,6 +65,7 @@ __all__ = [
     "qwen35_vl_27b_sft_config",
     # Qwen3.5-VL SFT configs — MoE
     "qwen35_vl_35b_a3b_sft_config",
+    "qwen35_vl_35b_a3b_fsdp_sft_config",
     "qwen35_vl_122b_a10b_sft_config",
     "qwen35_vl_397b_a17b_sft_config",
     # Qwen3.5-VL PEFT configs — dense

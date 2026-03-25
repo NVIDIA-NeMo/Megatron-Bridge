@@ -99,7 +99,7 @@ jobs:
           bash -c 'uv lock --upgrade'
 
       - name: Create Bump PR
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v7
         id: create-pull-request
         env:
           title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"

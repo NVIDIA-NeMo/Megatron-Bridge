@@ -145,6 +145,9 @@ def _load_metadata(data_folder: Path, image_extensions: List[str] = None) -> Lis
     Or JSON Lines format (one JSON object per line):
     {"file_name": "image1.jpg", "caption": "A description"}
     {"file_name": "image2.jpg", "caption": "Another description"}
+
+    When no meta.json is present, the fallback scans recursively under data_folder;
+    file_name values are paths relative to data_folder (e.g. folder1/img1.jpg).
     """
     if image_extensions is None:
         image_extensions = [".jpg", ".jpeg", ".png", ".webp", ".bmp"]
@@ -172,17 +175,17 @@ def _load_metadata(data_folder: Path, image_extensions: List[str] = None) -> Lis
                     return items
                 raise ValueError("Failed to parse meta.json as either JSON array or JSON Lines format")
 
-    # Fallback: scan for image files with sidecar captions
+    # Fallback: scan for image files with sidecar captions (recursive)
     items: List[Dict] = []
-    for entry in sorted(data_folder.iterdir()):
-        if not entry.is_file():
+    for path in sorted(data_folder.rglob("*")):
+        if not path.is_file():
             continue
-        if entry.suffix.lower() not in image_extensions:
+        if path.suffix.lower() not in image_extensions:
             continue
 
-        image_name = entry.name
-        # Look for caption in .txt file
-        caption_file = entry.with_suffix(".txt")
+        image_name = path.relative_to(data_folder).as_posix()
+        # Look for caption in .txt file next to the image
+        caption_file = path.with_suffix(".txt")
         caption = ""
         if caption_file.exists():
             with open(caption_file, "r") as f:
