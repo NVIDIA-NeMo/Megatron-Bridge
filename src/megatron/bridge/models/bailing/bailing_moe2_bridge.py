@@ -84,6 +84,7 @@ class BailingMoeV2Bridge(MegatronModelBridge):
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = True
         provider.moe_router_load_balancing_type = "none"
+        provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
