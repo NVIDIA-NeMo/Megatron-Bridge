@@ -24,6 +24,7 @@ import torch
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.param_mapping import split_qkv_weights
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -94,21 +95,44 @@ class TestFp8ParamExport:
             assert bridge.unquantized_state_dict is None
 
     @pytest.mark.parametrize(
-        "export_weight_dtype, expected_fp8_call_count",
+        "export_weight_dtype, runtime_fp8_cfg, should_raise, expected_fp8_call_count",
         [
-            ("fp8", 1),
-            ("bf16", 0),
+            (
+                "fp8",
+                {"fp8": "e4m3", "fp8_recipe": "blockwise", "fp8_param": True},
+                False,
+                1,
+            ),
+            (
+                "fp8",
+                {"fp8": "e4m3", "fp8_recipe": "tensorwise", "fp8_param": True},
+                True,
+                0,
+            ),
+            (
+                "fp8",
+                {"fp8": None, "fp8_recipe": "blockwise", "fp8_param": True},
+                True,
+                0,
+            ),
+            (
+                "bf16",
+                {"fp8": "e4m3", "fp8_recipe": "blockwise", "fp8_param": True},
+                False,
+                0,
+            ),
         ],
     )
-    def test_export_hf_weights_fp8_task_branching(self, export_weight_dtype, expected_fp8_call_count):
-        """export_hf_weights should call FP8 task builder only in fp8 mode."""
+    def test_export_hf_weights_fp8_task_branching(
+        self, export_weight_dtype, runtime_fp8_cfg, should_raise, expected_fp8_call_count
+    ):
+        """export_hf_weights FP8 branching with valid/invalid runtime configs."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["LlamaForCausalLM"]
         mock_hf_model.config.auto_map = None
 
-        mock_megatron_model = [Mock()]
-        mock_megatron_model[0].module = None
+        mock_megatron_model = [SimpleNamespace(config=SimpleNamespace(**runtime_fp8_cfg))]
 
         mock_model_bridge = Mock()
         fp8_tasks = [Mock(name="fp8_weight_task"), Mock(name="fp8_scale_inv_task")]
@@ -129,14 +153,20 @@ class TestFp8ParamExport:
 
                     with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as mock_prop:
                         mock_prop.return_value = mock_arch_class
-                        _ = list(bridge.export_hf_weights(mock_megatron_model, cpu=True))
+                        if should_raise:
+                            with pytest.raises(ValueError, match="only supports blockwise FP8 parameter export"):
+                                _ = list(bridge.export_hf_weights(mock_megatron_model, cpu=True))
+                        else:
+                            _ = list(bridge.export_hf_weights(mock_megatron_model, cpu=True))
 
                 assert mock_model_bridge.build_export_fp8_tasks.call_count == expected_fp8_call_count
-                if export_weight_dtype == "fp8":
+                if export_weight_dtype == "fp8" and not should_raise:
                     mock_model_bridge.build_export_fp8_tasks.assert_called_once_with(
                         mock_hf_model, mock_megatron_model
                     )
                     assert mock_stream.call_args.kwargs["conversion_tasks"] == fp8_tasks
+                elif should_raise:
+                    mock_model_bridge.build_export_fp8_tasks.assert_not_called()
                 else:
                     assert mock_stream.call_args.kwargs["conversion_tasks"] is None
 
@@ -217,3 +247,45 @@ class TestFp8ParamExport:
         assert tasks[1].param_weight is not None
         expected_k_tiles = math.ceil(fake_local_weights.shape[-1] / fake_local_weights._quantizer.block_len)
         assert tasks[1].param_weight.shape[1] == expected_k_tiles
+
+    @pytest.mark.parametrize(
+        "hidden_size,last_dim,expected_shapes,expected_error",
+        [
+            # divisor=4: 16 -> 4
+            (16, 4, ((4, 4), (2, 4), (2, 4)), None),
+            # divisor=128: 4096 -> 32
+            (4096, 32, ((32, 32), (16, 32), (16, 32)), None),
+            # invalid divisor inference: hidden_size % last_dim != 0
+            (10, 4, None, "Cannot infer block divisor"),
+            # invalid scaled head_size: head_size % divisor != 0
+            (12, 3, None, "Cannot scale head_size"),
+        ],
+    )
+    def test_split_qkv_weights_compressed_scale_cases(self, hidden_size, last_dim, expected_shapes, expected_error):
+        """split_qkv_weights handles compressed scales and error branches."""
+        qkv_total_dim = 8  # head_num + 2 * num_query_groups = 4 + 4
+        provider = SimpleNamespace(
+            num_attention_heads=4,
+            num_query_groups=2,
+            hidden_size=hidden_size,
+            kv_channels=None,
+            attention_output_gate=False,
+        )
+        if expected_error is None:
+            head_size = hidden_size // provider.num_attention_heads
+            divisor = hidden_size // last_dim
+            scaled_head_size = head_size // divisor
+            qkv = torch.randn(qkv_total_dim * scaled_head_size, last_dim)
+        else:
+            # Error branches are triggered before reshape, so minimal qkv rows are enough.
+            qkv = torch.randn(qkv_total_dim, last_dim)
+
+        if expected_error is not None:
+            with pytest.raises(ValueError, match=expected_error):
+                _ = split_qkv_weights(provider, qkv)
+            return
+
+        q, k, v = split_qkv_weights(provider, qkv)
+        assert q.shape == expected_shapes[0]
+        assert k.shape == expected_shapes[1]
+        assert v.shape == expected_shapes[2]
