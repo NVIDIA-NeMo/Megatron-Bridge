@@ -16,14 +16,12 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional
 
-import torch
 import torch.distributed as dist
 from megatron.core.models.mimo import MimoModel
 from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.training.checkpointing import init_checkpointing_context, load_checkpoint
-from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
@@ -33,6 +31,7 @@ from megatron.bridge.training.mimo_parallel_utils import (
 )
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train_mimo import train_mimo
+from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
 
 
 if TYPE_CHECKING:
@@ -256,8 +255,7 @@ def pretrain_mimo(
 
     rampup_batch_size = getattr(cfg.train, "rampup_batch_size", None)
     assert rampup_batch_size is None, (
-        "Microbatch rampup is not supported in MiMo training. "
-        "Set rampup_batch_size to None."
+        "Microbatch rampup is not supported in MiMo training. Set rampup_batch_size to None."
     )
 
     if nmc._GLOBAL_NUM_MICROBATCHES_CALCULATOR is None:
@@ -350,9 +348,8 @@ def pretrain_mimo(
 
     # Broadened load-intent gating: includes non-persistent resume intent
     has_persistent = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
-    has_pretrained = (
-        cfg.checkpoint.pretrained_checkpoint is not None
-        and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
+    has_pretrained = cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(
+        cfg.checkpoint.pretrained_checkpoint
     )
     wants_non_persistent = cfg.checkpoint.non_persistent_ckpt_type is not None
     should_load = has_persistent or has_pretrained or wants_non_persistent
@@ -391,7 +388,9 @@ def pretrain_mimo(
         sig = inspect.signature(build_data_iterators_fn)
         if "train_state" in sig.parameters:
             train_data_iterator, valid_data_iterator = build_data_iterators_fn(
-                cfg, setup_output.mimo_infra, train_state=train_state,
+                cfg,
+                setup_output.mimo_infra,
+                train_state=train_state,
             )
         else:
             raise RuntimeError(

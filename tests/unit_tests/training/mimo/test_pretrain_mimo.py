@@ -29,7 +29,7 @@ def _make_setup_output(module_to_grid_map):
         model=MagicMock(),
         mimo_infra=SimpleNamespace(
             module_to_grid_map=module_to_grid_map,
-            pg_collections={"llm": MagicMock()},
+            pg_collections={"language": MagicMock()},
         ),
         multimodule_communicator=MagicMock(),
         train_data_iterator=iter([]),

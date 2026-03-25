@@ -110,7 +110,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     mimo_parallelism_config: Optional[MimoParallelismConfig] = None
 
     # Module data-flow DAG for MultiModulePipelineCommunicator.
-    # If None, auto-derived as: all modality_submodules → language module (terminal).
+    # If None, auto-derived as: all modality_submodules → MIMO_LANGUAGE_MODULE_KEY (terminal).
     # Set explicitly for non-standard topologies (e.g., language → generator).
     topology: Optional[Dict[str, List[str]]] = None
 
@@ -167,6 +167,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         participating_modules = [name for name, pg in pg_collections.items() if pg is not None]
 
         # Derive module output tensor dimensionality if not explicitly configured.
+        # Language module produces 3D [S, B, H]; modality encoders produce 2D [S, H].
         if self.module_output_ndim is not None:
             output_ndim = self.module_output_ndim
         else:

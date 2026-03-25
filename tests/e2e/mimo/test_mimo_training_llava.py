@@ -193,7 +193,7 @@ from megatron.bridge.models.mimo.mimo_config import (
 def _build_parallelism_config() -> MimoParallelismConfig:
     return MimoParallelismConfig(
         module_parallelisms={
-            "llm": ModuleParallelismConfig(
+            "language": ModuleParallelismConfig(
                 tensor_model_parallel_size=4,
                 pipeline_model_parallel_size=1,
                 data_parallel_size=1,
@@ -493,7 +493,7 @@ def main():
         modality_submodules_spec=modality_submodules_spec,
         special_token_ids=special_token_ids,
         mimo_parallelism_config=mimo_parallelism_config,
-        topology={"images": ["llm"], "llm": []},
+        topology={"images": ["language"], "language": []},
         use_cpu_initialization=True,
         bf16=True,
     )
