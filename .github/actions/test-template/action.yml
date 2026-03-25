@@ -52,6 +52,10 @@ inputs:
   test-data-path:
     description: "Test data path"
     required: true
+  script_dir:
+    description: "Subdirectory within launch_scripts/ for functional tests (active or flaky)"
+    required: false
+    default: "active"
   runner:
     description: "Runner to use for test"
     required: true
@@ -60,7 +64,7 @@ runs:
   using: "composite"
   steps:
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v6
       with:
         path: ${{ github.workspace }}/Megatron-Bridge
         submodules: recursive
@@ -197,7 +201,7 @@ runs:
             echo "📝 Stored MCore commit SHA: ${{ github.event.inputs.mcore_commit }}"
           fi
 
-          timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || 'functional_tests' }}/${{ inputs.script }}.sh || EXIT_CODE=$?
+          timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/${{ inputs.script }}.sh || EXIT_CODE=$?
 
           if [[ "$EXIT_CODE" -eq 124 ]]; then
             echo "::error:: Test timed out after ${{ inputs.timeout }} minutes. Please reach out to the PIC."
@@ -250,7 +254,7 @@ runs:
         echo "::endgroup::"
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       if: ${{ steps.check.outputs.coverage_report != 'none' }}
       with:
         name: ${{ steps.check.outputs.coverage_report }}

@@ -12,145 +12,135 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import tempfile
+import importlib
+from types import SimpleNamespace
 
 import pytest
 
-from megatron.bridge.diffusion.data.flux.flux_mock_datamodule import FluxMockDataModuleConfig
+from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
-from megatron.bridge.diffusion.recipes.flux.flux import model_config, pretrain_config
+from megatron.bridge.diffusion.recipes.flux.flux import flux_12b_pretrain_config, flux_12b_sft_config
 from megatron.bridge.training.config import ConfigContainer
 
 
 pytestmark = [pytest.mark.unit]
 
+# Recipe loads HF config via PreTrainedFlux; patch it so unit tests do not call the Hub
+# (same idea as test_llama_recipes monkeypatching AutoBridge).
+_flux_recipe_mod = importlib.import_module("megatron.bridge.diffusion.recipes.flux.flux")
 
-class TestModelConfig:
-    """Tests for model_config function."""
 
-    def test_model_config_returns_flux_provider_with_defaults(self):
-        """Test that model_config returns a FluxProvider with correct defaults."""
-        config = model_config()
+def _fake_flux_diffusers_config() -> SimpleNamespace:
+    """Shape expected by FluxBridge.provider_bridge; values match FLUX.1-dev / recipe defaults."""
+    return SimpleNamespace(
+        num_attention_heads=24,
+        attention_head_dim=128,
+        in_channels=64,
+        patch_size=1,
+        num_layers=19,
+        num_single_layers=38,
+        joint_attention_dim=4096,
+        pooled_projection_dim=768,
+        guidance_embeds=True,
+        axes_dims_rope=[16, 56, 56],
+        ffn_dim=12288,
+    )
 
-        assert isinstance(config, FluxProvider)
 
-        # Parallelism defaults
-        assert config.tensor_model_parallel_size == 1
-        assert config.pipeline_model_parallel_size == 1
-        assert config.sequence_parallel is False
+class _FakePreTrainedFlux:
+    def __init__(self, model_name_or_path, **kwargs):
+        self._model_name_or_path = str(model_name_or_path)
+        self._config = _fake_flux_diffusers_config()
 
-        # FLUX-specific defaults
-        assert config.num_joint_layers == 19
-        assert config.num_single_layers == 38
-        assert config.hidden_size == 3072
-        assert config.num_attention_heads == 24
+    @property
+    def model_name_or_path(self) -> str:
+        return self._model_name_or_path
 
-    def test_model_config_custom_parameters(self):
-        """Test model_config with custom parameters."""
-        config = model_config(
-            tensor_parallelism=2,
-            pipeline_parallelism=4,
-            num_joint_layers=10,
-            num_single_layers=20,
-            hidden_size=2048,
-            guidance_embed=True,
-        )
+    @property
+    def config(self):
+        return self._config
 
-        assert config.tensor_model_parallel_size == 2
-        assert config.pipeline_model_parallel_size == 4
-        assert config.num_joint_layers == 10
-        assert config.num_single_layers == 20
-        assert config.hidden_size == 2048
-        assert config.guidance_embed is True
+
+@pytest.fixture(autouse=True)
+def _patch_pretrained_flux_no_hub(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_flux_recipe_mod, "PreTrainedFlux", _FakePreTrainedFlux)
 
 
 class TestPretrainConfig:
-    """Tests for pretrain_config function."""
+    """Tests for pretrain_config function (flattened, no-arg API)."""
 
     def test_pretrain_config_returns_complete_config(self):
         """Test that pretrain_config returns a ConfigContainer with all required components."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(dir=tmpdir, mock=True)
+        config = flux_12b_pretrain_config()
 
-            assert isinstance(config, ConfigContainer)
-            assert isinstance(config.model, FluxProvider)
-            assert isinstance(config.dataset, FluxMockDataModuleConfig)
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, FluxProvider)
+        assert isinstance(config.dataset, FluxDatasetConfig)
+        assert config.dataset.path is None  # default: mock/synthetic data
 
-            # Check all required components exist
-            assert hasattr(config, "train")
-            assert hasattr(config, "optimizer")
-            assert hasattr(config, "scheduler")
-            assert hasattr(config, "ddp")
-            assert hasattr(config, "logger")
-            assert hasattr(config, "checkpoint")
+        assert hasattr(config, "train")
+        assert hasattr(config, "optimizer")
+        assert hasattr(config, "scheduler")
+        assert hasattr(config, "ddp")
+        assert hasattr(config, "logger")
+        assert hasattr(config, "checkpoint")
 
     def test_pretrain_config_directory_structure(self):
-        """Test that pretrain_config creates correct directory structure."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(dir=tmpdir, name="test_run", mock=True)
+        """Test that pretrain_config uses default directory structure."""
+        config = flux_12b_pretrain_config()
 
-            assert "test_run" in config.checkpoint.save
-            assert "test_run" in config.logger.tensorboard_dir
-            assert config.checkpoint.save.endswith("checkpoints")
+        assert "default" in config.checkpoint.save
+        assert "default" in config.logger.tensorboard_dir
+        assert config.checkpoint.save.endswith("checkpoints")
 
-    def test_pretrain_config_custom_training_parameters(self):
-        """Test pretrain_config with custom training parameters."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(
-                dir=tmpdir,
-                mock=True,
-                train_iters=5000,
-                global_batch_size=8,
-                micro_batch_size=2,
-                lr=5e-5,
-            )
+    def test_pretrain_config_default_training_parameters(self):
+        """Test pretrain_config default training parameters."""
+        config = flux_12b_pretrain_config()
 
-            assert config.train.train_iters == 5000
-            assert config.train.global_batch_size == 8
-            assert config.train.micro_batch_size == 2
+        assert config.train.train_iters == 10000
+        assert config.train.global_batch_size == 16
+        assert config.train.micro_batch_size == 1
 
-    def test_pretrain_config_custom_model_parameters(self):
-        """Test that model parameters propagate correctly."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(
-                dir=tmpdir,
-                mock=True,
-                num_joint_layers=12,
-                hidden_size=2048,
-                guidance_embed=True,
-                tensor_parallelism=2,
-            )
+    def test_pretrain_config_default_model_parameters(self):
+        """Test that default model parameters are set correctly."""
+        config = flux_12b_pretrain_config()
 
-            assert config.model.num_joint_layers == 12
-            assert config.model.hidden_size == 2048
-            assert config.model.guidance_embed is True
-            assert config.model.tensor_model_parallel_size == 2
+        assert config.model.num_joint_layers == 19
+        assert config.model.hidden_size == 3072
+        assert config.model.guidance_embed is True
+        assert config.model.tensor_model_parallel_size == 2
 
-    def test_pretrain_config_mock_dataset_configuration(self):
-        """Test pretrain_config with mock dataset parameters."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = pretrain_config(
-                dir=tmpdir,
-                mock=True,
-                image_H=512,
-                image_W=512,
-                vae_channels=16,
-            )
+    def test_pretrain_config_default_dataset_configuration(self):
+        """Test pretrain_config default dataset parameters."""
+        config = flux_12b_pretrain_config()
 
-            assert config.dataset.image_H == 512
-            assert config.dataset.image_W == 512
-            assert config.dataset.vae_channels == 16
+        assert config.dataset.image_H == 1024
+        assert config.dataset.image_W == 1024
+        assert config.dataset.latent_channels == 16
 
-    def test_pretrain_config_with_real_dataset(self):
-        """Test pretrain_config with real dataset configuration."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            data_path = os.path.join(tmpdir, "data")
-            os.makedirs(data_path, exist_ok=True)
+    def test_pretrain_config_dataset_accepts_path_list(self):
+        """Test that dataset config can be overridden to use real data paths."""
+        config = flux_12b_pretrain_config()
+        assert config.dataset.path is None
 
-            config = pretrain_config(dir=tmpdir, mock=False, data_paths=[data_path])
+        # FluxDatasetConfig accepts path as str; recipe default is None
+        config.dataset.path = "/some/data/path"
+        assert config.dataset.path == "/some/data/path"
 
-            from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDataModuleConfig
 
-            assert isinstance(config.dataset, FluxDataModuleConfig)
-            assert config.dataset.path == [data_path]
+class TestSftConfig:
+    """Tests for flux_12b_sft_config (SFT from pretrained checkpoint)."""
+
+    def test_sft_config_matches_pretrain_except_checkpoint(self):
+        pretrain = flux_12b_pretrain_config()
+        sft = flux_12b_sft_config()
+
+        assert sft.model.num_joint_layers == pretrain.model.num_joint_layers
+        assert sft.train.train_iters == pretrain.train.train_iters
+        assert sft.checkpoint.save_interval == 20
+        assert sft.checkpoint.pretrained_checkpoint is None
+
+    def test_sft_config_accepts_pretrained_checkpoint(self):
+        ckpt = "/path/to/flux/iter_0000000"
+        sft = flux_12b_sft_config(pretrained_checkpoint=ckpt)
+        assert sft.checkpoint.pretrained_checkpoint == ckpt
