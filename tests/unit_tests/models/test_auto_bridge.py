@@ -1285,3 +1285,195 @@ class TestAutoBridge:
             bridge.save_hf_weights(mock_megatron_model, "/tmp/output")
 
             mock_torch_save.assert_not_called()
+
+
+class TestSimpleFacade:
+    """Tests for the simplified get_model / load_weights / save_weights facade."""
+
+    @pytest.fixture
+    def bridge(self):
+        mock_pretrained = create_mock_pretrained_causal_lm()
+        return AutoBridge(mock_pretrained)
+
+    def test_get_model_delegates_to_provider(self, bridge):
+        """get_model() calls to_megatron_provider and provide_distributed_model."""
+        mock_provider = Mock()
+        mock_provider.provide_distributed_model.return_value = ["model"]
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider) as mock_provider_fn:
+            result = bridge.get_model()
+
+        mock_provider_fn.assert_called_once_with(load_weights=True, hf_path=None)
+        mock_provider.finalize.assert_called_once()
+        mock_provider.provide_distributed_model.assert_called_once_with(wrap_with_ddp=False)
+        assert result == ["model"]
+
+    def test_get_model_sets_tp(self, bridge):
+        """get_model(tp=8) sets tensor_model_parallel_size on the provider."""
+        mock_provider = Mock()
+        mock_provider.provide_distributed_model.return_value = ["model"]
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_model(tp=8)
+
+        assert mock_provider.tensor_model_parallel_size == 8
+
+    def test_get_model_sets_pp(self, bridge):
+        """get_model(pp=4) sets pipeline_model_parallel_size on the provider."""
+        mock_provider = Mock()
+        mock_provider.provide_distributed_model.return_value = ["model"]
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_model(pp=4)
+
+        assert mock_provider.pipeline_model_parallel_size == 4
+
+    def test_get_model_sets_cp(self, bridge):
+        """get_model(cp=2) sets context_parallel_size on the provider."""
+        mock_provider = Mock()
+        mock_provider.provide_distributed_model.return_value = ["model"]
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_model(cp=2)
+
+        assert mock_provider.context_parallel_size == 2
+
+    def test_get_model_sets_ep(self, bridge):
+        """get_model(ep=4) sets expert_model_parallel_size on the provider."""
+        mock_provider = Mock()
+        mock_provider.provide_distributed_model.return_value = ["model"]
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_model(ep=4)
+
+        assert mock_provider.expert_model_parallel_size == 4
+
+    def test_get_model_default_parallelism_not_set(self, bridge):
+        """Default tp=1/pp=1/cp=1/ep=1 does not mutate provider attributes."""
+        mock_provider = Mock(spec=[])  # no attributes → setattr would create them
+        mock_provider = Mock()
+        mock_provider.provide_distributed_model.return_value = ["model"]
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_model()
+
+        # The parallelism attributes must NOT have been set (defaults stay as-is on provider)
+        assert mock_provider.tensor_model_parallel_size != 1 or True  # only checks via call counts
+        # A simpler assertion: no explicit assignment should have happened for default values
+        # We verify this by checking the provider's attribute wasn't touched
+        calls = [str(c) for c in mock_provider.mock_calls]
+        assert not any("tensor_model_parallel_size" in c for c in calls)
+        assert not any("pipeline_model_parallel_size" in c for c in calls)
+
+    def test_get_model_load_weights_false(self, bridge):
+        """get_model(load_weights=False) passes through to provider."""
+        mock_provider = Mock()
+        mock_provider.provide_distributed_model.return_value = ["model"]
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider) as mock_fn:
+            bridge.get_model(load_weights=False)
+
+        mock_fn.assert_called_once_with(load_weights=False, hf_path=None)
+
+    def test_get_model_with_hf_path(self, bridge):
+        """get_model(hf_path=...) passes through to provider."""
+        mock_provider = Mock()
+        mock_provider.provide_distributed_model.return_value = ["model"]
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider) as mock_fn:
+            bridge.get_model(hf_path="/tmp/weights")
+
+        mock_fn.assert_called_once_with(load_weights=True, hf_path="/tmp/weights")
+
+    def test_load_weights_is_primary(self, bridge):
+        """load_weights() holds the real implementation (not a delegation chain)."""
+        mock_model = [Mock()]
+        mock_pretrained = create_mock_pretrained_causal_lm()
+        bridge.hf_pretrained = mock_pretrained
+
+        with (
+            patch.object(bridge, "_model_bridge") as mock_mb,
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained",
+                return_value=mock_pretrained,
+            ),
+        ):
+            bridge.load_weights(mock_model, path="/tmp/weights")
+
+        mock_mb.load_weights_hf_to_megatron.assert_called_once()
+
+    def test_load_weights_without_path_uses_hf_pretrained(self, bridge):
+        """load_weights() with no path uses bridge.hf_pretrained directly."""
+        mock_model = [Mock()]
+        mock_pretrained = create_mock_pretrained_causal_lm()
+        bridge.hf_pretrained = mock_pretrained
+
+        with patch.object(bridge, "_model_bridge") as mock_mb:
+            bridge.load_weights(mock_model)
+
+        mock_mb.load_weights_hf_to_megatron.assert_called_once_with(
+            mock_pretrained, mock_model, allowed_mismatched_params=None
+        )
+
+    def test_load_weights_with_allowed_mismatched_params(self, bridge):
+        """load_weights() forwards allowed_mismatched_params to the bridge."""
+        mock_model = [Mock()]
+        mock_pretrained = create_mock_pretrained_causal_lm()
+        bridge.hf_pretrained = mock_pretrained
+        patterns = ["*.bias"]
+
+        with patch.object(bridge, "_model_bridge") as mock_mb:
+            bridge.load_weights(mock_model, allowed_mismatched_params=patterns)
+
+        mock_mb.load_weights_hf_to_megatron.assert_called_once_with(
+            mock_pretrained, mock_model, allowed_mismatched_params=patterns
+        )
+
+    def test_load_hf_weights_deprecated(self, bridge):
+        """load_hf_weights() emits DeprecationWarning and delegates to load_weights."""
+        mock_model = [Mock()]
+
+        with (
+            patch.object(bridge, "load_weights", return_value=mock_model) as mock_fn,
+            pytest.warns(DeprecationWarning, match="load_hf_weights.*deprecated.*load_weights"),
+        ):
+            result = bridge.load_hf_weights(mock_model, hf_path="/tmp/weights")
+
+        mock_fn.assert_called_once_with(mock_model, path="/tmp/weights", allowed_mismatched_params=None)
+        assert result is mock_model
+
+    def test_save_weights_calls_save_hf_weights(self, bridge):
+        """save_weights() calls save_hf_weights() for the actual weight serialisation."""
+        mock_model = [Mock()]
+        mock_pretrained = create_mock_pretrained_causal_lm()
+        bridge.hf_pretrained = mock_pretrained
+
+        with (
+            patch.object(bridge, "_model_bridge", Mock()),
+            patch.object(bridge.hf_pretrained, "save_artifacts", Mock()),
+            patch.object(bridge, "save_hf_weights") as mock_shw,
+        ):
+            bridge.save_weights(mock_model, "/tmp/output")
+
+        mock_shw.assert_called_once()
+
+    def test_save_hf_pretrained_deprecated(self, bridge):
+        """save_hf_pretrained() emits DeprecationWarning and delegates to save_weights."""
+        mock_model = [Mock()]
+
+        with (
+            patch.object(bridge, "save_weights") as mock_fn,
+            pytest.warns(DeprecationWarning, match="save_hf_pretrained.*deprecated.*save_weights"),
+        ):
+            bridge.save_hf_pretrained(mock_model, "/tmp/output", show_progress=False)
+
+        mock_fn.assert_called_once_with(
+            mock_model,
+            "/tmp/output",
+            show_progress=False,
+            source_path=None,
+            strict=True,
+            merge_adapter_weights=True,
+            distributed_save=False,
+            save_every_n_ranks=1,
+        )

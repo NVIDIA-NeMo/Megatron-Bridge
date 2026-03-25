@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import dataclasses
+import warnings
 from functools import cached_property, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
@@ -96,7 +97,7 @@ class AutoBridge(Generic[MegatronModelT]):
         >>> megatron_model = provider.provide_distributed_model(wrap_with_ddp=False)
 
         >>> # Export a Megatron model back to HuggingFace format
-        >>> bridge.save_hf_pretrained(megatron_model, "./exported_model")
+        >>> bridge.save_weights(megatron_model, "./exported_model")
 
         >>> # Convert weights with custom settings
         >>> for name, weight in bridge.export_hf_weights(
@@ -293,55 +294,219 @@ class AutoBridge(Generic[MegatronModelT]):
         model: list[MegatronModelT],
         hf_path: str | Path | None = None,
         allowed_mismatched_params: list[str] | None = None,
-    ) -> None:
-        """
-        Load HuggingFace weights into a Megatron model.
+    ) -> list[MegatronModelT]:
+        """Load HuggingFace weights into a Megatron model.
 
-        This method handles the conversion and distribution of weights from
-        HuggingFace format to Megatron's distributed format, including proper
-        tensor parallel and pipeline parallel distribution.
+        .. deprecated::
+            Use :meth:`load_weights` instead. ``load_hf_weights`` will be
+            removed in a future release.
 
         Args:
-            model: List of Megatron model instances (one per virtual pipeline stage)
+            model: List of Megatron model instances (one per virtual pipeline stage).
             hf_path: Optional path to load weights from. If None, uses weights
-                from the bridge's hf_pretrained instance
+                from the bridge's ``hf_pretrained`` instance.
             allowed_mismatched_params: Optional list of parameter names or patterns
-                to allow mismatch (skip instead of raise error).
+                to allow mismatch (skipped instead of raising an error).
 
         Returns:
-            The input model with loaded weights
+            The input model with loaded weights.
+        """
+        warnings.warn(
+            "load_hf_weights() is deprecated and will be removed in a future release. Use load_weights() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.load_weights(model, path=hf_path, allowed_mismatched_params=allowed_mismatched_params)
 
-        Raises:
-            ValueError: If hf_path is None and bridge was created without weights
+    def get_model(
+        self,
+        tp: int = 1,
+        pp: int = 1,
+        cp: int = 1,
+        ep: int = 1,
+        load_weights: bool = True,
+        hf_path: str | Path | None = None,
+    ) -> list[MegatronModelT]:
+        """Create a distributed Megatron model from the HuggingFace checkpoint.
+
+        This is the primary entry point for users who want to get a ready-to-use
+        Megatron model without interacting with the provider API directly. It
+        combines provider creation, parallelism configuration, and weight loading
+        into a single call.
+
+        Args:
+            tp: Tensor model parallel size (default: 1).
+            pp: Pipeline model parallel size (default: 1).
+            cp: Context parallel size (default: 1).
+            ep: Expert model parallel size for MoE models (default: 1).
+            load_weights: Whether to load HuggingFace weights into the model.
+                Set to False for random initialization. (default: True)
+            hf_path: Optional path to load weights from. If None, uses weights
+                from the bridge's ``hf_pretrained`` instance.
+
+        Returns:
+            List of Megatron model instances (one per virtual pipeline stage).
 
         Example:
-            >>> # Load weights from bridge's pretrained model
-            >>> bridge = AutoBridge.from_hf_pretrained("gpt2")
-            >>> megatron_model = create_megatron_model()  # Your model creation
-            >>> bridge.load_hf_weights(megatron_model)
+            >>> # Single-GPU inference
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+            >>> model = bridge.get_model()
 
-            >>> # Load weights from a different checkpoint
-            >>> bridge.load_hf_weights(megatron_model, "./finetuned_model")
+            >>> # Tensor parallel across 8 GPUs
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+            >>> model = bridge.get_model(tp=8)
 
-            >>> # Load weights with allowed mismatched parameters
-            >>> bridge.load_hf_weights(
-            ...     megatron_model,
-            ...     allowed_mismatched_params=["*.bias", "decoder.layers.0.*"]
-            ... )
+            >>> # Separate weight loading
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+            >>> model = bridge.get_model(tp=4, load_weights=False)
+            >>> bridge.load_weights(model)
+
+        See Also:
+            to_megatron_provider: Access the provider directly for advanced configuration.
+            load_weights: Load weights into an existing model.
+            save_weights: Export model weights back to HuggingFace format.
         """
-        if hf_path is None:
+        provider = self.to_megatron_provider(load_weights=load_weights, hf_path=hf_path)
+        if tp != 1:
+            provider.tensor_model_parallel_size = tp
+        if pp != 1:
+            provider.pipeline_model_parallel_size = pp
+        if cp != 1:
+            provider.context_parallel_size = cp
+        if ep != 1:
+            provider.expert_model_parallel_size = ep
+        if hasattr(provider, "finalize"):
+            provider.finalize()
+        return provider.provide_distributed_model(wrap_with_ddp=False)
+
+    def load_weights(
+        self,
+        model: list[MegatronModelT],
+        path: str | Path | None = None,
+        allowed_mismatched_params: list[str] | None = None,
+    ) -> list[MegatronModelT]:
+        """Load HuggingFace weights into a Megatron model.
+
+        Handles the conversion and distribution of weights from HuggingFace format
+        to Megatron's distributed format, including tensor parallel and pipeline
+        parallel distribution.
+
+        Args:
+            model: List of Megatron model instances (one per virtual pipeline stage).
+            path: Optional path to load weights from. If None, uses weights
+                from the bridge's ``hf_pretrained`` instance.
+            allowed_mismatched_params: Optional list of parameter name patterns
+                to allow mismatch (skipped instead of raising an error).
+
+        Returns:
+            The input model list with loaded weights.
+
+        Raises:
+            ValueError: If ``path`` is None and the bridge was created without weights
+                (i.e., via :meth:`from_hf_config`).
+
+        Example:
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+            >>> model = bridge.get_model(load_weights=False)
+            >>> bridge.load_weights(model)
+
+            >>> # Load from a different checkpoint
+            >>> bridge.load_weights(model, path="./finetuned_model")
+
+            >>> # Allow certain params to be missing
+            >>> bridge.load_weights(model, allowed_mismatched_params=["*.bias"])
+        """
+        if path is None:
             if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
-                raise ValueError("hf_path is required when hf_pretrained is not a PreTrainedCausalLM instance")
+                raise ValueError("path is required when the bridge was created without weights (from_hf_config)")
             pre_trained = self.hf_pretrained
         else:
-            # Preserve trust_remote_code setting from the original bridge instance
             trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
-            pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
+            pre_trained = PreTrainedCausalLM.from_pretrained(path, trust_remote_code=trust_remote_code)
         self._model_bridge.load_weights_hf_to_megatron(
             pre_trained, model, allowed_mismatched_params=allowed_mismatched_params
         )
-
         return model
+
+    def save_weights(
+        self,
+        model: list[MegatronModelT],
+        path: str | Path,
+        show_progress: bool = True,
+        source_path: Optional[Union[str, Path]] = None,
+        strict: bool = True,
+        merge_adapter_weights: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 1,
+    ) -> None:
+        """Save a Megatron model in HuggingFace format.
+
+        Exports the complete model — configuration, tokenizer, and weights — to
+        a directory loadable with HuggingFace's ``from_pretrained`` methods.
+
+        If the model contains LoRA adapters they are automatically merged into
+        the base weights before saving. If the original model was loaded with
+        ``trust_remote_code=True``, any custom modeling files are preserved.
+
+        Args:
+            model: Megatron model instance or list of instances.
+            path: Directory path to save the model.
+            show_progress: Display a progress bar during weight export.
+            source_path: Path containing custom modeling files to preserve.
+                Inferred from the HuggingFace config when not specified.
+            strict: Whether to perform strict validation during weight export.
+            merge_adapter_weights: Merge LoRA adapter weights into base tensors
+                before export.
+            distributed_save: Each rank saves part of the weights independently.
+                When ``False`` (default), only rank 0 saves after gathering.
+            save_every_n_ranks: In distributed-save mode, only ranks
+                ``0, n, 2n, …`` write files. Ignored when
+                ``distributed_save=False``.
+
+        Example:
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+            >>> model = bridge.get_model()
+            >>> # ... training ...
+            >>> bridge.save_weights(model, "./my_finetuned_model")
+
+            >>> # Load back with HuggingFace
+            >>> from transformers import AutoModelForCausalLM
+            >>> hf_model = AutoModelForCausalLM.from_pretrained("./my_finetuned_model")
+
+        Note:
+            This method is collective — all ranks must call it. Only rank 0
+            saves configuration files; weight saving is coordinated across ranks.
+        """
+        if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
+            raise ValueError(
+                "save_weights requires a pretrained HuggingFace model. "
+                "AutoBridge.from_hf_config() creates a config-only bridge; "
+                "use AutoBridge.from_hf_pretrained(...) instead."
+            )
+
+        additional_files = None
+        if hasattr(self._model_bridge, "ADDITIONAL_FILE_PATTERNS") and self._model_bridge.ADDITIONAL_FILE_PATTERNS:
+            additional_files = self._model_bridge.ADDITIONAL_FILE_PATTERNS
+
+        if dist.is_available() and dist.is_initialized():
+            if dist.get_rank() == 0:
+                self.hf_pretrained.save_artifacts(
+                    path, original_source_path=source_path, additional_files=additional_files
+                )
+        else:
+            self.hf_pretrained.save_artifacts(
+                path, original_source_path=source_path, additional_files=additional_files
+            )
+
+        self.save_hf_weights(
+            model,
+            path,
+            show_progress,
+            strict,
+            merge_adapter_weights=merge_adapter_weights,
+            distributed_save=distributed_save,
+            save_every_n_ranks=save_every_n_ranks,
+        )
 
     def export_hf_weights(
         self,
@@ -577,35 +742,17 @@ class AutoBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
-        if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
-            raise ValueError(
-                "save_hf_pretrained requires a pretrained HuggingFace model. "
-                "AutoBridge.from_hf_config() creates a config-only bridge; "
-                "use AutoBridge.from_hf_pretrained(...) instead."
-            )
-
-        # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured
-        additional_files = None
-        if hasattr(self._model_bridge, "ADDITIONAL_FILE_PATTERNS") and self._model_bridge.ADDITIONAL_FILE_PATTERNS:
-            additional_files = self._model_bridge.ADDITIONAL_FILE_PATTERNS
-
-        if dist.is_available() and dist.is_initialized():
-            # Distributed training, only rank 0 saves artifacts
-            if dist.get_rank() == 0:
-                self.hf_pretrained.save_artifacts(
-                    path, original_source_path=source_path, additional_files=additional_files
-                )
-        else:
-            # No distributed training, save artifacts
-            self.hf_pretrained.save_artifacts(
-                path, original_source_path=source_path, additional_files=additional_files
-            )
-
-        self.save_hf_weights(
+        warnings.warn(
+            "save_hf_pretrained() is deprecated and will be removed in a future release. Use save_weights() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.save_weights(
             model,
             path,
-            show_progress,
-            strict,
+            show_progress=show_progress,
+            source_path=source_path,
+            strict=strict,
             merge_adapter_weights=merge_adapter_weights,
             distributed_save=distributed_save,
             save_every_n_ranks=save_every_n_ranks,
@@ -970,7 +1117,7 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
 
             # Save in HuggingFace format
-            self.save_hf_pretrained(
+            self.save_weights(
                 megatron_model,
                 hf_path,
                 show_progress=show_progress,
