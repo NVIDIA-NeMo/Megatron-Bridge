@@ -66,6 +66,7 @@ import inspect
 from typing import Callable
 
 import megatron.bridge.recipes as recipes
+from megatron.bridge.models.qwen_omni.qwen3_omni_step import forward_step as qwen3_omni_forward_step
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
@@ -79,6 +80,7 @@ from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 STEP_FUNCTIONS: dict[str, Callable] = {
     "gpt_step": gpt_forward_step,
     "vlm_step": vlm_forward_step,
+    "qwen3_omni_step": qwen3_omni_forward_step,
     "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
 }
@@ -120,7 +122,11 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         type=str,
         default="gpt_step",
         choices=sorted(STEP_FUNCTIONS.keys()),
-        help="Step function: gpt_step (text-only), vlm_step (vision-language), or llava_step (LLaVA models)",
+        help=(
+            "Step function: gpt_step (text-only), vlm_step (vision-language), "
+            "qwen3_omni_step (Qwen3-Omni thinker), qwen3_vl_step (Qwen3-VL), "
+            "or llava_step (LLaVA models)"
+        ),
     )
     parser.add_argument(
         "--peft_scheme",
