@@ -275,6 +275,15 @@ class PerfEnvPlugin(Plugin):
         ):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+        if model_family_name in ["deepseek"]:
+            executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
+        if model_recipe_name in ["llama3_70b"]:
+            if compute_dtype in ["fp8_cs", "fp8_mx"]:
+                if train_task in ["sft"]:
+                    if gpu in ["gb300", "h100"]:
+                        executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+                        executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
+
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
@@ -301,6 +310,9 @@ class PerfEnvPlugin(Plugin):
             if gpu in ["h100"] and model_recipe_name in ["llama3_70b"] and compute_dtype == "fp8_cs":
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                 executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
+        if model_recipe_name in ["nemotron_3_nano"]:
+            del_cudnn_ln = False
+
         if del_cudnn_ln:
             if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")

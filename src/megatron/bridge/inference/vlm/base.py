@@ -149,7 +149,7 @@ def setup_inference_wrapper(
             # Expose decoder for MCore Infernce Engine compatibility (used by get_mamba_inference_state_config_from_model)
             _expose_decoder_from_language_model(mcore_model)
         else:
-            _ = config.language_transformer_config.hidden_size
+            _ = config.hidden_size
     else:
         raise ValueError(f"Unknown model config: {config}")
 

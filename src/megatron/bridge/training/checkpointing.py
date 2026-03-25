@@ -20,11 +20,12 @@ import random
 import shutil
 import sys
 import threading
+from dataclasses import dataclass
 from enum import Enum, auto
 from logging import getLogger
 from pathlib import Path
 from time import time
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, Protocol, Union, runtime_checkable
 
 import numpy as np
 import torch
@@ -63,7 +64,7 @@ from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
-from megatron.bridge.training.utils import mlflow_utils, wandb_utils
+from megatron.bridge.training.utils import comet_utils, mlflow_utils, wandb_utils
 from megatron.bridge.training.utils.checkpoint_utils import (
     checkpoint_exists,
     ensure_directory_exists,
@@ -188,6 +189,7 @@ def _get_checkpoint_format(checkpoint_path: str) -> str:
     """
     # Check for Megatron Core distributed checkpoint first
     if dist_checkpointing.check_is_distributed_checkpoint(checkpoint_path):
+        print_rank_0(f" Auto-detected checkpoint format as 'torch_dist' from {checkpoint_path}.")
         return "torch_dist"
 
     # Check for PyTorch DCP format (.metadata file exists)
@@ -463,6 +465,256 @@ class CheckpointType(Enum):
     FSDP_DTENSOR = auto()
 
 
+@dataclass
+class CheckpointSaveContext:
+    """Context containing all state needed for a checkpoint save operation.
+
+    Attributes:
+        state: The GlobalState object containing config, train_state, etc.
+        model: List of model modules (MegatronModule instances).
+        optimizer: The optimizer instance (may be None for inference checkpoints).
+        opt_param_scheduler: The learning rate scheduler instance.
+        num_floating_point_operations_so_far: Cumulative FLOPs computed up to this point.
+        train_data_iterator: Optional training data iterator to save its state.
+        non_persistent_ckpt: If True, saves as a non-persistent (temporary) checkpoint.
+    """
+
+    state: GlobalState
+    model: list[MegatronModule]
+    optimizer: MegatronOptimizer | None
+    opt_param_scheduler: Any | None
+    num_floating_point_operations_so_far: int
+
+    train_data_iterator: Any | None = None
+    non_persistent_ckpt: bool = False
+
+
+@dataclass
+class CheckpointLoadContext:
+    """Context containing all state needed for a checkpoint load operation.
+
+    Attributes:
+        state: The GlobalState object containing config, train_state, etc.
+        model: List of model modules to load state into.
+        optimizer: The optimizer instance to load state into.
+        opt_param_scheduler: The learning rate scheduler instance.
+        strict: Whether to enforce strict loading (see torch.nn.Module.load_state_dict).
+        skip_load_to_model_and_opt: If True, only loads metadata but skips loading
+            state into model and optimizer modules.
+    """
+
+    state: GlobalState
+    model: list[MegatronModule]
+    optimizer: MegatronOptimizer | None
+    opt_param_scheduler: Any | None
+
+    strict: bool = True
+    skip_load_to_model_and_opt: bool = False
+
+
+@runtime_checkable
+class CheckpointManager(Protocol):
+    """Protocol defining the checkpoint manager interface.
+
+    Implement this protocol to create custom checkpoint save/load behavior.
+    The default implementation (DefaultCheckpointManager) delegates to the
+    existing functional checkpoint code.
+    """
+
+    def __init__(self, checkpoint_config: CheckpointConfig) -> None:
+        """Initialize the checkpoint manager.
+
+        Args:
+            checkpoint_config: The checkpoint configuration.
+        """
+        ...
+
+    def save(self, ctx: CheckpointSaveContext) -> None:
+        """Save a checkpoint.
+
+        Args:
+            ctx: CheckpointSaveContext containing all state needed for save.
+        """
+        ...
+
+    def load(self, ctx: CheckpointLoadContext) -> tuple[int, int]:
+        """Load a checkpoint.
+
+        Args:
+            ctx: CheckpointLoadContext containing all state needed for load.
+
+        Returns:
+            A tuple of (iteration, num_floating_point_operations_so_far).
+            Returns (0, 0) if no checkpoint was loaded.
+        """
+        ...
+
+    def finalize_async_saves(self, state: GlobalState, blocking: bool = False, terminate: bool = False) -> None:
+        """Finalize any pending asynchronous checkpoint saves.
+
+        Args:
+            state: The GlobalState object (needed for async_calls_queue access).
+            blocking: If True, wait for all pending saves to complete.
+            terminate: If True, close the async queue after finalization.
+        """
+        ...
+
+
+class DefaultCheckpointManager:
+    """Default checkpoint manager that delegates to existing functional code.
+
+    This implementation wraps the default save_checkpoint and load_checkpoint
+    functions.
+
+    The manager owns the checkpointing_context dictionary, which is used to
+    cache strategies and local checkpoint managers across save/load operations.
+
+    Attributes:
+        checkpoint_config: The CheckpointConfig instance.
+        _context: Internal context dictionary for caching checkpoint strategies.
+    """
+
+    def __init__(self, checkpoint_config: CheckpointConfig) -> None:
+        """Initialize the checkpoint manager.
+
+        Args:
+            checkpoint_config: The checkpoint configuration.
+        """
+        self.checkpoint_config = checkpoint_config
+        self._context: dict[str, Any] = init_checkpointing_context(checkpoint_config)
+
+    @property
+    def checkpointing_context(self) -> dict[str, Any]:
+        """The internal checkpointing context dictionary.
+
+        This context is passed to save/load functions and caches:
+        - Save/load strategies for distributed checkpointing
+        - Local checkpoint manager (for non-persistent local checkpoints)
+        - Cached metadata for constant-structure optimization
+        """
+        return self._context
+
+    def save(self, ctx: CheckpointSaveContext) -> None:
+        """Save a checkpoint using the default implementation.
+
+        Delegates to save_checkpoint function.
+
+        Args:
+            ctx: CheckpointSaveContext containing all state needed for save.
+        """
+        save_checkpoint(
+            state=ctx.state,
+            model=ctx.model,
+            optimizer=ctx.optimizer,
+            opt_param_scheduler=ctx.opt_param_scheduler,
+            num_floating_point_operations_so_far=ctx.num_floating_point_operations_so_far,
+            checkpointing_context=self._context,
+            non_persistent_ckpt=ctx.non_persistent_ckpt,
+            train_data_iterator=ctx.train_data_iterator,
+        )
+
+    def load(self, ctx: CheckpointLoadContext) -> tuple[int, int]:
+        """Load a checkpoint using the default implementation.
+
+        Delegates to load_checkpoint function.
+
+        Args:
+            ctx: CheckpointLoadContext containing all state needed for load.
+
+        Returns:
+            A tuple of (iteration, num_floating_point_operations_so_far).
+        """
+        return load_checkpoint(
+            state=ctx.state,
+            model=ctx.model,
+            optimizer=ctx.optimizer,
+            opt_param_scheduler=ctx.opt_param_scheduler,
+            strict=ctx.strict,
+            checkpointing_context=self._context,
+            skip_load_to_model_and_opt=ctx.skip_load_to_model_and_opt,
+        )
+
+    def finalize_async_saves(self, state: GlobalState, blocking: bool = False, terminate: bool = False) -> None:
+        """Finalize any pending asynchronous checkpoint saves.
+
+        Args:
+            state: The GlobalState object (needed for async_calls_queue access).
+            blocking: If True, wait for all pending saves to complete.
+            terminate: If True, close the async queue after finalization.
+        """
+        maybe_finalize_async_save(
+            global_state=state,
+            ckpt_cfg=self.checkpoint_config,
+            blocking=blocking,
+            terminate=terminate,
+        )
+
+
+def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> CheckpointManager:
+    """Factory function to create a checkpoint manager.
+
+    Creates either the default checkpoint manager or a custom manager
+    based on the checkpoint_config.custom_manager_class setting.
+
+    Args:
+        checkpoint_config: The checkpoint configuration. If custom_manager_class is set,
+            it should be a fully qualified class name (e.g., "mypackage.module.MyManager").
+
+    Returns:
+        A CheckpointManager instance.
+
+    Raises:
+        ImportError: If the custom manager module cannot be imported.
+        AttributeError: If the custom manager class is not found in the module.
+        ValueError: If custom_manager_class format is invalid.
+        TypeError: If the custom manager does not implement the CheckpointManager protocol.
+
+    Example:
+        # Default manager
+        config = CheckpointConfig(save="/path/to/checkpoints")
+        manager = create_checkpoint_manager(config)
+
+        # Custom manager
+        config = CheckpointConfig(
+            save="/path/to/checkpoints",
+            custom_manager_class="mypackage.checkpoint.MyCheckpointManager",
+        )
+        manager = create_checkpoint_manager(config)
+    """
+    if checkpoint_config.custom_manager_class is not None:
+        import importlib
+
+        try:
+            module_path, class_name = checkpoint_config.custom_manager_class.rsplit(".", 1)
+        except ValueError as err:
+            raise ValueError(
+                f"Invalid custom_manager_class format: '{checkpoint_config.custom_manager_class}'. "
+                f"Expected fully qualified class name like 'mypackage.module.ClassName'."
+            ) from err
+
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError as e:
+            raise ImportError(f"Could not import module '{module_path}' for custom checkpoint manager: {e}") from e
+
+        try:
+            custom_manager_class = getattr(module, class_name)
+        except AttributeError as e:
+            raise AttributeError(f"Module '{module_path}' does not have class '{class_name}': {e}") from e
+
+        manager = custom_manager_class(checkpoint_config)
+
+        if not isinstance(manager, CheckpointManager):
+            raise TypeError(
+                f"Custom checkpoint manager '{checkpoint_config.custom_manager_class}' "
+                f"does not implement the CheckpointManager protocol."
+            )
+
+        return manager
+
+    return DefaultCheckpointManager(checkpoint_config)
+
+
 def save_checkpoint(
     state: GlobalState,
     model: list[MegatronModule],
@@ -710,6 +962,11 @@ def save_checkpoint(
                     "The 'nvidia_resiliency_ext' module is required for local "
                     "checkpointing but was not found. Please ensure it is installed."
                 )
+            # Embed TrainState so consumed_train_samples and other counters
+            # survive a local-checkpoint resume.  Goes into the ``common``
+            # part of MCoreTensorAwareStateDict (replicated, atomic).
+            state_dict["train_state_metadata"] = train_state.state_dict()
+
             algo = ckpt_cfg.non_persistent_local_ckpt_algo
             cached_metadata = None
             if ckpt_cfg.ckpt_assume_constant_structure and "local_checkpoint_cache" in checkpointing_context:
@@ -810,8 +1067,8 @@ def save_checkpoint(
     else:
         _post_save_global_barrier()
 
-    # Additional callback for wandb (last rank)
-    if not torch.distributed.is_initialized() or is_last_rank():
+    # Additional callback for wandb/mlflow (last rank, global checkpoints only)
+    if ckpt_type != CheckpointType.LOCAL and (not torch.distributed.is_initialized() or is_last_rank()):
 
         def wandb_finalize_fn() -> None:
             wandb_utils.on_save_checkpoint_success(
@@ -829,13 +1086,23 @@ def save_checkpoint(
                 mlflow_logger=state.mlflow_logger,
             )
 
+        def comet_finalize_fn() -> None:
+            comet_utils.on_save_checkpoint_success(
+                checkpoint_name,
+                save_dir,
+                train_state.step,
+                comet_logger=state.comet_logger,
+            )
+
         if ckpt_cfg.async_save:
             assert async_save_request is not None
             async_save_request.add_finalize_fn(wandb_finalize_fn)
             async_save_request.add_finalize_fn(mlflow_finalize_fn)
+            async_save_request.add_finalize_fn(comet_finalize_fn)
         else:
             wandb_finalize_fn()
             mlflow_finalize_fn()
+            comet_finalize_fn()
 
     if ckpt_cfg.async_save:
         schedule_async_save(state, async_save_request)
@@ -847,7 +1114,8 @@ def save_checkpoint(
     fault_tolerance.on_checkpointing_end(global_state=state, is_async_finalization=False)
 
     # keep only last k checkpoints
-    if ckpt_cfg.most_recent_k > -1:
+    # Skip for LOCAL checkpoints — LocalCheckpointManager manages its own cleanup.
+    if ckpt_cfg.most_recent_k > -1 and ckpt_type != CheckpointType.LOCAL:
         cleanup_old_non_persistent_checkpoint(
             save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
         )
@@ -1365,9 +1633,13 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
     except Exception as e:
         if strict:
             # Fallback support for backward compatibility breaking changes in TransformerEngine
-            print_rank_0(f"Warning: Exception during strict loading: {e}")
             load_return = module.load_state_dict(state_dict, strict=False)
-            print_rank_0(f"load_return: {load_return}")
+            missing = load_return.missing_keys
+            unexpected = load_return.unexpected_keys
+            non_extra = [k for k in missing + unexpected if not k.endswith("._extra_state")]
+            if non_extra:
+                print_rank_0(f"Warning: Exception during strict loading: {e}")
+                print_rank_0(f"Non-extra-state mismatched keys: {non_extra}")
         else:
             # Re-raise if we were already in non-strict mode
             raise
@@ -1431,13 +1703,33 @@ def _load_checkpoint_from_path(
         if state_dict is None:
             return 0, 0
 
-        # Read run_config for TP/PP compatibility checks
-        run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
-        if file_exists(run_config_filename):
-            run_config = read_run_config(run_config_filename)
+        if ckpt_type == CheckpointType.LOCAL:
+            # Local checkpoints don't contain run_config.yaml and checkpoint_name
+            # is a CkptID tuple, not a string path.  Use current config — local
+            # checkpoints always resume with the same parallelism.
+            run_config = {
+                "model": {
+                    "tensor_model_parallel_size": cfg.model.tensor_model_parallel_size,
+                    "pipeline_model_parallel_size": cfg.model.pipeline_model_parallel_size,
+                    "encoder_tensor_model_parallel_size": getattr(cfg.model, "encoder_tensor_model_parallel_size", 0),
+                    "encoder_pipeline_model_parallel_size": getattr(
+                        cfg.model, "encoder_pipeline_model_parallel_size", 0
+                    ),
+                },
+                "checkpoint": {
+                    "save_optim": cfg.checkpoint.save_optim,
+                    "save_rng": cfg.checkpoint.save_rng,
+                    "fully_parallel_save": cfg.checkpoint.fully_parallel_save,
+                },
+            }
         else:
-            print_rank_0("run_config.yaml not found, extracting config from legacy Megatron-LM checkpoint")
-            run_config = _extract_megatron_lm_args_from_state_dict(state_dict)
+            # Read run_config for TP/PP compatibility checks
+            run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
+            if file_exists(run_config_filename):
+                run_config = read_run_config(run_config_filename)
+            else:
+                print_rank_0("run_config.yaml not found, extracting config from legacy Megatron-LM checkpoint")
+                run_config = _extract_megatron_lm_args_from_state_dict(state_dict)
 
         ckpt_tp_pp = (
             run_config["model"]["tensor_model_parallel_size"],
@@ -1466,7 +1758,13 @@ def _load_checkpoint_from_path(
             if ckpt_tp_pp != run_tp_pp:
                 print_rank_0("{}: RNG state will be ignored".format(mismatch_msg))
 
-        sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
+        if ckpt_type == CheckpointType.LOCAL:
+            # Local checkpoints don't store content metadata in common.pt.
+            sharded_sd_metadata = _build_sharded_state_dict_metadata(
+                cfg.optimizer.use_distributed_optimizer, cfg.checkpoint
+            )
+        else:
+            sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
         print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
 
         # Determine if optimizer state will be loaded
@@ -1645,21 +1943,36 @@ def _load_checkpoint_from_path(
 
     # Handle train state
     if not cfg.checkpoint.finetune:
-        train_state_filename = get_checkpoint_train_state_filename(checkpoint_name)
-        if file_exists(train_state_filename):
-            state.train_state = read_train_state(train_state_filename)
+        if ckpt_type == CheckpointType.LOCAL:
+            # Local checkpoints embed train_state_metadata in the state dict.
+            if "train_state_metadata" in state_dict:
+                print_rank_0("Restoring TrainState from local checkpoint (train_state_metadata)")
+                state.train_state = TrainState()
+                state.train_state.load_state_dict(state_dict["train_state_metadata"])
+            else:
+                print_rank_0("WARNING: train_state_metadata not found in local checkpoint, counters reset")
+                state.train_state = TrainState(step=state_dict.get("iteration", 0))
         else:
-            print_rank_0(f"{train_state_filename} not found, creating TrainState from checkpoint state dict")
-            state.train_state = _get_train_state_from_state_dict(state_dict)
+            train_state_filename = get_checkpoint_train_state_filename(checkpoint_name)
+            if file_exists(train_state_filename):
+                state.train_state = read_train_state(train_state_filename)
+            else:
+                print_rank_0(f"{train_state_filename} not found, creating TrainState from checkpoint state dict")
+                state.train_state = _get_train_state_from_state_dict(state_dict)
 
     if cfg.checkpoint.finetune or release:
         state.train_state.step = 0
+
+    # For local checkpoints, checkpoint_name is a CkptID tuple.
+    # Normalize to string for downstream logging / wandb / mlflow.
+    if ckpt_type == CheckpointType.LOCAL and not isinstance(checkpoint_name, (str, bytes, os.PathLike)):
+        checkpoint_name = str(checkpoint_name)
 
     if not cfg.checkpoint.finetune:
         update_num_microbatches(consumed_samples=state.train_state.consumed_train_samples, verbose=True)
 
     # Load model weights
-    if not skip_load_to_model_and_opt:
+    if not skip_load_to_model_and_opt and ckpt_type != CheckpointType.FSDP_DTENSOR:
         # Handle PEFT resume for strict loading
         load_strict = strict
         is_peft_resume = (
@@ -1691,7 +2004,12 @@ def _load_checkpoint_from_path(
                 and optimizer is not None
                 and not getattr(optimizer, "is_stub_optimizer", False)
             ):
-                optimizer.load_state_dict(state_dict["optimizer"])
+                # torch.no_grad() is needed for local checkpoints: the
+                # DistributedOptimizer copies loaded tensors into main
+                # params via .copy_(), which fails on leaf Variables that
+                # require grad without this context.
+                with torch.no_grad():
+                    optimizer.load_state_dict(state_dict["optimizer"])
 
             if opt_param_scheduler is not None:
                 if "lr_scheduler" in state_dict:
@@ -1795,6 +2113,7 @@ def _load_checkpoint_from_path(
     if not torch.distributed.is_initialized() or is_last_rank():
         wandb_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.wandb_logger)
         mlflow_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.mlflow_logger)
+        comet_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.comet_logger)
 
     torch.cuda.empty_cache()
 
@@ -2060,6 +2379,12 @@ def _load_non_persistent_base_checkpoint(
             pg_collection=pg_collection,
         )
     elif ckpt_cfg.non_persistent_ckpt_type == "local":
+        if rank0:
+            # The rank0 pass only needs metadata to make loading decisions
+            # (TP/PP checks, optimizer sharding type, etc.).
+            # For local checkpoints all of that is derived from the running config,
+            # so skip the expensive full load + to_state_dict conversion.
+            return {}, non_persistent_iteration, False, CheckpointType.LOCAL
         intermediate_state_dict, checkpoint_name = checkpointing_context["local_checkpoint_manager"].load()
         state_dict = intermediate_state_dict.to_state_dict(
             sharded_state_dict,
@@ -2229,9 +2554,14 @@ def _load_base_checkpoint(
 
         return None, "", False, None
 
-    # Determine the checkpoint format
+    # Determine the checkpoint format from config, assert it matches auto-detected.
     checkpoint_path = get_checkpoint_name(load_dir, iteration, release)
-    ckpt_format = _get_checkpoint_format(checkpoint_path)
+    inferred_ckpt_format = _get_checkpoint_format(checkpoint_path)
+    ckpt_format = ckpt_cfg.ckpt_format
+    assert ckpt_format == inferred_ckpt_format, (
+        f"Checkpoint format '{ckpt_format}' from config differs from inferred format "
+        f"'{inferred_ckpt_format}' for {checkpoint_path}."
+    )
 
     if not rank0:
         dist_infix = "distributed " if ckpt_format == "torch_dist" else ""

@@ -24,7 +24,11 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.checkpointing import (
     _DIRECT_ITERATION_DIR_SENTINEL,
+    CheckpointLoadContext,
+    CheckpointManager,
+    CheckpointSaveContext,
     CheckpointType,
+    DefaultCheckpointManager,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
@@ -32,6 +36,7 @@ from megatron.bridge.training.checkpointing import (
     _load_model_state_dict,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
+    create_checkpoint_manager,
     delete_extra_state,
     ensure_directory_exists,
     find_checkpoint_rank_0,
@@ -1590,18 +1595,55 @@ class TestLoadModelStateDictHelper:
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     def test_load_model_state_dict_strict_fallback(self, mock_print_rank_0):
         module = Mock()
-        # First call raises, second (non-strict) call succeeds
-        module.load_state_dict.side_effect = [Exception("boom"), "ok"]
+        load_return = Mock(missing_keys=["layer.weight"], unexpected_keys=[])
+        module.load_state_dict.side_effect = [Exception("boom"), load_return]
 
         _load_model_state_dict(module, {"w": 1}, strict=True)
 
-        # Should have been called twice: strict=True then strict=False
         assert module.load_state_dict.call_count == 2
         first_args, first_kwargs = module.load_state_dict.call_args_list[0]
         second_args, second_kwargs = module.load_state_dict.call_args_list[1]
         assert first_kwargs.get("strict") is True
         assert second_kwargs.get("strict") is False
         assert mock_print_rank_0.called
+
+    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    def test_load_model_state_dict_only_extra_state_keys_no_warning(self, mock_print_rank_0):
+        """When every mismatched key ends with '._extra_state', no warning is printed."""
+        module = Mock()
+        load_return = Mock(
+            missing_keys=["layer.self_attention._extra_state", "layer.mlp._extra_state"],
+            unexpected_keys=["encoder.norm._extra_state"],
+        )
+        module.load_state_dict.side_effect = [Exception("strict mismatch"), load_return]
+
+        _load_model_state_dict(module, {"w": 1}, strict=True)
+
+        assert module.load_state_dict.call_count == 2
+        mock_print_rank_0.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    def test_load_model_state_dict_mixed_keys_warns_non_extra_only(self, mock_print_rank_0):
+        """When some keys don't end with '._extra_state', warn with only those keys."""
+        module = Mock()
+        load_return = Mock(
+            missing_keys=["layer.self_attention._extra_state", "layer.weight"],
+            unexpected_keys=["encoder.norm._extra_state", "decoder.bias"],
+        )
+        err = Exception("strict mismatch")
+        module.load_state_dict.side_effect = [err, load_return]
+
+        _load_model_state_dict(module, {"w": 1}, strict=True)
+
+        assert module.load_state_dict.call_count == 2
+        assert mock_print_rank_0.call_count == 2
+        warning_call = mock_print_rank_0.call_args_list[0][0][0]
+        keys_call = mock_print_rank_0.call_args_list[1][0][0]
+        assert "Warning: Exception during strict loading:" in warning_call
+        assert "strict mismatch" in warning_call
+        assert "layer.weight" in keys_call
+        assert "decoder.bias" in keys_call
+        assert "._extra_state" not in keys_call
 
     def test_load_model_state_dict_non_strict_raises(self):
         module = Mock()
@@ -1695,6 +1737,7 @@ class TestMegatronLMCompatibility:
         mock_cfg.non_persistent_ckpt_type = None
         mock_cfg.exit_on_missing_checkpoint = False
         mock_cfg.ckpt_step = None
+        mock_cfg.ckpt_format = "torch_dist"
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
@@ -2759,3 +2802,278 @@ class TestLoadCheckpointFromPathDirectIterDir:
             # with the direct path (not a tracker-resolved path).
             mock_reader.assert_called_once_with("/ckpt/iter_0001000")
             mock_is_iter_dir.assert_called_once_with("/ckpt/iter_0001000")
+
+
+class TestCheckpointManager:
+    """Tests for the CheckpointManager interface and DefaultCheckpointManager."""
+
+    def test_checkpoint_save_context_creation(self):
+        """Test CheckpointSaveContext dataclass can be created with required fields."""
+        mock_state = Mock(spec=GlobalState)
+        mock_model = [Mock()]
+        mock_optimizer = Mock()
+        mock_scheduler = Mock()
+
+        ctx = CheckpointSaveContext(
+            state=mock_state,
+            model=mock_model,
+            optimizer=mock_optimizer,
+            opt_param_scheduler=mock_scheduler,
+            num_floating_point_operations_so_far=1000,
+        )
+
+        assert ctx.state is mock_state
+        assert ctx.model is mock_model
+        assert ctx.optimizer is mock_optimizer
+        assert ctx.opt_param_scheduler is mock_scheduler
+        assert ctx.num_floating_point_operations_so_far == 1000
+        assert ctx.train_data_iterator is None
+        assert ctx.non_persistent_ckpt is False
+
+    def test_checkpoint_save_context_with_optional_fields(self):
+        """Test CheckpointSaveContext with optional fields set."""
+        mock_state = Mock(spec=GlobalState)
+        mock_iterator = Mock()
+
+        ctx = CheckpointSaveContext(
+            state=mock_state,
+            model=[Mock()],
+            optimizer=None,
+            opt_param_scheduler=None,
+            num_floating_point_operations_so_far=0,
+            train_data_iterator=mock_iterator,
+            non_persistent_ckpt=True,
+        )
+
+        assert ctx.train_data_iterator is mock_iterator
+        assert ctx.non_persistent_ckpt is True
+
+    def test_checkpoint_load_context_creation(self):
+        """Test CheckpointLoadContext dataclass can be created with required fields."""
+        mock_state = Mock(spec=GlobalState)
+        mock_model = [Mock()]
+        mock_optimizer = Mock()
+        mock_scheduler = Mock()
+
+        ctx = CheckpointLoadContext(
+            state=mock_state,
+            model=mock_model,
+            optimizer=mock_optimizer,
+            opt_param_scheduler=mock_scheduler,
+        )
+
+        assert ctx.state is mock_state
+        assert ctx.model is mock_model
+        assert ctx.optimizer is mock_optimizer
+        assert ctx.opt_param_scheduler is mock_scheduler
+        assert ctx.strict is True
+        assert ctx.skip_load_to_model_and_opt is False
+
+    def test_checkpoint_load_context_with_optional_fields(self):
+        """Test CheckpointLoadContext with optional fields set."""
+        mock_state = Mock(spec=GlobalState)
+
+        ctx = CheckpointLoadContext(
+            state=mock_state,
+            model=[Mock()],
+            optimizer=None,
+            opt_param_scheduler=None,
+            strict=False,
+            skip_load_to_model_and_opt=True,
+        )
+
+        assert ctx.strict is False
+        assert ctx.skip_load_to_model_and_opt is True
+
+    def test_create_checkpoint_manager_returns_default(self):
+        """Test create_checkpoint_manager returns DefaultCheckpointManager when no custom class."""
+        config = CheckpointConfig()
+
+        manager = create_checkpoint_manager(config)
+
+        assert isinstance(manager, DefaultCheckpointManager)
+        assert manager.checkpoint_config is config
+
+    def test_create_checkpoint_manager_invalid_format_raises(self):
+        """Test create_checkpoint_manager raises ValueError for invalid class format."""
+        config = CheckpointConfig(custom_manager_class="InvalidClassName")
+
+        with pytest.raises(ValueError, match="Invalid custom_manager_class format"):
+            create_checkpoint_manager(config)
+
+    def test_create_checkpoint_manager_missing_module_raises(self):
+        """Test create_checkpoint_manager raises ImportError for non-existent module."""
+        config = CheckpointConfig(custom_manager_class="nonexistent.module.ClassName")
+
+        with pytest.raises(ImportError, match="Could not import module"):
+            create_checkpoint_manager(config)
+
+    def test_create_checkpoint_manager_missing_class_raises(self):
+        """Test create_checkpoint_manager raises AttributeError for non-existent class."""
+        # Use a real module but non-existent class
+        config = CheckpointConfig(custom_manager_class="os.path.NonExistentClass")
+
+        with pytest.raises(AttributeError, match="does not have class"):
+            create_checkpoint_manager(config)
+
+    def test_create_checkpoint_manager_custom_class(self):
+        """Test create_checkpoint_manager loads and instantiates a custom class."""
+
+        # Create a simple custom manager class for testing
+        class CustomTestManager:
+            def __init__(self, checkpoint_config):
+                self.checkpoint_config = checkpoint_config
+                self.initialized = True
+
+            def save(self, _ctx):
+                pass
+
+            def load(self, _ctx):
+                return (0, 0)
+
+            def finalize_async_saves(self, state, blocking=False, terminate=False):
+                pass
+
+        # Patch the import to return our test class
+        with patch("importlib.import_module") as mock_import:
+            mock_module = Mock()
+            mock_module.CustomTestManager = CustomTestManager
+            mock_import.return_value = mock_module
+
+            config = CheckpointConfig(custom_manager_class="test.module.CustomTestManager")
+            manager = create_checkpoint_manager(config)
+
+            assert isinstance(manager, CustomTestManager)
+            assert manager.checkpoint_config is config
+            assert manager.initialized is True
+
+    def test_default_checkpoint_manager_init(self):
+        """Test DefaultCheckpointManager initialization."""
+        config = CheckpointConfig()
+
+        with patch("megatron.bridge.training.checkpointing.init_checkpointing_context") as mock_init_ctx:
+            mock_init_ctx.return_value = {"test_key": "test_value"}
+            manager = DefaultCheckpointManager(config)
+
+            assert manager.checkpoint_config is config
+            mock_init_ctx.assert_called_once_with(config)
+            assert manager.checkpointing_context == {"test_key": "test_value"}
+
+    def test_default_checkpoint_manager_save_delegates(self):
+        """Test DefaultCheckpointManager.save() delegates to save_checkpoint."""
+        config = CheckpointConfig()
+        mock_state = Mock(spec=GlobalState)
+        mock_model = [Mock()]
+        mock_optimizer = Mock()
+        mock_scheduler = Mock()
+
+        ctx = CheckpointSaveContext(
+            state=mock_state,
+            model=mock_model,
+            optimizer=mock_optimizer,
+            opt_param_scheduler=mock_scheduler,
+            num_floating_point_operations_so_far=5000,
+            train_data_iterator=Mock(),
+            non_persistent_ckpt=True,
+        )
+
+        with (
+            patch("megatron.bridge.training.checkpointing.init_checkpointing_context") as mock_init_ctx,
+            patch("megatron.bridge.training.checkpointing.save_checkpoint") as mock_save,
+        ):
+            mock_init_ctx.return_value = {"context": "data"}
+            manager = DefaultCheckpointManager(config)
+            manager.save(ctx)
+
+            mock_save.assert_called_once_with(
+                state=mock_state,
+                model=mock_model,
+                optimizer=mock_optimizer,
+                opt_param_scheduler=mock_scheduler,
+                num_floating_point_operations_so_far=5000,
+                checkpointing_context={"context": "data"},
+                non_persistent_ckpt=True,
+                train_data_iterator=ctx.train_data_iterator,
+            )
+
+    def test_default_checkpoint_manager_load_delegates(self):
+        """Test DefaultCheckpointManager.load() delegates to load_checkpoint."""
+        config = CheckpointConfig()
+        mock_state = Mock(spec=GlobalState)
+        mock_model = [Mock()]
+        mock_optimizer = Mock()
+        mock_scheduler = Mock()
+
+        ctx = CheckpointLoadContext(
+            state=mock_state,
+            model=mock_model,
+            optimizer=mock_optimizer,
+            opt_param_scheduler=mock_scheduler,
+            strict=False,
+            skip_load_to_model_and_opt=True,
+        )
+
+        with (
+            patch("megatron.bridge.training.checkpointing.init_checkpointing_context") as mock_init_ctx,
+            patch("megatron.bridge.training.checkpointing.load_checkpoint") as mock_load,
+        ):
+            mock_init_ctx.return_value = {"context": "data"}
+            mock_load.return_value = (100, 50000)
+
+            manager = DefaultCheckpointManager(config)
+            result = manager.load(ctx)
+
+            mock_load.assert_called_once_with(
+                state=mock_state,
+                model=mock_model,
+                optimizer=mock_optimizer,
+                opt_param_scheduler=mock_scheduler,
+                strict=False,
+                checkpointing_context={"context": "data"},
+                skip_load_to_model_and_opt=True,
+            )
+            assert result == (100, 50000)
+
+    def test_default_checkpoint_manager_finalize_async_saves(self):
+        """Test DefaultCheckpointManager.finalize_async_saves() delegates correctly."""
+        config = CheckpointConfig()
+        mock_state = Mock(spec=GlobalState)
+
+        with (
+            patch("megatron.bridge.training.checkpointing.init_checkpointing_context") as mock_init_ctx,
+            patch("megatron.bridge.training.checkpointing.maybe_finalize_async_save") as mock_finalize,
+        ):
+            mock_init_ctx.return_value = {}
+
+            manager = DefaultCheckpointManager(config)
+            manager.finalize_async_saves(state=mock_state, blocking=True, terminate=True)
+
+            mock_finalize.assert_called_once_with(
+                global_state=mock_state,
+                ckpt_cfg=config,
+                blocking=True,
+                terminate=True,
+            )
+
+    def test_checkpoint_manager_protocol_compliance(self):
+        """Test that DefaultCheckpointManager satisfies the CheckpointManager protocol."""
+        config = CheckpointConfig()
+
+        with patch("megatron.bridge.training.checkpointing.init_checkpointing_context"):
+            manager = DefaultCheckpointManager(config)
+
+            # Protocol check using isinstance (works because @runtime_checkable)
+            assert isinstance(manager, CheckpointManager)
+
+    def test_checkpointing_context_property(self):
+        """Test DefaultCheckpointManager.checkpointing_context property."""
+        config = CheckpointConfig()
+        expected_context = {"local_checkpoint_manager": Mock(), "save_strategy": Mock()}
+
+        with patch("megatron.bridge.training.checkpointing.init_checkpointing_context") as mock_init_ctx:
+            mock_init_ctx.return_value = expected_context
+
+            manager = DefaultCheckpointManager(config)
+
+            assert manager.checkpointing_context is expected_context
+            assert manager._context is expected_context

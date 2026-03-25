@@ -30,6 +30,8 @@ def set_nemotron_3_nano_common_configs(cfg: ConfigContainer) -> None:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    cfg.model.moe_router_force_load_balancing = True
+
 
 def nemotron_3_nano_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"

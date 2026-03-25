@@ -42,6 +42,9 @@ from megatron.core.utils import (
 )
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
@@ -149,7 +152,7 @@ def initialize_megatron(
 
 
 def torch_dist_init(
-    model_config: GPTModelProvider | T5ModelProvider,
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
     dist_config: DistributedInitConfig,
     rng_config: RNGConfig,
     micro_batch_size: int,
@@ -184,7 +187,9 @@ def torch_dist_init(
     def finish_mpu_init() -> ProcessGroupCollection:
         # Pytorch distributed.
         pg_collection = _initialize_distributed(
-            model_config=model_config,
+            model_config=model_config.transformer
+            if isinstance(model_config, (GPTModelConfig, MambaModelConfig))
+            else model_config,
             dist_config=dist_config,
             num_distributed_optimizer_instances=num_distributed_optimizer_instances,
             get_embedding_ranks=get_embedding_ranks,
@@ -267,7 +272,9 @@ def init_rerun_state(rerun_state_machine_config: RerunStateMachineConfig) -> Non
     rsm.spiky_loss_factor = rerun_state_machine_config.spiky_loss_factor
 
 
-def set_jit_fusion_options(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
+def set_jit_fusion_options(
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig, micro_batch_size: int
+) -> None:
     """Set PyTorch JIT layer fusion options and warmup JIT functions.
 
     Configures the JIT fuser (nvFuser or legacy) based on the PyTorch version
@@ -296,7 +303,10 @@ def set_jit_fusion_options(model_config: GPTModelProvider | T5ModelProvider, mic
         torch._C._jit_override_can_fuse_on_cpu(True)
         torch._C._jit_override_can_fuse_on_gpu(True)
 
-    _warmup_jit_function(model_config, micro_batch_size)
+    _warmup_jit_function(
+        model_config.transformer if isinstance(model_config, (GPTModelConfig, MambaModelConfig)) else model_config,
+        micro_batch_size,
+    )
 
 
 def destroy_global_state() -> None:
@@ -313,7 +323,9 @@ def destroy_global_state() -> None:
     destroy_rerun_state_machine()
 
 
-def _initialize_tp_communicators(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
+def _initialize_tp_communicators(
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig, micro_batch_size: int
+) -> None:
     """initializing the communicators with user buffers for high-performance tensor-model-parallel
     communication overlap"""
 
@@ -382,7 +394,7 @@ def _initialize_tp_communicators(model_config: GPTModelProvider | T5ModelProvide
 
 
 def _create_pg_collection(
-    model_config: GPTModelProvider | T5ModelProvider,
+    model_config: TransformerConfig,
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
@@ -533,8 +545,47 @@ def _create_pg_collection(
     return pg_collection
 
 
+def _setup_flight_recorder_env(dist_config: DistributedInitConfig) -> None:
+    """Set flight recorder env vars based on config or pre-existing environment.
+
+    Priority: pre-existing env var > config value. If no dump path is provided
+    (either via config or env), no env vars are set.
+    """
+    _fr_path = (
+        os.environ.get("TORCH_FR_DUMP_TEMP_FILE")
+        or os.environ.get("TORCH_NCCL_DEBUG_INFO_TEMP_FILE")
+        or dist_config.flight_recorder_dump_path
+    )
+    if _fr_path is None:
+        return
+
+    _fr_env_defaults = {
+        "TORCH_FR_DUMP_TEMP_FILE": _fr_path,
+        "TORCH_NCCL_DEBUG_INFO_TEMP_FILE": _fr_path,
+        "TORCH_NCCL_TRACE_BUFFER_SIZE": str(dist_config.flight_recorder_trace_buffer_size),
+        "TORCH_NCCL_DUMP_ON_TIMEOUT": str(int(dist_config.flight_recorder_dump_on_timeout)),
+        "TORCH_INCLUDE_STACK_TRACE": str(int(dist_config.flight_recorder_include_stack_trace)),
+        "TORCH_INCLUDE_ONLY_ACTIVE": str(int(dist_config.flight_recorder_include_only_active)),
+        "TORCH_NCCL_EXTRA_DUMP_ON_EXEC": str(int(dist_config.flight_recorder_extra_dump_on_exec)),
+    }
+    for _var, _default in _fr_env_defaults.items():
+        if _var in os.environ:
+            warnings.warn(
+                f"Flight recorder: env var {_var} is already set to "
+                f"'{os.environ[_var]}'; ignoring config value '{_default}'.",
+                stacklevel=2,
+            )
+        else:
+            os.environ[_var] = _default
+    if get_rank_safe() == 0:
+        print(
+            "Flight recorder env vars:\n" + "\n".join(f"  {k}={os.environ[k]}" for k in _fr_env_defaults),
+            flush=True,
+        )
+
+
 def _initialize_distributed(
-    model_config: GPTModelProvider | T5ModelProvider,
+    model_config: TransformerConfig,
     dist_config: DistributedInitConfig,
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
@@ -573,6 +624,8 @@ def _initialize_distributed(
             os.environ["MASTER_ADDR"] = get_master_addr_safe()
         if "MASTER_PORT" not in os.environ:
             os.environ["MASTER_PORT"] = str(get_master_port_safe())
+
+        _setup_flight_recorder_env(dist_config)
 
         # Call the init process
         init_process_group_kwargs = {
@@ -700,7 +753,7 @@ def _set_random_seed(
         )
 
 
-def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
+def _warmup_jit_function(model_config: TransformerConfig, micro_batch_size: int) -> None:
     """Compilie JIT functions before the main training steps"""
     if model_config.bf16:
         dtype = torch.bfloat16
