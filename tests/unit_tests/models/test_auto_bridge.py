@@ -1477,3 +1477,156 @@ class TestSimpleFacade:
             distributed_save=False,
             save_every_n_ranks=1,
         )
+
+
+class TestGetProvider:
+    """Tests for get_provider() — the hook-friendly provider facade."""
+
+    @pytest.fixture
+    def bridge(self):
+        mock_pretrained = create_mock_pretrained_causal_lm()
+        return AutoBridge(mock_pretrained)
+
+    def _make_provider(self):
+        mock_provider = Mock()
+        mock_provider.provide_distributed_model.return_value = ["model"]
+        return mock_provider
+
+    def test_get_provider_returns_provider_without_finalizing(self, bridge):
+        """get_provider() returns the provider but does NOT call finalize()."""
+        mock_provider = self._make_provider()
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            result = bridge.get_provider()
+
+        assert result is mock_provider
+        mock_provider.finalize.assert_not_called()
+        mock_provider.provide_distributed_model.assert_not_called()
+
+    def test_get_provider_load_weights_false_by_default(self, bridge):
+        """get_provider() defaults to load_weights=False (training use-case)."""
+        mock_provider = self._make_provider()
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider) as mock_fn:
+            bridge.get_provider()
+
+        mock_fn.assert_called_once_with(load_weights=False, hf_path=None)
+
+    def test_get_provider_sets_tp_pp_cp_ep(self, bridge):
+        """get_provider(tp, pp, cp, ep) sets the parallelism attributes."""
+        mock_provider = self._make_provider()
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_provider(tp=4, pp=2, cp=2, ep=4)
+
+        assert mock_provider.tensor_model_parallel_size == 4
+        assert mock_provider.pipeline_model_parallel_size == 2
+        assert mock_provider.context_parallel_size == 2
+        assert mock_provider.expert_model_parallel_size == 4
+
+    def test_get_provider_sets_etp(self, bridge):
+        """get_provider(etp=2) sets expert_tensor_parallel_size."""
+        mock_provider = self._make_provider()
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_provider(etp=2)
+
+        assert mock_provider.expert_tensor_parallel_size == 2
+
+    def test_get_provider_sets_vp(self, bridge):
+        """get_provider(vp=4) sets virtual_pipeline_model_parallel_size."""
+        mock_provider = self._make_provider()
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_provider(vp=4)
+
+        assert mock_provider.virtual_pipeline_model_parallel_size == 4
+
+    def test_get_provider_etp_none_not_set(self, bridge):
+        """etp=None (default) does not set expert_tensor_parallel_size."""
+        mock_provider = self._make_provider()
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_provider()
+
+        calls = [str(c) for c in mock_provider.mock_calls]
+        assert not any("expert_tensor_parallel_size" in c for c in calls)
+
+    def test_get_provider_vp_none_not_set(self, bridge):
+        """vp=None (default) does not set virtual_pipeline_model_parallel_size."""
+        mock_provider = self._make_provider()
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_provider()
+
+        calls = [str(c) for c in mock_provider.mock_calls]
+        assert not any("virtual_pipeline_model_parallel_size" in c for c in calls)
+
+    def test_get_provider_applies_overrides(self, bridge):
+        """**overrides are applied via setattr on the provider."""
+        mock_provider = self._make_provider()
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            bridge.get_provider(
+                sequence_parallel=True,
+                variable_seq_lengths=True,
+                moe_token_dispatcher_type="alltoall",
+                moe_router_load_balancing_type="none",
+            )
+
+        assert mock_provider.sequence_parallel is True
+        assert mock_provider.variable_seq_lengths is True
+        assert mock_provider.moe_token_dispatcher_type == "alltoall"
+        assert mock_provider.moe_router_load_balancing_type == "none"
+
+    def test_get_provider_full_verl_pattern(self, bridge):
+        """Simulates the complete veRL provider setup in a single call."""
+        import torch
+
+        mock_provider = self._make_provider()
+
+        with patch.object(bridge, "to_megatron_provider", return_value=mock_provider):
+            provider = bridge.get_provider(
+                tp=4,
+                pp=2,
+                ep=1,
+                vp=2,
+                params_dtype=torch.bfloat16,
+                fp16=False,
+                bf16=True,
+                sequence_parallel=True,
+                variable_seq_lengths=True,
+                moe_token_dispatcher_type="alltoall",
+                moe_router_load_balancing_type="none",
+            )
+
+        # No finalize or model creation yet — hooks can still be registered
+        mock_provider.finalize.assert_not_called()
+        mock_provider.provide_distributed_model.assert_not_called()
+
+        # All attributes set
+        assert provider.tensor_model_parallel_size == 4
+        assert provider.pipeline_model_parallel_size == 2
+        assert provider.virtual_pipeline_model_parallel_size == 2
+        assert provider.params_dtype == torch.bfloat16
+        assert provider.bf16 is True
+        assert provider.sequence_parallel is True
+
+    def test_get_model_delegates_through_get_provider(self, bridge):
+        """get_model() now delegates to get_provider() internally."""
+        mock_provider = self._make_provider()
+
+        with patch.object(bridge, "get_provider", return_value=mock_provider) as mock_gp:
+            bridge.get_model(tp=8, sequence_parallel=True)
+
+        mock_gp.assert_called_once_with(
+            tp=8,
+            pp=1,
+            cp=1,
+            ep=1,
+            etp=None,
+            vp=None,
+            load_weights=True,
+            hf_path=None,
+            sequence_parallel=True,
+        )

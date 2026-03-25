@@ -324,25 +324,37 @@ class AutoBridge(Generic[MegatronModelT]):
         pp: int = 1,
         cp: int = 1,
         ep: int = 1,
+        etp: int | None = None,
+        vp: int | None = None,
         load_weights: bool = True,
         hf_path: str | Path | None = None,
+        **overrides: Any,
     ) -> list[MegatronModelT]:
         """Create a distributed Megatron model from the HuggingFace checkpoint.
 
-        This is the primary entry point for users who want to get a ready-to-use
+        This is the primary entry point for users who want a ready-to-use
         Megatron model without interacting with the provider API directly. It
-        combines provider creation, parallelism configuration, and weight loading
-        into a single call.
+        combines provider creation, parallelism configuration, and weight
+        loading into a single call.
+
+        For use cases that require pre-wrap hooks (e.g. PEFT, custom value
+        heads), use :meth:`get_provider` instead, which returns a configured
+        provider before ``finalize()`` is called.
 
         Args:
             tp: Tensor model parallel size (default: 1).
             pp: Pipeline model parallel size (default: 1).
             cp: Context parallel size (default: 1).
             ep: Expert model parallel size for MoE models (default: 1).
+            etp: Expert tensor parallel size (default: None, inherits ``tp``).
+            vp: Virtual pipeline model parallel size (default: None).
             load_weights: Whether to load HuggingFace weights into the model.
                 Set to False for random initialization. (default: True)
             hf_path: Optional path to load weights from. If None, uses weights
                 from the bridge's ``hf_pretrained`` instance.
+            **overrides: Additional provider attribute overrides applied before
+                ``finalize()`` (e.g. ``sequence_parallel=True``,
+                ``params_dtype=torch.bfloat16``).
 
         Returns:
             List of Megatron model instances (one per virtual pipeline stage).
@@ -353,18 +365,105 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> model = bridge.get_model()
 
             >>> # Tensor parallel across 8 GPUs
-            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
             >>> model = bridge.get_model(tp=8)
 
             >>> # Separate weight loading
-            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
             >>> model = bridge.get_model(tp=4, load_weights=False)
             >>> bridge.load_weights(model)
 
         See Also:
-            to_megatron_provider: Access the provider directly for advanced configuration.
+            get_provider: Get the provider for advanced use (hooks, PEFT).
             load_weights: Load weights into an existing model.
             save_weights: Export model weights back to HuggingFace format.
+        """
+        provider = self.get_provider(
+            tp=tp,
+            pp=pp,
+            cp=cp,
+            ep=ep,
+            etp=etp,
+            vp=vp,
+            load_weights=load_weights,
+            hf_path=hf_path,
+            **overrides,
+        )
+        if hasattr(provider, "finalize"):
+            provider.finalize()
+        return provider.provide_distributed_model(wrap_with_ddp=False)
+
+    def get_provider(
+        self,
+        tp: int = 1,
+        pp: int = 1,
+        cp: int = 1,
+        ep: int = 1,
+        etp: int | None = None,
+        vp: int | None = None,
+        load_weights: bool = False,
+        hf_path: str | Path | None = None,
+        **overrides: Any,
+    ) -> GPTModelProvider:
+        """Return a configured provider ready for hook registration and model creation.
+
+        This is the recommended entry point for downstream frameworks (e.g. veRL,
+        NeMo-RL) that need to:
+
+        - Register pre-wrap hooks (PEFT, custom value heads, MoE router freezing)
+        - Apply custom attribute overrides before ``finalize()``
+        - Control DDP wrapping and optimizer configuration
+
+        Unlike :meth:`get_model`, this method does **not** call ``finalize()``
+        or ``provide_distributed_model()``, giving callers full control over the
+        provider lifecycle.
+
+        Args:
+            tp: Tensor model parallel size (default: 1).
+            pp: Pipeline model parallel size (default: 1).
+            cp: Context parallel size (default: 1).
+            ep: Expert model parallel size for MoE models (default: 1).
+            etp: Expert tensor parallel size (default: None).
+            vp: Virtual pipeline model parallel size (default: None).
+            load_weights: Pre-register an HF weight-loading hook that runs
+                inside ``provide_distributed_model()``. Set to ``True`` when
+                you want weights loaded automatically during model creation.
+                Default is ``False`` (load weights explicitly afterwards via
+                :meth:`load_weights`).
+            hf_path: Path to load weights from when ``load_weights=True``.
+                Defaults to the bridge's ``hf_pretrained`` source.
+            **overrides: Any additional provider attribute to set before
+                returning. Common examples::
+
+                    params_dtype=torch.bfloat16,
+                    sequence_parallel=True,
+                    variable_seq_lengths=True,
+                    attention_backend=AttnBackend.flash,
+                    moe_token_dispatcher_type="alltoall",
+
+        Returns:
+            GPTModelProvider configured with the requested parallelism and
+            overrides. Call ``provider.finalize()`` followed by
+            ``provider.provide_distributed_model(...)`` when ready.
+
+        Example:
+            >>> # veRL-style training setup with PEFT and custom overrides
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+            >>> provider = bridge.get_provider(
+            ...     tp=4, pp=2, ep=1, vp=2,
+            ...     params_dtype=torch.bfloat16,
+            ...     sequence_parallel=True,
+            ...     variable_seq_lengths=True,
+            ...     moe_token_dispatcher_type="alltoall",
+            ... )
+            >>> provider.register_pre_wrap_hook(my_peft_hook)
+            >>> provider.finalize()
+            >>> model = provider.provide_distributed_model(
+            ...     wrap_with_ddp=True, ddp_config=ddp_cfg
+            ... )
+
+        See Also:
+            get_model: Simpler one-call API when no hooks are needed.
+            to_megatron_provider: Lower-level accessor that returns the raw
+                provider without any parallelism or override application.
         """
         provider = self.to_megatron_provider(load_weights=load_weights, hf_path=hf_path)
         if tp != 1:
@@ -375,9 +474,13 @@ class AutoBridge(Generic[MegatronModelT]):
             provider.context_parallel_size = cp
         if ep != 1:
             provider.expert_model_parallel_size = ep
-        if hasattr(provider, "finalize"):
-            provider.finalize()
-        return provider.provide_distributed_model(wrap_with_ddp=False)
+        if etp is not None:
+            provider.expert_tensor_parallel_size = etp
+        if vp is not None:
+            provider.virtual_pipeline_model_parallel_size = vp
+        for key, value in overrides.items():
+            setattr(provider, key, value)
+        return provider
 
     def load_weights(
         self,
