@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING, Any, Optional
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.qwen.qwen_provider import Qwen2ModelProvider
 
 
 if TYPE_CHECKING:
@@ -45,7 +44,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class Qwen2AudioModelProvider(Qwen2ModelProvider):
+class Qwen2AudioModelProvider(GPTModelProvider):
     """
     Base model provider for Qwen2-Audio Models.
 
