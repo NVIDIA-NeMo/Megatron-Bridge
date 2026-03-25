@@ -64,7 +64,7 @@ class TestCanEnableGradientAccumulationFusion:
                 result = can_enable_gradient_accumulation_fusion()
 
             assert result is False
-            assert "gradient_accumulation_fusion requires FusedLayerNorm" in caplog.text
+            assert "gradient_accumulation_fusion requires either TransformerEngine" in caplog.text
 
 
 class TestValidateRopeFusionCompatibility:
