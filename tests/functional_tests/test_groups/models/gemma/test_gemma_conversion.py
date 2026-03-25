@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import GemmaConfig, GemmaForCausalLM, GemmaTokenizer
+from transformers import AutoModelForCausalLM, GemmaConfig, GemmaForCausalLM, GemmaTokenizer
 
 
 HF_GEMMA_TOY_MODEL_CONFIG = {
@@ -249,3 +249,9 @@ class TestGemmaConversion:
         except Exception as e:
             print(f"Error during Gemma {test_name} conversion test: {e}")
             raise
+
+    @pytest.mark.run_only_on("GPU")
+    def test_gemma_autoconfig_roundtrip(self, gemma_toy_model_path, tmp_path):
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(gemma_toy_model_path, tmp_path)

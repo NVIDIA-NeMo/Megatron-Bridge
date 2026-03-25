@@ -242,3 +242,258 @@ def compare_provider_configs(converted_provider, predefined_provider, model_id, 
 
     if mismatched_attrs:
         raise AssertionError(f"Configuration mismatch for {model_id}:\n" + "\n".join(mismatched_attrs))
+
+
+def autoconfig_roundtrip(
+    local_model_path: str,
+    tmp_path: Path,
+    trust_remote_code: bool = False,
+    atol: float = 2e-2,
+    model_loader_cls=None,
+) -> None:
+    """Run a full HF → Megatron → HF auto-config roundtrip and assert correctness.
+
+    This is the shared implementation for all ``test_<model>_autoconfig_roundtrip``
+    tests.  It performs:
+
+    1. ``AutoBridge.import_ckpt`` (HF → Megatron)
+    2. ``AutoBridge.from_auto_config`` + ``export_ckpt`` (Megatron → HF)
+    3. Config diff report (printed)
+    4. Weight key & value comparison (asserted bit-exact)
+    5. Forward-pass logit comparison (asserted within *atol*)
+
+    Args:
+        local_model_path: Path to the toy HF model directory.
+        tmp_path: Pytest ``tmp_path`` fixture.
+        trust_remote_code: Passed to ``import_ckpt`` and ``from_pretrained``.
+            When True, also copies ``*.py`` from *local_model_path* into the
+            export directory so that custom modeling code is available.
+        atol: Absolute tolerance for the forward-pass logit comparison.
+        model_loader_cls: Optional explicit HF model class to use for loading
+            original/exported checkpoints (for example,
+            ``Mistral3ForConditionalGeneration``). If omitted, a robust
+            auto-loader fallback sequence is used.
+    """
+    import json
+    import shutil
+
+    import megatron.core.parallel_state as parallel_state
+    import torch.distributed as dist
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoModelForImageTextToText,
+        AutoModelForMultimodalLM,
+        AutoModelForSeq2SeqLM,
+        AutoModelForSpeechSeq2Seq,
+    )
+
+    from megatron.bridge import AutoBridge
+
+    megatron_root = str(tmp_path / "megatron")
+    export_path = tmp_path / "hf_export"
+
+    # Read original config
+    with open(Path(local_model_path) / "config.json") as f:
+        original_config = json.load(f)
+
+    # HF → Megatron
+    AutoBridge.import_ckpt(
+        hf_model_id=local_model_path,
+        megatron_path=megatron_root,
+        trust_remote_code=trust_remote_code,
+    )
+
+    # Tear down distributed state between import and export
+    if parallel_state.is_initialized():
+        parallel_state.destroy_model_parallel()
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+    # Megatron → HF via auto-config export
+    bridge = AutoBridge.from_auto_config(megatron_root, local_model_path)
+    bridge.export_ckpt(
+        megatron_path=megatron_root,
+        hf_path=str(export_path),
+        show_progress=True,
+        strict=False,
+    )
+
+    # Copy custom modeling files for trust_remote_code models
+    if trust_remote_code:
+        for py_file in Path(local_model_path).glob("*.py"):
+            shutil.copy(py_file, export_path)
+
+    # ── Config diff ──────────────────────────────────────────────
+    with open(export_path / "config.json") as f:
+        exported_config = json.load(f)
+
+    print_config_diff(original_config, exported_config)
+
+    # ── Debug: inspect exported weights before loading ─────────
+    from safetensors.torch import load_file as load_safetensors
+    export_weights_files = list(export_path.glob("*.safetensors"))
+    if export_weights_files:
+        print("\n" + "=" * 70)
+        print("DEBUG: Exported weight shapes (from safetensors)")
+        print("=" * 70)
+        for wf in sorted(export_weights_files):
+            sd = load_safetensors(str(wf))
+            for k in sorted(sd.keys()):
+                print(f"  {k}: {sd[k].shape} {sd[k].dtype}")
+        print("=" * 70)
+
+    print(f"\nDEBUG: exported config model_type = {exported_config.get('model_type')}")
+    print(f"DEBUG: exported config architectures = {exported_config.get('architectures')}")
+
+    # ── Weight & forward-pass comparison ─────────────────────────
+    load_kwargs = dict(torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=trust_remote_code)
+
+    if model_loader_cls is not None:
+        original = model_loader_cls.from_pretrained(local_model_path, **load_kwargs)
+        exported = model_loader_cls.from_pretrained(str(export_path), **load_kwargs)
+    else:
+        loader_candidates = (
+            AutoModelForCausalLM,
+            AutoModelForImageTextToText,
+            AutoModelForMultimodalLM,
+            AutoModelForSeq2SeqLM,
+            AutoModelForSpeechSeq2Seq,
+        )
+        errors = []
+        original = None
+        exported = None
+
+        for loader in loader_candidates:
+            try:
+                original = loader.from_pretrained(local_model_path, **load_kwargs)
+                exported = loader.from_pretrained(str(export_path), **load_kwargs)
+                break
+            except Exception as exc:  # pragma: no cover - exercised by model-specific mappings
+                errors.append(f"{loader.__name__}: {exc}")
+
+        if original is None or exported is None:
+            joined_errors = "\n".join(errors)
+            raise RuntimeError(
+                "Unable to load roundtrip models with available auto loaders.\n"
+                f"Tried:\n{joined_errors}"
+            )
+
+    assert_weights_equal(original, exported)
+    assert_forward_pass_equal(original, exported, atol=atol)
+
+
+def print_config_diff(original_config: dict, exported_config: dict) -> None:
+    """Print a detailed diff between two HF config dicts."""
+    all_keys = sorted(set(list(original_config.keys()) + list(exported_config.keys())))
+    orig_only = []
+    export_only = []
+    value_diffs = []
+    matched = []
+
+    for key in all_keys:
+        in_orig = key in original_config
+        in_exp = key in exported_config
+        if in_orig and not in_exp:
+            orig_only.append(key)
+        elif in_exp and not in_orig:
+            export_only.append(key)
+        elif original_config[key] != exported_config[key]:
+            value_diffs.append((key, original_config[key], exported_config[key]))
+        else:
+            matched.append(key)
+
+    print("\n" + "=" * 70)
+    print("CONFIG DIFF REPORT")
+    print("=" * 70)
+    print(f"\nTotal keys — original: {len(original_config)}, exported: {len(exported_config)}")
+    print(f"Matched:       {len(matched)}")
+    print(f"Value diffs:   {len(value_diffs)}")
+    print(f"Only original: {len(orig_only)}")
+    print(f"Only exported: {len(export_only)}")
+
+    if orig_only:
+        print("\n--- Keys ONLY in original (missing from export) ---")
+        for key in orig_only:
+            print(f"  {key}: {original_config[key]}")
+
+    if export_only:
+        print("\n--- Keys ONLY in export (new/unexpected) ---")
+        for key in export_only:
+            print(f"  {key}: {exported_config[key]}")
+
+    if value_diffs:
+        print("\n--- Keys with DIFFERENT values ---")
+        for key, orig_val, exp_val in value_diffs:
+            print(f"  {key}:")
+            print(f"    original: {orig_val!r}")
+            print(f"    exported: {exp_val!r}")
+
+    if matched:
+        print(f"\n--- Matched keys ({len(matched)}) ---")
+        for key in matched:
+            print(f"  {key}: {original_config[key]!r}")
+
+    print("=" * 70)
+
+
+def assert_weights_equal(original, exported) -> None:
+    """Assert that two models have bit-exact matching weights, with detailed diff on failure."""
+    pure_sd = {k: v.cpu() for k, v in original.state_dict().items()}
+    conv_sd = {k: v.cpu() for k, v in exported.state_dict().items()}
+
+    orig_keys = set(pure_sd.keys())
+    conv_keys = set(conv_sd.keys())
+    only_in_orig = orig_keys - conv_keys
+    only_in_conv = conv_keys - orig_keys
+    common_keys = orig_keys & conv_keys
+
+    print("\n" + "=" * 70)
+    print("WEIGHT KEY DIFF REPORT")
+    print("=" * 70)
+    print(f"Original keys: {len(orig_keys)}, Exported keys: {len(conv_keys)}")
+
+    if only_in_orig:
+        print(f"\n--- Keys ONLY in original weights ({len(only_in_orig)}) ---")
+        for k in sorted(only_in_orig):
+            print(f"  {k}  shape={pure_sd[k].shape}  dtype={pure_sd[k].dtype}")
+
+    if only_in_conv:
+        print(f"\n--- Keys ONLY in exported weights ({len(only_in_conv)}) ---")
+        for k in sorted(only_in_conv):
+            print(f"  {k}  shape={conv_sd[k].shape}  dtype={conv_sd[k].dtype}")
+
+    mismatched_weights = []
+    matched_weights = 0
+    for key in sorted(common_keys):
+        if not torch.equal(pure_sd[key], conv_sd[key]):
+            max_diff = (pure_sd[key].float() - conv_sd[key].float()).abs().max().item()
+            mismatched_weights.append((key, pure_sd[key].shape, max_diff))
+        else:
+            matched_weights += 1
+
+    print(f"\nCommon keys: {len(common_keys)}")
+    print(f"  Bit-exact match: {matched_weights}")
+    print(f"  Value mismatch:  {len(mismatched_weights)}")
+
+    if mismatched_weights:
+        print("\n--- Weight value mismatches ---")
+        for key, shape, max_diff in mismatched_weights:
+            print(f"  {key}  shape={shape}  max_diff={max_diff:.6e}")
+
+    print("=" * 70)
+
+    assert not only_in_orig, f"Keys only in original: {only_in_orig}"
+    assert not only_in_conv, f"Keys only in exported: {only_in_conv}"
+    assert not mismatched_weights, f"Weight mismatches: {[m[0] for m in mismatched_weights]}"
+
+
+def assert_forward_pass_equal(original, exported, atol: float = 2e-2) -> None:
+    """Assert that two models produce matching logits for a simple input."""
+    input_ids = torch.tensor([[1, 2, 3, 4, 5]], device=next(original.parameters()).device)
+    with torch.no_grad():
+        orig_logits = original(input_ids).logits.cpu()
+        export_logits = exported(input_ids).logits.cpu()
+    max_diff = (orig_logits - export_logits).abs().max().item()
+    mean_diff = (orig_logits - export_logits).abs().mean().item()
+    print(f"\nFORWARD PASS: max_diff={max_diff:.6e}  mean_diff={mean_diff:.6e}")
+    assert torch.allclose(orig_logits, export_logits, atol=atol), f"Forward pass mismatch: max diff {max_diff}"

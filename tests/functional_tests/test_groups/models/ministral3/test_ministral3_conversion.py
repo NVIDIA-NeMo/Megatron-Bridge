@@ -253,3 +253,17 @@ class TestMinistral3Conversion:
         assert saved_config["text_config"]["num_attention_heads"] == 8, (
             "Number of attention heads should match toy config"
         )
+
+    @pytest.mark.run_only_on("GPU")
+    def test_ministral3_autoconfig_roundtrip(self, ministral3_toy_model_path, tmp_path):
+        from transformers import Mistral3ForConditionalGeneration
+
+        from tests.functional_tests.utils import (
+            autoconfig_roundtrip,
+        )
+
+        autoconfig_roundtrip(
+            local_model_path=ministral3_toy_model_path,
+            tmp_path=tmp_path,
+            model_loader_cls=Mistral3ForConditionalGeneration,
+        )
