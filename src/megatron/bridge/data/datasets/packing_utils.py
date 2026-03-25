@@ -25,24 +25,6 @@ PACKING_ALGOS = ["first_fit_decreasing", "first_fit_shuffle"]
 logger = logging.getLogger(__name__)
 
 
-def find_first_bin_that_fits(bin_sums: List[int], s: int, bin_size: int) -> int:
-    """
-    Finds the first bin in a list of bins that has enough space to fit a sequence of size 's'.
-
-    Args:
-      bins: A list of lists, where each inner list represents a bin and contains the current elements in that bin.
-      s: The size of the sequence to be placed in a bin.
-      bin_size: The maximum capacity of each bin.
-
-    Returns:
-      The index of the first bin that can fit the sequence 's', or -1 if no such bin exists.
-    """
-    for i, cur_sum in enumerate(bin_sums):
-        if cur_sum + s <= bin_size:
-            return i
-    return -1
-
-
 class _SegmentTree:
     def __init__(self, capacity: int):
         self._n = capacity
