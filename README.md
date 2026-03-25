@@ -12,6 +12,10 @@
 
 ## 📣 News
 
+- [03/24/2026] **Agent Skills (experimental):** We're building a library of Agent Skills — operational guides that encode expert workflows for adding new models, running experiments, debugging multi-node failures, performance tuning, and more. They double as documentation and as AI-agent instructions for tools like Cursor. Skills are in an early experimental stage and content is still being filled in. We'd love feedback, contributions, and discussion — browse the [`skills/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/skills) folder to get started.
+
+- [03/24/2026] **New models & recipes:** Recent additions include [Bailing MoE V2](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/bailing), [MiniMax-M2 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/minimax), [Qwen2-Audio](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen), [Qwen3.5-VL LoRA & SFT](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/recipes/qwen_vl), and [Qwen2.5-Omni](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_vl). Also added DeepSeek MTP conversion and [Sarvam-30B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/sarvam) examples.
+
 - [03/12/2026] **Deprecating Python 3.10 support:** We're officially dropping Python 3.10 support with the upcoming 0.4.0 release. Downstream applications must raise their lower boundary to 3.12 to stay compatible with Megatron-Bridge.
 
 * [12/16/2025] [Mind Lab](https://macaron.im/mindlab) successfully used Megatron-bridge and [VeRL](https://github.com/volcengine/verl) to trained GRPO Lora for Trillion-parameter model on 64 H800 - See their [techblog](https://macaron.im/mindlab/research/building-trillion-parameter-reasoning-rl-with-10-gpus).
@@ -209,6 +213,20 @@ Megatron-Bridge/
 │   └── utils/                   # Generic utilities for repo-wide usage
 └── tests/                       # Comprehensive test suite
 ```
+
+## 🤖 Agent Skills
+
+We maintain a growing library of [Agent Skills](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/skills) — operational guides that document expert workflows and also serve as AI-agent instructions:
+
+| Category | Skills |
+|----------|--------|
+| **Model development** | Add a new LLM/VLM model, MLM-Bridge training comparison, config translation |
+| **Performance** | Parallelism strategies, CUDA graphs, TP/DP/PP comm overlap, expert-parallel overlap, FSDP, sequence packing, hierarchical context parallelism |
+| **Operations** | Feature experiments, multi-node debugging, NCCL contiguous tensors, resiliency |
+| **Maintenance** | On-call assistant, weekly maintenance, PR triage, issue triage, MCore bump, training sync |
+| **Infrastructure** | Git workflow, single-node-to-Slurm conversion, remote cluster execution, last-mile PR tracker |
+
+**Use them as docs:** Each skill has enablement snippets, code anchors, constraints, pitfalls, and verification steps. **Use them with an AI agent:** Open the repo in an agent-enabled editor and ask it to "add a new model" or "run an experiment" — it will follow the skill automatically. **Contribute:** Write a new skill for a workflow you know well and open a PR.
 
 ## Acknowledgement & Contributing
 
