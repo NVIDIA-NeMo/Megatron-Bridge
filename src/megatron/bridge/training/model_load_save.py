@@ -218,6 +218,13 @@ def load_model_config(
         run_config = read_run_config(run_config_filename)
         mbridge_ckpt = True
         mlm_args = None
+
+        # For backward compatibility reasons only
+        model_dict = run_config.get("model", {})
+        if model_dict.get("hybrid_override_pattern") and not model_dict.get("hybrid_layer_pattern"):
+            model_dict["hybrid_layer_pattern"] = model_dict.pop("hybrid_override_pattern")
+        if isinstance(model_dict.get("pipeline_model_parallel_layout"), dict):
+            model_dict["pipeline_model_parallel_layout"] = None
     else:
         try:
             mlm_args = _load_args_from_checkpoint(checkpoint_path)
@@ -402,6 +409,8 @@ def load_megatron_model(
     model_cfg.context_parallel_size = 1
     model_cfg.expert_model_parallel_size = 1
     model_cfg.expert_tensor_parallel_size = 1
+    if getattr(model_cfg, "hybrid_layer_pattern", None):
+        model_cfg.hybrid_layer_pattern = model_cfg.hybrid_layer_pattern.replace("|", "")
     model_cfg.sequence_parallel = False
     model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
@@ -417,6 +426,13 @@ def load_megatron_model(
         for key, value in mp_overrides.items():
             if hasattr(model_cfg, key) and value is not None:
                 setattr(model_cfg, key, value)
+
+    # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
+    if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
+        tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
+        ep = getattr(model_cfg, "expert_model_parallel_size", 1)
+        if tp * ep == 1:
+            model_cfg.moe_token_dispatcher_type = "allgather"
 
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
