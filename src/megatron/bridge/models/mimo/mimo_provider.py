@@ -21,6 +21,7 @@ import torch.distributed as dist
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.base_configs import MimoModelConfig
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -60,6 +61,7 @@ class MimoModelInfra:
     topology: Dict[str, List[str]]
     pg_collections: Dict[str, Optional[ProcessGroupCollection]]
     participating_modules: List[str]
+    module_output_ndim: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -83,7 +85,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     Example:
         >>> mimo_parallelism_config = MimoParallelismConfig(
         ...     module_parallelisms={
-        ...         "llm": ModuleParallelismConfig(tensor_model_parallel_size=8),
+        ...         "language": ModuleParallelismConfig(tensor_model_parallel_size=8),
         ...         "clip_encoder": ModuleParallelismConfig(tensor_model_parallel_size=2),
         ...     }
         ... )
@@ -108,9 +110,14 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     mimo_parallelism_config: Optional[MimoParallelismConfig] = None
 
     # Module data-flow DAG for MultiModulePipelineCommunicator.
-    # If None, auto-derived as: all modality_submodules → "llm" (terminal).
-    # Set explicitly for non-standard topologies (e.g., llm → generator).
+    # If None, auto-derived as: all modality_submodules → language module (terminal).
+    # Set explicitly for non-standard topologies (e.g., language → generator).
     topology: Optional[Dict[str, List[str]]] = None
+
+    # Output tensor dimensionality per module for bridge communicator routing.
+    # Vision/audio encoders typically produce 2D [S, H]; language modules produce 3D [S, B, H].
+    # If None, auto-derived: language module → 3, all others → 2.
+    module_output_ndim: Optional[Dict[str, int]] = None
 
     # Cached grids after build_model() - used by data loading
     _grids: Optional[Dict[str, "HyperCommGrid"]] = field(default=None, repr=False)
@@ -150,18 +157,30 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         if self.topology is not None:
             topology = self.topology
         else:
-            topology = {name: ["llm"] for name in self.modality_submodules_spec} | {"llm": []}
+            topology = {name: [MIMO_LANGUAGE_MODULE_KEY] for name in self.modality_submodules_spec} | {
+                MIMO_LANGUAGE_MODULE_KEY: []
+            }
 
         # Cache grids for later use (e.g., data loading)
         object.__setattr__(self, "_grids", grids)
 
         participating_modules = [name for name, pg in pg_collections.items() if pg is not None]
 
+        # Derive module output tensor dimensionality if not explicitly configured.
+        if self.module_output_ndim is not None:
+            output_ndim = self.module_output_ndim
+        else:
+            output_ndim = {
+                name: 3 if name == MIMO_LANGUAGE_MODULE_KEY else 2
+                for name in grids
+            }
+
         return MimoModelInfra(
             module_to_grid_map=grids,
             topology=topology,
             pg_collections=pg_collections,
             participating_modules=participating_modules,
+            module_output_ndim=output_ndim,
         )
 
     def _get_pg_collections_from_grids(
@@ -289,7 +308,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
         if self.mimo_parallelism_config:
-            llm_pg = infra.pg_collections.get("llm")
+            llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
                 language_spec = self._inject_pg_collection_into_language_spec(
                     language_spec,
@@ -312,7 +331,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             modality_submodules_spec=modality_specs,
             special_token_ids=self.special_token_ids,
             module_to_grid_map=(infra.module_to_grid_map if self.mimo_parallelism_config is not None else None),
-            language_module_key="llm" if self.mimo_parallelism_config is not None else None,
         )
 
         mimo_model = MimoModel(mimo_model_config)

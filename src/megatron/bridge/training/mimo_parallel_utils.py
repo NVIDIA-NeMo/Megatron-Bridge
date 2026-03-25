@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Dict, List, Tuple
 import torch.distributed as dist
 from megatron.core.distributed.finalize_model_grads import finalize_model_grads as _finalize_model_grads
 from megatron.core.models.mimo import MimoModel
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
 from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra
 
@@ -94,7 +95,7 @@ def get_module_to_grid_tuple(
             continue
 
         # Get the actual module from the unwrapped model
-        if module_name == "llm":
+        if module_name == MIMO_LANGUAGE_MODULE_KEY:
             module = unwrapped_model.language_model
         elif hasattr(unwrapped_model, "modality_submodules") and module_name in unwrapped_model.modality_submodules:
             module = unwrapped_model.modality_submodules[module_name]
@@ -128,7 +129,7 @@ def build_pg_collection_for_schedule(infra: MimoModelInfra):
         module_pgs = {k: v for k, v in infra.pg_collections.items() if v is not None}
         if not module_pgs:
             raise ValueError("module_pgs dict cannot be empty")
-        language_model_module_name = "llm" if "llm" in module_pgs else None
+        language_model_module_name = MIMO_LANGUAGE_MODULE_KEY if MIMO_LANGUAGE_MODULE_KEY in module_pgs else None
         return MultiModuleProcessGroupCollection(
             module_pgs=module_pgs,
             language_model_module_name=language_model_module_name,

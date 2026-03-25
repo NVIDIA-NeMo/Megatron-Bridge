@@ -15,7 +15,7 @@ class TestBuildHypercommGrids:
         """Test build_hypercomm_grids with single LLM module."""
         mimo_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(
+                "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
                     context_parallel_size=1,
                     expert_tensor_parallel_size=1,
@@ -32,8 +32,8 @@ class TestBuildHypercommGrids:
         grids = build_hypercomm_grids(mimo_config)
 
         # Should create one grid
-        assert "llm" in grids
-        assert grids["llm"] == mock_grid
+        assert "language" in grids
+        assert grids["language"] == mock_grid
 
         # Check grid was created with correct shape
         mock_grid_class.assert_called_once()
@@ -57,7 +57,7 @@ class TestBuildHypercommGrids:
         """Test build_hypercomm_grids with multiple modules."""
         mimo_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(
+                "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=4,
                     data_parallel_size=2,
                     rank_offset=0,
@@ -82,7 +82,7 @@ class TestBuildHypercommGrids:
         grids = build_hypercomm_grids(mimo_config)
 
         # Should create three grids
-        assert "llm" in grids
+        assert "language" in grids
         assert "clip_encoder" in grids
         assert "dino_encoder" in grids
         assert len(grids) == 3
@@ -95,7 +95,7 @@ class TestBuildHypercommGrids:
         """Test grids with different parallelism configs per module."""
         mimo_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(
+                "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=8,
                     pipeline_model_parallel_size=2,
                     data_parallel_size=1,
@@ -134,7 +134,7 @@ class TestBuildHypercommGrids:
         """Test that all dimension process groups are created."""
         mimo_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(
+                "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
                     context_parallel_size=2,
                     expert_tensor_parallel_size=2,
@@ -170,7 +170,7 @@ class TestBuildHypercommGrids:
         """Test that grids use nccl backend."""
         mimo_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
             }
         )
 
@@ -189,7 +189,7 @@ class TestBuildHypercommGrids:
         """Test that rank_offset is correctly passed to grids."""
         mimo_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(
+                "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
                     data_parallel_size=2,
                     rank_offset=0,

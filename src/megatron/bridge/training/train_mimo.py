@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Tupl
 
 import torch
 import torch.distributed as dist
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
 from megatron.core.utils import get_model_config
@@ -144,10 +145,10 @@ def train_step_mimo(
         if mimo_model.role is None:
             is_last_stage = True
         elif mimo_model.role.has_language_module:
-            is_last_stage = mimo_model.role.is_last_stage(mimo_model.role.language_module_name)
+            is_last_stage = mimo_model.role.is_last_stage(MIMO_LANGUAGE_MODULE_KEY)
 
         if is_last_stage:
-            llm_pg = infra.pg_collections.get("llm") if infra.pg_collections else None
+            llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY) if infra.pg_collections else None
             for key in losses_reduced[0].keys():
                 val = [x[key].view(-1) for x in losses_reduced]
                 if val[0].numel() == 2:

@@ -224,7 +224,7 @@ class TestLlavaMimoProvider:
         mock_vision_encoder = Mock
         mimo_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=4),
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=4),
             }
         )
 

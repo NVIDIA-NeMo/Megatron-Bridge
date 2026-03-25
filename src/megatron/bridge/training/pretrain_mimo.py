@@ -166,6 +166,7 @@ def setup_mimo(
         mimo_infra.topology,
         model_config,
         dim_mapping={"s": 0, "b": 1, "h": 2},  # SBH mapping - matches MimoModel output
+        module_output_ndim=mimo_infra.module_output_ndim,
     )
 
     # Build pg_collection for schedule
@@ -261,11 +262,6 @@ def pretrain_mimo(
             "MimoModelConfig.module_to_grid_map must be set at model construction time. "
             "Ensure MimoModelProvider.provide() passes module_to_grid_map for MIMO parallelism."
         )
-        assert unwrapped_model.mimo_config.language_module_key is not None, (
-            "MimoModelConfig.language_module_key must be set at model construction time. "
-            "Ensure MimoModelProvider.provide() sets language_module_key for MIMO parallelism."
-        )
-
     logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
 
     # Create MimoOptimizer using the factory function

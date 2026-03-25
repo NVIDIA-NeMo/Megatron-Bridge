@@ -9,7 +9,7 @@ from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, Modul
 
 class FakePG:
     """Fake process group for testing."""
-    
+
     def __init__(self, rank: int, size: int):
         self._rank = rank
         self._size = size
@@ -23,9 +23,8 @@ class FakePG:
 
 class FakeGrid:
     """Fake HyperCommGrid for testing."""
-    
-    def __init__(self, rank_offset: int, size: int, dp_rank: int, dp_size: int, 
-                 pp_rank: int, pp_size: int):
+
+    def __init__(self, rank_offset: int, size: int, dp_rank: int, dp_size: int, pp_rank: int, pp_size: int):
         self.rank_offset = rank_offset
         self.size = size
         self._pgs = {
@@ -41,7 +40,7 @@ def _make_mimo_cfg() -> MimoParallelismConfig:
     """Create test MIMO config for heterogeneous deployment."""
     module_parallelisms = {
         "vision": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0),
-        "llm": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=4),
+        "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=4),
     }
     return MimoParallelismConfig(
         module_parallelisms=module_parallelisms,
@@ -55,11 +54,11 @@ def test_get_mimo_dp_info_encoder_first_pp(monkeypatch):
 
     grids = {
         "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=2),
-        "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
+        "language": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
     }
 
     dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
-    
+
     assert loader_module == "vision"
     assert dp_rank == 0
     assert dp_size == 2
@@ -73,11 +72,11 @@ def test_get_mimo_dp_info_encoder_non_first_pp(monkeypatch):
 
     grids = {
         "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=1, pp_size=2),
-        "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
+        "language": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
     }
 
     dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
-    
+
     assert loader_module == "vision"
     assert needs_data is False  # Not first PP stage
 
@@ -89,12 +88,12 @@ def test_get_mimo_dp_info_llm_first_pp(monkeypatch):
 
     grids = {
         "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
-        "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=2),
+        "language": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=2),
     }
 
     dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
-    
-    assert loader_module == "llm"
+
+    assert loader_module == "language"
     assert needs_data is True  # First PP stage
 
 
@@ -105,12 +104,12 @@ def test_get_mimo_dp_info_llm_last_pp(monkeypatch):
 
     grids = {
         "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
-        "llm": FakeGrid(4, 4, dp_rank=1, dp_size=4, pp_rank=1, pp_size=2),
+        "language": FakeGrid(4, 4, dp_rank=1, dp_size=4, pp_rank=1, pp_size=2),
     }
 
     dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
-    
-    assert loader_module == "llm"
+
+    assert loader_module == "language"
     assert needs_data is True  # Last PP stage
 
 
@@ -121,10 +120,10 @@ def test_get_mimo_dp_info_non_participating_rank(monkeypatch):
 
     grids = {
         "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
-        "llm": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
+        "language": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
     }
 
     dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
-    
+
     assert needs_data is False
-    assert loader_module == "llm"  # Default to LLM
+    assert loader_module == "language"  # Default to LLM

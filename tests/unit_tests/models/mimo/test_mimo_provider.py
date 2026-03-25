@@ -34,7 +34,7 @@ class TestMimoModelProvider:
         modality_spec = ModuleSpec(module=Mock, params={})
         mimo_parallelism_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=2),
             },
         )
 
@@ -93,7 +93,6 @@ class TestMimoModelProvider:
         mock_build_grids.assert_not_called()
         config_arg = mock_mimo_model.call_args[0][0]
         assert config_arg.module_to_grid_map is None
-        assert config_arg.language_module_key is None
 
     @patch("megatron.bridge.models.mimo.mimo_provider.MimoModel")
     @patch("megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids")
@@ -121,7 +120,7 @@ class TestMimoModelProvider:
         # Should return infrastructure with auto-derived topology
         assert isinstance(infra, MimoModelInfra)
         assert infra.module_to_grid_map == {}
-        assert infra.topology == {"llm": []}
+        assert infra.topology == {"language": []}
         assert infra.pg_collections == {}
         assert infra.participating_modules == []
 
@@ -141,7 +140,7 @@ class TestMimoModelProvider:
 
         mimo_parallelism_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(
+                "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
                     data_parallel_size=2,
                 ),
@@ -153,7 +152,7 @@ class TestMimoModelProvider:
         mock_grid.rank_offset = 0
         mock_grid.size = 4
         mock_grid.get_pg.return_value = MagicMock()
-        mock_build_grids.return_value = {"llm": mock_grid}
+        mock_build_grids.return_value = {"language": mock_grid}
 
         provider = MimoModelProvider(
             language_model_spec=language_spec,
@@ -167,9 +166,9 @@ class TestMimoModelProvider:
 
         # Should return populated infrastructure
         assert isinstance(infra, MimoModelInfra)
-        assert "llm" in infra.module_to_grid_map
-        assert "llm" in infra.pg_collections
-        assert "llm" in infra.participating_modules
+        assert "language" in infra.module_to_grid_map
+        assert "language" in infra.pg_collections
+        assert "language" in infra.participating_modules
 
     @patch("torch.distributed.new_group")
     @patch("torch.distributed.get_process_group_ranks")
@@ -184,7 +183,7 @@ class TestMimoModelProvider:
 
         mimo_parallelism_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0),
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0),
             },
         )
 
@@ -192,7 +191,7 @@ class TestMimoModelProvider:
         mock_grid.rank_offset = 0
         mock_grid.size = 2
         mock_grid.get_pg.return_value = MagicMock()
-        mock_build_grids.return_value = {"llm": mock_grid}
+        mock_build_grids.return_value = {"language": mock_grid}
 
         provider = MimoModelProvider(
             language_model_spec=language_spec,
@@ -222,7 +221,7 @@ class TestMimoModelProvider:
 
         mimo_parallelism_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(
+                "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
                     data_parallel_size=2,
                 ),
@@ -233,7 +232,7 @@ class TestMimoModelProvider:
         mock_grid.rank_offset = 0
         mock_grid.size = 4
         mock_grid.get_pg.return_value = MagicMock()
-        mock_build_grids.return_value = {"llm": mock_grid}
+        mock_build_grids.return_value = {"language": mock_grid}
 
         provider = MimoModelProvider(
             language_model_spec=language_spec,
@@ -248,13 +247,12 @@ class TestMimoModelProvider:
         # Should return model directly
         assert model == mock_model_instance
         config_arg = mock_mimo_model.call_args[0][0]
-        assert config_arg.module_to_grid_map == {"llm": mock_grid}
-        assert config_arg.language_module_key == "llm"
+        assert config_arg.module_to_grid_map == {"language": mock_grid}
 
         # Infrastructure should be available via build_infra()
         infra = provider.build_infra()
-        assert "llm" in infra.module_to_grid_map
-        assert "llm" in infra.pg_collections
+        assert "language" in infra.module_to_grid_map
+        assert "language" in infra.pg_collections
 
     def test_inject_pg_collection_into_language_spec(self):
         """Test that pg_collection is injected into language specs."""
@@ -328,7 +326,7 @@ class TestMimoModelProvider:
 
         mimo_parallelism_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=8, data_parallel_size=1),
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=8, data_parallel_size=1),
                 "clip_encoder": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1),
                 "dino_encoder": ModuleParallelismConfig(tensor_model_parallel_size=4, data_parallel_size=1),
             },
@@ -351,7 +349,7 @@ class TestMimoModelProvider:
         dino_grid.get_pg.return_value = MagicMock()
 
         mock_build_grids.return_value = {
-            "llm": llm_grid,
+            "language": llm_grid,
             "clip_encoder": clip_grid,
             "dino_encoder": dino_grid,
         }
@@ -379,7 +377,7 @@ class TestMimoModelProvider:
         mock_build_grids.assert_called_with(mimo_parallelism_config)
 
         # Should have pg_collections for all modules
-        assert "llm" in infra.pg_collections
+        assert "language" in infra.pg_collections
         assert "clip_encoder" in infra.pg_collections
         assert "dino_encoder" in infra.pg_collections
 
@@ -436,10 +434,10 @@ class TestMimoModelInfra:
 
     def test_infra_initialization(self):
         """Test infrastructure dataclass initializes correctly."""
-        grids = {"llm": MagicMock()}
-        topology = {"llm": []}
-        pg_collections = {"llm": MagicMock()}
-        participating = ["llm"]
+        grids = {"language": MagicMock()}
+        topology = {"language": []}
+        pg_collections = {"language": MagicMock()}
+        participating = ["language"]
 
         infra = MimoModelInfra(
             module_to_grid_map=grids,
@@ -593,7 +591,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         mimo_parallelism_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
             },
         )
 
@@ -608,11 +606,11 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
             mimo_parallelism_config=mimo_parallelism_config,
         )
 
-        pg_collections = provider._get_pg_collections_from_grids({"llm": mock_grid})
+        pg_collections = provider._get_pg_collections_from_grids({"language": mock_grid})
 
         # First stage should have pos_embd but not embd (not last stage)
-        assert pg_collections["llm"].pos_embd == mock_pos_embd
-        assert pg_collections["llm"].embd == mock_embd  # First stage gets embd too
+        assert pg_collections["language"].pos_embd == mock_pos_embd
+        assert pg_collections["language"].embd == mock_embd  # First stage gets embd too
 
     @patch("megatron.bridge.models.mimo.mimo_provider.is_pp_last_stage")
     @patch("megatron.bridge.models.mimo.mimo_provider.is_pp_first_stage")
@@ -632,7 +630,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         mimo_parallelism_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
             },
         )
 
@@ -647,11 +645,11 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
             mimo_parallelism_config=mimo_parallelism_config,
         )
 
-        pg_collections = provider._get_pg_collections_from_grids({"llm": mock_grid})
+        pg_collections = provider._get_pg_collections_from_grids({"language": mock_grid})
 
         # Middle stage should have neither embedding group
-        assert pg_collections["llm"].pos_embd is None
-        assert pg_collections["llm"].embd is None
+        assert pg_collections["language"].pos_embd is None
+        assert pg_collections["language"].embd is None
 
     @patch("megatron.bridge.models.mimo.mimo_provider.is_pp_last_stage")
     @patch("megatron.bridge.models.mimo.mimo_provider.is_pp_first_stage")
@@ -667,7 +665,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         mimo_parallelism_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
             },
         )
 
@@ -701,9 +699,9 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
             mimo_parallelism_config=mimo_parallelism_config,
         )
 
-        pg_collections = provider._get_pg_collections_from_grids({"llm": mock_grid})
+        pg_collections = provider._get_pg_collections_from_grids({"language": mock_grid})
 
-        pgc = pg_collections["llm"]
+        pgc = pg_collections["language"]
         assert pgc.tp == mock_tp
         assert pgc.dp == mock_dp
         assert pgc.pp == mock_pp

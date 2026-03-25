@@ -5,6 +5,8 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Optional
 
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+
 
 @dataclass
 class ModuleParallelismConfig:
@@ -62,7 +64,7 @@ class MimoParallelismConfig:
     Note: Phase 1 only supports heterogeneous deployment where each module
     can have different parallelism configurations and rank offsets.
 
-    The LLM module must be named "llm" in module_parallelisms.
+    The language module must be named MIMO_LANGUAGE_MODULE_KEY ("language") in module_parallelisms.
     """
 
     module_parallelisms: dict[str, ModuleParallelismConfig]
@@ -133,10 +135,10 @@ class MimoParallelismConfig:
         # Validate encoder DP >= LLM DP for embedding alignment
         # Encoder modules produce embeddings consumed by LLM. If encoder DP < LLM DP,
         # the same encoder batch would need to align with different LLM batches, which fails.
-        llm_dp = self.module_parallelisms["llm"].data_parallel_size
+        llm_dp = self.module_parallelisms[MIMO_LANGUAGE_MODULE_KEY].data_parallel_size
         if llm_dp is not None:
             for name, p in self.module_parallelisms.items():
-                if name == "llm":
+                if name == MIMO_LANGUAGE_MODULE_KEY:
                     continue
                 encoder_dp = p.data_parallel_size
                 if encoder_dp is not None and encoder_dp < llm_dp:
@@ -152,9 +154,9 @@ class MimoParallelismConfig:
             world_size: Total number of ranks in the distributed world.
                 MIMO requires a distributed environment, so this must always be provided.
         """
-        if "llm" not in self.module_parallelisms:
+        if MIMO_LANGUAGE_MODULE_KEY not in self.module_parallelisms:
             raise ValueError(
-                f"LLM module 'llm' must be in module_parallelisms. "
+                f"Language module '{MIMO_LANGUAGE_MODULE_KEY}' must be in module_parallelisms. "
                 f"Found modules: {list(self.module_parallelisms.keys())}"
             )
 
