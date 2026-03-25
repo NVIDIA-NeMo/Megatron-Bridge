@@ -245,11 +245,7 @@ def compare_provider_configs(converted_provider, predefined_provider, model_id, 
 
 
 def autoconfig_roundtrip(
-    local_model_path: str,
-    tmp_path: Path,
-    trust_remote_code: bool = False,
-    atol: float = 2e-2,
-    model_loader_cls=None,
+    local_model_path: str, tmp_path: Path, trust_remote_code: bool = False, atol: float = 2e-2
 ) -> None:
     """Run a full HF → Megatron → HF auto-config roundtrip and assert correctness.
 
@@ -269,10 +265,6 @@ def autoconfig_roundtrip(
             When True, also copies ``*.py`` from *local_model_path* into the
             export directory so that custom modeling code is available.
         atol: Absolute tolerance for the forward-pass logit comparison.
-        model_loader_cls: Optional explicit HF model class to use for loading
-            original/exported checkpoints (for example,
-            ``Mistral3ForConditionalGeneration``). If omitted, a robust
-            auto-loader fallback sequence is used.
     """
     import json
     import shutil
@@ -331,6 +323,7 @@ def autoconfig_roundtrip(
 
     # ── Debug: inspect exported weights before loading ─────────
     from safetensors.torch import load_file as load_safetensors
+
     export_weights_files = list(export_path.glob("*.safetensors"))
     if export_weights_files:
         print("\n" + "=" * 70)
@@ -348,35 +341,28 @@ def autoconfig_roundtrip(
     # ── Weight & forward-pass comparison ─────────────────────────
     load_kwargs = dict(torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=trust_remote_code)
 
-    if model_loader_cls is not None:
-        original = model_loader_cls.from_pretrained(local_model_path, **load_kwargs)
-        exported = model_loader_cls.from_pretrained(str(export_path), **load_kwargs)
-    else:
-        loader_candidates = (
-            AutoModelForCausalLM,
-            AutoModelForImageTextToText,
-            AutoModelForMultimodalLM,
-            AutoModelForSeq2SeqLM,
-            AutoModelForSpeechSeq2Seq,
-        )
-        errors = []
-        original = None
-        exported = None
+    loader_candidates = (
+        AutoModelForCausalLM,
+        AutoModelForImageTextToText,
+        AutoModelForMultimodalLM,
+        AutoModelForSeq2SeqLM,
+        AutoModelForSpeechSeq2Seq,
+    )
+    errors = []
+    original = None
+    exported = None
 
-        for loader in loader_candidates:
-            try:
-                original = loader.from_pretrained(local_model_path, **load_kwargs)
-                exported = loader.from_pretrained(str(export_path), **load_kwargs)
-                break
-            except Exception as exc:  # pragma: no cover - exercised by model-specific mappings
-                errors.append(f"{loader.__name__}: {exc}")
+    for loader in loader_candidates:
+        try:
+            original = loader.from_pretrained(local_model_path, **load_kwargs)
+            exported = loader.from_pretrained(str(export_path), **load_kwargs)
+            break
+        except Exception as exc:  # pragma: no cover - exercised by model-specific mappings
+            errors.append(f"{loader.__name__}: {exc}")
 
-        if original is None or exported is None:
-            joined_errors = "\n".join(errors)
-            raise RuntimeError(
-                "Unable to load roundtrip models with available auto loaders.\n"
-                f"Tried:\n{joined_errors}"
-            )
+    if original is None or exported is None:
+        joined_errors = "\n".join(errors)
+        raise RuntimeError(f"Unable to load roundtrip models with available auto loaders.\nTried:\n{joined_errors}")
 
     assert_weights_equal(original, exported)
     assert_forward_pass_equal(original, exported, atol=atol)

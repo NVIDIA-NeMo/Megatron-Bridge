@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from functools import partial
+from functools import cached_property, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
@@ -802,10 +802,15 @@ class AutoBridge(Generic[MegatronModelT]):
 
             # NOTE: Collects the full state dict into CPU memory before sharding.
             # For very large models (>70B), this may require significant host RAM.
-            state_dict = {name: tensor.contiguous().cpu() for name, tensor in generator}
-
             is_distributed = dist.is_available() and dist.is_initialized()
             rank = dist.get_rank() if is_distributed else 0
+
+            if rank == 0:
+                state_dict = {name: tensor.contiguous().cpu() for name, tensor in generator}
+            else:
+                for _ in generator:
+                    pass
+                state_dict = None
 
             if rank == 0:
                 plan = split_torch_state_dict_into_shards(state_dict)
@@ -1427,7 +1432,7 @@ class AutoBridge(Generic[MegatronModelT]):
             return self.hf_pretrained
         return self._config_only_pretrained
 
-    @property
+    @cached_property
     def _causal_lm_architecture(self):
         """Resolve the model's CausalLM architecture for dispatch.
 
@@ -1585,7 +1590,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 kwargs[field.name] = getattr(source_obj, field.name)
         return target_dataclass(**kwargs)
 
-    @property
+    @cached_property
     def _config_only_pretrained(self) -> _ConfigOnlyPretrainedShim:
         if not isinstance(self.hf_pretrained, PretrainedConfig):
             raise ValueError("Config-only shim accessed when hf_pretrained is not a PretrainedConfig instance.")

@@ -18,7 +18,13 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoTokenizer, DeepseekV2Config, DeepseekV2ForCausalLM, DeepseekV3Config, DeepseekV3ForCausalLM
+from transformers import (
+    AutoTokenizer,
+    DeepseekV2Config,
+    DeepseekV2ForCausalLM,
+    DeepseekV3Config,
+    DeepseekV3ForCausalLM,
+)
 
 
 HF_DEEPSEEK_V3_TOY_MODEL_CONFIG = {

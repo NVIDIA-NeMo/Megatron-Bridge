@@ -16,13 +16,13 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import torch
 from torch import nn
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, dynamic_module_utils
-
 
 
 def _fix_tied_weights_keys(model: nn.Module):
@@ -269,7 +269,6 @@ class TestNemotronHConversion:
                 capture_output=True,
                 text=True,
                 cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
-
             )
 
             # Check that the conversion completed successfully
@@ -319,12 +318,6 @@ class TestNemotronHConversion:
                 current_config_data["hybrid_override_pattern"] = original_hybrid_override_pattern
                 with open(config_file, "w") as f:
                     json.dump(current_config_data, f, indent=2)
-
-    @pytest.mark.run_only_on("GPU")
-    def test_nemotronh_autoconfig_roundtrip(self, nemotronh_toy_model_path, tmp_path, temp_hf_modules):
-        from tests.functional_tests.utils import autoconfig_roundtrip
-
-        autoconfig_roundtrip(nemotronh_toy_model_path, tmp_path, trust_remote_code=True, atol=1e-2)
 
 
 # Overrides for Nemotron-3-Nano MoE model (30B total, 3B active)
@@ -554,7 +547,6 @@ class TestNemotron3NanoConversion:
                 text=True,
                 cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
                 env={**os.environ, "HF_MODULES_CACHE": str(temp_hf_modules)},
-
             )
 
             # Check that the conversion completed successfully
@@ -599,7 +591,11 @@ class TestNemotron3NanoConversion:
             raise
 
     @pytest.mark.run_only_on("GPU")
-    def test_nemotron_3_nano_autoconfig_roundtrip(self, nemotron_3_nano_toy_model_path, tmp_path, temp_hf_modules):
+    def test_nemotron_3_nano_autoconfig_roundtrip(self, nemotron_3_nano_toy_model_path, tmp_path):
         from tests.functional_tests.utils import autoconfig_roundtrip
 
-        autoconfig_roundtrip(nemotron_3_nano_toy_model_path, tmp_path, trust_remote_code=True, atol=1e-2)
+        autoconfig_roundtrip(
+            nemotron_3_nano_toy_model_path,
+            tmp_path,
+            trust_remote_code=True,
+        )

@@ -417,7 +417,7 @@ class TestAutoBridge:
         first_bridge = Mock()
         first_bridge._model_bridge.megatron_to_hf_config.return_value = {"vocab_size": 64000}
         second_bridge = Mock()
-        
+
         hf_model_id = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
         with patch("transformers.AutoConfig.from_pretrained", return_value=mock_hf_cfg) as mock_auto_cfg:

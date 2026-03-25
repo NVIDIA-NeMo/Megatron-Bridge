@@ -268,94 +268,11 @@ class TestGemma3Conversion:
 
     @pytest.mark.run_only_on("GPU")
     def test_gemma3_autoconfig_roundtrip(self, gemma3_toy_model_path, tmp_path):
-        """
-        Test auto-config export round-trip for Gemma3 text model.
-
-        Validates that HF->Megatron->HF via auto-config produces bit-exact weights
-        and matching forward pass outputs.
-
-        Args:
-            gemma3_toy_model_path: Path to the toy Gemma3 model (from fixture)
-            tmp_path: Pytest temporary path fixture
-        """
-        import megatron.core.parallel_state as parallel_state
-        import torch.distributed as dist
-
-        from megatron.bridge import AutoBridge
-
-        megatron_root = str(tmp_path / "megatron")
-        export_path = tmp_path / "hf_export"
-        local_model_path = gemma3_toy_model_path
-
-        # Read original config for comparison
-        with open(Path(local_model_path) / "config.json") as f:
-            original_config = json.load(f)
-
-        # HF -> Megatron
-        AutoBridge.import_ckpt(
-            hf_model_id=local_model_path,
-            megatron_path=megatron_root,
+        from tests.functional_tests.utils import (
+            autoconfig_roundtrip,
         )
 
-        # Tear down distributed state between import and export
-        if parallel_state.is_initialized():
-            parallel_state.destroy_model_parallel()
-        if dist.is_initialized():
-            dist.destroy_process_group()
-
-        # Megatron -> HF via auto-config export
-        bridge = AutoBridge.from_auto_config(megatron_root, local_model_path)
-        bridge.export_ckpt(
-            megatron_path=megatron_root,
-            hf_path=str(export_path),
-            show_progress=True,
-            strict=False,
+        autoconfig_roundtrip(
+            local_model_path=gemma3_toy_model_path,
+            tmp_path=tmp_path,
         )
-
-        # Read exported config and compare
-        with open(export_path / "config.json") as f:
-            exported_config = json.load(f)
-
-        # Gemma3 export may represent RoPE as [local_base_freq, global_theta].
-        # Current Gemma3Text loader in this environment expects scalar rope_theta,
-        # so validate the pair then normalize for model loading.
-        if isinstance(exported_config.get("rope_theta"), list):
-            rope_theta_pair = exported_config["rope_theta"]
-            expected_pair = [
-                original_config.get("rope_local_base_freq"),
-                original_config.get("rope_theta"),
-            ]
-            assert rope_theta_pair == expected_pair, (
-                f"Unexpected Gemma3 rope_theta pair: {rope_theta_pair}, expected {expected_pair}"
-            )
-            exported_config["rope_theta"] = rope_theta_pair[-1]
-            with open(export_path / "config.json", "w") as f:
-                json.dump(exported_config, f, indent=2)
-            print(f"  CONFIG NORMALIZE: rope_theta {rope_theta_pair} -> {exported_config['rope_theta']}")
-
-        # Log config diffs for debugging
-        for key in sorted(set(list(original_config.keys()) + list(exported_config.keys()))):
-            orig_val = original_config.get(key, "<MISSING>")
-            exp_val = exported_config.get(key, "<MISSING>")
-            if orig_val != exp_val:
-                print(f"  CONFIG DIFF: {key}: {orig_val} -> {exp_val}")
-
-        original = Gemma3ForCausalLM.from_pretrained(local_model_path, torch_dtype=torch.bfloat16, device_map="auto")
-        exported = Gemma3ForCausalLM.from_pretrained(str(export_path), torch_dtype=torch.bfloat16, device_map="auto")
-
-        # Weight comparison
-        pure_sd = {k: v.cpu() for k, v in original.state_dict().items()}
-        conv_sd = {k: v.cpu() for k, v in exported.state_dict().items()}
-        assert pure_sd.keys() == conv_sd.keys(), f"Key mismatch: {pure_sd.keys() ^ conv_sd.keys()}"
-        for key in pure_sd:
-            assert torch.equal(pure_sd[key], conv_sd[key]), f"Mismatch at {key}"
-
-        # Forward pass comparison
-        input_ids = torch.tensor([[1, 2, 3, 4, 5]], device=original.device)
-        with torch.no_grad():
-            orig_out = original(input_ids)
-            export_out = exported(input_ids)
-        orig_logits, export_logits = orig_out.logits.cpu(), export_out.logits.cpu()
-        max_diff = (orig_logits - export_logits).abs().max().item()
-        print(f"Gemma3 toy model auto-config max logit difference: {max_diff}")
-        assert torch.allclose(orig_logits, export_logits, atol=2e-2), f"Forward pass mismatch: max diff {max_diff}"

@@ -89,9 +89,7 @@ class OlMoEBridge(MegatronModelBridge):
         provider.moe_router_pre_softmax = True
         provider.moe_grouped_gemm = True
         if hasattr(hf_config, "scoring_func") and hf_config.scoring_func != "softmax":
-            raise ValueError(
-                f"OlMoE only supports scoring_func='softmax', got {hf_config.scoring_func!r}"
-            )
+            raise ValueError(f"OlMoE only supports scoring_func='softmax', got {hf_config.scoring_func!r}")
         provider.moe_router_score_function = "softmax"
         provider.moe_permute_fusion = True
         provider.moe_router_dtype = "fp32"
