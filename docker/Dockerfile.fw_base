@@ -14,9 +14,11 @@
 
 # Build layer variables
 # To install trtllm set FW_DEP_BUILDER=trtllm_builder, FW_BASE_FINAL=trtllm_install
-# To exclude trtllm set FW_DEP_BUILDER=base, FW_BASE_FINAL=fw_dep_builder
+# To exclude trtllm set FW_DEP_BUILDER=base, FW_BASE_FINAL=fw_toolkit_builder
+# To skip AWS-OFI-NCCL set FW_NETWORK_LAYER=fw_dep_builder
 ARG FW_DEP_BUILDER
 ARG FW_BASE_FINAL
+ARG FW_NETWORK_LAYER=aws_ofi_builder
 
 ARG NEMO_FW_BASE_IMAGE
 FROM ${NEMO_FW_BASE_IMAGE} AS base
@@ -177,13 +179,19 @@ RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | XDG_BIN_HOME=/usr
 
 ##############################################################################
 ##
+## AWS-OFI-NCCL upgrade stage
+##
 ## Upgrade AWS-OFI-NCCL from v1.17.0 to v1.17.3
 ##
 ## IMPORTANT: Do NOT remove ibverbs/libmlx5 packages — they are required for
 ## InfiniBand/RDMA transport on Slurm clusters with Mellanox ConnectX adapters.
 ## The EFA stack is installed alongside (not replacing) the existing IB stack.
 ##
+## To skip this stage, set FW_NETWORK_LAYER=fw_dep_builder
+##
 ##############################################################################
+
+FROM fw_dep_builder AS aws_ofi_builder
 
 RUN apt-get update -y
 
@@ -252,6 +260,17 @@ RUN export LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/openmpi/lib:${LD_LIBR
     && cd .. \
     && rm -rf aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v} \
     && rm aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz
+
+##############################################################################
+##
+## CUDA toolkit + DeepEP stage
+##
+## Chains from FW_NETWORK_LAYER (default: aws_ofi_builder).
+## Set FW_NETWORK_LAYER=fw_dep_builder to skip the AWS-OFI-NCCL stage.
+##
+##############################################################################
+
+FROM ${FW_NETWORK_LAYER} AS fw_toolkit_builder
 
 ##############################################################################
 ##
@@ -327,7 +346,7 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
 ##
 ##############################################################################
 
-FROM fw_dep_builder AS trtllm_install
+FROM fw_toolkit_builder AS trtllm_install
 
 WORKDIR /opt/tensorrt_llm
 
@@ -353,25 +372,10 @@ RUN --mount=type=bind,from=trtllm_wheel,source=/src/tensorrt_llm/build/,target=/
 ## Final layer of FW_BASE container
 ##
 ## When TRTLLM is re-installed, FW_BASE_FINAL=trtllm_install
-## default, FW_BASE_FINAL=fw_dep_builder
+## default, FW_BASE_FINAL=fw_toolkit_builder
 ##
 ##############################################################################
 
 FROM ${FW_BASE_FINAL} AS nemo_fw_base_final
 
 WORKDIR /opt
-
-##############################################################################
-##
-## Address CVE and pip package management
-##
-##############################################################################
-
-RUN pip install nvidia-cudnn-frontend==1.17.0 \
-        starlette==0.49.1 \
-        "urllib3>=2.6.0" \
-        "aiohttp>=3.13.3" \
-        "jaraco-context>=6.1.0" \
-        "wheel>=0.46.2" \
-        "python-multipart>=0.0.22" \
-        "setuptools>=80.10.2"
