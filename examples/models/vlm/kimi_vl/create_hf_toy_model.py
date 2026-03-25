@@ -245,6 +245,11 @@ def main() -> None:
 
     quantized_state_dict = _maybe_quantize_state_dict(model, config)
 
+    # Clear tied-weight keys that can cause save_pretrained to fail with newer transformers.
+    for m in model.modules():
+        if hasattr(m, "_tied_weights_keys"):
+            m._tied_weights_keys = []
+
     model.save_pretrained(output_dir, safe_serialization=True, state_dict=quantized_state_dict)
 
     _save_tokenizer(output_dir, tokenizer_id, trust_remote_code=trust_remote_code)

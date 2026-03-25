@@ -64,7 +64,9 @@ class KimiK25VLBridge(MegatronModelBridge):
         vision_config = hf_config.vision_config
 
         provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-        provider = KimiK25VLModelProvider(**provider_kwargs)
+        provider_kwargs.pop("_mla_rope_params", None)
+        valid_fields = KimiK25VLModelProvider.__dataclass_fields__
+        provider = KimiK25VLModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
 
         # --- Language model architecture defaults (MoE + MLA) ---
         provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
