@@ -157,9 +157,8 @@ def forward_step(
     needs_data = True
     if mimo_model.role is not None:
         if mimo_model.role.has_language_module:
-            module_name = MIMO_LANGUAGE_MODULE_KEY
-            is_first_stage = mimo_model.role.is_first_stage(module_name)
-            is_last_stage = mimo_model.role.is_last_stage(module_name)
+            is_first_stage = mimo_model.role.is_first_stage(MIMO_LANGUAGE_MODULE_KEY)
+            is_last_stage = mimo_model.role.is_last_stage(MIMO_LANGUAGE_MODULE_KEY)
             needs_data = is_first_stage or is_last_stage
         elif mimo_model.role.has_modality_modules:
             modality_modules = mimo_model.role.modality_module_names
