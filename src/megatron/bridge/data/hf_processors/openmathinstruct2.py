@@ -20,6 +20,7 @@ OpenMathInstruct-2 contains math problems with generated solutions. Each example
 has ``problem``, ``generated_solution``, and ``expected_answer`` fields.
 """
 
+import re
 from typing import Any, Optional
 
 from megatron.bridge.data.builders.hf_dataset import ProcessExampleOutput
@@ -56,3 +57,25 @@ def process_openmathinstruct2_example(
     expected_answer = example["expected_answer"]
 
     return ProcessExampleOutput(input=_input, output=_output, original_answers=[expected_answer])
+
+
+def _convert_boxed_to_hash(solution: str, expected_answer: str) -> str:
+    """Convert \boxed{N} ending to GSM8K #### N format."""
+    pattern = r"\$?\\boxed\{[^}]*\}\$?\.?\s*$"
+    if re.search(pattern, solution):
+        result = re.sub(pattern, "", solution).rstrip()
+        return result + "\n#### " + expected_answer
+    return solution.rstrip() + "\n#### " + expected_answer
+
+
+def process_openmathinstruct2_gsm8k_example(
+    example: dict[str, Any], _tokenizer: Optional[MegatronTokenizer] = None
+) -> ProcessExampleOutput:
+    """Process OpenMathInstruct-2 example into GSM8K #### N format.
+
+    Same as process_openmathinstruct2_example but converts \boxed{N} endings
+    to GSM8K-compatible #### N format, matching the evaluation format.
+    """
+    _input = f"Problem: {example['problem']} Solution:"
+    _output = _convert_boxed_to_hash(example["generated_solution"], str(example["expected_answer"]))
+    return ProcessExampleOutput(input=_input, output=_output, original_answers=[str(example["expected_answer"])])

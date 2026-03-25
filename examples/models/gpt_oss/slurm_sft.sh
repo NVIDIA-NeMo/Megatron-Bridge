@@ -30,9 +30,9 @@
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=8  # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
 #SBATCH --gpus-per-node=8    # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
-#SBATCH --time=24:00:00
+#SBATCH --time=04:00:00
 #SBATCH --partition=batch
-#SBATCH --account=my_account
+#SBATCH --account=coreai_dlalgo_llm
 #SBATCH --output=logs/gpt_oss_sft_%j.out
 #SBATCH --error=logs/gpt_oss_sft_%j.err
 #SBATCH --exclusive
@@ -42,20 +42,20 @@
 # ==============================================================================
 
 # Workspace directory for checkpoints and results
-WORKSPACE=${WORKSPACE:-/workspace}
+export WORKSPACE="${WORKSPACE:-/lustre/fsw/portfolios/coreai/users/weijiac/nemo_workspace}"
 
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
-export WKDIR="${WKDIR:-}"
+export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
 
 # Model and training configurations (use pretrain checkpoint or converted Megatron checkpoint)
 # Use base dir (e.g. .../gpt-oss-20b) with latest_checkpointed_iteration.txt, or Bridge dir with latest_train_state.pt
-PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b}
+PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b-v2}
 MODEL_NAME=gpt_oss_20b
-RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_sft_config}"               # bf16 (default)
+RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_sft_openmathinstruct2_gsm8k_config}"  # bf16, OpenMathInstruct-2 GSM8K format
 # RECIPE_NAME="${MODEL_NAME}_sft_fp8_current_scaling_config"           # Hopper FP8 current scaling
 # RECIPE_NAME="${MODEL_NAME}_sft_mxfp8_config"                        # Blackwell MXFP8
-DATASET_NAME=squad
-SEQ_LENGTH=2048
+DATASET_NAME=openmathinstruct2_gsm8k
+SEQ_LENGTH=4096
 TRAIN_ITERS=1000
 GLOBAL_BATCH_SIZE=8
 MICRO_BATCH_SIZE=1
@@ -69,11 +69,11 @@ WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 PARALLELISM_CONFIGS=("2,2,4,1,True" "4,1,4,1,True")
 
 # Container image (required)
-CONTAINER_IMAGE=""
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-$WKDIR/sqsh/nemo_26.02.rc5.sqsh}"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional; comma-separated for srun --container-mounts)
-CONTAINER_MOUNTS=""
+CONTAINER_MOUNTS="${CONTAINER_MOUNTS:-/lustre:/lustre,$WKDIR/nemo_workspace/Megatron-Bridge:/opt/Megatron-Bridge,$WKDIR/nemo_workspace/Megatron-LM:/opt/megatron-lm}"
 # CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
 
 # ==============================================================================
@@ -89,7 +89,8 @@ export NCCL_NVLS_ENABLE=0
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 
 # HuggingFace cache directory (recommended for shared filesystem)
-# export HF_HOME="/path/to/shared/HF_HOME"
+export HF_HOME="${WKDIR}/.cache/huggingface"
+export NEMO_HOME="${WKDIR}/.cache/nemo"
 
 # Authentication tokens (set these for your environment)
 # export HF_TOKEN="hf_your_token_here"
@@ -150,6 +151,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
+        logger.wandb_entity=nvidia-nemo-fw-public \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
@@ -159,14 +161,11 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.context_parallel_size=$CP \
         model.calculate_per_token_loss=True \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
-        dataset.packed_sequence_specs.pad_seq_to_mult=$([ "$CP" -gt 1 ] && echo $((CP * 2)) || echo 1) \
-        dataset.packed_sequence_specs.packed_sequence_size=$SEQ_LENGTH \
         dataset.seq_length=$SEQ_LENGTH \
         model.seq_length=$SEQ_LENGTH
     "
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
-    CMD="$CMD --mode finetune"
-    CMD="$CMD --recipe ${RECIPE_NAME}"
+        CMD="$CMD --recipe ${RECIPE_NAME}"
     CMD="$CMD --peft_scheme none"
     # Collapse newlines so bash -c receives a single command
     CMD="$CMD $(echo "$CLI_OVERRIDES" | tr '\n' ' ' | sed 's/  \+/ /g')"

@@ -17,7 +17,10 @@
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.hf_processors.gsm8k import process_gsm8k_example
-from megatron.bridge.data.hf_processors.openmathinstruct2 import process_openmathinstruct2_example
+from megatron.bridge.data.hf_processors.openmathinstruct2 import (
+    process_openmathinstruct2_example,
+    process_openmathinstruct2_gsm8k_example,
+)
 from megatron.bridge.data.hf_processors.squad import process_squad_example
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
@@ -172,6 +175,49 @@ def default_gsm8k_config(
         dataloader_type="batch",
         do_validation=False,
         do_test=True,
+        num_workers=2,
+        data_sharding=True,
+        pin_memory=True,
+        persistent_workers=False,
+        packed_sequence_specs=packed_sequence_specs,
+        rewrite=False,
+    )
+
+
+def default_openmathinstruct2_gsm8k_config(
+    seq_length: int = 4096,
+    packed_sequence: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> HFDatasetConfig:
+    """Create OpenMathInstruct-2 dataset configuration with GSM8K (#### N) answer format.
+
+    Identical to default_openmathinstruct2_config but uses a processor that converts
+    \\boxed{N} endings to GSM8K-compatible #### N format, so the training distribution
+    matches GSM8K evaluation format.
+
+    Args:
+        seq_length: Sequence length for the dataset (default 4096 for math solutions)
+        packed_sequence: Whether to enable packed sequences for training efficiency
+        pad_seq_to_mult: Optional multiple to pad each sequence to when packing
+
+    Returns:
+        HFDatasetConfig configured for OpenMathInstruct-2 in GSM8K format
+    """
+    packed_sequence_specs = None
+    if packed_sequence:
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return HFDatasetConfig(
+        dataset_name="nvidia/OpenMathInstruct-2",
+        split="train_1M",
+        process_example_fn=process_openmathinstruct2_gsm8k_example,
+        seq_length=seq_length,
+        seed=5678,
+        memmap_workers=1,
+        dataloader_type="batch",
+        do_validation=True,
+        do_test=False,
+        val_proportion=0.05,
         num_workers=2,
         data_sharding=True,
         pin_memory=True,
