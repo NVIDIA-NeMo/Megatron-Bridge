@@ -101,7 +101,20 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
+
+# Compat shim: Kimi HF code calls DynamicCache.to_legacy_cache() which was
+# removed in transformers >= 5.0.  Re-add it so the model runs on newer versions.
+from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer, DynamicCache
+
+
+if not hasattr(DynamicCache, "to_legacy_cache"):
+
+    def _to_legacy_cache(self):
+        if hasattr(self, "key_cache"):
+            return [(self.key_cache[i], self.value_cache[i]) for i in range(len(self))]
+        return [(layer.keys, layer.values) for layer in self.layers]
+
+    DynamicCache.to_legacy_cache = _to_legacy_cache
 
 
 try:

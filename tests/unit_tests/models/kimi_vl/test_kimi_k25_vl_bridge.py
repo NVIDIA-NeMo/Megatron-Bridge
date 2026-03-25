@@ -26,7 +26,40 @@ from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelPr
 @pytest.fixture
 def mock_text_config():
     """Create a mock text config for Kimi K2.5."""
-    config = Mock()
+
+    _KIMI_TEXT_ATTRS = [
+        "num_hidden_layers",
+        "hidden_size",
+        "intermediate_size",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "q_lora_rank",
+        "kv_lora_rank",
+        "qk_nope_head_dim",
+        "qk_rope_head_dim",
+        "v_head_dim",
+        "n_routed_experts",
+        "moe_intermediate_size",
+        "n_shared_experts",
+        "first_k_dense_replace",
+        "num_experts_per_tok",
+        "n_group",
+        "topk_group",
+        "routed_scaling_factor",
+        "vocab_size",
+        "rope_theta",
+        "rope_scaling",
+        "initializer_range",
+        "rms_norm_eps",
+        "hidden_act",
+        "max_position_embeddings",
+        "torch_dtype",
+        "bos_token_id",
+        "eos_token_id",
+        "aux_loss_alpha",
+        "generation_config",
+    ]
+    config = Mock(spec=_KIMI_TEXT_ATTRS)
     config.num_hidden_layers = 61
     config.hidden_size = 7168
     config.intermediate_size = 18432
@@ -50,6 +83,8 @@ def mock_text_config():
     config.rope_scaling = {"type": "yarn", "factor": 32, "mscale": 1.0, "mscale_all_dim": 1.0}
     config.initializer_range = 0.006
     config.rms_norm_eps = 1e-6
+    config.hidden_act = "silu"
+    config.max_position_embeddings = 131072
     config.torch_dtype = "bfloat16"
     config.bos_token_id = 163584
     config.eos_token_id = 163585
