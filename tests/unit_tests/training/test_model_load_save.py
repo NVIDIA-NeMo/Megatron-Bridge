@@ -717,6 +717,7 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            callback_manager=None,
         )
 
     @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
@@ -861,6 +862,7 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            callback_manager=None,
         )
 
 
