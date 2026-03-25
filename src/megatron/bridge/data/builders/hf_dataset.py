@@ -358,5 +358,18 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
             )
         else:
             raise ValueError("Expected `dataset_name` to be str, got " + str(type(self.dataset_name)))
+        # If a specific split was requested, load_dataset returns a Dataset, not DatasetDict.
+        # We need to wrap it in a DatasetDict for downstream processing.
+        if isinstance(dataset, Dataset):
+            normalized_split = (self.split or "train").split("[", 1)[0]
+            if normalized_split.startswith("train"):
+                split_key = "train"
+            elif normalized_split.startswith(("validation", "valid", "val", "eval")):
+                split_key = "validation"
+            elif normalized_split.startswith("test"):
+                split_key = "test"
+            else:
+                split_key = "train"
+            dataset = DatasetDict({split_key: dataset})
 
         return dataset

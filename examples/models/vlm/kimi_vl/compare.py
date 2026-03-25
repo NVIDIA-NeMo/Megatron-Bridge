@@ -371,9 +371,9 @@ def load_image(image_path: str) -> Image.Image:
         PIL Image object
     """
     if image_path.startswith(("http://", "https://")):
-        response = requests.get(image_path)
+        response = requests.get(image_path, stream=True)
         response.raise_for_status()
-        return Image.open(requests.get(image_path, stream=True).raw)
+        return Image.open(response.raw)
     else:
         return Image.open(image_path)
 

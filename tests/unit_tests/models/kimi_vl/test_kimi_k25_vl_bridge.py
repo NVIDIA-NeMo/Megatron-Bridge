@@ -47,14 +47,13 @@ def mock_text_config():
     config.routed_scaling_factor = 2.827
     config.vocab_size = 163840
     config.rope_theta = 50000.0
-    config.rope_scaling = {"factor": 32, "mscale": 1.0, "mscale_all_dim": 1.0}
+    config.rope_scaling = {"type": "yarn", "factor": 32, "mscale": 1.0, "mscale_all_dim": 1.0}
     config.initializer_range = 0.006
     config.rms_norm_eps = 1e-6
     config.torch_dtype = "bfloat16"
     config.bos_token_id = 163584
     config.eos_token_id = 163585
     config.aux_loss_alpha = 1e-3
-    # generation_config for get_common_configs
     config.generation_config = None
     return config
 

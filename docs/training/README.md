@@ -41,6 +41,7 @@ This directory contains comprehensive documentation for training and customizing
 | **[Optimizer & Scheduler](optimizer-scheduler.md)** | Optimizer and learning rate scheduler configuration | Setting up optimization |
 | **[Mixed Precision](mixed-precision.md)** | Mixed precision training for memory efficiency | Reducing memory usage |
 | **[Communication Overlap](communication-overlap.md)** | Overlapping communication with computation | Optimizing distributed training |
+| **[Hybrid Context Parallel](hybrid-context-parallel.md)** | Hierarchical `a2a+p2p` context parallel guidance | Advanced long-sequence scaling |
 | **[Attention Optimizations](attention-optimizations.md)** | Optimizing attention mechanisms | Improving training speed |
 | **[Activation Recomputation](activation-recomputation.md)** | Gradient checkpointing strategies | Reducing memory footprint |
 | **[CPU Offloading](cpu-offloading.md)** | Offloading to CPU for memory management | Working with limited GPU memory |
@@ -59,6 +60,7 @@ This directory contains comprehensive documentation for training and customizing
 |----------|---------|--------------|
 | **[PEFT](peft.md)** | Parameter-Efficient Fine-Tuning (LoRA, etc.) | Fine-tuning with limited resources |
 | **[Packed Sequences](packed-sequences.md)** | Sequence packing for efficiency | Optimizing data loading |
+| **[Megatron FSDP](megatron-fsdp.md)** | Stable overview of Megatron FSDP | Choosing an FSDP path |
 | **[Distillation](distillation.md)** | Knowledge distillation techniques | Transferring knowledge between models |
 | **[Checkpointing](checkpointing.md)** | Checkpoint saving, loading, and resuming | Managing training state |
 | **[Callbacks](callbacks.md)** | Inject custom logic into training loop | Custom logging, metrics, third-party integrations |

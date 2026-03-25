@@ -14,11 +14,9 @@
 
 import torch
 
-# Converted to Kimi-K2.5-VL recipe file for Kimi-K2.5-VL, compatible with the Kimi-K2.5-VL provider/model API.
-from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import (
-    distributed_fused_adam_with_cosine_annealing,
     distributed_muon_with_cosine_annealing,
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -51,30 +49,29 @@ def _get_kimi_k25_vl_pipeline_layout(pp_size: int, vp_size: int):
     return layout
 
 
-def kimi_k25_vl_sft_config(hf_path: str = "moonshotai/Kimi-K2.5", optimizer_type: str = "muon") -> ConfigContainer:
-    """Return a pre-training config for Kimi-K2.5-VL (1T).
+def kimi_k25_vl_sft_config() -> ConfigContainer:
+    """Return an SFT config for Kimi-K2.5-VL (1T).
 
     Recommended parallelism: TP=2, PP=16, EP=32
-
-    Args:
-        optimizer_type: 'adam' or 'muon' (default).
     """
     cfg = _sft_common_vlm()
 
-    cfg.model = KimiK25VLModelProvider(
-        tensor_model_parallel_size=2,
-        pipeline_model_parallel_size=16,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        expert_model_parallel_size=32,
-        sequence_parallel=True,
-        expert_tensor_parallel_size=1,
-        recompute_granularity="full",
-        recompute_modules=None,
-        recompute_method="uniform",
-        recompute_num_layers=1,
-    )
+    # Model config — uses AutoBridge to extract HF config into provider
+    cfg.model = AutoBridge.from_hf_pretrained("moonshotai/Kimi-K2.5").to_megatron_provider(load_weights=False)
+
+    # Parallelism settings
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 16
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
 
     # Pipeline split settings (asymmetric stages)
     cfg.model.account_for_embedding_in_pipeline_split = False
@@ -91,11 +88,11 @@ def kimi_k25_vl_sft_config(hf_path: str = "moonshotai/Kimi-K2.5", optimizer_type
     cfg.tokenizer.vocab_size = cfg.model.vocab_size
 
     # Dataset config - mock data by default
-    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.blend = None
     cfg.dataset.sequence_length = 4096
     cfg.dataset.num_workers = 8
     cfg.dataset.pack_sequences_in_batch = False
-    cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.hf_processor_path = "moonshotai/Kimi-K2.5"
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -111,23 +108,13 @@ def kimi_k25_vl_sft_config(hf_path: str = "moonshotai/Kimi-K2.5", optimizer_type
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
 
-    # Optimizer
-    if optimizer_type == "adam":
-        opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-            lr_warmup_iters=2000,
-            lr_decay_iters=cfg.train.train_iters,
-            max_lr=3e-4,
-            min_lr=3e-5,
-        )
-    elif optimizer_type == "muon":
-        opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
-            lr_warmup_iters=2000,
-            lr_decay_iters=cfg.train.train_iters,
-            max_lr=3e-4,
-            min_lr=3e-5,
-        )
-    else:
-        raise ValueError(f"Invalid optimizer type: {optimizer_type}")
+    # Optimizer — Muon with cosine annealing
+    opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
+        lr_warmup_iters=2000,
+        lr_decay_iters=cfg.train.train_iters,
+        max_lr=3e-4,
+        min_lr=3e-5,
+    )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
@@ -147,28 +134,19 @@ def kimi_k25_vl_sft_config(hf_path: str = "moonshotai/Kimi-K2.5", optimizer_type
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"
 
-    # Memory saving (recompute & offloading) - already set in KimiK2Provider
-    # cfg.model.recompute_granularity = "selective"
-    # cfg.model.recompute_modules = None
+    # Memory saving
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # Mixed precision - Kimi-K2 uses custom MixedPrecisionConfig (NOT "bf16_mixed" string)
-    # Adam uses grad_reduce_in_fp32=False, Muon uses True.
-    grad_reduce_in_fp32_default = optimizer_type != "adam"
+    # Mixed precision
     cfg.mixed_precision = MixedPrecisionConfig(
         bf16=True,
         params_dtype=torch.bfloat16,
         pipeline_dtype=torch.bfloat16,
         autocast_enabled=False,
-        grad_reduce_in_fp32=grad_reduce_in_fp32_default,
+        grad_reduce_in_fp32=True,
     )
-    # FP8 settings (commented - enable if using FP8)
-    # cfg.mixed_precision.fp8_recipe = "tensorwise"
-    # cfg.mixed_precision.fp8 = None
-    # cfg.mixed_precision.fp8_param_gather = False
-    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.model.moe_router_padding_for_fp8 = False  # Pad router for FP8 alignment
+    cfg.model.moe_router_padding_for_fp8 = False
 
     # Optimizer precision settings
     cfg.optimizer.use_precision_aware_optimizer = False
@@ -186,18 +164,11 @@ def kimi_k25_vl_sft_config(hf_path: str = "moonshotai/Kimi-K2.5", optimizer_type
     # Checkpoint config
     cfg.checkpoint.save_interval = 2000
     cfg.checkpoint.async_save = False
-    # cfg.checkpoint.save = "path/to/save"
-    # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config — Adam uses distributed optimizer + overlap; Muon requires both off.
-    if optimizer_type == "adam":
-        cfg.ddp.use_distributed_optimizer = True
-        cfg.ddp.overlap_param_gather = True
-        cfg.ddp.grad_reduce_in_fp32 = False
-    else:
-        cfg.ddp.use_distributed_optimizer = False  # Muon needs this to be False
-        cfg.ddp.overlap_param_gather = False  # Muon needs this to be False
-        cfg.ddp.grad_reduce_in_fp32 = True
+    # DDP config — Muon requires distributed_optimizer=False and overlap_param_gather=False
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_megatron_fsdp = False
