@@ -1,6 +1,6 @@
 # WAN 2.1 Examples
 
-This directory contains example scripts for [WAN 2.1](https://github.com/Wan-Video/Wan2.1) (text-to-video/image) with Megatron-Bridge: dataset preparation, checkpoint conversion, pretraining, and inference. Built on [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) and [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge), it supports advanced parallelism strategies (data, tensor, sequence, and context parallelism) and optimized kernels (e.g., Transformer Engine fused attention).
+This directory contains example scripts for [WAN 2.1](https://github.com/Wan-Video/Wan2.1) (text-to-video/image) with Megatron-Bridge: dataset preparation, checkpoint conversion, and inference. Pretraining and fine-tuning use the generic `scripts/training/run_recipe.py` entry point. Built on [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) and [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge), it supports advanced parallelism strategies (data, tensor, sequence, and context parallelism) and optimized kernels (e.g., Transformer Engine fused attention).
 
 All commands below assume you run them from the **Megatron-Bridge repository root** unless noted. Use `uv run` when you need the project's virtualenv (e.g. `uv run python ...`, `uv run torchrun ...`).
 
@@ -74,6 +74,8 @@ energon prepare "${DATASET_PATH}"
 
 In the training config, point `dataset.path` to the processed data output directory: `dataset.path=${DATASET_PATH}`.
 
+**Note**: We provide an example instruction to process and train a small portion of OpenVid-1M dataset, at `examples/diffusion/recipes/wan/prepare_dataset/openvid1M_dataset`.
+
 ---
 
 ## 2. Checkpoint Conversion
@@ -121,7 +123,11 @@ uv run python examples/diffusion/recipes/wan/conversion/convert_checkpoints.py e
 
 ## 3. Pretraining
 
-The script [pretrain_wan.py](pretrain_wan.py) runs WAN pretraining with Hydra-style YAML config and CLI overrides. Example configs for 1.3B and 14B are provided under [`conf/`](conf/) (see `wan_1_3B.yaml` and `wan_14B.yaml`).
+Run WAN pretraining with the generic **run_recipe** script (same entry point as for LLM training).
+
+**Recipe:** [megatron.bridge.diffusion.recipes.wan.wan](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/diffusion/recipes/wan/wan.py)
+
+From the **Megatron-Bridge repository root**:
 
 ### Sequence packing
 
@@ -132,50 +138,33 @@ This recipe leverages sequence packing to maximize throughput. When a batch cont
 
 ### Training mode
 
-The script exposes a `--training-mode` flag with `pretrain` and `finetune` presets for flow-matching hyperparameters. Pretraining uses noisier, biased sampling (e.g., logit-normal, higher `logit_std`, lower `flow_shift`) for stability and broad learning, while finetuning uses uniform, lower-noise settings (e.g., uniform sampling, lower `logit_std`, higher `flow_shift`) to refine details and improve quality.
+WAN uses different flow-matching hyperparameters for pretraining vs fine-tuning. Always pass `--step_func wan_step`; the mode is automatically inferred from the recipe name:
+- **pretrain** (recipe contains `pretrain`): logit-normal sampling, higher `logit_std` (1.5), lower `flow_shift` (2.5) — for stability and broad learning
+- **finetune** (recipe contains `finetune`/`sft`/`peft`): uniform sampling, lower `logit_std` (1.0), higher `flow_shift` (3.0) — to refine details and improve quality
 
-### Quick start with mock dataset
-
-If you want to run without a real dataset (for debugging or performance measurement), pass `--mock`:
+### WAN 1.3B — Mock data (no dataset path):
 
 ```bash
-uv run torchrun --nproc_per_node=8 examples/diffusion/recipes/wan/pretrain_wan.py \
-  --config-file examples/diffusion/recipes/wan/conf/wan_1_3B.yaml \
-  --training-mode pretrain \
-  --mock
+uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe wan_1_3B_pretrain_config \
+  --step_func wan_step
 ```
 
-You may adjust mock shapes (`F_latents`, `H_latents`, `W_latents`) and packing behavior (`number_packed_samples`) in `WanMockDataModuleConfig` (see `src/megatron/bridge/diffusion/recipes/wan/wan.py`) to simulate different data scenarios.
-
-### With a custom config
-
-Copy one of the provided configs and edit it with your settings:
+### WAN 1.3B — Real data (WebDataset path):
 
 ```bash
-cp examples/diffusion/recipes/wan/conf/wan_1_3B.yaml examples/diffusion/recipes/wan/conf/my_wan.yaml
-# Edit my_wan.yaml to set:
-# - dataset.path: Path to your WebDataset directory
-# - train.global_batch_size/micro_batch_size: Keep micro_batch_size=1
-# - model.tensor_model_parallel_size / model.context_parallel_size: Based on GPUs
-# - checkpoint.save and checkpoint.load: Checkpoint directory
+uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe wan_1_3B_pretrain_config \
+  --step_func wan_step \
+  dataset.path=${WORKSPACE}/datasets/wan
 ```
 
-Then run:
+### With CLI overrides (iters, LR, batch size, parallelism, etc.):
 
 ```bash
-uv run torchrun --nproc_per_node=$NUM_GPUS examples/diffusion/recipes/wan/pretrain_wan.py \
-  --training-mode pretrain \
-  --config-file examples/diffusion/recipes/wan/conf/my_wan.yaml
-```
-
-### With CLI overrides
-
-You can also override any config values from the command line:
-
-```bash
-uv run torchrun --nproc_per_node=$NUM_GPUS examples/diffusion/recipes/wan/pretrain_wan.py \
-  --config-file examples/diffusion/recipes/wan/conf/my_wan.yaml \
-  --training-mode pretrain \
+uv run torchrun --nproc_per_node=$NUM_GPUS scripts/training/run_recipe.py \
+  --recipe wan_1_3B_pretrain_config \
+  --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan \
   train.global_batch_size=8 \
   train.micro_batch_size=1 \
@@ -187,7 +176,7 @@ uv run torchrun --nproc_per_node=$NUM_GPUS examples/diffusion/recipes/wan/pretra
 
 **Note**: If you use `logger.wandb_project` and `logger.wandb_exp_name`, export `WANDB_API_KEY`.
 
-For more details on arguments, see the [Megatron-Bridge docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/megatron-lm-to-megatron-bridge.md).
+For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/wan/wan.py` and `scripts/training/run_recipe.py`.
 
 ---
 

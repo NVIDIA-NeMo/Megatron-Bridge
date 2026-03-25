@@ -132,7 +132,7 @@ def _pretrain(
     train_data_iterator = setup_output.train_data_iterator
     valid_data_iterator = setup_output.valid_data_iterator
     test_data_iterator = setup_output.test_data_iterator
-    ckpt_context = setup_output.checkpointing_context
+    checkpoint_manager = setup_output.checkpoint_manager
     pg_collection = setup_output.pg_collection
     
     if ckpt_context is None:
@@ -152,7 +152,7 @@ def _pretrain(
                 train_data_iterator,
                 valid_data_iterator,
                 state,
-                ckpt_context,
+                checkpoint_manager,
                 pg_collection,
                 callback_manager=callback_manager,
             )
@@ -193,7 +193,7 @@ def _pretrain(
             is_test=True,
         )
 
-    _finish_train(state)
+    _finish_train(state, checkpoint_manager)
     _maybe_destroy_process_group(should_destroy_process_group)
 
 

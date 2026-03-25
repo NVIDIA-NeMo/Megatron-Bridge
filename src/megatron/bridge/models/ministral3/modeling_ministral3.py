@@ -27,6 +27,7 @@ import types
 from typing import TYPE_CHECKING, Optional
 
 import torch
+from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 
@@ -261,6 +262,13 @@ class Ministral3Model(MegatronModule):
             packed_seq_params=packed_seq_params,
             pg_collection=self.config._pg_collection,
         )
+
+        # Apply SP scatter after CP slice, before entering the language model.
+        # The language model's embedding layer (which normally handles SP scatter) is
+        # bypassed when decoder_input is provided. Matches Megatron Core's LLaVA pattern
+        # (llava_model.py:747-750): CP slice first, then SP scatter → [S/(CP*TP), B, H].
+        if self.config.sequence_parallel and inputs_embeds is not None:
+            inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
 
         # Forward through Megatron language model
         outputs = self.language_model.forward(

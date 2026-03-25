@@ -40,8 +40,9 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import (
     _load_checkpoint_from_path,
     checkpoint_exists,
-    init_checkpointing_context,
-    load_checkpoint,
+    CheckpointLoadContext,
+    CheckpointManager,
+    create_checkpoint_manager,
 )
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
@@ -54,7 +55,6 @@ from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
     initialize_tensor_inspect_pre_model_initialization,
 )
-
 
 
 class SetupOutput(NamedTuple):
@@ -70,8 +70,7 @@ class SetupOutput(NamedTuple):
         train_data_iterator: The data iterator for the training dataset, if applicable.
         valid_data_iterator: The data iterator for the validation dataset, if applicable.
         test_data_iterator: The data iterator for the testing dataset, if applicable.
-        checkpointing_context: A dictionary holding context for checkpointing operations,
-                               especially for non-persistent local checkpointing.
+        checkpoint_manager: The checkpoint manager for save/load operations.
         pg_collection: The process group collection initialized for this run.
     """
 
@@ -82,8 +81,9 @@ class SetupOutput(NamedTuple):
     train_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     valid_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
-    checkpointing_context: dict[str, Any]
+    checkpoint_manager: CheckpointManager
     pg_collection: ProcessGroupCollection
+
 
 def setup(
     state: GlobalState,
@@ -173,8 +173,8 @@ def setup(
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
 
-    # Context used for persisting some state between checkpoint saves.
-    checkpointing_context = init_checkpointing_context(cfg.checkpoint)
+    # Create checkpoint manager for save/load operations.
+    checkpoint_manager = create_checkpoint_manager(cfg.checkpoint)
 
     # Tokenizer
     timers("tokenizer-setup", log_level=0).start(barrier=True)
@@ -244,14 +244,15 @@ def setup(
     # checkpoints are independent of global ones — they don't write
     # latest_train_state.pt to load_dir, so checkpoint_exists() won't
     # find them.
+    _ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
     has_local_checkpoint = (
-        "local_checkpoint_manager" in checkpointing_context
-        and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
+        "local_checkpoint_manager" in _ckpt_ctx
+        and _ckpt_ctx["local_checkpoint_manager"].find_latest() != -1
     )
 
     # For PEFT, the pretrained checkpoint is loaded in the pre-wrap hook
     if cfg.peft is not None:
-        should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load))
+        should_load_checkpoint = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
         if should_load_checkpoint:
             # The finetune toggle is explicitly set to True in order to avoid loading optimizer and RNG states
             # This is switched off here in order to load these states from the checkpoint
@@ -265,14 +266,13 @@ def setup(
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        load_checkpoint(
-            state,
-            model,
-            optimizer,
-            scheduler,
-            checkpointing_context=checkpointing_context,
+        checkpoint_manager.load(CheckpointLoadContext(
+            state=state,
+            model=model,
+            optimizer=optimizer,
+            opt_param_scheduler=scheduler,
             skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2 or cfg.dist.use_megatron_fsdp,
-        )
+        ))
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
 
@@ -282,6 +282,7 @@ def setup(
         model,
         state.tensorboard_logger,
         state.wandb_logger,
+        comet_logger=state.comet_logger,
         current_training_step=state.train_state.step,
     )
 
@@ -299,9 +300,7 @@ def setup(
     if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
         train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
     if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
-        train_valid_test_datasets_provider = partial(
-            train_valid_test_datasets_provider, pg_collection=pg_collection
-        )
+        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, pg_collection=pg_collection)
 
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
@@ -330,7 +329,7 @@ def setup(
         train_data_iterator,
         valid_data_iterator,
         test_data_iterator,
-        checkpointing_context,
+        checkpoint_manager,
         pg_collection,
     )
 
@@ -395,13 +394,13 @@ def _update_model_config_funcs(
         if len(model) == 1:
             model_config.param_sync_func = model_config.param_sync_func[0]
     if optimizer is not None:
-        model_config.finalize_model_grads_func = partial(
-            finalize_model_grads, pg_collection=pg_collection
-        )
+        model_config.finalize_model_grads_func = partial(finalize_model_grads, pg_collection=pg_collection)
         model_config.grad_scale_func = optimizer.scale_loss
 
 
-def _create_peft_pre_wrap_hook(cfg: ConfigContainer, state: GlobalState) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
+def _create_peft_pre_wrap_hook(
+    cfg: ConfigContainer, state: GlobalState
+) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
     """Create a pre-wrap hook that handles PEFT logic.
 
     This hook is executed before the model is wrapped with DDP/FSDP and handles:
@@ -415,6 +414,7 @@ def _create_peft_pre_wrap_hook(cfg: ConfigContainer, state: GlobalState) -> Call
     Returns:
         A callable hook that can be registered with the model provider
     """
+
     def peft_pre_wrap_hook(model: list[MegatronModule]) -> list[MegatronModule]:
         """Pre-wrap hook that handles PEFT transformation.
 
