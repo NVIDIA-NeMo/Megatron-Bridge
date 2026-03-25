@@ -327,7 +327,7 @@ def _make_checkpoint_loader_hook(
         grids = model.mimo_config.module_to_grid_map
 
         if language_model_ckpt and model.language_model is not None:
-            tp_group = grids["llm"].get_pg(["tp"])
+            tp_group = grids["language"].get_pg(["tp"])
             tp_rank = dist.get_rank(tp_group)
             tp_size = dist.get_world_size(tp_group)
             _load_tp_rank_weights(
@@ -369,7 +369,7 @@ from megatron.bridge.models.mimo.mimo_config import (
 def _build_parallelism_config() -> MimoParallelismConfig:
     return MimoParallelismConfig(
         module_parallelisms={
-            "llm": ModuleParallelismConfig(
+            "language": ModuleParallelismConfig(
                 tensor_model_parallel_size=int(os.environ.get("MIMO_LLM_TP", 4)),
                 pipeline_model_parallel_size=int(os.environ.get("MIMO_LLM_PP", 1)),
                 data_parallel_size=int(os.environ.get("MIMO_LLM_DP", 1)),
@@ -692,7 +692,7 @@ def main():
     # Megatron-LM produce the correct layer count and offset for each PP stage.
     # Without this, config.pipeline_model_parallel_size defaults to 1 and every
     # stage builds *all* num_layers — duplicating the model across PP stages.
-    llm_pp_size = mimo_parallelism_config.module_parallelisms["llm"].pipeline_model_parallel_size
+    llm_pp_size = mimo_parallelism_config.module_parallelisms["language"].pipeline_model_parallel_size
     language_model_spec.params["config"].pipeline_model_parallel_size = llm_pp_size
 
     mimo_provider = MimoModelProvider(
@@ -700,7 +700,7 @@ def main():
         modality_submodules_spec=modality_submodules_spec,
         special_token_ids=special_token_ids,
         mimo_parallelism_config=mimo_parallelism_config,
-        topology={"images": ["llm"], "llm": []},
+        topology={"images": ["language"], "language": []},
         use_cpu_initialization=True,
         bf16=True,
         freeze_language_model=True,
