@@ -155,22 +155,21 @@ If you have write access to the repository (NVIDIA contributors):
 Format your commit messages and PR titles as:
 
 ```text
-[{modules}] {type}: {description}
+[{areas}] {type}: {description}
 ```
 
-**Modules** (use the most relevant ones, separate multiple with `,`):
-- `model` - Model implementations and bridges
-- `recipe` - Training recipes
-- `training` - Training loop and utilities
-- `data` - Data loading and processing
-- `ckpt` - Checkpoint conversion and saving
-- `peft` - Parameter-efficient fine-tuning (LoRA, etc.)
-- `perf` - Performance optimizations
-- `ci` - CI/CD configuration
-- `doc` - Documentation
-- `test` - Tests
-- `build` - Build system and dependencies
-- `misc` - Other changes
+**Areas** (use the most relevant ones, separate multiple with `,`):
+- `model` - Model implementations and HF bridge logic
+- `recipe` - Training recipes and launch configs
+- `training` - Training loop, callbacks, and runtime integration
+- `data` - Dataset builders, preprocessing, and samplers
+- `ckpt` - Checkpoint conversion, loading, export, and save paths
+- `peft` - PEFT methods (LoRA, adapters) and adapter export
+- `perf` - Performance optimizations and throughput improvements
+- `ci` - CI, automation, and workflow infrastructure
+- `docs` - Documentation, examples, and contributor guidance
+- `build` - Dependencies, packaging, and environment setup
+- `misc` - Cross-cutting utilities and other changes
 
 **Types**:
 - `feat` - New feature
@@ -184,11 +183,132 @@ Format your commit messages and PR titles as:
 **Examples**:
 ```text
 [model] feat: Add Qwen3 model bridge
-[recipe, doc] feat: Add Llama 3.1 70B recipe with documentation
+[recipe, docs] feat: Add Llama 3.1 70B recipe with documentation
 [ckpt] fix: Handle missing keys in HF checkpoint conversion
 [BREAKING][training] refactor: Change optimizer config structure
 [ci, build] chore: Update ruff version
 ```
+
+## 🏷️ Repository Labels and Triage
+
+Megatron Bridge uses a small governance taxonomy so maintainers, oncall, and automation can reason about issues and PRs consistently:
+
+- New issues should start with `needs-triage` and leave triage with one `type` label plus one `area` label.
+- PRs should use one primary `area:*` value in the PR template. State labels such as `needs-author`, `blocked`, and `ready-to-merge` are for routing active work, not for replacing review status or CI details.
+- Release labels such as `r0.3.0`, community labels, and `needs-follow-up` are still valid, but they are orthogonal to the main governance taxonomy.
+
+### Type Labels
+
+Use exactly one type label per issue or PR after triage:
+
+| Label | Use for |
+| --- | --- |
+| `bug` | Incorrect behavior, regressions, or broken workflows |
+| `feature` | New capabilities, enhancements, or enablement work |
+| `support` | Questions, help requests, or user guidance gaps |
+| `docs` | Documentation-only updates or documentation debt |
+| `ci` | CI, automation, test queue, or workflow infrastructure work |
+
+### State Labels
+
+Use at most one state label from this set at a time:
+
+| Label | Meaning |
+| --- | --- |
+| `needs-triage` | New item needs classification and ownership |
+| `needs-review` | PR is ready for code review and waiting on a reviewer |
+| `needs-author` | Author action is required before review or merge can continue |
+| `needs-follow-up` | Issue or PR has finished initial triage/review and needs further follow-up |
+| `blocked` | Work cannot move forward until an external dependency is cleared |
+| `ready-to-merge` | PR is approved, current, and only waiting for CI to pass before merge |
+
+### Risk Labels
+
+Apply only when risk affects review or merge behavior:
+
+| Label | Meaning |
+| --- | --- |
+| `breaking-change` | Public behavior or API compatibility changes |
+| `high-complexity` | Harder to merge: prone to conflicts and needs additional test coverage |
+| `needs-more-tests` | Requires additional test coverage; triggers both L0 and L1 CI test tiers |
+
+### Area Labels
+
+Use one primary area label after triage:
+
+| Label | Scope |
+| --- | --- |
+| `area:model` | Model implementations and HF bridge logic |
+| `area:recipe` | Training recipes and launch configs |
+| `area:training` | Training loop, callbacks, and runtime integration |
+| `area:data` | Dataset builders, preprocessing, and samplers |
+| `area:ckpt` | Checkpoint conversion, loading, export, and save paths |
+| `area:peft` | PEFT methods (LoRA, adapters) and adapter export |
+| `area:perf` | Performance optimizations, kernel integration, and throughput improvements |
+| `area:build` | Dependencies, packaging, images, and environment setup |
+| `area:misc` | Cross-cutting utilities, logging, helpers, and other changes that do not fit a primary domain |
+
+### Orthogonal Labels
+
+This taxonomy does not replace every existing label:
+
+- Keep release labels such as `r0.3.0` as independent scheduling signals.
+- Keep `community-request` and other community-related labels as independent intake signals.
+- Use `needs-follow-up` when an issue or PR should stay explicitly visible to the oncaller across handoffs.
+- Avoid creating new status synonyms when an existing label in this taxonomy already fits.
+
+### Label Application Rules
+
+- New issues should start with `needs-triage`.
+- Issues should leave triage with one `type` label and one `area` label.
+- An issue keeps `needs-triage` until a maintainer has responded or assigned it. Adding type and area labels is classification; the issue leaves `needs-triage` only when a maintainer engages (responds, assigns, or explicitly routes it).
+- After a maintainer engages, transition to `needs-follow-up` (deferred work oncall should track), `needs-author` (waiting on reporter for more info), `blocked` (external dependency), or no state label (actively being worked on).
+- PRs should not use `needs-triage`. Use `needs-review`, `needs-author`, `blocked`, or `ready-to-merge` only when they help route work.
+- `high-complexity` starts as a manual maintainer label, not an automated heuristic.
+- `needs-follow-up` should usually point to a linked issue instead of staying on a merged PR.
+- `needs-follow-up` is the visibility label for deferred work that should stay on the oncall radar.
+- `needs-follow-up` can be combined with `blocked` when the oncaller should keep watching a blocked item.
+- If a PR is marked `breaking-change`, do not treat it as auto-mergeable even if CI is green.
+
+### Daily Views
+
+These four views are the core daily queues maintainers and oncall should watch.
+
+#### Needs Triage
+
+- Scope: open issues labeled `needs-triage`
+- Goal: assign one `type` and one `area`
+- Suggested query: `is:issue is:open label:"needs-triage" sort:updated-asc`
+
+#### Ready To Merge
+
+- Scope: open PRs labeled `ready-to-merge`
+- Goal: surface PRs that should merge without rereading every CI detail
+- Suggested query: `is:pr is:open label:"ready-to-merge" draft:false sort:updated-asc`
+
+#### Blocked Or Needs Follow-Up
+
+- Scope: open issues and PRs labeled `blocked` or `needs-follow-up`
+- Goal: make blockers and deferred work visible across handoffs
+- Suggested query: `is:open (label:"blocked" OR label:"needs-follow-up") sort:updated-asc`
+
+#### High Complexity
+
+- Scope: open PRs labeled `high-complexity`
+- Goal: proactively review, rebase, and ensure adequate test coverage before conflicts waste CI and reviewer time
+- Suggested query: `is:pr is:open label:"high-complexity" sort:updated-asc`
+
+#### Recommended Columns
+
+If you mirror these queues into a GitHub Project, keep the columns and sort keys small:
+
+- item title
+- primary area
+- owner or assignee
+- age
+- last updated time
+- release label
+- current state
 
 ## 📝 Writing Tests
 
@@ -201,12 +321,19 @@ Unit tests are stored at `tests/unit_tests`. Please add your test to an existing
 
 ### Functional Test Launcher Scripts
 
-Functional tests that take longer to run should be placed in a `L2_Launch_*.sh` launcher script inside the [`tests/functional_tests/`](tests/functional_tests/) folder. These launcher scripts allow CI to run test groups in parallel, significantly reducing overall pipeline time.
+Functional tests are placed in tiered launcher scripts inside [`tests/functional_tests/`](tests/functional_tests/). Each tier runs in a separate CI job, allowing faster PR feedback while keeping thorough coverage on nightly runs.
 
-When adding a new `L2_Launch_*.sh` file, you **must** also update [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the `cicd-functional-tests` job matrix. Add a new entry under `matrix.include`, for example:
+| Tier | Prefix | Trigger | Purpose |
+|------|--------|---------|---------|
+| **L0** | `L0_Launch_*.sh` | Every PR, main push, schedule | Core smoke tests — must be fast and stable |
+| **L1** | `L1_Launch_*.sh` | Main push + schedule (not PRs) | Broader model/recipe coverage |
+| **L2** | `L2_Launch_*.sh` | Schedule / `workflow_dispatch` only | VL models, checkpoint conversion, heavy quantization |
+
+When adding a new launcher script, choose the appropriate tier and **also update** [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the corresponding `cicd-functional-tests-l{0,1,2}` job matrix:
 
 ```yaml
-- script: L2_Launch_your_new_test
+# Example: adding an L1 test
+- script: L1_Launch_your_new_test
 ```
 
 Without this step, your new launcher script will not be picked up by CI.

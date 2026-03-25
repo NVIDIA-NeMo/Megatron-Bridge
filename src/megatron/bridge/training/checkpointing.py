@@ -63,7 +63,7 @@ from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
-from megatron.bridge.training.utils import mlflow_utils, wandb_utils
+from megatron.bridge.training.utils import comet_utils, mlflow_utils, wandb_utils
 from megatron.bridge.training.utils.checkpoint_utils import (
     checkpoint_exists,
     ensure_directory_exists,
@@ -188,6 +188,7 @@ def _get_checkpoint_format(checkpoint_path: str) -> str:
     """
     # Check for Megatron Core distributed checkpoint first
     if dist_checkpointing.check_is_distributed_checkpoint(checkpoint_path):
+        print_rank_0(f" Auto-detected checkpoint format as 'torch_dist' from {checkpoint_path}.")
         return "torch_dist"
 
     # Check for PyTorch DCP format (.metadata file exists)
@@ -834,13 +835,23 @@ def save_checkpoint(
                 mlflow_logger=state.mlflow_logger,
             )
 
+        def comet_finalize_fn() -> None:
+            comet_utils.on_save_checkpoint_success(
+                checkpoint_name,
+                save_dir,
+                train_state.step,
+                comet_logger=state.comet_logger,
+            )
+
         if ckpt_cfg.async_save:
             assert async_save_request is not None
             async_save_request.add_finalize_fn(wandb_finalize_fn)
             async_save_request.add_finalize_fn(mlflow_finalize_fn)
+            async_save_request.add_finalize_fn(comet_finalize_fn)
         else:
             wandb_finalize_fn()
             mlflow_finalize_fn()
+            comet_finalize_fn()
 
     if ckpt_cfg.async_save:
         schedule_async_save(state, async_save_request)
@@ -1371,9 +1382,13 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
     except Exception as e:
         if strict:
             # Fallback support for backward compatibility breaking changes in TransformerEngine
-            print_rank_0(f"Warning: Exception during strict loading: {e}")
             load_return = module.load_state_dict(state_dict, strict=False)
-            print_rank_0(f"load_return: {load_return}")
+            missing = load_return.missing_keys
+            unexpected = load_return.unexpected_keys
+            non_extra = [k for k in missing + unexpected if not k.endswith("._extra_state")]
+            if non_extra:
+                print_rank_0(f"Warning: Exception during strict loading: {e}")
+                print_rank_0(f"Non-extra-state mismatched keys: {non_extra}")
         else:
             # Re-raise if we were already in non-strict mode
             raise
@@ -1706,7 +1721,7 @@ def _load_checkpoint_from_path(
         update_num_microbatches(consumed_samples=state.train_state.consumed_train_samples, verbose=True)
 
     # Load model weights
-    if not skip_load_to_model_and_opt:
+    if not skip_load_to_model_and_opt and ckpt_type != CheckpointType.FSDP_DTENSOR:
         # Handle PEFT resume for strict loading
         load_strict = strict
         is_peft_resume = (
@@ -1847,6 +1862,7 @@ def _load_checkpoint_from_path(
     if not torch.distributed.is_initialized() or is_last_rank():
         wandb_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.wandb_logger)
         mlflow_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.mlflow_logger)
+        comet_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.comet_logger)
 
     torch.cuda.empty_cache()
 
@@ -2287,9 +2303,14 @@ def _load_base_checkpoint(
 
         return None, "", False, None
 
-    # Determine the checkpoint format
+    # Determine the checkpoint format from config, assert it matches auto-detected.
     checkpoint_path = get_checkpoint_name(load_dir, iteration, release)
-    ckpt_format = _get_checkpoint_format(checkpoint_path)
+    inferred_ckpt_format = _get_checkpoint_format(checkpoint_path)
+    ckpt_format = ckpt_cfg.ckpt_format
+    assert ckpt_format == inferred_ckpt_format, (
+        f"Checkpoint format '{ckpt_format}' from config differs from inferred format "
+        f"'{inferred_ckpt_format}' for {checkpoint_path}."
+    )
 
     if not rank0:
         dist_infix = "distributed " if ckpt_format == "torch_dist" else ""

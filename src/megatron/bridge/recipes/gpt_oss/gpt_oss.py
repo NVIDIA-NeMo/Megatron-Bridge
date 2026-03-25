@@ -20,6 +20,7 @@ from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
 def _enable_gpt_oss_hopper_fp8_current_scaling(cfg: ConfigContainer) -> ConfigContainer:
@@ -811,3 +812,33 @@ def gpt_oss_20b_peft_fp8_current_scaling_config(
     """Return a PEFT config for GPT-OSS 20B with Hopper FP8 current scaling."""
     cfg = gpt_oss_20b_peft_config(peft_scheme=peft_scheme)
     return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
+
+
+def _enable_gpt_oss_blackwell_mxfp8(cfg: ConfigContainer) -> ConfigContainer:
+    """Enable Blackwell MXFP8 for GPT-OSS recipes."""
+    cfg.mixed_precision = get_mixed_precision_config("bf16_with_mxfp8_mixed")
+    cfg.model.moe_router_padding_for_fp8 = True
+    return cfg
+
+
+def gpt_oss_20b_pretrain_mxfp8_config() -> ConfigContainer:
+    """Return a pre-training config for GPT-OSS 20B with Blackwell MXFP8."""
+    cfg = gpt_oss_20b_pretrain_config()
+    return _enable_gpt_oss_blackwell_mxfp8(cfg)
+
+
+def gpt_oss_20b_sft_mxfp8_config() -> ConfigContainer:
+    """Return a full SFT config for GPT-OSS 20B with Blackwell MXFP8."""
+    cfg = gpt_oss_20b_sft_config()
+    cfg = _enable_gpt_oss_blackwell_mxfp8(cfg)
+    cfg.mixed_precision.fp8_param_gather = False
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    return cfg
+
+
+def gpt_oss_20b_peft_mxfp8_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for GPT-OSS 20B with Blackwell MXFP8."""
+    cfg = gpt_oss_20b_peft_config(peft_scheme=peft_scheme)
+    return _enable_gpt_oss_blackwell_mxfp8(cfg)
