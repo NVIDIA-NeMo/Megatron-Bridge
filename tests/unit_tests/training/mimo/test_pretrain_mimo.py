@@ -48,15 +48,14 @@ def test_pretrain_mimo_uses_constructor_wired_config(
 
     mock_dist.get_rank.return_value = 0
 
-    sentinel_grid_map = {"llm": MagicMock()}
+    sentinel_grid_map = {"language": MagicMock()}
     setup_output = _make_setup_output(module_to_grid_map=sentinel_grid_map)
     mock_setup_mimo.return_value = setup_output
 
-    original_grid_map = {"llm": MagicMock()}
+    original_grid_map = {"language": MagicMock()}
     unwrapped_model = MagicMock()
     unwrapped_model.mimo_config = SimpleNamespace(
         module_to_grid_map=original_grid_map,
-        language_module_key="llm",
     )
     mock_unwrap_mimo_model.return_value = unwrapped_model
 
@@ -79,7 +78,6 @@ def test_pretrain_mimo_uses_constructor_wired_config(
 
     # No post-construction mutation: keep original references/values.
     assert unwrapped_model.mimo_config.module_to_grid_map is original_grid_map
-    assert unwrapped_model.mimo_config.language_module_key == "llm"
     mock_train_mimo.assert_called_once()
 
 
@@ -97,13 +95,12 @@ def test_pretrain_mimo_asserts_when_constructor_fields_missing(mock_dist, mock_u
     mock_dist.get_rank.return_value = 0
 
     # Infra indicates MIMO-parallel path is active.
-    mock_setup_mimo.return_value = _make_setup_output(module_to_grid_map={"llm": MagicMock()})
+    mock_setup_mimo.return_value = _make_setup_output(module_to_grid_map={"language": MagicMock()})
 
     # Missing constructor-wired fields should trigger assertion.
     unwrapped_model = MagicMock()
     unwrapped_model.mimo_config = SimpleNamespace(
         module_to_grid_map=None,
-        language_module_key=None,
     )
     mock_unwrap_mimo_model.return_value = unwrapped_model
 

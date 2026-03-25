@@ -5,17 +5,22 @@ Called from the training layer after MimoModelProvider.provide().
 
 Note: This module only supports DDP wrapping. FSDP is not yet implemented.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Dict, Optional
 
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+
 from megatron.bridge.models.mimo.mimo_builder import is_current_rank_in_grid
+
 
 if TYPE_CHECKING:
     from megatron.core.distributed import DistributedDataParallelConfig
     from megatron.core.hyper_comm_grid import HyperCommGrid
     from megatron.core.models.mimo import MimoModel
     from megatron.core.process_groups_config import ProcessGroupCollection
+
     from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 
 
@@ -44,9 +49,9 @@ def wrap_mimo_model_distributed(
 
     # Wrap language model if present and rank participates
     if mimo_model.language_model is not None:
-        llm_grid = grids.get("llm")
+        llm_grid = grids.get(MIMO_LANGUAGE_MODULE_KEY)
         if llm_grid is not None and is_current_rank_in_grid(llm_grid):
-            llm_pg = pg_collections.get("llm")
+            llm_pg = pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
                 mimo_model.language_model = DistributedDataParallel(
                     config=mimo_model.language_model.config,
@@ -56,7 +61,7 @@ def wrap_mimo_model_distributed(
                 )
 
     # Wrap modality submodules
-    if hasattr(mimo_model, 'modality_submodules'):
+    if hasattr(mimo_model, "modality_submodules"):
         for module_name, submodule in mimo_model.modality_submodules.items():
             if submodule is None:
                 continue
@@ -74,11 +79,11 @@ def wrap_mimo_model_distributed(
             # Note: We use the first encoder's config for DDP bucket sizing.
             # This assumes all encoders in a modality submodule share similar
             # parallelism settings, which is typical for MIMO models.
-            if hasattr(submodule, 'encoders') and submodule.encoders:
+            if hasattr(submodule, "encoders") and submodule.encoders:
                 encoder_key = next(iter(submodule.encoders.keys()))
                 first_encoder = submodule.encoders[encoder_key]
-                
-                if not hasattr(first_encoder, 'config'):
+
+                if not hasattr(first_encoder, "config"):
                     raise AttributeError(
                         f"Encoder '{encoder_key}' in modality '{module_name}' does not have "
                         f"a 'config' attribute. Encoders must be MegatronModule subclasses."

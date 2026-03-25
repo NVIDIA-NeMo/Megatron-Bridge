@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Dict, Iterable, Optional, Tuple
 
 import torch
 from megatron.core.models.mimo import MimoModel
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
 from megatron.bridge.training.mimo_parallel_utils import unwrap_mimo_model
 from megatron.bridge.training.state import GlobalState
@@ -135,7 +136,7 @@ def forward_step(
     needs_data = True
     if mimo_model.role is not None:
         if mimo_model.role.has_language_module:
-            module_name = mimo_model.role.language_module_name
+            module_name = MIMO_LANGUAGE_MODULE_KEY
             is_first_stage = mimo_model.role.is_first_stage(module_name)
             is_last_stage = mimo_model.role.is_last_stage(module_name)
             needs_data = is_first_stage or is_last_stage
@@ -182,7 +183,7 @@ def forward_step(
     if mimo_model.role is None:
         is_last_stage = True
     elif mimo_model.role.has_language_module:
-        is_last_stage = mimo_model.role.is_last_stage(mimo_model.role.language_module_name)
+        is_last_stage = mimo_model.role.is_last_stage(MIMO_LANGUAGE_MODULE_KEY)
     else:
         is_last_stage = False
 
