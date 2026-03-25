@@ -86,12 +86,12 @@ class MimoParallelismConfig:
     def _validate_heterogeneous(self) -> None:
         """Validate heterogeneous deployment: no overlapping rank ranges."""
         ranges = []
-        for parallelism in self.module_parallelisms.values():
+        for name, parallelism in self.module_parallelisms.items():
             if parallelism.data_parallel_size is None:
                 raise ValueError("data_parallel_size must be set for heterogeneous deployment.")
-            ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks))
+            ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks, name))
 
-        ranges.sort()
+        ranges.sort(key=lambda x: x[0])
         for idx in range(1, len(ranges)):
             prev_end = ranges[idx - 1][1]
             cur_start = ranges[idx][0]

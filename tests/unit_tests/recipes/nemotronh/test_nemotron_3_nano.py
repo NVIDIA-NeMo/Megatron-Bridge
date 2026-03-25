@@ -28,7 +28,7 @@ import tempfile
 
 import pytest
 
-from megatron.bridge.models.nemotronh import Nemotron3NanoProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_peft_config,
     nemotron_3_nano_pretrain_config,
@@ -51,7 +51,7 @@ class TestNemotron3NanoPretrain:
         config = nemotron_3_nano_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Nemotron3NanoProvider)
+        assert isinstance(config.model, MambaModelProvider)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 4
@@ -142,7 +142,7 @@ class TestNemotron3NanoSft:
         config = nemotron_3_nano_sft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Nemotron3NanoProvider)
+        assert isinstance(config.model, MambaModelProvider)
 
         # Check default parallelism for SFT
         assert config.model.tensor_model_parallel_size == 1
@@ -254,7 +254,7 @@ class TestNemotron3NanoPeft:
         config = nemotron_3_nano_peft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Nemotron3NanoProvider)
+        assert isinstance(config.model, MambaModelProvider)
 
         # Check default parallelism for LoRA/DoRA
         assert config.model.tensor_model_parallel_size == 1
@@ -388,7 +388,7 @@ class TestNemotron3NanoCommon:
         config = recipe_fn()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Nemotron3NanoProvider)
+        assert isinstance(config.model, MambaModelProvider)
 
         # Check required sections exist
         assert config.train is not None
@@ -433,7 +433,7 @@ class TestNemotron3NanoCommon:
         # All configs use parameterless API (peft_config has optional peft_scheme)
         config = recipe_fn()
 
-        # Check MoE settings from Nemotron3NanoProvider
+        # Check MoE settings from MambaModelProvider
         assert config.model.num_moe_experts == 128
         assert config.model.moe_ffn_hidden_size == 1856
         assert config.model.moe_shared_expert_intermediate_size == 3712

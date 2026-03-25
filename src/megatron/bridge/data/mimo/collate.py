@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Collate functions for MIMO datasets."""
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def mimo_collate_fn(
             - position_ids: (batch, seq) position indices
             - modality_inputs: Dict[str, Dict[str, Tensor]] with batched modality tensors
               Each modality's tensors are stacked along batch dimension.
-              
+
     Example:
         >>> batch = [
         ...     {

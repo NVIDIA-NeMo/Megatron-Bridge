@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+=======
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+>>>>>>> main
 """HuggingFace dataset provider for MIMO multi-encoder models."""
 
 from __future__ import annotations
@@ -46,7 +50,6 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
         valid_split: Dataset split for validation. Default: "validation".
         test_split: Dataset split for testing. Default: "test".
         trust_remote_code: Whether to trust remote code for HF models/processors.
-        
     Example:
         >>> provider = HFMimoDatasetProvider(
         ...     seq_length=2048,
@@ -60,7 +63,6 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
         >>> context = DatasetBuildContext(train_samples=10000, valid_samples=1000, test_samples=1000)
         >>> train_ds, valid_ds, test_ds = provider.build_datasets(context)
     """
-    
     seq_length: int
     hf_dataset_path: str
     hf_dataset_name: Optional[str] = None
@@ -80,7 +82,6 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
     # Cached processors and tokenizer (loaded once)
     _processors: Optional[Dict[str, Any]] = field(default=None, repr=False)
     _tokenizer: Optional[Any] = field(default=None, repr=False)
-    
     def _load_processors(self) -> Dict[str, Any]:
         """Load HuggingFace processors for each modality."""
         if self._processors is not None:
@@ -138,7 +139,6 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
         except ValueError:
             # Split doesn't exist
             return None
-    
     def _build_split_dataset(
         self,
         split: str,

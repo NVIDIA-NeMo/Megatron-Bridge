@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Mock dataset provider for MIMO testing with synthetic multimodal data.
 
 This module produces synthetic multimodal inputs (random images, audio, etc.)
@@ -62,7 +62,6 @@ class MockMimoProvider(MimoDatasetProvider):
             {"vision": {"type": "image", "width": 224, "height": 224}}.
         text_prompt: Default text prompt for synthetic examples.
         random_seed: Seed for random generation.
-        
     Example:
         >>> provider = MockMimoProvider(
         ...     seq_length=2048,
@@ -75,7 +74,6 @@ class MockMimoProvider(MimoDatasetProvider):
         >>> context = DatasetBuildContext(train_samples=1000, valid_samples=100, test_samples=100)
         >>> train_ds, valid_ds, test_ds = provider.build_datasets(context)
     """
-    
     seq_length: int
     processor_paths: Dict[str, str] = field(default_factory=dict)
     tokenizer_path: str = ""
@@ -85,21 +83,21 @@ class MockMimoProvider(MimoDatasetProvider):
     text_prompt: str = "Describe this input."
     random_seed: int = 0
     trust_remote_code: bool = False
-    
+
     # DataloaderConfig fields
     dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
-    
+
     # Cached processors and tokenizer
     _processors: Optional[Dict[str, Any]] = field(default=None, repr=False)
     _tokenizer: Optional[Any] = field(default=None, repr=False)
-    
+
     def _load_processors(self) -> Dict[str, Any]:
         """Load HuggingFace processors for each modality."""
         if self._processors is not None:
             return self._processors
-        
+
         from transformers import AutoProcessor
-        
+
         processors = {}
         for modality_name, processor_path in self.processor_paths.items():
             processors[modality_name] = AutoProcessor.from_pretrained(
@@ -109,10 +107,10 @@ class MockMimoProvider(MimoDatasetProvider):
                     hf_path=processor_path,
                 ),
             )
-        
+
         object.__setattr__(self, "_processors", processors)
         return processors
-    
+
     def _load_tokenizer(self) -> Any:
         """Load HuggingFace tokenizer."""
         if self._tokenizer is not None:
@@ -167,7 +165,6 @@ class MockMimoProvider(MimoDatasetProvider):
                     width = config.get("width", 224)
                     height = config.get("height", 224)
                     example[modality_name] = _generate_random_image(width, height, rng)
-                    
                 elif modality_type == "audio":
                     duration = config.get("duration_sec", 3.0)
                     sample_rate = config.get("sample_rate", 16000)
@@ -208,7 +205,6 @@ class MockMimoProvider(MimoDatasetProvider):
             modality_columns=modality_columns,
             text_column="text",
         )
-    
     def build_datasets(
         self, context: DatasetBuildContext
     ) -> Tuple[Optional[MimoDataset], Optional[MimoDataset], Optional[MimoDataset]]:
@@ -242,7 +238,6 @@ class MockMimoProvider(MimoDatasetProvider):
             Partial function of mimo_collate_fn with modality names pre-filled.
         """
         from megatron.bridge.data.mimo.collate import mimo_collate_fn
-        
         return partial(
             mimo_collate_fn,
             modality_names=list(self.modality_configs.keys()),

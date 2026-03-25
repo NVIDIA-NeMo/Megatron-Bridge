@@ -137,8 +137,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         """Build MIMO parallelism infrastructure.
 
         This method builds HyperCommGrids, ProcessGroupCollections, and topology
-        for MIMO's heterogeneous parallelism. It is idempotent and does not
-        mutate provider state (results are not cached).
+        for MIMO's heterogeneous parallelism. It does not mutate provider state.
+        Use get_or_build_infra() when cached reuse is desired.
 
         Can be called before or after provide(). Call finalize() first to
         validate the parallelism configuration.
@@ -182,6 +182,12 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             participating_modules=participating_modules,
             module_output_ndim=output_ndim,
         )
+
+    def get_or_build_infra(self) -> MimoModelInfra:
+        """Return cached MIMO infrastructure, building it once if needed."""
+        if self._cached_infra is None:
+            object.__setattr__(self, "_cached_infra", self.build_infra())
+        return self._cached_infra
 
     def _get_pg_collections_from_grids(
         self,
@@ -303,7 +309,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             )
 
         # Build infrastructure
-        infra = self.build_infra()
+        infra = self.get_or_build_infra()
 
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
@@ -412,8 +418,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         # Finalize parallelism config
         self.finalize()
 
-        # Build infrastructure
-        infra = self.build_infra()
+        # Build infrastructure once and reuse in provide()
+        infra = self.get_or_build_infra()
 
         # Get the model
         model = self.provide()

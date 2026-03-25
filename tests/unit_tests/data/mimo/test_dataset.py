@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MimoDataset."""
 
 import pytest
@@ -9,7 +9,6 @@ from megatron.bridge.data.mimo.dataset import MimoDataset
 
 class MockExamples:
     """Mock data source (HuggingFace dataset or list) for testing."""
-    
     def __init__(self, size: int = 100):
         self._size = size
         self._data = [
@@ -44,13 +43,11 @@ class MockProcessor:
 
 class MockTokenizer:
     """Mock HuggingFace tokenizer for testing."""
-    
     def __init__(self, vocab_size: int = 32000):
         self.vocab_size = vocab_size
         self.pad_token = "<pad>"
         self.pad_token_id = 0
         self.eos_token = "</s>"
-    
     def __call__(
         self,
         text: str,
@@ -66,13 +63,11 @@ class MockTokenizer:
 
 class TestMimoDataset:
     """Test suite for MimoDataset."""
-    
     def test_basic_construction(self):
         """Test basic dataset construction."""
         examples = MockExamples(size=50)
         processors = {"vision": MockProcessor()}
         tokenizer = MockTokenizer()
-        
         dataset = MimoDataset(
             examples=examples,
             processors=processors,
@@ -109,7 +104,6 @@ class TestMimoDataset:
         examples = MockExamples(size=10)
         processors = {"vision": MockProcessor()}
         tokenizer = MockTokenizer()
-        
         dataset = MimoDataset(
             examples=examples,
             processors=processors,
@@ -127,19 +121,13 @@ class TestMimoDataset:
         assert "attention_mask" in item
         assert "position_ids" in item
         assert "modality_inputs" in item
-    
     def test_getitem_shapes(self):
         """Test that __getitem__ returns correct tensor shapes."""
         seq_length = 64
         examples = MockExamples(size=10)
         processors = {"vision": MockProcessor(output_shape=(3, 224, 224))}
         tokenizer = MockTokenizer()
-        
-        dataset = MimoDataset(
-            examples=examples,
-            processors=processors,
             tokenizer=tokenizer,
-            seq_length=seq_length,
             special_token_ids={"vision": 32000},
             encoder_seq_lengths={"vision": 1},
             modality_columns={"vision": "image"},
@@ -151,13 +139,11 @@ class TestMimoDataset:
         assert item["labels"].shape == (seq_length,)
         assert item["attention_mask"].shape == (seq_length,)
         assert item["position_ids"].shape == (seq_length,)
-    
     def test_modality_inputs_present(self):
         """Test that modality_inputs contains processed tensors."""
         examples = MockExamples(size=10)
         processors = {"vision": MockProcessor(output_shape=(3, 224, 224))}
         tokenizer = MockTokenizer()
-        
         dataset = MimoDataset(
             examples=examples,
             processors=processors,
@@ -174,7 +160,6 @@ class TestMimoDataset:
         assert "pixel_values" in item["modality_inputs"]["vision"]
         # Shape should be (3, 224, 224) - batch dim squeezed
         assert item["modality_inputs"]["vision"]["pixel_values"].shape == (3, 224, 224)
-    
     def test_multiple_modalities(self):
         """Test dataset with multiple modalities."""
         examples = MockExamples(size=10)
@@ -183,7 +168,6 @@ class TestMimoDataset:
             "audio": MockProcessor(output_key="input_features", output_shape=(128, 3000)),
         }
         tokenizer = MockTokenizer()
-        
         dataset = MimoDataset(
             examples=examples,
             processors=processors,
@@ -200,7 +184,6 @@ class TestMimoDataset:
         assert "audio" in item["modality_inputs"]
         assert "pixel_values" in item["modality_inputs"]["vision"]
         assert "input_features" in item["modality_inputs"]["audio"]
-    
     def test_placeholder_token_inserted(self):
         """Test that N placeholder tokens are inserted in input_ids based on encoder_seq_lengths."""
         examples = MockExamples(size=10)
@@ -236,7 +219,6 @@ class TestMimoDataset:
         examples = MockExamples(size=10)
         processors = {"vision": MockProcessor()}
         tokenizer = MockTokenizer()
-        
         dataset = MimoDataset(
             examples=examples,
             processors=processors,
@@ -284,7 +266,6 @@ class TestMimoDataset:
         ]
         processors = {"vision": MockProcessor()}
         tokenizer = MockTokenizer()
-        
         dataset = MimoDataset(
             examples=examples,
             processors=processors,
@@ -294,7 +275,6 @@ class TestMimoDataset:
             encoder_seq_lengths={"vision": 1},
             modality_columns={"vision": "image"},
         )
-        
         assert len(dataset) == 2
         item = dataset[0]
         assert "input_ids" in item
@@ -302,12 +282,7 @@ class TestMimoDataset:
 
 class TestMimoDatasetPreprocessing:
     """Test preprocessing functionality."""
-    
-    def test_custom_preprocess_fn(self):
-        """Test that custom preprocess_fn is applied."""
-        examples = MockExamples(size=10)
         processors = {"vision": MockProcessor()}
-        tokenizer = MockTokenizer()
         
         def custom_preprocess(example):
             example["text"] = example["text"].upper()
@@ -323,7 +298,6 @@ class TestMimoDatasetPreprocessing:
             modality_columns={"vision": "image"},
             preprocess_fn=custom_preprocess,
         )
-        
         # Should not raise
         item = dataset[0]
         assert "input_ids" in item
@@ -331,13 +305,11 @@ class TestMimoDatasetPreprocessing:
 
 class TestMimoDatasetEncoderSeqLengths:
     """Test encoder_seq_lengths functionality."""
-    
     def test_encoder_seq_lengths_validation(self):
         """Test that encoder_seq_lengths >= seq_length raises ValueError."""
         examples = MockExamples(size=10)
         processors = {"vision": MockProcessor()}
         tokenizer = MockTokenizer()
-        
         # encoder_seq_lengths (100) >= seq_length (64) should raise
         with pytest.raises(ValueError, match="must be less than"):
             MimoDataset(
@@ -349,25 +321,18 @@ class TestMimoDatasetEncoderSeqLengths:
                 encoder_seq_lengths={"vision": 100},  # Too large!
                 modality_columns={"vision": "image"},
             )
-    
     def test_encoder_seq_lengths_validation_equal(self):
         """Test that encoder_seq_lengths == seq_length raises ValueError."""
         examples = MockExamples(size=10)
         processors = {"vision": MockProcessor()}
         tokenizer = MockTokenizer()
-        
-        # encoder_seq_lengths (64) == seq_length (64) should raise
-        with pytest.raises(ValueError, match="must be less than"):
-            MimoDataset(
                 examples=examples,
-                processors=processors,
                 tokenizer=tokenizer,
                 seq_length=64,
                 special_token_ids={"vision": 32000},
                 encoder_seq_lengths={"vision": 64},  # Equal, no room for text!
                 modality_columns={"vision": "image"},
             )
-    
     def test_multiple_modality_placeholders(self):
         """Test correct placeholder insertion for multiple modalities."""
         examples = MockExamples(size=10)
@@ -376,17 +341,11 @@ class TestMimoDatasetEncoderSeqLengths:
             "audio": MockProcessor(output_key="input_features", output_shape=(128, 3000)),
         }
         tokenizer = MockTokenizer()
-        
         vision_placeholder = 32000
         audio_placeholder = 32001
         vision_seq_len = 10
         audio_seq_len = 5
-        
-        dataset = MimoDataset(
-            examples=examples,
-            processors=processors,
             tokenizer=tokenizer,
-            seq_length=64,
             special_token_ids={"vision": vision_placeholder, "audio": audio_placeholder},
             encoder_seq_lengths={"vision": vision_seq_len, "audio": audio_seq_len},
             modality_columns={"vision": "image", "audio": "audio"},

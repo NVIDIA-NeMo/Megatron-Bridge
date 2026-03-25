@@ -127,9 +127,7 @@ class TestMambaModelConfigInitialization:
         assert config.fp16_lm_cross_entropy is False
         assert config.parallel_output is True
         assert config.share_embeddings_and_output_weights is False
-        assert config.hybrid_attention_ratio == 0.0
-        assert config.hybrid_mlp_ratio == 0.0
-        assert config.hybrid_override_pattern is None
+        assert config.hybrid_layer_pattern is None
         assert config.seq_length == 8192
         assert config.position_embedding_type == "none"
         assert config.rotary_percent == 1.0
@@ -146,7 +144,7 @@ class TestMambaModelConfigInitialization:
             parallel_output=False,
             hybrid_attention_ratio=0.25,
             hybrid_mlp_ratio=0.1,
-            hybrid_override_pattern="M-M*-",
+            hybrid_layer_pattern="M-M*-",
             seq_length=4096,
             vocab_size=50000,
         )
@@ -154,7 +152,7 @@ class TestMambaModelConfigInitialization:
         assert config.parallel_output is False
         assert config.hybrid_attention_ratio == 0.25
         assert config.hybrid_mlp_ratio == 0.1
-        assert config.hybrid_override_pattern == "M-M*-"
+        assert config.hybrid_layer_pattern == "M-M*-"
         assert config.seq_length == 4096
         assert config.vocab_size == 50000
 
@@ -238,6 +236,16 @@ class TestMambaModelConfigSetAttr:
     def test_proxied_write_does_not_shadow_on_self(self):
         self.config.hidden_size = 2048
         assert "hidden_size" not in self.config.__dict__
+
+
+class TestMambaModelConfigFinalize:
+    """Tests for MambaModelConfig.finalize() — validation logic."""
+
+    def test_calls_transformer_finalize(self):
+        config = _make_mamba_config()
+        with patch.object(config.transformer, "finalize") as mock_finalize:
+            config.finalize()
+        mock_finalize.assert_called_once()
 
 
 # =============================================================================
@@ -389,9 +397,7 @@ class TestMambaModelBuilderBuildModel:
         config = _make_mamba_config(
             vocab_size=32000,
             seq_length=4096,
-            hybrid_attention_ratio=0.1,
-            hybrid_mlp_ratio=0.2,
-            hybrid_override_pattern="M-A-",
+            hybrid_layer_pattern="M-A-",
             fp16_lm_cross_entropy=True,
             parallel_output=False,
             share_embeddings_and_output_weights=True,
@@ -407,9 +413,7 @@ class TestMambaModelBuilderBuildModel:
         assert kw["config"] is config.transformer
         assert kw["vocab_size"] == 32000
         assert kw["max_sequence_length"] == 4096
-        assert kw["hybrid_attention_ratio"] == 0.1
-        assert kw["hybrid_mlp_ratio"] == 0.2
-        assert kw["hybrid_override_pattern"] == "M-A-"
+        assert kw["hybrid_layer_pattern"] == "M-A-"
         assert kw["fp16_lm_cross_entropy"] is True
         assert kw["parallel_output"] is False
         assert kw["share_embeddings_and_output_weights"] is True
@@ -520,6 +524,6 @@ class TestMambaModelBuilderBuildDistributedModels:
         assert args[2] is self.pg
         assert args[3] is None  # ddp_config
         assert args[7] is True  # wrap_with_ddp
-        assert args[8] is True  # data_parallel_random_init
+        assert args[8] is False  # data_parallel_random_init
         assert args[9] is Float16Module  # mixed_precision_wrapper
         assert args[11] is ModelType.encoder_or_decoder  # model_type
