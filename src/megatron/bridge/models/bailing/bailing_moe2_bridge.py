@@ -32,11 +32,11 @@ Supported models:
 """
 
 import logging
+from functools import partial
 
-import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
-from megatron.bridge.models.bailing.bailing_moe2_provider import BailingMoeV2ModelProvider
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -44,13 +44,21 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     GatedMLPMapping,
 )
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
+
+try:
+    import transformer_engine  # type: ignore  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
 
 logger = logging.getLogger(__name__)
 
 
-@MegatronModelBridge.register_bridge(source="BailingMoeV2ForCausalLM", target=GPTModel)
+@MegatronModelBridge.register_bridge(source="BailingMoeV2ForCausalLM", target=GPTModel, model_type="bailing_moe_v2")
 class BailingMoeV2Bridge(MegatronModelBridge):
     """
     Megatron Bridge for Ling MoE V2 Model
@@ -61,37 +69,33 @@ class BailingMoeV2Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> BailingMoeV2ModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
+        provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
+        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_bias_linear = False
+        provider.share_embeddings_and_output_weights = False
+        provider.qk_layernorm = True
+        provider.add_qkv_bias = getattr(hf_config, "use_qkv_bias", False)
+
+        provider.moe_grouped_gemm = True
+        provider.moe_router_pre_softmax = True
+        provider.moe_router_load_balancing_type = "none"
+        provider.moe_router_enable_expert_bias = True
+        provider.moe_router_dtype = "fp32"
+        provider.moe_permute_fusion = True
+
+        provider.hidden_dropout = 0.0
+
+        provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )
-        return BailingMoeV2ModelProvider(
-            add_qkv_bias=hf_config.use_qkv_bias,
-            kv_channels=hf_config.head_dim,
-            seq_length=hf_config.max_position_embeddings,
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            moe_ffn_hidden_size=hf_config.moe_intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            num_moe_experts=hf_config.num_experts,
-            moe_layer_freq=moe_layer_freq,
-            mtp_num_layers=getattr(hf_config, "num_nextn_predict_layers", 0),
-            moe_router_topk=hf_config.num_experts_per_tok,
-            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            rotary_base=hf_config.rope_theta,
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-        )
+        provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size
 
-    def build_conversion_tasks(self, hf_pretrained, megatron_model):
-        """Override to store config before mapping_registry is called."""
-        # Store config on instance for use in mapping_registry
-        self._hf_config = hf_pretrained.config
-        return super().build_conversion_tasks(hf_pretrained, megatron_model)
+        return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []
@@ -151,12 +155,8 @@ class BailingMoeV2Bridge(MegatronModelBridge):
                 ),
             ]
         )
-        # optionally add MTP mappings
-        if not hasattr(self, "_hf_config"):
-            logger.warning("No HF config found, skipping MTP mappings.")
-            return MegatronMappingRegistry(*mapping_list)
 
-        hf_config = self._hf_config
+        hf_config = self.hf_config
         num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
         num_transformer_layers = hf_config.num_hidden_layers
         for mtp_layer in range(num_mtp_layers):

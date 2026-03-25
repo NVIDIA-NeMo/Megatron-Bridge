@@ -1,6 +1,5 @@
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -13,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.bailing.bailing_moe2_bridge import BailingMoeV2Bridge
+#!/bin/bash
+set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+export CUDA_VISIBLE_DEVICES="0,1"
 
-__all__ = [
-    "BailingMoeV2Bridge",
-]
+uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
+  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  tests/functional_tests/test_groups/models/bailing
+coverage combine -q
