@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, Optional
 
 import torch
 from torch.utils.data import Dataset
@@ -11,10 +11,12 @@ from torch.utils.data import Dataset
 
 class MimoDataset(Dataset):
     """Dataset for MIMO models with per-modality preprocessing.
+
     Wraps a data source (HuggingFace dataset or list of examples) and applies
     per-modality processors to convert raw inputs (images, audio, etc.) into
     preprocessed tensors (pixel_values, input_features) that encoders consume
     during the forward pass.
+
     Args:
         examples: Data source - either a HuggingFace Dataset or a list of dicts.
         processors: Dict mapping modality name to HF processor, e.g.,
@@ -33,6 +35,7 @@ class MimoDataset(Dataset):
         max_samples: Optional limit on dataset size for debugging.
         preprocess_fn: Optional function to preprocess each example before
             modality processing.
+
     Example:
         >>> from datasets import load_dataset
         >>> from transformers import AutoProcessor, AutoTokenizer
@@ -67,6 +70,7 @@ class MimoDataset(Dataset):
         ...     modality_columns={"vision": "image"},
         ... )
     """
+
     def __init__(
         self,
         examples: Any,  # HF Dataset or List[Dict]
@@ -88,6 +92,7 @@ class MimoDataset(Dataset):
                 f"seq_length ({seq_length}) to leave room for text tokens. "
                 f"encoder_seq_lengths: {encoder_seq_lengths}"
             )
+
         self.examples = examples
         self.processors = processors
         self.tokenizer = tokenizer
@@ -97,18 +102,18 @@ class MimoDataset(Dataset):
         self.modality_columns = modality_columns
         self.text_column = text_column
         self.preprocess_fn = preprocess_fn
-        
+
         # Limit dataset size if requested
         self._size = len(examples)
         if max_samples is not None and max_samples > 0:
             self._size = min(self._size, max_samples)
-    
+
     def __len__(self) -> int:
         return self._size
-    
+
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         """Get a single example with preprocessed modality inputs.
-        
+
         Returns:
             Dict containing:
                 - input_ids: Tokenized text with placeholder tokens
@@ -121,13 +126,13 @@ class MimoDataset(Dataset):
         """
         if idx >= self._size:
             raise IndexError(f"Index {idx} out of range for dataset of size {self._size}")
-        
+
         example = self.examples[idx]
-        
+
         # Apply custom preprocessing if provided
         if self.preprocess_fn is not None:
             example = self.preprocess_fn(example)
-        
+
         # Process each modality
         modality_inputs: Dict[str, Dict[str, Any]] = {}
         for modality_name, column_name in self.modality_columns.items():
@@ -143,18 +148,17 @@ class MimoDataset(Dataset):
                 processed = processor(raw_input, return_tensors="pt")
                 # Remove batch dimension added by processor
                 modality_inputs[modality_name] = {
-                    k: v.squeeze(0) if isinstance(v, torch.Tensor) else v
-                    for k, v in processed.items()
+                    k: v.squeeze(0) if isinstance(v, torch.Tensor) else v for k, v in processed.items()
                 }
-        
+
         # Process text with placeholder tokens
         text = example.get(self.text_column, "")
         input_ids = self._tokenize_with_placeholders(text, modality_inputs)
-        
+
         # Create attention mask and position ids
         attention_mask = torch.ones_like(input_ids)
         position_ids = torch.arange(len(input_ids))
-        
+
         # Shift labels by 1 for next-token prediction: label[i] = input_ids[i+1]
         labels = input_ids.clone()
         labels[:-1] = input_ids[1:]
@@ -210,6 +214,7 @@ class MimoDataset(Dataset):
             return_tensors="pt",
         )
         input_ids = encoded["input_ids"].squeeze(0)
+
         # Insert placeholder tokens for each modality at the beginning
         # The order follows the order of modality_inputs (Python 3.7+ dict ordering)
         prefix_tokens = []
@@ -218,12 +223,14 @@ class MimoDataset(Dataset):
                 token_id = self.special_token_ids[modality_name]
                 num_tokens = self.encoder_seq_lengths.get(modality_name, 1)
                 prefix_tokens.extend([token_id] * num_tokens)
+
         if prefix_tokens:
             prefix = torch.tensor(prefix_tokens, dtype=input_ids.dtype)
             # Truncate text tokens to make room for placeholders
             max_text_len = self.seq_length - len(prefix_tokens)
             input_ids = input_ids[:max_text_len]
             input_ids = torch.cat([prefix, input_ids])
+
         # Pad or truncate to seq_length
         if len(input_ids) < self.seq_length:
             pad_len = self.seq_length - len(input_ids)

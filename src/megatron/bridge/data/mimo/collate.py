@@ -14,10 +14,10 @@ def mimo_collate_fn(
     modality_names: List[str],
 ) -> Dict[str, Any]:
     """Collate function for MIMO datasets.
-    
+
     Stacks batch items and organizes modality inputs into a structure
     suitable for MIMO model forward pass.
-    
+
     Args:
         batch: List of examples from MimoDataset, each containing:
             - input_ids: Token IDs with placeholder tokens
@@ -26,7 +26,7 @@ def mimo_collate_fn(
             - position_ids: Position indices
             - modality_inputs: Dict[str, Dict[str, Any]] with preprocessed inputs
         modality_names: List of modality names to collate.
-        
+
     Returns:
         Dict containing:
             - input_ids: (batch, seq) stacked token IDs
@@ -53,39 +53,33 @@ def mimo_collate_fn(
     """
     if not batch:
         return {}
-    
+
     # Stack standard fields
     input_ids = torch.stack([item["input_ids"] for item in batch])
     labels = torch.stack([item["labels"] for item in batch])
     attention_mask = torch.stack([item["attention_mask"] for item in batch])
     position_ids = torch.stack([item["position_ids"] for item in batch])
     loss_mask = torch.stack([item["loss_mask"] for item in batch])
-    
+
     # Collate modality inputs
     modality_inputs: Dict[str, Dict[str, Any]] = {}
-    
+
     for modality_name in modality_names:
         # Collect all tensors for this modality across the batch
-        modality_batch_items = [
-            item.get("modality_inputs", {}).get(modality_name, {})
-            for item in batch
-        ]
-        
+        modality_batch_items = [item.get("modality_inputs", {}).get(modality_name, {}) for item in batch]
+
         # Skip if no items have this modality
         if not any(modality_batch_items):
             continue
-        
+
         # Get all keys from the first non-empty item
-        first_non_empty = next(
-            (item for item in modality_batch_items if item), 
-            {}
-        )
-        
+        first_non_empty = next((item for item in modality_batch_items if item), {})
+
         if not first_non_empty:
             continue
-        
+
         modality_inputs[modality_name] = {}
-        
+
         for key in first_non_empty.keys():
             values = []
             for item in modality_batch_items:
@@ -96,7 +90,7 @@ def mimo_collate_fn(
                     else:
                         # Non-tensor values are kept as lists
                         values.append(val)
-            
+
             if values and isinstance(values[0], torch.Tensor):
                 # Stack tensors along batch dimension
                 try:
@@ -113,7 +107,7 @@ def mimo_collate_fn(
             elif values:
                 # Keep non-tensor values as list
                 modality_inputs[modality_name][key] = values
-    
+
     return {
         "input_ids": input_ids,
         "labels": labels,
