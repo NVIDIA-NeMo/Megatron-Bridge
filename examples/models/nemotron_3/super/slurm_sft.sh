@@ -62,7 +62,7 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry
-PARALLELISM_CONFIGS=("8,1,64,1,True")
+PARALLELISM_CONFIGS=("8,1,64,1,True" "4,1,64,2,True")
 
 # Container image (required)
 CONTAINER_IMAGE=""
