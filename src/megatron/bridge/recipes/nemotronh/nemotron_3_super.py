@@ -176,10 +176,10 @@ def nemotron_3_super_sft_config() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
 
-    # CUDA Graph (TE impl + partial scopes: ~40% throughput gain over disabled)
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
-    cfg.model.cuda_graph_warmup_steps = 3
+    # CUDA Graph disabled — packed-sequence SFT passes explicit attention masks that
+    # are incompatible with CUDA graph capture/replay in Mamba layers.
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
 
     # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
     # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)
@@ -273,10 +273,10 @@ def nemotron_3_super_peft_config(
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
 
-    # CUDA Graph (TE impl + partial scopes: ~40% throughput gain over disabled)
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
-    cfg.model.cuda_graph_warmup_steps = 3
+    # CUDA Graph disabled — packed-sequence SFT passes explicit attention masks that
+    # are incompatible with CUDA graph capture/replay in Mamba layers.
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
 
     # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
     # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)

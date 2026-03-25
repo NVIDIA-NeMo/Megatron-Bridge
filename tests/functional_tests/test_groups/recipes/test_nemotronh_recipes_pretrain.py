@@ -139,6 +139,10 @@ NEMOTRON_3_SUPER_PRETRAIN_RECIPES = [
             "mtp_num_layers": 2,
             "mtp_hybrid_override_pattern": "*E",
             "moe_router_topk": 2,
+            # Disable CUDA graphs in CI — TE/MCore RNG state mismatch causes
+            # 'Tensor' object has no attribute 'get_state' in make_graphed_callables.
+            "cuda_graph_impl": "none",
+            "cuda_graph_scope": [],
         },
     ),
 ]
