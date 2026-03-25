@@ -634,11 +634,6 @@ def parse_args():
         "--lr-warmup-iters", type=int, default=20, help="Number of iterations to linearly warmup learning rate"
     )
     parser.add_argument("--dataset-root", type=str, required=True, help="Root directory of the LLaVA-Pretrain dataset")
-    parser.add_argument(
-        "--save-initial-checkpoint",
-        action="store_true",
-        help="Save a checkpoint at step 0 (before any training) to checkpoint-dir",
-    )
     return parser.parse_args()
 
 
@@ -790,7 +785,6 @@ def main():
         forward_step_func=mimo_forward_step,
         build_data_iterators_fn=_build_data_iterators,
         opt_config=mcore_opt_config,
-        save_initial_checkpoint=args.save_initial_checkpoint,
     )
 
     _log("PASSED")
