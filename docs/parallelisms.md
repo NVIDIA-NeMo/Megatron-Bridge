@@ -15,7 +15,7 @@ Distributed Data Parallelism (DDP) keeps the model copies consistent by synchron
 
 ### Distributed Optimizer
 
-[Distributed optimizer](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/dist_optimizer.html) is a memory-optimized data-parallel deployment method. It shards the optimizer states and the high-precision master parameters across data-parallel GPUs instead of replicating them. At the parameter optimizer step, each data-parallel GPU updates its shard of parameters. Since each GPU needs its own gradient shard, the distributed optimizer conducts reduce-scatter of the parameter gradients instead of all-reduce of them. Then, the updated parameter shards are all-gathered across data-parallel GPUs. This approach significantly reduces the memory need of large-scale LLM training.
+[Distributed optimizer](https://docs.nvidia.com/megatron-core/developer-guide/latest/user-guide/features/dist_optimizer.html) is a memory-optimized data-parallel deployment method. It shards the optimizer states and the high-precision master parameters across data-parallel GPUs instead of replicating them. At the parameter optimizer step, each data-parallel GPU updates its shard of parameters. Since each GPU needs its own gradient shard, the distributed optimizer conducts reduce-scatter of the parameter gradients instead of all-reduce of them. Then, the updated parameter shards are all-gathered across data-parallel GPUs. This approach significantly reduces the memory need of large-scale LLM training.
 
 ### Enable Data Parallelism
 
@@ -82,7 +82,7 @@ config = ConfigContainer(
 
 #### Implement Tensor Parallelism
 
-Megatron Bridge integrates TP through the implementation from Megatron Core. For detailed API usage and additional configurations, consult the [Megatron Core Developer Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/tensor_parallel.html).
+Megatron Bridge integrates TP through the implementation from Megatron Core. For detailed API usage and additional configurations, consult the [Megatron Core Developer Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.tensor_parallel.html).
 
 ### Pipeline Parallelism
 
@@ -127,7 +127,7 @@ For more insights into this approach, see the detailed blog: [Scaling Language M
 
 #### Implement Pipeline Parallelism
 
-The Megatron Bridge implementation of PP leverages functionalities from Megatron Core. For more detailed API usage and configurations related to PP, visit the [Megatron Core Developer Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/tensor_parallel.html).
+The Megatron Bridge implementation of PP leverages functionalities from Megatron Core. For more detailed API usage and configurations related to PP, visit the [Megatron Core Developer Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.pipeline_parallel.html).
 
 ### Expert Parallelism and Mixture of Experts (MoE)
 
@@ -182,34 +182,102 @@ model_config = GPTModelProvider(
 
 #### Advanced MoE Features
 
-##### DeepEP Optimization
+Megatron Bridge provides several advanced optimizations for MoE models to improve performance on modern GPU architectures.
 
-Megatron Bridge includes DeepEP optimization for improved MoE performance on Ampere and Hopper GPUs:
+##### DeepEP and HybridEP Optimizations
+
+DeepEP and HybridEP are high-performance MoE token dispatchers that improve throughput and efficiency on specific GPU architectures:
+
+- **DeepEP**: Optimized for Ampere, Hopper, B200, and B300 GPUs
+- **HybridEP**: Optimized for GB200, GB300 with NVL72, and Ampere, Hopper, B200, B300 GPUs
+
+These dispatchers replace the standard token routing mechanism with an optimized "flex" dispatcher that provides better performance for MoE workloads.
+
+**Enable DeepEP:**
 
 ```python
-from megatron.bridge.training.deepep import apply_deepep
+from megatron.bridge.models import GPTModelProvider
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+
+model_config = GPTModelProvider(
+    num_moe_experts=8,
+    expert_model_parallel_size=4,
+    # ... other model parameters
+)
 
 # Apply DeepEP optimization
-apply_deepep(model_config)  # Sets moe_token_dispatcher_type="flex" and other optimizations
+apply_flex_dispatcher_backend(model_config, moe_flex_dispatcher_backend="deepep")
 ```
+
+**Enable HybridEP:**
+
+```python
+from megatron.bridge.models import GPTModelProvider
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+
+model_config = GPTModelProvider(
+    num_moe_experts=8,
+    expert_model_parallel_size=4,
+    # ... other model parameters
+)
+
+# Apply HybridEP optimization
+apply_flex_dispatcher_backend(model_config, moe_flex_dispatcher_backend="hybridep")
+```
+
+**GPU Architecture Requirements:**
+
+- **DeepEP**: Ampere (SM 8.x), Hopper (SM 9.x), B200, B300
+- **HybridEP**: GB200, GB300 with NVL72, Ampere (SM 8.x), Hopper (SM 9.x), B200, B300
+
+The system automatically validates GPU compatibility and issues warnings if the dispatcher is not supported on the current hardware.
 
 ##### Token Dropping for Load Balancing
 
-Token dropping improves performance by balancing work across experts:
+Token dropping improves MoE performance by balancing work across experts through capacity factors. This feature allows the model to drop tokens when experts are overloaded, preventing stragglers and improving overall throughput.
 
 ```python
+from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
-# Apply token drop settings for load balancing
-apply_moe_token_drop(model_config, moe_expert_capacity_factor=1.0)
+model_config = GPTModelProvider(
+    num_moe_experts=8,
+    moe_router_topk=2,
+    moe_token_dispatcher_type="alltoall",  # Required for token dropping
+    moe_router_load_balancing_type="aux_loss",  # Required load balancing type
+    # ... other model parameters
+)
+
+# Apply token dropping with capacity factor
+apply_moe_token_drop(
+    model_config,
+    moe_expert_capacity_factor=1.0,  # Capacity multiplier per expert
+    moe_pad_expert_input_to_capacity=True,  # Pad inputs to capacity length
+)
 ```
 
+**Configuration Parameters:**
+
+- `moe_expert_capacity_factor`: Controls the maximum number of tokens each expert can process. A factor of 1.0 means each expert can handle exactly its proportional share of tokens. Lower values (e.g., 0.8) drop more tokens but improve load balancing.
+- `moe_pad_expert_input_to_capacity`: When enabled, pads expert inputs to the capacity length for consistent batch sizes.
+
+**Requirements:**
+
+- Token dispatcher must be `alltoall` or `alltoall_seq`
+- Load balancing type must be `aux_loss`, `seq_aux_loss`, or `none`
+
+**Trade-offs:**
+
+Token dropping can improve training throughput by 10-30% in imbalanced MoE models, but may affect convergence if too aggressive. Start with a capacity factor of 1.0 and gradually reduce if needed.
+
 #### Complete MoE Configuration Example
+
+Here's a complete example showing how to configure an MoE model with advanced optimizations:
 
 ```python
 from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.deepep import apply_deepep
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
 # Configure MoE model with expert parallelism
@@ -221,12 +289,25 @@ model_config = GPTModelProvider(
     # MoE configuration
     num_moe_experts=8,                    # 8 experts total
     moe_router_topk=2,                    # Activate 2 experts per token
+    moe_ffn_hidden_size=8192,            # Expert FFN hidden dimension
+    moe_token_dispatcher_type="alltoall", # Token dispatcher type
+    moe_router_load_balancing_type="aux_loss",  # Load balancing
     
     # Expert parallelism
     expert_model_parallel_size=4,         # Distribute experts across 4 GPUs
     expert_tensor_parallel_size=2,        # Apply TP within each expert
     
     # ... other model parameters
+)
+
+# Apply DeepEP optimization (for Ampere/Hopper GPUs)
+apply_flex_dispatcher_backend(model_config, moe_flex_dispatcher_backend="deepep")
+
+# Apply token dropping for load balancing
+apply_moe_token_drop(
+    model_config,
+    moe_expert_capacity_factor=1.0,
+    moe_pad_expert_input_to_capacity=True,
 )
 
 config = ConfigContainer(
@@ -296,7 +377,7 @@ For long context training scenarios, context parallelism is particularly effecti
 Megatron Bridge leverages functionalities from both Megatron Core and Transformer Engine to implement CP efficiently. During forward propagation, each GPU handles a segment of the sequence, storing only the necessary Key and Value (KV) pairs. In the backward pass, these KV pairs are reassembled across GPUs using advanced communication schemes like all-gather and reduce-scatter transformed into point-to-point communications in a ring topology. This method reduces the memory footprint significantly while maintaining computational efficiency.
 
 For more detailed technical information and implementation details, visit:
-- [Megatron Core Context Parallelism Documentation](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/context_parallel.html)
+- [Megatron Core Context Parallelism Documentation](https://docs.nvidia.com/megatron-core/developer-guide/latest/user-guide/features/context_parallel.html)
 - [Megatron Core wrappers for Transformer Engine](https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/custom_layers/transformer_engine.py)
 - [Transformer Engine attention modules](https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/attention.py)
 
@@ -354,6 +435,53 @@ For example, with 32 GPUs total and the configuration above:
 - `context_parallel_size = 2`
 - `data_parallel_size = 32 / (2 × 4 × 2) = 2`
 
+## Strategy Selection Guide
+
+Choosing the right combination depends on model size, hardware topology,
+and sequence length.
+
+### Dense Models by Size
+
+| Model size | GPUs | Recommended starting point |
+|---|---|---|
+| < 1B | 1-8 | DP only |
+| 1-10B | 8-16 | TP=2-4 + DP |
+| 10-70B | 16-64 | TP=4-8 + PP=2-4 + DP |
+| 70-175B | 64-256 | TP=8 + PP=4-8 + DP |
+| 175-500B | 256-1024 | TP=8 + PP=8-16 + CP=2 + DP |
+
+### MoE Models
+
+MoE models differ fundamentally from dense models: only a fraction of
+parameters are active per token, so TP can often stay at 1 or 2. EP is
+the primary scaling dimension.
+
+| Total / active params | Typical layout |
+|---|---|
+| < 20B | EP only (TP=1, PP=1) |
+| 20-100B | TP=1-2 + PP=2-4 + EP=8-16 |
+| 100-500B | TP=2-4 + PP=8-16 + EP=8-32 |
+| 500B+ | TP=2 + PP=16 + EP=32-64 |
+
+### By Hardware Topology
+
+- **Single node with NVLink**: maximize TP within the node (up to TP=8).
+- **Multiple nodes with InfiniBand**: keep TP within a node, use PP across nodes.
+- **Limited network (Ethernet)**: minimize TP, prefer PP for cross-node scaling.
+
+### By Sequence Length
+
+| Sequence length | Recommendation |
+|---|---|
+| < 2K | standard TP + PP + DP |
+| 2K-8K | add SP (`sequence_parallel=True`) |
+| 8K-32K | add CP=2 |
+| 32K+ | add CP=4-8, consider hierarchical CP |
+
+For operational details on configuring combined parallelism, troubleshooting
+layouts, and memory estimation, see the
+[parallelism strategies skill](skills/perf-techniques/parallelism-strategies/SKILL.md).
+
 ## Configuration Guidelines
 
 ### Memory Optimization
@@ -367,11 +495,20 @@ For example, with 32 GPUs total and the configuration above:
 - **Pipeline parallelism** can work across nodes but requires careful batch size tuning
 - **Context parallelism** is essential for long context scenarios
 - **Expert parallelism** is specific to MoE models and should match the number of experts
+- **DeepEP/HybridEP** provide optimized MoE token dispatching on supported GPU architectures
 
 ### Compatibility
 - **Sequence parallelism** requires `tensor_model_parallel_size > 1`
 - **Expert parallelism** requires MoE models (`num_moe_experts > 0`)
+- **DeepEP** requires Ampere, Hopper, B200, or B300 GPUs
+- **HybridEP** requires GB200, GB300 with NVL72, or Ampere, Hopper, B200, B300 GPUs
+- **Token dropping** requires `alltoall` or `alltoall_seq` token dispatcher
 - All parallelism strategies can be combined, but total parallelism must divide evenly into the world size
+
+## Related Artifacts
+
+- **Operational skill**: [skills/perf-techniques/parallelism-strategies/SKILL.md](skills/perf-techniques/parallelism-strategies/SKILL.md) — enablement, pitfalls, memory estimation, verification
+- **Knowledge card**: [skills/perf-techniques/parallelism-strategies/card.yaml](skills/perf-techniques/parallelism-strategies/card.yaml) — structured metadata and validation status
 
 ## Resources
 
@@ -379,4 +516,3 @@ For example, with 32 GPUs total and the configuration above:
 - [Scaling Language Model Training](https://developer.nvidia.com/blog/scaling-language-model-training-to-a-trillion-parameters-using-megatron/)
 - [Megatron-LM Repository](https://github.com/NVIDIA/Megatron-LM)
 - [Transformer Engine](https://github.com/NVIDIA/TransformerEngine)
-

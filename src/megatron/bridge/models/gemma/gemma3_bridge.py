@@ -25,6 +25,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_local_base_freq_from_hf,
+    rope_scaling_factor_from_hf,
+    rope_theta_from_hf,
+)
 from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -34,37 +39,40 @@ AutoMapping.register_module_type("Gemma3TEDotProductAttention", "replicated")
 AutoMapping.register_module_type("TERowParallelLinearLayerNorm", "row")
 
 
-@MegatronModelBridge.register_bridge(source=Gemma3ForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(
+    source=Gemma3ForCausalLM,
+    target=GPTModel,
+    provider=Gemma3ModelProvider,
+    model_type="gemma3",
+)
 class Gemma3ModelBridge(MegatronModelBridge):
     """
     Megatron Bridge for Gemma3.
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma3ModelProvider:
+        """Convert HuggingFace config to Gemma3ModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
+
         # Precision config is stored in the VL Config
         hf_vl_config = AutoConfig.from_pretrained(hf_pretrained._model_name_or_path)
 
-        provider = Gemma3ModelProvider(
-            init_method_std=hf_config.initializer_range,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            kv_channels=hf_config.head_dim,
-            seq_length=hf_config.max_position_embeddings,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_layers=hf_config.num_hidden_layers,
-            num_query_groups=hf_config.num_key_value_heads,
-            window_size=hf_config.sliding_window,
-            rotary_base=(hf_config.rope_local_base_freq, hf_config.rope_theta),
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            vocab_size=hf_config.vocab_size,
-            softmax_scale=1.0 / math.sqrt(hf_config.query_pre_attn_scalar),
-            rope_scaling_factor=hf_config.rope_scaling["factor"] if hf_config.rope_scaling else 1.0,
-            fp16=(self.dtype_from_hf(hf_vl_config, default=torch.float32) == torch.float16),  # TODO confirm
-            bf16=(self.dtype_from_hf(hf_vl_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_vl_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
+        # Override dtype from VL config (has precision info)
+        params_dtype = self.dtype_from_hf(hf_vl_config, default=torch.float32)
+        provider.fp16 = params_dtype == torch.float16
+        provider.bf16 = params_dtype == torch.bfloat16
+        provider.params_dtype = params_dtype
+        provider.autocast_dtype = params_dtype
+
+        # Gemma3-specific features not in CONFIG_MAPPING
+        provider.window_size = hf_config.sliding_window
+        provider.rotary_base = (
+            rope_local_base_freq_from_hf(hf_config),
+            rope_theta_from_hf(hf_config),
         )
+        provider.softmax_scale = 1.0 / math.sqrt(hf_config.query_pre_attn_scalar)
+        provider.rope_scaling_factor = rope_scaling_factor_from_hf(hf_config)
 
         return provider
 

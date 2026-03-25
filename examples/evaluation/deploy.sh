@@ -13,7 +13,4 @@ python \
   --host 0.0.0.0 \
   --port 8000 \
   --num_gpus "$NUM_GPUS" \
-  --num_replicas "$NUM_REPLICAS" \
-  --tensor_model_parallel_size 1 \
-  --pipeline_model_parallel_size 1 \
-  --context_parallel_size 1 
+  --num_replicas "$NUM_REPLICAS"

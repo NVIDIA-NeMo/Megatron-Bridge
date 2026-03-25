@@ -14,18 +14,11 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
 import torch
 
-from megatron.bridge.models.mamba.mamba_provider import (
-    MambaModelProvider,
-    MambaModelProvider1P3B,
-    MambaModelProvider2P7B,
-    MambaModelProvider130M,
-    MambaModelProvider370M,
-    MambaModelProvider780M,
-    NVIDIAMambaHybridModelProvider8B,
-    NVIDIAMambaModelProvider8B,
-)
+from megatron.bridge.models.mamba import mamba_provider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
 class TestMambaModelProvider:
@@ -52,9 +45,7 @@ class TestMambaModelProvider:
         assert provider.fp16 is False
         assert provider.bf16 is True
         assert provider.mamba_num_groups == 8
-        assert provider.hybrid_attention_ratio == 0.0
-        assert provider.hybrid_mlp_ratio == 0.0
-        assert provider.hybrid_override_pattern is None
+        assert provider.hybrid_layer_pattern is None
         assert provider.seq_length == 8192
         assert provider.position_embedding_type == "none"
         assert provider.rotary_percent == 1.0
@@ -76,17 +67,16 @@ class TestMambaModelProvider:
     def test_mamba_provider_with_hybrid_configuration(self):
         """Test MambaModelProvider with hybrid attention/MLP configuration."""
         provider = MambaModelProvider(
-            num_layers=12,
             hidden_size=768,
             num_attention_heads=8,
             hybrid_attention_ratio=0.25,
             hybrid_mlp_ratio=0.1,
-            hybrid_override_pattern="M-M-M*-M-M-M-M*-M-M-M-M-",
+            hybrid_layer_pattern="M-M-M*-M-M-M-M*-M-M-M-M-",
         )
 
         assert provider.hybrid_attention_ratio == 0.25
         assert provider.hybrid_mlp_ratio == 0.1
-        assert provider.hybrid_override_pattern == "M-M-M*-M-M-M-M*-M-M-M-M-"
+        assert provider.hybrid_layer_pattern == "M-M-M*-M-M-M-M*-M-M-M-M-"
 
     def test_provide_method_basic(self):
         """Test the provide method creates a Mamba model."""
@@ -313,206 +303,37 @@ class TestMambaModelProvider:
         assert provider.attention_dropout == 0.2
         assert provider.layernorm_epsilon == 1e-6
 
+    def test_get_hybrid_total_layer_count_prefers_mcore_helper(self):
+        """Test helper delegates to MCore when available."""
+        mock_counter = Mock(return_value=7)
 
-class TestMambaModelProvider130M:
-    """Test cases for MambaModelProvider130M class."""
+        with patch.object(mamba_provider, "_mcore_get_hybrid_total_layer_count", mock_counter):
+            assert mamba_provider._get_hybrid_total_layer_count("M*M*") == 7
 
-    def test_mamba_130m_default_configuration(self):
-        """Test Mamba 130M model has correct default configuration."""
-        provider = MambaModelProvider130M()
+        mock_counter.assert_called_once_with("M*M*")
 
-        # Check Mamba 130M specific configuration
-        assert provider.num_layers == 24
-        assert provider.hidden_size == 768
-        assert provider.num_attention_heads == 1
-        assert provider.mamba_num_groups == 1
-        assert provider.ffn_hidden_size == 768
-        assert provider.seq_length == 2048
-        assert provider.make_vocab_size_divisible_by == 16
-        assert provider.hybrid_override_pattern == "M" * 24
+    def test_get_hybrid_total_layer_count_fallback_supports_pipe_and_mtp(self):
+        """Test fallback counts only main-decoder layers for newer pattern syntax."""
+        with patch.object(mamba_provider, "_mcore_get_hybrid_total_layer_count", None):
+            assert mamba_provider._get_hybrid_total_layer_count("M-M-|M-M*-/MM/MM") == 9
 
-    def test_mamba_130m_override_configuration(self):
-        """Test Mamba 130M model with overridden configuration."""
-        provider = MambaModelProvider130M(
-            seq_length=4096,
-            hidden_dropout=0.1,
+    def test_get_hybrid_total_layer_count_fallback_rejects_invalid_symbols(self):
+        """Test fallback validation matches MCore-style pattern validation."""
+        with patch.object(mamba_provider, "_mcore_get_hybrid_total_layer_count", None):
+            with pytest.raises(ValueError, match="not a valid layer symbol"):
+                mamba_provider._get_hybrid_total_layer_count("M-A-")
+
+    def test_finalize_uses_compatible_hybrid_layer_count(self):
+        """Test finalize derives num_layers even when older MCore lacks the helper."""
+        provider = MambaModelProvider(
+            hidden_size=768,
+            num_attention_heads=8,
+            hybrid_layer_pattern="M-M-|M-M*-/MM/MM",
         )
 
-        # Check overridden values
-        assert provider.seq_length == 4096
-        assert provider.hidden_dropout == 0.1
+        with patch.object(mamba_provider, "_mcore_get_hybrid_total_layer_count", None):
+            with patch.object(mamba_provider.TransformerConfig, "finalize", autospec=True) as mock_finalize:
+                provider.finalize()
 
-        # Check defaults remain
-        assert provider.num_layers == 24
-        assert provider.hidden_size == 768
-        assert provider.mamba_num_groups == 1
-
-
-class TestMambaModelProvider370M:
-    """Test cases for MambaModelProvider370M class."""
-
-    def test_mamba_370m_default_configuration(self):
-        """Test Mamba 370M model has correct default configuration."""
-        provider = MambaModelProvider370M()
-
-        # Check Mamba 370M specific configuration
-        assert provider.num_layers == 48
-        assert provider.hidden_size == 1024
-        assert provider.num_attention_heads == 1
-        assert provider.mamba_num_groups == 1
-        assert provider.ffn_hidden_size == 1024
-        assert provider.seq_length == 2048
-        assert provider.make_vocab_size_divisible_by == 16
-        assert provider.hybrid_override_pattern == "M" * 48
-
-
-class TestMambaModelProvider780M:
-    """Test cases for MambaModelProvider780M class."""
-
-    def test_mamba_780m_default_configuration(self):
-        """Test Mamba 780M model has correct default configuration."""
-        provider = MambaModelProvider780M()
-
-        # Check Mamba 780M specific configuration
-        assert provider.num_layers == 48
-        assert provider.hidden_size == 1536
-        assert provider.num_attention_heads == 1
-        assert provider.mamba_num_groups == 1
-        assert provider.ffn_hidden_size == 1536
-        assert provider.seq_length == 2048
-        assert provider.make_vocab_size_divisible_by == 16
-        assert provider.hybrid_override_pattern == "M" * 48
-
-
-class TestMambaModelProvider1P3B:
-    """Test cases for MambaModelProvider1P3B class."""
-
-    def test_mamba_1_3b_default_configuration(self):
-        """Test Mamba 1.3B model has correct default configuration."""
-        provider = MambaModelProvider1P3B()
-
-        # Check Mamba 1.3B specific configuration
-        assert provider.num_layers == 48
-        assert provider.hidden_size == 2048
-        assert provider.num_attention_heads == 1
-        assert provider.mamba_num_groups == 1
-        assert provider.ffn_hidden_size == 2048
-        assert provider.seq_length == 2048
-        assert provider.make_vocab_size_divisible_by == 16
-        assert provider.hybrid_override_pattern == "M" * 48
-
-
-class TestMambaModelProvider2P7B:
-    """Test cases for MambaModelProvider2P7B class."""
-
-    def test_mamba_2_7b_default_configuration(self):
-        """Test Mamba 2.7B model has correct default configuration."""
-        provider = MambaModelProvider2P7B()
-
-        # Check Mamba 2.7B specific configuration
-        assert provider.num_layers == 64
-        assert provider.hidden_size == 2560
-        assert provider.num_attention_heads == 1
-        assert provider.mamba_num_groups == 1
-        assert provider.ffn_hidden_size == 2560
-        assert provider.seq_length == 2048
-        assert provider.make_vocab_size_divisible_by == 16
-        assert provider.hybrid_override_pattern == "M" * 64
-
-
-class TestNVIDIAMambaModelProvider8B:
-    """Test cases for NVIDIAMambaModelProvider8B class."""
-
-    def test_nvidia_mamba_8b_default_configuration(self):
-        """Test NVIDIA Mamba 8B model has correct default configuration."""
-        provider = NVIDIAMambaModelProvider8B()
-
-        # Check NVIDIA Mamba 8B specific configuration
-        assert provider.num_layers == 56
-        assert provider.hidden_size == 4096
-        assert provider.num_attention_heads == 32
-        assert provider.mamba_num_groups == 8
-        assert provider.ffn_hidden_size == 4096
-        assert provider.seq_length == 4096
-        assert provider.make_vocab_size_divisible_by == 128
-        assert provider.hybrid_override_pattern == "M" * 56
-
-
-class TestNVIDIAMambaHybridModelProvider8B:
-    """Test cases for NVIDIAMambaHybridModelProvider8B class."""
-
-    def test_nvidia_mamba_hybrid_8b_default_configuration(self):
-        """Test NVIDIA Mamba Hybrid 8B model has correct default configuration."""
-        provider = NVIDIAMambaHybridModelProvider8B()
-
-        # Check NVIDIA Mamba Hybrid 8B specific configuration
-        assert provider.num_layers == 56
-        assert provider.hidden_size == 4096
-        assert provider.num_attention_heads == 32
-        assert provider.num_query_groups == 8
-        assert provider.mamba_num_groups == 8
-        assert provider.ffn_hidden_size == 16384
-        assert provider.seq_length == 4096
-        assert provider.make_vocab_size_divisible_by == 128
-        assert provider.hybrid_override_pattern == "M-M-M--M-M*-M-M-M-M--M*-M-M-M-M-M*--M-M-M-M-M*-M--M-M-M-"
-
-    def test_nvidia_mamba_hybrid_8b_hybrid_pattern(self):
-        """Test NVIDIA Mamba Hybrid 8B hybrid pattern configuration."""
-        provider = NVIDIAMambaHybridModelProvider8B()
-
-        # Check that the hybrid pattern contains both Mamba and Attention layers
-        pattern = provider.hybrid_override_pattern
-        assert "M" in pattern  # Mamba layers
-        assert "*" in pattern  # Attention layers
-        assert len(pattern) > 0
-
-
-class TestMambaModelProviderInheritance:
-    """Test inheritance relationships between Mamba providers."""
-
-    def test_all_providers_inherit_from_base(self):
-        """Test all Mamba model providers inherit from MambaModelProvider."""
-        providers = [
-            MambaModelProvider130M,
-            MambaModelProvider370M,
-            MambaModelProvider780M,
-            MambaModelProvider1P3B,
-            MambaModelProvider2P7B,
-            NVIDIAMambaModelProvider8B,
-            NVIDIAMambaHybridModelProvider8B,
-        ]
-
-        for provider_class in providers:
-            assert issubclass(provider_class, MambaModelProvider)
-
-    def test_provide_method_inherited(self):
-        """Test that provide method works correctly in inherited classes."""
-        # Test with Mamba 130M
-        provider = MambaModelProvider130M()
-
-        # The provide method should be inherited from MambaModelProvider
-        assert hasattr(provider, "provide")
-        assert callable(provider.provide)
-
-    def test_hybrid_patterns_consistency(self):
-        """Test that hybrid patterns are consistent across providers."""
-        # Pure Mamba models should have only "M" in their pattern
-        pure_mamba_providers = [
-            MambaModelProvider130M(),
-            MambaModelProvider370M(),
-            MambaModelProvider780M(),
-            MambaModelProvider1P3B(),
-            MambaModelProvider2P7B(),
-            NVIDIAMambaModelProvider8B(),
-        ]
-
-        for provider in pure_mamba_providers:
-            pattern = provider.hybrid_override_pattern
-            assert "M" in pattern  # Mamba layers
-            assert "*" not in pattern  # No attention layers
-
-        # Hybrid models should have both "M" and "*" in their pattern
-        hybrid_provider = NVIDIAMambaHybridModelProvider8B()
-        pattern = hybrid_provider.hybrid_override_pattern
-        assert "M" in pattern  # Mamba layers
-        assert "*" in pattern  # Attention layers
+        assert provider.num_layers == 9
+        mock_finalize.assert_called_once_with(provider)

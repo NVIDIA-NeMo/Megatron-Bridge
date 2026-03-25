@@ -24,7 +24,7 @@ from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.glm.glm45_bridge import GLM45Bridge
-from megatron.bridge.models.glm.glm45_provider import GLMMoEModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -114,7 +114,8 @@ class TestGLM45Bridge:
     @pytest.fixture
     def mock_pretrained_355b(self, glm45_355b_config):
         """Create mock pretrained model for GLM 4.5 355B."""
-        cfg = Mock()
+        # Use spec to prevent Mock from auto-creating undefined attributes
+        cfg = Mock(spec=list(glm45_355b_config.keys()))
         for k, v in glm45_355b_config.items():
             setattr(cfg, k, v)
 
@@ -126,7 +127,8 @@ class TestGLM45Bridge:
     @pytest.fixture
     def mock_pretrained_air_106b(self, glm45_air_106b_config):
         """Create mock pretrained model for GLM 4.5 Air 106B."""
-        cfg = Mock()
+        # Use spec to prevent Mock from auto-creating undefined attributes
+        cfg = Mock(spec=list(glm45_air_106b_config.keys()))
         for k, v in glm45_air_106b_config.items():
             setattr(cfg, k, v)
 
@@ -144,7 +146,7 @@ class TestGLM45Bridge:
         bridge = GLM45Bridge()
         provider = bridge.provider_bridge(mock_pretrained_355b)
 
-        assert isinstance(provider, GLMMoEModelProvider)
+        assert isinstance(provider, GPTModelProvider)
         assert provider.hidden_size == mock_pretrained_355b.config.hidden_size
         assert provider.num_attention_heads == mock_pretrained_355b.config.num_attention_heads
         assert provider.ffn_hidden_size == mock_pretrained_355b.config.intermediate_size
@@ -180,7 +182,7 @@ class TestGLM45Bridge:
         bridge = GLM45Bridge()
         provider = bridge.provider_bridge(mock_pretrained_air_106b)
 
-        assert isinstance(provider, GLMMoEModelProvider)
+        assert isinstance(provider, GPTModelProvider)
         assert provider.hidden_size == mock_pretrained_air_106b.config.hidden_size
         assert provider.num_attention_heads == mock_pretrained_air_106b.config.num_attention_heads
         assert provider.ffn_hidden_size == mock_pretrained_air_106b.config.intermediate_size
@@ -223,7 +225,8 @@ class TestGLM45Bridge:
         """Test dtype mapping for FP16 models."""
         glm45_355b_config["torch_dtype"] = "float16"
 
-        cfg = Mock()
+        # Use spec to prevent Mock from auto-creating undefined attributes
+        cfg = Mock(spec=list(glm45_355b_config.keys()))
         for k, v in glm45_355b_config.items():
             setattr(cfg, k, v)
 
@@ -240,9 +243,11 @@ class TestGLM45Bridge:
 
     def test_dtype_mapping_default(self, glm45_355b_config):
         """Test dtype mapping defaults to float32 when not specified."""
-        del glm45_355b_config["torch_dtype"]
+        # Set torch_dtype to None to test default behavior (keep in spec but with None value)
+        glm45_355b_config["torch_dtype"] = None
 
-        cfg = Mock()
+        # Use spec to prevent Mock from auto-creating undefined attributes
+        cfg = Mock(spec=list(glm45_355b_config.keys()))
         for k, v in glm45_355b_config.items():
             setattr(cfg, k, v)
 

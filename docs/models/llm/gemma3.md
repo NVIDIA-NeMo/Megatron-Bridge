@@ -84,8 +84,11 @@ See: [bridge.recipes.gemma](../../apidocs/bridge/bridge.recipes.gemma.md)
 - **Pretrain recipes**:
   - `gemma3_1b_pretrain_config`: Pre-training for Gemma 3 1B
 
-- **Finetune recipes**:
-  - `gemma3_1b_finetune_config`: Finetuning for Gemma 3 1B with PEFT support (LoRA, DoRA)
+- **SFT recipes**:
+  - `gemma3_1b_sft_config`: Full SFT for Gemma 3 1B
+
+- **PEFT recipes** (LoRA, DoRA):
+  - `gemma3_1b_peft_config`: PEFT for Gemma 3 1B
 
 **Before training**, ensure these environment variables are set:
 - `SAVE_DIR`: checkpoint and log saving directory
@@ -120,12 +123,11 @@ config = gemma3_1b_pretrain_config(
 #### Full Finetuning
 
 ```python
-from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
+from megatron.bridge.recipes.gemma import gemma3_1b_sft_config
 
-config = gemma3_1b_finetune_config(
+config = gemma3_1b_sft_config(
     name="gemma3_1b_full_finetune",
     pretrained_checkpoint="/models/gemma-3-1b-it",
-    peft=None,
     train_iters=1000,
     global_batch_size=64,
     finetune_lr=5e-6,
@@ -136,12 +138,12 @@ config = gemma3_1b_finetune_config(
 #### LoRA Finetuning
 
 ```python
-from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
+from megatron.bridge.recipes.gemma import gemma3_1b_peft_config
 
-config = gemma3_1b_finetune_config(
+config = gemma3_1b_peft_config(
     name="gemma3_1b_lora_finetune",
     pretrained_checkpoint="/models/gemma-3-1b-it",
-    peft="lora",  # or "dora"
+    peft_scheme="lora",  # or "dora"
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
@@ -155,7 +157,7 @@ config = gemma3_1b_finetune_config(
 ```bash
 torchrun --nproc-per-node=8 run/run_recipe.py \
   --pretrained-checkpoint /models/gemma-3-1b-it \
-  --recipe gemma3_1b_finetune_config \
+  --recipe gemma3_1b_sft_config \
   train.global_batch_size=64 \
   train.train_iters=1000 \
   checkpoint.save=$SAVE_DIR/gemma3_1b_finetune
@@ -165,7 +167,7 @@ torchrun --nproc-per-node=8 run/run_recipe.py \
 ```bash
 torchrun --nproc-per-node=8 run/run_recipe.py \
   --pretrained-checkpoint /models/gemma-3-1b-it \
-  --recipe gemma3_1b_finetune_config \
+  --recipe gemma3_1b_peft_config \
   --peft_scheme lora \
   train.global_batch_size=128 \
   checkpoint.save=$SAVE_DIR/gemma3_1b_lora
@@ -180,7 +182,7 @@ torchrun --nproc-per-node=8 run/run_recipe.py \
 - Gemma 3 1B: https://huggingface.co/google/gemma-3-1b-it
 
 ## Related Docs
-- Gemma3 Vision-Language Models: [Gemma 3 VL](../vlm/gemma3-vl.md)
+- Gemma3 Vision-Language Models: [Gemma 3 VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/gemma3_vl/README.md)
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)

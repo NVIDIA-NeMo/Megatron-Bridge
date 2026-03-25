@@ -54,7 +54,14 @@ class SingleBatchIterator:
     """
 
     def __init__(
-        self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None, image_sizes=None
+        self,
+        input_ids,
+        position_ids,
+        attention_mask,
+        pixel_values=None,
+        image_grid_thw=None,
+        image_sizes=None,
+        mm_token_type_ids=None,
     ):
         self.batch = dict(
             tokens=input_ids,
@@ -69,7 +76,8 @@ class SingleBatchIterator:
             self.batch["image_grid_thw"] = image_grid_thw
         if image_sizes is not None:
             self.batch["image_sizes"] = image_sizes
-
+        if mm_token_type_ids is not None:
+            self.batch["mm_token_type_ids"] = mm_token_type_ids
         self._yielded = False
 
     def __iter__(self):
@@ -111,11 +119,19 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         forward_args["image_grid_thw"] = batch["image_grid_thw"]
     if "image_sizes" in batch:
         forward_args["image_sizes"] = batch["image_sizes"]
+    if "mm_token_type_ids" in batch:
+        forward_args["mm_token_type_ids"] = batch["mm_token_type_ids"]
 
     def loss_func(x, **kwargs):
         return x
 
-    return model(**forward_args), loss_func
+    model_output = model(**forward_args)
+    if isinstance(model_output, tuple):
+        output_tensor, _ = model_output
+    else:
+        output_tensor = model_output
+
+    return output_tensor, loss_func
 
 
 def load_image(image_path: str) -> Image.Image:
@@ -144,7 +160,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         prompt: Text prompt
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, messages)
+        Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, messages)
     """
     if image_path:
         # Create messages with image and text
@@ -177,12 +193,13 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             inputs.pixel_values,
             getattr(inputs, "image_grid_thw", None),
             getattr(inputs, "image_sizes", None),
+            getattr(inputs, "mm_token_type_ids", None),
             messages,
         )
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")
-        return inputs.input_ids, None, None, None, None
+        return inputs.input_ids, None, None, None, None, None
 
 
 def main(args) -> None:
@@ -247,9 +264,19 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
+    # Disable MTP for inference (MTP is only used during training)
+    def _disable_mtp(m):
+        """Disable MTP on a model by clearing mtp_process on the language model."""
+        m.config.mtp_num_layers = None
+        inner = m.module if hasattr(m, "module") else m
+        lang = getattr(inner, "language_model", inner)
+        if hasattr(lang, "mtp_process"):
+            lang.mtp_process = False
+
     model = [m.cuda() for m in model]
     for m in model:
         m.eval()
+        _disable_mtp(m)
 
     # Set grad_scale_func to None on the model's config for inference
     for m in model:
@@ -276,7 +303,7 @@ def main(args) -> None:
 
     # Process inputs (text and image if provided)
     prompt = args.prompt
-    input_ids, pixel_values, image_grid_thw, image_sizes, messages = process_image_inputs(
+    input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, _messages = process_image_inputs(
         processor, args.image_path, prompt
     )
 
@@ -288,6 +315,8 @@ def main(args) -> None:
         image_grid_thw = image_grid_thw.cuda()
     if image_sizes is not None:
         image_sizes = image_sizes.cuda()
+    if mm_token_type_ids is not None:
+        mm_token_type_ids = mm_token_type_ids.cuda()
 
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
@@ -307,7 +336,7 @@ def main(args) -> None:
             # The Megatron VL model only processes vision features when pixel_values is not None,
             # so we need to provide them throughout the generation process
             iterator = SingleBatchIterator(
-                input_ids, position_ids, attention_mask, pixel_values, image_grid_thw, image_sizes
+                input_ids, position_ids, attention_mask, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids
             )
 
             output = fwd_bwd_function(
@@ -347,6 +376,12 @@ def main(args) -> None:
 
             torch.distributed.broadcast(next_token_ids, get_last_rank())
             generated_ids = torch.cat([generated_ids, next_token_ids], dim=-1)
+
+            # Extend mm_token_type_ids with 0 (text) for the new token
+            if mm_token_type_ids is not None:
+                mm_token_type_ids = torch.cat(
+                    [mm_token_type_ids, torch.zeros_like(next_token_ids, dtype=mm_token_type_ids.dtype)], dim=-1
+                )
 
             input_ids = generated_ids
             position_ids = (

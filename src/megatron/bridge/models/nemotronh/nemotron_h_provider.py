@@ -44,13 +44,25 @@ class NemotronHModelProvider(MambaModelProvider):
     first_last_layers_bf16: bool = True
     is_hybrid_model: bool = True
 
+    # MoE
+    moe_aux_loss_coeff: float = 0.0001
+    moe_router_score_function: str = "sigmoid"
+    moe_router_enable_expert_bias: bool = True
+    moe_router_load_balancing_type: str = "seq_aux_loss"
+    moe_router_dtype: str = "fp32"
+    moe_grouped_gemm: bool = True
+    moe_token_dispatcher_type: str = "alltoall"
+    moe_permute_fusion: bool = True
+    moe_shared_expert_overlap: bool = True
+
+    # Num layers i
+
 
 @dataclass
 class NemotronHModelProvider4B(NemotronHModelProvider):
     """Configuration for a 4B parameter Nemotron-H model."""
 
-    hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
-    num_layers: int = 52
+    hybrid_layer_pattern: str = "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
     hidden_size: int = 3072
     mamba_num_heads: int = 112
     kv_channels: int = 128
@@ -64,8 +76,7 @@ class NemotronHModelProvider4B(NemotronHModelProvider):
 class NemotronHModelProvider8B(NemotronHModelProvider):
     """Configuration for a 8B parameter Nemotron-H model."""
 
-    hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
-    num_layers: int = 52
+    hybrid_layer_pattern: str = "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
     hidden_size: int = 4096
     mamba_state_dim: int = 128
     mamba_num_heads: int = 128
@@ -77,10 +88,9 @@ class NemotronHModelProvider8B(NemotronHModelProvider):
 class NemotronHModelProvider47B(NemotronHModelProvider):
     """Configuration for a 47B parameter Nemotron-H model."""
 
-    hybrid_override_pattern: str = (
+    hybrid_layer_pattern: str = (
         "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
     )
-    num_layers: int = 98
     hidden_size: int = 8192
     mamba_state_dim: int = 256
     mamba_num_heads: int = 256
@@ -92,11 +102,10 @@ class NemotronHModelProvider47B(NemotronHModelProvider):
 class NemotronHModelProvider56B(NemotronHModelProvider):
     """Configuration for a 56B parameter Nemotron-H model."""
 
-    hybrid_override_pattern: str = (
+    hybrid_layer_pattern: str = (
         "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
         "M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
     )
-    num_layers: int = 118
     hidden_size: int = 8192
     mamba_state_dim: int = 256
     mamba_num_heads: int = 256
@@ -110,8 +119,7 @@ class NemotronHModelProvider56B(NemotronHModelProvider):
 class NemotronNanoModelProvider9Bv2(NemotronHModelProvider):
     """Configuration for a 9B parameter Nemotron Nano v2 model."""
 
-    hybrid_override_pattern: str = "M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-"
-    num_layers: int = 56
+    hybrid_layer_pattern: str = "M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-"
     hidden_size: int = 4480
     mamba_num_heads: int = 128
     kv_channels: int = 128
@@ -126,8 +134,7 @@ class NemotronNanoModelProvider9Bv2(NemotronHModelProvider):
 class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
     """Configuration for the Nemotron Nano v2 12B model."""
 
-    hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-"
-    num_layers: int = 62
+    hybrid_layer_pattern: str = "M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-"
     hidden_size: int = 5120
     mamba_num_heads: int = 128
     kv_channels: int = 128
@@ -136,6 +143,29 @@ class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
     num_attention_heads: int = 40
     mamba_head_dim: int = 80
     seq_length: int = 131072
+
+
+@dataclass
+class Nemotron3NanoProvider(NemotronHModelProvider):
+    """Configuration for a 3B parameter Nemotron 3 Nano model."""
+
+    seq_length: int = 262144
+    num_query_groups: int = 2
+    hybrid_layer_pattern: str = "MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
+    hidden_size: int = 2688
+    mamba_num_heads: int = 64
+    kv_channels: int = 128
+    mamba_state_dim: int = 128
+    ffn_hidden_size: int = 1856
+    num_attention_heads: int = 32
+    mamba_head_dim: int = 64
+    num_moe_experts: int = 128
+    moe_ffn_hidden_size: int = 1856
+    moe_shared_expert_intermediate_size: int = 3712  # 1856 * 2 shared expert
+    moe_router_topk: int = 6
+    moe_router_topk_scaling_factor: float = 2.5
+    moe_router_num_groups: int = 1
+    moe_router_group_topk: int = 1
 
 
 # -----------------------------------------------------------------------------

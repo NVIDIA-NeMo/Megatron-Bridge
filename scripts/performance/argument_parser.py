@@ -15,6 +15,7 @@
 import argparse
 import logging
 import os
+import re
 from pathlib import Path
 
 from nemo_run.config import get_nemorun_home
@@ -25,6 +26,16 @@ logger: logging.Logger = logging.getLogger(__name__)
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", Path.home() / ".cache" / "nemo")
 VALID_CUDA_GRAPH_IMPLS = ["none", "local", "transformer_engine"]
 VALID_CUDA_GRAPH_SCOPES = ["full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
+
+NUM_GPUS_PER_NODE_MAP = {
+    "h100": 8,
+    "b200": 8,
+    "b300": 8,
+    "gb200": 4,
+    "gb300": 4,
+    "vr200": 4,
+    "r100": 1,
+}
 
 
 def list_of_strings(arg):
@@ -47,6 +58,20 @@ def list_of_ints(arg):
 def to_dict(arg):
     """Split a comma-separated string into a dictionary of key-value pairs."""
     return dict(item.split("=") for item in arg.split(","))
+
+
+def parse_kv(s: str):
+    """Parse a key-value pair from a string."""
+    KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")  # Useful check for errors like hyphen in var names
+    if "=" not in s:
+        raise argparse.ArgumentTypeError(f"Expected KEY=VALUE, got {s!r}")
+
+    key, value = s.split("=", 1)
+
+    if not KEY_RE.match(key):
+        raise argparse.ArgumentTypeError(f"Invalid env var name: {key!r}")
+
+    return key, value
 
 
 def lower_str(arg):
@@ -145,7 +170,7 @@ def parse_cli_args():
     parser.add_argument(
         "--domain",
         type=lower_str,
-        choices=["llm", "vlm"],
+        choices=["llm", "vlm", "qwen3vl"],
         help="Domain to use for experiment.",
         default="llm",
     )
@@ -200,6 +225,34 @@ def parse_cli_args():
         type=int,
         help="Number of gpus.",
         required=True,
+    )
+    parser.add_argument(
+        "--hidden_size",
+        type=int,
+        help="Hidden size to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--num_layers",
+        type=int,
+        help="Number of layers to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--pipeline_model_parallel_layout",
+        type=str,
+        help="Pipeline model parallel layout to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--first_k_dense_replace",
+        type=int,
+        help="Number of MoE layers to be converted to dense layers. Defaults to None.",
+        required=False,
+        default=None,
     )
     parser.add_argument(
         "-d",
@@ -355,8 +408,8 @@ def parse_cli_args():
         "-gn",
         "--gpus_per_node",
         type=int,
-        help="Number of gpus per node. Defaults to 8",
-        default=8,
+        help="Number of gpus per node. Defaults to None. If not provided, will be inferred from the GPU type.",
+        default=None,
     )
     slurm_args.add_argument(
         "-i",
@@ -385,11 +438,28 @@ def parse_cli_args():
         default={},
     )
     slurm_args.add_argument(
+        "-E",
+        "--env",
+        action="append",
+        type=parse_kv,
+        metavar="KEY=VALUE",
+        help="Set environment variable (repeatable arg). This is an alternative to --custom_env_vars \
+        (--custom_env_vars is preferred for most cases). Example: -E var1=value1,value2 -E var2=value3",
+    )
+    slurm_args.add_argument(
         "-cs",
         "--custom_srun_args",
         type=list_of_strings,
         help="Comma separated string of srun arguments",
         default=[],
+    )
+    slurm_args.add_argument(
+        "-cb",
+        "--custom_bash_cmds",
+        nargs="*",
+        action="append",
+        help="List of bash commands to execute before the main command",
+        default=None,
     )
     slurm_args.add_argument(
         "--gres",
@@ -464,7 +534,7 @@ def parse_cli_args():
         "-g",
         "--gpu",
         type=str,
-        choices=["h100", "b200", "gb200", "gb300", "b300"],
+        choices=NUM_GPUS_PER_NODE_MAP.keys(),
         help="Target gpu type.",
         required=True,
     )
@@ -476,6 +546,14 @@ def parse_cli_args():
         help="Compute precision. Options- bf16 or fp8. Defaults to bf16",
         required=False,
         default="bf16",
+    )
+    performance_args.add_argument(
+        "--optimizer_type",
+        type=str,
+        choices=["adam", "muon"],
+        help="Optimizer type for recipes that support it (e.g. Kimi-K2). Defaults to muon.",
+        required=False,
+        default="muon",
     )
     performance_args.add_argument(
         "-vb",
@@ -530,6 +608,22 @@ def parse_cli_args():
         type=list_of_ints,
         metavar="N[,N...]",
         help="List of ranks to target for profiling (defaults to just first rank)",
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--nsys_trace",
+        type=list_of_strings,
+        metavar="TRACE[,TRACE...]",
+        help="Comma-separated list of events to trace during nsys profiling (e.g., 'cuda,nvtx'). Defaults to nemo_run defaults.",
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--nsys_extra_args",
+        type=list_of_strings,
+        metavar="ARG[,ARG...]",
+        help="Comma-separated list of additional nsys arguments. Will be combined with default args.",
         required=False,
         default=None,
     )
@@ -700,6 +794,21 @@ def parse_cli_args():
         type=float,
         default=0.20,
         help="Percentage of loss points to skip from beginning for convergence analysis",
+    )
+    testing_args.add_argument(
+        "--memory_threshold", type=float, default=0.05, help="Memory validation threshold (default: 0.05 = 5%%)"
+    )
+    testing_args.add_argument(
+        "--eval_time_start_step",
+        type=int,
+        default=None,
+        help="Start step (0-indexed, inclusive) for timing average window. Overrides skip_first_percent_time when set.",
+    )
+    testing_args.add_argument(
+        "--eval_time_end_step",
+        type=int,
+        default=None,
+        help="End step (0-indexed, exclusive) for timing average window. If None, averages to end.",
     )
 
     return parser

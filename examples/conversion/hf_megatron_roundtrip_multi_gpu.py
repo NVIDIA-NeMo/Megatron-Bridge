@@ -58,6 +58,15 @@ from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 console = Console()
 
+# Parameters where Megatron and HF may use different dtypes.
+# These are compared in float32 to avoid false mismatches.
+IGNORE_PRECISION_PARAMS = [
+    "e_score_correction_bias",
+    "A_log",
+    "linear_attn.norm.weight",
+    "dt_bias",
+]
+
 
 @torchrun_main
 def main(
@@ -155,9 +164,14 @@ def main(
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
             original_param = bridge.hf_pretrained.state[name]
-            match = torch.allclose(
-                param, original_param.to(param.device), atol=1e-1
-            )  # Increased tolerance for bfloat16
+            compare_param = param
+            compare_original = original_param
+            # Cast to float32 for params with known precision mismatches.
+            # Any new known mismatch should be recorded in IGNORE_PRECISION_PARAMS above.
+            if any(p in name for p in IGNORE_PRECISION_PARAMS):
+                compare_param = param.float()
+                compare_original = original_param.float()
+            match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
             all_match = all_match and match
             table.add_row(
                 name,

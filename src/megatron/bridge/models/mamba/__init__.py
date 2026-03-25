@@ -12,41 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.mamba.mamba_provider import (
-    MambaModelProvider,
-    MambaModelProvider1P3B,
-    MambaModelProvider2P7B,
-    MambaModelProvider130M,
-    MambaModelProvider370M,
-    MambaModelProvider780M,
-    MambaProvider,
-    MambaProvider1_3B,
-    MambaProvider2_7B,
-    MambaProvider130M,
-    MambaProvider370M,
-    MambaProvider780M,
-    NVIDIAMambaHybridModelProvider8B,
-    NVIDIAMambaHybridProvider8B,
-    NVIDIAMambaModelProvider8B,
-    NVIDIAMambaProvider8B,
-)
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
 __all__ = [
     "MambaModelProvider",
-    "MambaModelProvider1P3B",
-    "MambaModelProvider2P7B",
-    "MambaModelProvider130M",
-    "MambaModelProvider370M",
-    "MambaModelProvider780M",
-    "NVIDIAMambaHybridModelProvider8B",
-    "NVIDIAMambaModelProvider8B",
-    "MambaProvider",
-    "MambaProvider1_3B",
-    "MambaProvider2_7B",
-    "MambaProvider130M",
-    "MambaProvider370M",
-    "MambaProvider780M",
-    "NVIDIAMambaHybridProvider8B",
-    "NVIDIAMambaProvider8B",
 ]

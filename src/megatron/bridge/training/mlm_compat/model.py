@@ -51,7 +51,7 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
         use_kitchen: Whether to use kitchen extension
 
     Returns:
-        transformer_layer_spec: The transformer layer specification
+        ModuleSpec: The transformer layer specification
     """
     if use_te:
         return get_gpt_layer_with_transformer_engine_spec(
@@ -59,8 +59,6 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
             moe_grouped_gemm=args.moe_grouped_gemm,
             qk_layernorm=args.qk_layernorm,
             multi_latent_attention=args.multi_latent_attention,
-            experimental_attention_variant=getattr(args, "experimental_attention_variant", None),
-            moe_use_legacy_grouped_gemm=args.moe_use_legacy_grouped_gemm,
             qk_l2_norm=args.qk_l2_norm,
             use_kitchen=use_kitchen,
         )
@@ -70,8 +68,6 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
             moe_grouped_gemm=args.moe_grouped_gemm,
             qk_layernorm=args.qk_layernorm,
             multi_latent_attention=args.multi_latent_attention,
-            experimental_attention_variant=getattr(args, "experimental_attention_variant", None),
-            moe_use_legacy_grouped_gemm=args.moe_use_legacy_grouped_gemm,
             normalization=args.normalization,
             use_kitchen=use_kitchen,
         )
@@ -166,9 +162,7 @@ def _mamba_provider(
         vocab_size=args.padded_vocab_size,
         max_sequence_length=args.max_position_embeddings,
         pre_process=pre_process,
-        hybrid_attention_ratio=args.hybrid_attention_ratio,
-        hybrid_mlp_ratio=args.hybrid_mlp_ratio,
-        hybrid_override_pattern=args.hybrid_override_pattern,
+        hybrid_layer_pattern=args.hybrid_layer_pattern,
         post_process=post_process,
         fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
         parallel_output=True,

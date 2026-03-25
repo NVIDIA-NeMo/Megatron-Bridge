@@ -71,7 +71,6 @@ def common_mock_args() -> argparse.Namespace:
     # MoE and expert parameters
     args.num_experts = None
     args.moe_grouped_gemm = False
-    args.moe_use_legacy_grouped_gemm = False
     args.qk_layernorm = False
     args.qk_l2_norm = False
 
@@ -105,8 +104,6 @@ class TestTransformerLayerSpecRouter:
             moe_grouped_gemm=False,
             qk_layernorm=False,
             multi_latent_attention=False,
-            experimental_attention_variant=None,
-            moe_use_legacy_grouped_gemm=False,
             qk_l2_norm=False,
             use_kitchen=False,
         )
@@ -121,8 +118,6 @@ class TestTransformerLayerSpecRouter:
             moe_grouped_gemm=False,
             qk_layernorm=False,
             multi_latent_attention=False,
-            experimental_attention_variant=None,
-            moe_use_legacy_grouped_gemm=False,
             normalization="LayerNorm",
             use_kitchen=True,
         )
@@ -372,9 +367,7 @@ class TestMambaModelProvider:
         args.spec = "megatron.core.models.mamba.mamba_layer_specs.mamba_stack_spec"
 
         # Hybrid model parameters
-        args.hybrid_attention_ratio = 0.3
-        args.hybrid_mlp_ratio = 0.3
-        args.hybrid_override_pattern = None
+        args.hybrid_layer_pattern = None
 
         return args
 
@@ -419,9 +412,7 @@ class TestMambaModelProvider:
             vocab_size=32000,
             max_sequence_length=2048,
             pre_process=True,
-            hybrid_attention_ratio=0.3,
-            hybrid_mlp_ratio=0.3,
-            hybrid_override_pattern=None,
+            hybrid_layer_pattern=None,
             post_process=True,
             fp16_lm_cross_entropy=False,
             parallel_output=True,

@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
-
 import torch.distributed as dist
 from nvidia_resiliency_ext.inprocess import CallWrapper
 
 from megatron.bridge.data.utils import get_dataset_provider
-from megatron.bridge.training.checkpointing import save_checkpoint
+from megatron.bridge.training.callbacks import Callback, CallbackManager, normalize_callbacks
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
@@ -34,6 +32,7 @@ from megatron.bridge.utils.decorators import experimental_fn
 def pretrain(
     config: ConfigContainer,
     forward_step_func: ForwardStepCallable,
+    callbacks: list[Callback] | CallbackManager | None = None,
 ) -> None:
     """Main function to run the training pipeline.
 
@@ -50,6 +49,10 @@ def pretrain(
                           - 3 args: (data_iterator, model, return_schedule_plan=False)
                                    OR (state: GlobalState, data_iterator, model)
                           - 4 args: (state: GlobalState, data_iterator, model, return_schedule_plan=False)
+        callbacks: Optional callbacks for custom logic injection. Can be:
+                   - list[Callback]: List of Callback subclass instances
+                   - CallbackManager: Pre-configured manager with registered callbacks
+                   - None: No callbacks (default)
 
     Note:
         Use the signature with GlobalState type hint for full access to configuration, timers, and training state.
@@ -66,6 +69,9 @@ def pretrain(
     # Create a single GlobalState instance regardless of restart path
     state = GlobalState()
     state.cfg = config
+
+    # Normalize callbacks to CallbackManager
+    callback_manager = normalize_callbacks(callbacks)
 
     if config.inprocess_restart and config.inprocess_restart.enabled:
         if dist.is_initialized():
@@ -86,23 +92,25 @@ def pretrain(
 
         # Execute the wrapped function - nvidia-resiliency-ext will inject inprocess_call_wrapper
         # Call with positional args matching the adapter signature: (state, forward_step_func, store=None, inprocess_call_wrapper=None)
-        wrapped_pretrain(state, forward_step_func, store=store)
+        wrapped_pretrain(state, forward_step_func, callback_manager, store=store)
     else:
         # Normal execution without in-process restart
-        _pretrain(state=state, forward_step_func=forward_step_func)
+        _pretrain(state=state, forward_step_func=forward_step_func, callback_manager=callback_manager)
 
 
 def _pretrain(
     state: GlobalState,
     forward_step_func: ForwardStepCallable,
-    store: Optional[dist.Store] = None,
-    inprocess_call_wrapper: Optional[CallWrapper] = None,
+    callback_manager: CallbackManager | None = None,
+    store: dist.Store | None = None,
+    inprocess_call_wrapper: CallWrapper | None = None,
 ) -> None:
     """Internal function containing the actual pretrain logic.
 
     Args:
         state: Global training state containing the validated configuration and runtime objects
         forward_step_func: Function or functor that performs a single forward/backward step
+        callback_manager: Optional CallbackManager for custom callback execution
         store: Optional distributed Store used by in-process restart for coordination
         inprocess_call_wrapper: Optional wrapper injected by nvrx to expose restart iteration
     """
@@ -129,7 +137,7 @@ def _pretrain(
     pg_collection = setup_output.pg_collection
 
     # TRAINING
-    if not config.train.skip_train:
+    if not config.validation.skip_train:
         if state.train_state.do_train and config.train.train_iters > 0:
             train(
                 forward_step_func,
@@ -141,20 +149,10 @@ def _pretrain(
                 state,
                 ckpt_context,
                 pg_collection,
+                callback_manager=callback_manager,
             )
 
         barrier_and_log("after training is done")
-        ckpt_config = config.checkpoint
-        if ckpt_config.save and state.train_state.step != 0 and ckpt_config.save_interval != 0:
-            save_checkpoint(
-                state,
-                model,
-                optimizer,
-                scheduler,
-                state.train_state.floating_point_operations_so_far,
-                ckpt_context,
-                train_data_iterator=train_data_iterator,
-            )
 
     else:
         print_rank_0("skipping training ...")
@@ -172,7 +170,8 @@ def _pretrain(
             model,
             config.model,
             verbose=True,
-            write_to_tensorboard=not config.train.skip_train,
+            write_to_tensorboard=not config.validation.skip_train,
+            callback_manager=callback_manager,
         )
     if state.train_state.do_test:
         prefix = f"iteration {iteration} on test set"
@@ -184,7 +183,9 @@ def _pretrain(
             model,
             config.model,
             verbose=True,
-            write_to_tensorboard=not config.train.skip_train,
+            write_to_tensorboard=not config.validation.skip_train,
+            callback_manager=callback_manager,
+            is_test=True,
         )
 
     _finish_train(state)

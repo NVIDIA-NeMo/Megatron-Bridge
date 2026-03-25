@@ -135,14 +135,19 @@ class TestDataGPTSFTDataset:
             )
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
+        from megatron.core.process_groups_config import ProcessGroupCollection
 
         from megatron.bridge.training.initialize import _set_random_seed
+
+        # Create pg_collection from initialized mpu
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         _set_random_seed(
             seed_=1234,
             data_parallel_random_init=False,
             te_rng_tracker=True,
             inference_rng_tracker=False,
+            pg_collection=pg_collection,
         )
 
         yield
@@ -319,6 +324,53 @@ class TestDataGPTSFTChatDataset:
             },
         ]
         dataset.collate_fn(batch)
+
+    def test_collate_fn_respects_pad_seq_length_to_mult(self, tmp_path):
+        datasets_dir = tmp_path / "datasets"
+        datasets_dir.mkdir(exist_ok=True)
+        path = str(datasets_dir / "sft.jsonl")
+        line = {"input": "hi how are you?", "output": "I'm fine, thanks."}
+        with open(path, "w") as f:
+            for _ in range(2):
+                f.write(json.dumps(line) + "\n")
+
+        tokenizer = create_mock_tokenizer()
+        dataset = GPTSFTChatDataset(
+            file_path=path,
+            tokenizer=tokenizer,
+            label_key="output",
+            prompt_template="{input}\n\n### Response:\n{output}",
+            truncation_field="output",
+            pad_seq_length_to_mult=32,
+            memmap_workers=1,
+        )
+        batch = [
+            {
+                "input_ids": np.array([101, 102, 103, 104, 105]),
+                "context_ids": np.array([101, 102]),
+                "answer_start_idx": 2,
+                "context_length": 2,
+                "answer_ids": np.array([104, 105]),
+                "seq_boundaries": (0, 3),
+                "loss_mask": np.array([0, 0, 0, 1, 1]),
+                "metadata": {},
+                "token_count": 5,
+            },
+            {
+                "input_ids": np.array([201, 202, 203, 204]),
+                "context_ids": np.array([201]),
+                "answer_start_idx": 1,
+                "context_length": 1,
+                "answer_ids": np.array([203, 204]),
+                "seq_boundaries": (0, 2),
+                "loss_mask": np.array([0, 0, 1, 1]),
+                "metadata": {},
+                "token_count": 4,
+            },
+        ]
+        result = dataset.collate_fn(batch)
+        seq_length = result["tokens"].shape[1]
+        assert seq_length % 32 == 0, f"Expected sequence length divisible by 32, got {seq_length}"
 
     def test_build_samples_mapping(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path, dataset_type="chat")

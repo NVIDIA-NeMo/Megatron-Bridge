@@ -9,7 +9,7 @@ PARALLELISM=$2
 # Install missing dependency for lm-evaluation-harness
 uv pip install math_verify --quiet
 
-uv run --active --no-sync python << EVAL_EOF
+cat << EVAL_EOF > _temp_eval_script.py
 import subprocess
 import time
 
@@ -32,7 +32,11 @@ request_timeout = 1000
 temperature = None
 top_p = None
 top_k = None
-output_dir = "/$OUTPUT_DIR/results/"
+# Use local filesystem to avoid NFS SQLite lock contention on GCP (NFSv3).
+# lm-eval's --use_cache writes a SQLite WAL that requires POSIX locks which
+# are extremely slow over NFS, causing minutes-long stalls between batches.
+pvc_output_dir = "/$OUTPUT_DIR/results/"
+output_dir = "/tmp/eval_results/"
 
 # Check server readiness
 server_ready = check_endpoint(
@@ -65,12 +69,29 @@ eval_cfg = EvaluationConfig(
     output_dir=output_dir,
 )
 
-# Run evaluation
-result = evaluate(target_cfg=target_cfg, eval_cfg=eval_cfg)
+if __name__ == "__main__":
+    # Run evaluation
+    result = evaluate(target_cfg=target_cfg, eval_cfg=eval_cfg)
 
-# Shutdown Ray server
-print("Evaluation completed. Shutting down Ray server...")
-subprocess.run(["ray", "stop", "--force"], check=False, timeout=30)
-print("Ray server shutdown command sent.")
-time.sleep(5)
+    # Copy results from local tmp to PVC output dir (lm_cache stays in /tmp)
+    import os, shutil
+    os.makedirs(pvc_output_dir, exist_ok=True)
+    for item in os.listdir(output_dir):
+        if item == "lm_cache_rank0.db":
+            continue  # skip large SQLite cache
+        src = os.path.join(output_dir, item)
+        dst = os.path.join(pvc_output_dir, item)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
+    print(f"Results copied to {pvc_output_dir}")
+
+    # Shutdown Ray server
+    print("Evaluation completed. Shutting down Ray server...")
+    subprocess.run(["ray", "stop", "--force"], check=False, timeout=30)
+    print("Ray server shutdown command sent.")
+    time.sleep(5)
 EVAL_EOF
+
+uv run --active --no-sync python _temp_eval_script.py

@@ -35,53 +35,6 @@ _NEMOTRONH_RECIPE_FUNCS = [
 ]
 
 
-def _safe_overrides_for(name: str) -> dict:
-    """Create minimal, dependency-light overrides for fast unit testing."""
-    # Detect if this is a finetune recipe
-    is_finetune = "finetune" in name.lower()
-
-    overrides = {
-        "name": f"unit_{name}",
-        "dir": ".",  # keep paths local
-        "train_iters": 10,
-        "global_batch_size": 2,
-        "micro_batch_size": 1,
-        "seq_length": 64,
-    }
-
-    if is_finetune:
-        # Finetuning-specific overrides
-        overrides.update(
-            {
-                "finetune_lr": 1e-4,
-                "min_lr": 1e-5,
-                "lr_warmup_iters": 2,
-                "peft": None,  # Disable PEFT for simpler testing
-                "pretrained_checkpoint": "/fake/checkpoint/path",  # Required for finetuning
-            }
-        )
-        # Note: Finetuning recipes set parallelism internally based on PEFT vs full SFT
-        # Note: Finetuning always uses HF tokenizer, never null tokenizer
-    else:
-        # Pretrain-specific overrides
-        overrides.update(
-            {
-                "mock": True,  # use mock data paths
-                "lr": 1e-4,
-                "min_lr": 1e-5,
-                "lr_warmup_iters": 2,
-                # Prefer NullTokenizer in tests to avoid HF tokenizer I/O
-                "use_null_tokenizer": True,
-                # Keep parallelism tiny so provider shaping is trivial
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-                "context_parallel_size": 1,
-            }
-        )
-
-    return overrides
-
-
 def _assert_basic_config(cfg):
     from megatron.bridge.training.config import ConfigContainer
 
@@ -117,22 +70,23 @@ def test_each_nemotronh_recipe_builds_config(recipe_func: Callable):
     # Note: NemotronH recipes don't use AutoBridge, so no patching needed
     # They directly instantiate model providers
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
-
-    cfg = recipe_func(**overrides)
+    # All configs use parameterless API (peft configs have optional peft_scheme)
+    cfg = recipe_func()
 
     _assert_basic_config(cfg)
 
     # Ensure tokenizer choice matches recipe type
-    is_finetune = "finetune" in recipe_func.__name__.lower()
+    is_sft = "sft" in recipe_func.__name__.lower()
+    is_peft = "peft" in recipe_func.__name__.lower()
+    is_finetune = is_sft or is_peft
+
     if is_finetune:
         # Finetuning recipes always use HF tokenizer
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert cfg.tokenizer.tokenizer_model is not None
     else:
-        # Pretrain recipes honor use_null_tokenizer override
-        if overrides.get("use_null_tokenizer"):
-            assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+        # Pretrain recipes use either NullTokenizer or HuggingFaceTokenizer
+        if cfg.tokenizer.tokenizer_type == "NullTokenizer":
             assert cfg.tokenizer.vocab_size is not None
         else:
             assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
@@ -144,86 +98,115 @@ def test_each_nemotronh_recipe_builds_config(recipe_func: Callable):
 
     # Finetuning-specific assertions
     if is_finetune:
-        # Should have pretrained_checkpoint set (even if fake)
-        assert cfg.checkpoint.pretrained_checkpoint is not None
-        # Should have PEFT config (or None if disabled in test)
+        # Should have PEFT config (or None if SFT)
         assert hasattr(cfg, "peft")  # peft field should exist
         # Dataset should be configured (SQuAD by default)
         assert cfg.dataset is not None
 
 
-# NemotronH finetune-specific tests (all model sizes)
-_NEMOTRONH_FINETUNE_FUNCS = [
+# NemotronH SFT-specific tests (all model sizes)
+_NEMOTRONH_SFT_FUNCS = [
     getattr(_nemotronh_module, name)
     for name in [
-        "nemotronh_4b_finetune_config",
-        "nemotronh_8b_finetune_config",
-        "nemotronh_47b_finetune_config",
-        "nemotronh_56b_finetune_config",
+        "nemotronh_4b_sft_config",
+        "nemotronh_8b_sft_config",
+        "nemotronh_47b_sft_config",
+        "nemotronh_56b_sft_config",
+    ]
+    if callable(getattr(_nemotronh_module, name, None))
+]
+
+_NEMOTRONH_PEFT_FUNCS = [
+    getattr(_nemotronh_module, name)
+    for name in [
+        "nemotronh_4b_peft_config",
+        "nemotronh_8b_peft_config",
+        "nemotronh_47b_peft_config",
+        "nemotronh_56b_peft_config",
     ]
     if callable(getattr(_nemotronh_module, name, None))
 ]
 
 
-@pytest.mark.parametrize("recipe_func", _NEMOTRONH_FINETUNE_FUNCS)
-@pytest.mark.parametrize("peft", ["lora", "none"])
-def test_nemotronh_finetune_peft_vs_full_sft(recipe_func: Callable, peft: str):
-    """Test that PEFT and full SFT configurations are correctly applied for NemotronH models."""
+@pytest.mark.parametrize("recipe_func", _NEMOTRONH_SFT_FUNCS)
+def test_nemotronh_sft_config(recipe_func: Callable):
+    """Test that SFT configurations are correctly applied for NemotronH models."""
     # Note: NemotronH recipes don't use AutoBridge, so no patching needed
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
-    overrides["peft"] = peft
-
-    cfg = recipe_func(**overrides)
+    cfg = recipe_func()
 
     _assert_basic_config(cfg)
 
-    # Check PEFT config presence
-    if peft == "lora":
-        assert cfg.peft is not None
-    elif peft == "none":
-        assert cfg.peft is None
+    # SFT should have no PEFT config
+    assert cfg.peft is None
 
 
-# Nemotron Nano v2 finetune-specific tests (9B and 12B models)
-_NEMOTRON_NANO_V2_FINETUNE_FUNCS = [
+@pytest.mark.parametrize("recipe_func", _NEMOTRONH_PEFT_FUNCS)
+@pytest.mark.parametrize("peft_scheme", ["lora"])
+def test_nemotronh_peft_config(recipe_func: Callable, peft_scheme: str):
+    """Test that PEFT configurations are correctly applied for NemotronH models."""
+    # Note: NemotronH recipes don't use AutoBridge, so no patching needed
+
+    cfg = recipe_func(peft_scheme=peft_scheme)
+
+    _assert_basic_config(cfg)
+
+    # PEFT config should be present
+    assert cfg.peft is not None
+
+
+# Nemotron Nano v2 SFT and PEFT-specific tests (9B and 12B models)
+_NEMOTRON_NANO_V2_SFT_FUNCS = [
     getattr(_nemotronh_module, name)
     for name in [
-        "nemotron_nano_9b_v2_finetune_config",
-        "nemotron_nano_12b_v2_finetune_config",
+        "nemotron_nano_9b_v2_sft_config",
+        "nemotron_nano_12b_v2_sft_config",
+    ]
+    if callable(getattr(_nemotronh_module, name, None))
+]
+
+_NEMOTRON_NANO_V2_PEFT_FUNCS = [
+    getattr(_nemotronh_module, name)
+    for name in [
+        "nemotron_nano_9b_v2_peft_config",
+        "nemotron_nano_12b_v2_peft_config",
     ]
     if callable(getattr(_nemotronh_module, name, None))
 ]
 
 
-@pytest.mark.parametrize("recipe_func", _NEMOTRON_NANO_V2_FINETUNE_FUNCS)
-@pytest.mark.parametrize("peft", ["lora", "none"])
-def test_nemotron_nano_v2_finetune_peft_vs_full_sft(recipe_func: Callable, peft: str):
-    """Test that PEFT and full SFT configurations are correctly applied for Nemotron Nano v2 models."""
+@pytest.mark.parametrize("recipe_func", _NEMOTRON_NANO_V2_SFT_FUNCS)
+def test_nemotron_nano_v2_sft_config(recipe_func: Callable):
+    """Test that SFT configurations are correctly applied for Nemotron Nano v2 models."""
     # Note: Nemotron Nano v2 recipes don't use AutoBridge, so no patching needed
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
-    overrides["peft"] = peft
-
-    cfg = recipe_func(**overrides)
+    cfg = recipe_func()
 
     _assert_basic_config(cfg)
 
-    # Check PEFT config presence
-    if peft == "lora":
-        assert cfg.peft is not None
-    elif peft == "none":
-        assert cfg.peft is None
+    # SFT should have no PEFT config
+    assert cfg.peft is None
+
+
+@pytest.mark.parametrize("recipe_func", _NEMOTRON_NANO_V2_PEFT_FUNCS)
+@pytest.mark.parametrize("peft_scheme", ["lora"])
+def test_nemotron_nano_v2_peft_config(recipe_func: Callable, peft_scheme: str):
+    """Test that PEFT configurations are correctly applied for Nemotron Nano v2 models."""
+    # Note: Nemotron Nano v2 recipes don't use AutoBridge, so no patching needed
+
+    cfg = recipe_func(peft_scheme=peft_scheme)
+
+    _assert_basic_config(cfg)
+
+    # PEFT config should be present
+    assert cfg.peft is not None
 
 
 def test_nemotron_nano_9b_v2_lora_defaults():
     """Test that Nemotron Nano 9B v2 LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_peft_config
 
-    overrides = _safe_overrides_for("nemotron_nano_9b_v2_finetune_config")
-    overrides["peft"] = "lora"
-
-    cfg = nemotron_nano_9b_v2_finetune_config(**overrides)
+    cfg = nemotron_nano_9b_v2_peft_config(peft_scheme="lora")
 
     _assert_basic_config(cfg)
 
@@ -241,12 +224,9 @@ def test_nemotron_nano_9b_v2_lora_defaults():
 
 def test_nemotron_nano_9b_v2_full_sft_defaults():
     """Test that Nemotron Nano 9B v2 full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_sft_config
 
-    overrides = _safe_overrides_for("nemotron_nano_9b_v2_finetune_config")
-    overrides["peft"] = "none"
-
-    cfg = nemotron_nano_9b_v2_finetune_config(**overrides)
+    cfg = nemotron_nano_9b_v2_sft_config()
 
     _assert_basic_config(cfg)
 
@@ -259,12 +239,9 @@ def test_nemotron_nano_9b_v2_full_sft_defaults():
 
 def test_nemotron_nano_12b_v2_lora_defaults():
     """Test that Nemotron Nano 12B v2 LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_peft_config
 
-    overrides = _safe_overrides_for("nemotron_nano_12b_v2_finetune_config")
-    overrides["peft"] = "lora"
-
-    cfg = nemotron_nano_12b_v2_finetune_config(**overrides)
+    cfg = nemotron_nano_12b_v2_peft_config(peft_scheme="lora")
 
     _assert_basic_config(cfg)
 
@@ -282,12 +259,9 @@ def test_nemotron_nano_12b_v2_lora_defaults():
 
 def test_nemotron_nano_12b_v2_full_sft_defaults():
     """Test that Nemotron Nano 12B v2 full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_sft_config
 
-    overrides = _safe_overrides_for("nemotron_nano_12b_v2_finetune_config")
-    overrides["peft"] = "none"
-
-    cfg = nemotron_nano_12b_v2_finetune_config(**overrides)
+    cfg = nemotron_nano_12b_v2_sft_config()
 
     _assert_basic_config(cfg)
 
@@ -300,12 +274,9 @@ def test_nemotron_nano_12b_v2_full_sft_defaults():
 
 def test_nemotronh_4b_lora_defaults():
     """Test that NemotronH 4B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_4b_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotronh_4b_peft_config
 
-    overrides = _safe_overrides_for("nemotronh_4b_finetune_config")
-    overrides["peft"] = "lora"
-
-    cfg = nemotronh_4b_finetune_config(**overrides)
+    cfg = nemotronh_4b_peft_config(peft_scheme="lora")
 
     _assert_basic_config(cfg)
 
@@ -323,12 +294,9 @@ def test_nemotronh_4b_lora_defaults():
 
 def test_nemotronh_4b_full_sft_defaults():
     """Test that NemotronH 4B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_4b_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotronh_4b_sft_config
 
-    overrides = _safe_overrides_for("nemotronh_4b_finetune_config")
-    overrides["peft"] = "none"
-
-    cfg = nemotronh_4b_finetune_config(**overrides)
+    cfg = nemotronh_4b_sft_config()
 
     _assert_basic_config(cfg)
 
@@ -341,12 +309,9 @@ def test_nemotronh_4b_full_sft_defaults():
 
 def test_nemotronh_8b_lora_defaults():
     """Test that NemotronH 8B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_8b_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotronh_8b_peft_config
 
-    overrides = _safe_overrides_for("nemotronh_8b_finetune_config")
-    overrides["peft"] = "lora"
-
-    cfg = nemotronh_8b_finetune_config(**overrides)
+    cfg = nemotronh_8b_peft_config(peft_scheme="lora")
 
     _assert_basic_config(cfg)
 
@@ -364,12 +329,9 @@ def test_nemotronh_8b_lora_defaults():
 
 def test_nemotronh_8b_full_sft_defaults():
     """Test that NemotronH 8B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_8b_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotronh_8b_sft_config
 
-    overrides = _safe_overrides_for("nemotronh_8b_finetune_config")
-    overrides["peft"] = "none"
-
-    cfg = nemotronh_8b_finetune_config(**overrides)
+    cfg = nemotronh_8b_sft_config()
 
     _assert_basic_config(cfg)
 
@@ -382,12 +344,9 @@ def test_nemotronh_8b_full_sft_defaults():
 
 def test_nemotronh_47b_lora_defaults():
     """Test that NemotronH 47B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_47b_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotronh_47b_peft_config
 
-    overrides = _safe_overrides_for("nemotronh_47b_finetune_config")
-    overrides["peft"] = "lora"
-
-    cfg = nemotronh_47b_finetune_config(**overrides)
+    cfg = nemotronh_47b_peft_config(peft_scheme="lora")
 
     _assert_basic_config(cfg)
 
@@ -405,12 +364,9 @@ def test_nemotronh_47b_lora_defaults():
 
 def test_nemotronh_47b_full_sft_defaults():
     """Test that NemotronH 47B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_47b_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotronh_47b_sft_config
 
-    overrides = _safe_overrides_for("nemotronh_47b_finetune_config")
-    overrides["peft"] = "none"
-
-    cfg = nemotronh_47b_finetune_config(**overrides)
+    cfg = nemotronh_47b_sft_config()
 
     _assert_basic_config(cfg)
 
@@ -423,12 +379,9 @@ def test_nemotronh_47b_full_sft_defaults():
 
 def test_nemotronh_56b_lora_defaults():
     """Test that NemotronH 56B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_56b_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotronh_56b_peft_config
 
-    overrides = _safe_overrides_for("nemotronh_56b_finetune_config")
-    overrides["peft"] = "lora"
-
-    cfg = nemotronh_56b_finetune_config(**overrides)
+    cfg = nemotronh_56b_peft_config(peft_scheme="lora")
 
     _assert_basic_config(cfg)
 
@@ -446,12 +399,9 @@ def test_nemotronh_56b_lora_defaults():
 
 def test_nemotronh_56b_full_sft_defaults():
     """Test that NemotronH 56B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_56b_finetune_config
+    from megatron.bridge.recipes.nemotronh import nemotronh_56b_sft_config
 
-    overrides = _safe_overrides_for("nemotronh_56b_finetune_config")
-    overrides["peft"] = "none"
-
-    cfg = nemotronh_56b_finetune_config(**overrides)
+    cfg = nemotronh_56b_sft_config()
 
     _assert_basic_config(cfg)
 
