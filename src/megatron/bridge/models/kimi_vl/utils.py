@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,18 +14,6 @@
 
 
 import torch
-
-
-_INT4_SHIFTS: dict[str, torch.Tensor] = {}
-
-
-def _get_int4_shifts(device: torch.device) -> torch.Tensor:
-    """Return cached shift constants for INT4 unpacking on the given device."""
-    key = str(device)
-    if key not in _INT4_SHIFTS:
-        _INT4_SHIFTS[key] = torch.arange(8, device=device, dtype=torch.int32) * 4
-    return _INT4_SHIFTS[key]
-
 
 def dequantize_int4(
     weight_packed: torch.Tensor,
@@ -58,12 +46,18 @@ def dequantize_int4(
         weight_scale = weight_scale.cuda()
 
     # Unpack INT4: [out, packed_in] -> [out, packed_in, 8] -> [out, in_features]
-    shifts = _get_int4_shifts(weight_packed.device)
+    shifts = torch.arange(8, device=weight_packed.device) * 4
 
-    # Unpack, convert to signed, and cast to float in one fused expression
-    unpacked = (((weight_packed.unsqueeze(-1) >> shifts) & 0xF).to(torch.float32) - 8.0).reshape(local_out, local_in)
+    packed_unsqueezed = weight_packed.unsqueeze(-1)
+    unpacked = ((packed_unsqueezed >> shifts) & 0xF).float()
+    unpacked = unpacked.reshape(local_out, local_in)
 
-    # Apply per-group scale using broadcast (no repeat_interleave allocation)
+    # Convert unsigned 4-bit (0-15) to signed (-8 to 7) using OFFSET BINARY
+    # This matches compressed-tensors library which packs as: value + 8
+    # So unpack as: value - 8
+    unpacked = unpacked - 8
+
+    # Apply scale - both are now local tensors with corresponding slices
     scale = weight_scale.float()
     if scale.ndim == 1:
         local_num_groups = scale.numel() // local_out
@@ -74,13 +68,20 @@ def dequantize_int4(
     local_num_groups = scale.shape[1]
     elements_per_group = local_in // local_num_groups
 
-    # Reshape unpacked to [out, num_groups, elements_per_group], multiply by
-    # scale [out, num_groups, 1] via broadcast, then flatten back — avoids
-    # the expensive repeat_interleave allocation.
-    unpacked = unpacked.view(local_out, local_num_groups, elements_per_group)
-    result = (unpacked * scale.unsqueeze(-1)).reshape(local_out, local_in)
+    # repeat_interleave expands [local_out, local_num_groups] -> [local_out, local_in]
+    scale_expanded = scale.repeat_interleave(elements_per_group, dim=1)
 
-    return result.to(torch.bfloat16)
+    if scale_expanded.shape[1] < local_in:
+        # Pad if needed
+        scale_expanded = torch.nn.functional.pad(
+            scale_expanded, (0, local_in - scale_expanded.shape[1]), value=scale_expanded[:, -1:].mean()
+        )
+    scale_expanded = scale_expanded[:, :local_in]
+    result = unpacked * scale_expanded
+
+    result = result.to(torch.bfloat16)
+
+    return result
 
 
 def quantize_to_int4(

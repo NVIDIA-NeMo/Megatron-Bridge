@@ -1,146 +1,110 @@
 #!/bin/bash
-set -euo pipefail
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 # ==============================================================================
 # Kimi-K2.5-VL Supervised Fine-Tuning (SFT)
 #
-# Recommended parallelism for the full model: TP=2, PP=16, EP=32 (64 GPUs, 8 nodes)
-# For toy model validation, see TOY_MODEL_VALIDATION.md.
+# Full model (~1T params, 384 MoE experts, FP8 expert weights)
+# Recipe: kimi_k25_vl_sft_config
+# Recommended parallelism: TP=4, PP=4, EP=32
 #
 # Usage:
-#   1. Modify the #SBATCH directives below for your cluster
-#   2. Set PRETRAINED_CHECKPOINT to your local model path
-#   3. Set CONTAINER_IMAGE or adapt for bare metal
-#   4. Submit: sbatch slurm_sft.sh
+#   sbatch slurm_sft.sh
+#   sbatch --nodes=128 slurm_sft.sh   # override node count
 # ==============================================================================
 
-#SBATCH --job-name=kimi-vl-sft
-#SBATCH --nodes=8
+#SBATCH --job-name=kimi-k25-vl-sft
+#SBATCH --nodes=16
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=24:00:00
-#SBATCH --partition=gpu
-#SBATCH --account=my_account
-#SBATCH --output=logs/kimi_vl_sft_%j.out
-#SBATCH --error=logs/kimi_vl_sft_%j.err
+#SBATCH --account=coreai_devtech_all
+#SBATCH --partition=batch
 #SBATCH --exclusive
 
-# ==============================================================================
-# CONFIGURATION
-# ==============================================================================
+# ── Paths (edit these for your environment) ──────────────────────────────
+MEGATRON_BRIDGE_PATH=""   # Path to Megatron-Bridge repo
+CONTAINER_IMAGE=""        # Path to container .sqsh image
+DATA_DIR=""               # Path to data directory (mounted as /opt/data)
+HF_HOME_DIR=""            # Path to HuggingFace cache directory
+UV_CACHE=""               # Path to UV cache directory
+OUTPUT_DIR=""             # Path to save checkpoints and logs
+# export HF_TOKEN=""      # HuggingFace token (if needed)
 
-WORKSPACE=${WORKSPACE:-/workspace}
+# ── Container ────────────────────────────────────────────────────────────
+CONTAINER_MOUNTS="${MEGATRON_BRIDGE_PATH}:/opt/Megatron-Bridge,${DATA_DIR}:/opt/data"
+WORKDIR="/opt/Megatron-Bridge"
 
-PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Kimi-K2.5
-RECIPE=kimi_k25_vl_sft_config
-DATASET_NAME=cord_v2
-SEQ_LENGTH=2048
+# ── Tokens / Caches ──────────────────────────────────────────────────────
+export HF_HOME="${HF_HOME_DIR}"
+export UV_CACHE_DIR="${UV_CACHE}"
+
+# ── Model / Training ─────────────────────────────────────────────────────
+HF_MODEL_PATH="moonshotai/Kimi-K2.5"
+RECIPE="kimi_k25_vl_sft_config"
+DATASET_NAME="cord_v2"
+SEQ_LENGTH=4096
 TRAIN_ITERS=5000
-GLOBAL_BATCH_SIZE=32
+GLOBAL_BATCH_SIZE=16
 MICRO_BATCH_SIZE=1
+SAVE_INTERVAL=2000
 LOG_INTERVAL=1
-WANDB_PROJECT=megatron-bridge-kimi
+WANDB_PROJECT="megatron-bridge-kimi-vl"
 
-# Container image (required)
-CONTAINER_IMAGE=""
-# CONTAINER_IMAGE="/path/to/container.sqsh"
+# ── Parallelism ──────────────────────────────────────────────────────────
+# Recommended: TP=4, PP=4, EP=32 → 128 GPUs (16 nodes)
+TP=4
+PP=4
+EP=32
 
-# Container mounts (optional, space-separated)
-CONTAINER_MOUNTS=""
-# CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
-
-# ==============================================================================
-# Environment Setup
-# ==============================================================================
-
+# ── Environment ───────────────────────────────────────────────────────────
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
-export CUDA_DEVICE_MAX_CONNECTIONS=1
-
-# export UV_CACHE_DIR="/path/to/shared/uv_cache"
-# export HF_HOME="/path/to/shared/HF_HOME"
-# export HF_TOKEN="hf_your_token_here"
-# export WANDB_API_KEY="your_wandb_key_here"
-export WANDB_MODE=disabled
-
-# ==============================================================================
-# Job Execution
-# ==============================================================================
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export HTTPX_LOG_LEVEL=WARNING
 
 echo "======================================"
-echo "Kimi-K2.5-VL SFT Training Job"
-echo "======================================"
-echo "Job ID: $SLURM_JOB_ID"
-echo "Nodes: $SLURM_JOB_NUM_NODES"
-echo "GPUs per node: $SLURM_GPUS_PER_NODE"
-echo "Total GPUs: $((SLURM_JOB_NUM_NODES * SLURM_GPUS_PER_NODE))"
+echo "Kimi-K2.5-VL SFT Training"
+echo "Job: $SLURM_JOB_ID | Nodes: $SLURM_JOB_NUM_NODES"
+echo "TP=$TP PP=$PP EP=$EP (Total GPUs: $((SLURM_JOB_NUM_NODES * 8)))"
 echo "Recipe: $RECIPE"
-echo "Checkpoint: $PRETRAINED_CHECKPOINT"
+echo "Dataset: $DATASET_NAME"
 echo "======================================"
 
-# Create logs directory
-mkdir -p logs
+mkdir -p "${MEGATRON_BRIDGE_PATH}/logs"
+
+SAVE_DIR="${OUTPUT_DIR}/kimi_k25_vl_sft"
 
 CLI_OVERRIDES="\
-    checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
+    checkpoint.pretrained_checkpoint=$HF_MODEL_PATH \
     model.seq_length=$SEQ_LENGTH \
-    model.freeze_vision_model=true \
-    model.freeze_vision_projection=true \
-    model.calculate_per_token_loss=true \
-    model.cross_entropy_loss_fusion=false \
+    model.tensor_model_parallel_size=$TP \
+    model.pipeline_model_parallel_size=$PP \
+    model.expert_model_parallel_size=$EP \
     train.train_iters=$TRAIN_ITERS \
     train.global_batch_size=$GLOBAL_BATCH_SIZE \
     train.micro_batch_size=$MICRO_BATCH_SIZE \
-    checkpoint.save=${WORKSPACE}/results/${RECIPE}_sft \
-    dataset.maker_name=make_${DATASET_NAME}_dataset \
-    dataset.seq_length=$SEQ_LENGTH \
-    ddp.average_in_collective=false \
+    checkpoint.save=$SAVE_DIR \
+    checkpoint.save_interval=$SAVE_INTERVAL \
     logger.log_interval=$LOG_INTERVAL \
-    logger.log_throughput=true \
-    logger.log_params_norm=true \
     logger.wandb_project=$WANDB_PROJECT \
-    logger.wandb_exp_name=${RECIPE}_${DATASET_NAME}_sft"
+    logger.wandb_exp_name=kimi_k25_vl_${DATASET_NAME}_sft \
+    dataset.maker_name=make_${DATASET_NAME}_dataset \
+    dataset.seq_length=$SEQ_LENGTH"
 
-# For multinode runs, pass --hf_path with a local model directory
-# for more reliable config loading, e.g.:
-#   --hf_path ${WORKSPACE}/models/Kimi-K2.5
-CMD="uv run --no-sync python scripts/training/run_recipe.py \
-    --recipe $RECIPE \
-    --step_func vlm_step \
-    --hf_path moonshotai/Kimi-K2.5 \
-    $CLI_OVERRIDES"
+CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 15; fi && "
+CMD="${CMD}uv run --no-sync python scripts/training/run_recipe.py"
+CMD="$CMD --recipe $RECIPE"
+CMD="$CMD --step_func vlm_step"
+CMD="$CMD --hf_path $HF_MODEL_PATH"
+CMD="$CMD $CLI_OVERRIDES"
 
-echo "Executing command..."
-echo "======================================"
+echo "Command: $CMD"
 
-if [ -z "$CONTAINER_IMAGE" ]; then
-    echo "ERROR: CONTAINER_IMAGE must be set. Please specify a valid container image."
-    exit 1
-fi
-
-SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
-
-if [ -n "$CONTAINER_MOUNTS" ]; then
-    for mount in $CONTAINER_MOUNTS; do
-        SRUN_CMD="$SRUN_CMD --container-mounts=$mount"
-    done
-fi
-
-$SRUN_CMD bash -c "$CMD"
+srun --mpi=pmix \
+  --container-image="$CONTAINER_IMAGE" \
+  --container-mounts="$CONTAINER_MOUNTS" \
+  --no-container-mount-home \
+  bash -c "cd $WORKDIR && $CMD"
 
 echo "======================================"
-echo "Job completed"
+echo "SFT training completed"
 echo "======================================"

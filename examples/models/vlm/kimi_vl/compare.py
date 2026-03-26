@@ -565,7 +565,6 @@ def _load_hf_model(args, is_vl_model: bool):
                 raw_state[f"{base}.weight_packed"],
                 raw_state[f"{base}.weight_scale"],
                 raw_state[f"{base}.weight_shape"],
-                device="cpu",
             )
             param_key = f"{base}.weight"
             parts = param_key.split(".")

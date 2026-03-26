@@ -38,7 +38,7 @@ from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0, print_rank_last
 
 
 def _patch_kimi_vision_processor(hf_model_path: str):
@@ -70,6 +70,37 @@ def _patch_kimi_vision_processor(hf_model_path: str):
         klass._from_dict_patched = True
     except Exception:
         pass
+
+
+def pre_expand_image_tokens(input_ids, grid_thws, image_token_id, spatial_merge_size=2):
+    """Pre-expand single image placeholders to N placeholders matching vision feature count.
+
+    With PP > 1, the pipeline schedule needs to know the actual sequence length upfront.
+    The VLM model's dynamic expansion mode changes seq_length during forward, causing a
+    send/recv shape mismatch. Pre-expanding makes the model use the 1:1 replacement path
+    (is_pre_expanded=True), keeping seq_length constant through the pipeline.
+    """
+    if grid_thws is None:
+        return input_ids
+
+    # Compute number of features per image from grid_thws
+    feature_counts = []
+    for grid_thw in grid_thws:
+        t, h, w = grid_thw.tolist()
+        num_features = int(t * (h // spatial_merge_size) * (w // spatial_merge_size))
+        feature_counts.append(num_features)
+
+    # Expand: replace each single image placeholder with N placeholders
+    expanded = []
+    feat_idx = 0
+    for token_id in input_ids[0]:
+        if token_id.item() == image_token_id and feat_idx < len(feature_counts):
+            expanded.extend([image_token_id] * feature_counts[feat_idx])
+            feat_idx += 1
+        else:
+            expanded.append(token_id.item())
+
+    return torch.tensor([expanded], dtype=input_ids.dtype, device=input_ids.device)
 
 
 def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0):
@@ -152,17 +183,25 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(image_path)
 
 
-def process_image_inputs(processor, tokenizer, image_path: Optional[str], prompt: str, tp_size: int = 1):
+def process_image_inputs(
+    processor, tokenizer, image_path: Optional[str], prompt: str, tp_size: int = 1, image_token_id: int = 163605
+):
     """Process image inputs for Kimi VL model.
 
     Uses the KimiK25Processor directly with messages format, and pads
     input_ids to be divisible by tp_size for sequence parallel.
+
+    When images are present, pre-expands image placeholder tokens so that
+    input_ids.size(1) matches the actual sequence length after vision feature
+    insertion. This is required for PP > 1 where the pipeline schedule
+    pre-allocates recv buffers based on seq_length.
 
     Returns:
         Tuple of (input_ids, pixel_values, grid_thws)
     """
     if image_path:
         messages = [
+            {'role': 'system', 'content': 'You are Kimi, an AI assistant created by Moonshot AI.'},
             {
                 "role": "user",
                 "content": [
@@ -172,11 +211,21 @@ def process_image_inputs(processor, tokenizer, image_path: Optional[str], prompt
             }
         ]
         inputs = processor(messages=messages)
-        input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
         grid_thws = getattr(inputs, "grid_thws", None)
+        # Pre-expand image placeholders so seq_length matches the expanded length
+        input_ids = pre_expand_image_tokens(inputs.input_ids, grid_thws, image_token_id)
+        input_ids = pad_input_ids_to_tp_multiple(input_ids, tp_size, tokenizer.pad_token_id or 0)
         return input_ids, inputs.pixel_values, grid_thws
     else:
-        inputs = processor(text=[prompt], return_tensors="pt")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+        inputs = processor(messages=messages, return_tensors="pt")
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
         return input_ids, None, None
 
@@ -202,6 +251,15 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.init_model_with_meta_device = True
+        if pp == 4:
+            model_provider.pipeline_model_parallel_layout = "Et*15|t*15|t*16|t*15L"
+        elif pp == 8:
+            model_provider.pipeline_model_parallel_layout = "Et*8|t*8|t*8|t*8|t*8|t*8|t*8|t*5L"
+        elif pp == 1:
+            model_provider.pipeline_model_parallel_layout = None
+        else:
+            raise ValueError(f"Unsupported pipeline parallelism size: {pp}, you need to specify the pipeline model parallel layout manually")
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         model = bridge.load_megatron_model(
@@ -212,6 +270,7 @@ def main(args) -> None:
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
                 "pipeline_dtype": torch.bfloat16,
+                "pipeline_model_parallel_layout": model_provider.pipeline_model_parallel_layout,
             },
             wrap_with_ddp=False,
         )
@@ -307,12 +366,12 @@ def main(args) -> None:
                 next_token_ids = torch.argmax(output[:, -1], dim=-1, keepdim=True)
 
                 if step < 5:
-                    print_rank_0(f"Step {step}: output shape={output.shape}, var={output.var():.4f}")
+                    print_rank_last(f"Step {step}: output shape={output.shape}, var={output.var():.4f}")
                     logits = output[0, -1, :]
                     top5_vals, top5_ids = torch.topk(logits, 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
-                    print_rank_0(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
-                    print_rank_0(
+                    print_rank_last(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
+                    print_rank_last(
                         f"Selected: '{tokenizer.decode([next_token_ids.item()])}' (id={next_token_ids.item()})"
                     )
             else:

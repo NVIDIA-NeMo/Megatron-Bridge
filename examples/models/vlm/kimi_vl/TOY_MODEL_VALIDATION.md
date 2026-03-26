@@ -15,9 +15,9 @@ export WORKSPACE=/your/custom/path
 ```bash
 python examples/models/vlm/kimi_vl/create_hf_toy_model.py \
     --hf-model-id moonshotai/Kimi-K2.5 \
-    --output-dir ../kimi/kimi_toy \
+    --output-dir ${WORKSPACE}/models/kimi_toy_hf \
     --num-experts 16 \
-    --num-hidden-layers 2
+    --num-hidden-layers 4
 ```
 
 ## Step 2: Checkpoint Conversion (HF → Megatron → HF)
@@ -26,8 +26,8 @@ python examples/models/vlm/kimi_vl/create_hf_toy_model.py \
 
 ```bash
 python examples/conversion/convert_checkpoints.py import \
-    --hf-model ../kimi/kimi_toy \
-    --megatron-path ${WORKSPACE}/models/Kimi-K2.5 \
+    --hf-model ${WORKSPACE}/models/kimi_toy_hf \
+    --megatron-path ${WORKSPACE}/models/kimi_toy_megatron \
     --trust-remote-code
 ```
 
@@ -35,8 +35,8 @@ python examples/conversion/convert_checkpoints.py import \
 
 ```bash
 python examples/conversion/convert_checkpoints.py export \
-    --hf-model ../kimi/kimi_toy \
-    --megatron-path ${WORKSPACE}/models/Kimi-K2.5/iter_0000000 \
+    --hf-model ${WORKSPACE}/models/kimi_toy_hf  \
+    --megatron-path ${WORKSPACE}/models/kimi_toy_megatron/iter_0000000 \
     --hf-path ${WORKSPACE}/models/Kimi-K2.5-hf-export
 ```
 
@@ -46,7 +46,7 @@ Compare 1-step forward-pass outputs between HuggingFace and Megatron:
 
 ```bash
 torchrun --nproc_per_node=2 examples/models/vlm/kimi_vl/compare.py \
-    --hf_model_path ../kimi/kimi_toy \
+    --hf_model_path ${WORKSPACE}/models/kimi_toy_hf \
     --trust_remote_code \
     --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
     --prompt "Describe this image." \
@@ -93,7 +93,7 @@ torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
     model.seq_length=2048 \
     model.tensor_model_parallel_size=2 \
     model.sequence_parallel=true \
-    model.pipeline_model_parallel_size=1 \
+    model.pipeline_model_parallel_size=2 \
     model.expert_model_parallel_size=2 \
     model.pipeline_model_parallel_layout=null \
     model.hf_model_path=moonshotai/Kimi-K2.5 \
@@ -101,6 +101,9 @@ torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
     model.freeze_vision_projection=true \
     model.calculate_per_token_loss=true \
     model.cross_entropy_loss_fusion=false \
+    model.num_layers=4 \
+    model.moe_layer_freq=1\
+    model.pipeline_model_parallel_layout="Ett|ttL" \
     model.hidden_size=7168 \
     model.ffn_hidden_size=1024 \
     model.num_moe_experts=16 \
@@ -111,8 +114,8 @@ torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
     dataset.maker_name=make_cord_v2_dataset \
     dataset.pack_sequences_in_batch=false \
     dataset.seq_length=2048 \
-    checkpoint.save=../kimi-test \
-    checkpoint.load=../kimi-test \
+    checkpoint.save=${WORKSPACE}/models/kimi_toy_megatron/iter_0000000 \
+    checkpoint.load=${WORKSPACE}/models/kimi_toy_megatron/iter_0000000 \
     checkpoint.load_rng=false \
     checkpoint.save_interval=1000 \
     checkpoint.ckpt_step=100 \
@@ -127,7 +130,7 @@ torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
     logger.log_l2_norm_grad_to_tensorboard=false \
     logger.wandb_project=mbridge-kimi \
     logger.wandb_save_dir=./outputs/kimi-k25-vl/ \
-    logger.wandb_exp_name=kimi-tp2-pp1-ep2-tiny \
+    logger.wandb_exp_name=kimi-tp2-pp1-ep2-tiny 
 ```
 
 Note: The toy model overrides (`hidden_size`, `ffn_hidden_size`, `num_moe_experts`,
