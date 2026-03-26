@@ -208,6 +208,7 @@ jobs:
 
       - name: Install Azure CLI
         shell: bash
+        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
         run: |
           echo "::group::Install Azure CLI"
           # Create systemd override for proper dependencies
@@ -216,12 +217,14 @@ jobs:
 
       - name: Azure Login
         uses: azure/login@v2
+        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Azure ACR Login
+        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
         shell: bash
         run: |
           az acr login --name nemoci
@@ -377,7 +380,7 @@ jobs:
           script: Launch_Unit_Tests_Core
           timeout: 18
           is_unit_test: "true"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -438,7 +441,7 @@ jobs:
           script: Launch_Unit_Tests_Diffusion
           timeout: 18
           is_unit_test: "true"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -550,7 +553,7 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -618,7 +621,7 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -686,7 +689,7 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -746,7 +749,7 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
