@@ -78,6 +78,9 @@ class LoRA(PEFT, ModuleMatcher):
         lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
         lora_dtype (torch.dtype): Parameter data type for LoRA weights. Default None (will use model's dtype).
+        normalize_moe_lora (bool): When True, expert linear layers use dim // moe_router_topk as the LoRA rank
+            while non-expert layers keep the full dim. This normalizes the total adapter capacity for MoE models
+            so it is comparable to a dense model. Defaults to False.
     """
 
     target_modules: List[str] = field(
@@ -91,6 +94,21 @@ class LoRA(PEFT, ModuleMatcher):
     lora_B_init_method: str = "zero"
     a2a_experimental: bool = False
     lora_dtype: torch.dtype = None
+    normalize_moe_lora: bool = False
+
+    def _get_effective_dim(self, module: nn.Module, is_expert: bool) -> int:
+        """Return the LoRA rank to use, reduced for expert layers when normalize_moe_lora is enabled."""
+        if not self.normalize_moe_lora or not is_expert:
+            return self.dim
+        topk = getattr(getattr(module, "config", None), "moe_router_topk", None)
+        if topk is None or topk <= 0:
+            return self.dim
+        if self.dim % topk != 0:
+            raise ValueError(
+                f"LoRA dim={self.dim} must be divisible by moe_router_topk={topk} "
+                f"when normalize_moe_lora is enabled"
+            )
+        return self.dim // topk
 
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
@@ -140,6 +158,8 @@ class LoRA(PEFT, ModuleMatcher):
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(module, is_expert=is_expert)
 
+            dim = self._get_effective_dim(module, is_expert)
+
             enable_op_fuser = (
                 hasattr(module, "config")
                 and getattr(module.config, "use_transformer_engine_op_fuser", False)
@@ -151,7 +171,7 @@ class LoRA(PEFT, ModuleMatcher):
             adapter = ParallelLinearAdapter(
                 attrs.in_features,
                 attrs.out_features,
-                self.dim,
+                dim,
                 base_linear_name=full_name,
                 activation="identity",
                 norm_type=None,
