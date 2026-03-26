@@ -2885,3 +2885,54 @@ class TestLoggerConfigFinalize:
         # Mock mlflow import to avoid slow actual import
         with patch("importlib.import_module"):
             config.finalize()  # Should not raise
+
+    def test_finalize_no_comet_settings(self):
+        """Test finalize succeeds when no Comet settings are configured."""
+        config = LoggerConfig()
+        config.finalize()
+
+    def test_finalize_with_comet_project_only_raises_error(self):
+        """Test finalize raises error when comet_project is set but comet_experiment_name is missing."""
+        config = LoggerConfig(comet_project="my_project")
+
+        with pytest.raises(ValueError, match="comet_experiment_name"):
+            config.finalize()
+
+    def test_finalize_with_comet_project_and_empty_experiment_name_raises_error(self):
+        """Test finalize raises error when comet_experiment_name is empty string."""
+        config = LoggerConfig(comet_project="my_project", comet_experiment_name="")
+
+        with pytest.raises(ValueError, match="comet_experiment_name"):
+            config.finalize()
+
+    def test_finalize_with_comet_project_and_experiment_name_succeeds(self):
+        """Test finalize succeeds when both comet_project and comet_experiment_name are set."""
+        config = LoggerConfig(comet_project="my_project", comet_experiment_name="my_experiment")
+        with patch("importlib.import_module"):
+            config.finalize()
+
+    def test_finalize_comet_not_installed_raises_module_not_found(self):
+        """Test finalize raises ModuleNotFoundError when comet_ml is configured but not installed."""
+        config = LoggerConfig(comet_project="my_project", comet_experiment_name="my_experiment")
+
+        with patch("importlib.import_module", side_effect=ModuleNotFoundError("No module named 'comet_ml'")):
+            with pytest.raises(ModuleNotFoundError, match="comet_ml"):
+                config.finalize()
+
+    def test_finalize_with_comet_workspace_only(self):
+        """Test finalize with only comet_workspace triggers Comet validation."""
+        config = LoggerConfig(comet_workspace="my_workspace")
+        with patch("importlib.import_module"):
+            config.finalize()
+
+    def test_finalize_with_all_comet_settings(self):
+        """Test finalize with all Comet settings configured."""
+        config = LoggerConfig(
+            comet_project="my_project",
+            comet_experiment_name="my_experiment",
+            comet_workspace="my_workspace",
+            comet_api_key="my_key",
+            comet_tags=["sft", "qwen3"],
+        )
+        with patch("importlib.import_module"):
+            config.finalize()

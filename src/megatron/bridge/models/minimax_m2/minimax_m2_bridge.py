@@ -99,8 +99,14 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     Megatron Bridge for MiniMax-M2 MoE Causal LM.
 
     MiniMax-M2 is a sparse MoE model (256 experts, top-8 routing with sigmoid
-    scoring and expert bias correction). HF weights use per-expert format
-    with block_sparse_moe prefix (w1/w2/w3).
+    scoring and expert bias correction). Use the native transformers >= 5.0
+    implementation (no ``trust_remote_code`` required).
+
+    On-disk checkpoint format (both the HF hub checkpoint and models saved with
+    ``save_pretrained``) uses the legacy ``block_sparse_moe`` key prefix with
+    per-expert ``w1`` (gate), ``w3`` (up), and ``w2`` (down) weight tensors.
+    The in-memory model API uses ``mlp`` / ``gate_up_proj`` / ``down_proj``
+    but serialization reverts to the legacy layout.
 
     QK normalization:
         MiniMax-M2 applies full-dimension RMSNorm to Q/K (weight shape =
@@ -190,7 +196,7 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
             # Attention o_proj
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            # MoE router and expert bias
+            # MoE router and expert bias — on-disk uses block_sparse_moe prefix
             "decoder.layers.*.mlp.router.weight": "model.layers.*.block_sparse_moe.gate.weight",
             "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.block_sparse_moe.e_score_correction_bias",
         }
@@ -224,8 +230,7 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             )
         )
 
-        # MoE expert weights (per-expert w1/w2/w3 with block_sparse_moe prefix).
-        # Uses grouped-gemm layout (weight* suffix) since moe_grouped_gemm=True.
+        # MoE expert weights — on-disk layout: per-expert w1 (gate), w3 (up), w2 (down)
         mapping_list.extend(
             [
                 GatedMLPMapping(
