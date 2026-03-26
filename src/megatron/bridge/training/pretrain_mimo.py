@@ -25,6 +25,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
     get_module_to_grid_tuple,
+    is_current_rank_in_grid,
     unwrap_mimo_model,
     validate_no_stub_ranks,
 )
@@ -40,6 +41,52 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _set_mimo_random_seeds(
+    cfg: ConfigContainer,
+    mimo_infra: "MimoModelInfra",
+) -> None:
+    """Initialize random seeds with per-module TP/PP awareness.
+
+    Mirrors the standard path's ``_set_random_seed()`` but derives TP/PP ranks
+    from the per-module HyperCommGrids instead of global MPU state.
+
+    Must be called **after** ``build_infra()`` (grids exist) and **before**
+    ``provide_distributed_model()`` (weight init needs the CUDA RNG tracker).
+    """
+    import random
+
+    import numpy as np
+    import torch
+    from megatron.core import tensor_parallel
+
+    seed = getattr(cfg, "seed", None) or getattr(getattr(cfg, "rng", None), "seed", None) or 1234
+
+    current_rank = dist.get_rank()
+
+    # Find which module this rank belongs to and get its TP/PP ranks.
+    tp_rank = 0
+    pp_rank = 0
+    for module_name, grid in mimo_infra.module_to_grid_map.items():
+        if is_current_rank_in_grid(grid):
+            tp_rank = dist.get_group_rank(grid.get_pg(["tp"]), current_rank)
+            pp_rank = dist.get_group_rank(grid.get_pg(["pp"]), current_rank)
+            break
+
+    # Different PP stages get different seeds (consistent with standard path).
+    seed = seed + (100 * pp_rank)
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.device_count() > 0:
+        tensor_parallel.model_parallel_cuda_manual_seed(seed, tp_rank=tp_rank, ep_rank=0, etp_rank=0)
+
+    logger.info(
+        f"Rank {current_rank}: Initialized MIMO random seeds (base_seed={seed}, tp_rank={tp_rank}, pp_rank={pp_rank})"
+    )
 
 
 @dataclass
@@ -121,6 +168,13 @@ def setup_mimo(
     # Validate no stub ranks
     world_size = dist.get_world_size()
     validate_no_stub_ranks(mimo_infra.module_to_grid_map, world_size)
+
+    # Initialize per-module random seeds before model construction.
+    # MIMO bypasses initialize_megatron() (to avoid global MPU corruption), which
+    # also skips model_parallel_cuda_manual_seed(). Without it, GPU weight init and
+    # TP-region dropout crash because CudaRNGStatesTracker is empty. We look up the
+    # per-module TP/PP ranks from HyperCommGrids and pass them explicitly.
+    _set_mimo_random_seeds(cfg, mimo_infra)
 
     logger.info(f"Rank {dist.get_rank()}: Building distributed model")
 

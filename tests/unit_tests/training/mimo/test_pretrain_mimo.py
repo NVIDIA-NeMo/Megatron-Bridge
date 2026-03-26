@@ -30,6 +30,74 @@ def _make_setup_output(module_to_grid_map):
     )
 
 
+@patch(
+    "megatron.bridge.training.pretrain_mimo.is_current_rank_in_grid",
+    side_effect=lambda grid: grid.rank_offset <= 4 < (grid.rank_offset + grid.size),
+)
+@patch("megatron.bridge.training.pretrain_mimo.dist")
+def test_set_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mock_dist, _mock_in_grid):
+    """_set_mimo_random_seeds should derive TP/PP ranks from grids and call model_parallel_cuda_manual_seed."""
+    from megatron.bridge.training.pretrain_mimo import _set_mimo_random_seeds
+
+    mock_dist.get_rank.return_value = 4  # e.g. first rank of vision encoder
+
+    # Build a mock grid: vision ranks [4,8), TP=2, PP=1
+    tp_pg = MagicMock()
+    pp_pg = MagicMock()
+    mock_dist.get_group_rank.side_effect = lambda pg, rank: {tp_pg: 0, pp_pg: 0}[pg]
+
+    grid = MagicMock()
+    grid.rank_offset = 4
+    grid.size = 4
+    grid.get_pg.side_effect = lambda dims: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
+
+    mimo_infra = SimpleNamespace(module_to_grid_map={"vision": grid})
+    cfg = SimpleNamespace(seed=42, rng=None)
+
+    with patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
+        import torch
+
+        with patch.object(torch.cuda, "device_count", return_value=1):
+            _set_mimo_random_seeds(cfg, mimo_infra)
+
+        # pp_rank=0, so seed stays 42. tp_rank=0 passed explicitly.
+        mock_seed.assert_called_once_with(42, tp_rank=0, ep_rank=0, etp_rank=0)
+
+
+@patch(
+    "megatron.bridge.training.pretrain_mimo.is_current_rank_in_grid",
+    side_effect=lambda grid: grid.rank_offset <= 2 < (grid.rank_offset + grid.size),
+)
+@patch("megatron.bridge.training.pretrain_mimo.dist")
+def test_set_mimo_random_seeds_offsets_by_pp_rank(mock_dist, _mock_in_grid):
+    """PP rank > 0 should offset the seed by 100 * pp_rank."""
+    from megatron.bridge.training.pretrain_mimo import _set_mimo_random_seeds
+
+    mock_dist.get_rank.return_value = 2
+
+    tp_pg = MagicMock()
+    pp_pg = MagicMock()
+    # tp_rank=1, pp_rank=1
+    mock_dist.get_group_rank.side_effect = lambda pg, rank: {tp_pg: 1, pp_pg: 1}[pg]
+
+    grid = MagicMock()
+    grid.rank_offset = 0
+    grid.size = 4
+    grid.get_pg.side_effect = lambda dims: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
+
+    mimo_infra = SimpleNamespace(module_to_grid_map={"llm": grid})
+    cfg = SimpleNamespace(seed=42, rng=None)
+
+    with patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
+        import torch
+
+        with patch.object(torch.cuda, "device_count", return_value=1):
+            _set_mimo_random_seeds(cfg, mimo_infra)
+
+        # seed = 42 + 100 * 1 = 142, tp_rank=1
+        mock_seed.assert_called_once_with(142, tp_rank=1, ep_rank=0, etp_rank=0)
+
+
 @patch("megatron.bridge.training.pretrain_mimo.train_mimo")
 @patch("megatron.bridge.training.pretrain_mimo.setup_mimo")
 @patch("megatron.bridge.training.pretrain_mimo.unwrap_mimo_model")
