@@ -28,12 +28,12 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
     Qwen3OmniMoeThinkerConfig,
 )
 
-from megatron.bridge.models.qwen import Qwen3MoEModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
 
 
 @dataclass
-class Qwen3OmniModelProvider(Qwen3MoEModelProvider):
+class Qwen3OmniModelProvider(GPTModelProvider):
     """Provider for Qwen3-Omni.
 
     The current implementation focuses on thinker-side multimodal training and
@@ -45,6 +45,32 @@ class Qwen3OmniModelProvider(Qwen3MoEModelProvider):
     code2wav_config: Qwen3OmniMoeCode2WavConfig | None = None
 
     pretrained_model_name: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
+
+    normalization: str = "RMSNorm"
+    gated_linear_unit: bool = True
+    add_bias_linear: bool = False
+    add_qkv_bias: bool = False
+    qk_layernorm: bool = True
+    kv_channels: int | None = 128
+    num_query_groups: int = 8
+    seq_length: int = 40960
+    max_position_embeddings: int = 40960
+    init_method_std: int = 0.02
+    hidden_dropout: float = 0.0
+    attention_dropout: float = 0.0
+    vocab_size: int = 151936
+    share_embeddings_and_output_weights: bool | None = False
+    layernorm_epsilon: float = 1e-6
+    rotary_base: float = 1000000.0
+
+    num_moe_experts: int = 128
+    moe_router_load_balancing_type: str = "aux_loss"
+    moe_aux_loss_coeff: float = 1e-3
+    moe_router_topk: int = 8
+    moe_router_pre_softmax: bool = False
+    moe_grouped_gemm: bool = True
+    moe_token_dispatcher_type: str = "alltoall"
+    moe_permute_fusion: bool = True
 
     image_token_id: int = 151655
     video_token_id: int = 151656
@@ -114,4 +140,4 @@ class Qwen3OmniModelProvider(Qwen3MoEModelProvider):
         return model
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
-        return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)

@@ -64,6 +64,7 @@ class Qwen3OmniBridge(MegatronModelBridge):
             moe_ffn_hidden_size=getattr(text_config, "moe_intermediate_size", None),
             num_attention_heads=text_config.num_attention_heads,
             num_query_groups=text_config.num_key_value_heads,
+            kv_channels=getattr(text_config, "head_dim", text_config.hidden_size // text_config.num_attention_heads),
             init_method_std=text_config.initializer_range,
             layernorm_epsilon=text_config.rms_norm_eps,
             gated_linear_unit=True,

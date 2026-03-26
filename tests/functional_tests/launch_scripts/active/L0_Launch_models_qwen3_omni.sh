@@ -15,9 +15,22 @@
 
 set -xeuo pipefail
 
-export CUDA_VISIBLE_DEVICES="0,1"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../../../.. && pwd)"
+export MEGATRON_BRIDGE_COVERAGE_ROOT="${MEGATRON_BRIDGE_COVERAGE_ROOT:-$REPO_ROOT}"
 
-uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
+GPU_COUNT="$(python - <<'PY'
+import torch
+print(torch.cuda.device_count() if torch.cuda.is_available() else 0)
+PY
+)"
+
+if [ "${GPU_COUNT}" -ge 2 ]; then
+  export CUDA_VISIBLE_DEVICES="0,1"
+else
+  export CUDA_VISIBLE_DEVICES="0"
+fi
+
+uv run coverage run --data-file="${MEGATRON_BRIDGE_COVERAGE_ROOT}/.coverage" --source="${MEGATRON_BRIDGE_COVERAGE_ROOT}/" --parallel-mode -m pytest \
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
   tests/functional_tests/models/qwen_omni/test_qwen3_omni_conversion.py
 coverage combine -q
