@@ -123,10 +123,25 @@ gh pr checks "$PR_NUMBER" --repo NVIDIA-NeMo/Megatron-Bridge
    # List runs for the PR's head SHA
    gh run list --repo NVIDIA-NeMo/Megatron-Bridge --branch "pull-request/$PR_NUMBER"
 
-   # View logs for a specific run
-   gh run view <run_id> --repo NVIDIA-NeMo/Megatron-Bridge --log-failed
+   # Download logs for a specific run to a local file
+   gh run view <run_id> --repo NVIDIA-NeMo/Megatron-Bridge --log-failed > run.log
    ```
-5. **Cross-reference the changeset** against the failing test or step to narrow down the root cause.
+5. **Scan the log file in chunks.** Log files can exceed 10,000 lines — never load them whole into context. Read them in chunks of ~200 lines and stop as soon as the root cause is found:
+   ```bash
+   # Total line count
+   wc -l run.log
+
+   # Read chunk N (lines 1–200, 201–400, …)
+   sed -n '1,200p' run.log
+   sed -n '201,400p' run.log
+   # … continue until the failure is located
+   ```
+   Scan from the end first if looking for the final error, then work backwards:
+   ```bash
+   # Last 200 lines
+   tail -200 run.log
+   ```
+6. **Cross-reference the changeset** against the failing test or step to narrow down the root cause.
 
 ### Common Failure Patterns
 
