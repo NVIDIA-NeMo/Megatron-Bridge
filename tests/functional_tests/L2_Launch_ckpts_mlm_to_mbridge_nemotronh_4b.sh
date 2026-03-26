@@ -20,10 +20,9 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # Run recipe functional tests on 2 GPUs
 # This script tests recipe configurations with their default settings to ensure
 # they can run basic training without crashes
-uv run python -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/ckpts/nemotronh_4b/test_nemotronh_4b_ckpt.py::TestNemotronhCkpt::test_nemotronh_4b_ckpt_mcore
+uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/ckpts/nemotronh_4b/test_nemotronh_4b_ckpt.py::TestNemotronhCkpt::test_nemotronh_4b_ckpt_mcore
 
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/ckpts/nemotronh_4b/test_nemotronh_4b_ckpt.py::TestNemotronhCkpt::test_nemotronh_4b_ckpt_mbridge
-uv run coverage combine -q
 
-
-uv run python -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/ckpts/nemotronh_4b/test_nemotronh_4b_ckpt.py::TestNemotronhCkpt::test_remove_artifacts
+uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/ckpts/nemotronh_4b/test_nemotronh_4b_ckpt.py::TestNemotronhCkpt::test_remove_artifacts
+coverage combine -q
