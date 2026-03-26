@@ -198,6 +198,9 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
         lora_A_init_method (str): Initialization method for LoRA A matrix. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for LoRA B matrix. Defaults to "zero".
+        normalize_moe_lora (bool): When True, expert linear layers use dim // moe_router_topk as the LoRA rank
+            while non-expert layers keep the full dim. This normalizes the total adapter capacity for MoE models
+            so it is comparable to a dense model. Defaults to False.
     """
 
     target_modules: List[str] = field(
@@ -217,6 +220,21 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
     dropout_position: Literal["pre", "post"] = "pre"
     lora_A_init_method: str = "xavier"
     lora_B_init_method: str = "zero"
+    normalize_moe_lora: bool = False
+
+    def _get_effective_dim(self, m: nn.Module, is_expert: bool) -> int:
+        """Return the LoRA rank to use, reduced for expert layers when normalize_moe_lora is enabled."""
+        if not self.normalize_moe_lora or not is_expert:
+            return self.dim
+        topk = getattr(getattr(m, "config", None), "moe_router_topk", None)
+        if topk is None or topk <= 0:
+            return self.dim
+        if self.dim % topk != 0:
+            raise ValueError(
+                f"LoRA dim={self.dim} must be divisible by moe_router_topk={topk} "
+                f"when normalize_moe_lora is enabled"
+            )
+        return self.dim // topk
 
     def __post_init__(self) -> None:
         """
@@ -289,8 +307,10 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(m, is_expert=is_expert)
 
+            dim = self._get_effective_dim(m, is_expert)
+
             adapter_kwargs = dict(
-                dim=self.dim,
+                dim=dim,
                 base_linear_name=full_name,
                 activation="identity",
                 norm_type=None,

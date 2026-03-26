@@ -26,6 +26,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.lora import LoRA, LoRAMerge, VLMLoRA
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.utils import AdapterAttributes
 
 
 class SimpleModel(nn.Module):
@@ -68,6 +69,47 @@ class NestedModel(nn.Module):
                 for _ in range(2)
             ]
         )
+
+
+class MockMegatronLinear(nn.Module):
+    """Mock Megatron linear layer that's not nn.Linear to trigger parallel adapter path."""
+
+    def __init__(self, in_features, out_features, moe_router_topk=None):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features)
+        self.in_features = in_features
+        self.out_features = out_features
+
+        class MockConfig:
+            def __init__(self):
+                self.sequence_parallel = False
+                self.moe_router_topk = moe_router_topk
+
+        self.config = MockConfig()
+
+    def forward(self, x):
+        return self.linear(x), None
+
+
+class MoEModel(nn.Module):
+    """Model with dense and expert linear layers for testing normalize_moe_lora."""
+
+    def __init__(self, moe_router_topk=2):
+        super().__init__()
+        self.decoder = nn.Module()
+        self.decoder.layers = nn.ModuleList([nn.Module()])
+
+        layer = self.decoder.layers[0]
+        layer.self_attention = nn.Module()
+        layer.self_attention.linear_proj = MockMegatronLinear(512, 512, moe_router_topk=moe_router_topk)
+        layer.mlp = nn.Module()
+        layer.mlp.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
+        layer.mlp.linear_fc2 = MockMegatronLinear(2048, 512, moe_router_topk=moe_router_topk)
+        layer.mlp.experts = nn.Module()
+        layer.mlp.experts.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
+        layer.mlp.experts.linear_fc2 = MockMegatronLinear(2048, 512, moe_router_topk=moe_router_topk)
+        layer.mlp.shared_experts = nn.Module()
+        layer.mlp.shared_experts.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
 
 
 class TestLoRA:
@@ -332,6 +374,132 @@ class TestLoRA:
             assert isinstance(chunk.linear_proj, LinearAdapter)
             assert isinstance(chunk.linear_fc1, LinearAdapter)
             assert isinstance(chunk.linear_fc2, LinearAdapter)
+
+
+class TestLoRANormalizeMoE:
+    """Tests for LoRA normalize_moe_lora feature."""
+
+    def test_normalize_moe_lora_reduces_expert_dim(self):
+        """Expert layers should get dim // moe_router_topk when normalize_moe_lora is enabled."""
+        model = MoEModel(moe_router_topk=2)
+        lora = LoRA(target_modules=["linear_fc1", "linear_fc2", "linear_proj"], dim=32, normalize_moe_lora=True)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
+            with patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+                lora(model, training=True)
+
+        expert_calls = {}
+        non_expert_calls = {}
+        for call in mock_adapter.call_args_list:
+            name = call.kwargs.get("base_linear_name", "")
+            dim_used = call.args[2] if len(call.args) > 2 else call.kwargs.get("dim")
+            if ".mlp.experts." in name and ".shared_experts." not in name:
+                expert_calls[name] = dim_used
+            else:
+                non_expert_calls[name] = dim_used
+
+        assert len(expert_calls) > 0, "Should have expert adapter calls"
+        assert len(non_expert_calls) > 0, "Should have non-expert adapter calls"
+
+        for name, dim_used in expert_calls.items():
+            assert dim_used == 16, f"Expert layer {name} should get dim=16 (32 // 2), got {dim_used}"
+
+        for name, dim_used in non_expert_calls.items():
+            assert dim_used == 32, f"Non-expert layer {name} should get full dim=32, got {dim_used}"
+
+    def test_normalize_moe_lora_disabled_uses_full_dim(self):
+        """All layers should get full dim when normalize_moe_lora is False (default)."""
+        model = MoEModel(moe_router_topk=2)
+        lora = LoRA(target_modules=["linear_fc1", "linear_fc2"], dim=32, normalize_moe_lora=False)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
+            with patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+                lora(model, training=True)
+
+        for call in mock_adapter.call_args_list:
+            dim_used = call.args[2] if len(call.args) > 2 else call.kwargs.get("dim")
+            assert dim_used == 32, f"All layers should get full dim=32 when normalize_moe_lora=False, got {dim_used}"
+
+    def test_normalize_moe_lora_indivisible_dim_raises(self):
+        """Should raise ValueError when dim is not divisible by moe_router_topk."""
+        model = MoEModel(moe_router_topk=3)
+        lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
+            with patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+                with pytest.raises(ValueError, match="must be divisible by moe_router_topk"):
+                    lora(model, training=True)
+
+    def test_normalize_moe_lora_shared_experts_get_full_dim(self):
+        """Shared expert layers should get full dim (they are excluded by is_expert_linear)."""
+        model = MoEModel(moe_router_topk=2)
+        lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
+            with patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+                lora(model, training=True)
+
+        for call in mock_adapter.call_args_list:
+            name = call.kwargs.get("base_linear_name", "")
+            dim_used = call.args[2] if len(call.args) > 2 else call.kwargs.get("dim")
+            if ".shared_experts." in name:
+                assert dim_used == 32, f"Shared expert {name} should get full dim=32, got {dim_used}"
+
+    def test_normalize_moe_lora_no_op_on_dense_model(self):
+        """normalize_moe_lora=True with a non-MoE model should be a no-op (full dim everywhere)."""
+        model = SimpleModel()
+        lora = LoRA(target_modules=["linear_fc1", "linear_fc2"], dim=32, normalize_moe_lora=True)
+
+        transformed_model = lora(model, training=True)
+
+        assert isinstance(transformed_model.linear_fc1, LinearAdapter)
+        assert isinstance(transformed_model.linear_fc2, LinearAdapter)
+        assert transformed_model.linear_fc1.dim == 32
+        assert transformed_model.linear_fc2.dim == 32
 
 
 class TestLoRAMerge:
