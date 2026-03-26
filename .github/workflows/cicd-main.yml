@@ -59,9 +59,6 @@ permissions:
   id-token: write
   contents: read
 
-env:
-  container-registry: nemoci.azurecr.io
-
 jobs:
   pre-flight:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
@@ -70,6 +67,8 @@ jobs:
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
       default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
       non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+      default_registry: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}
+      non_nvidia_registry: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
     secrets:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
@@ -248,7 +247,7 @@ jobs:
                 }
               }
             }' | jq -r '.data.repository.pullRequests.nodes[].number' | while read -r number; do
-              echo "type=registry,ref=${{ env.container-registry }}/megatron-bridge:$number-buildcache,mode=max"
+              echo "type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:$number-buildcache,mode=max"
             done)
 
           echo "LAST_PRS<<EOF" | tee -a $GITHUB_OUTPUT
@@ -272,7 +271,7 @@ jobs:
             KEY="$BRANCH_SANITIZED"
           fi
           echo "key=$KEY" >> $GITHUB_OUTPUT
-          echo "cache-to=type=registry,ref=${{ env.container-registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
+          echo "cache-to=type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -285,14 +284,14 @@ jobs:
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
           cache-from: |
-            type=registry,ref=${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
-            type=registry,ref=${{ env.container-registry }}/megatron-bridge:main-buildcache,mode=max
+            type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
+            type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:main-buildcache,mode=max
             ${{ steps.cache_from.outputs.LAST_PRS }}
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |
-            ${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
-            ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+            ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
+            ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
 
@@ -369,7 +368,7 @@ jobs:
           fi
 
           echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
+          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
 
       - name: main
@@ -383,7 +382,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
@@ -430,7 +429,7 @@ jobs:
           fi
 
           echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
+          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
 
       - name: main
@@ -444,7 +443,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
@@ -542,7 +541,7 @@ jobs:
           fi
 
           echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
+          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
 
       - name: main
@@ -556,7 +555,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
@@ -610,7 +609,7 @@ jobs:
           fi
 
           echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
+          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
 
       - name: main
@@ -624,7 +623,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
@@ -678,7 +677,7 @@ jobs:
           fi
 
           echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
+          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
 
       - name: main
@@ -692,7 +691,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
@@ -737,7 +736,7 @@ jobs:
           fi
 
           echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
+          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
 
       - name: main
@@ -752,7 +751,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
