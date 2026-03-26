@@ -45,6 +45,7 @@ _MULTIMODAL_KEYS = (
     "pixel_values_videos",
     "video_grid_thw",
     "video_second_per_grid",
+    "visual_inputs",
     "input_features",
     "feature_attention_mask",
     "audio_feature_lengths",
@@ -74,7 +75,17 @@ def get_batch_from_iterator(
     batch_required_keys: dict[str, Any] = {}
     for key, value in batch.items():
         if key in required_device_keys:
-            batch_required_keys[key] = value.cuda(non_blocking=True) if value is not None else None
+            if key == "visual_inputs":
+                if value is None:
+                    batch_required_keys[key] = None
+                else:
+                    batch_required_keys[key] = value
+                    for visual_key, visual_value in value.__dict__.items():
+                        value.__dict__[visual_key] = (
+                            visual_value.cuda(non_blocking=True) if visual_value is not None else None
+                        )
+            else:
+                batch_required_keys[key] = value.cuda(non_blocking=True) if value is not None else None
         else:
             batch_required_keys[key] = value
 
@@ -85,7 +96,12 @@ def _normalize_multimodal_inputs(batch: dict[str, Any]) -> dict[str, torch.Tenso
     """Normalize multimodal batch tensors for Qwen3-Omni model forward."""
 
     normalized: dict[str, torch.Tensor] = {}
+    visual_inputs = batch.get("visual_inputs")
+    if visual_inputs is not None:
+        normalized.update(visual_inputs.normalized_for_model())
     for key in _MULTIMODAL_KEYS:
+        if key == "visual_inputs":
+            continue
         value = batch.get(key)
         if value is None:
             continue

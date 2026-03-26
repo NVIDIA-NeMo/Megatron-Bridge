@@ -68,6 +68,18 @@ if "megatron.bridge.recipes.utils.optimizer_utils" not in sys.modules:
     fake_optimizer_utils.distributed_fused_adam_with_cosine_annealing = _fake_distributed_fused_adam_with_cosine_annealing
     sys.modules["megatron.bridge.recipes.utils.optimizer_utils"] = fake_optimizer_utils
 
+if "megatron.bridge.data.vlm_datasets.preloaded_provider" not in sys.modules:
+    fake_preloaded = types.ModuleType("megatron.bridge.data.vlm_datasets.preloaded_provider")
+
+    class _FakePreloadedVLMConversationProvider:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+            self.pack_sequences_in_batch = False
+
+    fake_preloaded.PreloadedVLMConversationProvider = _FakePreloadedVLMConversationProvider
+    sys.modules["megatron.bridge.data.vlm_datasets.preloaded_provider"] = fake_preloaded
+
 _RECIPE_PATH = (
     pathlib.Path(__file__).resolve().parents[4]
     / "src"
@@ -144,3 +156,17 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
     assert cfg.dataset.hf_processor_path == "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
     assert cfg.optimizer.lr == 5e-6
+
+
+def test_qwen3_omni_preloaded_recipe_uses_preloaded_provider(monkeypatch):
+    monkeypatch.setattr(_qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_preloaded_config()
+
+    assert cfg.dataset is not None
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.dataset.hf_processor_path == "Qwen/Qwen3-Omni-30B-A3B-Instruct"
+    assert cfg.dataset.train_data_path is None
+    assert cfg.dataset.valid_data_path is None
+    assert cfg.dataset.test_data_path is None
+    assert cfg.dataset.pack_sequences_in_batch is False

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 
@@ -95,4 +96,24 @@ def qwen3_omni_30b_a3b_sft_config(
 
     cfg = _sft_common_vlm()
     _qwen3_omni_apply_common(cfg, hf_path, tp=1, pp=1, max_lr=5e-6, min_lr=5e-7)
+    return cfg
+
+
+def qwen3_omni_30b_a3b_sft_preloaded_config(
+    hf_path: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+) -> "ConfigContainer":
+    """Return a thinker-only SFT config backed by preloaded local JSON/JSONL data."""
+
+    cfg = _sft_common_vlm()
+    _qwen3_omni_apply_common(cfg, hf_path, tp=1, pp=1, max_lr=5e-6, min_lr=5e-7)
+    cfg.dataset = PreloadedVLMConversationProvider(
+        seq_length=cfg.model.seq_length,
+        hf_processor_path=hf_path,
+        train_data_path=None,
+        valid_data_path=None,
+        test_data_path=None,
+        dataloader_type="single",
+        num_workers=2,
+    )
+    cfg.dataset.pack_sequences_in_batch = False
     return cfg
