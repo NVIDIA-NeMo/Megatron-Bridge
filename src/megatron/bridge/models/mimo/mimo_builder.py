@@ -106,15 +106,3 @@ def is_pp_last_stage(pp_group: Optional[dist.ProcessGroup]) -> bool:
         return True
     pp_ranks = sorted(dist.get_process_group_ranks(pp_group))
     return dist.get_rank() == pp_ranks[-1]
-
-
-def is_current_rank_in_grid(grid: "HyperCommGrid") -> bool:
-    """Check if the current rank participates in this grid.
-
-    Args:
-        grid: A HyperCommGrid instance.
-
-    Returns:
-        True if dist.get_rank() is within the grid's rank range.
-    """
-    return grid.rank_offset <= dist.get_rank() < (grid.rank_offset + grid.size)

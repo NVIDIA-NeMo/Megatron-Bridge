@@ -3,68 +3,8 @@
 
 from unittest.mock import MagicMock, patch
 
-from megatron.bridge.models.mimo.mimo_builder import is_current_rank_in_grid
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 from megatron.bridge.models.mimo.mimo_ddp import wrap_mimo_model_distributed
-
-
-class TestIsCurrentRankInGrid:
-    """Test cases for is_current_rank_in_grid helper."""
-
-    @patch("torch.distributed.get_rank")
-    def test_rank_in_grid(self, mock_get_rank):
-        """Rank within grid range should return True."""
-        mock_get_rank.return_value = 2
-
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 0
-        mock_grid.size = 4
-
-        assert is_current_rank_in_grid(mock_grid) is True
-
-    @patch("torch.distributed.get_rank")
-    def test_rank_at_grid_start(self, mock_get_rank):
-        """Rank at grid start should return True."""
-        mock_get_rank.return_value = 4
-
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 4
-        mock_grid.size = 4
-
-        assert is_current_rank_in_grid(mock_grid) is True
-
-    @patch("torch.distributed.get_rank")
-    def test_rank_at_grid_end_exclusive(self, mock_get_rank):
-        """Rank at grid end (exclusive) should return False."""
-        mock_get_rank.return_value = 8
-
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 4
-        mock_grid.size = 4
-
-        assert is_current_rank_in_grid(mock_grid) is False
-
-    @patch("torch.distributed.get_rank")
-    def test_rank_before_grid(self, mock_get_rank):
-        """Rank before grid range should return False."""
-        mock_get_rank.return_value = 2
-
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 4
-        mock_grid.size = 4
-
-        assert is_current_rank_in_grid(mock_grid) is False
-
-    @patch("torch.distributed.get_rank")
-    def test_rank_after_grid(self, mock_get_rank):
-        """Rank after grid range should return False."""
-        mock_get_rank.return_value = 10
-
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 0
-        mock_grid.size = 4
-
-        assert is_current_rank_in_grid(mock_grid) is False
 
 
 class TestWrapMimoModelDistributed:

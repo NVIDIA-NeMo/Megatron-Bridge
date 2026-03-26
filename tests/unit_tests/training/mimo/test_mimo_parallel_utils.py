@@ -50,6 +50,18 @@ class TestIsCurrentRankInGrid:
         mock_dist.get_rank.return_value = 8
         assert is_current_rank_in_grid(mock_grid) is False
 
+    @patch("megatron.bridge.training.mimo_parallel_utils.dist")
+    def test_rank_before_grid(self, mock_dist):
+        """Test rank before grid range returns False."""
+        from megatron.bridge.training.mimo_parallel_utils import is_current_rank_in_grid
+
+        mock_dist.get_rank.return_value = 2
+        mock_grid = MagicMock()
+        mock_grid.rank_offset = 4
+        mock_grid.size = 4
+
+        assert is_current_rank_in_grid(mock_grid) is False
+
 
 class TestValidateNoStubRanks:
     """Test cases for validate_no_stub_ranks()."""

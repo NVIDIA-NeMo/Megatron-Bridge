@@ -12,8 +12,6 @@ from typing import TYPE_CHECKING, Dict, Optional
 
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
-from megatron.bridge.models.mimo.mimo_builder import is_current_rank_in_grid
-
 
 if TYPE_CHECKING:
     from megatron.core.distributed import DistributedDataParallelConfig
@@ -46,6 +44,9 @@ def wrap_mimo_model_distributed(
         The same mimo_model with wrapped submodules.
     """
     from megatron.core.distributed import DistributedDataParallel
+
+    # Lazy import to avoid circular dependency (models layer loads before training layer)
+    from megatron.bridge.training.mimo_parallel_utils import is_current_rank_in_grid
 
     # Wrap language model if present and rank participates
     if mimo_model.language_model is not None:
