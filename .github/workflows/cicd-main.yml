@@ -131,7 +131,7 @@ jobs:
   cicd-container-build:
     needs: [pre-flight, cicd-wait-in-queue]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     if: |
       (
         success()
@@ -340,7 +340,7 @@ jobs:
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests_Core
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -401,7 +401,7 @@ jobs:
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests_Diffusion
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -512,7 +512,7 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -580,7 +580,7 @@ jobs:
       && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true' || needs.check-labels.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -648,7 +648,7 @@ jobs:
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -707,7 +707,7 @@ jobs:
     needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: ${{ matrix.script }}
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
