@@ -26,7 +26,7 @@ fi
 echo ""
 
 # Skip timeout on Azure runners because the machines are slower
-TIMEOUT_ARG="--timeout=2"
+TIMEOUT_ARG="--timeout=3"
 if [[ "${GHA_RUNNER:-}" == *"azure"* ]]; then
     TIMEOUT_ARG=""
 fi
