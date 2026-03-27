@@ -350,30 +350,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for unit tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 UNIT TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
-
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -410,30 +386,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for unit tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 UNIT TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
 
       - name: main
         uses: ./.github/actions/test-template
@@ -523,30 +475,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for functional tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
-
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -590,30 +518,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for functional tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
 
       - name: main
         uses: ./.github/actions/test-template
@@ -659,30 +563,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for functional tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
-
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -717,30 +597,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for functional tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
 
       - name: main
         uses: ./.github/actions/test-template
