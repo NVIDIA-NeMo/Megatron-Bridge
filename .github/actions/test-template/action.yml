@@ -132,7 +132,6 @@ runs:
           --env RUN_ID=${{ github.run_id }} \
           --env UV_NO_SYNC=1 \
           --workdir /opt/Megatron-Bridge \
-          --volume ${{ github.workspace }}/Megatron-Bridge/src:/opt/Megatron-Bridge/src \
           $VOLUME_ARGS \
           ${{ inputs.container-image }} \
           bash -c "sleep $(( ${{ inputs.timeout }} * 60 + 60 ))"
