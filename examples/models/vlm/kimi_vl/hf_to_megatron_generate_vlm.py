@@ -184,17 +184,19 @@ def load_image(image_path: str) -> Image.Image:
 
 
 def process_image_inputs(
-    processor, tokenizer, image_path: Optional[str], prompt: str, tp_size: int = 1, image_token_id: int = 163605
+    processor, image_path: Optional[str], prompt: str, image_token_id: int = 163605
 ):
     """Process image inputs for Kimi VL model.
 
-    Uses the KimiK25Processor directly with messages format, and pads
-    input_ids to be divisible by tp_size for sequence parallel.
+    Uses the KimiK25Processor directly with messages format.
 
     When images are present, pre-expands image placeholder tokens so that
     input_ids.size(1) matches the actual sequence length after vision feature
     insertion. This is required for PP > 1 where the pipeline schedule
     pre-allocates recv buffers based on seq_length.
+
+    Note: TP padding is NOT applied here. The generation loop handles padding
+    separately so that logit sampling always uses the last real token position.
 
     Returns:
         Tuple of (input_ids, pixel_values, grid_thws)
@@ -214,7 +216,6 @@ def process_image_inputs(
         grid_thws = getattr(inputs, "grid_thws", None)
         # Pre-expand image placeholders so seq_length matches the expanded length
         input_ids = pre_expand_image_tokens(inputs.input_ids, grid_thws, image_token_id)
-        input_ids = pad_input_ids_to_tp_multiple(input_ids, tp_size, tokenizer.pad_token_id or 0)
         return input_ids, inputs.pixel_values, grid_thws
     else:
         messages = [
@@ -226,8 +227,7 @@ def process_image_inputs(
             }
         ]
         inputs = processor(messages=messages, return_tensors="pt")
-        input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, None, None
+        return inputs.input_ids, None, None
 
 
 def main(args) -> None:
@@ -311,7 +311,7 @@ def main(args) -> None:
 
     # Process inputs
     input_ids, pixel_values, grid_thws = process_image_inputs(
-        processor, tokenizer, args.image_path, args.prompt, tp_size=tp
+        processor, args.image_path, args.prompt
     )
 
     # Move to GPU
@@ -327,13 +327,17 @@ def main(args) -> None:
         else:
             grid_thws = grid_thws.cuda()
 
+    # Track the real (unpadded) sequence length so we sample logits from the
+    # last real token, not from a TP-padding position.
+    real_seq_len = input_ids.size(1)
+    input_ids = pad_input_ids_to_tp_multiple(input_ids, tp, tokenizer.pad_token_id or 0)
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
     )
     # Megatron-Core convention: True in attention_mask means "mask OUT this token"
     # (opposite of HuggingFace). Passing None lets Megatron auto-generate the correct causal mask.
     attention_mask = None
-    generated_ids = input_ids.clone()
+    generated_ids = input_ids[:, :real_seq_len].clone()
 
     stop_tokens = [tokenizer.eos_token_id]
 
@@ -363,11 +367,13 @@ def main(args) -> None:
                 gathered_tensors = [torch.zeros_like(output) for _ in range(world_size)]
                 dist.all_gather(gathered_tensors, output, group=parallel_state.get_tensor_model_parallel_group())
                 output = torch.cat(gathered_tensors, dim=2)
-                next_token_ids = torch.argmax(output[:, -1], dim=-1, keepdim=True)
+                # Sample from the last real token position, not the TP-padded position
+                last_real_pos = real_seq_len - 1
+                next_token_ids = torch.argmax(output[:, last_real_pos], dim=-1, keepdim=True)
 
                 if step < 5:
-                    print_rank_last(f"Step {step}: output shape={output.shape}, var={output.var():.4f}")
-                    logits = output[0, -1, :]
+                    print_rank_last(f"Step {step}: output shape={output.shape}, real_seq_len={real_seq_len}, var={output.var():.4f}")
+                    logits = output[0, last_real_pos, :]
                     top5_vals, top5_ids = torch.topk(logits, 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
                     print_rank_last(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
@@ -379,6 +385,7 @@ def main(args) -> None:
 
             torch.distributed.broadcast(next_token_ids, get_last_rank())
             generated_ids = torch.cat([generated_ids, next_token_ids], dim=-1)
+            real_seq_len = generated_ids.size(1)
 
             input_ids = pad_input_ids_to_tp_multiple(generated_ids, tp, tokenizer.pad_token_id or 0)
             position_ids = (
