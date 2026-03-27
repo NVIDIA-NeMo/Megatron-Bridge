@@ -115,9 +115,6 @@ runs:
         #!/bin/bash
         docker container rm -f nemo_container_${{ github.run_id }} || true
 
-        # Only mount Megatron-Bridge/src directory to avoid overwriting the Megatron-LM submodule.
-        # The container will have built Megatron-LM including the datasets_cpp helper file already.
-        # Additionally, the container may be built with a different Megatron-LM commit as part of MCore's downstream testing.
         docker run \
           --rm \
           -d \
