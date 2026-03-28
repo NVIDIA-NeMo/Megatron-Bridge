@@ -24,7 +24,7 @@ overrides = [
     { name = "nvidia-modelopt", specifier = ">=0.42.0a0", index = "https://pypi.nvidia.com/" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=287770466f0f4433052260a765db5ff7b8be1320" },
+    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=71bbefbf153418f943640df0f7373625dc93fa46" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
 ]
@@ -7657,8 +7657,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.13.0+28777046"
-source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=287770466f0f4433052260a765db5ff7b8be1320#287770466f0f4433052260a765db5ff7b8be1320" }
+version = "2.14.0+71bbefbf"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=71bbefbf153418f943640df0f7373625dc93fa46#71bbefbf153418f943640df0f7373625dc93fa46" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },
