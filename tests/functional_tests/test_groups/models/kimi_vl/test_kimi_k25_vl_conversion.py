@@ -31,8 +31,6 @@ from pathlib import Path
 
 import pytest
 import torch
-
-import megatron.bridge.models.conversion.transformers_compat  # noqa: F401 – patch is_torch_fx_available for transformers 5.x
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 
@@ -77,6 +75,27 @@ class TestKimiK25VLConversion:
         for cfg in (config, text):
             if hasattr(cfg, "quantization_config"):
                 delattr(cfg, "quantization_config")
+
+        # Patch KimiK25ForConditionalGeneration.tie_weights to accept the
+        # `recompute_mapping` / `missing_keys` kwargs added in transformers 5.x.
+        # The HF custom code defines tie_weights() with the old signature, so
+        # calling it with the new kwargs raises a TypeError.
+        try:
+            from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+            KimiGenCls = get_class_from_dynamic_module(
+                "modeling_kimi_k25.KimiK25ForConditionalGeneration",
+                "moonshotai/Kimi-K2.5",
+            )
+            if "recompute_mapping" not in inspect.signature(KimiGenCls.tie_weights).parameters:
+                _orig_tw = KimiGenCls.tie_weights
+
+                def _compat_tie_weights(self, missing_keys=None, recompute_mapping=True):
+                    return _orig_tw(self)
+
+                KimiGenCls.tie_weights = _compat_tie_weights
+        except Exception:
+            pass
 
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
         model = model.to(dtype=torch.bfloat16)

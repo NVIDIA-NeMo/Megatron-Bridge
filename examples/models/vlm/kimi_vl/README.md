@@ -15,6 +15,10 @@ Ensure the following are available:
 - `HF_HOME`: (optional) to cache downloaded models and datasets
 - `WANDB_API_KEY`: (optional) to enable WandB logging
 
+Directory structure:
+- `${WORKSPACE}/models/` - Converted checkpoints
+- `${WORKSPACE}/results/` - Training outputs and experiment results
+
 ## Step 1: Download the Full Model
 
 The full model is hosted on HuggingFace. Download it or let the scripts
@@ -68,6 +72,8 @@ python examples/conversion/convert_checkpoints.py export \
     --hf-path ${WORKSPACE}/models/Kimi-K2.5-hf-export
 ```
 
+See the [conversion.sh](conversion.sh) script for more examples including multi-GPU round-trip validation.
+
 ## Step 3: HF vs Megatron Comparison
 
 Compare 1-step forward-pass outputs between HuggingFace and Megatron.
@@ -76,7 +82,7 @@ The full model requires multi-node with TP=2, EP=48:
 ```bash
 # Requires 48 GPUs (6 nodes × 8 GPUs)
 torchrun --nproc_per_node=8 --nnodes=6 \
-    examples/models/vlm/kimi_vl/compare.py \
+    examples/conversion/compare_hf_and_megatron/compare.py \
     --hf_model_path moonshotai/Kimi-K2.5 \
     --trust_remote_code \
     --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
@@ -89,6 +95,25 @@ torchrun --nproc_per_node=8 --nnodes=6 \
 Run greedy auto-regressive generation through the Megatron model.
 Recommended parallelism: TP=2, EP=48, PP=1 (48 GPUs, 6+ nodes).
 
+Kimi K2.5 VL uses a model-specific generation script that handles PP layout,
+pre-expanding image placeholders for pipeline parallelism, and Kimi processor patching.
+
+### Single-Node Inference (≤ 8 GPUs)
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=8 \
+    examples/models/vlm/kimi_vl/hf_to_megatron_generate_vlm.py \
+    --hf_model_path moonshotai/Kimi-K2.5 \
+    --trust_remote_code \
+    --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
+    --prompt "Describe this image." \
+    --tp 2 --ep 4
+```
+
+See the [inference.sh](inference.sh) script for additional inference configurations.
+
+### Multi-Node Inference (Full Model)
+
 **Via SLURM** (recommended):
 
 ```bash
@@ -99,13 +124,12 @@ Note:
 - `--trust_remote_code` is required for Kimi-K2.5 models.
 - You can optionally pass `--megatron_model_path` to use a pre-converted checkpoint (faster startup).
 
-
 ## Step 5: SFT Training
 
 Full training run with explicit parallelism, logging, and checkpoint settings.
 Recommended parallelism: TP=2, PP=2, EP=64 (128 GPUs, 16 nodes).
 
-NOTE: sft is not test yet, we will update slurm_sft.sh as soon as we test it.
+NOTE: SFT is not tested yet, we will update slurm_sft.sh as soon as we test it.
 
 **Via SLURM** (recommended):
 
@@ -116,3 +140,7 @@ sbatch examples/models/vlm/kimi_vl/slurm_sft.sh
 Note: Unlike the toy model, no architecture overrides (hidden_size, ffn_hidden_size,
 num_moe_experts, etc.) are needed — the recipe loads the full model architecture
 from the HuggingFace config automatically.
+
+## Evaluation
+
+Coming soon.
