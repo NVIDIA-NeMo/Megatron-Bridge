@@ -612,6 +612,7 @@ class TestNemotron3NanoConversion:
             trust_remote_code=True,
         )
 
+
 # Overrides for Nemotron-3-Super MoE model (120B total, 12B active)
 HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES = {
     "layers_block_type": ["mamba", "attention", "moe"],
