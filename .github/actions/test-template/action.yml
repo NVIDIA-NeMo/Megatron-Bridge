@@ -69,6 +69,21 @@ runs:
         path: ${{ github.workspace }}/Megatron-Bridge
         submodules: recursive
 
+    - name: Update MCore submodule (if triggered from MCore)
+      if: ${{ github.event.inputs.mcore_commit != '' }}
+      shell: bash
+      working-directory: ${{ github.workspace }}/Megatron-Bridge
+      run: |
+        echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_commit }}"
+        echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
+        cd 3rdparty/Megatron-LM
+        git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
+        git checkout ${{ github.event.inputs.mcore_commit }}
+
+        ACTUAL_COMMIT=$(git rev-parse HEAD)
+        echo "✅ MCore submodule updated to: ${ACTUAL_COMMIT}"
+        git log -1 --oneline
+
     - name: Install Azure CLI
       if: ${{ inputs.has-azure-credentials == 'true' }}
       shell: bash
@@ -114,7 +129,6 @@ runs:
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
         docker container rm -f nemo_container_${{ github.run_id }} || true
-
         docker run \
           --rm \
           -d \
@@ -127,8 +141,8 @@ runs:
           --env HF_HOME=/home/TestData/HF_HOME \
           --env NEMO_HOME=/home/TestData/nemo_home \
           --env RUN_ID=${{ github.run_id }} \
-          --env UV_NO_SYNC=1 \
           --workdir /opt/Megatron-Bridge \
+          --volume ${{ github.workspace }}/Megatron-Bridge:/opt/Megatron-Bridge \
           $VOLUME_ARGS \
           ${{ inputs.container-image }} \
           bash -c "sleep $(( ${{ inputs.timeout }} * 60 + 60 ))"
