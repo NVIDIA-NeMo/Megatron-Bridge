@@ -75,6 +75,7 @@ class MockMegatronLinear(nn.Module):
     """Mock Megatron linear layer that's not nn.Linear to trigger parallel adapter path."""
 
     def __init__(self, in_features, out_features, moe_router_topk=None):
+        """Initialize with given dimensions and optional moe_router_topk on the mock config."""
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
         self.in_features = in_features
@@ -88,6 +89,7 @@ class MockMegatronLinear(nn.Module):
         self.config = MockConfig()
 
     def forward(self, x):
+        """Return (output, None) tuple like Megatron parallel linear layers."""
         return self.linear(x), None
 
 
@@ -95,6 +97,7 @@ class MoEModel(nn.Module):
     """Model with dense and expert linear layers for testing normalize_moe_lora."""
 
     def __init__(self, moe_router_topk=2):
+        """Build a model with dense MLP, routed experts, and shared experts."""
         super().__init__()
         self.decoder = nn.Module()
         self.decoder.layers = nn.ModuleList([nn.Module()])

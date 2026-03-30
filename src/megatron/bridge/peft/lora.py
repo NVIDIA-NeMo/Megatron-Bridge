@@ -102,11 +102,13 @@ class LoRA(PEFT, ModuleMatcher):
             return self.dim
         topk = getattr(getattr(module, "config", None), "moe_router_topk", None)
         if topk is None or topk <= 0:
-            return self.dim
+            raise ValueError(
+                f"normalize_moe_lora is enabled but moe_router_topk is {topk!r}; "
+                f"it must be set to a positive integer on the model config"
+            )
         if self.dim % topk != 0:
             raise ValueError(
-                f"LoRA dim={self.dim} must be divisible by moe_router_topk={topk} "
-                f"when normalize_moe_lora is enabled"
+                f"LoRA dim={self.dim} must be divisible by moe_router_topk={topk} when normalize_moe_lora is enabled"
             )
         return self.dim // topk
 
