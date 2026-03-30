@@ -100,3 +100,29 @@ before producing the final answer. The first 100 generated tokens look like:
 The model correctly identifies the beach scene, golden hour lighting, the
 woman, and the dog breed. Kimi-K2.5 is a thinking model, so the initial output
 is always the internal `<think>` reasoning chain before the final response.
+
+## Supervised Fine-Tuning (SFT)
+
+See [slurm_sft.sh](slurm_sft.sh) for full-parameter SFT. The recipe uses:
+- **Recipe**: `kimi_k25_vl_sft_config`
+- **Parallelism**: TP=2, PP=16, EP=32 (1024 GPUs, 128 nodes)
+- **Optimizer**: Distributed Muon with cosine annealing
+- **MoE dispatcher**: alltoall with DeepEP backend
+- **Recompute**: full, uniform, 1 layer
+
+```bash
+sbatch examples/models/vlm/kimi_k25_vl/slurm_sft.sh
+```
+
+Before training, ensure the following are configured:
+1. **Container Image**: Set `CONTAINER_IMAGE` in the SLURM script
+2. **Container Mounts**: (optional) Set `CONTAINER_MOUNTS` for data and workspace
+3. **Environment Variables**:
+   - `HF_TOKEN`: to download models from HF Hub
+   - `HF_HOME`: (optional) to avoid re-downloading models
+   - `WANDB_API_KEY`: (optional) to enable WandB logging
+
+Note:
+- `--trust_remote_code` is required for Kimi-K2.5 models.
+- The recipe uses `--hf_path` to pass the HF model path for reliable config
+  loading in multi-node environments.
