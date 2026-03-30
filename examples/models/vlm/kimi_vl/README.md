@@ -1,86 +1,118 @@
-# Kimi K2.5 VL Examples
+# Kimi-K2.5-VL Full-Model Guide
 
-This directory contains example scripts for the Kimi K2.5 Vision-Language model (~1T parameters, 384 MoE experts).
+Step-by-step guide to run the full Kimi-K2.5-VL pipeline (conversion,
+inference, comparison, training) using the full-size model (~1T params,
+384 MoE experts, FP8 expert weights). Multi-node SLURM required.
 
-## Workspace Configuration
-
-All scripts use a `WORKSPACE` environment variable to define the base directory for checkpoints and results. By default, this is set to `/workspace`. You can override it:
+## Prerequisites
 
 ```bash
 export WORKSPACE=/your/custom/path
 ```
 
-Directory structure:
-- `${WORKSPACE}/models/` - Converted checkpoints
-- `${WORKSPACE}/results/` - Training outputs and experiment results
+Ensure the following are available:
+- `HF_TOKEN`: to download `moonshotai/Kimi-K2.5` from HuggingFace Hub
+- `HF_HOME`: (optional) to cache downloaded models and datasets
+- `WANDB_API_KEY`: (optional) to enable WandB logging
 
-## Checkpoint Conversion
+## Step 1: Download the Full Model
 
-### Import HF → Megatron
+The full model is hosted on HuggingFace. Download it or let the scripts
+pull it on-the-fly:
+
+```bash
+huggingface-cli download moonshotai/Kimi-K2.5 \
+    --local-dir ${WORKSPACE}/models/Kimi-K2.5
+```
+
+Alternatively, you can pass `moonshotai/Kimi-K2.5` directly to scripts
+and they will download automatically (requires `HF_TOKEN`).
+
+## Step 2: Checkpoint Conversion (HF → Megatron → HF)
+
+**Import** the full HF checkpoint into Megatron format:
 
 ```bash
 python examples/conversion/convert_checkpoints.py import \
-  --hf-model moonshotai/Kimi-K2.5 \
-  --megatron-path ${WORKSPACE}/models/Kimi-K2.5 \
-  --trust-remote-code
+    --hf-model moonshotai/Kimi-K2.5 \
+    --megatron-path ${WORKSPACE}/models/Kimi-K2.5-megatron \
+    --trust-remote-code
 ```
 
-### Export Megatron → HF
+For faster multi-GPU conversion, use `convert_checkpoints_multi_gpu.py` via SLURM:
+
+```bash
+srun --mpi=pmix -A <YOUR_ACCOUNT> \
+    --partition batch \
+    -N4 \
+    -t 4:00:00 \
+    --container-image=<CONTAINER_IMAGE> \
+    --container-mounts=<YOUR_MOUNT> \
+    --no-container-entrypoint \
+    --no-container-remap-root \
+    --exclusive \
+    --gres=gpu:8 \
+    --ntasks-per-node=8 \
+    python examples/conversion/convert_checkpoints_multi_gpu.py import \
+        --hf-model moonshotai/Kimi-K2.5 \
+        --megatron-path ${WORKSPACE}/models/Kimi-K2.5-megatron \
+        --tp 8 --ep 8 --pp 4
+```
+
+**Export** back to HF format for round-trip verification:
 
 ```bash
 python examples/conversion/convert_checkpoints.py export \
-  --hf-model moonshotai/Kimi-K2.5 \
-  --megatron-path ${WORKSPACE}/models/Kimi-K2.5/iter_0000000 \
-  --hf-path ${WORKSPACE}/models/Kimi-K2.5-hf-export \
-  --trust-remote-code
+    --hf-model moonshotai/Kimi-K2.5 \
+    --megatron-path ${WORKSPACE}/models/Kimi-K2.5-megatron/iter_0000000 \
+    --hf-path ${WORKSPACE}/models/Kimi-K2.5-hf-export
 ```
 
-See the [conversion.sh](conversion.sh) script for more examples including multi-GPU round-trip validation.
+## Step 3: HF vs Megatron Comparison
 
-## Inference
-
-Kimi K2.5 VL uses a model-specific generation script that handles PP layout, pre-expanding image placeholders for pipeline parallelism, and Kimi processor patching.
-
-### Single-Node Inference (≤ 8 GPUs)
+Compare 1-step forward-pass outputs between HuggingFace and Megatron.
+The full model requires multi-node with TP=2, EP=48:
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 \
-  examples/models/vlm/kimi_vl/hf_to_megatron_generate_vlm.py \
-  --hf_model_path moonshotai/Kimi-K2.5 \
-  --trust_remote_code \
-  --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
-  --prompt "Describe this image." \
-  --tp 2 --ep 4
+# Requires 48 GPUs (6 nodes × 8 GPUs)
+torchrun --nproc_per_node=8 --nnodes=6 \
+    examples/models/vlm/kimi_vl/compare.py \
+    --hf_model_path moonshotai/Kimi-K2.5 \
+    --trust_remote_code \
+    --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
+    --prompt "Describe this image." \
+    --tp 2 --ep 48
 ```
 
-See the [inference.sh](inference.sh) script for additional inference configurations.
+## Step 4: Inference (HF-to-Megatron Generation)
 
-### Multi-Node Inference (Full Model)
+Run greedy auto-regressive generation through the Megatron model.
+Recommended parallelism: TP=2, EP=48, PP=1 (48 GPUs, 6+ nodes).
 
-The full Kimi K2.5 VL model requires 12 nodes (96 GPUs) with TP=2, EP=48.
-See the [slurm_inference.sh](slurm_inference.sh) script for multi-node Slurm-based inference.
+**Via SLURM** (recommended):
 
-## Finetune Recipes
+```bash
+sbatch examples/models/vlm/kimi_vl/slurm_inference.sh
+```
 
-- Available recipes:
-  - `kimi_k25_vl_sft_config`: Full model SFT with Muon optimizer
+Note:
+- `--trust_remote_code` is required for Kimi-K2.5 models.
+- You can optionally pass `--megatron_model_path` to use a pre-converted checkpoint (faster startup).
 
-Before training, ensure the following environment variables are set:
-1. `SAVE_DIR`: checkpoint and log saving directory
-2. `HF_TOKEN`: to download models from HF Hub (if required)
-3. `HF_HOME`: (optional) to avoid re-downloading models and datasets
-4. `WANDB_API_KEY`: (optional) to enable WandB logging
 
-### Pretrain
+## Step 5: SFT Training
 
-Pretraining is not verified for this model.
+Full training run with explicit parallelism, logging, and checkpoint settings.
+Recommended parallelism: TP=2, PP=2, EP=64 (128 GPUs, 16 nodes).
 
-### Supervised Fine-Tuning (SFT)
+NOTE: sft is not test yet, we will update slurm_sft.sh as soon as we test it.
 
-See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning.
+**Via SLURM** (recommended):
 
-Recommended parallelism: TP=4, PP=4, EP=32 → 128 GPUs (16 nodes).
+```bash
+sbatch examples/models/vlm/kimi_vl/slurm_sft.sh
+```
 
-## Evaluation
-
-Coming soon.
+Note: Unlike the toy model, no architecture overrides (hidden_size, ffn_hidden_size,
+num_moe_experts, etc.) are needed — the recipe loads the full model architecture
+from the HuggingFace config automatically.
