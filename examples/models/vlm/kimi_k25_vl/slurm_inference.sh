@@ -75,7 +75,7 @@ else
 fi
 
 CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 15; fi && "
-CMD="${CMD}uv run --no-sync python examples/models/vlm/kimi_vl/hf_to_megatron_generate_vlm.py"
+CMD="${CMD}uv run --no-sync python examples/conversion/hf_to_megatron_generate_vlm.py"
 CMD="$CMD --hf_model_path $HF_MODEL_PATH"
 CMD="$CMD --trust_remote_code"
 CMD="$CMD $MEGATRON_CKPT_ARG"
