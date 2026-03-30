@@ -279,3 +279,23 @@ class TestKimiK25VLBridgeWeightConversion:
         """Test _is_quantized_expert_key returns False for non-expert keys."""
         assert kimi_bridge._is_quantized_expert_key("model.layers.5.self_attn.q_proj.weight") is False
         assert kimi_bridge._is_quantized_expert_key("model.embed_tokens.weight") is False
+
+    @patch("megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge.dequantize_int4")
+    def test_load_and_dequantize_uses_source_tensor_device(self, mock_dequantize, kimi_bridge):
+        """Quantized loads should dequantize on the source tensor device."""
+        packed = torch.zeros((2, 1), dtype=torch.int32)
+        scale = torch.ones((2, 1), dtype=torch.float16)
+        shape = torch.tensor([2, 8], dtype=torch.int64)
+        mock_dequantize.return_value = torch.zeros((2, 8), dtype=torch.bfloat16)
+
+        kimi_bridge._load_and_dequantize(
+            "language_model.model.layers.5.mlp.experts.0.gate_proj.weight",
+            {
+                "language_model.model.layers.5.mlp.experts.0.gate_proj.weight_packed": packed,
+                "language_model.model.layers.5.mlp.experts.0.gate_proj.weight_scale": scale,
+                "language_model.model.layers.5.mlp.experts.0.gate_proj.weight_shape": shape,
+            },
+        )
+
+        _, kwargs = mock_dequantize.call_args
+        assert kwargs["device"] == packed.device

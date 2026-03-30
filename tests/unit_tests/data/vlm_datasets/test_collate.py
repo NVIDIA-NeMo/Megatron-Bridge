@@ -100,3 +100,22 @@ def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
     vi = batch["visual_inputs"]
     # Ensure fields exist when images present
     assert hasattr(vi, "pixel_values")
+
+
+def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
+    image_token_id = 163605
+    input_ids = torch.tensor([11, image_token_id, 22, image_token_id, 33])
+    attention_mask = torch.ones_like(input_ids)
+    grid_thws = torch.tensor([[1, 4, 4], [2, 6, 4]])
+
+    expanded_input_ids, expanded_attention_mask = collate._expand_image_tokens(
+        input_ids,
+        attention_mask,
+        grid_thws,
+        image_token_id,
+    )
+
+    expected = [11] + [image_token_id] * 4 + [22] + [image_token_id] * 12 + [33]
+    assert expanded_input_ids.tolist() == expected
+    assert expanded_attention_mask.tolist() == [1] * len(expected)
+

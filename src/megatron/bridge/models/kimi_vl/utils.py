@@ -15,12 +15,13 @@
 
 import torch
 
+
 def dequantize_int4(
     weight_packed: torch.Tensor,
     weight_scale: torch.Tensor,
     weight_shape: torch.Tensor,
     group_size: int = 32,
-    device: str = "cuda",
+    device: str | torch.device | None = None,
 ) -> torch.Tensor:
     """Dequantize INT4 packed weights to bfloat16.
 
@@ -39,11 +40,12 @@ def dequantize_int4(
     local_out, local_packed_in = weight_packed.shape
     local_in = local_packed_in * 8  # 8 INT4 values per int32
 
-    use_cuda = device == "cuda" and torch.cuda.is_available()
+    target_device = weight_packed.device if device is None else torch.device(device)
+    use_cuda = target_device.type == "cuda" and torch.cuda.is_available()
 
     if use_cuda:
-        weight_packed = weight_packed.cuda()
-        weight_scale = weight_scale.cuda()
+        weight_packed = weight_packed.to(target_device)
+        weight_scale = weight_scale.to(target_device)
 
     # Unpack INT4: [out, packed_in] -> [out, packed_in, 8] -> [out, in_features]
     shifts = torch.arange(8, device=weight_packed.device) * 4
