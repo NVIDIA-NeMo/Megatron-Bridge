@@ -133,8 +133,6 @@ For a deeper dive into conversion design and advanced usage, see the [models REA
 
 Megatron Bridge provides out-of-the-box bridges and training recipes for a wide range of models, built on top of base model architectures from [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core). Refer to the [models directory](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models) for the full list of model bridges.
 
-For more details, see our documentation: **[LLM](https://docs.nvidia.com/nemo/megatron-bridge/latest/models/llm/index.html)** | **[VLM](https://docs.nvidia.com/nemo/megatron-bridge/latest/models/vlm/index.html)**
-
 ### Nemotron (NVIDIA)
 
 - [Nemotron Nano v2](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/nemotronh) — [recipes (9B/12B)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/nemotronh/nemotron_nano_v2.py)
