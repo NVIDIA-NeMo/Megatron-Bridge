@@ -12,6 +12,9 @@ if HAVE_MEGATRON_BRIDGE:
         nemotron_3_nano_pretrain_config_gb200,
         nemotron_3_nano_pretrain_config_gb300,
         nemotron_3_nano_pretrain_config_h100,
+        nemotron_3_super_pretrain_config_b200,
+        nemotron_3_super_pretrain_config_b300,
+        nemotron_3_super_pretrain_config_gb200,
         nemotron_3_super_pretrain_config_gb300,
     )
     from .nemotronh_llm_pretrain import (
@@ -37,6 +40,15 @@ from .nemotron_3_workload_base_configs import (
     NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_NVFP4_V1,
     NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100_BF16_V1,
     NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100_FP8_CS_V1,
+    NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_BF16_V1,
+    NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_FP8_MX_V1,
+    NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_NVFP4_V1,
+    NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_BF16_V1,
+    NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_FP8_MX_V1,
+    NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_NVFP4_V1,
+    NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_BF16_V1,
+    NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_FP8_MX_V1,
+    NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_NVFP4_V1,
     NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_BF16_V1,
     NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_FP8_MX_V1,
     NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_NVFP4_V1,
@@ -73,6 +85,15 @@ __all__ = [
     "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_BF16_V1",
     "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
     "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_NVFP4_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_BF16_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_FP8_MX_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_NVFP4_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_BF16_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_FP8_MX_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_NVFP4_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_BF16_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_FP8_MX_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_NVFP4_V1",
 ]
 
 if HAVE_MEGATRON_BRIDGE:
@@ -89,5 +110,8 @@ if HAVE_MEGATRON_BRIDGE:
             "nemotron_3_nano_pretrain_config_b200",
             "nemotron_3_nano_pretrain_config_h100",
             "nemotron_3_super_pretrain_config_gb300",
+            "nemotron_3_super_pretrain_config_gb200",
+            "nemotron_3_super_pretrain_config_b300",
+            "nemotron_3_super_pretrain_config_b200",
         ]
     )
