@@ -118,4 +118,3 @@ def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
     expected = [11] + [image_token_id] * 4 + [22] + [image_token_id] * 12 + [33]
     assert expanded_input_ids.tolist() == expected
     assert expanded_attention_mask.tolist() == [1] * len(expected)
-
