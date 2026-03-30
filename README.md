@@ -12,7 +12,7 @@
 
 ## 📣 News
 
-- [03/30/2026] Day 0 support for **Nemotron Super** ([nvidia/Nemotron-Super-49B-v1](https://huggingface.co/nvidia/Nemotron-Super-49B-v1))! Checkpoint conversion and SFT/LoRA recipes are available on the [`super-v3`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/super-v3) branch.
+- [03/11/2026] Day 0 support for **Nemotron Super** ([nvidia/Nemotron-Super-49B-v1](https://huggingface.co/nvidia/Nemotron-Super-49B-v1))! Checkpoint conversion and SFT/LoRA recipes are available on the [`super-v3`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/super-v3) branch. Read the [blog post](https://developer.nvidia.com/blog/introducing-nemotron-3-super-an-open-hybrid-mamba-transformer-moe-for-agentic-reasoning/).
 
 - [03/12/2026] **Deprecating Python 3.10 support:** We're officially dropping Python 3.10 support with the upcoming 0.4.0 release. Downstream applications must raise their lower boundary to 3.12 to stay compatible with Megatron-Bridge.
 
