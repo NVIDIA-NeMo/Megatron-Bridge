@@ -116,7 +116,7 @@ def deepseek_v3_pretrain_config_gb200(
 
 
 def deepseek_v3_pretrain_config_vr200(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v2"
 ) -> ConfigContainer:
     """VR200, baseline config."""
     base_cfg = get_workload_base_config(
