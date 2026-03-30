@@ -148,7 +148,7 @@ class KimiK25VLBridge(MegatronModelBridge):
                 hf_state_dict[packed_key],
                 hf_state_dict[f"{base}.weight_scale"],
                 hf_state_dict[f"{base}.weight_shape"],
-                device="cuda",
+                device=hf_state_dict[packed_key].device,
             )
         else:
             weight = hf_state_dict[key]

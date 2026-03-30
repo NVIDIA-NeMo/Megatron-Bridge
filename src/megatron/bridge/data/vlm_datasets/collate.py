@@ -524,17 +524,15 @@ def _expand_image_tokens(
     media_token_id: int,
     merge_kernel_size: tuple[int, int] = (2, 2),
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Expand single image placeholder tokens to the correct number based on grid_thws.
+    """Expand image placeholder tokens to the correct count based on grid_thws.
 
     For PP, this ensures the sequence length is fixed BEFORE the model forward pass,
     eliminating dynamic sequence expansion inside the model.
 
-    Assumes 1 image per sample (1 placeholder per sequence).
-
     Args:
-        input_ids: (seq_len,) tensor with 1 media_token_id placeholder
+        input_ids: (seq_len,) tensor with one placeholder per image
         attention_mask: (seq_len,) tensor
-        grid_thws: (1, 3) tensor with [t, h, w] for the single image
+        grid_thws: (num_images, 3) tensor with [t, h, w] for each image
         media_token_id: Token ID of the image placeholder
         merge_kernel_size: Vision tower's patch merge kernel, default (2, 2)
 
@@ -544,32 +542,49 @@ def _expand_image_tokens(
     """
     merge_h, merge_w = merge_kernel_size
 
-    # Calculate number of image tokens: (h // merge_h) * (w // merge_w)
-    t, h, w = grid_thws[0].tolist()
-    num_image_tokens = (h // merge_h) * (w // merge_w)
+    # Calculate number of image tokens for each image: t * (h // merge_h) * (w // merge_w)
+    feature_counts = []
+    for grid_thw in grid_thws:
+        t, h, w = (int(x) for x in grid_thw.tolist())
+        feature_counts.append(t * (h // merge_h) * (w // merge_w))
 
-    # Find the placeholder position
+    # Find placeholder positions
     placeholder_positions = (input_ids == media_token_id).nonzero(as_tuple=True)[0]
     if len(placeholder_positions) == 0:
         # No placeholder found, return as-is
         return input_ids, attention_mask
 
-    # For 1 image per sample, there should be exactly 1 placeholder
-    placeholder_pos = placeholder_positions[0].item()
+    if len(placeholder_positions) != len(feature_counts):
+        warnings.warn(
+            "Mismatch between image placeholder count and grid_thws rows during Kimi token expansion; "
+            "expanding as many placeholders as have corresponding grid metadata.",
+            stacklevel=2,
+        )
 
-    # Build expanded tensors
-    before = input_ids[:placeholder_pos]
-    after = input_ids[placeholder_pos + 1 :]
+    expanded_input_ids = []
+    expanded_attention_mask = []
+    feature_idx = 0
 
-    # Expand: replace 1 placeholder with num_image_tokens placeholders
-    expanded_placeholder = torch.full((num_image_tokens,), media_token_id, dtype=input_ids.dtype)
-    expanded_input_ids = torch.cat([before, expanded_placeholder, after])
+    for token_id, mask_value in zip(input_ids.tolist(), attention_mask.tolist()):
+        if token_id == media_token_id and feature_idx < len(feature_counts):
+            expanded_input_ids.extend([media_token_id] * feature_counts[feature_idx])
+            expanded_attention_mask.extend([1] * feature_counts[feature_idx])
+            feature_idx += 1
+            continue
 
-    # Expand attention mask similarly
-    before_mask = attention_mask[:placeholder_pos]
-    after_mask = attention_mask[placeholder_pos + 1 :]
-    expanded_mask_tokens = torch.ones(num_image_tokens, dtype=attention_mask.dtype)
-    expanded_attention_mask = torch.cat([before_mask, expanded_mask_tokens, after_mask])
+        expanded_input_ids.append(token_id)
+        expanded_attention_mask.append(mask_value)
+
+    expanded_input_ids = torch.tensor(
+        expanded_input_ids,
+        dtype=input_ids.dtype,
+        device=input_ids.device,
+    )
+    expanded_attention_mask = torch.tensor(
+        expanded_attention_mask,
+        dtype=attention_mask.dtype,
+        device=attention_mask.device,
+    )
 
     return expanded_input_ids, expanded_attention_mask
 
@@ -583,7 +598,7 @@ def kimi_k25_vl_collate_fn(
 
     For pipeline parallelism, this function:
     1. Processes each sample to get input_ids with 1 placeholder per image
-    2. Pre-expands the placeholder to N tokens (N = (h//2)*(w//2) from grid_thws)
+    2. Pre-expands each placeholder to N tokens (N = t*(h//2)*(w//2) from grid_thws)
     3. Pads all sequences to fixed max_length
     This ensures the model forward pass doesn't change sequence length dynamically.
     """
