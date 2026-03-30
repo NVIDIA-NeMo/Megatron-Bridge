@@ -173,6 +173,7 @@ For more details, see our documentation: **[LLM](https://docs.nvidia.com/nemo/me
 
 ### Omni Models
 
+- [Qwen2 Audio](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_audio)
 - [Qwen2.5-Omni](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_omni)
 
 #### Launching Recipes
