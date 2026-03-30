@@ -35,6 +35,17 @@ from .qwen25_vl import (
 )
 
 # Qwen3.5 models
+from .qwen35_llm import (
+    QWEN35_LLM_SFT_SKIP_VISION_GLOBS,
+    qwen35_llm_2b_sft_config,
+    qwen35_llm_4b_sft_config,
+    qwen35_llm_9b_sft_config,
+    qwen35_llm_27b_sft_config,
+    qwen35_llm_35b_a3b_sft_config,
+    qwen35_llm_122b_a10b_sft_config,
+    qwen35_llm_397b_a17b_sft_config,
+    qwen35_llm_800m_sft_config,
+)
 from .qwen35_vl import (
     qwen35_vl_2b_peft_config,
     qwen35_vl_2b_sft_config,
@@ -57,6 +68,16 @@ from .qwen35_vl import (
 
 
 __all__ = [
+    # Qwen3.5 LLM-only (text) SFT configs
+    "QWEN35_LLM_SFT_SKIP_VISION_GLOBS",
+    "qwen35_llm_800m_sft_config",
+    "qwen35_llm_2b_sft_config",
+    "qwen35_llm_4b_sft_config",
+    "qwen35_llm_9b_sft_config",
+    "qwen35_llm_27b_sft_config",
+    "qwen35_llm_35b_a3b_sft_config",
+    "qwen35_llm_122b_a10b_sft_config",
+    "qwen35_llm_397b_a17b_sft_config",
     # Qwen3.5-VL SFT configs — dense
     "qwen35_vl_800m_sft_config",
     "qwen35_vl_2b_sft_config",
