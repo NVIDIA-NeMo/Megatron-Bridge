@@ -26,7 +26,6 @@ import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
-from megatron.core.optimizer_cuda_graph import OptimizerCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
     get_current_running_global_batch_size,
@@ -112,6 +111,14 @@ try:
     HAS_PAGED_STASHING = True
 except ImportError:
     HAS_PAGED_STASHING = False
+
+# For Optimizer CUDA graph support
+try:
+    from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
+
+    HAS_OPTIMIZER_CUDA_GRAPH = True
+except ImportError:
+    HAS_OPTIMIZER_CUDA_GRAPH = False
 
 
 def train(
@@ -315,7 +322,7 @@ def train(
         forward_backward_func = PagedStashRunner(
             model_config, copy_main_params, model, optimizer, forward_backward_func
         )
-    if config.optimizer.optimizer_cuda_graph:
+    if config.optimizer.optimizer_cuda_graph and HAS_OPTIMIZER_CUDA_GRAPH:
         optimizer.step = OptimizerCudaGraphWrapper(
             optimizer.step, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
@@ -1635,7 +1642,7 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
         del FullCudaGraphWrapper.cuda_graph["training"]
 
     # Explicitly delete optimizer CUDA graph
-    if OptimizerCudaGraphWrapper.cuda_graph is not None:
+    if HAS_OPTIMIZER_CUDA_GRAPH and OptimizerCudaGraphWrapper.cuda_graph is not None:
         del OptimizerCudaGraphWrapper.cuda_graph
         OptimizerCudaGraphWrapper.cuda_graph = None
 
