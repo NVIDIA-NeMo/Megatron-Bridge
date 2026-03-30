@@ -49,7 +49,7 @@ Use [slurm_conversion.sh](slurm_conversion.sh) to sweep multiple parallelism
 configs (TP, PP, EP) and verify HF ↔ Megatron round-trip conversion:
 
 ```bash
-sbatch examples/models/vlm/kimi_vl/slurm_conversion.sh
+sbatch examples/models/vlm/kimi_k25_vl/slurm_conversion.sh
 ```
 
 Default configs: `TP=2,EP=48` | `TP=2,PP=2,EP=24` | `TP=4,EP=24`.
@@ -59,17 +59,44 @@ Default configs: `TP=2,EP=48` | `TP=2,PP=2,EP=24` | `TP=4,EP=24`.
 The full model requires multi-node inference. Recommended parallelism:
 TP=2, EP=48, PP=1 (48 GPUs, 6 nodes).
 
-Kimi K2.5 VL uses a model-specific generation script that handles PP layout,
-pre-expanding image placeholders for pipeline parallelism, and Kimi processor
-patching.
+Uses the shared VLM generation script
+(`examples/conversion/hf_to_megatron_generate_vlm.py`), which auto-detects
+Kimi models and handles processor patching, image-token pre-expansion for PP,
+and TP sequence padding for MoE.
 
 ```bash
-sbatch examples/models/vlm/kimi_vl/slurm_inference.sh
+sbatch examples/models/vlm/kimi_k25_vl/slurm_inference.sh
 ```
 
 See [slurm_inference.sh](slurm_inference.sh) for configuration details.
 
 Note:
 - `--trust_remote_code` is required for Kimi-K2.5 models.
+- Use `--pp_layout` to specify custom pipeline layouts (e.g.
+  `--pp_layout "Et*15|t*15|t*16|t*15L"` for PP=4).
 - You can optionally pass `--megatron_model_path` to use a pre-converted
   checkpoint (faster startup).
+
+### Expected Inference Output
+
+With the [Qwen-VL demo image](https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg)
+and prompt `"Describe this image."`, the model enters `<think>` reasoning mode
+before producing the final answer. The first 100 generated tokens look like:
+
+```
+<think>The user wants me to describe the image. Let me analyze what I see in the image:
+
+1. **Setting**: A beach scene during what appears to be sunset or sunrise
+   (golden hour lighting). The ocean is visible in the background with waves.
+
+2. **Main subjects**:
+   - A woman sitting on the sand
+   - A large dog (looks like a yellow Labrador or Golden Retriever)
+
+3. **The woman**:
+   - Long dark hair
+```
+
+The model correctly identifies the beach scene, golden hour lighting, the
+woman, and the dog breed. Kimi-K2.5 is a thinking model, so the initial output
+is always the internal `<think>` reasoning chain before the final response.
