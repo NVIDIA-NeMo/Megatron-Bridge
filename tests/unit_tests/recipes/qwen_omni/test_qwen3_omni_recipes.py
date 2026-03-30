@@ -95,10 +95,62 @@ _qwen3_omni_module = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_qwen3_omni_module)
 
 
-class _FakeModelCfg:
-    """Minimal provider-like object for recipe unit tests."""
-
+class _FakeTextConfig:
     def __init__(self):
+        self.num_hidden_layers = 2
+        self.hidden_size = 64
+        self.intermediate_size = 256
+        self.moe_intermediate_size = 128
+        self.num_attention_heads = 8
+        self.num_key_value_heads = 8
+        self.initializer_range = 0.02
+        self.rms_norm_eps = 1e-6
+        self.vocab_size = 32000
+        self.max_position_embeddings = 4096
+        self.torch_dtype = "bfloat16"
+        self.attention_bias = False
+        self.rope_theta = 1000000.0
+        self.tie_word_embeddings = False
+        self.num_experts = 128
+        self.num_experts_per_tok = 8
+        self.rope_scaling = {"mrope_section": [24, 20, 20]}
+
+
+class _FakeVisionConfig:
+    def __init__(self):
+        self.patch_size = 16
+        self.temporal_patch_size = 2
+        self.spatial_merge_size = 2
+
+
+class _FakeThinkerConfig:
+    def __init__(self):
+        self.text_config = _FakeTextConfig()
+        self.vision_config = _FakeVisionConfig()
+        self.audio_config = SimpleNamespace()
+        self.image_token_id = 151655
+        self.video_token_id = 151656
+        self.audio_token_id = 151646
+        self.vision_start_token_id = 151652
+        self.audio_start_token_id = 151647
+        self.position_id_per_seconds = 25
+        self.seconds_per_chunk = 2
+        self.torch_dtype = "bfloat16"
+
+
+class _FakeHFConfig:
+    def __init__(self, enable_audio_output: bool = False):
+        self.enable_audio_output = enable_audio_output
+        self.thinker_config = _FakeThinkerConfig()
+        self.talker_config = None
+        self.code2wav_config = None
+        self.torch_dtype = "bfloat16"
+
+
+class _FakeProvider:
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
         self.tensor_model_parallel_size = 1
         self.pipeline_model_parallel_size = 1
         self.pipeline_dtype = None
@@ -119,19 +171,13 @@ class _FakeModelCfg:
         return None
 
 
-class _FakeAutoBridge:
-    """Fake AutoBridge that avoids model I/O in recipe tests."""
-
-    @staticmethod
-    def from_hf_pretrained(hf_path: str):
-        return _FakeAutoBridge()
-
-    def to_megatron_provider(self, load_weights: bool = False):
-        return _FakeModelCfg()
-
-
 def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
-    monkeypatch.setattr(_qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(
+        _qwen3_omni_module.Qwen3OmniMoeConfig,
+        "from_pretrained",
+        staticmethod(lambda *_args, **_kwargs: _FakeHFConfig()),
+    )
+    monkeypatch.setattr(_qwen3_omni_module, "Qwen3OmniModelProvider", _FakeProvider)
 
     cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_config()
 
@@ -159,7 +205,12 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
 
 
 def test_qwen3_omni_preloaded_recipe_uses_preloaded_provider(monkeypatch):
-    monkeypatch.setattr(_qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(
+        _qwen3_omni_module.Qwen3OmniMoeConfig,
+        "from_pretrained",
+        staticmethod(lambda *_args, **_kwargs: _FakeHFConfig()),
+    )
+    monkeypatch.setattr(_qwen3_omni_module, "Qwen3OmniModelProvider", _FakeProvider)
 
     cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_preloaded_config()
 
