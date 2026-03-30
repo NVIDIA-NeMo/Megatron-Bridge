@@ -14,37 +14,87 @@
 # limitations under the License.
 
 """
-Generic Training Script for GPT-based Models
+Generic Training Script for LLM and diffusion models
 
 This script works with any model family that uses GPT-style training
-(Llama, Gemma, Qwen, GPT, etc.). It dynamically loads recipes and supports
-CLI overrides.
+(Llama, Gemma, Qwen, GPT, etc.) and with diffusion models (e.g. FLUX, WAN). It dynamically loads recipes and supports
+CLI overrides. The --dataset flag selects the dataset type and automatically
+infers pretrain vs finetune mode.
 
 Usage:
-    Pretrain:
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config
+    Pretrain (mock data):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_pretrain_config \\
+            --dataset llm-pretrain-mock
 
-    Finetune:
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_finetune_config
+    Pretrain (real data):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_pretrain_config \\
+            --dataset llm-pretrain \\
+            'dataset.blend=[[/data/my_dataset_text_document],null]'
 
-    With CLI overrides:
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config \
-            train.train_iters=5000 \
+    Finetune (SQuAD, default):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_sft_config \\
+            --dataset llm-finetune
+
+    Finetune (GSM8K):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_sft_config \\
+            --dataset llm-finetune \\
+            dataset.dataset_name=gsm8k
+
+    Finetune (user-supplied JSONL):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_sft_config \\
+            --dataset llm-finetune-preloaded \\
+            dataset.dataset_root=/data/my_finetune_data
+
+    Diffusion pretrain:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe wan_1_3B_pretrain_config \
+            --step_func wan_step \
+            dataset.path=/data/energon
+
+    Diffusion SFT (full finetuning):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe wan_1_3B_sft_config \
+            --step_func wan_step
+            dataset.path=/data/energon
+
+    VLM with HF dataset:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe qwen3_vl_8b_peft_config \\
+            --dataset vlm-hf \\
+            --step_func qwen3_vl_step \\
+            dataset.maker_name=cord_v2 \\
+            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
+            checkpoint.pretrained_checkpoint=/path/to/checkpoint
+
+    VLM with Energon dataset:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe qwen3_vl_8b_peft_energon_config \\
+            --dataset vlm-energon \\
+            --step_func qwen3_vl_step \\
+            dataset.path=/data/energon \\
+            checkpoint.pretrained_checkpoint=/path/to/checkpoint
+
+    VLM with preloaded JSON:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe qwen3_vl_8b_peft_config \\
+            --dataset vlm-preloaded \\
+            --step_func qwen3_vl_step \\
+            dataset.train_data_path=/data/vlm_train.json \\
+            dataset.image_folder=/data/vlm_images \\
+            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
+            checkpoint.pretrained_checkpoint=/path/to/checkpoint
+
+    With CLI overrides (Hydra-style, works for any config field):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_pretrain_config \\
+            --dataset llm-pretrain-mock \\
+            train.train_iters=5000 \\
             optimizer.lr=0.0003
-
-    With VLM step function:
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe qwen25_vl_finetune_config \
-            --step_func vlm_step
-
-    With packed sequences and custom sequence length:
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config \
-            --packed_sequence \
-            --seq_length 2048
 
 Recipe Arguments:
     Generic scripts call recipes with no arguments: recipe().
@@ -58,7 +108,16 @@ import inspect
 from typing import Callable
 
 import megatron.bridge.recipes as recipes
+
+# Diffusion forward steps: use class instances so they can be passed as forward_step_func
+from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
+from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
+from megatron.bridge.recipes.utils.dataset_utils import (
+    DATASET_TYPES,
+    apply_dataset_override,
+    infer_mode_from_dataset,
+)
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
@@ -73,47 +132,60 @@ STEP_FUNCTIONS: dict[str, Callable] = {
     "vlm_step": vlm_forward_step,
     "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
+    "flux_step": FluxForwardStep,
+    "wan_step": WanForwardStep,
 }
 
-TRAIN_MODES = {
+TRAIN_FUNCTIONS = {
     "pretrain": pretrain,
     "finetune": finetune,
 }
 
-# Error message constants
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
-    "Unable to infer training mode from recipe name. "
-    "Please include 'pretrain' or 'finetune' (or 'sft'/'peft') in the recipe name, "
-    "or pass --mode explicitly."
+    "Unable to infer training mode. "
+    "Pass --dataset to specify the dataset type, or include 'pretrain' or 'finetune' "
+    "(or 'sft'/'peft') in the recipe name."
 )
 
 
 def parse_args() -> tuple[argparse.Namespace, list[str]]:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Generic training script for GPT-based models",
+        description="Generic training script for LLM and diffusion models",
         formatter_class=argparse.RawTextHelpFormatter,
-    )
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default=None,
-        choices=sorted(TRAIN_MODES.keys()),
-        help="Training mode (optional). If omitted, inferred from recipe name.",
     )
     parser.add_argument(
         "--recipe",
         type=str,
         required=True,
-        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_finetune_config)",
+        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_sft_config, gemma3_1b_peft_config)",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        choices=DATASET_TYPES,
+        help=(
+            "Dataset type. Training mode (pretrain/finetune) is inferred from this.\n"
+            "LLM datasets:\n"
+            "  llm-pretrain           GPT pretrain data (set dataset.blend=<path>)\n"
+            "  llm-pretrain-mock      Mock pretrain data for testing\n"
+            "  llm-finetune           HF finetune dataset (set dataset.dataset_name=squad|gsm8k|openmathinstruct2)\n"
+            "  llm-finetune-preloaded User-supplied JSONL (set dataset.dataset_root=<path>)\n"
+            "VLM datasets:\n"
+            "  vlm-energon            Energon multimodal (set dataset.path=<path>)\n"
+            "  vlm-hf                 HF VLM dataset (set dataset.maker_name=<name>)\n"
+            "  vlm-preloaded          User-supplied VLM JSON (set dataset.train_data_path=<path>)"
+        ),
     )
     parser.add_argument(
         "--step_func",
         type=str,
         default="gpt_step",
         choices=sorted(STEP_FUNCTIONS.keys()),
-        help="Step function: gpt_step (text-only), vlm_step (vision-language), or llava_step (LLaVA models)",
+        help="Step function: gpt_step (text-only), vlm_step (vision-language), llava_step (LLaVA), "
+        "flux_step (FLUX diffusion), wan_step (WAN diffusion, hyperparameters selected by --mode/recipe name)",
     )
     parser.add_argument(
         "--peft_scheme",
@@ -134,10 +206,11 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         help="Sequence length for training",
     )
     parser.add_argument(
-        "--dataset_type",
+        "--hf_path",
         type=str,
         default=None,
-        help="Dataset type for VLM recipes (e.g., 'energon', 'mock', 'hf', 'preloaded').",
+        help="HuggingFace model ID or local path to model directory. "
+        "Use a local path for more stable multinode training.",
     )
     args, cli_overrides = parser.parse_known_args()
     return args, cli_overrides
@@ -148,7 +221,7 @@ def load_recipe(
     peft_scheme: str | None,
     packed_sequence: bool = False,
     seq_length: int | None = None,
-    dataset_type: str | None = None,
+    hf_path: str | None = None,
 ) -> ConfigContainer:
     """
     Load recipe by name from megatron.bridge.recipes.
@@ -158,7 +231,7 @@ def load_recipe(
         peft_scheme: PEFT scheme to use ('lora', 'dora', or None)
         packed_sequence: Enable packed sequence training (default: False)
         seq_length: Sequence length for training (optional)
-        dataset_type: Dataset type for VLM recipes (e.g., 'energon', 'mock', 'hf', 'preloaded')
+        hf_path: HuggingFace model ID or local path to model directory (optional)
 
     Returns:
         ConfigContainer from calling the recipe
@@ -184,13 +257,13 @@ def load_recipe(
         accepts_peft = "peft" in params or has_var_keyword
         accepts_packed_sequence = "packed_sequence" in params or has_var_keyword
         accepts_seq_length = "seq_length" in params or has_var_keyword
-        accepts_dataset_type = "dataset_type" in params or has_var_keyword
+        accepts_hf_path = "hf_path" in params or has_var_keyword
     except (ValueError, TypeError):
         # If signature inspection fails, fallback conservatively
         accepts_peft = True  # peft is widely supported, try passing it
         accepts_packed_sequence = False  # new parameter, don't pass if unsure
         accepts_seq_length = False  # new parameter, don't pass if unsure
-        accepts_dataset_type = False  # VLM-specific, don't pass if unsure
+        accepts_hf_path = False  # model-specific, don't pass if unsure
 
     # Build kwargs dynamically based on what the recipe accepts
     kwargs = {}
@@ -200,8 +273,8 @@ def load_recipe(
         kwargs["packed_sequence"] = packed_sequence
     if accepts_seq_length and seq_length is not None:
         kwargs["seq_length"] = seq_length
-    if accepts_dataset_type and dataset_type is not None:
-        kwargs["dataset_type"] = dataset_type
+    if accepts_hf_path and hf_path is not None:
+        kwargs["hf_path"] = hf_path
 
     try:
         return config_builder(**kwargs)
@@ -210,16 +283,21 @@ def load_recipe(
         return config_builder()
 
 
-def load_forward_step(step_type: str) -> Callable:
+def load_forward_step(step_type: str, mode: str | None = None) -> Callable:
     """Load forward_step function based on the requested step type."""
     step_key = step_type.lower()
     if step_key not in STEP_FUNCTIONS:
         raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))
-    return STEP_FUNCTIONS[step_key]
+    step = STEP_FUNCTIONS[step_key]
+    if inspect.isclass(step):
+        if "mode" in inspect.signature(step.__init__).parameters:
+            return step(mode=mode)
+        return step()
+    return step
 
 
 def infer_train_mode(recipe_name: str) -> str:
-    """Infer training mode from the recipe name."""
+    """Infer training mode from the recipe name (fallback when --dataset is not passed)."""
     lowered = recipe_name.lower()
     has_pretrain = "pretrain" in lowered
     has_finetune = "finetune" in lowered or "sft" in lowered or "peft" in lowered
@@ -237,18 +315,38 @@ def main() -> None:
         args.peft_scheme,
         args.packed_sequence,
         args.seq_length,
-        args.dataset_type,
+        args.hf_path,
     )
+
+    if args.dataset is not None:
+        mode = infer_mode_from_dataset(args.dataset)
+        config = apply_dataset_override(
+            config,
+            dataset_type=args.dataset,
+            packed_sequence=args.packed_sequence,
+            seq_length=args.seq_length,
+            cli_overrides=cli_overrides,
+        )
+    else:
+        mode = infer_train_mode(args.recipe)
 
     config = process_config_with_overrides(
         config,
         cli_overrides=cli_overrides or None,
     )
 
-    mode = args.mode or infer_train_mode(args.recipe)
+    # Ensure dataset.seq_length and model.seq_length stay in sync after CLI overrides
+    if (
+        hasattr(config, "model")
+        and config.model is not None
+        and hasattr(config, "dataset")
+        and config.dataset is not None
+    ):
+        if hasattr(config.dataset, "seq_length") and config.model.seq_length != config.dataset.seq_length:
+            config.model.seq_length = config.dataset.seq_length
 
-    forward_step = load_forward_step(args.step_func)
-    train_func = TRAIN_MODES[mode]
+    forward_step = load_forward_step(args.step_func, mode=mode)
+    train_func = TRAIN_FUNCTIONS[mode]
     train_func(config=config, forward_step_func=forward_step)
 
 

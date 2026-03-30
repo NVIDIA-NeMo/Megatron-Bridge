@@ -19,8 +19,8 @@ import pytest
 import torch
 from megatron.core.transformer.enums import CudaGraphScope
 
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekModelProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
@@ -76,8 +76,8 @@ def create_test_gpt_config(**kwargs: Any) -> GPTModelProvider:
     return GPTModelProvider(**defaults)
 
 
-def create_test_deepseek_config(**kwargs: Any) -> DeepSeekModelProvider:
-    """Creates an instance of DeepSeekModelProvider for testing."""
+def create_test_deepseek_config(**kwargs: Any) -> MLAModelProvider:
+    """Creates an instance of MLAModelProvider for testing."""
     defaults = {
         "num_layers": 1,
         "hidden_size": 128,
@@ -86,7 +86,7 @@ def create_test_deepseek_config(**kwargs: Any) -> DeepSeekModelProvider:
         "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
-    return DeepSeekModelProvider(**defaults)
+    return MLAModelProvider(**defaults)
 
 
 def create_test_t5_config(**kwargs: Any) -> T5ModelProvider:
@@ -722,6 +722,39 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_scheduler_lr_warmup_steps_capped_when_exceeds_lr_decay_steps(self, monkeypatch):
+        """Test lr_warmup_steps is capped to lr_decay_steps - 1 with a warning when it would exceed lr_decay_steps."""
+        gpt_model_cfg = create_test_gpt_config()
+        # train_iters=10 gives lr_decay_steps=10*32=320; lr_warmup_iters=2000 gives lr_warmup_steps=2000*32=64000
+        train_cfg = create_test_training_config(train_iters=10, global_batch_size=32)
+        sched_cfg = create_test_scheduler_config(lr_warmup_fraction=None, lr_warmup_iters=2000)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            with pytest.warns(UserWarning, match="capping lr_warmup_steps"):
+                container.validate()
+            assert container.scheduler.lr_warmup_steps == container.scheduler.lr_decay_steps - 1
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_scheduler_lr_decay_steps_zero_raises_value_error(self, monkeypatch):
+        """Test that lr_decay_steps <= 0 raises ValueError."""
+        gpt_model_cfg = create_test_gpt_config()
+        # train_iters=0 gives lr_decay_steps=0*32=0, which must be rejected
+        train_cfg = create_test_training_config(train_iters=0, global_batch_size=32)
+        sched_cfg = create_test_scheduler_config(lr_warmup_fraction=None, lr_warmup_iters=0)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            with pytest.raises(ValueError, match="lr_decay_steps must be > 0"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_scheduler_lr_warmup_fraction_and_iters_mutual_exclusivity(self, monkeypatch):
         """Test that lr_warmup_fraction and lr_warmup_iters cannot both be specified."""
         gpt_model_cfg = create_test_gpt_config()
@@ -1002,25 +1035,34 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     @pytest.mark.parametrize(
-        "gpu_major, moe_enable_deepep, expect_error",
+        "gpu_major, gpu_name, moe_enable_deepep, expect_error",
         [
-            (8, True, False),  # Ampere GPU with DeepEP enabled - should pass
-            (9, True, False),  # Hopper GPU with DeepEP enabled - should pass
-            (7, True, True),  # Volta GPU with DeepEP enabled - should raise ValueError
-            (6, True, True),  # Pascal GPU with DeepEP enabled - should raise ValueError
-            (10, True, True),  # Future unsupported GPU with DeepEP enabled - should raise ValueError
-            (7, False, False),  # Volta GPU with DeepEP disabled - should pass
-            (6, False, False),  # Pascal GPU with DeepEP disabled - should pass
+            (8, "NVIDIA A100", True, False),  # Ampere GPU with DeepEP enabled - should pass
+            (9, "NVIDIA H100", True, False),  # Hopper GPU with DeepEP enabled - should pass
+            (10, "NVIDIA B200", True, False),  # Blackwell B200 GPU with DeepEP enabled - should pass
+            (10, "NVIDIA B200 SXM6 AC", True, False),  # Blackwell B200 variant with DeepEP enabled - should pass
+            (10, "NVIDIA B300", True, False),  # Blackwell B300 GPU with DeepEP enabled - should pass
+            (7, "NVIDIA V100", True, True),  # Volta GPU with DeepEP enabled - should raise ValueError
+            (6, "NVIDIA P100", True, True),  # Pascal GPU with DeepEP enabled - should raise ValueError
+            (
+                10,
+                "NVIDIA B100",
+                True,
+                True,
+            ),  # Unsupported Blackwell variant with DeepEP enabled - should raise ValueError
+            (7, "NVIDIA V100", False, False),  # Volta GPU with DeepEP disabled - should pass
+            (6, "NVIDIA P100", False, False),  # Pascal GPU with DeepEP disabled - should pass
         ],
     )
     @patch("torch.cuda.get_device_properties")
     def test_deepep_validation(
-        self, mock_get_device_properties, monkeypatch, gpu_major, moe_enable_deepep, expect_error
+        self, mock_get_device_properties, monkeypatch, gpu_major, gpu_name, moe_enable_deepep, expect_error
     ):
         """Test DeepEP validation during config container validation."""
         # Mock GPU device properties
         mock_properties = MagicMock()
         mock_properties.major = gpu_major
+        mock_properties.name = gpu_name
         mock_get_device_properties.return_value = mock_properties
 
         # Create a GPT model config with MoE settings
@@ -1036,7 +1078,7 @@ class TestConfigContainerValidation:
 
         try:
             if expect_error:
-                with pytest.raises(ValueError, match="DeepEP is supported for Ampere"):
+                with pytest.raises(ValueError, match="DeepEP is supported for Ampere, Hopper, and Blackwell"):
                     container.validate()
             else:
                 container.validate()  # Should pass without error
@@ -1084,10 +1126,8 @@ class TestConfigContainerValidation:
             dist_config=dist_cfg,
         )
         try:
-            container.model.gradient_accumulation_fusion = True
             container.ddp.average_in_collective = True
             container.validate()
-            assert container.model.gradient_accumulation_fusion is False
             assert container.ddp.average_in_collective is False
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -1796,6 +1836,28 @@ class TestCheckpointConfig:
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_pretrained_checkpoint_none_skips_validation(self):
+        """Test that finalize succeeds when pretrained_checkpoint is None (no file existence check)."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint=None)
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+
+    @patch("megatron.bridge.training.utils.checkpoint_utils.file_exists", return_value=True)
+    def test_pretrained_checkpoint_exists_passes(self, mock_file_exists):
+        """Test that finalize succeeds when pretrained_checkpoint path exists."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint="/path/to/valid/checkpoint")
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+        mock_file_exists.assert_called_once_with("/path/to/valid/checkpoint")
+
+    @patch("megatron.bridge.training.utils.checkpoint_utils.file_exists", return_value=False)
+    def test_pretrained_checkpoint_not_exists_raises(self, mock_file_exists):
+        """Test that finalize raises AssertionError when pretrained_checkpoint path does not exist."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint="/path/to/missing/checkpoint")
+        with pytest.raises(AssertionError, match="Pretrained checkpoint /path/to/missing/checkpoint does not exist"):
+            ckpt_cfg.finalize()
+        mock_file_exists.assert_called_once_with("/path/to/missing/checkpoint")
 
 
 class TestMixedPrecisionConsistencyValidation:
@@ -2823,3 +2885,54 @@ class TestLoggerConfigFinalize:
         # Mock mlflow import to avoid slow actual import
         with patch("importlib.import_module"):
             config.finalize()  # Should not raise
+
+    def test_finalize_no_comet_settings(self):
+        """Test finalize succeeds when no Comet settings are configured."""
+        config = LoggerConfig()
+        config.finalize()
+
+    def test_finalize_with_comet_project_only_raises_error(self):
+        """Test finalize raises error when comet_project is set but comet_experiment_name is missing."""
+        config = LoggerConfig(comet_project="my_project")
+
+        with pytest.raises(ValueError, match="comet_experiment_name"):
+            config.finalize()
+
+    def test_finalize_with_comet_project_and_empty_experiment_name_raises_error(self):
+        """Test finalize raises error when comet_experiment_name is empty string."""
+        config = LoggerConfig(comet_project="my_project", comet_experiment_name="")
+
+        with pytest.raises(ValueError, match="comet_experiment_name"):
+            config.finalize()
+
+    def test_finalize_with_comet_project_and_experiment_name_succeeds(self):
+        """Test finalize succeeds when both comet_project and comet_experiment_name are set."""
+        config = LoggerConfig(comet_project="my_project", comet_experiment_name="my_experiment")
+        with patch("importlib.import_module"):
+            config.finalize()
+
+    def test_finalize_comet_not_installed_raises_module_not_found(self):
+        """Test finalize raises ModuleNotFoundError when comet_ml is configured but not installed."""
+        config = LoggerConfig(comet_project="my_project", comet_experiment_name="my_experiment")
+
+        with patch("importlib.import_module", side_effect=ModuleNotFoundError("No module named 'comet_ml'")):
+            with pytest.raises(ModuleNotFoundError, match="comet_ml"):
+                config.finalize()
+
+    def test_finalize_with_comet_workspace_only(self):
+        """Test finalize with only comet_workspace triggers Comet validation."""
+        config = LoggerConfig(comet_workspace="my_workspace")
+        with patch("importlib.import_module"):
+            config.finalize()
+
+    def test_finalize_with_all_comet_settings(self):
+        """Test finalize with all Comet settings configured."""
+        config = LoggerConfig(
+            comet_project="my_project",
+            comet_experiment_name="my_experiment",
+            comet_workspace="my_workspace",
+            comet_api_key="my_key",
+            comet_tags=["sft", "qwen3"],
+        )
+        with patch("importlib.import_module"):
+            config.finalize()

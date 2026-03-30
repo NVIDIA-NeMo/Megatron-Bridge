@@ -103,17 +103,13 @@ Before training, ensure the following environment variables are set:
 
 ### Supervised Fine-Tuning (SFT)
 
-See the [sft_unpacked.sh](sft_seq_unpacked.sh) script for full parameter fine-tuning with configurable model parallelisms, with unpacked sequences..
-See the [sft_packed.sh](sft_seq_packed.sh) script for for full parameter fine-tuning with sequence-packing.
-
-W&B report coming soon.
+See the [sft_unpacked.sh](sft_unpacked.sh) script for full parameter fine-tuning with configurable model parallelisms, with unpacked sequences.
+See the [sft.sh](sft.sh) script for full parameter fine-tuning with sequence-packing.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-See the [peft_unpacked.sh](peft_seq_unpacked.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism, with unpacked sequences.
-See the [peft_packed.sh](peft_seq_packed.sh) script for LoRA fine-tuning with sequence-packing.
-
-W&B report coming soon.
+See the [peft_unpacked.sh](peft_unpacked.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism, with unpacked sequences.
+See the [peft.sh](peft.sh) script for LoRA fine-tuning with sequence-packing.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
@@ -129,7 +125,11 @@ field_map:
   conversation: json
 ```
 
-Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [energon_test.sh](energon_test.sh) and run the script.
+Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [peft_energon.sh](peft_energon.sh) and run the script.
+
+
+### Expected Training Dynamics
+We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/lczz4ixx) for the expected loss curves and grad norms.
 
 ## Evaluation
 

@@ -39,6 +39,9 @@ on:
         type: choice
         options:
           - "all"
+          - "L0"
+          - "L1"
+          - "L2"
           - "unit-only"
           - "functional-only"
         default: "all"
@@ -56,17 +59,17 @@ permissions:
   id-token: write
   contents: read
 
-env:
-  container-registry: nemoci.azurecr.io
-
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.73.2
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
       default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
       non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+      default_registry: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}
+      non_nvidia_registry: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}
+      sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
     secrets:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
@@ -82,10 +85,10 @@ jobs:
         needs.pre-flight.outputs.is_deployment_workflow == 'false'
           && needs.pre-flight.outputs.is_ci_workload == 'false'
           && needs.pre-flight.outputs.docs_only == 'false'
-      )
+      ) || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: "recursive"
 
@@ -128,7 +131,7 @@ jobs:
   cicd-container-build:
     needs: [pre-flight, cicd-wait-in-queue]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     if: |
       (
         success()
@@ -137,10 +140,29 @@ jobs:
       )
       && !cancelled()
     steps:
+      - name: Get PR info
+        id: get-pr-info
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        uses: nv-gha-runners/get-pr-info@main
+
+      - name: Get merge commit sha
+        shell: bash -x -e -u -o pipefail {0}
+        id: sha
+        env:
+          IS_PR: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
+        run: |
+          if [[ "$IS_PR" == "true" ]]; then
+            SHA=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
+          else
+            SHA=${GITHUB_SHA}
+          fi
+          echo "main=${SHA}" | tee -a "$GITHUB_OUTPUT"
+
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ steps.sha.outputs.main }}
 
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
@@ -180,17 +202,13 @@ jobs:
           echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
 
       - name: Setup python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: 3.12
 
-      - name: Get PR info
-        id: get-pr-info
-        if: startsWith(github.ref, 'refs/heads/pull-request/')
-        uses: nv-gha-runners/get-pr-info@main
-
       - name: Install Azure CLI
         shell: bash
+        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
         run: |
           echo "::group::Install Azure CLI"
           # Create systemd override for proper dependencies
@@ -199,12 +217,14 @@ jobs:
 
       - name: Azure Login
         uses: azure/login@v2
+        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Azure ACR Login
+        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
         shell: bash
         run: |
           az acr login --name nemoci
@@ -230,7 +250,7 @@ jobs:
                 }
               }
             }' | jq -r '.data.repository.pullRequests.nodes[].number' | while read -r number; do
-              echo "type=registry,ref=${{ env.container-registry }}/megatron-bridge:$number-buildcache,mode=max"
+              echo "type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:$number-buildcache,mode=max"
             done)
 
           echo "LAST_PRS<<EOF" | tee -a $GITHUB_OUTPUT
@@ -254,7 +274,7 @@ jobs:
             KEY="$BRANCH_SANITIZED"
           fi
           echo "key=$KEY" >> $GITHUB_OUTPUT
-          echo "cache-to=type=registry,ref=${{ env.container-registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
+          echo "cache-to=type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -267,18 +287,48 @@ jobs:
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
           cache-from: |
-            type=registry,ref=${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
-            type=registry,ref=${{ env.container-registry }}/megatron-bridge:main-buildcache,mode=max
+            type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
+            type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:main-buildcache,mode=max
             ${{ steps.cache_from.outputs.LAST_PRS }}
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |
-            ${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
-            ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+            ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
+            ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
 
-  cicd-unit-tests:
+  check-labels:
+    runs-on: ubuntu-latest
+    needs: [pre-flight, cicd-container-build]
+    outputs:
+      needs_more_tests: ${{ steps.check.outputs.needs_more_tests }}
+      full_test_suite: ${{ steps.check.outputs.full_test_suite }}
+    steps:
+      - name: Check PR labels
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${{ github.ref }}" == refs/heads/pull-request/* ]]; then
+            PR_NUMBER=$(echo "${{ github.ref }}" | sed 's|refs/heads/pull-request/||')
+            LABELS=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+            if echo "$LABELS" | grep -q "needs-more-tests"; then
+              echo "needs_more_tests=true" >> $GITHUB_OUTPUT
+            else
+              echo "needs_more_tests=false" >> $GITHUB_OUTPUT
+            fi
+            if echo "$LABELS" | grep -q "full-test-suite"; then
+              echo "full_test_suite=true" >> $GITHUB_OUTPUT
+            else
+              echo "full_test_suite=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "needs_more_tests=false" >> $GITHUB_OUTPUT
+            echo "full_test_suite=false" >> $GITHUB_OUTPUT
+          fi
+
+  cicd-unit-tests-core:
     if: |
       (
         success()
@@ -286,98 +336,124 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
-    name: Launch_Unit_Tests
-    environment: nemo-ci
+    name: Launch_Unit_Tests_Core
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for unit tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 UNIT TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
 
       - name: main
         uses: ./.github/actions/test-template
         with:
-          script: Launch_Unit_Tests
-          timeout: 15
+          script: Launch_Unit_Tests_Core
+          timeout: 18
           is_unit_test: "true"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
-  cicd-functional-tests:
+  cicd-unit-tests-diffusion:
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+      )
+      && !cancelled()
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
+    needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    name: Launch_Unit_Tests_Diffusion
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script: Launch_Unit_Tests_Diffusion
+          timeout: 18
+          is_unit_test: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+
+  generate-test-matrix:
+    needs: [pre-flight, cicd-container-build]
+    runs-on: ubuntu-latest
+    outputs:
+      matrix_l0: ${{ steps.scan.outputs.matrix_l0 }}
+      matrix_l1: ${{ steps.scan.outputs.matrix_l1 }}
+      matrix_l2: ${{ steps.scan.outputs.matrix_l2 }}
+      matrix_flaky: ${{ steps.scan.outputs.matrix_flaky }}
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+      )
+      && !cancelled()
+    steps:
+      - uses: actions/checkout@v6
+      - id: scan
+        shell: bash
+        run: |
+          get_timeout() {
+            local f="$1"
+            local t
+            t=$(grep -m1 '^# CI_TIMEOUT=' "$f" | cut -d= -f2)
+            echo "${t:-30}"
+          }
+          for tier in L0 L1 L2; do
+            entries=""
+            for f in tests/functional_tests/launch_scripts/active/${tier}_*.sh; do
+              name=$(basename "$f" .sh)
+              timeout=$(get_timeout "$f")
+              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
+            done
+            matrix="{\"include\":[${entries%,}]}"
+            echo "matrix_${tier,,}=${matrix}" | tee -a "$GITHUB_OUTPUT"
+          done
+          entries=""
+          for f in tests/functional_tests/launch_scripts/flaky/L*.sh; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f" .sh)
+            timeout=$(get_timeout "$f")
+            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
+          done
+          echo "matrix_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
+
+  # L0: runs on every PR, main push, and schedule
+  cicd-functional-tests-l0:
     strategy:
       fail-fast: false
       max-parallel: 16
-      matrix:
-        include:
-          - script: L2_Launch_training
-            timeout: 50
-          - script: L2_Launch_converter
-          - script: L2_Launch_models_deepseek
-          - script: L2_Launch_models_gemma
-          - script: L2_Launch_models_gemma_vl
-          - script: L2_Launch_models_glm
-          - script: L2_Launch_models_gpt_oss
-          - script: L2_Launch_models_llama_nemotron
-          - script: L2_Launch_models_mistral
-          - script: L2_Launch_models_nemotron
-          - script: L2_Launch_models_nemotronh
-          - script: L2_Launch_models_nemotronh_quantization
-          - script: L2_Launch_models_nemotron_vl
-          - script: L2_Launch_models_olmoe
-          - script: L2_Launch_models_qwen
-          - script: L2_Launch_models_qwen_quantization
-          - script: L2_Launch_models_qwen_vl
-          - script: L2_Launch_recipes_gemma_vl
-          - script: L2_Launch_recipes_gpt_oss
-          - script: L2_Launch_models_qwen_vl_quantization
-          - script: L2_Launch_recipes_llama_1b
-          - script: L2_Launch_recipes_llama_3b
-          - script: L2_Launch_recipes_llama_distill
-          - script: L2_Launch_recipes_nemotronh
-          - script: L2_Launch_recipes_qwen
-          - script: L2_Launch_data
-          - script: L2_Launch_post_training_quantization
-          - script: L2_Launch_quantization_aware_training
-          # - script: L2_Launch_quantization_export
-          - script: L2_Launch_recipes_llama_cuda_graphs
-          - script: L2_Launch_utils
-    needs: [pre-flight, cicd-unit-tests]
+      matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l0) }}
+    needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
       (
@@ -386,63 +462,167 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for functional tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
 
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
-          timeout: ${{ matrix.timeout || 30 }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+
+  # L1: runs on main push, schedule, and PRs with "needs-more-tests" label
+  cicd-functional-tests-l1:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l1) }}
+    needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion, check-labels]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+      )
+      && !cancelled()
+      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true' || needs.check-labels.outputs.full_test_suite == 'true')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
+    name: ${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+
+  # L2: runs on schedule (nightly/weekly) and workflow_dispatch only
+  cicd-functional-tests-l2:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l2) }}
+    needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion, check-labels]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+      )
+      && !cancelled()
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.full_test_suite == 'true')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
+    name: ${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+
+  cicd-functional-tests-flaky:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_flaky) }}
+    needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    name: ${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script_dir: flaky
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   Nemo_CICD_Test:
     needs:
       - pre-flight
-      - cicd-unit-tests
-      - cicd-functional-tests
+      - check-labels
+      - cicd-unit-tests-core
+      - cicd-unit-tests-diffusion
+      - cicd-functional-tests-l0
+      - cicd-functional-tests-l1
+      - cicd-functional-tests-l2
     if: |
       (
         needs.pre-flight.outputs.docs_only == 'true'
@@ -455,41 +635,67 @@ jobs:
     permissions: write-all
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Get workflow result
         id: result
-        shell: bash -x -e -u -o pipefail {0}
+        shell: bash -e -u -o pipefail {0}
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.run_id }}
-          SKIPPING_IS_ALLOWED: ${{ needs.pre-flight.outputs.docs_only == 'true' || needs.pre-flight.outputs.is_deployment_workflow == 'true' || needs.pre-flight.outputs.is_ci_workload == 'true' || inputs.test_suite == 'unit-only' || inputs.test_suite == 'functional-only' }}
+          # A tier is "expected" if its if-condition (excluding success()/is_ci_workload/force_run_all) would be true.
+          # Unexpected skips in an expected tier are failures.
+          # is_ci_workload must be true, otherwise docs-only/deployment runs have no tests and trigger false positives.
+          EXPECT_L0: ${{ needs.pre-flight.outputs.is_ci_workload == 'true' && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') }}
+          EXPECT_L1: ${{ needs.pre-flight.outputs.is_ci_workload == 'true' && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true') }}
+          EXPECT_L2: ${{ needs.pre-flight.outputs.is_ci_workload == 'true' && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         run: |
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success")] | length') || echo 0
+          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
 
-          if [ "${FAILED_JOBS:-0}" -eq 0 ] || [ "$SKIPPING_IS_ALLOWED" == "true" ]; then
-              echo "✅ All previous jobs completed successfully"
-              exit 0
-          else
-              echo "❌ Found $FAILED_JOBS failed job(s)"
-              # Show which jobs failed
-              gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success") | .name'
-              exit 1
+          UNEXPECTED_SKIPS=0
+          check_tier_skips() {
+            local tier="$1" expect="$2"
+            [ "$expect" != "true" ] && return
+            local n
+            n=$(gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
+              '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length') || n=0
+            if [ "${n:-0}" -gt 0 ]; then
+              echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
+              gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
+                '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name'
+              UNEXPECTED_SKIPS=$((UNEXPECTED_SKIPS + n))
+            fi
+          }
+
+          check_tier_skips "L0" "$EXPECT_L0"
+          check_tier_skips "L1" "$EXPECT_L1"
+          check_tier_skips "L2" "$EXPECT_L2"
+
+          if [ "${FAILED_JOBS:-0}" -gt 0 ]; then
+            echo "❌ Found $FAILED_JOBS failed job(s):"
+            gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | .name'
           fi
+
+          if [ "${FAILED_JOBS:-0}" -gt 0 ] || [ "${UNEXPECTED_SKIPS:-0}" -gt 0 ]; then
+            exit 1
+          fi
+
+          echo "✅ All previous jobs completed successfully"
+          exit 0
 
   Coverage_Fake:
     runs-on: ubuntu-latest
     needs: [Nemo_CICD_Test, pre-flight]
     if: |
-      (
+      always()
+      && !cancelled()
+      && needs.pre-flight.outputs.is_ci_workload == 'false'
+      && (
         needs.pre-flight.outputs.docs_only == 'true'
         || needs.pre-flight.outputs.is_deployment_workflow == 'true'
       )
-      && needs.pre-flight.outputs.is_ci_workload == 'false'
-      && !cancelled()
     steps:
       - name: Generate fake coverage report
-        uses: actions/github-script@v6
+        uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.PAT }}
           script: |
@@ -506,10 +712,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [Nemo_CICD_Test, pre-flight]
     if: |
-      (
-        (needs.pre-flight.outputs.is_ci_workload == 'true' && !failure())
-        || success()
-      )
+      needs.Nemo_CICD_Test.result == 'success'
+      && needs.pre-flight.outputs.docs_only == 'false'
+      && needs.pre-flight.outputs.is_deployment_workflow == 'false'
+      && github.event.inputs.mcore_ref == ''
       && !cancelled()
     strategy:
       matrix:
@@ -518,10 +724,10 @@ jobs:
           - e2e
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download coverage reports of current branch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: coverage-${{ matrix.flag }}-*
 
@@ -546,7 +752,7 @@ jobs:
           flags: ${{ matrix.flag }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-${{ matrix.flag }}-aggregated
           path: |

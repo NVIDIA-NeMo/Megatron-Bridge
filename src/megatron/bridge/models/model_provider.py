@@ -14,6 +14,7 @@
 
 import abc
 import os
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
 
@@ -113,7 +114,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         use_megatron_fsdp: bool = False,
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
-        data_parallel_random_init: bool = True,
+        data_parallel_random_init: bool = False,
         use_cpu_initialization: None | bool = False,
         init_model_with_meta_device: bool | None = None,
         pre_wrap_hook: Union[
@@ -158,6 +159,12 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         Returns:
             A list containing the wrapped model instance.
         """
+        warnings.warn(
+            "ModelProviderMixin-based model configuration is deprecated. Migrate to ModelConfig + ModelBuilder.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         if wrap_with_ddp and not ddp_config:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
@@ -482,7 +489,7 @@ def get_model(
     use_megatron_fsdp: bool = False,
     use_torch_fsdp2: bool = False,
     wrap_with_ddp: bool = True,
-    data_parallel_random_init: bool = True,
+    data_parallel_random_init: bool = False,
     use_cpu_initialization: None | bool = False,
     init_model_with_meta_device: bool | None = None,
     pre_wrap_hook: Union[
@@ -508,7 +515,7 @@ def get_model(
             Uses the provide() method with optional pre_process(bool), post_process(bool),
             vp_stage(int) arguments for pipeline parallelism
         ddp_config: Configuration for distributed data parallel training
-        model_type: Type of model (encoder, decoder, or encoder_and_decoder)
+        model_type: Type of model (encoder, decoder)
         overlap_param_gather_with_optimizer_step: Whether to overlap parameter
             gathering with optimizer step for performance optimization
         fp16: Enable FP16 mixed precision training. If None, uses model config
@@ -634,9 +641,6 @@ def _create_model(
     vp_size = getattr(model_provider, "virtual_pipeline_model_parallel_size", None)
     pp_group = pg_collection.pp
     if (pp_group.size() > 1) and (vp_size is not None):
-        assert model_type != ModelType.encoder_and_decoder, (
-            "Interleaved schedule not supported for model with both encoder and decoder"
-        )
         model = []
         for i in range(vp_size):
             pre_process = is_vp_first_stage(vp_stage=i, vp_size=vp_size) and is_pp_first_stage(pp_group)
@@ -651,14 +655,10 @@ def _create_model(
     else:
         pre_process = is_pp_first_stage(pp_group)
         post_process = is_pp_last_stage(pp_group)
-        if model_type == ModelType.encoder_and_decoder:
-            # Deprecated in upstream; simplify to first/last stage semantics
-            model = model_provider.provide()
-        else:
-            model = model_provider.provide(
-                pre_process=pre_process,
-                post_process=post_process,
-            )
+        model = model_provider.provide(
+            pre_process=pre_process,
+            post_process=post_process,
+        )
         model.model_type = model_type
 
     if not isinstance(model, list):

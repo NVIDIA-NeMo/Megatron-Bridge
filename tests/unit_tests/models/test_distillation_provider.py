@@ -20,7 +20,6 @@ import torch
 from megatron.bridge.models.distillation_provider import DistillationProvider, convert_to_distillation_provider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
-from megatron.bridge.models.qwen import Qwen3MoEModelProvider
 from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 
 
@@ -309,7 +308,7 @@ class TestDistillationProvider:
     def test_converted_provider_to_cfg_dict_preserves_original_provider(self):
         """Ensure converted provider to_cfg_dict retains original provider behavior."""
 
-        teacher = Qwen3MoEModelProvider(
+        teacher = GPTModelProvider(
             num_layers=24,
             hidden_size=4096,
             num_attention_heads=32,
@@ -320,7 +319,7 @@ class TestDistillationProvider:
             seq_length=1024,
             pipeline_dtype=None,
         )
-        student = Qwen3MoEModelProvider(
+        student = GPTModelProvider(
             num_layers=12,
             hidden_size=2048,
             num_attention_heads=16,
@@ -337,7 +336,11 @@ class TestDistillationProvider:
             converted = convert_to_distillation_provider(student, teacher)
             cfg_dict = converted.to_cfg_dict()
 
-            assert cfg_dict["_target_"] == "megatron.bridge.models.qwen.qwen_provider.Qwen3MoEModelProvider"
+            assert cfg_dict["_target_"] == "megatron.bridge.models.gpt_provider.GPTModelProvider"
+
+            # Verify GPTModelProvider-level fields are present and match the student config.
+            assert cfg_dict["vocab_size"] == student.vocab_size
+            assert cfg_dict["share_embeddings_and_output_weights"] == student.share_embeddings_and_output_weights
         finally:
             # Restore original bases since it was modified globally for the entire class
             DistillationProvider.__bases__ = original_bases
