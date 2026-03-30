@@ -438,6 +438,14 @@ def parse_cli_args():
         default={},
     )
     slurm_args.add_argument(
+        "--container_env",
+        type=list_of_strings,
+        metavar="KEY[,KEY2,...]",
+        help="Comma-separated list of environment variable names that should override same-named "
+        "values from the container image. Use -E/--env or -ce/--custom_env_vars to set the value explicitly.",
+        default=[],
+    )
+    slurm_args.add_argument(
         "-E",
         "--env",
         action="append",
