@@ -61,6 +61,7 @@ class MockModelConfig:
     group_query_attention: bool = True
     gated_linear_unit: bool = True
     activation_func: object = field(default=None)
+    attention_output_gate: bool = False
     # GDN (Gated DeltaNet) settings
     experimental_attention_variant: str | None = None
     linear_attention_freq: int | list | None = None
@@ -290,6 +291,8 @@ class TestHybridLayerCounting:
             ("****", 4, 0, 0, 0),
             ("EEEE", 0, 0, 0, 4),
             ("M-*E-*M", 2, 2, 2, 1),
+            ("MG*E", 1, 1, 0, 1),
+            ("GGGG", 0, 0, 0, 0),
         ],
     )
     def test_layer_counting_patterns(self, pattern, expected_attn, expected_mamba, expected_mlp, expected_moe):
@@ -556,16 +559,19 @@ class TestGDNLayerFlops:
         gdn_flops = num_floating_point_operations(cfg, batch_size=batch_size)
 
         # Compute expected manually
-        expansion_factor = 3 * 2 * 2  # 12
-        # Standard attention per-layer (MHA, num_query_groups==num_attention_heads so ratio=1)
+        # Standard attention per-layer (MHA, num_query_groups==num_attention_heads)
         kv_channels = 128
-        query_projection_size = kv_channels * 8
-        query_projection_to_hidden_size_ratio = query_projection_size / hidden_size
+        q_proj_size = kv_channels * 8
+        k_proj_size = kv_channels * 8
+        v_proj_size = kv_channels * 8
         standard_attn_per_layer = (
-            expansion_factor
-            * hidden_size
-            * hidden_size
-            * ((1 + 8 / 8 + seq_length / hidden_size / 2) * query_projection_to_hidden_size_ratio)
+            3
+            * 2
+            * (
+                hidden_size * (q_proj_size + k_proj_size + v_proj_size)
+                + q_proj_size * seq_length / 2 * 2
+                + q_proj_size * hidden_size
+            )
         )
         # GDN per-layer
         gdn_per_layer = (
@@ -580,8 +586,8 @@ class TestGDNLayerFlops:
         )
         # freq=2: pattern = [1, 0, 1, 0] -> 2 GDN, 2 standard
         expected_self_attn = gdn_per_layer * 2 + standard_attn_per_layer * 2
-        # MLP: gated_linear_unit=False -> gated_linear_multiplier=1
-        expected_mlp = expansion_factor * num_layers * hidden_size * ffn_hidden_size * 1
+        # MLP: gated_linear_unit=False -> ffn_expansion_factor=2
+        expected_mlp = 3 * 2 * hidden_size * (ffn_hidden_size * 2) * num_layers
         # Logit
         padded_vocab = vocab_size  # 32000 is already divisible by 128
         expected_logit = 3 * 2 * hidden_size * padded_vocab * 1
@@ -644,3 +650,257 @@ class TestHybridMtpPatternParsing:
         expected_delta = 2 * batch_size * seq_len * hidden_size * vocab_size * 2 * 3
         actual_delta = flops_inferred - flops_explicit_zero
         assert actual_delta == expected_delta, f"Expected logits delta {expected_delta:.2e} but got {actual_delta:.2e}"
+
+
+@pytest.mark.unit
+class TestHybridGDNFlops:
+    """Tests for GDN ('G') layer support in the hybrid FLOPs path."""
+
+    def test_gdn_hybrid_pattern_positive_flops(self):
+        """A hybrid pattern containing G layers should produce positive FLOPs."""
+        batch_size = 1
+        model_cfg = MockModelConfig(
+            is_hybrid_model=True,
+            hybrid_layer_pattern="G*G*",
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=512,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            gated_linear_unit=False,
+            linear_key_head_dim=64,
+            linear_value_head_dim=64,
+            linear_num_key_heads=8,
+            linear_num_value_heads=16,
+            linear_conv_kernel_dim=4,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+        flops = num_floating_point_operations(cfg, batch_size=batch_size)
+        assert flops > 0, "Hybrid pattern with G layers should produce positive FLOPs"
+
+    def test_gdn_hybrid_exact_flops(self):
+        """Verify exact GDN FLOPs in hybrid path match the gdn_layer_flops formula."""
+        batch_size = 1
+        seq_len = 512
+        hidden_size = 1024
+        vocab_size = 32000
+        qk_head_dim = 64
+        v_head_dim = 64
+        num_qk_heads = 8
+        num_v_heads = 16
+        conv_kernel_dim = 4
+
+        model_cfg = MockModelConfig(
+            is_hybrid_model=True,
+            hybrid_layer_pattern="GG",
+            num_layers=2,
+            hidden_size=hidden_size,
+            seq_length=seq_len,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=vocab_size,
+            gated_linear_unit=False,
+            linear_key_head_dim=qk_head_dim,
+            linear_value_head_dim=v_head_dim,
+            linear_num_key_heads=num_qk_heads,
+            linear_num_value_heads=num_v_heads,
+            linear_conv_kernel_dim=conv_kernel_dim,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+        flops = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        qk_dim = qk_head_dim * num_qk_heads
+        v_dim = v_head_dim * num_v_heads
+        gdn_per_layer = (
+            2
+            * batch_size
+            * seq_len
+            * (
+                hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                + conv_kernel_dim * (2 * qk_dim + v_dim)
+                + num_v_heads * (v_head_dim**2) * 4
+                + hidden_size * v_dim
+            )
+        )
+        logit = 2 * batch_size * seq_len * hidden_size * vocab_size
+        expected = (2 * gdn_per_layer + logit) * 3
+
+        assert flops == expected, f"Expected {expected:.2e} but got {flops:.2e}"
+
+    def test_gdn_differs_from_attention_in_hybrid(self):
+        """G layers should produce different FLOPs than * layers in hybrid path."""
+        batch_size = 1
+        base = dict(
+            is_hybrid_model=True,
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=512,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            gated_linear_unit=False,
+        )
+        cfg_gdn = MockConfigContainer(model=MockModelConfig(**base, hybrid_layer_pattern="GGGG"))
+        cfg_attn = MockConfigContainer(model=MockModelConfig(**base, hybrid_layer_pattern="****"))
+        flops_gdn = num_floating_point_operations(cfg_gdn, batch_size=batch_size)
+        flops_attn = num_floating_point_operations(cfg_attn, batch_size=batch_size)
+        assert flops_gdn != flops_attn, "G layers and * layers should have different FLOPs"
+
+
+@pytest.mark.unit
+class TestAttentionOutputGateFlops:
+    """Tests for attention_output_gate FLOPs in transformer_flops path."""
+
+    def test_gate_increases_flops(self):
+        """attention_output_gate=True should add extra FLOPs for the gate projection."""
+        batch_size = 1
+        base = dict(
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=512,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_no_gate = MockConfigContainer(model=MockModelConfig(**base, attention_output_gate=False))
+        cfg_gate = MockConfigContainer(model=MockModelConfig(**base, attention_output_gate=True))
+        flops_no_gate = num_floating_point_operations(cfg_no_gate, batch_size=batch_size)
+        flops_gate = num_floating_point_operations(cfg_gate, batch_size=batch_size)
+        assert flops_gate > flops_no_gate, "attention_output_gate should increase FLOPs"
+
+    def test_gate_exact_delta(self):
+        """Verify the exact FLOPs delta from attention_output_gate matches the gate projection formula."""
+        batch_size = 1
+        num_layers = 4
+        hidden_size = 1024
+        seq_length = 512
+        kv_channels = 128
+        num_attention_heads = 8
+        vocab_size = 32000
+
+        base = dict(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            seq_length=seq_length,
+            ffn_hidden_size=4096,
+            num_attention_heads=num_attention_heads,
+            num_query_groups=4,
+            kv_channels=kv_channels,
+            vocab_size=vocab_size,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_no_gate = MockConfigContainer(model=MockModelConfig(**base, attention_output_gate=False))
+        cfg_gate = MockConfigContainer(model=MockModelConfig(**base, attention_output_gate=True))
+        flops_no_gate = num_floating_point_operations(cfg_no_gate, batch_size=batch_size)
+        flops_gate = num_floating_point_operations(cfg_gate, batch_size=batch_size)
+
+        query_projection_size = kv_channels * num_attention_heads
+        expected_delta = batch_size * seq_length * 3 * 2 * num_layers * hidden_size * query_projection_size
+        actual_delta = flops_gate - flops_no_gate
+
+        assert actual_delta == expected_delta, f"Expected gate delta {expected_delta:.2e} but got {actual_delta:.2e}"
+
+
+@pytest.mark.unit
+class TestMoELatentTransformerPath:
+    """Tests for moe_latent_size handling in the transformer_flops path (non-hybrid)."""
+
+    def test_latent_reduces_flops(self):
+        """MoE with latent compression should produce fewer FLOPs than without (when latent < hidden)."""
+        batch_size = 1
+        hidden_size = 2048
+        moe_ffn_hidden = 4096
+        latent_size = 512
+
+        base = dict(
+            num_layers=4,
+            hidden_size=hidden_size,
+            seq_length=1024,
+            ffn_hidden_size=8192,
+            num_attention_heads=16,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=moe_ffn_hidden,
+            moe_shared_expert_intermediate_size=0,
+            gated_linear_unit=False,
+        )
+        cfg_no_latent = MockConfigContainer(model=MockModelConfig(**base, moe_latent_size=None))
+        cfg_latent = MockConfigContainer(model=MockModelConfig(**base, moe_latent_size=latent_size))
+        flops_no_latent = num_floating_point_operations(cfg_no_latent, batch_size=batch_size)
+        flops_latent = num_floating_point_operations(cfg_latent, batch_size=batch_size)
+        assert flops_latent < flops_no_latent, (
+            "Latent MoE (latent < hidden) should produce fewer FLOPs in transformer path"
+        )
+
+    def test_latent_exact_moe_term(self):
+        """Verify exact MoE FLOPs with latent compression in transformer_flops path."""
+        batch_size = 1
+        num_layers = 2
+        hidden_size = 1024
+        seq_length = 512
+        moe_ffn_hidden = 2048
+        latent_size = 256
+        topk = 1
+        vocab_size = 32000
+
+        model_cfg = MockModelConfig(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            seq_length=seq_length,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=8,
+            kv_channels=128,
+            vocab_size=vocab_size,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=topk,
+            moe_ffn_hidden_size=moe_ffn_hidden,
+            moe_shared_expert_intermediate_size=0,
+            moe_latent_size=latent_size,
+            gated_linear_unit=False,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+        actual_flops = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        # ffn_expansion_factor = 2 (non-SwiGLU)
+        ffn_exp = 2
+        routed_term = (moe_ffn_hidden * topk * ffn_exp * latent_size / hidden_size) + 2 * latent_size
+        # All layers are MoE (moe_layer_freq=1), num_dense_layers=0
+        expected_mlp = 3 * 2 * hidden_size * routed_term * num_layers
+
+        # Standard attention: 3 * 2 * num_layers * (...) -- compute per-layer
+        kv_channels = 128
+        q_proj = kv_channels * 8  # = 1024 = hidden_size
+        k_proj = kv_channels * 8
+        v_proj = kv_channels * 8
+        attn_per_layer = hidden_size * (q_proj + k_proj + v_proj) + q_proj * seq_length / 2 * 2 + q_proj * hidden_size
+        expected_attn = 3 * 2 * num_layers * attn_per_layer
+
+        expected_logit = 3 * 2 * hidden_size * vocab_size
+
+        expected_total = batch_size * seq_length * (expected_mlp + expected_attn + expected_logit)
+
+        assert actual_flops == expected_total, f"Expected {expected_total:.2e} but got {actual_flops:.2e}"
