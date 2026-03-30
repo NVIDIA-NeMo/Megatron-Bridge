@@ -122,7 +122,7 @@ The performance data includes:
 |--------|--------|-----------|-----|-----|-----------------|------|----|----|----|----|----|-----------------------|-------------------------|
 | DGX-GB300 | 256 | MXFP8 | 4096 | 2 | 4096 | 0 | 1 | 4 | 1 | 4 | 64 | 5072 | 1037 |
 
-    -  Muon optimizer was used for pre-training Kimi-K2.
+-  Muon optimizer was used for pre-training Kimi-K2.
 
 - In MoE training benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
 
