@@ -3,7 +3,7 @@
 # Kimi-K2.5-VL Multi-Node Inference
 #
 # Full model (~1T params, 384 MoE experts, FP8 expert weights)
-# Config: TP=2, EP=48, PP=1 -> 96 GPUs (12 nodes)
+# Config: TP=2, EP=48, PP=1 -> 48 GPUs (6 nodes)
 #
 # Supports both HF checkpoints (on-the-fly conversion) and pre-converted
 # Megatron checkpoints (faster startup).
@@ -13,12 +13,12 @@
 # ==============================================================================
 
 #SBATCH --job-name=kimi-k25-vl-infer
-#SBATCH --nodes=12
+#SBATCH --nodes=6
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=02:00:00
-#SBATCH --account=coreai_devtech_all
-#SBATCH --partition=batch
+#SBATCH --account=<YOUR_ACCOUNT>
+#SBATCH --partition=<YOUR_PARTITION>
 #SBATCH --exclusive
 
 # ── Paths (edit these for your environment) ──────────────────────────────
