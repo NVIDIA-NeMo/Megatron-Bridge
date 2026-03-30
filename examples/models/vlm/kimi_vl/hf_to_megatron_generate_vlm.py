@@ -183,9 +183,7 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(image_path)
 
 
-def process_image_inputs(
-    processor, image_path: Optional[str], prompt: str, image_token_id: int = 163605
-):
+def process_image_inputs(processor, image_path: Optional[str], prompt: str, image_token_id: int = 163605):
     """Process image inputs for Kimi VL model.
 
     Uses the KimiK25Processor directly with messages format.
@@ -203,14 +201,14 @@ def process_image_inputs(
     """
     if image_path:
         messages = [
-            {'role': 'system', 'content': 'You are Kimi, an AI assistant created by Moonshot AI.'},
+            {"role": "system", "content": "You are Kimi, an AI assistant created by Moonshot AI."},
             {
                 "role": "user",
                 "content": [
                     {"type": "image", "image_url": load_image(image_path)},
                     {"type": "text", "text": prompt},
                 ],
-            }
+            },
         ]
         inputs = processor(messages=messages)
         grid_thws = getattr(inputs, "grid_thws", None)
@@ -259,7 +257,9 @@ def main(args) -> None:
         elif pp == 1:
             model_provider.pipeline_model_parallel_layout = None
         else:
-            raise ValueError(f"Unsupported pipeline parallelism size: {pp}, you need to specify the pipeline model parallel layout manually")
+            raise ValueError(
+                f"Unsupported pipeline parallelism size: {pp}, you need to specify the pipeline model parallel layout manually"
+            )
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         model = bridge.load_megatron_model(
@@ -310,9 +310,7 @@ def main(args) -> None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # Process inputs
-    input_ids, pixel_values, grid_thws = process_image_inputs(
-        processor, args.image_path, args.prompt
-    )
+    input_ids, pixel_values, grid_thws = process_image_inputs(processor, args.image_path, args.prompt)
 
     # Move to GPU
     input_ids = input_ids.cuda()
@@ -372,7 +370,9 @@ def main(args) -> None:
                 next_token_ids = torch.argmax(output[:, last_real_pos], dim=-1, keepdim=True)
 
                 if step < 5:
-                    print_rank_last(f"Step {step}: output shape={output.shape}, real_seq_len={real_seq_len}, var={output.var():.4f}")
+                    print_rank_last(
+                        f"Step {step}: output shape={output.shape}, real_seq_len={real_seq_len}, var={output.var():.4f}"
+                    )
                     logits = output[0, last_real_pos, :]
                     top5_vals, top5_ids = torch.topk(logits, 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
