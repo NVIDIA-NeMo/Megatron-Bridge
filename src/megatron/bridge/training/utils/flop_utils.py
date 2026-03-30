@@ -402,17 +402,51 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             key_projection_size = cfg.model.kv_channels * num_query_groups
             value_projection_size = cfg.model.kv_channels * num_query_groups
             gate_projection_size = query_projection_size if getattr(cfg.model, "attention_output_gate", False) else 0
-            self_attn_term = (
-                3
-                * 2
-                * num_layers
-                * (
-                    cfg.model.hidden_size
-                    * (query_projection_size + key_projection_size + value_projection_size + gate_projection_size)
-                    + query_projection_size * cfg.model.seq_length / 2 * 2
-                    + query_projection_size * cfg.model.hidden_size
-                )
+            proj_per_layer = (
+                cfg.model.hidden_size
+                * (query_projection_size + key_projection_size + value_projection_size + gate_projection_size)
+                + query_projection_size * cfg.model.hidden_size
             )
+
+            window_size = getattr(cfg.model, "window_size", None)
+            window_attn_skip_freq = getattr(cfg.model, "window_attn_skip_freq", None)
+
+            if window_size is not None:
+                if isinstance(window_size, (list, tuple)):
+                    effective_window = window_size[0] + window_size[1] + 1
+                else:
+                    effective_window = window_size
+                swa_context = min(effective_window, cfg.model.seq_length)
+
+                if window_attn_skip_freq is None:
+                    num_swa_layers = num_layers
+                    num_full_attn_layers = 0
+                elif isinstance(window_attn_skip_freq, int):
+                    swa_pattern = [0 if ((i + 1) % window_attn_skip_freq == 0) else 1 for i in range(num_layers)]
+                    num_swa_layers = sum(swa_pattern)
+                    num_full_attn_layers = num_layers - num_swa_layers
+                elif isinstance(window_attn_skip_freq, list):
+                    swa_pattern = window_attn_skip_freq[:num_layers]
+                    num_swa_layers = sum(swa_pattern)
+                    num_full_attn_layers = num_layers - num_swa_layers
+                else:
+                    num_swa_layers = 0
+                    num_full_attn_layers = num_layers
+
+                full_core = query_projection_size * cfg.model.seq_length / 2 * 2
+                swa_core = query_projection_size * swa_context / 2 * 2
+
+                self_attn_term = (
+                    3
+                    * 2
+                    * (
+                        num_full_attn_layers * (proj_per_layer + full_core)
+                        + num_swa_layers * (proj_per_layer + swa_core)
+                    )
+                )
+            else:
+                full_core = query_projection_size * cfg.model.seq_length / 2 * 2
+                self_attn_term = 3 * 2 * num_layers * (proj_per_layer + full_core)
 
         # Handle GDN (Gated DeltaNet) hybrid attention variant.
         # When experimental_attention_variant is "gated_delta_net", a fraction of the

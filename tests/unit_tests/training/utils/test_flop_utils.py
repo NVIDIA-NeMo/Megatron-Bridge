@@ -62,6 +62,9 @@ class MockModelConfig:
     gated_linear_unit: bool = True
     activation_func: object = field(default=None)
     attention_output_gate: bool = False
+    # Sliding window attention settings
+    window_size: tuple | list | int | None = None
+    window_attn_skip_freq: int | list | None = None
     # GDN (Gated DeltaNet) settings
     experimental_attention_variant: str | None = None
     linear_attention_freq: int | list | None = None
@@ -904,3 +907,150 @@ class TestMoELatentTransformerPath:
         expected_total = batch_size * seq_length * (expected_mlp + expected_attn + expected_logit)
 
         assert actual_flops == expected_total, f"Expected {expected_total:.2e} but got {actual_flops:.2e}"
+
+
+@pytest.mark.unit
+class TestSlidingWindowAttentionFlops:
+    """Tests for sliding window attention (SWA) FLOPs in transformer_flops path."""
+
+    def test_swa_reduces_flops(self):
+        """SWA layers should produce fewer FLOPs than full attention when window < seq_length."""
+        batch_size = 1
+        base = dict(
+            num_layers=8,
+            hidden_size=1024,
+            seq_length=4096,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_full = MockConfigContainer(model=MockModelConfig(**base))
+        cfg_swa = MockConfigContainer(model=MockModelConfig(**base, window_size=(511, 0), window_attn_skip_freq=2))
+        flops_full = num_floating_point_operations(cfg_full, batch_size=batch_size)
+        flops_swa = num_floating_point_operations(cfg_swa, batch_size=batch_size)
+        assert flops_swa < flops_full, "SWA should reduce FLOPs when window < seq_length"
+
+    def test_swa_no_effect_when_window_ge_seq(self):
+        """SWA should have no effect when effective window >= seq_length."""
+        batch_size = 1
+        seq_length = 512
+        base = dict(
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=seq_length,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_full = MockConfigContainer(model=MockModelConfig(**base))
+        cfg_swa = MockConfigContainer(
+            model=MockModelConfig(**base, window_size=(seq_length, 0), window_attn_skip_freq=2)
+        )
+        flops_full = num_floating_point_operations(cfg_full, batch_size=batch_size)
+        flops_swa = num_floating_point_operations(cfg_swa, batch_size=batch_size)
+        assert flops_swa == flops_full, "SWA with window >= seq should equal full attention FLOPs"
+
+    def test_swa_exact_delta(self):
+        """Verify the exact FLOPs reduction from SWA matches the core attention formula difference."""
+        batch_size = 1
+        num_layers = 4
+        hidden_size = 1024
+        seq_length = 4096
+        kv_channels = 128
+        num_attention_heads = 8
+        window_left = 511
+        vocab_size = 32000
+
+        base = dict(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            seq_length=seq_length,
+            ffn_hidden_size=4096,
+            num_attention_heads=num_attention_heads,
+            num_query_groups=4,
+            kv_channels=kv_channels,
+            vocab_size=vocab_size,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_full = MockConfigContainer(model=MockModelConfig(**base))
+        cfg_swa = MockConfigContainer(
+            model=MockModelConfig(**base, window_size=(window_left, 0), window_attn_skip_freq=2)
+        )
+        flops_full = num_floating_point_operations(cfg_full, batch_size=batch_size)
+        flops_swa = num_floating_point_operations(cfg_swa, batch_size=batch_size)
+
+        # skip_freq=2: layers [0,2] are SWA, layers [1,3] are full → 2 SWA layers
+        num_swa_layers = 2
+        query_projection_size = kv_channels * num_attention_heads
+        effective_window = window_left + 0 + 1  # 512
+
+        # Core attention difference per SWA layer: Q * (S - W) (the /2 *2 cancels)
+        core_diff_per_layer = query_projection_size * (seq_length - effective_window)
+        expected_delta = batch_size * seq_length * 3 * 2 * num_swa_layers * core_diff_per_layer
+        actual_delta = flops_full - flops_swa
+
+        assert actual_delta == expected_delta, f"Expected SWA delta {expected_delta:.2e} but got {actual_delta:.2e}"
+
+    def test_swa_list_pattern(self):
+        """Test SWA with a list pattern for window_attn_skip_freq."""
+        batch_size = 1
+        base = dict(
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=4096,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        # List [1,1,0,1] means 3 SWA layers, 1 full layer
+        cfg_list = MockConfigContainer(
+            model=MockModelConfig(**base, window_size=(511, 0), window_attn_skip_freq=[1, 1, 0, 1])
+        )
+        # Int freq=4 gives pattern [1,1,1,0] → 3 SWA, 1 full (same counts, different order)
+        cfg_int = MockConfigContainer(model=MockModelConfig(**base, window_size=(511, 0), window_attn_skip_freq=4))
+        flops_list = num_floating_point_operations(cfg_list, batch_size=batch_size)
+        flops_int = num_floating_point_operations(cfg_int, batch_size=batch_size)
+        assert flops_list == flops_int, "Same SWA/full split should produce same FLOPs regardless of order"
+
+    def test_swa_all_layers_when_skip_freq_none(self):
+        """When window_size is set but window_attn_skip_freq is None, all layers should be SWA."""
+        batch_size = 1
+        base = dict(
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=4096,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_no_window = MockConfigContainer(model=MockModelConfig(**base))
+        cfg_all_swa = MockConfigContainer(
+            model=MockModelConfig(**base, window_size=(511, 0), window_attn_skip_freq=None)
+        )
+        flops_full = num_floating_point_operations(cfg_no_window, batch_size=batch_size)
+        flops_all_swa = num_floating_point_operations(cfg_all_swa, batch_size=batch_size)
+        assert flops_all_swa < flops_full, (
+            "window_size set with skip_freq=None should make all layers SWA (fewer FLOPs)"
+        )
