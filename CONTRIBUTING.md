@@ -169,6 +169,7 @@ Format your commit messages and PR titles as:
 - `distill` - Knowledge distillation
 - `prune` - Pruning and sparsity
 - `quant` - Quantization (PTQ, QAT, FP8 recipes)
+- `diffusion` - Diffusion model implementations and training
 - `ci` - CI, automation, and workflow infrastructure
 - `docs` - Documentation, examples, and contributor guidance
 - `build` - Dependencies, packaging, and environment setup
@@ -197,7 +198,7 @@ Format your commit messages and PR titles as:
 When you create a pull request, **add labels immediately** so reviewers and CI can route it correctly. At minimum, apply:
 
 1. **One type label** — `bug`, `feature`, `docs`, or `ci`
-2. **One or more area labels** — `area:model`, `area:recipe`, `area:training`, `area:data`, `area:ckpt`, `area:peft`, `area:perf`, `area:distill`, `area:prune`, `area:quant`, `area:build`, or `area:misc`
+2. **One or more area labels** — `area:model`, `area:recipe`, `area:training`, `area:data`, `area:ckpt`, `area:peft`, `area:perf`, `area:distill`, `area:diffusion`, `area:prune`, `area:quant`, `area:build`, or `area:misc`
 3. **`docs-only`** — if the PR touches only documentation (no code changes); this skips most CI jobs
 4. **`needs-review`** — when the PR is ready for review
 5. **`needs-more-tests`** — if the change needs additional test coverage; triggers both L0 and L1 CI
@@ -266,6 +267,7 @@ Use one primary area label after triage:
 | `area:peft` | PEFT methods (LoRA, adapters) and adapter export |
 | `area:perf` | Performance optimizations, kernel integration, and throughput improvements |
 | `area:distill` | Knowledge distillation |
+| `area:diffusion` | Diffusion model implementations and training |
 | `area:prune` | Pruning and sparsity |
 | `area:quant` | Quantization (PTQ, QAT, FP8 recipes) |
 | `area:build` | Dependencies, packaging, images, and environment setup |
@@ -340,7 +342,11 @@ We use [pytest](https://docs.pytest.org/en/stable/) for writing both unit and fu
 **Unit tests** aim to test functions in isolation. They generally do not depend on artifacts like Hugging Face checkpoints or larger datasets. Exception to this is a small toy dataset consisting of tokenizers.
 Unit tests are stored at `tests/unit_tests`. Please add your test to an existing folder or create a new one if none matches.
 
+> **Preferred:** Unit tests are strongly recommended over functional tests. CI resources are limited, so every functional test slot has a real cost. Cover as much logic as possible with unit tests before reaching for a functional test.
+
 **Functional tests** are integration tests that perform model training or operate on larger artifacts. We use pytest for writing these. In some cases, it might be desired to run your test (or parts of it) in a subprocess to avoid process contamination. We use `subprocess.run` for this inside the pytest function. Please add your test into one of the predefined folders. If none of the folders matches semantically, please reach out to the `@nvidia-nemo/automation` in your PR for consultation.
+
+> **GPU limit:** Functional tests must use **at most 2 GPUs**. Do not add tests that require more than 2 GPUs — they will not fit in the CI resource budget.
 
 ### Functional Test Launcher Scripts
 
