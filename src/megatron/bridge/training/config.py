@@ -606,7 +606,7 @@ class SchedulerConfig:
     lr_decay_style: Literal["constant", "linear", "cosine", "inverse-square-root", "WSD"] = "linear"
     """Learning rate decay function."""
 
-    lr_wsd_decay_style: Literal["exponential", "linear", "cosine"] = "exponential"
+    lr_wsd_decay_style: Literal["exponential", "linear", "cosine", "minus_sqrt"] = "exponential"
     """Decay style for the annealing phase of WSD"""
 
     lr_decay_iters: Optional[int] = None
@@ -984,6 +984,16 @@ class CheckpointConfig:
 
     replication_factor: int = 2
     """Number of machines storing the replica of a given rank's data."""
+
+    custom_manager_class: str | None = None
+    """Fully qualified class name for a custom CheckpointManager implementation.
+
+    When set, checkpoint operations will instantiate and delegate to this class instead of the default
+    checkpoint manager. The custom class must implement the `CheckpointManager` protocol
+    defined in `megatron.bridge.training.checkpointing`.
+
+    Example: ``'mypackage.checkpoint.MyCheckpointManager'``
+    """
 
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
@@ -1824,6 +1834,8 @@ class ConfigContainer(Container):
             # Iteration-based training
             if self.scheduler.lr_decay_iters is None:
                 self.scheduler.lr_decay_iters = self.train.train_iters
+            if self.scheduler.lr_wsd_decay_iters is None and self.scheduler.lr_decay_style == "WSD":
+                self.scheduler.lr_wsd_decay_iters = self.scheduler.lr_decay_iters
             self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
             self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
 

@@ -86,6 +86,27 @@ NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     recompute_modules=["moe", "layernorm", "core_attn", "moe_act"],
 )
 
+
+# =============================================================================
+# Nemotron 3 Super Pretrain - V1
+# =============================================================================
+
+BASE_NEMOTRON_3_SUPER_CONFIG = WorkloadBaseConfig(
+    num_gpus=64,
+    global_batch_size=512,
+    tensor_model_parallel_size=1,
+    expert_tensor_parallel_size=1,
+    expert_model_parallel_size=64,
+    moe_flex_dispatcher_backend="hybridep",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "mamba", "moe_router", "moe_preprocess"],
+)
+
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_BF16_V1 = BASE_NEMOTRON_3_SUPER_CONFIG
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_BF16_V1
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_NVFP4_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_BF16_V1
+
+
 __all__ = [
     "NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_BF16_V1",
     "NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
@@ -101,4 +122,7 @@ __all__ = [
     "NEMOTRON_3_NANO_PRETRAIN_CONFIG_B200_NVFP4_V1",
     "NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100_BF16_V1",
     "NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100_FP8_CS_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_BF16_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
+    "NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_NVFP4_V1",
 ]
