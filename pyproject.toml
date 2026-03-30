@@ -66,9 +66,15 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.0.0,<=5.2.0",
+    "transformers>=5.0.0,<=5.3.0",
+    "peft>=0.18.1",
     "datasets>=2.20.0",
     "accelerate",
+    "diffusers>=0.36.0",
+    "peft>=0.18.0",
+    "einops",
+    "imageio",
+    "imageio-ffmpeg",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
     "typing-extensions",
@@ -83,12 +89,13 @@ dependencies = [
     "qwen-vl-utils",
     "transformer-engine[pytorch,core_cu13]",
     "mamba-ssm",
-    "nvidia-resiliency-ext~=0.4.1",
+    "nvidia-resiliency-ext~=0.5.0",
     "causal-conv1d",
     "flash-linear-attention",
     "timm",
     "open-clip-torch>=3.2.0",
     "mlflow>=3.5.0",
+    "comet-ml>=3.50.0",
     "torch>=2.6.0",
 ]
 
@@ -112,7 +119,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@287770466f0f4433052260a765db5ff7b8be1320",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@71bbefbf153418f943640df0f7373625dc93fa46",
     "mlflow>=3.5.0",
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt>=0.42.0a0",
@@ -126,11 +133,14 @@ url = "https://pypi.nvidia.com"
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
-nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "v0.4.1" }
+nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "v0.5.0" }
 
 [project.optional-dependencies]
 recipes = [
     "nemo-run",
+]
+parquet = [
+    "pyarrow>=14.0.0",
 ]
 tensor-inspect = [
     "nvdlfw-inspect==0.2.1",
