@@ -335,10 +335,6 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     tp_size = pg_collection.tp.size() if pg_collection is not None and pg_collection.tp is not None else 1
     has_sp = getattr(cfg.model, "sequence_parallel", False)
 
-    tp_sp_size = pg_collection.tp.size() if pg_collection is not None and pg_collection.tp is not None else 1
-    cp_multiple = cp_size * 2 if cp_size > 1 else 1
-    pad_to_multiple_of = math.lcm(tp_sp_size, cp_multiple)
-
     if enable_packing:
         # Pack sequences
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")

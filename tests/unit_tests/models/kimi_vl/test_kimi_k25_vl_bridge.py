@@ -15,6 +15,7 @@
 from unittest.mock import Mock
 
 import pytest
+import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
