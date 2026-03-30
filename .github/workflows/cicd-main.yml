@@ -59,9 +59,6 @@ permissions:
   id-token: write
   contents: read
 
-env:
-  container-registry: nemoci.azurecr.io
-
 jobs:
   pre-flight:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
@@ -70,6 +67,8 @@ jobs:
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
       default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
       non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+      default_registry: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}
+      non_nvidia_registry: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
     secrets:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
@@ -132,7 +131,7 @@ jobs:
   cicd-container-build:
     needs: [pre-flight, cicd-wait-in-queue]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     if: |
       (
         success()
@@ -209,6 +208,7 @@ jobs:
 
       - name: Install Azure CLI
         shell: bash
+        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
         run: |
           echo "::group::Install Azure CLI"
           # Create systemd override for proper dependencies
@@ -217,12 +217,14 @@ jobs:
 
       - name: Azure Login
         uses: azure/login@v2
+        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Azure ACR Login
+        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
         shell: bash
         run: |
           az acr login --name nemoci
@@ -248,7 +250,7 @@ jobs:
                 }
               }
             }' | jq -r '.data.repository.pullRequests.nodes[].number' | while read -r number; do
-              echo "type=registry,ref=${{ env.container-registry }}/megatron-bridge:$number-buildcache,mode=max"
+              echo "type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:$number-buildcache,mode=max"
             done)
 
           echo "LAST_PRS<<EOF" | tee -a $GITHUB_OUTPUT
@@ -272,7 +274,7 @@ jobs:
             KEY="$BRANCH_SANITIZED"
           fi
           echo "key=$KEY" >> $GITHUB_OUTPUT
-          echo "cache-to=type=registry,ref=${{ env.container-registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
+          echo "cache-to=type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -285,14 +287,14 @@ jobs:
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
           cache-from: |
-            type=registry,ref=${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
-            type=registry,ref=${{ env.container-registry }}/megatron-bridge:main-buildcache,mode=max
+            type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
+            type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:main-buildcache,mode=max
             ${{ steps.cache_from.outputs.LAST_PRS }}
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |
-            ${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
-            ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+            ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
+            ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
 
@@ -338,7 +340,7 @@ jobs:
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests_Core
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -348,42 +350,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for unit tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 UNIT TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
-
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests_Core
           timeout: 18
           is_unit_test: "true"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
@@ -399,7 +377,7 @@ jobs:
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests_Diffusion
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -409,42 +387,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for unit tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 UNIT TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
-
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests_Diffusion
           timeout: 18
           is_unit_test: "true"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
@@ -510,7 +464,7 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -521,42 +475,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for functional tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
-
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
@@ -578,7 +508,7 @@ jobs:
       && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true' || needs.check-labels.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -589,42 +519,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for functional tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
-
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
@@ -646,7 +552,7 @@ jobs:
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -657,42 +563,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for functional tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
-
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
@@ -705,7 +587,7 @@ jobs:
     needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: ${{ matrix.script }}
-    environment: nemo-ci
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -716,30 +598,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Update MCore submodule (if triggered from MCore)
-        if: ${{ github.event.inputs.mcore_ref != '' }}
-        run: |
-          echo "🔄 Updating MCore submodule for functional tests..."
-          cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
-
-          ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
-
-          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
-          echo "Expected: ${EXPECTED_COMMIT}"
-          echo "Actual:   ${ACTUAL_COMMIT}"
-
-          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-            echo "❌ ERROR: MCore commit mismatch!"
-            exit 1
-          fi
-
-          echo "✅ MCore commit verified"
-          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
-          git log -1 --oneline
-
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -747,12 +605,12 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: "true"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
