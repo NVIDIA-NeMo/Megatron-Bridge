@@ -21,6 +21,9 @@ on:
       - "pull-request/[0-9]+"
       - "deploy-release/*"
 
+  merge_group:
+    types: [checks_requested]
+
   # Allow MCore to trigger this workflow remotely for compatibility testing
   workflow_dispatch:
     inputs:
@@ -123,6 +126,7 @@ jobs:
       !(needs.pre-flight.outputs.is_ci_workload == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true'
       || needs.pre-flight.outputs.docs_only == 'true')
+      && github.event_name != 'merge_group'
     steps:
       - name: Running CI tests
         run: |
@@ -137,6 +141,7 @@ jobs:
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
       )
       && !cancelled()
     steps:
@@ -334,6 +339,7 @@ jobs:
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
@@ -371,6 +377,7 @@ jobs:
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
@@ -415,6 +422,7 @@ jobs:
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
       )
       && !cancelled()
     steps:
@@ -460,6 +468,7 @@ jobs:
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
@@ -503,9 +512,10 @@ jobs:
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
       )
       && !cancelled()
-      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true' || needs.check-labels.outputs.full_test_suite == 'true')
+      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.check-labels.outputs.needs_more_tests == 'true' || needs.check-labels.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
@@ -547,6 +557,7 @@ jobs:
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
       )
       && !cancelled()
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.full_test_suite == 'true')
@@ -646,7 +657,7 @@ jobs:
           # Unexpected skips in an expected tier are failures.
           # is_ci_workload must be true, otherwise docs-only/deployment runs have no tests and trigger false positives.
           EXPECT_L0: ${{ needs.pre-flight.outputs.is_ci_workload == 'true' && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') }}
-          EXPECT_L1: ${{ needs.pre-flight.outputs.is_ci_workload == 'true' && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true') }}
+          EXPECT_L1: ${{ needs.pre-flight.outputs.is_ci_workload == 'true' && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.check-labels.outputs.needs_more_tests == 'true') }}
           EXPECT_L2: ${{ needs.pre-flight.outputs.is_ci_workload == 'true' && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         run: |
           FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
