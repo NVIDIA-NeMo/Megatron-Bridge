@@ -50,7 +50,7 @@ def kimi_k2_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -65,14 +65,15 @@ def kimi_k2_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.ddp.overlap_grad_reduce = True
 
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
-
     cfg.model.cuda_graph_scope = []
     _benchmark_common(cfg)
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True  # Must be after _benchmark_common
     return cfg
 
 
@@ -84,7 +85,7 @@ def kimi_k2_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -99,14 +100,15 @@ def kimi_k2_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.ddp.overlap_grad_reduce = True
 
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
-
     cfg.model.cuda_graph_scope = []
     _benchmark_common(cfg)
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True  # Must be after _benchmark_common
     return cfg
 
 
@@ -120,7 +122,7 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -135,14 +137,15 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.ddp.overlap_grad_reduce = True
 
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
-
     cfg.model.cuda_graph_scope = []
     _benchmark_common(cfg)
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True  # Must be after _benchmark_common
     return cfg
 
 
@@ -154,7 +157,7 @@ def kimi_k2_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -169,14 +172,15 @@ def kimi_k2_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.ddp.overlap_grad_reduce = True
 
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
-
     cfg.model.cuda_graph_scope = []
     _benchmark_common(cfg)
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True  # Must be after _benchmark_common
     return cfg
 
 
@@ -193,7 +197,7 @@ def kimi_k2_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -208,6 +212,8 @@ def kimi_k2_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.model.cuda_graph_impl = "transformer_engine"
@@ -227,7 +233,7 @@ def kimi_k2_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -242,6 +248,8 @@ def kimi_k2_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.model.cuda_graph_impl = "transformer_engine"
@@ -263,7 +271,7 @@ def kimi_k2_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -278,6 +286,8 @@ def kimi_k2_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.model.cuda_graph_impl = "transformer_engine"
@@ -302,7 +312,7 @@ def kimi_k2_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -332,7 +342,7 @@ def kimi_k2_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -364,7 +374,7 @@ def kimi_k2_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -399,7 +409,7 @@ def kimi_k2_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 
@@ -434,7 +444,7 @@ def kimi_k2_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False
 

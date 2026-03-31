@@ -44,7 +44,7 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -77,7 +77,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -109,7 +109,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -141,7 +141,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -178,7 +178,7 @@ def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -211,7 +211,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -244,7 +244,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -282,7 +282,7 @@ def deepseek_v3_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -312,7 +312,7 @@ def deepseek_v3_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -342,7 +342,7 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -377,7 +377,7 @@ def deepseek_v3_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -407,7 +407,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -437,7 +437,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -472,7 +472,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 2
@@ -508,7 +508,7 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 2
@@ -544,7 +544,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -577,7 +577,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -608,7 +608,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -639,7 +639,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -675,7 +675,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -708,7 +708,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -741,7 +741,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -779,7 +779,7 @@ def deepseek_v3_pretrain_v2_256gpu_b300_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -809,7 +809,7 @@ def deepseek_v3_pretrain_v2_256gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -839,7 +839,7 @@ def deepseek_v3_pretrain_v2_256gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -874,7 +874,7 @@ def deepseek_v3_pretrain_v2_256gpu_b200_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -904,7 +904,7 @@ def deepseek_v3_pretrain_v2_256gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -934,7 +934,7 @@ def deepseek_v3_pretrain_v2_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
@@ -969,7 +969,7 @@ def deepseek_v3_pretrain_v2_1024gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 2
@@ -1005,7 +1005,7 @@ def deepseek_v3_pretrain_v2_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
-    cfg.model.enable_megatron_core_experimental = True
+    cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 2
