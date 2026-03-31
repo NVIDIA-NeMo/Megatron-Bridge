@@ -11,7 +11,7 @@ body:
       value: |
         Use this form to request support for a new model. Include the upstream model reference and the minimum deliverables needed to make the request actionable.
 
-        **We encourage you to try adding model support yourself first!** Megatron Bridge includes an [AI-assisted model onboarding guide](../docs/adding-new-models.md) that walks you through creating bridges, providers, recipes, and tests. Many models share architectural patterns with already-supported families, making self-service onboarding straightforward. If you have a working implementation, please open a PR — we'll help review and merge it.
+        **We encourage you to try adding model support yourself first!** Megatron Bridge includes an [AI-assisted model onboarding guide](../../docs/adding-new-models.md) that walks you through creating bridges, providers, recipes, and tests. Many models share architectural patterns with already-supported families, making self-service onboarding straightforward. If you have a working implementation, please open a PR — we'll help review and merge it.
   - type: input
     id: hf-repo
     attributes:
