@@ -136,15 +136,18 @@ class Qwen3NextBridge(MegatronModelBridge):
             return False
 
         # Try local path first, then download from hub
-        local_path = Path(str(model_id)) / "model.safetensors.index.json"
-        if local_path.exists():
-            index_path = local_path
-        else:
-            index_path = Path(hf_hub_download(str(model_id), "model.safetensors.index.json"))
+        try:
+            local_path = Path(str(model_id)) / "model.safetensors.index.json"
+            if local_path.exists():
+                index_path = local_path
+            else:
+                index_path = Path(hf_hub_download(str(model_id), "model.safetensors.index.json"))
 
-        with open(index_path) as f:
-            weight_map = json.load(f).get("weight_map", {})
-        return any(k.startswith("mtp.") for k in weight_map)
+            with open(index_path) as f:
+                weight_map = json.load(f).get("weight_map", {})
+            return any(k.startswith("mtp.") for k in weight_map)
+        except Exception:
+            return False
 
     @staticmethod
     def _gdn_attention_mappings(p, h):
