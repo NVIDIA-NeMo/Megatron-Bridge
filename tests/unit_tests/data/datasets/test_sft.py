@@ -60,6 +60,7 @@ def get_gpt_sft(tmp_path, dataset_type="sft"):
             max_num_samples=num_samples,
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
+            memmap_workers=1,
         )
     elif dataset_type == "packed":
         # Create a mock packed dataset file
@@ -82,6 +83,7 @@ def get_gpt_sft(tmp_path, dataset_type="sft"):
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
+            memmap_workers=1,
         )
     else:
         dataset = GPTSFTChatDataset(
@@ -90,6 +92,7 @@ def get_gpt_sft(tmp_path, dataset_type="sft"):
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
+            memmap_workers=1,
         )
 
     return dataset, num_samples
