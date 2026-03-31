@@ -31,7 +31,7 @@ from transformers import AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
 
 
 class SingleBatchIterator:
@@ -167,24 +167,10 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
-    # Disable MTP for inference (MTP is only used during training)
-    def _disable_mtp(m):
-        """Disable MTP on a model by clearing mtp_process on the language model."""
-        m.config.mtp_num_layers = None
-        inner = m.module if hasattr(m, "module") else m
-        lang = getattr(inner, "language_model", inner)
-        if hasattr(lang, "mtp_process"):
-            lang.mtp_process = False
-
     model = [m.cuda() for m in model]
     for m in model:
         m.eval()
-        _disable_mtp(m)
-
-    # Set grad_scale_func to None on the model's config for inference
-    for m in model:
-        if hasattr(m, "config"):
-            m.config.grad_scale_func = None
+        disable_mtp_for_inference(m)
 
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
