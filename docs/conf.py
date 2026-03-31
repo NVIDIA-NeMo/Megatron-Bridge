@@ -37,7 +37,7 @@ if os.path.isdir(_SKILLS_SRC):
 project = "Megatron Bridge"
 copyright = "2026, NVIDIA Corporation"
 author = "NVIDIA Corporation"
-release = "nightly"
+release = "0.4.0"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
