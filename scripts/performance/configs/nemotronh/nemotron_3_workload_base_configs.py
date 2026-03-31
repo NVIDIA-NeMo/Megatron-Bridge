@@ -112,7 +112,7 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_NVFP4_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONF
 
 BASE_NEMOTRON_3_SUPER_CONFIG_GB200 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG,
-    moe_flex_dispatcher_backend=None,
+    moe_flex_dispatcher_backend="hybridep",
     cuda_graph_scope=["mamba", "attn"],
     recompute_modules=["moe_act", "layernorm", "core_attn", "moe"],
 )
