@@ -528,6 +528,35 @@ def parse_cli_args():
         required=False,
     )
 
+    # Kubeflow
+    kubeflow_args = parser.add_argument_group("Kubeflow arguments")
+    kubeflow_args.add_argument(
+        "--kubeflow_namespace",
+        type=str,
+        help="Kubernetes namespace for Kubeflow TrainJob. When set, uses the Kubeflow executor instead of Slurm.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_workdir_pvc",
+        type=str,
+        help="PVC name for syncing job workdir (launch scripts, packaged code) to the cluster before launch.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_workdir_pvc_path",
+        type=str,
+        help="Mount path for the workdir PVC inside the training pod. Defaults to '/nemo_run'.",
+        default="/nemo_run",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_image_pull_secrets",
+        type=list_of_strings,
+        help="Comma-separated list of Kubernetes image pull secret names.",
+        required=False,
+        default=[],
+    )
+
     # For performance
     performance_args = parser.add_argument_group("Performance arguments")
     performance_args.add_argument(
