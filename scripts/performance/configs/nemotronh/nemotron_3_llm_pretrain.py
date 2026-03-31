@@ -89,6 +89,10 @@ def nemotron_3_super_pretrain_config_gb200(
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
 
+    if precision != "nvfp4":
+        cfg.model.fine_grained_activation_offloading = True
+        cfg.model.offload_modules = ["expert_fc1"]
+
     return cfg
 
 
@@ -136,6 +140,10 @@ def nemotron_3_super_pretrain_config_b200(
     set_workload_base_configs(cfg, base_cfg)
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    if precision != "nvfp4":
+        cfg.model.fine_grained_activation_offloading = True
+        cfg.model.offload_modules = ["expert_fc1"]
 
     return cfg
 
