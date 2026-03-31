@@ -283,6 +283,9 @@ class PerfEnvPlugin(Plugin):
                     if gpu in ["gb300", "h100"]:
                         executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                         executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
+        if model_recipe_name == "nemotron_3_super":
+            if gpu == "gb200":
+                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
         del_cudnn_ln = True
         if gpu in ["h100"]:
