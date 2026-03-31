@@ -296,16 +296,29 @@ uv run python examples/conversion/convert_checkpoints.py import \
 
 ## Training
 
+See `examples/models/<type>/<model>/slurm_sft.sh` and `slurm_peft.sh` for full Slurm scripts.
+Single-node quick-start:
+
 ### SFT
 \`\`\`bash
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/train_any_basic.py \
-    --model <model> --size <size> --mode sft
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+    --recipe <model>_<size>_sft_config \
+    checkpoint.pretrained_checkpoint=/workspace/models/<model> \
+    model.tensor_model_parallel_size=<TP> \
+    model.pipeline_model_parallel_size=<PP> \
+    train.train_iters=1000 \
+    train.global_batch_size=<GBS>
 \`\`\`
 
 ### PEFT (LoRA)
 \`\`\`bash
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/train_any_basic.py \
-    --model <model> --size <size> --mode peft
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+    --recipe <model>_<size>_peft_config \
+    checkpoint.pretrained_checkpoint=/workspace/models/<model> \
+    model.tensor_model_parallel_size=<TP> \
+    model.pipeline_model_parallel_size=<PP> \
+    train.train_iters=1000 \
+    train.global_batch_size=<GBS>
 \`\`\`
 
 ## Known Limitations
