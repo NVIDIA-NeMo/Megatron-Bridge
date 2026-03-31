@@ -15,13 +15,15 @@
 
 import torch
 
-from megatron.bridge.models.qwen.qwen_provider import Qwen3NextMambaModelProvider80B_A3B
+from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import bf16_mixed
+
+_HF_MODEL_ID = "Qwen/Qwen3-Next-80B-A3B-Instruct"
 
 
 def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
@@ -32,18 +34,11 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config - using MambaModel with GDN layers
-    cfg.model = Qwen3NextMambaModelProvider80B_A3B(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=4,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        sequence_parallel=False,
-    )
+    # Model config - using MambaModel with GDN layers (derived from HF config)
+    cfg.model = AutoBridge.from_hf_pretrained(_HF_MODEL_ID).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-Next-80B-A3B-Instruct"
+    cfg.tokenizer.tokenizer_model = _HF_MODEL_ID
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
@@ -51,6 +46,12 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     cfg.dataset.mmap_bin_files = False  # Qwen3-Next specific setting
 
     # Parallelism settings (MoE-specific: includes expert_model_parallel_size)
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
@@ -157,11 +158,11 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
     # Override dataset - Qwen3-Next does NOT support packed_sequence
     cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
 
-    # Model config - using MambaModel with GDN layers (same as pretrain)
-    cfg.model = Qwen3NextMambaModelProvider80B_A3B()
+    # Model config - using MambaModel with GDN layers (derived from HF config)
+    cfg.model = AutoBridge.from_hf_pretrained(_HF_MODEL_ID).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-Next-80B-A3B-Instruct"
+    cfg.tokenizer.tokenizer_model = _HF_MODEL_ID
 
     # Sequence length
     cfg.model.seq_length = 2048

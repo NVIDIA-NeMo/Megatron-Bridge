@@ -34,6 +34,7 @@ from megatron.bridge.models.conversion.utils import (
     is_modelopt_dynamic_module,
     remove_non_pickleables,
 )
+from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
@@ -530,7 +531,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather(gathered, tensor, group=self.tp_group)
         return gathered
 
-    def _count_wildcard_groups(self, pattern: str) -> int:
+    @staticmethod
+    def _count_wildcard_groups(pattern: str) -> int:
         """Count the number of wildcard capture groups in a pattern.
 
         Args:
@@ -679,13 +681,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             num_experts_per_rank = num_experts // self.ep_size
             num_experts_per_rank = self.broadcast_obj_from_pp_rank(num_experts_per_rank, "num_experts_per_rank")
 
-        # Extract local expert number from parameter name
-        # Handle both .weight and .bias suffixes
-        local_expert_number = None
-        for key in (".weight", ".bias"):
-            if key in self.megatron_param:
-                global_expert_number = int(self.megatron_param.split(key)[-1])
-                local_expert_number = global_expert_number % num_experts_per_rank
+        global_expert_number = extract_expert_number_from_param(self.megatron_param)
+        local_expert_number = global_expert_number % num_experts_per_rank
 
         # Compute global expert numbers for all EP ranks
         # use regex to replace the local expert number with the global expert number
@@ -2680,12 +2677,26 @@ def merge_gdn_linear_weights(
     return in_proj
 
 
-def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor, tp_size: int = 1) -> torch.Tensor:
-    """Split GDN linear weights into QKVZ and BA."""
+def split_gdn_linear_weights(
+    provider: TransformerConfig,
+    in_proj: torch.Tensor,
+    tp_size: int = 1,
+    feature_dim: Optional[int] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Split GDN linear weights into QKVZ and BA.
+
+    Args:
+        provider: Transformer config with GDN dimensions.
+        in_proj: Packed in-proj tensor.
+        tp_size: Tensor-parallel world size used for packing layout.
+        feature_dim: Trailing tensor dimension used for reshape/split.
+            Defaults to ``provider.hidden_size`` for base weights, but LoRA
+            paths can pass the adapter rank here.
+    """
 
     assert tp_size >= 1, f"tp_size must be greater than 0, but got {tp_size=}"
 
-    hidden_size = provider.hidden_size
+    feature_dim = provider.hidden_size if feature_dim is None else feature_dim
     qk_head_dim = provider.linear_key_head_dim
     v_head_dim = provider.linear_value_head_dim
     num_qk_heads = provider.linear_num_key_heads
@@ -2694,7 +2705,7 @@ def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor,
     qk_dim_local_tp = qk_head_dim * num_qk_heads_local_tp
     v_dim_local_tp = v_head_dim * num_v_heads_local_tp
 
-    in_proj = in_proj.reshape(tp_size, -1, hidden_size)
+    in_proj = in_proj.reshape(tp_size, -1, feature_dim)
     q, k, v, z, b, a = torch.split(
         in_proj,
         [
@@ -2708,12 +2719,12 @@ def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor,
         dim=1,
     )
 
-    q, k, v, z, b, a = [weight.reshape(num_qk_heads, -1, hidden_size) for weight in [q, k, v, z, b, a]]
+    q, k, v, z, b, a = [weight.reshape(num_qk_heads, -1, feature_dim) for weight in [q, k, v, z, b, a]]
     qkvz = torch.cat([q, k, v, z], dim=1)
     ba = torch.cat([b, a], dim=1)
 
-    qkvz = qkvz.reshape(-1, hidden_size)
-    ba = ba.reshape(-1, hidden_size)
+    qkvz = qkvz.reshape(-1, feature_dim)
+    ba = ba.reshape(-1, feature_dim)
 
     assert qkvz.numel() + ba.numel() == in_proj.numel(), (
         f"QKVZBA weights are not correctly split, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
@@ -2786,6 +2797,7 @@ def _split_gdn_grouped_to_separate(
     config: TransformerConfig,
     qkvz: torch.Tensor,
     ba: torch.Tensor,
+    feature_dim: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Convert head-grouped ``qkvz`` and ``ba`` tensors (as produced by
     :func:`split_gdn_linear_weights`) back into four flat tensors.
@@ -2793,7 +2805,7 @@ def _split_gdn_grouped_to_separate(
     Returns:
         Tuple of (qkv, z, b, a) where each tensor has a flat per-component layout.
     """
-    hidden_size = config.hidden_size
+    feature_dim = config.hidden_size if feature_dim is None else feature_dim
     qk_head_dim = config.linear_key_head_dim
     v_head_dim = config.linear_value_head_dim
     num_qk_heads = config.linear_num_key_heads
@@ -2802,31 +2814,31 @@ def _split_gdn_grouped_to_separate(
 
     expected_qkvz_dim0 = num_qk_heads * (qk_head_dim * 2 + v_per_group * v_head_dim * 2)
     expected_ba_dim0 = num_qk_heads * v_per_group * 2
-    if qkvz.ndim != 2 or qkvz.shape[0] != expected_qkvz_dim0 or qkvz.shape[1] != hidden_size:
+    if qkvz.ndim != 2 or qkvz.shape[0] != expected_qkvz_dim0 or qkvz.shape[1] != feature_dim:
         raise ValueError(
-            f"qkvz shape mismatch: expected ({expected_qkvz_dim0}, {hidden_size}), got {tuple(qkvz.shape)}"
+            f"qkvz shape mismatch: expected ({expected_qkvz_dim0}, {feature_dim}), got {tuple(qkvz.shape)}"
         )
-    if ba.ndim != 2 or ba.shape[0] != expected_ba_dim0 or ba.shape[1] != hidden_size:
-        raise ValueError(f"ba shape mismatch: expected ({expected_ba_dim0}, {hidden_size}), got {tuple(ba.shape)}")
+    if ba.ndim != 2 or ba.shape[0] != expected_ba_dim0 or ba.shape[1] != feature_dim:
+        raise ValueError(f"ba shape mismatch: expected ({expected_ba_dim0}, {feature_dim}), got {tuple(ba.shape)}")
 
     # --- Split grouped QKVZ ---
-    qkvz_g = qkvz.reshape(num_qk_heads, -1, hidden_size)
+    qkvz_g = qkvz.reshape(num_qk_heads, -1, feature_dim)
     q_g, k_g, v_g, z_g = torch.split(
         qkvz_g,
         [qk_head_dim, qk_head_dim, v_per_group * v_head_dim, v_per_group * v_head_dim],
         dim=1,
     )
-    q_flat = q_g.reshape(-1, hidden_size)
-    k_flat = k_g.reshape(-1, hidden_size)
-    v_flat = v_g.reshape(-1, hidden_size)
-    z_flat = z_g.reshape(-1, hidden_size)
+    q_flat = q_g.reshape(-1, feature_dim)
+    k_flat = k_g.reshape(-1, feature_dim)
+    v_flat = v_g.reshape(-1, feature_dim)
+    z_flat = z_g.reshape(-1, feature_dim)
     qkv = torch.cat([q_flat, k_flat, v_flat], dim=0)
 
     # --- Split grouped BA ---
-    ba_g = ba.reshape(num_qk_heads, -1, hidden_size)
+    ba_g = ba.reshape(num_qk_heads, -1, feature_dim)
     b_g, a_g = torch.split(ba_g, [v_per_group, v_per_group], dim=1)
-    b_flat = b_g.reshape(-1, hidden_size)
-    a_flat = a_g.reshape(-1, hidden_size)
+    b_flat = b_g.reshape(-1, feature_dim)
+    a_flat = a_g.reshape(-1, feature_dim)
 
     return qkv, z_flat, b_flat, a_flat
 

@@ -18,7 +18,7 @@ from transformers import Qwen3NextForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import (
+from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     AutoMapping,
     GatedMLPMapping,
     GDNConv1dMapping,
@@ -27,10 +27,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
-from megatron.bridge.models.qwen.qwen_provider import Qwen3NextMambaModelProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=MambaModel, model_type="qwen3_next")
+@MegatronModelBridge.register_bridge(
+    source=Qwen3NextForCausalLM, target=MambaModel, provider=MambaModelProvider, model_type="qwen3_next"
+)
 class Qwen3NextBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3-Next Causal LM.
@@ -51,8 +53,6 @@ class Qwen3NextBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    PROVIDER_CLASS = Qwen3NextMambaModelProvider
-
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace Qwen3-Next config to MambaModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
@@ -67,6 +67,7 @@ class Qwen3NextBridge(MegatronModelBridge):
         provider.hidden_dropout = 0.0
         provider.qk_layernorm = True
         provider.autocast_dtype = torch.bfloat16
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
 
         # MoE settings
         provider.moe_grouped_gemm = True
@@ -100,15 +101,15 @@ class Qwen3NextBridge(MegatronModelBridge):
             pattern_chars.append("E")
         main_pattern = "".join(pattern_chars)
 
-        # Append MTP suffix if the HF model has MTP weights.
-        # Qwen3-Next MTP uses standard attention (not GDN), so the pattern is "*E".
-        # The HF config doesn't expose num_mtp_layers, so we detect it from the
-        # safetensors index (no model load / GPU memory needed).
-        has_mtp = self._hf_model_has_mtp(hf_pretrained)
-        provider.hybrid_override_pattern = main_pattern + ("/*E" if has_mtp else "")
+        provider.hybrid_override_pattern = main_pattern
         provider.num_layers = num_hf_layers * 2
-        if has_mtp:
+
+        # MTP: Qwen3-Next MTP uses standard attention (not GDN), pattern "*E".
+        # The HF config doesn't expose num_mtp_layers, so we detect from the
+        # safetensors index (no model load / GPU memory needed).
+        if self._hf_model_has_mtp(hf_pretrained):
             provider.mtp_num_layers = 1
+            provider.mtp_hybrid_override_pattern = "*E"
 
         # Heterogeneous checkpointing for mixed attention layers
         provider.hetereogenous_dist_checkpoint = True
