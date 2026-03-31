@@ -78,7 +78,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1 = replace(
     expert_model_parallel_size=64,
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
-    recompute_modules=["mla_up_proj"],
+    recompute_modules=["mlp"],
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
 )
