@@ -15,6 +15,7 @@ prerelease-mode = "allow"
 
 [manifest]
 overrides = [
+    { name = "cachetools", specifier = ">=5.0.0" },
     { name = "cryptography", specifier = ">=43.0.0,<47" },
     { name = "mlflow", specifier = ">=3.5.0" },
     { name = "nvidia-modelopt", specifier = ">=0.42.0a0", index = "https://pypi.nvidia.com/" },
@@ -41,7 +42,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
     { name = "numpy" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
@@ -602,7 +604,8 @@ version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ninja" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "torch", marker = "sys_platform == 'never'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/63/15/ec51d77a2df03ee93410f8ee97fceeb7181da213813c51243e9dd6d7e144/causal_conv1d-1.6.1.tar.gz", hash = "sha256:e4a697ec2db3906f012e675125569f8b510b4559bc53e3095143d91369e1221b", size = 29426, upload-time = "2026-03-10T08:56:35.305Z" }
@@ -1171,7 +1174,8 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "multiprocess" },
     { name = "numpy" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pyyaml" },
@@ -1492,7 +1496,8 @@ dependencies = [
     { name = "nvidia-cudnn-frontend" },
     { name = "nvidia-cutlass-dsl" },
     { name = "nvidia-ml-py" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "requests" },
     { name = "tabulate" },
     { name = "torch", marker = "sys_platform == 'never'" },
@@ -1860,7 +1865,8 @@ name = "gunicorn"
 version = "25.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c4/f4/e78fa054248fab913e2eab0332c6c2cb07421fca1ce56d8fe43b6aef57a4/gunicorn-25.3.0.tar.gz", hash = "sha256:f74e1b2f9f76f6cd1ca01198968bd2dd65830edc24b6e8e4d78de8320e2fe889", size = 634883, upload-time = "2026-03-27T00:00:26.092Z" }
 wheels = [
@@ -2022,7 +2028,8 @@ dependencies = [
     { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
     { name = "httpx", version = "0.27.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "httpx", version = "0.28.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "pyyaml" },
     { name = "tqdm" },
     { name = "typer" },
@@ -2040,7 +2047,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "antlr4-python3-runtime" },
     { name = "omegaconf" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6d/8e/07e42bc434a847154083b315779b0a81d567154504624e181caf2c71cd98/hydra-core-1.3.2.tar.gz", hash = "sha256:8a878ed67216997c3e9d88a8e72e7b4767e81af37afb4ea3334b269a4390a824", size = 3263494, upload-time = "2023-02-23T18:33:43.03Z" }
 wheels = [
@@ -2589,7 +2597,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "einops" },
     { name = "ninja" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "setuptools" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "transformers" },
@@ -2691,7 +2700,8 @@ dependencies = [
     { name = "fonttools" },
     { name = "kiwisolver" },
     { name = "numpy" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "pillow" },
     { name = "pyparsing" },
     { name = "python-dateutil" },
@@ -2866,7 +2876,7 @@ requires-dist = [
     { name = "mlflow", specifier = ">=3.5.0" },
     { name = "nemo-run", marker = "extra == 'recipes'" },
     { name = "nvdlfw-inspect", marker = "extra == 'tensor-inspect'", specifier = "==0.2.1" },
-    { name = "nvidia-resiliency-ext", git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=v0.5.0" },
+    { name = "nvidia-resiliency-ext" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "open-clip-torch", specifier = ">=3.2.0" },
     { name = "peft", specifier = ">=0.18.0" },
@@ -2929,7 +2939,8 @@ name = "megatron-core"
 source = { editable = "3rdparty/Megatron-LM" }
 dependencies = [
     { name = "numpy" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "torch", marker = "sys_platform == 'never'" },
 ]
 
@@ -3220,7 +3231,8 @@ dependencies = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-proto" },
     { name = "opentelemetry-sdk" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "protobuf" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -3245,7 +3257,8 @@ dependencies = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-proto" },
     { name = "opentelemetry-sdk" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "protobuf" },
     { name = "pydantic" },
 ]
@@ -3529,7 +3542,8 @@ dependencies = [
     { name = "jinja2", marker = "python_full_version >= '3.13'" },
     { name = "networkx", marker = "python_full_version >= '3.13'" },
     { name = "omegaconf", marker = "python_full_version >= '3.13'" },
-    { name = "packaging", marker = "python_full_version >= '3.13'" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version == '3.13.*' and platform_machine != 's390x') or (python_full_version >= '3.13' and platform_machine == 's390x')" },
     { name = "rich", marker = "python_full_version >= '3.13'" },
     { name = "torchx", marker = "python_full_version >= '3.13'" },
     { name = "typer", marker = "python_full_version >= '3.13'" },
@@ -3556,7 +3570,7 @@ dependencies = [
     { name = "leptonai", marker = "python_full_version < '3.13'" },
     { name = "networkx", marker = "python_full_version < '3.13'" },
     { name = "omegaconf", marker = "python_full_version < '3.13'" },
-    { name = "packaging", marker = "python_full_version < '3.13'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "rich", marker = "python_full_version < '3.13'" },
     { name = "toml", marker = "python_full_version < '3.13'" },
     { name = "torchx", marker = "python_full_version < '3.13'" },
@@ -3741,7 +3755,8 @@ dependencies = [
     { name = "numpy" },
     { name = "nvidia-ml-py" },
     { name = "omegaconf" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "pulp" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -3766,7 +3781,8 @@ dependencies = [
     { name = "nv-one-logger-core" },
     { name = "nv-one-logger-training-telemetry" },
     { name = "nvidia-ml-py" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "torch", marker = "sys_platform == 'never'" },
@@ -3947,7 +3963,8 @@ dependencies = [
     { name = "numpy", marker = "python_full_version >= '3.13'" },
     { name = "onnx", version = "1.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "onnx-ir", version = "0.1.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
-    { name = "packaging", marker = "python_full_version >= '3.13'" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version == '3.13.*' and platform_machine != 's390x') or (python_full_version >= '3.13' and platform_machine == 's390x')" },
     { name = "typing-extensions", marker = "python_full_version >= '3.13'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f5/2f/0bb2b6ca727e4d5173f640527f402ab4225def4bc8d667269b83047be8c4/onnxscript-0.5.0.tar.gz", hash = "sha256:4aba215e1f80fbcd07ba0d97d6bca96797fc3e9639eacb5434d35317ce1406aa", size = 588762, upload-time = "2025-09-12T16:57:46.484Z" }
@@ -3968,7 +3985,7 @@ dependencies = [
     { name = "numpy", marker = "python_full_version < '3.13'" },
     { name = "onnx", version = "1.21.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "onnx-ir", version = "0.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "packaging", marker = "python_full_version < '3.13'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ae/e7/56084058dad0de73ab3bfa567f7da045f5d6c6bc26fce94e908b64e7da76/onnxscript-0.6.3.dev20260328.tar.gz", hash = "sha256:81a033058d4163f9d53b6460f16e4c1513d90a75e740c192ed5d37de95919b85", size = 605055, upload-time = "2026-03-28T07:16:46.933Z" }
@@ -4175,8 +4192,27 @@ wheels = [
 
 [[package]]
 name = "packaging"
+version = "25.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and platform_machine != 's390x'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a1/d4/1fc4078c65507b51b96ca8f8c3ba19e6a61c8253c72794544580a7b6c24d/packaging-25.0.tar.gz", hash = "sha256:d443872c98d677bf60f6a1f2f8c1cb748e8fe762d2bf9d3148b5599295b0fc4f", size = 165727, upload-time = "2025-04-19T11:48:59.673Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl", hash = "sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484", size = 66469, upload-time = "2025-04-19T11:48:57.875Z" },
+]
+
+[[package]]
+name = "packaging"
 version = "26.0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version == '3.13.*' and platform_machine != 's390x'",
+    "python_full_version < '3.13' and platform_machine != 's390x'",
+    "python_full_version >= '3.14' and platform_machine == 's390x'",
+    "python_full_version == '3.13.*' and platform_machine == 's390x'",
+    "python_full_version < '3.13' and platform_machine == 's390x'",
+]
 sdist = { url = "https://files.pythonhosted.org/packages/65/ee/299d360cdc32edc7d2cf530f3accf79c4fca01e96ffc950d8a52213bd8e4/packaging-26.0.tar.gz", hash = "sha256:00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4", size = 143416, upload-time = "2026-01-21T20:50:39.064Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/b9/c538f279a4e237a006a2c98387d081e9eb060d203d8ed34467cc0f0b9b53/packaging-26.0-py3-none-any.whl", hash = "sha256:b36f1fef9334a5588b4166f8bcd26a14e521f2b55e6b9de3aaa80d3ff7a37529", size = 74366, upload-time = "2026-01-21T20:50:37.788Z" },
@@ -4261,7 +4297,8 @@ dependencies = [
     { name = "accelerate" },
     { name = "huggingface-hub" },
     { name = "numpy" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
@@ -4929,7 +4966,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
     { name = "iniconfig" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "pluggy" },
     { name = "pygments" },
 ]
@@ -5144,7 +5182,8 @@ version = "0.0.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "av" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "pillow" },
     { name = "requests" },
 ]
@@ -5162,7 +5201,7 @@ dependencies = [
     { name = "filelock", marker = "python_full_version < '3.13'" },
     { name = "jsonschema", marker = "python_full_version < '3.13'" },
     { name = "msgpack", marker = "python_full_version < '3.13'" },
-    { name = "packaging", marker = "python_full_version < '3.13'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "protobuf", marker = "python_full_version < '3.13'" },
     { name = "pyyaml", marker = "python_full_version < '3.13'" },
     { name = "requests", marker = "python_full_version < '3.13'" },
@@ -5732,7 +5771,8 @@ version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "prettytable" },
     { name = "scikit-learn" },
     { name = "scipy" },
@@ -5829,7 +5869,8 @@ dependencies = [
     { name = "docutils" },
     { name = "imagesize" },
     { name = "jinja2" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "pygments" },
     { name = "requests" },
     { name = "roman-numerals" },
@@ -6076,7 +6117,8 @@ dependencies = [
     { name = "grpcio" },
     { name = "markdown" },
     { name = "numpy" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "pillow" },
     { name = "protobuf" },
     { name = "setuptools" },
@@ -6384,7 +6426,8 @@ dependencies = [
     { name = "onnx", version = "1.21.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "onnxscript", version = "0.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "onnxscript", version = "0.6.3.dev20260328", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "pydantic" },
     { name = "torch", marker = "sys_platform == 'never'" },
 ]
@@ -6396,7 +6439,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
     { name = "numpy" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "pyyaml" },
     { name = "regex" },
     { name = "safetensors" },
@@ -6525,7 +6569,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "gitpython" },
-    { name = "packaging" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine != 's390x'" },
+    { name = "packaging", version = "26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine == 's390x'" },
     { name = "platformdirs" },
     { name = "protobuf" },
     { name = "pydantic" },
