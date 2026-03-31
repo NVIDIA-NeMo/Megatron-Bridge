@@ -22,6 +22,8 @@ from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
+import megatron.bridge.models.conversion.transformers_compat  # noqa: F401  # patches removed HF utils
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
