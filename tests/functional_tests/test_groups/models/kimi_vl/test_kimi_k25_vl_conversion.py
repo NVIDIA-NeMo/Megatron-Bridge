@@ -31,6 +31,8 @@ from pathlib import Path
 
 import pytest
 import torch
+
+import megatron.bridge.models.conversion.transformers_compat  # noqa: F401 – patch is_torch_fx_available for transformers 5.x
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 
