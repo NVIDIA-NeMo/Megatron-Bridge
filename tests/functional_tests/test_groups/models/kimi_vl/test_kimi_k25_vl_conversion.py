@@ -31,9 +31,11 @@ from pathlib import Path
 
 import pytest
 import torch
-
-import megatron.bridge.models.conversion.transformers_compat  # noqa: F401 – patch is_torch_fx_available for transformers 5.x
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+# Patch is_torch_fx_available (removed in transformers 5.x) before any Kimi
+# custom model code is loaded via trust_remote_code.
+import megatron.bridge.models.conversion.transformers_compat  # noqa: F401
 
 
 class TestKimiK25VLConversion:
