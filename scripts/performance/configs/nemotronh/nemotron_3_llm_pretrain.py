@@ -141,9 +141,9 @@ def nemotron_3_super_pretrain_config_b200(
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
 
-    if precision != "nvfp4":
-        cfg.model.fine_grained_activation_offloading = True
-        cfg.model.offload_modules = ["core_attn", "qkv_linear"]
+    # if precision != "nvfp4":
+    #     cfg.model.fine_grained_activation_offloading = True
+    #     cfg.model.offload_modules = ["core_attn", "qkv_linear"]
 
     return cfg
 
