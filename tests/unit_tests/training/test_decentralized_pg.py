@@ -405,9 +405,12 @@ class TestSetupUsesDecentralizedPg:
 class TestSetupOptimizerWithPgCollection:
     """Tests for setup_optimizer function with pg_collection parameter."""
 
+    @patch("megatron.bridge.training.optim.get_model_config")
     @patch("megatron.bridge.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.OptimizerParamScheduler")
-    def test_setup_optimizer_passes_pg_collection_to_get_megatron_optimizer(self, mock_scheduler, mock_get_optimizer):
+    def test_setup_optimizer_passes_pg_collection_to_get_megatron_optimizer(
+        self, mock_scheduler, mock_get_optimizer, mock_get_model_config
+    ):
         """Test that setup_optimizer passes pg_collection to get_megatron_optimizer."""
         from megatron.core.optimizer import OptimizerConfig
 
@@ -415,6 +418,7 @@ class TestSetupOptimizerWithPgCollection:
         from megatron.bridge.training.optim import setup_optimizer
 
         # Setup mocks
+        mock_get_model_config.return_value.use_mup = False
         mock_model = MagicMock()
         mock_pg_collection = MagicMock()
         mock_optimizer = MagicMock()
@@ -437,9 +441,12 @@ class TestSetupOptimizerWithPgCollection:
         call_kwargs = mock_get_optimizer.call_args[1]
         assert call_kwargs["pg_collection"] == mock_pg_collection
 
+    @patch("megatron.bridge.training.optim.get_model_config")
     @patch("megatron.bridge.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.OptimizerParamScheduler")
-    def test_setup_optimizer_passes_none_pg_collection_when_not_provided(self, mock_scheduler, mock_get_optimizer):
+    def test_setup_optimizer_passes_none_pg_collection_when_not_provided(
+        self, mock_scheduler, mock_get_optimizer, mock_get_model_config
+    ):
         """Test that setup_optimizer passes None pg_collection when not provided."""
         from megatron.core.optimizer import OptimizerConfig
 
@@ -447,6 +454,7 @@ class TestSetupOptimizerWithPgCollection:
         from megatron.bridge.training.optim import setup_optimizer
 
         # Setup mocks
+        mock_get_model_config.return_value.use_mup = False
         mock_model = MagicMock()
         mock_optimizer = MagicMock()
         mock_get_optimizer.return_value = mock_optimizer
@@ -467,9 +475,12 @@ class TestSetupOptimizerWithPgCollection:
         call_kwargs = mock_get_optimizer.call_args[1]
         assert call_kwargs["pg_collection"] is None
 
+    @patch("megatron.bridge.training.optim.get_model_config")
     @patch("megatron.bridge.training.optim.get_megatron_muon_optimizer")
     @patch("megatron.bridge.training.optim.OptimizerParamScheduler")
-    def test_setup_optimizer_passes_pg_collection_to_muon_optimizer(self, mock_scheduler, mock_get_muon_optimizer):
+    def test_setup_optimizer_passes_pg_collection_to_muon_optimizer(
+        self, mock_scheduler, mock_get_muon_optimizer, mock_get_model_config
+    ):
         """Test that setup_optimizer passes pg_collection to muon optimizer."""
         from megatron.core.optimizer import OptimizerConfig
 
@@ -477,6 +488,7 @@ class TestSetupOptimizerWithPgCollection:
         from megatron.bridge.training.optim import setup_optimizer
 
         # Setup mocks
+        mock_get_model_config.return_value.use_mup = False
         mock_model = MagicMock()
         mock_pg_collection = MagicMock()
         mock_optimizer = MagicMock()
@@ -498,6 +510,47 @@ class TestSetupOptimizerWithPgCollection:
         mock_get_muon_optimizer.assert_called_once()
         call_kwargs = mock_get_muon_optimizer.call_args[1]
         assert call_kwargs["pg_collection"] == mock_pg_collection
+
+    @patch("megatron.bridge.training.optim.get_model_config")
+    @patch("megatron.bridge.training.optim.OptimizerParamScheduler")
+    def test_setup_optimizer_with_optimizer_config_having_provide_method(self, mock_scheduler, mock_get_model_config):
+        """Test that setup_optimizer uses the provide method when optimizer_config has one."""
+        from megatron.bridge.training.config import SchedulerConfig
+        from megatron.bridge.training.optim import setup_optimizer
+
+        # Setup mocks
+        mock_get_model_config.return_value.use_mup = False
+        mock_model = MagicMock()
+        mock_pg_collection = MagicMock()
+        mock_optimizer = MagicMock()
+
+        # Create a mock optimizer config with a provide method
+        mock_optimizer_config = MagicMock()
+        mock_optimizer_config.lr = 1e-3
+        mock_optimizer_config.min_lr = 1e-5
+        mock_optimizer_config.provide = MagicMock(return_value=mock_optimizer)
+
+        scheduler_config = SchedulerConfig()
+
+        # Execute
+        optimizer, _ = setup_optimizer(
+            optimizer_config=mock_optimizer_config,
+            scheduler_config=scheduler_config,
+            model=mock_model,
+            use_gloo_process_groups=False,
+            pg_collection=mock_pg_collection,
+        )
+
+        # Verify the provide method was called with correct parameters
+        mock_optimizer_config.provide.assert_called_once()
+        call_kwargs = mock_optimizer_config.provide.call_args[1]
+        assert call_kwargs["model_chunks"] == mock_model
+        assert call_kwargs["pg_collection"] == mock_pg_collection
+        assert call_kwargs["use_gloo_process_groups"] is False
+        assert "config_overrides" in call_kwargs
+
+        # Verify the returned optimizer is from the provide method
+        assert optimizer == mock_optimizer
 
 
 class TestSetupConditionalPgCollectionPassing:

@@ -50,9 +50,13 @@ from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
+from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
-from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
+from megatron.bridge.training.checkpointing import (
+    CheckpointManager,
+    CheckpointSaveContext,
+)
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
@@ -92,7 +96,7 @@ def train(
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     valid_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     global_state: GlobalState,
-    checkpointing_context: dict[str, Any],
+    checkpoint_manager: CheckpointManager,
     pg_collection: ProcessGroupCollection,
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
@@ -111,7 +115,7 @@ def train(
         train_data_iterator: Iterator for the training dataset.
         valid_data_iterator: Iterator for the validation dataset.
         global_state: The GlobalState object holding various training states.
-        checkpointing_context: Context dictionary for checkpointing.
+        checkpoint_manager: The checkpoint manager for save/load operations.
         process_non_loss_data_func: Optional function to process non-loss data during evaluation.
         non_loss_data_func: Optional function to compute non-loss data during evaluation.
         callback_manager: Optional CallbackManager for custom callback execution.
@@ -123,6 +127,7 @@ def train(
     config: ConfigContainer = global_state.cfg
     model_config = get_model_config(model[0])
     train_config = config.train
+    val_config = config.validation
     timers = global_state.timers
     straggler_timer = global_state.straggler_timer
     energy_monitor = global_state.energy_monitor
@@ -203,8 +208,6 @@ def train(
             global_state._nvrx_straggler_manager = None
 
     num_microbatches = get_num_microbatches()
-    eval_duration = 0.0
-    eval_iterations = 0
 
     prof = None
     nsys_nvtx_context = None  # NVTX context for nsys profiling
@@ -220,16 +223,6 @@ def train(
         config.optimizer.use_distributed_optimizer,
         config.ddp.overlap_param_gather,
     )
-    # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
-    # or random initialization don't propagate to all ranks in first all-gather (which is a
-    # no-op if things work correctly).
-    if should_toggle_forward_pre_hook:
-        disable_forward_pre_hook(model, param_sync=False)
-        # Also remove param_sync_func temporarily so that sync calls made in
-        # `forward_backward_func` are no-ops.
-        param_sync_func = model_config.param_sync_func
-        model_config.param_sync_func = None
-        pre_hook_enabled = False
     # Also, check weight hash across DP replicas to be very pedantic.
     if train_config.check_weight_hash_across_dp_replicas_interval is not None:
         assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
@@ -266,6 +259,9 @@ def train(
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
+    num_floating_point_operations_model = flop_utils.num_floating_point_operations(config, batch_size=1)
+    p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+    dp_size = pg_collection.dp.size()
 
     if should_fire(callback_manager, "on_train_start"):
         callback_manager.fire(
@@ -278,6 +274,17 @@ def train(
                 scheduler=scheduler,
             ),
         )
+
+    # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
+    # or random initialization don't propagate to all ranks in first all-gather (which is a
+    # no-op if things work correctly).
+    if should_toggle_forward_pre_hook:
+        disable_forward_pre_hook(model, param_sync=False)
+        # Also remove param_sync_func temporarily so that sync calls made in
+        # `forward_backward_func` are no-ops.
+        param_sync_func = model_config.param_sync_func
+        model_config.param_sync_func = None
+        pre_hook_enabled = False
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -292,7 +299,7 @@ def train(
             nsys_nvtx_context = nvtx_ctx
 
         fault_tolerance.on_checkpointing_start(global_state)
-        maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
+        checkpoint_manager.finalize_async_saves(state=global_state, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
         # Update the timeout for all process groups after initialization
@@ -320,7 +327,7 @@ def train(
                     optimizer,
                     scheduler,
                     num_floating_point_operations_so_far,
-                    checkpointing_context,
+                    checkpoint_manager,
                     non_persistent_ckpt=False,  # TODO: implement non-persistent checkpointing
                     train_data_iterator=train_data_iterator,
                 )
@@ -378,6 +385,7 @@ def train(
             global_state,
             pg_collection,
             forward_backward_func,
+            p2p_communicator,
         )
 
         fault_tolerance.on_training_step_end(global_state)
@@ -410,7 +418,7 @@ def train(
                 optimizer,
                 scheduler,
                 num_floating_point_operations_so_far,
-                checkpointing_context,
+                checkpoint_manager,
                 train_data_iterator=train_data_iterator,
                 non_persistent_ckpt=False,  # TODO: implement non-persistent checkpointing
             )
@@ -448,7 +456,6 @@ def train(
         if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
 
-        dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
         num_skipped_samples_in_batch = get_current_global_batch_size() - get_current_running_global_batch_size()
@@ -457,51 +464,54 @@ def train(
         else:
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
-        num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(config, batch_size)
+        num_floating_point_operations_in_batch = num_floating_point_operations_model * batch_size
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
-        if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
-            loss_scale = optimizer.get_loss_scale().item()
-        else:
-            loss_scale = 1.0
-        params_norm = None
-
-        if config.logger.log_params_norm:
-            params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
-        learning_rate = None
-        decoupled_learning_rate = None
-        for param_group in optimizer.param_groups:
-            if len(param_group) == 0:
-                continue
-            if param_group["is_decoupled_lr"]:
-                decoupled_learning_rate = param_group["lr"]
+        if not config.logger.skip_train_metrics_log:
+            if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
+                loss_scale = optimizer.get_loss_scale().item()
             else:
-                learning_rate = param_group["lr"]
-        report_memory_flag = training_log(
-            loss_dict,
-            total_loss_dict,
-            learning_rate,
-            decoupled_learning_rate,
-            loss_scale,
-            report_memory_flag,
-            skipped_iter,
-            grad_norm,
-            params_norm,
-            num_zeros_in_grad,
-            config,
-            global_state,
-            history_wct,
-            model,
-            log_max_attention_logit,
-        )
+                loss_scale = 1.0
+            params_norm = None
+
+            if config.logger.log_params_norm:
+                params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
+
+            learning_rate = None
+            decoupled_learning_rate = None
+            for param_group in optimizer.param_groups:
+                if len(param_group) == 0:
+                    continue
+                if param_group["is_decoupled_lr"]:
+                    decoupled_learning_rate = param_group["lr"]
+                else:
+                    learning_rate = param_group["lr"]
+
+            report_memory_flag = training_log(
+                loss_dict,
+                total_loss_dict,
+                learning_rate,
+                decoupled_learning_rate,
+                loss_scale,
+                report_memory_flag,
+                skipped_iter,
+                grad_norm,
+                params_norm,
+                num_zeros_in_grad,
+                config,
+                global_state,
+                history_wct,
+                model,
+                log_max_attention_logit,
+            )
 
         if (
             global_state.train_state.do_valid
-            and train_config.eval_interval
-            and global_state.train_state.step % train_config.eval_interval == 0
+            and val_config.eval_interval
+            and global_state.train_state.step % val_config.eval_interval == 0
         ):
             if energy_monitor is not None:
                 energy_monitor.pause()
@@ -527,8 +537,6 @@ def train(
                 non_loss_data_func=non_loss_data_func,
                 callback_manager=callback_manager,
             )
-            eval_duration += timers("eval-time").elapsed()
-            eval_iterations += train_config.eval_iters
             timers("eval-time").stop()
 
             if train_config.manual_gc and train_config.manual_gc_eval:
@@ -577,11 +585,32 @@ def train(
             optimizer,
             scheduler,
             num_floating_point_operations_so_far,
-            checkpointing_context,
+            checkpoint_manager,
             train_data_iterator,
         )
         if should_exit:
             break
+
+    # Save final checkpoint when training completes normally and the last
+    # step wasn't already persisted by the interval-based save inside
+    # checkpoint_and_decide_exit.
+    if not should_exit:
+        ckpt_config = config.checkpoint
+        if (
+            ckpt_config.save
+            and global_state.train_state.step != 0
+            and ckpt_config.save_interval != 0
+            and (ckpt_config.save_interval is None or global_state.train_state.step % ckpt_config.save_interval != 0)
+        ):
+            save_checkpoint_and_time(
+                global_state,
+                model,
+                optimizer,
+                scheduler,
+                num_floating_point_operations_so_far,
+                checkpoint_manager,
+                train_data_iterator=train_data_iterator,
+            )
 
     _delete_cuda_graphs(cuda_graph_helper)
 
@@ -597,7 +626,7 @@ def train(
     # This will finalize all unfinalized async request and terminate
     # a persistent async worker if persistent ckpt worker is enabled
     fault_tolerance.on_checkpointing_start(global_state)
-    maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
+    checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
     fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
     # Shutdown NVRx straggler detection if enabled
@@ -613,10 +642,12 @@ def train(
     if should_exit:
         # Close NVIDIA DLFw Inspect if enabled
         tensor_inspect_end_if_enabled(config.tensor_inspect)
-        maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
+        checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
         wandb_writer = global_state.wandb_logger
         if wandb_writer:
             wandb_writer.finish()
+        if global_state._comet_logger:
+            global_state._comet_logger.end()
         fault_tolerance.shutdown(global_state)
         sys.exit(exit_code)
 
@@ -645,6 +676,7 @@ def train_step(
     global_state: GlobalState,
     pg_collection: ProcessGroupCollection,
     forward_backward_func: Callable,
+    p2p_communicator: P2PCommunicator,
 ) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
     """Single training step.
 
@@ -684,29 +716,31 @@ def train_step(
 
         _handle_mxfp8_param_buffer_copy(
             optimizer=optimizer,
+            model=model,
             reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
             overlap_param_gather=cfg.ddp.overlap_param_gather,
         )
 
         # Handle finetuning vs pretraining data consumption
-        seq_length = model_config.seq_length  # Default for pretraining
+        seq_length = getattr(model_config, "seq_length", cfg.model.seq_length)  # Default for pretraining
         forward_backward_data_iterator = data_iterator  # Default for pretraining
 
         if cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
             from megatron.bridge.data.finetuning import prepare_finetuning_batch
-            from megatron.bridge.data.iterator_utils import make_data_iterator_list
 
             forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
                 data_iterator=data_iterator,
                 num_microbatches=get_num_microbatches(),
-                default_seq_length=model_config.seq_length,
+                default_seq_length=getattr(model_config, "seq_length", cfg.model.seq_length),
                 seq_key="tokens",
             )
 
-            # Forward-backward pass.
-            # Convert to list of iterators for virtual pipeline parallelism
-            # With virtual PP, each model chunk needs independent access to the same microbatch
+        # Forward-backward pass.
+        # Convert to list of iterators for virtual pipeline parallelism
+        # With virtual PP, each model chunk needs independent access to the same microbatch.
+        if len(model) > 1:
+            # As MLM, expects a list of iterators for virtual pipeline parallelism. One iterator per model chunk.
             forward_backward_data_iterator = make_data_iterator_list(
                 model=model,
                 data_iterator=forward_backward_data_iterator,
@@ -716,15 +750,14 @@ def train_step(
         if not cfg.dist.use_decentralized_pg:
             adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
                 model,
-                seq_length=model_config.seq_length,
+                seq_length=getattr(model_config, "seq_length", cfg.model.seq_length),
                 micro_batch_size=train_config.micro_batch_size,
-                decoder_seq_length=model_config.seq_length,
+                decoder_seq_length=getattr(model_config, "seq_length", cfg.model.seq_length),
             )
         else:
             adjust_tensor_shapes_fn = None
 
         # Forward pass.
-        p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -760,10 +793,14 @@ def train_step(
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
-    update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
+    if train_config.check_optimizer_step_success:
+        update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
+
     # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
     # so we must gather across mp ranks
-    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
+    if not train_config.skip_sync_grad_norm_across_mp:
+        grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
+
     if optim_config.log_num_zeros_in_grad:
         num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, mp_group=pg_collection.mp)
 
@@ -1057,13 +1094,13 @@ def save_checkpoint_and_time(
     optimizer: MegatronOptimizer,
     opt_param_scheduler: OptimizerParamScheduler,
     num_floating_point_operations_so_far: float,
-    checkpointing_context: dict[str, Any],
+    checkpoint_manager: CheckpointManager,
     non_persistent_ckpt: bool = False,
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]] = None,
 ) -> None:
     """Saves a checkpoint and logs the timing.
 
-    Wraps the `save_checkpoint` function with timers and forces parameter
+    Wraps the checkpoint manager's save method with timers and forces parameter
     synchronization when using distributed optimizer with overlapped parameter
     gather to ensure checkpoint correctness.
 
@@ -1073,7 +1110,7 @@ def save_checkpoint_and_time(
         optimizer: The optimizer instance.
         opt_param_scheduler: The optimizer parameter scheduler instance.
         num_floating_point_operations_so_far: Cumulative Model TFLOPs up to this point.
-        checkpointing_context: Dictionary holding checkpointing-related state.
+        checkpoint_manager: The checkpoint manager for save operations.
         non_persistent_ckpt: Flag indicating if this is a non-persistent
                              (local) checkpoint. Defaults to False.
         train_data_iterator: Optional training data iterator to save its state.
@@ -1099,16 +1136,27 @@ def save_checkpoint_and_time(
     )
     if should_force_param_sync:
         force_param_sync(model)
-    save_checkpoint(
-        state,
-        model,
-        optimizer,
-        opt_param_scheduler,
-        num_floating_point_operations_so_far,
-        checkpointing_context=checkpointing_context,
-        non_persistent_ckpt=non_persistent_ckpt,
-        train_data_iterator=train_data_iterator,
+
+    # Free overlap param-gather buffers and release cached GPU memory so
+    # that the async checkpoint worker process has enough GPU headroom for
+    # D2H tensor transfers.
+    for model_chunk in model:
+        if hasattr(model_chunk, "free_overlap_buffers"):
+            model_chunk.free_overlap_buffers()
+    torch.cuda.empty_cache()
+
+    checkpoint_manager.save(
+        CheckpointSaveContext(
+            state=state,
+            model=model,
+            optimizer=optimizer,
+            opt_param_scheduler=opt_param_scheduler,
+            num_floating_point_operations_so_far=int(num_floating_point_operations_so_far),
+            train_data_iterator=train_data_iterator,
+            non_persistent_ckpt=non_persistent_ckpt,
+        )
     )
+
     if state.cfg.model.fp8 is not None:
         # Run garbage collection after checkpoint saving to free memory from
         # dequantized bf16 tensors that were temporarily created during fp8
@@ -1132,7 +1180,7 @@ def checkpoint_and_decide_exit(
     optimizer: MegatronOptimizer,
     opt_param_scheduler: OptimizerParamScheduler,
     num_floating_point_operations_so_far: float,
-    checkpointing_context: dict[str, Any],
+    checkpoint_manager: CheckpointManager,
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
 ) -> bool:
     """Handles checkpointing decisions and determines if training should exit.
@@ -1147,7 +1195,7 @@ def checkpoint_and_decide_exit(
         optimizer: The optimizer instance.
         opt_param_scheduler: The optimizer parameter scheduler instance.
         num_floating_point_operations_so_far: Cumulative TFLOPs up to this point.
-        checkpointing_context: Dictionary holding checkpointing-related state.
+        checkpoint_manager: The checkpoint manager for save operations.
         train_data_iterator: Optional training data iterator to save its state.
 
     Returns:
@@ -1166,7 +1214,7 @@ def checkpoint_and_decide_exit(
                     optimizer,
                     opt_param_scheduler,
                     num_floating_point_operations_so_far,
-                    checkpointing_context,
+                    checkpoint_manager,
                     train_data_iterator=train_data_iterator,
                 )
             barrier_and_log("exiting program after receiving SIGTERM.")
@@ -1185,7 +1233,7 @@ def checkpoint_and_decide_exit(
             optimizer,
             opt_param_scheduler,
             num_floating_point_operations_so_far,
-            checkpointing_context,
+            checkpoint_manager,
             train_data_iterator=train_data_iterator,
         )
         saved_checkpoint = True
@@ -1201,7 +1249,7 @@ def checkpoint_and_decide_exit(
             optimizer,
             opt_param_scheduler,
             num_floating_point_operations_so_far,
-            checkpointing_context,
+            checkpoint_manager,
             non_persistent_ckpt=True,
             train_data_iterator=train_data_iterator,
         )
@@ -1221,7 +1269,7 @@ def checkpoint_and_decide_exit(
                     optimizer,
                     opt_param_scheduler,
                     num_floating_point_operations_so_far,
-                    checkpointing_context,
+                    checkpoint_manager,
                     train_data_iterator=train_data_iterator,
                 )
             barrier_and_log(f"exiting program after {train_time} minutes")
@@ -1237,7 +1285,7 @@ def checkpoint_and_decide_exit(
                 optimizer,
                 opt_param_scheduler,
                 num_floating_point_operations_so_far,
-                checkpointing_context,
+                checkpoint_manager,
                 train_data_iterator=train_data_iterator,
             )
         barrier_and_log(f"exiting program at iteration {state.train_state.step}")
@@ -1253,7 +1301,7 @@ def checkpoint_and_decide_exit(
                 optimizer,
                 opt_param_scheduler,
                 num_floating_point_operations_so_far,
-                checkpointing_context,
+                checkpoint_manager,
                 train_data_iterator=train_data_iterator,
             )
         barrier_and_log("Exiting program due to straggler detection.")
@@ -1262,19 +1310,26 @@ def checkpoint_and_decide_exit(
     return False
 
 
-def _finish_train(global_state: GlobalState):
-    ckpt_cfg = global_state.cfg.checkpoint
+def _finish_train(global_state: GlobalState, checkpoint_manager: CheckpointManager):
+    """Cleanup function called at the end of training.
 
+    Args:
+        global_state: The global training state.
+        checkpoint_manager: The checkpoint manager for finalizing async saves.
+    """
     # Shutdown NVRx straggler detection if enabled
     safe_shutdown_nvrx_straggler_manager(global_state.nvrx_straggler_manager)
 
     fault_tolerance.on_checkpointing_start(global_state)
-    maybe_finalize_async_save(global_state=global_state, blocking=True, terminate=True, ckpt_cfg=ckpt_cfg)
+    checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
     fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
     fault_tolerance.shutdown(global_state)
 
     if global_state.wandb_logger:
         global_state.wandb_logger.finish()
+
+    if global_state._comet_logger:
+        global_state._comet_logger.end()
 
     destroy_global_state()
 
@@ -1347,7 +1402,10 @@ def _dummy_train_step(
 
 
 def _handle_mxfp8_param_buffer_copy(
-    optimizer: MegatronOptimizer, reuse_grad_buf_for_mxfp8_param_ag: bool, overlap_param_gather: bool
+    optimizer: MegatronOptimizer,
+    model: list[MegatronModule],
+    reuse_grad_buf_for_mxfp8_param_ag: bool,
+    overlap_param_gather: bool,
 ) -> None:
     """Copy main params to param buffer for mxfp8 with grad buffer reuse.
 
@@ -1355,15 +1413,25 @@ def _handle_mxfp8_param_buffer_copy(
     we need to call _copy_main_params_to_param_buffer() after the grad buffer
     is zeroed because param and grad buffer are shared.
 
+    However, we should skip this on the first iteration when forward_pre_hook is disabled,
+    because:
+    1. The first iteration's params are already in param.data (from init or checkpoint).
+    2. Without forward_pre_hook, finish_param_sync() won't be called to zero the grad buffer,
+       so the main grads will be polluted by the main params.
+
     Args:
         optimizer: The MegatronOptimizer instance
+        model: List of model chunks (MegatronModule instances)
         reuse_grad_buf_for_mxfp8_param_ag: Config flag for grad buffer reuse
         overlap_param_gather: Config flag for overlapping param gathering
     """
     if reuse_grad_buf_for_mxfp8_param_ag and overlap_param_gather:
-        for optim_instance in optimizer.chained_optimizers:
-            if isinstance(optim_instance, DistributedOptimizer):
-                optim_instance._copy_main_params_to_param_buffer()
+        # Check if forward_pre_hook is enabled by checking if hooks are registered.
+        forward_pre_hook_enabled = len(model[0].remove_forward_pre_hook_handles) > 0
+        if forward_pre_hook_enabled:
+            for optim_instance in optimizer.chained_optimizers:
+                if isinstance(optim_instance, DistributedOptimizer):
+                    optim_instance._copy_main_params_to_param_buffer()
 
 
 def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):

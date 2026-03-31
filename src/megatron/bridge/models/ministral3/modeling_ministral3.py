@@ -27,6 +27,7 @@ import types
 from typing import TYPE_CHECKING, Optional
 
 import torch
+from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 
@@ -140,11 +141,10 @@ class Ministral3Model(MegatronModule):
                     # Apply the transformation (e.g., bfloat16 conversion)
                     result = original_apply(fn)
 
-                    # Restore inv_freq to FP32 (only move device, keep dtype)
+                    # Restore inv_freq to FP32 but on the correct device
                     if inv_freq_backup is not None:
-                        # Get the new device from the transformation
-                        new_device = fn(torch.tensor([1.0])).device
-                        pos_emb.inv_freq.data = inv_freq_backup.to(device=new_device)
+                        target_device = pos_emb.inv_freq.data.device
+                        pos_emb.inv_freq.data = inv_freq_backup.to(device=target_device)
 
                     return result
 
@@ -177,6 +177,9 @@ class Ministral3Model(MegatronModule):
         # Some config requires from HF vision tower
         self.config.spatial_merge_size = getattr(self.config.hf_config, "spatial_merge_size", 2)
         self.config.vision_feature_layer = getattr(self.config.hf_config, "vision_feature_layer", -1)
+        # HF's get_image_features accesses self.config.return_dict
+        if not hasattr(self.config, "return_dict"):
+            self.config.return_dict = True
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
@@ -225,7 +228,9 @@ class Ministral3Model(MegatronModule):
 
             if pixel_values is not None:
                 # Get image features using HF's method (monkey-patched)
-                image_features = self.get_image_features(pixel_values.to(inputs_embeds.dtype), image_sizes=image_sizes)
+                image_features = self.get_image_features(
+                    pixel_values.to(inputs_embeds.dtype), image_sizes=image_sizes, return_dict=True
+                ).pooler_output
                 image_features = torch.cat(image_features, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
 
                 # Replace image tokens in text embeddings with image features
@@ -257,6 +262,13 @@ class Ministral3Model(MegatronModule):
             packed_seq_params=packed_seq_params,
             pg_collection=self.config._pg_collection,
         )
+
+        # Apply SP scatter after CP slice, before entering the language model.
+        # The language model's embedding layer (which normally handles SP scatter) is
+        # bypassed when decoder_input is provided. Matches Megatron Core's LLaVA pattern
+        # (llava_model.py:747-750): CP slice first, then SP scatter → [S/(CP*TP), B, H].
+        if self.config.sequence_parallel and inputs_embeds is not None:
+            inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
 
         # Forward through Megatron language model
         outputs = self.language_model.forward(

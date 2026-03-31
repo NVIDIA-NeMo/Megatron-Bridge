@@ -15,6 +15,7 @@
 import argparse
 import logging
 import os
+import re
 from pathlib import Path
 
 from nemo_run.config import get_nemorun_home
@@ -25,6 +26,16 @@ logger: logging.Logger = logging.getLogger(__name__)
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", Path.home() / ".cache" / "nemo")
 VALID_CUDA_GRAPH_IMPLS = ["none", "local", "transformer_engine"]
 VALID_CUDA_GRAPH_SCOPES = ["full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
+
+NUM_GPUS_PER_NODE_MAP = {
+    "h100": 8,
+    "b200": 8,
+    "b300": 8,
+    "gb200": 4,
+    "gb300": 4,
+    "vr200": 4,
+    "r100": 1,
+}
 
 
 def list_of_strings(arg):
@@ -47,6 +58,20 @@ def list_of_ints(arg):
 def to_dict(arg):
     """Split a comma-separated string into a dictionary of key-value pairs."""
     return dict(item.split("=") for item in arg.split(","))
+
+
+def parse_kv(s: str):
+    """Parse a key-value pair from a string."""
+    KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")  # Useful check for errors like hyphen in var names
+    if "=" not in s:
+        raise argparse.ArgumentTypeError(f"Expected KEY=VALUE, got {s!r}")
+
+    key, value = s.split("=", 1)
+
+    if not KEY_RE.match(key):
+        raise argparse.ArgumentTypeError(f"Invalid env var name: {key!r}")
+
+    return key, value
 
 
 def lower_str(arg):
@@ -145,7 +170,7 @@ def parse_cli_args():
     parser.add_argument(
         "--domain",
         type=lower_str,
-        choices=["llm", "vlm"],
+        choices=["llm", "vlm", "qwen3vl"],
         help="Domain to use for experiment.",
         default="llm",
     )
@@ -383,8 +408,8 @@ def parse_cli_args():
         "-gn",
         "--gpus_per_node",
         type=int,
-        help="Number of gpus per node. Defaults to 8",
-        default=8,
+        help="Number of gpus per node. Defaults to None. If not provided, will be inferred from the GPU type.",
+        default=None,
     )
     slurm_args.add_argument(
         "-i",
@@ -413,11 +438,28 @@ def parse_cli_args():
         default={},
     )
     slurm_args.add_argument(
+        "-E",
+        "--env",
+        action="append",
+        type=parse_kv,
+        metavar="KEY=VALUE",
+        help="Set environment variable (repeatable arg). This is an alternative to --custom_env_vars \
+        (--custom_env_vars is preferred for most cases). Example: -E var1=value1,value2 -E var2=value3",
+    )
+    slurm_args.add_argument(
         "-cs",
         "--custom_srun_args",
         type=list_of_strings,
         help="Comma separated string of srun arguments",
         default=[],
+    )
+    slurm_args.add_argument(
+        "-cb",
+        "--custom_bash_cmds",
+        nargs="*",
+        action="append",
+        help="List of bash commands to execute before the main command",
+        default=None,
     )
     slurm_args.add_argument(
         "--gres",
@@ -486,13 +528,42 @@ def parse_cli_args():
         required=False,
     )
 
+    # Kubeflow
+    kubeflow_args = parser.add_argument_group("Kubeflow arguments")
+    kubeflow_args.add_argument(
+        "--kubeflow_namespace",
+        type=str,
+        help="Kubernetes namespace for Kubeflow TrainJob. When set, uses the Kubeflow executor instead of Slurm.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_workdir_pvc",
+        type=str,
+        help="PVC name for syncing job workdir (launch scripts, packaged code) to the cluster before launch.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_workdir_pvc_path",
+        type=str,
+        help="Mount path for the workdir PVC inside the training pod. Defaults to '/nemo_run'.",
+        default="/nemo_run",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_image_pull_secrets",
+        type=list_of_strings,
+        help="Comma-separated list of Kubernetes image pull secret names.",
+        required=False,
+        default=[],
+    )
+
     # For performance
     performance_args = parser.add_argument_group("Performance arguments")
     performance_args.add_argument(
         "-g",
         "--gpu",
         type=str,
-        choices=["h100", "b200", "gb200", "gb300", "b300"],
+        choices=NUM_GPUS_PER_NODE_MAP.keys(),
         help="Target gpu type.",
         required=True,
     )
@@ -504,6 +575,14 @@ def parse_cli_args():
         help="Compute precision. Options- bf16 or fp8. Defaults to bf16",
         required=False,
         default="bf16",
+    )
+    performance_args.add_argument(
+        "--optimizer_type",
+        type=str,
+        choices=["adam", "muon"],
+        help="Optimizer type for recipes that support it (e.g. Kimi-K2). Defaults to muon.",
+        required=False,
+        default="muon",
     )
     performance_args.add_argument(
         "-vb",
@@ -744,6 +823,21 @@ def parse_cli_args():
         type=float,
         default=0.20,
         help="Percentage of loss points to skip from beginning for convergence analysis",
+    )
+    testing_args.add_argument(
+        "--memory_threshold", type=float, default=0.05, help="Memory validation threshold (default: 0.05 = 5%%)"
+    )
+    testing_args.add_argument(
+        "--eval_time_start_step",
+        type=int,
+        default=None,
+        help="Start step (0-indexed, inclusive) for timing average window. Overrides skip_first_percent_time when set.",
+    )
+    testing_args.add_argument(
+        "--eval_time_end_step",
+        type=int,
+        default=None,
+        help="End step (0-indexed, exclusive) for timing average window. If None, averages to end.",
     )
 
     return parser

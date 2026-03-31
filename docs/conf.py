@@ -18,16 +18,26 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 import os
+import shutil
 import sys
+
+
+_SKILLS_SRC = os.path.join(os.path.dirname(__file__), os.pardir, "skills")
+_SKILLS_DST = os.path.join(os.path.dirname(__file__), "skills")
+
+if os.path.isdir(_SKILLS_SRC):
+    if os.path.exists(_SKILLS_DST):
+        shutil.rmtree(_SKILLS_DST)
+    shutil.copytree(_SKILLS_SRC, _SKILLS_DST)
 
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = "Megatron Bridge"
-copyright = "2025, NVIDIA Corporation"
+copyright = "2026, NVIDIA Corporation"
 author = "NVIDIA Corporation"
-release = "latest"
+release = "nightly"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -43,7 +53,16 @@ extensions = [
 ]
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "skills/perf-techniques/README.md",
+]
+
+suppress_warnings = [
+    "misc.highlighting_failure",  # skills use Cursor-specific code reference syntax
+]
 
 # -- Options for MyST Parser (Markdown) --------------------------------------
 # MyST Parser settings
@@ -117,3 +136,5 @@ linkcheck_ignore = [
     ".*github\\.com.*",
     ".*githubusercontent\\.com.*",
 ]
+linkcheck_retries = 10
+linkcheck_rate_limit_timeout = 600

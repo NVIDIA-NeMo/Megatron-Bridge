@@ -64,7 +64,7 @@ Before training, ensure the following environment variables are set.
 Example usage for full parameter finetuning:
 
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/qwen_vl/finetune_qwen25_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --dataset-type hf \
@@ -82,7 +82,7 @@ Note:
   - `qwen25_vl_7b_finetune_config` - for 7B model  
   - `qwen25_vl_32b_finetune_config` - for 32B model
   - `qwen25_vl_72b_finetune_config` - for 72B model
-- The config file `examples/recipes/qwen_vl/conf/qwen25_vl_pretrain_override_example.yaml` contains a list of arguments 
+- The config file `examples/models/vlm/qwen_vl/conf/qwen25_vl_pretrain_override_example.yaml` contains a list of arguments 
   that can be overridden in the command. For example, you can set `train.global_batch_size=<batch size>` in the command. 
 - The dataset format should be JSONL with conversation format (see dataset section below).
 - After training, you can run inference with `hf_to_megatron_generate_vlm.py` by supplying the trained megatron checkpoint. 
@@ -92,7 +92,7 @@ Note:
 Parameter-efficient finetuning (PEFT) using LoRA or DoRA is supported. You can use the `--peft_scheme` argument to enable PEFT training:
 
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/qwen_vl/finetune_qwen25_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --peft_scheme lora \
@@ -112,7 +112,7 @@ You can also combine PEFT with freeze options to control which components are tr
 
 Example with LoRA and freeze options:
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/qwen_vl/finetune_qwen25_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --peft_scheme lora \

@@ -18,6 +18,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
@@ -36,6 +37,9 @@ from megatron.bridge.training.train import (
     should_disable_forward_pre_hook,
 )
 from megatron.bridge.training.utils.train_utils import maybe_inject_state
+
+
+pytestmark = pytest.mark.unit
 
 
 class TestFSDPRegistration:
@@ -198,8 +202,18 @@ class TestPostTrainingStepHelpers:
 class TestMxfp8ParamBufferCopy:
     """Unit tests for mxfp8 parameter buffer copying functionality."""
 
-    def test_copy_main_params_called_when_both_flags_true(self):
-        """Test that _copy_main_params_to_param_buffer is called when both config flags are True."""
+    def _create_mock_model(self, forward_pre_hook_enabled: bool = True):
+        """Helper to create a mock model with forward_pre_hook configuration."""
+        mock_model_chunk = Mock()
+        # Simulate forward_pre_hook enabled/disabled via remove_forward_pre_hook_handles
+        if forward_pre_hook_enabled:
+            mock_model_chunk.remove_forward_pre_hook_handles = [Mock()]  # Non-empty list
+        else:
+            mock_model_chunk.remove_forward_pre_hook_handles = []  # Empty list
+        return [mock_model_chunk]
+
+    def test_copy_main_params_called_when_both_flags_true_and_hook_enabled(self):
+        """Test that _copy_main_params_to_param_buffer is called when both config flags are True and hook is enabled."""
         mock_distributed_optimizer = Mock(spec=DistributedOptimizer)
         mock_other_optimizer = Mock()
 
@@ -209,8 +223,13 @@ class TestMxfp8ParamBufferCopy:
             mock_distributed_optimizer,
         ]
 
+        model = self._create_mock_model(forward_pre_hook_enabled=True)
+
         _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer, reuse_grad_buf_for_mxfp8_param_ag=True, overlap_param_gather=True
+            optimizer=mock_megatron_optimizer,
+            model=model,
+            reuse_grad_buf_for_mxfp8_param_ag=True,
+            overlap_param_gather=True,
         )
 
         mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_called_once()
@@ -219,14 +238,36 @@ class TestMxfp8ParamBufferCopy:
             or not mock_other_optimizer._copy_main_params_to_param_buffer.called
         )
 
+    def test_no_copy_when_forward_pre_hook_disabled(self):
+        """Test that no copying occurs when forward_pre_hook is disabled (first iteration)."""
+        mock_distributed_optimizer = Mock(spec=DistributedOptimizer)
+        mock_megatron_optimizer = Mock()
+        mock_megatron_optimizer.chained_optimizers = [mock_distributed_optimizer]
+
+        model = self._create_mock_model(forward_pre_hook_enabled=False)
+
+        _handle_mxfp8_param_buffer_copy(
+            optimizer=mock_megatron_optimizer,
+            model=model,
+            reuse_grad_buf_for_mxfp8_param_ag=True,
+            overlap_param_gather=True,
+        )
+
+        mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_not_called()
+
     def test_no_copy_when_reuse_grad_buf_false(self):
         """Test that no copying occurs when reuse_grad_buf_for_mxfp8_param_ag is False."""
         mock_distributed_optimizer = Mock(spec=DistributedOptimizer)
         mock_megatron_optimizer = Mock()
         mock_megatron_optimizer.chained_optimizers = [mock_distributed_optimizer]
 
+        model = self._create_mock_model(forward_pre_hook_enabled=True)
+
         _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer, reuse_grad_buf_for_mxfp8_param_ag=False, overlap_param_gather=True
+            optimizer=mock_megatron_optimizer,
+            model=model,
+            reuse_grad_buf_for_mxfp8_param_ag=False,
+            overlap_param_gather=True,
         )
         mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_not_called()
 
@@ -235,8 +276,14 @@ class TestMxfp8ParamBufferCopy:
         mock_distributed_optimizer = Mock(spec=DistributedOptimizer)
         mock_megatron_optimizer = Mock()
         mock_megatron_optimizer.chained_optimizers = [mock_distributed_optimizer]
+
+        model = self._create_mock_model(forward_pre_hook_enabled=True)
+
         _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer, reuse_grad_buf_for_mxfp8_param_ag=True, overlap_param_gather=False
+            optimizer=mock_megatron_optimizer,
+            model=model,
+            reuse_grad_buf_for_mxfp8_param_ag=True,
+            overlap_param_gather=False,
         )
 
         mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_not_called()
@@ -247,8 +294,13 @@ class TestMxfp8ParamBufferCopy:
         mock_megatron_optimizer = Mock()
         mock_megatron_optimizer.chained_optimizers = [mock_distributed_optimizer]
 
+        model = self._create_mock_model(forward_pre_hook_enabled=True)
+
         _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer, reuse_grad_buf_for_mxfp8_param_ag=False, overlap_param_gather=False
+            optimizer=mock_megatron_optimizer,
+            model=model,
+            reuse_grad_buf_for_mxfp8_param_ag=False,
+            overlap_param_gather=False,
         )
 
         mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_not_called()
@@ -266,8 +318,13 @@ class TestMxfp8ParamBufferCopy:
             mock_distributed_optimizer_2,
         ]
 
+        model = self._create_mock_model(forward_pre_hook_enabled=True)
+
         _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer, reuse_grad_buf_for_mxfp8_param_ag=True, overlap_param_gather=True
+            optimizer=mock_megatron_optimizer,
+            model=model,
+            reuse_grad_buf_for_mxfp8_param_ag=True,
+            overlap_param_gather=True,
         )
 
         mock_distributed_optimizer_1._copy_main_params_to_param_buffer.assert_called_once()
@@ -289,8 +346,13 @@ class TestMxfp8ParamBufferCopy:
             mock_distributed_optimizer,
         ]
 
+        model = self._create_mock_model(forward_pre_hook_enabled=True)
+
         _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer, reuse_grad_buf_for_mxfp8_param_ag=True, overlap_param_gather=True
+            optimizer=mock_megatron_optimizer,
+            model=model,
+            reuse_grad_buf_for_mxfp8_param_ag=True,
+            overlap_param_gather=True,
         )
 
         mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_called_once()
@@ -300,6 +362,31 @@ class TestMxfp8ParamBufferCopy:
             not hasattr(mock_regular_optimizer, "_copy_main_params_to_param_buffer")
             or not mock_regular_optimizer._copy_main_params_to_param_buffer.called
         )
+
+    def test_no_copy_when_hook_disabled_despite_all_flags_true(self):
+        """Test that no copying occurs on first iteration (hook disabled) even when all flags are True."""
+        mock_distributed_optimizer_1 = Mock(spec=DistributedOptimizer)
+        mock_distributed_optimizer_2 = Mock(spec=DistributedOptimizer)
+
+        mock_megatron_optimizer = Mock()
+        mock_megatron_optimizer.chained_optimizers = [
+            mock_distributed_optimizer_1,
+            mock_distributed_optimizer_2,
+        ]
+
+        # Simulate first iteration where forward_pre_hook is disabled
+        model = self._create_mock_model(forward_pre_hook_enabled=False)
+
+        _handle_mxfp8_param_buffer_copy(
+            optimizer=mock_megatron_optimizer,
+            model=model,
+            reuse_grad_buf_for_mxfp8_param_ag=True,
+            overlap_param_gather=True,
+        )
+
+        # Neither optimizer should have copy called
+        mock_distributed_optimizer_1._copy_main_params_to_param_buffer.assert_not_called()
+        mock_distributed_optimizer_2._copy_main_params_to_param_buffer.assert_not_called()
 
 
 class TestShouldDisableForwardPreHook:
@@ -422,15 +509,14 @@ class TestSaveCheckpointAndTime:
 
     @patch("megatron.bridge.training.train.force_param_sync")
     @patch("megatron.bridge.training.train.should_disable_forward_pre_hook", return_value=True)
-    @patch("megatron.bridge.training.train.save_checkpoint")
     def test_param_sync_forced_when_overlap_enabled(
         self,
-        mock_save_checkpoint,
         mock_should_disable,
         mock_force_param_sync,
     ):
         state, _ = self._make_state()
         model = [Mock()]
+        mock_checkpoint_manager = Mock()
 
         save_checkpoint_and_time(
             state=state,
@@ -438,24 +524,23 @@ class TestSaveCheckpointAndTime:
             optimizer=Mock(),
             opt_param_scheduler=Mock(),
             num_floating_point_operations_so_far=123.0,
-            checkpointing_context={},
+            checkpoint_manager=mock_checkpoint_manager,
         )
 
         mock_should_disable.assert_called_once_with(False, True, True)
         mock_force_param_sync.assert_called_once_with(model)
-        mock_save_checkpoint.assert_called_once()
+        mock_checkpoint_manager.save.assert_called_once()
 
     @patch("megatron.bridge.training.train.force_param_sync")
     @patch("megatron.bridge.training.train.should_disable_forward_pre_hook", return_value=False)
-    @patch("megatron.bridge.training.train.save_checkpoint")
     def test_param_sync_skipped_when_not_required(
         self,
-        mock_save_checkpoint,
         mock_should_disable,
         mock_force_param_sync,
     ):
         state, _ = self._make_state()
         model = [Mock()]
+        mock_checkpoint_manager = Mock()
 
         save_checkpoint_and_time(
             state=state,
@@ -463,12 +548,12 @@ class TestSaveCheckpointAndTime:
             optimizer=Mock(),
             opt_param_scheduler=Mock(),
             num_floating_point_operations_so_far=123.0,
-            checkpointing_context={},
+            checkpoint_manager=mock_checkpoint_manager,
         )
 
         mock_should_disable.assert_called_once_with(False, True, True)
         mock_force_param_sync.assert_not_called()
-        mock_save_checkpoint.assert_called_once()
+        mock_checkpoint_manager.save.assert_called_once()
 
 
 class TestCheckpointAndDecideExit:
@@ -515,7 +600,7 @@ class TestCheckpointAndDecideExit:
             "optimizer": Mock(),
             "opt_param_scheduler": Mock(),
             "num_floating_point_operations_so_far": 1000.0,
-            "checkpointing_context": {},
+            "checkpoint_manager": Mock(),
             "train_data_iterator": None,
         }
 

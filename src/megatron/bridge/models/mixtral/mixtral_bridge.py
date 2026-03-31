@@ -25,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mixtral.mixtral_provider import MixtralModelProvider
 
@@ -66,7 +67,7 @@ class MixtralBridge(MegatronModelBridge):
             num_layers=hf_config.num_hidden_layers,
             num_query_groups=hf_config.num_key_value_heads,
             layernorm_epsilon=hf_config.rms_norm_eps,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=rope_theta_from_hf(hf_config),
             moe_aux_loss_coeff=hf_config.router_aux_loss_coef,
             vocab_size=hf_config.vocab_size,
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),

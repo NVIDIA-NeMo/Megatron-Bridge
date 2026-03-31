@@ -18,6 +18,11 @@ import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
+from megatron.bridge.models.common import ModelBuilder, ModelConfig
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.transformer_config import TransformerConfig
 import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
@@ -35,8 +40,9 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import (
     _load_checkpoint_from_path,
     checkpoint_exists,
-    init_checkpointing_context,
-    load_checkpoint,
+    CheckpointLoadContext,
+    CheckpointManager,
+    create_checkpoint_manager,
 )
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
@@ -49,7 +55,6 @@ from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
     initialize_tensor_inspect_pre_model_initialization,
 )
-
 
 
 class SetupOutput(NamedTuple):
@@ -65,8 +70,7 @@ class SetupOutput(NamedTuple):
         train_data_iterator: The data iterator for the training dataset, if applicable.
         valid_data_iterator: The data iterator for the validation dataset, if applicable.
         test_data_iterator: The data iterator for the testing dataset, if applicable.
-        checkpointing_context: A dictionary holding context for checkpointing operations,
-                               especially for non-persistent local checkpointing.
+        checkpoint_manager: The checkpoint manager for save/load operations.
         pg_collection: The process group collection initialized for this run.
     """
 
@@ -77,8 +81,9 @@ class SetupOutput(NamedTuple):
     train_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     valid_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
-    checkpointing_context: dict[str, Any]
+    checkpoint_manager: CheckpointManager
     pg_collection: ProcessGroupCollection
+
 
 def setup(
     state: GlobalState,
@@ -110,6 +115,7 @@ def setup(
         SetupOutput containing the populated state, model, optimizer, scheduler, dataloaders, and ckpt context.
     """
     cfg = state.cfg
+    maybe_log_and_save_config(cfg)
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
@@ -167,8 +173,8 @@ def setup(
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
 
-    # Context used for persisting some state between checkpoint saves.
-    checkpointing_context = init_checkpointing_context(cfg.checkpoint)
+    # Create checkpoint manager for save/load operations.
+    checkpoint_manager = create_checkpoint_manager(cfg.checkpoint)
 
     # Tokenizer
     timers("tokenizer-setup", log_level=0).start(barrier=True)
@@ -192,7 +198,7 @@ def setup(
     # Register PEFT pre-wrap hook if PEFT is configured
     if cfg.peft is not None:
         peft_hook = _create_peft_pre_wrap_hook(cfg, state)
-        cfg.model.register_pre_wrap_hook(peft_hook)
+        _register_pre_wrap_hook(cfg.model, peft_hook)
         print_rank_0("Registered PEFT pre-wrap hook")
 
     if getattr(cfg.model, "restore_modelopt_state", False):
@@ -215,16 +221,9 @@ def setup(
             load_modelopt_state(model, checkpoint_path)
             return model
 
-        cfg.model.register_pre_wrap_hook(modelopt_pre_wrap_hook)
+        _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
 
-    model = cfg.model.provide_distributed_model(
-        ddp_config=cfg.ddp,
-        use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
-        use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
-        overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
-        data_parallel_random_init=cfg.rng.data_parallel_random_init,
-        pg_collection=pg_collection,
-    )
+    model = _build_distributed_model(cfg, pg_collection)
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
@@ -241,26 +240,39 @@ def setup(
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
 
+    # Check if a local (non-persistent) checkpoint is available.  Local
+    # checkpoints are independent of global ones — they don't write
+    # latest_train_state.pt to load_dir, so checkpoint_exists() won't
+    # find them.
+    _ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
+    has_local_checkpoint = (
+        "local_checkpoint_manager" in _ckpt_ctx
+        and _ckpt_ctx["local_checkpoint_manager"].find_latest() != -1
+    )
+
     # For PEFT, the pretrained checkpoint is loaded in the pre-wrap hook
     if cfg.peft is not None:
-        should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load))
+        should_load_checkpoint = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
         if should_load_checkpoint:
             # The finetune toggle is explicitly set to True in order to avoid loading optimizer and RNG states
             # This is switched off here in order to load these states from the checkpoint
             cfg.checkpoint.finetune = False
     else:
-        should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)) or (cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint))
+        should_load_checkpoint = (
+            (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load))
+            or (cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint))
+            or has_local_checkpoint
+        )
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        load_checkpoint(
-            state,
-            model,
-            optimizer,
-            scheduler,
-            checkpointing_context=checkpointing_context,
+        checkpoint_manager.load(CheckpointLoadContext(
+            state=state,
+            model=model,
+            optimizer=optimizer,
+            opt_param_scheduler=scheduler,
             skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2 or cfg.dist.use_megatron_fsdp,
-        )
+        ))
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
 
@@ -270,12 +282,13 @@ def setup(
         model,
         state.tensorboard_logger,
         state.wandb_logger,
+        comet_logger=state.comet_logger,
         current_training_step=state.train_state.step,
     )
 
     _update_model_config_funcs(
         model,
-        cfg.model,
+        cfg.model.transformer if isinstance(cfg.model, (GPTModelConfig, MambaModelConfig)) else cfg.model,
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
@@ -286,6 +299,8 @@ def setup(
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
     if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
         train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
+    if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
+        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, pg_collection=pg_collection)
 
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
@@ -305,7 +320,6 @@ def setup(
     # Print setup timing.
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
-    maybe_log_and_save_config(cfg)
 
     return SetupOutput(
         state,
@@ -315,14 +329,47 @@ def setup(
         train_data_iterator,
         valid_data_iterator,
         test_data_iterator,
-        checkpointing_context,
+        checkpoint_manager,
         pg_collection,
     )
 
 
+def _register_pre_wrap_hook(model_cfg: ModelConfig | ModelProviderMixin, hook):
+    """Register a pre-wrap hook on either ModelConfig or ModelProviderMixin."""
+    if isinstance(model_cfg, ModelConfig):
+        model_cfg.pre_wrap_hooks.append(hook)
+    else:
+        model_cfg.register_pre_wrap_hook(hook)
+
+
+def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
+    """Build distributed model from either ModelConfig or ModelProviderMixin."""
+    model_config = cfg.model
+    if isinstance(model_config, ModelConfig):
+        builder_cls = model_config.get_builder_cls()
+        builder = builder_cls(model_config)
+        return builder.build_distributed_models(
+            pg_collection=pg_collection,
+            ddp_config=cfg.ddp,
+            overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
+            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+            data_parallel_random_init=cfg.rng.data_parallel_random_init,
+        )
+    else:
+        return model_config.provide_distributed_model(
+            ddp_config=cfg.ddp,
+            use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
+            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+            overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            pg_collection=pg_collection,
+        )
+
+
 def _update_model_config_funcs(
     model: MegatronModule,
-    model_config: GPTModelProvider | T5ModelProvider,
+    model_config: TransformerConfig,
     ddp_config: DistributedDataParallelConfig,
     optimizer: Optional[MegatronOptimizer],
     *,
@@ -347,13 +394,13 @@ def _update_model_config_funcs(
         if len(model) == 1:
             model_config.param_sync_func = model_config.param_sync_func[0]
     if optimizer is not None:
-        model_config.finalize_model_grads_func = partial(
-            finalize_model_grads, pg_collection=pg_collection
-        )
+        model_config.finalize_model_grads_func = partial(finalize_model_grads, pg_collection=pg_collection)
         model_config.grad_scale_func = optimizer.scale_loss
 
 
-def _create_peft_pre_wrap_hook(cfg: ConfigContainer, state: GlobalState) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
+def _create_peft_pre_wrap_hook(
+    cfg: ConfigContainer, state: GlobalState
+) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
     """Create a pre-wrap hook that handles PEFT logic.
 
     This hook is executed before the model is wrapped with DDP/FSDP and handles:
@@ -367,6 +414,7 @@ def _create_peft_pre_wrap_hook(cfg: ConfigContainer, state: GlobalState) -> Call
     Returns:
         A callable hook that can be registered with the model provider
     """
+
     def peft_pre_wrap_hook(model: list[MegatronModule]) -> list[MegatronModule]:
         """Pre-wrap hook that handles PEFT transformation.
 
@@ -484,7 +532,14 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
 
 
 def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
-    """Save configuration to disk and log it on rank 0."""
+    """Save configuration to disk and log non-default values on rank 0.
+
+    Instead of printing the full config YAML, this now logs only the values
+    that differ from Megatron Core defaults, making it easier to spot
+    unintended configuration deviations.
+
+    The full config can still be saved to a file via logger.save_config_filepath.
+    """
 
     if get_rank_safe() != 0:
         return
@@ -495,6 +550,4 @@ def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
         except Exception as e:
             print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
 
-    print("------- Task Configuration -------")
-    cfg.print_yaml()
-    print("----------------------------------")
+    cfg.log_non_default_values()

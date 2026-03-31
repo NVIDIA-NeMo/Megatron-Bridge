@@ -26,6 +26,7 @@ from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import get_model_config
+from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.data.finetuning import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
@@ -34,6 +35,7 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
 from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
@@ -101,9 +103,19 @@ def evaluate(
     eval_batch_size = state.cfg.train.global_batch_size
     eval_num_microbatches = eval_batch_size // (state.cfg.train.micro_batch_size * state.cfg.data_parallel_size)
 
+    if not state.cfg.dist.use_decentralized_pg:
+        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+            model,
+            seq_length=state.cfg.model.seq_length,
+            micro_batch_size=state.cfg.train.micro_batch_size,
+            decoder_seq_length=state.cfg.model.seq_length,
+        )
+    else:
+        adjust_tensor_shapes_fn = None
+
     with torch.no_grad():
         if verbose:
-            print_rank_0(f"Evaluating on {state.cfg.train.eval_iters * eval_batch_size} samples")
+            print_rank_0(f"Evaluating on {state.cfg.validation.eval_iters * eval_batch_size} samples")
 
         if (
             state.cfg.model.cuda_graph_impl == "local"
@@ -123,10 +135,10 @@ def evaluate(
             )
 
         iteration = 0
-        while iteration < state.cfg.train.eval_iters:
+        while iteration < state.cfg.validation.eval_iters:
             iteration += 1
             if verbose:
-                print_rank_0(f"Evaluating iter {iteration}/{state.cfg.train.eval_iters}")
+                print_rank_0(f"Evaluating iter {iteration}/{state.cfg.validation.eval_iters}")
 
             # Handle finetuning vs pretraining data consumption
             seq_length = state.cfg.model.seq_length  # Default for pretraining
@@ -134,18 +146,19 @@ def evaluate(
 
             if state.cfg.dataset.dataloader_type == "batch":
                 # Finetuning path: prepare batch and extract dynamic seq_length
-                eval_microbatch_iterator, seq_length = prepare_finetuning_batch(
+                eval_data_iterator, seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
                     num_microbatches=eval_num_microbatches,
                     default_seq_length=state.cfg.model.seq_length,
                     seq_key="tokens",
                 )
 
+            if len(model) > 1:
                 # Convert to list of iterators for virtual pipeline parallelism
                 # With virtual PP, each model chunk needs independent access to the same microbatch
                 eval_data_iterator = make_data_iterator_list(
                     model=model,
-                    data_iterator=eval_microbatch_iterator,
+                    data_iterator=eval_data_iterator,
                 )
 
             # Don't care about timing during evaluation
@@ -171,10 +184,18 @@ def evaluate(
                 seq_length=seq_length,
                 micro_batch_size=state.cfg.train.micro_batch_size,
                 forward_only=True,
+                adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
                 p2p_communicator=p2p_communicator,
                 pg_collection=pg_collection,
             )
             fault_tolerance.on_eval_step_end(state)
+
+            # Workaround: for FullIteration CG only. TODO: Filed #2569 to fix this.
+            if (
+                state.cfg.model.cuda_graph_impl == "local"
+                and CudaGraphScope.full_iteration in state.cfg.model.cuda_graph_scope
+            ):
+                torch.cuda.synchronize()
 
             if should_fire(callback_manager, step_end_event):
                 callback_manager.fire(
@@ -316,6 +337,8 @@ def evaluate_and_print_results(
         writer = None
 
     wandb_writer = state.wandb_logger
+    mlflow_writer = state.mlflow_logger
+    comet_logger = state.comet_logger
 
     if should_fire(callback_manager, start_event):
         callback_manager.fire(
@@ -365,6 +388,21 @@ def evaluate_and_print_results(
             wandb_writer.log({"{} validation".format(key): total_loss_dict[key].item()}, state.train_state.step)
             if state.cfg.logger.log_validation_ppl_to_tensorboard:
                 wandb_writer.log({"{} validation ppl".format(key): ppl}, state.train_state.step)
+
+        if mlflow_writer and is_last_rank():
+            mlflow_writer.log_metrics(
+                _sanitize_mlflow_metrics({f"val/{key}": total_loss_dict[key].item()}), step=state.train_state.step
+            )
+            if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                mlflow_writer.log_metrics(
+                    _sanitize_mlflow_metrics({f"val/{key} ppl": ppl}), step=state.train_state.step
+                )
+        if comet_logger and is_last_rank():
+            comet_logger.log_metrics(
+                {"{} validation".format(key): total_loss_dict[key].item()}, step=state.train_state.step
+            )
+            if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                comet_logger.log_metrics({"{} validation ppl".format(key): ppl}, step=state.train_state.step)
 
     if process_non_loss_data_func is not None and writer and is_last_rank():
         process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)
