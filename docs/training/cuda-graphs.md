@@ -42,11 +42,11 @@ It is less about changing the math and more about reducing runtime overhead.
 
 | Dimension | Effect | Confidence | Why |
 |---|---|---|---|
-| `speed` | `+` to `++` | medium | Replays pre-captured GPU work and reduces launch overhead. |
-| `memory` | `-` | high | Graph buffers stay allocated for replay and reduce memory reuse. |
-| `scale` | `+/-` | low | Can help at scale if launch overhead matters, but memory overhead can limit larger configs. |
-| `convergence` | `0` | medium | Intended to preserve training math when capture constraints are satisfied. |
-| `stability` | `-` | medium | Adds stricter runtime constraints around shapes, supported scopes, and environment settings. |
+| `speed` | ~15-30% faster step time | medium | Replays pre-captured GPU work and reduces launch overhead. Measured 16-24% on GPT-OSS-20B and 22% on Qwen3-30B-A3B with TE-scoped graphs. Gain depends on how launch-bound the workload is. |
+| `memory` | ~0-2 GB extra (TE scoped); 10 GB+ possible with `PP > 1` or large MoE | high | Graph buffers stay allocated for replay. TE-scoped showed no measurable increase on 20B/30B models but OOM'd on 120B at 70/79 GB. |
+| `scale` | neutral to slightly positive | low | Can help at scale if launch overhead matters, but memory overhead can gate larger configs (e.g., GPT-OSS-120B OOM). |
+| `convergence` | no change expected | medium | Intended to preserve training math when capture constraints are satisfied. Loss matched within 0.001 on Qwen3-30B-A3B over 20 iterations. |
+| `stability` | adds operational constraints | medium | Requires static shapes, specific RNG/NaN settings, and compatible scope selections. Failure modes are well-defined but add surface area. |
 
 ## When to Use It
 

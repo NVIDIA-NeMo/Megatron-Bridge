@@ -277,7 +277,6 @@ evidence:
   - scripts/performance/utils/overrides.py
   - tests/unit_tests/training/test_config.py
   - tests/functional_tests/recipes/test_llama_recipes_pretrain_cuda_graphs.py
-  - .local/cuda_graph_gpt_oss_experiment_tracker_2026-03-20.md
 follow_up_validation:
   - Re-run GPT-OSS-20B pretrain with lower LR and/or larger GBS for a meaningful loss comparison.
   - Retry GPT-OSS packed-sequence SFT and LoRA on a newer TE/container build.
