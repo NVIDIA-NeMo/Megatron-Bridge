@@ -196,8 +196,15 @@ class Qwen25VLModel(MegatronModule):
         # Each stage has input_ids and visual grid info from the data iterator
         # This avoids any broadcasting overhead
         hf_attention_mask = None
+
+        # Build mm_token_type_ids: 0=text, 1=image, 2=video
+        mm_token_type_ids = torch.zeros_like(input_ids, dtype=torch.int)
+        mm_token_type_ids[input_ids == self.config.image_token_id] = 1
+        mm_token_type_ids[input_ids == self.config.video_token_id] = 2
+
         position_ids, rope_deltas = self.get_rope_index(
             input_ids,
+            mm_token_type_ids,
             image_grid_thw,
             video_grid_thw,
             second_per_grid_ts=second_per_grid_ts,
