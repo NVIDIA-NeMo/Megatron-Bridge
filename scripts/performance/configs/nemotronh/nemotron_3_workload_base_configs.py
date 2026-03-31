@@ -133,8 +133,8 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_NVFP4_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONFI
 
 BASE_NEMOTRON_3_SUPER_CONFIG_B200 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG,
-    recompute_modules=["moe_act", "layernorm", "moe", "core_attn"],
-    cuda_graph_scope=["attn", "mamba"],
+    recompute_modules=["moe_act", "layernorm", "moe"],
+    # cuda_graph_scope=["attn", "mamba"],
 )
 
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_BF16_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_B200
