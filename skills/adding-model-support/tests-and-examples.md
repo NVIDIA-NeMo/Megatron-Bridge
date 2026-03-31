@@ -154,7 +154,7 @@ class TestMyModelConversion:
     def test_roundtrip(self, toy_model_path, tp, pp, tmp_path):
         result = subprocess.run(
             [
-                "python", "-m", "torch.distributed.run",
+                "uv", "run", "python", "-m", "torch.distributed.run",
                 f"--nproc_per_node={tp * pp}",
                 "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
                 f"--hf-model-id={toy_model_path}",
@@ -209,6 +209,10 @@ def _fuse_moe_expert_weights(model_dir):
 ```
 
 ## Example Scripts
+
+Example scripts target **real published models** (e.g. `Qwen/Qwen3-8B`), not toy configs.
+The inference script must produce reasonable output — a coherent text completion for LLMs,
+a plausible image description for VLMs. This is the acceptance bar for the deliverable.
 
 ### Conversion example (`examples/models/<type>/<model>/conversion.sh`)
 
@@ -286,7 +290,7 @@ Create `docs/models/<type>/<model>.md`:
 
 \`\`\`bash
 # HF → Megatron
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model <org>/<model> --megatron-path /workspace/<model>
 \`\`\`
 
@@ -294,13 +298,13 @@ python examples/conversion/convert_checkpoints.py import \
 
 ### SFT
 \`\`\`bash
-torchrun --nproc-per-node=8 examples/recipes/train_any_basic.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/train_any_basic.py \
     --model <model> --size <size> --mode sft
 \`\`\`
 
 ### PEFT (LoRA)
 \`\`\`bash
-torchrun --nproc-per-node=8 examples/recipes/train_any_basic.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/train_any_basic.py \
     --model <model> --size <size> --mode peft
 \`\`\`
 

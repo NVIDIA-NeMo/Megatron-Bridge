@@ -228,14 +228,16 @@ For detailed test patterns, see [tests-and-examples.md](tests-and-examples.md).
 ```
 examples/models/<type>/<model>/
 ├── README.md
-├── conversion.sh        # HF↔Megatron conversion commands
-├── inference.sh         # Generation commands
+├── conversion.sh        # HF↔Megatron conversion commands (real model)
+├── inference.sh         # Generation commands (real model, reasonable output)
 ├── slurm_sft.sh         # SFT training on SLURM
 └── slurm_peft.sh        # PEFT training on SLURM
 ```
 
 - LLM type folder: `examples/models/<model>/`
 - VLM type folder: `examples/models/vlm/<model>/`
+
+**Key deliverable requirement:** `conversion.sh` and `inference.sh` must target a real published model (e.g. `Qwen/Qwen3-8B`, not a toy). The inference script must produce reasonable output — for LLMs a coherent text continuation, for VLMs a plausible image description. This is the acceptance bar: conversion runs cleanly and generation makes sense.
 
 ### Documentation
 
@@ -300,8 +302,8 @@ uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 ### 4. Run tests
 
 ```bash
-uv run pytest tests/unit_tests/models/<model>/ -v
-uv run pytest tests/functional_tests/models/<model>/ -v --run-gpu
+uv run python -m pytest tests/unit_tests/models/<model>/ -v
+uv run python -m pytest tests/functional_tests/models/<model>/ -v --run-gpu
 ```
 
 ## Quick Decision Tree
