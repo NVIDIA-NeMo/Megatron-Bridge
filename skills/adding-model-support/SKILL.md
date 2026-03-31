@@ -203,7 +203,7 @@ For detailed recipe patterns, see [recipe-patterns.md](recipe-patterns.md).
 
 ### Unit tests (no GPU)
 
-```
+```text
 tests/unit_tests/models/<model>/
 ├── __init__.py
 ├── test_<model>_bridge.py    # Mock HF config → verify provider mapping
@@ -212,7 +212,7 @@ tests/unit_tests/models/<model>/
 
 ### Functional tests (GPU)
 
-```
+```text
 tests/functional_tests/models/<model>/
 ├── __init__.py
 ├── test_<model>_conversion.py  # Toy model HF↔Megatron roundtrip
@@ -225,17 +225,18 @@ For detailed test patterns, see [tests-and-examples.md](tests-and-examples.md).
 
 ### Examples
 
-```
-examples/models/<type>/<model>/
+LLM examples: `examples/models/<model>/`
+VLM examples: `examples/models/vlm/<model>/`
+
+```text
+examples/models/<model>/          # LLM
+examples/models/vlm/<model>/      # VLM
 ├── README.md
 ├── conversion.sh        # HF↔Megatron conversion commands (real model)
 ├── inference.sh         # Generation commands (real model, reasonable output)
 ├── slurm_sft.sh         # SFT training on SLURM
 └── slurm_peft.sh        # PEFT training on SLURM
 ```
-
-- LLM type folder: `examples/models/<model>/`
-- VLM type folder: `examples/models/vlm/<model>/`
 
 **Key deliverable requirement:** `conversion.sh` and `inference.sh` must target a real published model (e.g. `Qwen/Qwen3-8B`, not a toy). The inference script must produce reasonable output — for LLMs a coherent text continuation, for VLMs a plausible image description. This is the acceptance bar: conversion runs cleanly and generation makes sense.
 

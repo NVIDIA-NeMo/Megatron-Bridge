@@ -28,7 +28,7 @@ cfg.model.moe_shared_expert_overlap = False
 - `num_moe_experts > 1`
 - `moe_token_dispatcher_type` must be `"alltoall"` or `"flex"`
 - Precision: BF16 or FP16
-- If PP is used, VPP (`virtual_pipeline_model_parallel_size > 1`) is required
+- If PP is used, VPP (`virtual_pipeline_model_parallel_size`) must be set (non-`None`)
 
 ### Flex dispatcher activation
 

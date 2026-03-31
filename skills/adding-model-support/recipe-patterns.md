@@ -8,7 +8,7 @@ Reference implementations:
 
 ## File Structure
 
-```
+```text
 src/megatron/bridge/recipes/<family>/
 ├── __init__.py          # Import and expose recipe functions
 └── <model>.py           # Recipe functions for all sizes

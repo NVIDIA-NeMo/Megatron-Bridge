@@ -161,7 +161,7 @@ class MyModelBridge(MegatronModelBridge):
 
 The base class provides automatic mapping for common fields — no need to duplicate:
 
-```
+```text
 (num_hidden_layers, num_layers), (hidden_size, hidden_size),
 (intermediate_size, ffn_hidden_size), (num_attention_heads, num_attention_heads),
 (num_key_value_heads, num_query_groups), (head_dim, kv_channels),
