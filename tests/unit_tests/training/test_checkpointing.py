@@ -3278,6 +3278,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_state_dict = {
             "checkpoint_version": 3.0,
             "model": {"param": "value"},
+            "opt_param_scheduler": {"max_lr": 0.001},
         }
         # Return CheckpointType.LOCAL to trigger the LayerWise load path
         mock_load_base.return_value = (mock_state_dict, "/ckpts/local_ckpt_id", False, CheckpointType.LOCAL)
@@ -3382,6 +3383,7 @@ class TestLayerWiseOptimizerCheckpointing:
             "checkpoint_version": 3.0,
             "model": {"param": "value"},
             "optimizer": {"param_groups": []},
+            "opt_param_scheduler": {"max_lr": 0.001},
         }
         # GLOBAL checkpoint - optimizer is in state_dict["optimizer"]
         mock_load_base.return_value = (mock_state_dict, "/ckpts/iter_0001000", False, CheckpointType.GLOBAL)
