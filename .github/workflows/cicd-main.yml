@@ -133,9 +133,9 @@ jobs:
             fi
           fi
 
-          # EXPECT_L2: schedule or workflow_dispatch only
+          # EXPECT_L2: schedule, workflow_dispatch, or full-test-suite label
           EXPECT_L2=false
-          if [[ "$EXPECT_L0" == "true" && ("$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch") ]]; then
+          if [[ "$EXPECT_L0" == "true" && ("$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch" || "$FULL_TEST_SUITE" == "true") ]]; then
             EXPECT_L2=true
           fi
 
@@ -156,6 +156,7 @@ jobs:
           _SCHED=$( [[ "$EVENT_NAME" == "schedule"          ]] && echo "**→**" || echo "" )
           _WD=$(    [[ "$EVENT_NAME" == "workflow_dispatch" ]] && echo "**→**" || echo "" )
           _NMT=$(   [[ "$NEEDS_MORE_TESTS" == "true"        ]] && echo "**→**" || echo "" )
+          _FTS=$(   [[ "$FULL_TEST_SUITE"  == "true"        ]] && echo "**→**" || echo "" )
 
           cat <<SUMMARY >> "$GITHUB_STEP_SUMMARY"
           ## CI Configuration
@@ -175,7 +176,7 @@ jobs:
           |---|---|---|
           | $_L0 | **L0** | any non-docs/deployment run |
           | $_L1 | **L1** | \`main\` / \`schedule\` / \`workflow_dispatch\` / \`merge_group\` / label _needs-more-tests_ |
-          | $_L2 | **L2** | \`schedule\` / \`workflow_dispatch\` only |
+          | $_L2 | **L2** | \`schedule\` / \`workflow_dispatch\` / label _full-test-suite_ |
 
           ### Decision tree
 
@@ -195,6 +196,7 @@ jobs:
           | $_WD    | \`workflow_dispatch\` |
           | $_MG    | \`merge_group\` |
           | $_NMT   | Label: _needs-more-tests_ |
+          | $_FTS   | Label: _full-test-suite_ |
           SUMMARY
 
   lint-check:
