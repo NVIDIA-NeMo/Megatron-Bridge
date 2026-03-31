@@ -3289,6 +3289,10 @@ class TestLayerWiseOptimizerCheckpointing:
         checkpointing_context = {"local_checkpoint_manager": mock_local_ckpt_manager}
 
         load_checkpoint_fixtures["mock_cfg"].checkpoint.load = "/ckpts"
+        # For LOCAL checkpoints, run_config is built from cfg directly (not read_run_config).
+        # Set save_rng=False so the test doesn't attempt to restore RNG state from the
+        # minimal mock state_dict (which has no rng_state key and would hit sys.exit()).
+        load_checkpoint_fixtures["mock_cfg"].checkpoint.save_rng = False
 
         load_checkpoint(
             load_checkpoint_fixtures["mock_state"],
