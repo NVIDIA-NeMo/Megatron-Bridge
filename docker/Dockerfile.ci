@@ -22,7 +22,7 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 ENV UV_LINK_MODE=copy
 ENV UV_VERSION="0.7.2"
-
+ENV NVTE_BUILD_NUM_PHILOX_ROUNDS=3
 RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
     uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
     # Address CVE-2025-68973
