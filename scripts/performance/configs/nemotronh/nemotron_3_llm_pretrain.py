@@ -91,7 +91,7 @@ def nemotron_3_super_pretrain_config_gb200(
 
     if precision != "nvfp4":
         cfg.model.fine_grained_activation_offloading = True
-        cfg.model.offload_modules = ["expert_fc1"]
+        cfg.model.offload_modules = ["expert_fc1", "core_attn"]
 
     return cfg
 
@@ -143,7 +143,7 @@ def nemotron_3_super_pretrain_config_b200(
 
     if precision != "nvfp4":
         cfg.model.fine_grained_activation_offloading = True
-        cfg.model.offload_modules = ["expert_fc1"]
+        cfg.model.offload_modules = ["expert_fc1", "core_attn"]
 
     return cfg
 
