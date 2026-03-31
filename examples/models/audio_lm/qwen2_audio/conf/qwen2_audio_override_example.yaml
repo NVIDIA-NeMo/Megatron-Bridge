@@ -1,0 +1,69 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Example override file for Qwen2-Audio 7B finetuning
+
+model:
+  seq_length: 4096
+  freeze_language_model: false
+  freeze_audio_model: false
+  freeze_audio_projection: false
+
+train:
+  train_iters: 11250
+  global_batch_size: 32
+  micro_batch_size: 4
+
+validation:
+  eval_interval: 1000    # validate every N training steps
+  eval_iters: 10        # number of batches per validation run
+
+optimizer:
+  lr: 2e-5
+  min_lr: 2e-6
+
+scheduler:
+  lr_warmup_iters: 5
+
+checkpoint:
+  # Directory to save to. If null, no checkpoint will be saved.
+  save: ???
+  save_interval: 1000
+  save_optim: False
+
+logger:
+  log_interval: 1
+
+dataset:
+  maker_name: make_default_audio_dataset
+  # maker_kwargs is used for the train split
+  maker_kwargs:
+    path_or_dataset: "yuekai/aishell"
+    subset: "train"
+    split: "test"
+    prompt: "Detect the language and recognize the speech: <|zh|>"
+  # val_maker_kwargs overrides maker_kwargs when building the validation split
+  val_maker_kwargs:
+    subset: "dev"
+    split: "test"
+  # skip test set evaluation at the end of training
+  skip_test: true
+  # Enable in-batch sequence packing for better GPU utilization
+  pack_sequences_in_batch: true
+
+rng:
+  seed: 42
+
+ddp:
+  grad_reduce_in_fp32: false

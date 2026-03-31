@@ -124,10 +124,12 @@ from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
 from megatron.bridge.training.llava_step import forward_step as llava_forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+from megatron.bridge.training.audio_lm_step import forward_step as audio_lm_forward_step
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 
 
 STEP_FUNCTIONS: dict[str, Callable] = {
+    "audio_lm_step": audio_lm_forward_step,
     "gpt_step": gpt_forward_step,
     "vlm_step": vlm_forward_step,
     "qwen3_vl_step": qwen3_vl_forward_step,
