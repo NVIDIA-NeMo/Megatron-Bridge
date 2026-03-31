@@ -5,7 +5,7 @@ during training, trading throughput for the ability to train models or
 configurations that would otherwise not fit in GPU memory.
 
 For operational setup, code anchors, and verification commands, see
-[skills/perf-techniques/cpu-offloading/SKILL.md](../../skills/perf-techniques/cpu-offloading/SKILL.md).
+[skills/perf-techniques/cpu-offloading/SKILL.md](../skills/perf-techniques/cpu-offloading/SKILL.md).
 
 ## What It Is
 
@@ -44,6 +44,15 @@ target different bottlenecks:
 | Scale | enables otherwise-OOM configurations | medium | Can free memory for larger batch sizes or additional parallelism. |
 | Convergence | no change (loss delta < 0.001 across all fractions) | high | All optimizer offload fractions (25–100%) produce identical loss across 20 iterations. |
 | Stability | no issues observed | high | No errors, hangs, or NCCL issues across 120 total iterations tested (6 configurations). |
+
+D2H (device-to-host) and H2D (host-to-device) refer to data transfers between
+GPU and CPU memory. Each optimizer step copies gradients to CPU (D2H), runs
+Adam on CPU, then copies updated parameters back (H2D). The
+`overlap_cpu_optimizer_d2h_h2d` flag overlaps these transfers with compute.
+On Qwen3-30B-A3B MoE this provided only ~7% speedup because CPU-side Adam
+compute — not the transfers — was the dominant bottleneck. Other models with
+different parameter counts or optimizer configurations may see different
+transfer-to-compute ratios.
 
 ## When to Use It
 
@@ -87,21 +96,7 @@ CPU offloading is configured through two independent config namespaces:
   `model.cpu_offloading_num_layers`, and related `model.cpu_offloading_*` fields
 
 For config examples, parameter tables, and runnable commands, see
-[skills/perf-techniques/cpu-offloading/SKILL.md](../../skills/perf-techniques/cpu-offloading/SKILL.md).
-
-## Expected Metric Changes
-
-| Metric | Direction | Magnitude | Conditions | Evidence |
-|--------|-----------|-----------|------------|----------|
-| Steady-state memory (allocated) | down | 3.8 GB per 25% of optimizer offload fraction | Qwen3-30B-A3B, TP2 PP2 EP4, 2 nodes H100 | measured |
-| Step time | up | 1.9x at 25%, 2.5x at 50%, 3.2x at 75%, 4.2x at 100% offload | Same config | measured |
-| Step time with D2H/H2D overlap | up | 3.9x at 100% offload (vs 4.2x without overlap) | Same config + `overlap_cpu_optimizer_d2h_h2d=True` | measured |
-| Loss | neutral | max delta < 0.001 across all fractions | Same config, 20 iterations | measured |
-
-Memory savings and throughput penalty both scale linearly with
-`optimizer_offload_fraction`. The D2H/H2D overlap provides ~7% speedup at
-100% because CPU-side Adam compute — not the data transfers — is the
-dominant bottleneck.
+[skills/perf-techniques/cpu-offloading/SKILL.md](../skills/perf-techniques/cpu-offloading/SKILL.md).
 
 ## Common Failure Modes
 
@@ -120,4 +115,4 @@ dominant bottleneck.
 - [docs/training/megatron-fsdp.md](megatron-fsdp.md)
 - [docs/training/optimizer-scheduler.md](optimizer-scheduler.md)
 - [docs/training/cuda-graphs.md](cuda-graphs.md)
-- [skills/perf-techniques/cpu-offloading/SKILL.md](../../skills/perf-techniques/cpu-offloading/SKILL.md)
+- [skills/perf-techniques/cpu-offloading/SKILL.md](../skills/perf-techniques/cpu-offloading/SKILL.md)

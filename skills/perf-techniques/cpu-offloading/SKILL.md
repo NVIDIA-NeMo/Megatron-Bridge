@@ -127,9 +127,37 @@ cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = True
 cfg.model.cpu_offloading = True
 cfg.model.cpu_offloading_num_layers = 16
 cfg.model.cpu_offloading_activations = True
+cfg.model.cpu_offloading_weights = False
 cfg.model.pipeline_model_parallel_size = 1
 cfg.model.recompute_granularity = None
 ```
+
+### Weight offload only (small model, PP=1)
+
+```python
+cfg.model.cpu_offloading = True
+cfg.model.cpu_offloading_num_layers = 8
+cfg.model.cpu_offloading_activations = False
+cfg.model.cpu_offloading_weights = True
+cfg.model.pipeline_model_parallel_size = 1
+cfg.model.recompute_granularity = None
+```
+
+### Both activations and weights (small model, PP=1)
+
+```python
+cfg.model.cpu_offloading = True
+cfg.model.cpu_offloading_num_layers = 8
+cfg.model.cpu_offloading_activations = True
+cfg.model.cpu_offloading_weights = True
+cfg.model.pipeline_model_parallel_size = 1
+cfg.model.recompute_granularity = None
+```
+
+Weight offloading and activation offloading share the same constraints (PP=1,
+no recompute, no CUDA graphs). Weight offloading has not been tested in
+the Qwen3-30B-A3B experiments — the measured results cover optimizer
+offloading only.
 
 ## Minimal Runnable Command
 
