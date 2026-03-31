@@ -107,8 +107,6 @@ from megatron.bridge.training.pretrain import pretrain
 if __name__ == "__main__":
     # The recipe uses the Llama 3.2 1B model configuration from HuggingFace
     cfg = llama32_1b_pretrain_config()
-    cfg.model.seq_length = 1024
-    cfg.dataset.seq_length = 1024
 
     # Override training parameters
     cfg.train.train_iters = 10
