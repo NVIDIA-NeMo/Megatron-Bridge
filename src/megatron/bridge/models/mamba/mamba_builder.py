@@ -39,6 +39,19 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 logger = logging.getLogger(__name__)
 
 
+def transformer_engine_mamba_stack_spec() -> ModuleSpec:
+    """Return the default Mamba stack spec with Transformer Engine layers.
+
+    This is a named function (not a lambda) to allow proper serialization
+    and reconstruction from checkpoints. Named functions can be imported
+    via their module path, unlike lambdas.
+
+    Returns:
+        Default Mamba stack specification from megatron.core
+    """
+    return default_mamba_stack_spec
+
+
 def modelopt_mamba_stack_spec() -> ModuleSpec:
     """Mamba stack specification for quantization with ModelOpt.
 
@@ -52,15 +65,6 @@ def modelopt_mamba_stack_spec() -> ModuleSpec:
         local_core_attention=False,
         remap_te_layernorm=False,
     )
-
-
-def transformer_engine_mamba_stack_spec() -> ModuleSpec:
-    """Return the default Mamba stack spec with Transformer Engine layers.
-
-    Returns:
-        Default Mamba stack specification from megatron.core
-    """
-    return default_mamba_stack_spec
 
 
 def get_default_mamba_stack_spec(config: "MambaModelConfig") -> ModuleSpec:

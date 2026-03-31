@@ -102,6 +102,10 @@ def modelopt_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
 def transformer_engine_mamba_stack_spec() -> ModuleSpec:
     """Return the default Mamba stack spec with Transformer Engine layers.
 
+    This is a named function (not a lambda) to allow proper serialization
+    and reconstruction from checkpoints. Named functions can be imported
+    via their module path, unlike lambdas.
+
     Returns:
         Default Mamba stack specification from megatron.core
     """
