@@ -1,0 +1,115 @@
+name: Build Megatron-Bridge Full Stack
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-fw-base:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push fw-base
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.fw_base
+          target: nemo_fw_base_final
+          push: true
+          build-args: |
+            FW_DEP_BUILDER=base
+            FW_BASE_FINAL=fw_toolkit_builder
+            NEMO_FW_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.02-py3
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/fw-base:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/fw-base:${{ github.sha }}
+
+  build-megatron-bridge:
+    runs-on: ubuntu-latest
+    needs: build-fw-base
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push megatron-bridge
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.ci
+          target: megatron_bridge
+          push: true
+          build-args: |
+            BASE_IMAGE=${{ secrets.DOCKERHUB_USERNAME }}/fw-base:latest
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/megatron-bridge:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/megatron-bridge:${{ github.sha }}
+
+  build-fw-final:
+    runs-on: ubuntu-latest
+    needs: build-megatron-bridge
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push fw-final
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.fw_final
+          target: nemo_fw_final
+          push: true
+          build-args: |
+            NEMO_FW_FINAL_BASE_IMAGE=${{ secrets.DOCKERHUB_USERNAME }}/megatron-bridge:latest
+            NEMO_COMMIT=main
+            NEMO_EXPORT_DEPLOY_COMMIT=main
+            NEMO_EVAL_COMMIT=main
+            NEMO_RUN_COMMIT=main
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/fw-final:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/fw-final:${{ github.sha }}
