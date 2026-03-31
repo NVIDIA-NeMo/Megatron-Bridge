@@ -20,7 +20,7 @@ from typing import Callable, Literal, Optional, Union
 
 import torch
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
-from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
+from megatron.core.models.mamba.mamba_layer_specs import get_mamba_stack_spec
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.post_training.modelopt.mamba.model_specs import get_mamba_stack_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
@@ -97,21 +97,11 @@ def modelopt_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     )
 
 
-def transformer_engine_mamba_stack_spec() -> ModuleSpec:
-    """Return the default Mamba stack spec with Transformer Engine layers.
-
-    This is a named function (not a lambda) to allow proper serialization
-    and reconstruction from checkpoints. Named functions can be imported
-    via their module path, unlike lambdas.
-
-    Returns:
-        Default Mamba stack specification from megatron.core
-    """
-    return default_mamba_stack_spec
-
-
 def get_default_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     """Determine the most appropriate Mamba stack specification based on configuration.
+
+    Passes config to get_mamba_stack_spec so that config-dependent features
+    (e.g. qk_layernorm, qk_l2_norm) are reflected in the spec.
 
     Args:
         config: Mamba configuration object
@@ -119,7 +109,7 @@ def get_default_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     Returns:
         ModuleSpec: Appropriate module specification based on config
     """
-    return transformer_engine_mamba_stack_spec()
+    return get_mamba_stack_spec(config)
 
 
 @dataclass
