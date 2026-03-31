@@ -7,7 +7,7 @@ fine-tuning and PEFT optimization rather than a general pretraining feature.
 
 This page is the stable overview for what packed sequences are, when to use
 them, and which constraints are durable. For operational setup, code anchors,
-and verification commands, see [skills/perf-techniques/sequence-packing/SKILL.md](../../skills/perf-techniques/sequence-packing/SKILL.md).
+and verification commands, see [skills/perf-techniques/sequence-packing/SKILL.md](../skills/perf-techniques/sequence-packing/SKILL.md).
 
 ## What It Is
 
@@ -90,7 +90,7 @@ The most stable caveats to remember are:
 - [docs/training/multi-token-prediction.md](multi-token-prediction.md)
 - [docs/performance-guide.md](../performance-guide.md)
 - [docs/training/hybrid-context-parallel.md](hybrid-context-parallel.md)
-- [skills/perf-techniques/sequence-packing/SKILL.md](../../skills/perf-techniques/sequence-packing/SKILL.md)
-- [skills/perf-techniques/sequence-packing/card.yaml](../../skills/perf-techniques/sequence-packing/card.yaml)
-- [skills/perf-techniques/packed-sequences-long-context/SKILL.md](../../skills/perf-techniques/packed-sequences-long-context/SKILL.md)
-- [skills/perf-techniques/packed-sequences-long-context/card.yaml](../../skills/perf-techniques/packed-sequences-long-context/card.yaml)
+- [skills/perf-techniques/sequence-packing/SKILL.md](../skills/perf-techniques/sequence-packing/SKILL.md)
+- [skills/perf-techniques/sequence-packing/card.yaml](../skills/perf-techniques/sequence-packing/card.yaml)
+- [skills/perf-techniques/packed-sequences-long-context/SKILL.md](../skills/perf-techniques/packed-sequences-long-context/SKILL.md)
+- [skills/perf-techniques/packed-sequences-long-context/card.yaml](../skills/perf-techniques/packed-sequences-long-context/card.yaml)
