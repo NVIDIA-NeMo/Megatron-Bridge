@@ -48,7 +48,6 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.share_embeddings_and_output_weights = False
         provider.qk_layernorm = True
@@ -69,7 +68,6 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         provider.cross_entropy_loss_fusion = True
         provider.masked_softmax_fusion = True
         provider.persist_layer_norm = True
-        provider.gradient_accumulation_fusion = True
 
         provider.hidden_dropout = 0.0
         provider.attention_softmax_in_fp32 = False

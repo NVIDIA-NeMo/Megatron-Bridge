@@ -320,6 +320,7 @@ HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES = {
 
 MEGATRON_NEMOTRON_3_NANO_OVERRIDES = {
     "hybrid_layer_pattern": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["hybrid_override_pattern"],
+    "num_layers": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["num_hidden_layers"],
     "hidden_size": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["hidden_size"],
     "num_moe_experts": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["n_routed_experts"],
     "tensor_model_parallel_size": 1,
