@@ -1,5 +1,4 @@
 #!/bin/bash
-set -euo pipefail
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +50,8 @@ set -euo pipefail
 #SBATCH --output=qwen35vl_sft_%j.out
 #SBATCH --error=qwen35vl_sft_%j.err
 #SBATCH --exclusive
+
+set -euo pipefail
 
 # ==============================================================================
 # Parse arguments
