@@ -571,9 +571,6 @@ class TrainingConfig(MTrainTrainingConfig):
         if has_train_samples:
             assert self.train_samples > 0, "train_samples must be positive"
             assert self.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
-            assert self.global_batch_size is not None, (
-                "global_batch_size must be set when using train_samples to calculate train_iters"
-            )
 
             # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
             self.train_iters = self.train_samples // self.global_batch_size
@@ -581,41 +578,7 @@ class TrainingConfig(MTrainTrainingConfig):
 
 
 @dataclass(kw_only=True)
-class ValidationConfig:
-    """Configuration settings related to validation during or after model training."""
-
-    eval_iters: int | None = 100
-    """Number of iterations to run for evaluation. Used for both validation and test. If not set,
-    evaluation will not run."""
-
-    eval_interval: int | None = None
-    """Interval between running evaluation on validation set. If not set, evaluation will not run
-    during training.
-    """
-
-    eval_global_batch_size: int | None = None
-    """Global batch size to use during evaluation. If not set, defaults to train.global_batch_size.
-    Must be divisible by (eval_micro_batch_size * data_parallel_size).
-    """
-
-    eval_micro_batch_size: int | None = None
-    """Micro batch size to use during evaluation. If not set, defaults to train.micro_batch_size.
-    Changing this affects per-device memory usage during eval and the number of microbatches per
-    eval step.
-    """
-
-    start_eval_at_iter: int = 0
-    """Training iteration at which to start running periodic evaluation during the training loop.
-    Periodic evaluation will be skipped for all iterations before this value. Does not affect
-    the final validation/test evaluation that runs after training completes.
-    Defaults to 0 (evaluate from the beginning)."""
-
-    skip_train: bool = False
-    """If set, bypass the training loop, perform evaluation for validation/test, and exit."""
-
-
-@dataclass(kw_only=True)
-class CheckpointConfig:
+class CheckpointConfig(MTrainCheckpointConfig):
     """Configuration settings for model checkpointing (saving and loading)."""
 
     pretrained_checkpoint: Optional[str] = None
@@ -1100,19 +1063,6 @@ class ConfigContainer(Container):
 
         self.logger.finalize()
         self.train.finalize()
-
-        # Resolve eval batch size defaults from training config
-        if self.validation.eval_global_batch_size is None:
-            assert self.train.global_batch_size is not None, (
-                "train.global_batch_size must be set when validation.eval_global_batch_size is not explicitly configured"
-            )
-            self.validation.eval_global_batch_size = self.train.global_batch_size
-        if self.validation.eval_micro_batch_size is None:
-            assert self.train.micro_batch_size is not None, (
-                "train.micro_batch_size must be set when validation.eval_micro_batch_size is not explicitly configured"
-            )
-            self.validation.eval_micro_batch_size = self.train.micro_batch_size
-
         self.scheduler.finalize()
         self.checkpoint.finalize()
         if self.profiling is not None:
@@ -1139,15 +1089,6 @@ class ConfigContainer(Container):
             # Set data_parallel_size on comm_overlap config if present
             if self.comm_overlap is not None:
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
-
-        # Validate eval batch size divisibility
-        eval_mbs = self.validation.eval_micro_batch_size
-        dp = self.data_parallel_size
-        eval_gbs = self.validation.eval_global_batch_size
-        assert eval_gbs % (eval_mbs * dp) == 0, (
-            f"eval_global_batch_size ({eval_gbs}) must be divisible by "
-            f"eval_micro_batch_size ({eval_mbs}) * data_parallel_size ({dp}) = {eval_mbs * dp}"
-        )
 
         # Deterministic mode validations and settings
         self._validate_and_apply_deterministic_mode()
