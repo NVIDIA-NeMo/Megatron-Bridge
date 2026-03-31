@@ -26,6 +26,7 @@ import torch
 from typing_extensions import Unpack
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.qwen_vl.qwen3_vl import (
