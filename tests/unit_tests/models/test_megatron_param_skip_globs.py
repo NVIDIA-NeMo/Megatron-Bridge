@@ -77,7 +77,7 @@ def test_load_weights_hf_to_megatron_respects_skip_globs():
     bridge = MegatronModelBridge.__new__(MegatronModelBridge)
     bridge.maybe_modify_loaded_hf_weight = lambda _hf_key, hf_sd: hf_sd["hf.weight"]  # type: ignore[method-assign]
 
-    megatron_stages = [mock.Mock()]
+    megatron_stages = [mock.MagicMock()]
 
     with (
         mock.patch.object(MegatronModelBridge, "build_conversion_tasks", return_value=tasks),

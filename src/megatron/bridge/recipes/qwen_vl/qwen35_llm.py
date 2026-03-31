@@ -110,7 +110,7 @@ def _qwen35_llm_sft_apply_common(
 
     cfg.tokenizer.tokenizer_model = hf_path
 
-    cfg.dataset.pack_sequences_in_batch = True
+    cfg.dataset.pack_sequences_in_batch = False
 
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -162,7 +162,7 @@ def qwen35_llm_35b_a3b_sft_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> Conf
     """SQuAD-style SFT: Qwen3.5 35B-A3B MoE, LLM weights only, TP=2 PP=1 EP=16."""
     cfg = _sft_common()
     _qwen35_llm_sft_apply_common(
-        cfg, hf_path, tp=2, pp=1, max_lr=2e-5, min_lr=2e-6, global_batch_size=32, micro_batch_size=2
+        cfg, hf_path, tp=2, pp=1, max_lr=2e-5, min_lr=2e-6, global_batch_size=32, micro_batch_size=1
     )
     _qwen35_vl_apply_moe(cfg, ep=16)
     return cfg
