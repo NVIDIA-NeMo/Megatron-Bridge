@@ -12,6 +12,8 @@
 
 ## 📣 News
 
+- [03/31/2026] **Agent Skills for Megatron Bridge!** We've added a [`skills/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/skills) directory with structured guides that AI coding agents (Cursor, Copilot, etc.) can use to help you add model support, set up dev environments, tune performance, and more. Try them out, and PRs to improve or add new skills are very welcome!
+
 - [03/11/2026] Day 0 support for [**Nemotron 3 Super**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/nemotron_3)! Checkpoint conversion and SFT/LoRA recipes are available on the [`super-v3`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/super-v3) branch. Read the [blog post](https://developer.nvidia.com/blog/introducing-nemotron-3-super-an-open-hybrid-mamba-transformer-moe-for-agentic-reasoning/).
 
 - [03/12/2026] **Deprecating Python 3.10 support:** We're officially dropping Python 3.10 support with the upcoming 0.4.0 release. Downstream applications must raise their lower boundary to 3.12 to stay compatible with Megatron-Bridge.
@@ -44,6 +46,22 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
 ```
 
 For development installation and additional details, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md).
+
+### Megatron-Core Submodule (main & dev)
+
+Megatron Bridge pins [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) as a git submodule at `3rdparty/Megatron-LM`. The repository tracks two pinned commits — one from the upstream **main** branch (default) and one from **dev** — managed by `scripts/switch_mcore.sh`.
+
+The submodule committed to the repo always points to the **main** commit. Use the **dev** commit when you need a Megatron-Core feature or fix that has not yet landed on main, or to validate forward-compatibility with upcoming MCore changes:
+
+```bash
+./scripts/switch_mcore.sh status   # Show current commit
+./scripts/switch_mcore.sh dev      # Switch to dev; then run: uv sync
+./scripts/switch_mcore.sh main     # Switch back; then run: uv sync --locked
+```
+
+> **Note:** `uv.lock` is generated against the main commit. After switching to dev, use `uv sync` (without `--locked`). After switching back to main, use `uv sync --locked`.
+
+The dev branch follows Megatron-LM's upstream [dev branch philosophy](https://github.com/NVIDIA/Megatron-LM) — features are experimental, follow a streamlined review process, and must graduate to stable within 6 months or be deprecated.
 
 ## ⚡ Quickstart
 
