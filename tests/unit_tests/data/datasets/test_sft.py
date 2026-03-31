@@ -12,16 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import datetime
 import json
-import os
 from unittest.mock import MagicMock
 
-import megatron.core.parallel_state as parallel_state
 import numpy as np
-import pytest
-import torch
-import torch.distributed as dist
 
 from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTDataset, GPTSFTPackedDataset
 
@@ -50,7 +44,8 @@ def get_gpt_sft(tmp_path, dataset_type="sft"):
     path = str(datasets_dir / "sft.jsonl")
     line = {"input": "hi how are you?", "output": "I'm fine, thanks."}
 
-    num_samples = 100
+    # Enough rows for index checks (e.g. [11] and [-11]); keep small for fast IO and mapping.
+    num_samples = 24
     with open(path, "w") as f:
         for i in range(num_samples):
             f.write(json.dumps(line) + "\n")
@@ -101,68 +96,6 @@ def get_gpt_sft(tmp_path, dataset_type="sft"):
 
 
 class TestDataGPTSFTDataset:
-    @pytest.fixture(autouse=True)
-    def setup_and_teardown_parallel_state(self):
-        """Setup and teardown parallel state for Megatron tests."""
-
-        if not dist.is_initialized():
-            os.environ["MASTER_ADDR"] = "127.0.0.1"
-            os.environ["MASTER_PORT"] = "29500"
-            os.environ["RANK"] = "0"
-            os.environ["LOCAL_RANK"] = "0"
-            os.environ["WORLD_SIZE"] = "1"
-
-            device_count = torch.cuda.device_count()
-            if device_count > 0:
-                torch.cuda.set_device(0)
-
-            init_process_group_kwargs = {
-                "backend": "nccl" if device_count > 0 else "gloo",
-                "world_size": 1,
-                "rank": 0,
-                "timeout": datetime.timedelta(minutes=30),
-            }
-
-            dist.init_process_group(**init_process_group_kwargs)
-
-        assert dist.is_initialized(), "Distributed backend not initialized"
-        if not parallel_state.model_parallel_is_initialized():
-            parallel_state.initialize_model_parallel(
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                virtual_pipeline_model_parallel_size=None,
-                context_parallel_size=1,
-            )
-
-        assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
-        from megatron.core.process_groups_config import ProcessGroupCollection
-
-        from megatron.bridge.training.initialize import _set_random_seed
-
-        # Create pg_collection from initialized mpu
-        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
-
-        _set_random_seed(
-            seed_=1234,
-            data_parallel_random_init=False,
-            te_rng_tracker=True,
-            inference_rng_tracker=False,
-            pg_collection=pg_collection,
-        )
-
-        yield
-
-        try:
-            if parallel_state.model_parallel_is_initialized():
-                parallel_state.destroy_model_parallel()
-            if dist.is_initialized():
-                dist.destroy_process_group()
-                # Clean up environment variables
-                for key in ["MASTER_ADDR", "MASTER_PORT", "RANK", "LOCAL_RANK", "WORLD_SIZE"]:
-                    os.environ.pop(key, None)
-        except (NameError, AttributeError, RuntimeError):
-            pass
-
     def test_build_samples_mapping(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path)
         dataset._build_samples_mapping()

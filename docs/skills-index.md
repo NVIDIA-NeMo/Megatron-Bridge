@@ -6,6 +6,25 @@ Each skill contains enablement snippets, code anchors, constraints, pitfalls,
 and verification steps.
 
 ```{toctree}
+:caption: Getting Started
+:maxdepth: 1
+
+skills/developer-guide/SKILL
+skills/mlm-bridge-training/SKILL
+```
+
+```{toctree}
+:caption: Adding Model Support
+:maxdepth: 1
+
+skills/adding-model-support/SKILL
+skills/adding-model-support/llm-patterns
+skills/adding-model-support/vlm-patterns
+skills/adding-model-support/recipe-patterns
+skills/adding-model-support/tests-and-examples
+```
+
+```{toctree}
 :caption: Performance Techniques
 :maxdepth: 1
 
