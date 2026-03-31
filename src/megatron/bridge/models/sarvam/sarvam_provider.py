@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import math
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Callable, List, Optional, Union
@@ -102,6 +103,19 @@ class SarvamMoEModelProvider(GPTModelProvider):
 
     # GQA
     num_query_groups: int = 4
+
+    def finalize(self) -> None:
+        """Enable uneven PP when num_layers is not divisible by pipeline_model_parallel_size.
+
+        Sarvam MoE has 19 transformer layers (a prime number). When PP > 1 and
+        num_layers is not evenly divisible, assign the extra layer(s) to the
+        first pipeline stage so the assertion in MCore's
+        ``get_num_layers_to_build`` does not fail.
+        """
+        pp = self.pipeline_model_parallel_size
+        if pp > 1 and self.num_layers % pp != 0:
+            self.num_layers_in_first_pipeline_stage = math.ceil(self.num_layers / pp)
+        super().finalize()
 
 
 @dataclass
