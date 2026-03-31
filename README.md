@@ -12,13 +12,15 @@
 
 ## 📣 News
 
-- [03/11/2026] Day 0 support for [**Nemotron 3 Super**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/nemotron_3)! Checkpoint conversion and SFT/LoRA recipes are available on the [`super-v3`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/super-v3) branch. Read the [blog post](https://developer.nvidia.com/blog/introducing-nemotron-3-super-an-open-hybrid-mamba-transformer-moe-for-agentic-reasoning/).
+- [03/31/2026] **Agent Skills for Megatron Bridge!** We've added a [`skills/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/skills) directory with structured guides that AI coding agents (Cursor, Claude Code, Codex, etc.) can use to help you add model support, set up dev environments, tune performance, and more. Try them out, and PRs to improve or add new skills are very welcome!
+
+- [03/26/2026] [**Nemotron 3 Super**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/nemotron_3) is now on **main**! Checkpoint conversion and SFT/LoRA recipes (120B-A12B) are available in the main branch. Read the [blog post](https://developer.nvidia.com/blog/introducing-nemotron-3-super-an-open-hybrid-mamba-transformer-moe-for-agentic-reasoning/).
 
 - [03/12/2026] **Deprecating Python 3.10 support:** We're officially dropping Python 3.10 support with the upcoming 0.4.0 release. Downstream applications must raise their lower boundary to 3.12 to stay compatible with Megatron-Bridge.
 
 - [12/16/2025] [Mind Lab](https://macaron.im/mindlab) successfully used Megatron-bridge and [VeRL](https://github.com/volcengine/verl) to trained GRPO Lora for Trillion-parameter model on 64 H800 - See their [techblog](https://macaron.im/mindlab/research/building-trillion-parameter-reasoning-rl-with-10-gpus).
 
-- [12/15/2025] Day 0 support for [NVIDIA-NeMotron-3-Nano-30B-A3B-FP8](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8)! [Reproducible code](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nano-v3) and custom NGC container: [nvcr.io/nvidia/nemo:25.11.nemotron_3_nano](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo?version=25.11.nemotron_3_nano)
+- [12/15/2025] Day 0 support for [NVIDIA-NeMotron-3-Nano-30B-A3B-FP8](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8)! [Reproducible code](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/nemotron_3/nano) and custom NGC container: [nvcr.io/nvidia/nemo:25.11.nemotron_3_nano](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo?version=25.11.nemotron_3_nano)
 
 ## Overview
 
@@ -44,6 +46,22 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
 ```
 
 For development installation and additional details, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md).
+
+### Megatron-Core Submodule (main & dev)
+
+Megatron Bridge pins [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) as a git submodule at `3rdparty/Megatron-LM`. The repository tracks two pinned commits — one from the upstream **main** branch (default) and one from **dev** — managed by `scripts/switch_mcore.sh`.
+
+The submodule committed to the repo always points to the **main** commit. Use the **dev** commit when you need a Megatron-Core feature or fix that has not yet landed on main, or to validate forward-compatibility with upcoming MCore changes:
+
+```bash
+./scripts/switch_mcore.sh status   # Show current commit
+./scripts/switch_mcore.sh dev      # Switch to dev; then run: uv sync
+./scripts/switch_mcore.sh main     # Switch back; then run: uv sync --locked
+```
+
+> **Note:** `uv.lock` is generated against the main commit. After switching to dev, use `uv sync` (without `--locked`). After switching back to main, use `uv sync --locked`.
+
+The dev branch follows Megatron-LM's upstream [dev branch philosophy](https://github.com/NVIDIA/Megatron-LM/tree/dev) — features are experimental, follow a streamlined review process, and must graduate to stable within 6 months or be deprecated.
 
 ## ⚡ Quickstart
 
@@ -136,8 +154,8 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 ### Nemotron (NVIDIA)
 
 - [Nemotron Nano v2](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/nemotronh) — [recipes (9B/12B)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/nemotronh/nemotron_nano_v2.py)
-- [Nemotron Nano v3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nano-v3/src/megatron/bridge/models/nemotronh) — [recipes (30B-A3B)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nano-v3/src/megatron/bridge/recipes/nemotronh/nemotron_3_nano.py) *(branch: `nano-v3`)*
-- [Nemotron Super v3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/super-v3/src/megatron/bridge/models/nemotronh) — [recipes (120B-A12B)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/super-v3/src/megatron/bridge/recipes/nemotronh/nemotron_3_super.py) *(branch: `super-v3`)*
+- [Nemotron Nano v3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/nemotronh) — [recipes (30B-A3B)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/nemotronh/nemotron_3_nano.py)
+- [Nemotron Super v3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/nemotronh) — [recipes (120B-A12B)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/nemotronh/nemotron_3_super.py)
 - [Llama Nemotron](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/llama_nemotron)
 - [Nemotron Nano v2 VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/nemotron_vl) — [recipes (9B/12B)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/nemotron_vl/nemotron_nano_v2_vl.py)
 
