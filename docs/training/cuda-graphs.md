@@ -20,7 +20,7 @@ Megatron Bridge supports two capture implementations:
 |---|---|---|
 | `"local"` | MCore `CudaGraphManager` / `FullCudaGraphWrapper` | `full_iteration` |
 | `"transformer_engine"` | TE `make_graphed_callables()` per layer | `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, `mamba` |
-| `"none"` | Disabled | — |
+| `"none"` (default) | Disabled | — |
 
 `"local"` captures the whole forward-backward iteration. `"transformer_engine"`
 captures selected submodules and is usually the more flexible default path.
