@@ -313,6 +313,7 @@ def main(
             custom_srun_args=custom_srun_args,
             custom_bash_cmds=custom_bash_cmds,
             gres=args.gres,
+            container_env=args.container_env,
             hf_token=hf_token,
             offline=offline,
             nemo_home=nemo_home,
