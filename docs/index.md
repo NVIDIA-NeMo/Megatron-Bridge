@@ -85,6 +85,13 @@ releases/known-issues.md
 ```
 
 ```{toctree}
+:caption: Agent Skills
+:hidden:
+
+skills-index
+```
+
+```{toctree}
 :caption: Directory Readme Files
 :hidden:
 

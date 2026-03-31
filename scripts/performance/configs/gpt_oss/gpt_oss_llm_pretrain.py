@@ -19,6 +19,7 @@ from utils.precision import get_precision_config
 from utils.utils import get_workload_base_config
 
 from megatron.bridge.recipes.gpt_oss import gpt_oss_120b_pretrain_config
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
@@ -77,6 +78,8 @@ def gpt_oss_120b_pretrain_config_gb200(
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(base_cfg.tensor_model_parallel_size > 1))
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 

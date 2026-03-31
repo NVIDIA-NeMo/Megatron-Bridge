@@ -300,13 +300,10 @@ class TestLlamaBridgeConfigConverter:
         assert mapping_dict["mlp_bias"] == "add_bias_linear"
 
     def test_activation_mapping_inherited_from_base(self):
-        """Test that ACTIVATION_MAPPING is inherited from MegatronModelBridge."""
-        assert hasattr(LlamaBridge, "ACTIVATION_MAPPING")
-        assert LlamaBridge.ACTIVATION_MAPPING is MegatronModelBridge.ACTIVATION_MAPPING
-        mapping = LlamaBridge.ACTIVATION_MAPPING
-        assert mapping["silu"] == F.silu
-        assert mapping["gelu"] == F.gelu
-        assert mapping["relu"] == F.relu
+        """Test that activation functions are resolved via hf_to_megatron_activation (ACTIVATION_MAPPING removed)."""
+        assert LlamaBridge.hf_to_megatron_activation("silu") == F.silu
+        assert LlamaBridge.hf_to_megatron_activation("gelu") == F.gelu
+        assert LlamaBridge.hf_to_megatron_activation("relu") == F.relu
 
     def test_hf_to_megatron_activation_inherited(self):
         """Test HF to Megatron activation function conversion (inherited from base)."""

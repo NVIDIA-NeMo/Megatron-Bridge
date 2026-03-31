@@ -28,6 +28,7 @@ CUDA graphs are most effective when:
 | `"transformer_engine"` | TE `make_graphed_callables()` per layer | `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, `mamba` |
 | `"none"` (default) | Disabled | — |
 
+
 ### Local full-iteration graphs
 
 Captures the entire forward-backward pass as one graph. Provides the highest

@@ -21,6 +21,35 @@ import torch
 
 
 @dataclass
+class GenericVisualInputs:
+    """Container for visual modality tensors produced by HF processors.
+
+    Works with any HF-encoder VLM (Gemma3-VL, Ministral3, GLM-4.5V, etc.).
+    Compatible with ``vlm_step.py`` iteration over ``__dict__`` and
+    ``.normalized_for_model()`` call.
+    """
+
+    pixel_values: Optional[torch.Tensor] = None
+    pixel_values_videos: Optional[torch.Tensor] = None
+    image_grid_thw: Optional[torch.Tensor] = None
+    video_grid_thw: Optional[torch.Tensor] = None
+    image_sizes: Optional[torch.Tensor] = None
+
+    def as_model_kwargs(self) -> dict[str, torch.Tensor]:
+        """Return a mapping of non-None fields suitable for model forward kwargs."""
+        result: dict[str, torch.Tensor] = {}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if value is not None:
+                result[f.name] = value
+        return result
+
+    def normalized_for_model(self) -> dict[str, torch.Tensor]:
+        """Return non-None fields — no shape normalization needed for generic encoders."""
+        return self.as_model_kwargs()
+
+
+@dataclass
 class Qwen2_5_VLVisualInputs:
     """Container for Qwen2/Qwen2.5-VL visual modality tensors.
 

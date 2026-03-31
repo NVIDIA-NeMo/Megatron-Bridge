@@ -29,7 +29,13 @@ known_constraints:
   - num_moe_experts must be greater than 1.
   - moe_token_dispatcher_type must be alltoall or flex.
   - Precision must be BF16 or FP16.
+  - moe_shared_expert_overlap must be false when overlap is enabled.
+  - PyTorch must be at least 2.6.0.
   - If pipeline parallelism is used, virtual pipeline parallelism is required for the overlap path.
+  - recompute_granularity must not be 'full'.
+  - recompute_method must be None.
+  - recompute_num_layers must be None.
+  - mtp_num_layers must be None or 1.
 known_limitations:
   - Setting moe_flex_dispatcher_backend alone does not activate flex dispatch.
   - Public recipes are often conservative and leave MoE overlap disabled by default.

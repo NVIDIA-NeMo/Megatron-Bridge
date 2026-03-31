@@ -24,7 +24,7 @@ from PIL import Image  # noqa: F401  # may be used downstream by processors
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs, Qwen2_5_VLVisualInputs
 
 
 # Local message used when optional qwen_vl_utils dependency is missing
@@ -356,7 +356,9 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
         )
 
     key = "pixel_values_videos" if is_video else "pixel_values"
-    batch["pixel_values"] = batch[key].to(torch.bfloat16)
+    pv = batch[key].to(torch.bfloat16)
+    del batch[key]
+    batch["visual_inputs"] = GenericVisualInputs(pixel_values=pv)
     # roll label by 1 and fill last token with IGNORE_INDEX
     labels = batch["input_ids"].clone()[:, 1:]
     labels = torch.cat([labels, IGNORE_INDEX * torch.ones_like(labels[:, :1])], dim=1)
@@ -454,6 +456,13 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         batch["position_ids"] = (
             torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
         )
+
+    # Wrap visual tensors in GenericVisualInputs so vlm_step.py picks them up
+    visual_kwargs = {}
+    for vk in ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "image_sizes"):
+        if vk in batch:
+            visual_kwargs[vk] = batch.pop(vk)
+    batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
 
     return batch
 

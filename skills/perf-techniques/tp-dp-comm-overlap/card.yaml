@@ -31,6 +31,7 @@ recommended_path:
 known_constraints:
   - TP overlap requires tensor_model_parallel_size > 1.
   - TP overlap requires sequence_parallel=True.
+  - TP overlap requires Transformer Engine to be available.
   - DP overlap is tied to the distributed-optimizer path.
   - PP overlap behavior depends on the pipeline schedule and is not identical for every PP setup.
   - Launch-time environment tuning is part of practical overlap behavior.
