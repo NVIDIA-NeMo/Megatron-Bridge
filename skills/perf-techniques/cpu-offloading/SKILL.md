@@ -61,6 +61,27 @@ cfg.model.recompute_granularity = None
 cfg.model.cuda_graph_impl = "none"
 ```
 
+## Config Parameter Reference
+
+### Optimizer offloading
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `optimizer_cpu_offload` | `False` | Master switch |
+| `optimizer_offload_fraction` | `0.0` | Fraction of optimizer states on CPU (0.0–1.0) |
+| `overlap_cpu_optimizer_d2h_h2d` | `False` | Overlap GPU↔CPU transfers with compute |
+| `use_torch_optimizer_for_cpu_offload` | `False` | Use `torch.optim` instead of fused optimizer for CPU portion |
+
+### Activation offloading
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `cpu_offloading` | `False` | Master switch |
+| `cpu_offloading_num_layers` | `0` | Number of transformer layers to offload (0 to num_layers-1) |
+| `cpu_offloading_activations` | `True` | Offload activations |
+| `cpu_offloading_weights` | `False` | Offload weights |
+| `cpu_offloading_double_buffering` | `False` | Double-buffer across layers while reloading |
+
 ## Compatibility And Constraints
 
 ### Activation offloading

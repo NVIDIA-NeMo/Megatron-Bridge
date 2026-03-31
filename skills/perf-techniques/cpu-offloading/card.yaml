@@ -41,30 +41,29 @@ validation_status:
     - measured  # Job 10611046
 training_dimensions:
   speed:
-    effect: "--"
+    effect: "1.9x-4.2x slower step time (scales linearly with offload fraction)"
     confidence: high
     rationale: >
-      Optimizer offloading incurs throughput penalty scaling linearly with
-      fraction: 1.9x at 25%, 2.5x at 50%, 3.2x at 75%, 4.2x at 100%.
-      D2H/H2D overlap reduces 100% penalty to 3.9x.
+      CPU Adam compute and D2H/H2D transfers add latency. Measured on
+      Qwen3-30B-A3B TP2 PP2 EP4, 2 nodes H100. D2H/H2D overlap reduces
+      100% penalty from 4.2x to 3.9x.
   memory:
-    effect: "++"
+    effect: "3.8 GB saved per 25% of offload fraction (up to 15.3 GB / 32% at 100%)"
     confidence: high
     rationale: >
-      Optimizer offloading saves memory linearly: 3.8 GB per 25% increment on
-      Qwen3-30B-A3B (47.2 GB baseline). At 100%, drops to 32.0 GB (-32%).
+      Measured on Qwen3-30B-A3B (47.2 GB baseline). Savings scale linearly.
   scale:
-    effect: "+"
+    effect: "enables otherwise-OOM configurations"
     confidence: medium
     rationale: >
-      Enables training configurations that would otherwise OOM.
+      Can free memory for larger batch sizes or additional parallelism.
   convergence:
-    effect: "0"
+    effect: "no change (loss delta < 0.001 across all fractions)"
     confidence: high
     rationale: >
-      All fractions produce identical loss within 0.001 across 20 iterations.
+      All fractions produce identical loss across 20 iterations on Qwen3-30B-A3B.
   stability:
-    effect: "0"
+    effect: "no issues observed"
     confidence: high
     rationale: >
       No errors, hangs, or NCCL issues across 120 total iterations tested.
@@ -205,7 +204,6 @@ evidence:
   - 3rdparty/Megatron-LM/megatron/core/optimizer/optimizer_config.py
   - 3rdparty/Megatron-LM/megatron/core/optimizer/__init__.py
   - src/megatron/bridge/models/gpt_full_te_layer_autocast_spec.py
-  - .local/cpu_offload_verification_report.md
 follow_up_validation:
   - Test optimizer offload + CUDA graphs combined
   - Test fine_grained_activation_offloading as alternative

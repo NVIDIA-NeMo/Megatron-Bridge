@@ -39,11 +39,11 @@ target different bottlenecks:
 
 | Dimension | Effect | Confidence | Rationale |
 |-----------|--------|------------|-----------|
-| Speed | `--` | high | Throughput penalty scales linearly with offload fraction. CPU Adam compute and D2H/H2D transfers add latency. Measured 1.9x–4.2x slower on Qwen3-30B-A3B. |
-| Memory | `++` | high | Optimizer offload saves 3.8 GB per 25% of fraction on Qwen3-30B-A3B (up to 15.3 GB / 32% at 100%). Activation offload saves activation memory proportional to layers offloaded. |
-| Scale | `+` | medium | Enables training configurations that would otherwise OOM. Can free memory for larger batch sizes or additional parallelism. |
-| Convergence | `0` | high | All optimizer offload fractions (25–100%) produce identical loss within 0.001 across 20 iterations, validation, and test. |
-| Stability | `0` | high | No errors, hangs, or NCCL issues across 120 total iterations tested (6 configurations). |
+| Speed | 1.9x–4.2x slower step time (scales linearly with offload fraction) | high | CPU Adam compute and D2H/H2D transfers add latency. Measured on Qwen3-30B-A3B TP2 PP2 EP4. D2H/H2D overlap reduces 100% penalty from 4.2x to 3.9x. |
+| Memory | 3.8 GB saved per 25% of optimizer offload fraction (up to 15.3 GB / 32% at 100%) | high | Measured on Qwen3-30B-A3B (47.2 GB baseline). Activation offload saves proportional to layers offloaded. |
+| Scale | enables otherwise-OOM configurations | medium | Can free memory for larger batch sizes or additional parallelism. |
+| Convergence | no change (loss delta < 0.001 across all fractions) | high | All optimizer offload fractions (25–100%) produce identical loss across 20 iterations. |
+| Stability | no issues observed | high | No errors, hangs, or NCCL issues across 120 total iterations tested (6 configurations). |
 
 ## When to Use It
 
@@ -78,51 +78,16 @@ target different bottlenecks:
 
 ## Bridge Configuration
 
-### Optimizer CPU offloading
+CPU offloading is configured through two independent config namespaces:
 
-```python
-cfg.optimizer.optimizer_cpu_offload = True
-cfg.optimizer.optimizer_offload_fraction = 0.5     # 0.0 to 1.0
-cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = True # overlap transfers with compute
-```
+- **Optimizer offloading**: `optimizer.optimizer_cpu_offload`,
+  `optimizer.optimizer_offload_fraction`, and
+  `optimizer.overlap_cpu_optimizer_d2h_h2d`
+- **Activation offloading**: `model.cpu_offloading`,
+  `model.cpu_offloading_num_layers`, and related `model.cpu_offloading_*` fields
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `optimizer_cpu_offload` | `False` | Master switch |
-| `optimizer_offload_fraction` | `0.0` | Fraction of optimizer states on CPU (0.0–1.0) |
-| `overlap_cpu_optimizer_d2h_h2d` | `False` | Overlap GPU↔CPU transfers with compute |
-| `use_torch_optimizer_for_cpu_offload` | `False` | Use `torch.optim` instead of fused optimizer for CPU portion |
-
-### Activation CPU offloading
-
-```python
-cfg.model.cpu_offloading = True
-cfg.model.cpu_offloading_num_layers = 16
-cfg.model.cpu_offloading_activations = True
-cfg.model.cpu_offloading_weights = False
-```
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `cpu_offloading` | `False` | Master switch |
-| `cpu_offloading_num_layers` | `0` | Number of transformer layers to offload (0 to num_layers-1) |
-| `cpu_offloading_activations` | `True` | Offload activations |
-| `cpu_offloading_weights` | `False` | Offload weights |
-| `cpu_offloading_double_buffering` | `False` | Double-buffer across layers while reloading |
-
-## Minimal Runnable Example
-
-Optimizer offload with 50% fraction on Qwen3-30B-A3B pretrain:
-
-```bash
-uv run python scripts/training/run_recipe.py \
-  --recipe qwen3_30b_a3b_pretrain_config \
-  optimizer.optimizer_cpu_offload=True \
-  optimizer.optimizer_offload_fraction=0.5 \
-  train.train_iters=20 \
-  train.global_batch_size=8 \
-  train.micro_batch_size=1
-```
+For config examples, parameter tables, and runnable commands, see
+[skills/perf-techniques/cpu-offloading/SKILL.md](../../skills/perf-techniques/cpu-offloading/SKILL.md).
 
 ## Expected Metric Changes
 
@@ -151,8 +116,8 @@ dominant bottleneck.
 
 ## Related Docs
 
-- [Activation Recomputation](activation-recomputation.md)
-- [Megatron FSDP](megatron-fsdp.md)
-- [Optimizer & Scheduler](optimizer-scheduler.md)
-- [CUDA Graphs](cuda-graphs.md)
+- [docs/training/activation-recomputation.md](activation-recomputation.md)
+- [docs/training/megatron-fsdp.md](megatron-fsdp.md)
+- [docs/training/optimizer-scheduler.md](optimizer-scheduler.md)
+- [docs/training/cuda-graphs.md](cuda-graphs.md)
 - [skills/perf-techniques/cpu-offloading/SKILL.md](../../skills/perf-techniques/cpu-offloading/SKILL.md)
