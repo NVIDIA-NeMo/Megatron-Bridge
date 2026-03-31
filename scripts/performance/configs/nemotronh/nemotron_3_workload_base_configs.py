@@ -97,7 +97,6 @@ BASE_NEMOTRON_3_SUPER_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     expert_tensor_parallel_size=1,
     expert_model_parallel_size=64,
-    moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "mamba", "moe_router", "moe_preprocess"],
 )
@@ -113,8 +112,9 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_NVFP4_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONF
 
 BASE_NEMOTRON_3_SUPER_CONFIG_GB200 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG,
+    moe_flex_dispatcher_backend=None,
+    cuda_graph_impl="none",
     recompute_modules=["moe_act", "layernorm"],
-    cuda_graph_scope=["mamba"],
 )
 
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_BF16_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_GB200
@@ -122,20 +122,20 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_NVFP4_V1 = BASE_NEMOTRON_3_SUPER_CONFIG
 
 
-NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300 = replace(
+BASE_NEMOTRON_3_SUPER_CONFIG_B300 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG,
-    moe_flex_dispatcher_backend=None,
+    moe_flex_dispatcher_backend="hybridep",
 )
-NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_BF16_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300
-NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_FP8_MX_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300
-NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_NVFP4_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_BF16_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_B300
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_FP8_MX_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_B300
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_NVFP4_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_B300
 
 
 BASE_NEMOTRON_3_SUPER_CONFIG_B200 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG,
-    recompute_modules=["moe_act", "layernorm"],
-    # cuda_graph_scope=["attn", "mamba"],
+    moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="none",
+    recompute_modules=["moe_act", "layernorm"],
 )
 
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_BF16_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_B200
