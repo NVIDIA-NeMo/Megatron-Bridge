@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -474,3 +474,279 @@ class TestQwen3NextBridge:
             if "experts" in mapping.hf_param and "down_proj" in mapping.hf_param
         ]
         assert len(expert_down_params) > 0
+
+
+class TestQwen3NextMambaLayerIndexing:
+    """Test that the MambaModel bridge generates correct physical layer indices.
+
+    In MambaModel, each HF logical layer N becomes two physical layers:
+      - Physical layer 2*N:   attention (GDN or standard)
+      - Physical layer 2*N+1: MoE FFN
+    """
+
+    @pytest.fixture
+    def mock_pretrained_qwen3_next(self):
+        """Mock PreTrainedCausalLM with Qwen3-Next 80B config (48 HF layers)."""
+        config = Mock()
+        config_dict = {
+            "architectures": ["Qwen3NextForCausalLM"],
+            "attention_dropout": 0.0,
+            "full_attention_interval": 4,
+            "head_dim": 256,
+            "hidden_size": 2048,
+            "initializer_range": 0.02,
+            "intermediate_size": 5120,
+            "linear_conv_kernel_dim": 4,
+            "linear_key_head_dim": 128,
+            "linear_num_key_heads": 16,
+            "linear_num_value_heads": 32,
+            "linear_value_head_dim": 128,
+            "max_position_embeddings": 262144,
+            "moe_intermediate_size": 512,
+            "num_attention_heads": 16,
+            "num_experts": 512,
+            "num_experts_per_tok": 10,
+            "num_hidden_layers": 48,
+            "num_key_value_heads": 2,
+            "partial_rotary_factor": 0.25,
+            "rms_norm_eps": 1e-06,
+            "rope_scaling": None,
+            "rope_theta": 10000000,
+            "shared_expert_intermediate_size": 512,
+            "tie_word_embeddings": False,
+            "torch_dtype": "bfloat16",
+            "vocab_size": 151936,
+            "hidden_act": "silu",
+            "hidden_dropout": 0.0,
+            "attention_bias": False,
+            "mlp_bias": False,
+            "use_qk_norm": True,
+        }
+        for key, value in config_dict.items():
+            setattr(config, key, value)
+        for null_attr in ("q_lora_rank", "kv_lora_rank", "qk_nope_head_dim",
+                          "qk_rope_head_dim", "v_head_dim", "n_routed_experts",
+                          "num_local_experts", "num_nextn_predict_layers",
+                          "mtp_num_hidden_layers"):
+            setattr(config, null_attr, None)
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        mock_pretrained.model = Mock()
+        mock_pretrained.model.dtype = torch.bfloat16
+        return mock_pretrained
+
+    @pytest.fixture
+    def bridge_with_config(self):
+        """Create a bridge with hf_config set (for mapping_registry)."""
+        bridge = Qwen3NextBridge()
+        config = Mock()
+        config.num_hidden_layers = 8  # Small for testing
+        config.full_attention_interval = 4
+        bridge.hf_config = config
+        return bridge
+
+    def _all_megatron_params(self, registry):
+        """Extract all megatron param names from the registry."""
+        return [m.megatron_param for m in registry.mappings if hasattr(m, "megatron_param")]
+
+    def test_hybrid_override_pattern(self, mock_pretrained_qwen3_next):
+        """Test that hybrid_override_pattern is correctly generated from HF config."""
+        bridge = Qwen3NextBridge()
+        # Mock _hf_model_has_mtp to avoid network calls
+        bridge._hf_model_has_mtp = staticmethod(lambda _: False)
+
+        provider = bridge.provider_bridge(mock_pretrained_qwen3_next)
+
+        # 48 HF layers, full_attention_interval=4: GEGEGE*E repeated 12 times
+        assert provider.hybrid_override_pattern == "GEGEGE*E" * 12
+        assert provider.num_layers == 96
+
+    def test_hybrid_override_pattern_with_mtp(self, mock_pretrained_qwen3_next):
+        """Test that MTP suffix is appended when MTP is detected."""
+        bridge = Qwen3NextBridge()
+        bridge._hf_model_has_mtp = staticmethod(lambda _: True)
+
+        provider = bridge.provider_bridge(mock_pretrained_qwen3_next)
+
+        assert provider.hybrid_override_pattern == "GEGEGE*E" * 12
+        assert provider.mtp_num_layers == 1
+        assert provider.mtp_hybrid_override_pattern == "*E"
+
+    def test_hybrid_pattern_small_model(self):
+        """Test pattern generation for a small 8-layer model."""
+        bridge = Qwen3NextBridge()
+        bridge._hf_model_has_mtp = staticmethod(lambda _: False)
+
+        config = Mock()
+        for null_attr in ("q_lora_rank", "kv_lora_rank", "qk_nope_head_dim",
+                          "qk_rope_head_dim", "v_head_dim", "n_routed_experts",
+                          "num_local_experts", "num_nextn_predict_layers",
+                          "mtp_num_hidden_layers"):
+            setattr(config, null_attr, None)
+        config.num_hidden_layers = 8
+        config.full_attention_interval = 4
+        config.hidden_size = 256
+        config.intermediate_size = 512
+        config.num_attention_heads = 4
+        config.num_key_value_heads = 2
+        config.head_dim = 64
+        config.vocab_size = 1000
+        config.max_position_embeddings = 1024
+        config.rms_norm_eps = 1e-6
+        config.initializer_range = 0.02
+        config.rope_theta = 10000
+        config.partial_rotary_factor = 0.25
+        config.rope_scaling = None
+        config.torch_dtype = "bfloat16"
+        config.hidden_act = "silu"
+        config.attention_dropout = 0.0
+        config.hidden_dropout = 0.0
+        config.tie_word_embeddings = False
+        config.attention_bias = False
+        config.mlp_bias = False
+        config.use_qk_norm = True
+        config.num_experts = 8
+        config.num_experts_per_tok = 2
+        config.moe_intermediate_size = 64
+        config.shared_expert_intermediate_size = 64
+        config.linear_conv_kernel_dim = 4
+        config.linear_key_head_dim = 32
+        config.linear_value_head_dim = 32
+        config.linear_num_key_heads = 4
+        config.linear_num_value_heads = 8
+
+        mock_pretrained = Mock()
+        mock_pretrained.config = config
+
+        provider = bridge.provider_bridge(mock_pretrained)
+
+        # 8 layers, interval=4: layers 0-2 GDN, 3 standard, 4-6 GDN, 7 standard
+        assert provider.hybrid_override_pattern == "GEGEGE*EGEGEGE*E"
+        assert provider.num_layers == 16
+
+    def test_gdn_layers_at_even_physical_indices(self, bridge_with_config):
+        """Test that GDN attention is at physical layer 2*N for non-standard-attn layers."""
+        registry = bridge_with_config.mapping_registry()
+        params = self._all_megatron_params(registry)
+
+        # HF layer 0 -> physical 0 (GDN), physical 1 (MoE)
+        assert any("decoder.layers.0.self_attention.in_proj.weight" in p for p in params)
+        assert any("decoder.layers.1.mlp.router.weight" in p for p in params)
+
+        # HF layer 1 -> physical 2 (GDN), physical 3 (MoE)
+        assert any("decoder.layers.2.self_attention.in_proj.weight" in p for p in params)
+        assert any("decoder.layers.3.mlp.router.weight" in p for p in params)
+
+    def test_standard_attention_at_interval(self, bridge_with_config):
+        """Test that standard attention is at physical layer 2*N where (N+1) % interval == 0."""
+        registry = bridge_with_config.mapping_registry()
+        params = self._all_megatron_params(registry)
+
+        # HF layer 3 (full_attention_interval=4) -> physical 6 (standard attn)
+        # Standard attention has linear_qkv, not in_proj
+        assert any("decoder.layers.6.self_attention.linear_qkv.layer_norm_weight" in p for p in params)
+        # Should NOT have GDN in_proj at this position
+        assert not any("decoder.layers.6.self_attention.in_proj.weight" in p for p in params)
+
+        # HF layer 7 -> physical 14 (standard attn)
+        assert any("decoder.layers.14.self_attention.linear_qkv.layer_norm_weight" in p for p in params)
+
+    def test_mlp_at_odd_physical_indices(self, bridge_with_config):
+        """Test that MoE MLP is always at physical layer 2*N+1."""
+        registry = bridge_with_config.mapping_registry()
+        params = self._all_megatron_params(registry)
+
+        for n in range(8):
+            mlp_idx = 2 * n + 1
+            assert any(f"decoder.layers.{mlp_idx}.mlp.router.weight" in p for p in params), (
+                f"Missing MoE router at physical layer {mlp_idx} (HF layer {n})"
+            )
+            assert any(f"decoder.layers.{mlp_idx}.pre_mlp_layernorm.weight" in p for p in params), (
+                f"Missing pre_mlp_layernorm at physical layer {mlp_idx} (HF layer {n})"
+            )
+
+    def test_no_attention_at_odd_indices(self, bridge_with_config):
+        """Test that odd physical indices never have attention parameters."""
+        registry = bridge_with_config.mapping_registry()
+        params = self._all_megatron_params(registry)
+
+        for n in range(8):
+            odd_idx = 2 * n + 1
+            assert not any(f"decoder.layers.{odd_idx}.self_attention." in p for p in params), (
+                f"Unexpected attention at physical layer {odd_idx} (should be MLP only)"
+            )
+
+    def test_no_mlp_at_even_indices(self, bridge_with_config):
+        """Test that even physical indices never have MLP parameters."""
+        registry = bridge_with_config.mapping_registry()
+        params = self._all_megatron_params(registry)
+
+        for n in range(8):
+            even_idx = 2 * n
+            assert not any(f"decoder.layers.{even_idx}.mlp." in p for p in params), (
+                f"Unexpected MLP at physical layer {even_idx} (should be attention only)"
+            )
+
+    def test_hf_layer_index_mapping(self, bridge_with_config):
+        """Test that HF layer indices are correctly mapped to physical indices."""
+        registry = bridge_with_config.mapping_registry()
+        params = self._all_megatron_params(registry)
+
+        # Build a map of HF -> physical from the auto mappings
+        for n in range(8):
+            hf_prefix = f"model.layers.{n}."
+            attn_prefix = f"decoder.layers.{2 * n}."
+            mlp_prefix = f"decoder.layers.{2 * n + 1}."
+
+            # Find mappings that reference this HF layer
+            hf_params = [
+                m.hf_param
+                for m in registry.mappings
+                if hasattr(m, "hf_param") and isinstance(m.hf_param, str) and hf_prefix in m.hf_param
+            ]
+            megatron_params_for_layer = [
+                m.megatron_param
+                for m in registry.mappings
+                if hasattr(m, "megatron_param")
+                and isinstance(m.megatron_param, str)
+                and (attn_prefix in m.megatron_param or mlp_prefix in m.megatron_param)
+            ]
+
+            assert len(hf_params) > 0, f"No HF mappings for layer {n}"
+            assert len(megatron_params_for_layer) > 0, f"No Megatron mappings for layer {n}"
+
+    def test_final_norm_key(self, bridge_with_config):
+        """Test that final layernorm uses MambaModel's 'final_norm' key, not 'final_layernorm'."""
+        registry = bridge_with_config.mapping_registry()
+        params = self._all_megatron_params(registry)
+
+        assert "decoder.final_norm.weight" in params
+        assert "decoder.final_layernorm.weight" not in params
+
+    def test_mtp_uses_standard_attention(self, bridge_with_config):
+        """Test that MTP inner layers use standard attention (not GDN)."""
+        registry = bridge_with_config.mapping_registry()
+        params = self._all_megatron_params(registry)
+
+        mtp_inner = "mtp.layers.0.mtp_model_layer.layers"
+
+        # MTP layer 0 should have standard attention (linear_qkv), not GDN (in_proj)
+        assert any(f"{mtp_inner}.0.self_attention.linear_qkv" in p for p in params)
+        assert not any(f"{mtp_inner}.0.self_attention.in_proj" in p for p in params)
+
+        # MTP layer 1 should have MoE
+        assert any(f"{mtp_inner}.1.mlp.router.weight" in p for p in params)
+
+    def test_mtp_uses_mtp_model_layer_prefix(self, bridge_with_config):
+        """Test that MTP uses 'mtp_model_layer' prefix (not 'decoder' or 'transformer_layer')."""
+        registry = bridge_with_config.mapping_registry()
+        params = self._all_megatron_params(registry)
+
+        mtp_params = [p for p in params if p.startswith("mtp.layers.0.")]
+        inner_layer_params = [p for p in mtp_params if ".layers." in p.replace("mtp.layers.0.", "", 1)]
+
+        for p in inner_layer_params:
+            assert "mtp_model_layer.layers." in p, (
+                f"MTP inner param '{p}' should use 'mtp_model_layer.layers' prefix"
+            )
