@@ -114,7 +114,7 @@ BASE_NEMOTRON_3_SUPER_CONFIG_GB200 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG,
     moe_flex_dispatcher_backend=None,
     cuda_graph_impl="none",
-    recompute_modules=["moe_act", "layernorm"],
+    recompute_modules=["moe_act", "layernorm", "core_attn"],
 )
 
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_BF16_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_GB200
