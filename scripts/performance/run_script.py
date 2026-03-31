@@ -62,12 +62,13 @@ def _dump_env_rank0() -> None:
 
 def main():
     """Main function to run the pretraining/finetuning script."""
-    _dump_env_rank0()
-
     # Parse known args and treat any unknown args as Hydra-style config overrides.
     # `argparse.parse_known_args()` returns the unknown args as a `list[str]`.
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
+
+    if args.dump_env:
+        _dump_env_rank0()
 
     recipe = get_perf_optimized_recipe(
         model_family_name=args.model_family_name,
