@@ -16,6 +16,9 @@
 Unit tests for Sarvam provider classes.
 """
 
+import math
+from unittest.mock import patch
+
 import torch
 import torch.nn.functional as F
 
@@ -24,7 +27,7 @@ from megatron.bridge.models.sarvam.sarvam_provider import (
     SarvamMLAModelProvider,
     SarvamMoEModelProvider,
 )
-from megatron.bridge.models.transformer_config import MLATransformerConfig
+from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
 
 
 class TestSarvamProviderDefaults:
@@ -197,3 +200,54 @@ class TestSarvamProviderDefaults:
         assert mla.fp16 is True
         assert mla.bf16 is False
         assert mla.params_dtype == torch.float16
+
+
+class TestSarvamMoEFinalize:
+    """Tests for SarvamMoEModelProvider.finalize() uneven pipeline logic."""
+
+    def test_finalize_sets_first_stage_layers_when_pp_uneven(self):
+        """19 layers with PP=2 -> first stage gets ceil(19/2) = 10 layers."""
+        provider = SarvamMoEModelProvider(pipeline_model_parallel_size=2)
+
+        with patch.object(TransformerConfig, "finalize", autospec=True) as mock_super:
+            provider.finalize()
+
+        assert provider.num_layers_in_first_pipeline_stage == math.ceil(19 / 2)
+        mock_super.assert_called_once_with(provider)
+
+    def test_finalize_no_change_when_pp_is_one(self):
+        """PP=1 (default) should not set num_layers_in_first_pipeline_stage."""
+        provider = SarvamMoEModelProvider(pipeline_model_parallel_size=1)
+
+        with patch.object(TransformerConfig, "finalize", autospec=True) as mock_super:
+            provider.finalize()
+
+        assert provider.num_layers_in_first_pipeline_stage is None
+        mock_super.assert_called_once_with(provider)
+
+    def test_finalize_no_change_when_pp_evenly_divides(self):
+        """When num_layers is divisible by PP, no special assignment needed."""
+        provider = SarvamMoEModelProvider(
+            num_layers=20,
+            moe_layer_freq=[0] + [1] * 19,
+            pipeline_model_parallel_size=4,
+        )
+
+        with patch.object(TransformerConfig, "finalize", autospec=True) as mock_super:
+            provider.finalize()
+
+        assert provider.num_layers_in_first_pipeline_stage is None
+        mock_super.assert_called_once_with(provider)
+
+    def test_finalize_with_prime_layers_and_various_pp(self):
+        """19 layers (prime) should trigger uneven PP for any PP > 1 that doesn't divide 19."""
+        for pp in [2, 3, 4, 5, 6]:
+            provider = SarvamMoEModelProvider(pipeline_model_parallel_size=pp)
+
+            with patch.object(TransformerConfig, "finalize", autospec=True):
+                provider.finalize()
+
+            expected = math.ceil(19 / pp)
+            assert provider.num_layers_in_first_pipeline_stage == expected, (
+                f"PP={pp}: expected {expected}, got {provider.num_layers_in_first_pipeline_stage}"
+            )
