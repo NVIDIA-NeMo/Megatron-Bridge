@@ -7,10 +7,9 @@ due to failures and interruptions during training.
 
 This page is the stable overview for what each resiliency feature is, when to
 use it, and which constraints are durable. For operational setup, config knobs,
-parameter tables, code anchors, and verification commands, see
-[skills/resiliency/SKILL.md](../skills/resiliency/SKILL.md).
+parameter tables, code anchors, and verification commands, see [skills/resiliency/SKILL.md](../skills/resiliency/SKILL.md).
 
-## Feature Overview
+## What It Is
 
 | Feature | Purpose | Maturity | Cluster |
 |---|---|---|---|
