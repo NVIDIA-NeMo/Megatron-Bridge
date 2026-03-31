@@ -24,7 +24,7 @@ from PIL import Image  # noqa: F401  # may be used downstream by processors
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs, Qwen2AudioInputs, Qwen2_5_VLVisualInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs, Qwen2_5_VLVisualInputs, Qwen2AudioInputs
 
 
 # Local message used when optional qwen_vl_utils dependency is missing
@@ -538,6 +538,13 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
             else:
                 audio_inputs.append(audio)
 
+    # Megatron's packing and padding utilities assume right-padding
+    # (tokens[:length] extracts real content). Override the tokenizer's
+    # default padding_side which may be "left" (e.g. Qwen2Audio).
+    tokenizer = getattr(processor, "tokenizer", processor)
+    orig_padding_side = getattr(tokenizer, "padding_side", "right")
+    tokenizer.padding_side = "right"
+
     batch = processor(
         text=texts,
         audio=audio_inputs if audio_inputs else None,
@@ -545,7 +552,7 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
         padding=True,
     )
 
-    tokenizer = getattr(processor, "tokenizer", processor)
+    tokenizer.padding_side = orig_padding_side
     input_ids = batch["input_ids"]
     batch_size, seq_len = input_ids.shape
     pad_token_id = tokenizer.pad_token_id

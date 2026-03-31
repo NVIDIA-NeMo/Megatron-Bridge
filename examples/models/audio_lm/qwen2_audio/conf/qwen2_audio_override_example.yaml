@@ -15,7 +15,7 @@
 # Example override file for Qwen2-Audio 7B finetuning
 
 model:
-  seq_length: 4096
+  seq_length: 16384
   freeze_language_model: false
   freeze_audio_model: false
   freeze_audio_projection: false
