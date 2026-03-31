@@ -1,134 +1,139 @@
 ---
 name: expert-parallel-overlap
-description: Validate and use MoE expert-parallel communication overlap in Megatron-Bridge, including `overlap_moe_expert_parallel_comm`, `delay_wgrad_compute`, and `flex` dispatcher backends such as DeepEP and HybridEP.
+description: Validate and use MoE expert-parallel communication overlap in Megatron-Bridge, including overlap_moe_expert_parallel_comm, delay_wgrad_compute, and flex dispatcher backends such as DeepEP and HybridEP.
 ---
 
-# MoE Expert-Parallel Overlap
+# MoE Expert-Parallel Overlap Skill
+
+Stable docs: `docs/training/communication-overlap.md`
+Card: `card.yaml` (co-located)
 
 ## References
 
-- `docs/training/communication-overlap.md`
-- `skills/perf-techniques/expert-parallel-overlap/card.yaml`
-- `scripts/experiments/ep_overlap_qwen3_moe.py`
+- Stable docs: `docs/training/communication-overlap.md`
+- Structured metadata: `skills/perf-techniques/expert-parallel-overlap/card.yaml`
 
 ## What It Is
 
-MoE expert-parallel overlap hides token dispatch or combine communication behind
-expert compute through
-`comm_overlap.overlap_moe_expert_parallel_comm`.
-`comm_overlap.delay_wgrad_compute` is a stricter additive option that delays
-expert weight-gradient work to create more overlap opportunity.
+Expert-parallel (EP) overlap hides the cost of token dispatch/combine all-to-all
+communication by running it concurrently with expert FFN compute. Optionally,
+delayed expert weight-gradient computation (`delay_wgrad_compute`) provides
+additional overlap by deferring wgrad to overlap with the next layer's forward.
 
-This is separate from choosing a dispatcher backend. If you want DeepEP or
-HybridEP, the dispatcher must actually switch to `flex`. Setting only
-`moe_flex_dispatcher_backend` is not enough.
+Bridge supports two dispatcher paths:
+
+| Dispatcher | Backend | When to use |
+|---|---|---|
+| `alltoall` | Standard MoE all-to-all | Default, broadest compatibility |
+| `flex` | DeepEP or HybridEP | Higher overlap on Ampere/Hopper/Blackwell |
 
 ## Quick Decision
 
-| Situation | Recommendation | Why |
-|---|---|---|
-| First EP-overlap rollout on a working MoE recipe | Start with overlap only, not delayed wgrad | Smaller change surface and best current evidence. |
-| You want DeepEP or HybridEP | Call `apply_flex_dispatcher_backend(...)` | That is what actually flips the dispatcher to `flex`. |
-| `EP <= 4` with `alltoall` on `<= 2` nodes | Do not expect a speedup | Repo measurements show flat or worse performance. |
-| `PP > 1` and no VPP | Stop and add VPP first | Bridge asserts on this combination. |
-| Full recompute or shared-expert overlap must stay enabled | Do not use EP overlap | Unsupported combination. |
-| You need benchmark-backed throughput guidance | Use the wrapper experiment script and compare against baseline | Unit tests validate logic, not speedup. |
+Use EP overlap when:
+
+- the model is MoE with `EP > 1`
+- expert dispatch/combine communication is a meaningful part of step time
+- you have memory headroom and are tuning for throughput
+
+Prefer:
+
+- `alltoall` dispatcher for the first rollout (broader compatibility)
+- `flex` + DeepEP/HybridEP when running on supported GPUs and seeking
+  additional gains
+
+Avoid EP overlap when:
+
+- full activation recompute is enabled
+- `moe_shared_expert_overlap` is enabled
+- the run is still being brought up for correctness
+- PyTorch < 2.6.0
 
 ## Enablement
 
-1. Start from a working MoE run with `expert_model_parallel_size > 1`.
-2. Ensure the recipe has a `CommOverlapConfig`. If it leaves `comm_overlap=None`,
-   initialize it in code before applying overrides.
-3. Set `overlap_moe_expert_parallel_comm=True`.
-4. Leave `delay_wgrad_compute=False` for the first rollout unless you have a
-   reason to benchmark it separately.
-5. If using DeepEP or HybridEP, call `apply_flex_dispatcher_backend(...)` so the
-   dispatcher actually becomes `flex`.
-
-## Compatibility And Constraints
-
-Bridge validation currently requires:
-
-- `expert_model_parallel_size > 1`
-- `num_moe_experts > 1`
-- `moe_token_dispatcher_type in {"alltoall", "flex"}`
-- model precision is BF16 or FP16
-- PyTorch `>= 2.6.0`
-- if `pipeline_model_parallel_size > 1`, set `virtual_pipeline_model_parallel_size`
-- `recompute_granularity != "full"`
-- `recompute_method is None`
-- `recompute_num_layers is None`
-- `moe_shared_expert_overlap is False`
-- `mtp_num_layers is None or 1`
-
-Additional delayed-wgrad constraints:
-
-- `delay_wgrad_compute` requires EP overlap to be enabled
-- if `overlap_grad_reduce=True` or `gradient_accumulation_fusion=True`, TE must be `>= 2.7.0`
-- if CUDA graphs capture the affected wgrad path, TE must be `>= 2.12.0`
-- CUDA graphs plus delayed wgrad also requires `gradient_accumulation_fusion=True`
-- CUDA graphs plus delayed wgrad does not support attention bias today
-
-## Minimal Working Config
-
-### Plain `alltoall`
+### alltoall dispatcher
 
 ```python
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
-
-cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
-cfg.comm_overlap.delay_wgrad_compute = False
+cfg.comm_overlap.delay_wgrad_compute = True
+cfg.model.moe_shared_expert_overlap = False
 
 cfg.model.expert_model_parallel_size = 8
 cfg.model.num_moe_experts = 64
 cfg.model.moe_token_dispatcher_type = "alltoall"
-cfg.model.moe_shared_expert_overlap = False
 cfg.model.bf16 = True
 cfg.model.fp16 = False
 ```
 
-### DeepEP or HybridEP
+### flex dispatcher (DeepEP or HybridEP)
 
 ```python
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
-cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
-cfg.comm_overlap.delay_wgrad_compute = False
+cfg.comm_overlap.delay_wgrad_compute = True
 cfg.model.moe_shared_expert_overlap = False
 
 apply_flex_dispatcher_backend(cfg.model, moe_flex_dispatcher_backend="deepep")
 # or: apply_flex_dispatcher_backend(cfg.model, moe_flex_dispatcher_backend="hybridep")
 ```
 
-## Minimal Runnable Command
+## Compatibility And Constraints
 
-Use the measured wrapper script when the recipe leaves `comm_overlap=None`:
+- `expert_model_parallel_size > 1`
+- `num_moe_experts > 1`
+- `moe_token_dispatcher_type` must be `"alltoall"` or `"flex"`
+- `moe_shared_expert_overlap = False`
+- Base precision is BF16 or FP16
+- PyTorch `>= 2.6.0`
+- If `PP > 1`, `virtual_pipeline_model_parallel_size` must be set
+- `recompute_granularity != "full"`, `recompute_method = None`,
+  `recompute_num_layers = None`
+- `mtp_num_layers` must be `None` or `1`
+- `delay_wgrad_compute` requires `overlap_moe_expert_parallel_comm` as a
+  prerequisite
+- `delay_wgrad_compute` with `overlap_grad_reduce` requires TE >= 2.7.0
+- `delay_wgrad_compute` with `gradient_accumulation_fusion` requires TE >= 2.7.0
+- CUDA graph `attn` scope + `delay_wgrad_compute` requires TE >= 2.12.0,
+  `gradient_accumulation_fusion = True`, and no attention bias
+- DeepEP: Ampere, Hopper, B200, B300 GPUs only
+- HybridEP: Ampere, Hopper, B200, B300, GB200/GB300 with NVL72
 
-```bash
-uv run python scripts/experiments/ep_overlap_qwen3_moe.py \
-  --model qwen3_30b \
-  --variant overlap \
-  model.tensor_model_parallel_size=2 \
-  model.pipeline_model_parallel_size=2 \
-  model.virtual_pipeline_model_parallel_size=4 \
-  model.expert_model_parallel_size=4 \
-  model.sequence_parallel=True \
-  model.moe_token_dispatcher_type=alltoall \
-  model.moe_shared_expert_overlap=False \
-  train.train_iters=20 \
-  train.global_batch_size=8 \
-  train.micro_batch_size=1
+## Minimal Working Config
+
+```python
+cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+cfg.comm_overlap.delay_wgrad_compute = False
+cfg.model.expert_model_parallel_size = 4
+cfg.model.num_moe_experts = 64
+cfg.model.moe_token_dispatcher_type = "alltoall"
+cfg.model.moe_shared_expert_overlap = False
+cfg.model.bf16 = True
 ```
 
-Run the same command with `--variant baseline` and `--variant overlap-wgrad` to
-get an apples-to-apples comparison.
+## Minimal Runnable Command
+
+Performance harness example:
+
+```bash
+python scripts/performance/setup_experiment.py \
+  --model qwen3-30b-a3b \
+  --moe_a2a_overlap \
+  --num_nodes 2 \
+  --gpus_per_node 8 \
+  --max_steps 20
+```
+
+Unit test verification:
+
+```bash
+uv run python -m pytest \
+  tests/unit_tests/training/test_comm_overlap.py -k "moe" \
+  tests/unit_tests/training/test_deepep.py -q
+```
 
 ## Verification
 
-### Local logic coverage
+### Unit tests
 
 ```bash
 uv run python -m pytest \
@@ -136,109 +141,97 @@ uv run python -m pytest \
   tests/unit_tests/training/test_deepep.py -q
 ```
 
-Success criteria:
+### Log checks
 
-- both test files pass
-- `test_comm_overlap.py` covers EP overlap and delayed-wgrad validation logic
-- `test_deepep.py` covers `flex` backend activation and GPU gating
+After a successful run with EP overlap:
 
-### End-to-end activation checks
+1. Confirm no assertion errors during `CommOverlapConfig` finalization
+2. Confirm `overlap_moe_expert_parallel_comm` appears as `True` in the logged
+   config
+3. If using flex dispatcher, confirm `moe_token_dispatcher_type = "flex"` and
+   the correct backend in logs
 
-In benchmark logs, confirm:
+### Success criteria
 
-- `overlap_moe_expert_parallel_comm: True`
-- `delay_wgrad_compute: True` only for the delayed-wgrad variant
-- overlap and baseline use the same non-EP settings
-
-### Current measured evidence
-
-- Qwen3-30B-A3B, EP=4, 2 nodes, `alltoall`: overlap is numerically safe at
-  GBS=8 but not faster, and is about 13% slower at GBS=64.
-- Qwen3-Next-80B-A3B, EP=8, 8 nodes, `alltoall`: overlap variants are stable,
-  but `delay_wgrad_compute` is about 4.8% slower than overlap-only.
+- Config validation passes for the selected dispatcher and overlap settings
+- Training runs complete without hangs or assertion failures
+- Throughput improves or at least does not regress for the target workload
+- Loss trajectory matches baseline (overlap should not affect convergence)
 
 ## Code Anchors
 
-Bridge validation logic:
+### Bridge overlap validation
 
-```465:522:src/megatron/bridge/training/comm_overlap.py
-# MOE expert parallel comm overlap
+```470:505:src/megatron/bridge/training/comm_overlap.py
 if self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm is True:
     assert model_cfg.expert_model_parallel_size > 1, ...
     assert model_cfg.num_moe_experts > 1, ...
     assert model_cfg.moe_token_dispatcher_type in ["alltoall", "flex"], ...
     assert model_cfg.bf16 or model_cfg.fp16, ...
     assert is_torch_min_version("2.6.0"), ...
-    ...
+    # ... PP + VPP check, recompute checks, shared_expert_overlap check ...
+```
+
+### Delayed wgrad validation
+
+```507:557:src/megatron/bridge/training/comm_overlap.py
 if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
-    ...
-    assert (
-        model_cfg.overlap_moe_expert_parallel_comm
-        or self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm
-    ), "overlap_moe_expert_parallel_comm is required for delay_wgrad_compute"
+    # TE version checks for overlap_grad_reduce and gradient_accumulation_fusion
+    # CUDA graph scope validations for delayed wgrad
+    assert overlap_moe_expert_parallel_comm, ...
 ```
 
-Delayed-wgrad CUDA-graph checks:
-
-```524:556:src/megatron/bridge/training/comm_overlap.py
-# CUDA graph scope-specific validations for delayed wgrad.
-cuda_graph_scope = getattr(model_cfg, "cuda_graph_scope", []) or []
-...
-if wgrad_in_graph_scope:
-    assert is_te_min_version("2.12.0"), ...
-    assert model_cfg.gradient_accumulation_fusion, ...
-    if attn_scope_enabled:
-        assert not model_cfg.add_bias_linear and not model_cfg.add_qkv_bias, ...
-```
-
-Flex-dispatcher activation:
+### Flex-dispatcher activation
 
 ```27:72:src/megatron/bridge/training/flex_dispatcher_backend.py
-def apply_flex_dispatcher_backend(
-    model_config: TransformerConfig,
-    moe_flex_dispatcher_backend: str | None = None,
-) -> None:
-    ...
+def apply_flex_dispatcher_backend(...):
+    # GPU architecture check for DeepEP / HybridEP
     model_config.moe_token_dispatcher_type = "flex"
     model_config.moe_flex_dispatcher_backend = moe_flex_dispatcher_backend
     model_config.moe_shared_expert_overlap = False
 ```
 
-Benchmark wrapper config injection:
+### Perf harness override
 
-```128:139:scripts/experiments/ep_overlap_qwen3_moe.py
-cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-cfg.comm_overlap.delay_wgrad_compute = False
-
-if args.variant in ("overlap", "overlap-wgrad"):
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
-    cfg.comm_overlap.delay_wgrad_compute = args.variant == "overlap-wgrad"
-
-cfg = process_config_with_overrides(cfg, cli_overrides=cli_overrides or None)
+```149:156:scripts/performance/utils/overrides.py
+def _set_moe_a2a_overlap_overrides(recipe, moe_a2a_overlap=False):
+    if moe_a2a_overlap:
+        recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
+        recipe.comm_overlap.delay_wgrad_compute = True
+        recipe.model.moe_shared_expert_overlap = False
 ```
+
+### Tests
+
+| File | Coverage |
+|---|---|
+| `tests/unit_tests/training/test_comm_overlap.py` | EP overlap validation, delayed wgrad, CUDA graph + wgrad interaction |
+| `tests/unit_tests/training/test_deepep.py` | DeepEP/HybridEP helper activation and GPU gating |
 
 ## Failure Diagnosis
 
-- `AttributeError` or `NoneType` around `comm_overlap.*`:
-  the recipe left `comm_overlap=None`. Initialize `CommOverlapConfig` in code or
-  use `scripts/experiments/ep_overlap_qwen3_moe.py`.
-- Assertion about `virtual_pipeline_model_parallel_size`:
-  EP overlap with `PP > 1` needs VPP.
-- Assertion about recompute or `moe_shared_expert_overlap`:
-  disable full recompute, recompute method, recompute layers, and shared-expert
-  overlap before enabling EP overlap.
-- Overlap not actually using DeepEP or HybridEP:
-  call `apply_flex_dispatcher_backend(...)`; setting only
-  `moe_flex_dispatcher_backend` is just metadata.
-- Overlap is slower than baseline:
-  check whether the run is small-EP, `alltoall`, or has too few micro-batches.
-  That is consistent with current measurements, not necessarily a bug.
+| Symptom | Likely Cause | How To Confirm | Fix |
+|---|---|---|---|
+| assert `expert_model_parallel_size > 1` | EP not configured | Check `expert_model_parallel_size` | Set EP > 1 |
+| assert `moe_token_dispatcher_type` | Wrong dispatcher | Check dispatcher type | Use `"alltoall"` or `"flex"` |
+| assert on BF16/FP16 | Wrong precision | Check `bf16` and `fp16` | Set `bf16 = True` |
+| hang during training | PyTorch < 2.6 | Check PyTorch version | Upgrade to >= 2.6.0 |
+| assert `virtual_pipeline_model_parallel_size` | PP > 1 without VPP | Check PP and VPP config | Set VPP when PP > 1 |
+| assert `recompute_granularity` | Full recompute enabled | Check recompute settings | Disable full recompute |
+| assert `overlap_moe_expert_parallel_comm required` | delayed wgrad without EP overlap | Check `delay_wgrad_compute` without overlap | Enable EP overlap first |
+| assert `gradient_accumulation_fusion` | CUDA graph + delayed wgrad | Check graph scope + wgrad settings | Enable `gradient_accumulation_fusion` |
+| assert on attention bias | CUDA graph attn + delayed wgrad + bias | Check `add_bias_linear` / `add_qkv_bias` | Disable attention bias |
+| no throughput gain from flex dispatcher | `apply_flex_dispatcher_backend` not called | Check `moe_token_dispatcher_type` in logs | Call `apply_flex_dispatcher_backend(...)` |
+| DeepEP/HybridEP silently skipped | Unsupported GPU | Check warning logs | Run on Ampere/Hopper/Blackwell |
 
 ## Known Limitations
 
-- Repo measurements do not yet show a throughput win for `alltoall` EP overlap.
-- `delay_wgrad_compute` has been slower in both measured workloads.
-- The highest-confidence future win case is still unmeasured here: larger EP,
-  more nodes, more micro-batches, and `flex` backends such as DeepEP or HybridEP.
-- Public recipes are conservative and may expose the feature without enabling it
-  by default.
+- Setting `moe_flex_dispatcher_backend` alone does not activate flex dispatch —
+  you must call `apply_flex_dispatcher_backend(...)`.
+- Public recipes are often conservative and leave MoE overlap disabled by
+  default.
+- End-to-end throughput gains have not yet been measured in a controlled Bridge
+  experiment. Code validation is stronger than performance evidence.
+- MoE overlap and shared-expert overlap are mutually exclusive.
+- CUDA graph plus delayed wgrad is a multi-constraint path that requires
+  careful TE version and scope validation.

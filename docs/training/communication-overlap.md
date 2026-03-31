@@ -42,11 +42,11 @@ to reduce idle time.
 
 | Dimension | Effect | Confidence | Why |
 |---|---|---|---|
-| `speed` | `+` to `++` | medium | The whole point is to hide communication time, but gain depends strongly on which overlap mode is active and whether communication is actually exposed. |
-| `memory` | `0` | low | Overlap itself is usually not a primary memory technique, although some implementations add buffer or scheduling constraints. |
-| `scale` | `+` | medium | Overlap becomes more valuable as communication dominates larger distributed runs. |
-| `convergence` | `0` | medium | The intent is to preserve the same training math, though schedule changes can alter floating-point accumulation order. |
-| `stability` | `-` | medium | More overlap usually means tighter requirements around schedule shape, precision, runtime versions, and feature combinations. |
+| `speed` | ~0-15% faster step time, mode-dependent | medium | The whole point is to hide communication time, but gain depends strongly on which overlap mode is active and whether communication is actually exposed. EP overlap measured flat to ~13% slower on small-EP Qwen3-30B-A3B, so gains are not guaranteed. |
+| `memory` | neutral (some modes add ~1-2 GB for buffers) | low | Overlap itself is usually not a primary memory technique, although some implementations (e.g., TP userbuffers) add buffer or scheduling constraints. |
+| `scale` | positive at higher parallelism degrees | medium | Overlap becomes more valuable as communication dominates larger distributed runs. |
+| `convergence` | no change expected | medium | The intent is to preserve the same training math, though schedule changes can alter floating-point accumulation order. |
+| `stability` | adds operational constraints | medium | More overlap usually means tighter requirements around schedule shape, precision, runtime versions, and feature combinations. |
 
 ## When to Use It
 
@@ -107,46 +107,15 @@ The most important interactions are:
 
 ## Bridge Configuration
 
-At a high level, communication overlap is configured through
-`CommOverlapConfig`, plus mode-specific model settings:
+Communication overlap is configured through `CommOverlapConfig` plus
+mode-specific model settings. There is no single universal toggle — DP, TP,
+PP, CP, and EP each have different prerequisites and should be enabled based
+on the actual bottleneck.
 
-```python
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+For config examples and minimal runnable commands, see:
 
-cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
-
-cfg.model.tensor_model_parallel_size = 2
-cfg.model.sequence_parallel = True
-
-cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
-cfg.comm_overlap.delay_wgrad_compute = False
-cfg.model.expert_model_parallel_size = 8
-cfg.model.num_moe_experts = 64
-cfg.model.moe_token_dispatcher_type = "alltoall"
-cfg.model.moe_shared_expert_overlap = False
-
-# For DeepEP or HybridEP, switch the dispatcher to "flex" explicitly.
-# apply_flex_dispatcher_backend(cfg.model, moe_flex_dispatcher_backend="deepep")
-```
-
-The important design point is that "communication overlap" is not one universal
-toggle. DP, TP, PP, CP, and EP each have different prerequisites and should be
-enabled based on the actual bottleneck.
-
-## Minimal Runnable Example
-
-For a measured end-to-end MoE overlap path, use:
-
-- `scripts/experiments/ep_overlap_qwen3_moe.py`
-
-That wrapper exists because some recipes leave `comm_overlap=None`, and CLI
-overrides cannot create `CommOverlapConfig` from `None`.
-
-For lightweight local verification of overlap validation logic, start from:
-
-- `tests/unit_tests/training/test_comm_overlap.py`
-- `tests/unit_tests/training/test_deepep.py`
+- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
+- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
 
 ## Expected Metric Changes
 

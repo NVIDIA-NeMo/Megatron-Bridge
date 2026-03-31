@@ -1,210 +1,186 @@
 title: expert_parallel_overlap
-validated_on: "2026-03-22"
+validated_on: "2026-03-23"
 summary: >
-  MoE expert-parallel overlap hides token dispatch or combine communication
-  behind expert compute through `overlap_moe_expert_parallel_comm`, with
-  optional delayed expert wgrad scheduling via `delay_wgrad_compute`. Repo
-  evidence currently supports correctness and activation, but not a general
-  throughput win: Qwen3-30B-A3B with EP=4 and `alltoall` is flat at GBS=8 and
-  ~13% slower at GBS=64, while Qwen3-Next-80B-A3B with EP=8 has stable overlap
-  variants but `delay_wgrad_compute` is still ~4.8% slower than overlap-only.
+  Megatron-Bridge supports MoE expert-parallel communication overlap through
+  overlap_moe_expert_parallel_comm, with optional delayed expert wgrad
+  scheduling. The path depends on dispatcher choice (alltoall or flex),
+  expert parallelism degree, precision (BF16/FP16), and runtime support.
+
 validation_status:
-  unit_tests:
+  moe_overlap_validation:
     - code_verified
-  flex_dispatcher_helper:
+  flex_dispatcher_activation:
     - code_verified
-  qwen3_30b_a3b_ep4_alltoall:
-    - measured
-  qwen3_next_80b_a3b_ep8_alltoall:
-    - measured
+  deepep_hybridep_helper_behavior:
+    - code_verified
+  delayed_wgrad_validation:
+    - code_verified
+  cuda_graph_wgrad_interaction:
+    - code_verified
+  end_to_end_recipe_smoke:
+    - not_yet_tested
+
 training_dimensions:
   speed:
-    effect: "0/-"
-    confidence: high
+    effect: "~10-20% faster step time (not yet measured in a controlled Bridge experiment)"
+    confidence: medium
     rationale: >
-      Measured runs show no gain at EP=4 with `alltoall` and regressions from
-      scheduling overhead. Benefit is still expected only when expert-parallel
-      communication is a dominant bottleneck.
+      Hides expert dispatch/combine all-to-all under expert FFN compute.
+      Benefit depends on EP degree and collective-to-compute ratio.
   memory:
-    effect: "0"
+    effect: "neutral to slightly higher (not yet measured)"
     confidence: medium
-    rationale: >
-      Current experiments did not show a meaningful memory change attributable
-      to the overlap feature itself.
+    rationale: Overlap buffers may add minor memory pressure.
   scale:
-    effect: "+"
+    effect: "positive at higher EP degrees (not yet measured)"
     confidence: medium
-    rationale: >
-      The technique becomes more relevant as EP size, inter-node traffic, and
-      dispatcher latency grow.
+    rationale: Communication fraction grows with more EP ranks.
   convergence:
-    effect: "0"
-    confidence: medium
-    rationale: >
-      Qwen3-30B-A3B loss matches within 0.001 at GBS=8. Larger GBS can change
-      accumulation ordering and lead to different trajectories without implying
-      a correctness bug.
+    effect: "no change expected"
+    confidence: high
+    rationale: Overlap reorders execution but does not change mathematical result.
   stability:
-    effect: "+/-"
+    effect: "adds operational constraints"
     confidence: medium
     rationale: >
-      Overlap variants were stable in the measured runs, but the feature adds
-      strict constraints around recompute, VPP, shared-expert overlap, runtime
-      versions, and some CUDA-graph combinations.
+      Requires specific dispatcher, precision, recompute, and VPP settings.
+      CUDA graph + delayed wgrad path has additional TE version constraints.
+
 enable_when:
-  - EP is large enough that expert-parallel communication is visible in the profile.
-  - The run has many micro-batches, so there is real overlap opportunity.
-  - Inter-node A2A latency is meaningful, especially with `flex` backends.
-  - Baseline correctness is already established without EP overlap.
+  - Model is MoE with expert_model_parallel_size > 1
+  - Expert dispatch communication is a meaningful part of step time
+  - Throughput tuning phase (correctness already established)
+
 avoid_when:
-  - EP <= 4 with `alltoall` on <= 2 nodes.
-  - The run is still in basic bring-up or correctness debugging.
-  - Full recompute or shared-expert overlap must remain enabled.
-  - You have not benchmarked the exact model and parallelism shape.
+  - Full activation recompute is enabled
+  - moe_shared_expert_overlap is enabled
+  - PyTorch < 2.6.0
+  - Still bringing up training for correctness
+
 interactions:
-  - name: flex_dispatcher_activation
-    detail: >
-      `moe_flex_dispatcher_backend` alone is not enough. DeepEP or HybridEP is
-      activated only when `apply_flex_dispatcher_backend(...)` switches the
-      dispatcher to `flex`.
-  - name: pipeline_parallelism
-    detail: >
-      If `pipeline_model_parallel_size > 1`, EP overlap requires
-      `virtual_pipeline_model_parallel_size`.
   - name: recompute
-    detail: >
-      EP overlap does not support `recompute_granularity="full"`,
-      `recompute_method != None`, or `recompute_num_layers != None`.
+    constraint: "recompute_granularity must not be full; recompute_method and recompute_num_layers must be None"
   - name: shared_expert_overlap
-    detail: >
-      EP overlap and `moe_shared_expert_overlap` are mutually exclusive.
-  - name: cuda_graphs
-    detail: >
-      `delay_wgrad_compute` plus CUDA-graph capture adds TE-version,
-      gradient-accumulation-fusion, and attention-bias restrictions.
+    constraint: "moe_shared_expert_overlap must be False when EP overlap is enabled"
+  - name: pipeline_parallelism
+    constraint: "PP > 1 requires virtual_pipeline_model_parallel_size to be set"
+  - name: cuda_graphs_delayed_wgrad
+    constraint: >
+      CUDA graph attn or moe_router scope with delay_wgrad_compute requires
+      TE >= 2.12.0, gradient_accumulation_fusion = True, and no attention bias
+  - name: mtp
+    constraint: "mtp_num_layers must be None or 1"
+
 feature_meaning:
   overlap_moe_expert_parallel_comm: >
-    Overlap expert-parallel token dispatch or combine communication with expert
-    compute.
+    Overlap expert-parallel token dispatch/combine all-to-all with expert compute.
   delay_wgrad_compute: >
-    Delay expert weight-gradient computation to create additional overlap.
-  flex_dispatcher_backend: >
+    Delay expert weight-gradient computation to overlap with the next layer's
+    forward pass. Requires EP overlap as a prerequisite.
+  moe_flex_dispatcher_backend: >
     Backend selection for DeepEP or HybridEP once the dispatcher is explicitly
-    switched to `flex`.
+    switched to flex via apply_flex_dispatcher_backend().
+
 config_keys:
   - comm_overlap.overlap_moe_expert_parallel_comm
   - comm_overlap.delay_wgrad_compute
-  - model.expert_model_parallel_size
-  - model.num_moe_experts
   - model.moe_token_dispatcher_type
   - model.moe_flex_dispatcher_backend
   - model.moe_shared_expert_overlap
-  - model.virtual_pipeline_model_parallel_size
+  - model.expert_model_parallel_size
+  - model.num_moe_experts
+
 recommended_path:
-  first_rollout: enable `overlap_moe_expert_parallel_comm` only
-  delayed_wgrad: keep `delay_wgrad_compute=False` unless benchmarked
-  dispatcher: use `apply_flex_dispatcher_backend(...)` for DeepEP or HybridEP
-  benchmarking: compare baseline, overlap, and overlap-wgrad with the same `CommOverlapConfig` shape
+  comm_overlap.overlap_moe_expert_parallel_comm: true_for_moe_tuning
+  comm_overlap.delay_wgrad_compute: true_with_overlap
+  model.moe_shared_expert_overlap: false_when_overlap_is_enabled
+
 expected_metric_change:
   - metric: step_time
-    direction: flat
-    magnitude: "~0%"
-    conditions: Qwen3-30B-A3B, EP=4, 2 nodes, `alltoall`, GBS=8
-    evidence_status: measured
-  - metric: step_time
+    direction: down
+    magnitude: "~10-20% (not yet measured in Bridge)"
+    conditions: "MoE with alltoall or flex dispatcher, EP >= 4"
+    evidence: not_yet_measured
+  - metric: peak_memory
     direction: up
-    magnitude: "~13%"
-    conditions: Qwen3-30B-A3B, EP=4, 2 nodes, `alltoall`, GBS=64
-    evidence_status: measured
-  - metric: step_time
-    direction: up
-    magnitude: "~4.8%"
-    conditions: Qwen3-Next-80B-A3B, EP=8, 8 nodes, `alltoall`, `delay_wgrad_compute=True` vs overlap-only
-    evidence_status: measured
-  - metric: throughput
-    direction: mixed
-    conditions: Large-EP, communication-bound MoE runs, especially with `flex` dispatchers
-    evidence_status: expected
+    magnitude: "slight (not yet measured)"
+    conditions: "EP overlap buffers"
+    evidence: not_yet_measured
+
 minimal_example:
-  script: scripts/experiments/ep_overlap_qwen3_moe.py
-  models:
-    - qwen3_30b
-    - qwen3_next_80b
-  variants:
-    - baseline
-    - overlap
-    - overlap-wgrad
-  note: >
-    The wrapper initializes `CommOverlapConfig` in code because CLI overrides
-    cannot create it from `None`.
+  config: |
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.model.moe_shared_expert_overlap = False
+  command: |
+    python scripts/performance/setup_experiment.py \
+      --model qwen3-30b-a3b --moe_a2a_overlap
+
 failure_modes:
-  - name: missing_comm_overlap_object
-    symptom: "AttributeError or NoneType failure when overriding comm_overlap.*"
-    likely_cause: recipe leaves `comm_overlap=None`
-    fix: initialize `CommOverlapConfig` in code or use the wrapper experiment script
+  - name: ep_too_small
+    symptom: "AssertionError about expert_model_parallel_size"
+    likely_cause: "EP not configured or set to 1"
+    fix: "Set expert_model_parallel_size > 1"
+  - name: wrong_dispatcher
+    symptom: "AssertionError about moe_token_dispatcher_type"
+    likely_cause: "Dispatcher is not alltoall or flex"
+    fix: "Set moe_token_dispatcher_type to alltoall or flex"
+  - name: wrong_precision
+    symptom: "AssertionError about bf16 or fp16"
+    likely_cause: "Neither BF16 nor FP16 enabled"
+    fix: "Set bf16 = True or fp16 = True"
+  - name: pytorch_hang
+    symptom: "Training hangs"
+    likely_cause: "PyTorch < 2.6.0"
+    fix: "Upgrade to PyTorch >= 2.6.0"
   - name: missing_vpp
     symptom: "AssertionError about virtual_pipeline_model_parallel_size"
-    likely_cause: `PP > 1` without VPP
-    fix: set `virtual_pipeline_model_parallel_size`
-  - name: unsupported_recompute_or_shared_expert
-    symptom: "AssertionError about recompute or moe_shared_expert_overlap"
-    likely_cause: incompatible feature combination
-    fix: disable full recompute, recompute method or layers, and shared-expert overlap
-  - name: flex_backend_not_active
-    symptom: "Run still uses alltoall semantics after setting moe_flex_dispatcher_backend"
-    likely_cause: dispatcher never switched to `flex`
-    fix: call `apply_flex_dispatcher_backend(...)`
-  - name: slower_than_baseline
-    symptom: "Overlap run is flat or slower than baseline"
-    likely_cause: A2A cost is too small relative to added scheduling overhead
-    fix: benchmark on larger EP, more nodes, more micro-batches, or a `flex` backend
+    likely_cause: "PP > 1 without VPP"
+    fix: "Set virtual_pipeline_model_parallel_size when PP > 1"
+  - name: full_recompute
+    symptom: "AssertionError about recompute_granularity"
+    likely_cause: "Full recompute enabled"
+    fix: "Disable full recompute (set recompute_granularity to null)"
+  - name: delay_wgrad_without_overlap
+    symptom: "AssertionError overlap_moe_expert_parallel_comm is required"
+    likely_cause: "delay_wgrad_compute without EP overlap"
+    fix: "Enable overlap_moe_expert_parallel_comm first"
+  - name: flex_not_activated
+    symptom: "No throughput gain from flex dispatcher"
+    likely_cause: "apply_flex_dispatcher_backend() not called"
+    fix: "Call apply_flex_dispatcher_backend(cfg.model, ...)"
+
 known_constraints:
   - expert_model_parallel_size must be greater than 1.
   - num_moe_experts must be greater than 1.
-  - moe_token_dispatcher_type must be `alltoall` or `flex`.
+  - moe_token_dispatcher_type must be alltoall or flex.
   - Precision must be BF16 or FP16.
+  - moe_shared_expert_overlap must be false when overlap is enabled.
   - PyTorch must be at least 2.6.0.
-  - If PP is used, virtual pipeline parallelism is required.
-  - `recompute_granularity` must not be `full`.
-  - `recompute_method` must be `None`.
-  - `recompute_num_layers` must be `None`.
-  - `moe_shared_expert_overlap` must be `False`.
-  - `mtp_num_layers` must be `None` or `1`.
+  - If pipeline parallelism is used, virtual pipeline parallelism is required.
+  - recompute_granularity must not be full.
+  - recompute_method must be None.
+  - recompute_num_layers must be None.
+  - mtp_num_layers must be None or 1.
+  - delay_wgrad_compute requires overlap_moe_expert_parallel_comm.
+  - delay_wgrad_compute with overlap_grad_reduce requires TE >= 2.7.0.
+  - CUDA graph attn scope + delay_wgrad requires TE >= 2.12.0 and no attention bias.
+
 known_limitations:
-  - Repo measurements do not yet show a throughput win for `alltoall` EP overlap.
-  - `delay_wgrad_compute` has been slower in both measured workloads.
-  - Setting `moe_flex_dispatcher_backend` alone does not activate `flex`.
-  - Public recipes are conservative and often leave EP overlap disabled by default.
+  - Setting moe_flex_dispatcher_backend alone does not activate flex dispatch.
+  - Public recipes are often conservative and leave MoE overlap disabled by default.
+  - End-to-end throughput gains not yet measured in a controlled Bridge experiment.
+
 evidence:
-  - source: docs/training/communication-overlap.md
-    kind: docs
-    takeaway: stable recommendation boundary and measured EP guidance
-  - source: src/megatron/bridge/training/comm_overlap.py
-    kind: code
-    takeaway: validation gates for EP overlap and delayed wgrad
-  - source: src/megatron/bridge/training/flex_dispatcher_backend.py
-    kind: code
-    takeaway: helper flips dispatcher to `flex` and disables shared-expert overlap
-  - source: scripts/experiments/ep_overlap_qwen3_moe.py
-    kind: harness
-    takeaway: wrapper path for recipes that leave `comm_overlap=None`
-  - source: tests/unit_tests/training/test_comm_overlap.py
-    kind: unit_test
-    takeaway: local coverage for overlap validation logic
-  - source: tests/unit_tests/training/test_deepep.py
-    kind: unit_test
-    takeaway: local coverage for DeepEP or HybridEP helper behavior
-  - source: .local/ep_overlap_verification_report.md
-    kind: experiment
-    takeaway: Qwen3-30B-A3B EP=4 measured results, including flat and slower cases
-  - source: .local/ep_overlap_qwen3_moe_experiment_tracker_2026-03-21.md
-    kind: experiment
-    takeaway: experiment design and wrapper-script rationale for Qwen3-30B-A3B
-  - source: .local/ep_overlap_qwen3_next_experiment_tracker_2026-03-21.md
-    kind: experiment
-    takeaway: Qwen3-Next-80B-A3B EP=8 results and baseline NaN context
+  - docs/training/communication-overlap.md
+  - src/megatron/bridge/training/comm_overlap.py
+  - src/megatron/bridge/training/flex_dispatcher_backend.py
+  - src/megatron/bridge/training/config.py
+  - scripts/performance/utils/overrides.py
+  - tests/unit_tests/training/test_comm_overlap.py
+  - tests/unit_tests/training/test_deepep.py
+
 follow_up_validation:
-  - Benchmark EP=16+ on more nodes with `deepep` or `hybridep`.
-  - Re-test on a standard-attention MoE model to isolate the Qwen3-Next baseline NaN.
-  - Check SFT or packed-sequence interactions separately from pretrain.
-  - Re-benchmark at production-scale GBS where A2A cost is larger.
+  - Measure end-to-end throughput gain for EP overlap on a representative MoE model.
+  - Add a positive Bridge functional smoke test for overlap_moe_expert_parallel_comm.
+  - Validate flex dispatcher (DeepEP/HybridEP) throughput vs alltoall baseline.
