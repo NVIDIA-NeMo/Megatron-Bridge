@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FlexAttention for sbd_block_diff diffusion LM training with YARN RoPE."""
+"""NemotronDiffusionAttention for sbd_block_diff diffusion LM training with YARN RoPE."""
 
 import math
 from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 from torch.nn.attention.flex_attention import flex_attention
 from transformers import ROPE_INIT_FUNCTIONS
-from transformers.utils.generic import maybe_autocast
 
 from megatron.bridge.diffusion.common.dllm import compute_block_mask
 from megatron.core import tensor_parallel
@@ -93,6 +93,11 @@ class Ministral3RotaryEmbedding(nn.Module):
         self.rope_type = config.rope_parameters["rope_type"]
         rope_init_fn = self._compute_default_rope_parameters
         if self.rope_type != "default":
+            rp = getattr(config, "rope_parameters", {})
+            if not hasattr(config, "rope_theta") and "rope_theta" in rp:
+                config.rope_theta = rp["rope_theta"]
+            if not hasattr(config, "rope_scaling"):
+                config.rope_scaling = {k: v for k, v in rp.items() if k != "rope_type"}
             rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
         inv_freq, self.attention_scaling = rope_init_fn(config, device)
 
@@ -114,7 +119,7 @@ class Ministral3RotaryEmbedding(nn.Module):
         position_ids_expanded = position_ids[:, None, :].float()
 
         device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
-        with maybe_autocast(device_type=device_type, enabled=False):
+        with torch.autocast(device_type=device_type, enabled=False):
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
             emb = torch.cat((freqs, freqs), dim=-1)
             cos = emb.cos() * self.attention_scaling
@@ -124,11 +129,11 @@ class Ministral3RotaryEmbedding(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# FlexDotProductAttention  (sbd_block_diff only)
+# NemotronDiffusionAttention  (sbd_block_diff only)
 # ---------------------------------------------------------------------------
 
-class FlexDotProductAttention(MegatronModule):
-    """FlexAttention for semi-block-diffusion (sbd_block_diff) training.
+class NemotronDiffusionAttention(MegatronModule):
+    """NemotronDiffusionAttention for semi-block-diffusion (sbd_block_diff) training.
 
     The sequence is doubled to ``[xt | x0]`` where xt are noised tokens and x0
     are clean tokens.  RoPE is applied independently to each half.  Llama-4
@@ -161,7 +166,7 @@ class FlexDotProductAttention(MegatronModule):
             pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=['tp'])
         else:
             assert hasattr(pg_collection, 'tp'), (
-                "FlexDotProductAttention pg_collection must have tp process group"
+                "NemotronDiffusionAttention pg_collection must have tp process group"
             )
 
         world_size = pg_collection.tp.size()
@@ -203,6 +208,29 @@ class FlexDotProductAttention(MegatronModule):
         import torch._dynamo.config as dcfg
         dcfg.cache_size_limit = 512
 
+        # Inference state
+        self._inference_mode = False
+        self._inference_causal = True
+        self._cache_enabled = False
+        self._kv_cache_k = None
+        self._kv_cache_v = None
+        self._kv_cache_seq_len = 0
+
+    def set_inference_mode(self, enabled: bool):
+        """Enable or disable inference mode. Clears cache on disable."""
+        self._inference_mode = enabled
+        if not enabled:
+            self.clear_kv_cache()
+
+    def set_inference_params(self, causal: bool, cache_enabled: bool):
+        self._inference_causal = causal
+        self._cache_enabled = cache_enabled
+
+    def clear_kv_cache(self):
+        self._kv_cache_k = None
+        self._kv_cache_v = None
+        self._kv_cache_seq_len = 0
+
     def forward(
         self,
         query: Tensor,
@@ -214,8 +242,12 @@ class FlexDotProductAttention(MegatronModule):
         packed_seq_params: Optional[PackedSeqParams] = None,
     ):
         assert packed_seq_params is None, (
-            "Packed sequence is not supported by FlexDotProductAttention."
+            "Packed sequence is not supported by NemotronDiffusionAttention."
         )
+
+        if self._inference_mode:
+            return self._inference_forward(query, key, value)
+
 
         # Position ids for each half of the doubled sequence
         half_seq_len = query.shape[0] // 2
@@ -246,7 +278,7 @@ class FlexDotProductAttention(MegatronModule):
         key = repeat_kv(key, n_rep)
         value = repeat_kv(value, n_rep)
 
-        # FlexAttention with pre-computed block mask
+        # NemotronDiffusionAttention with pre-computed block mask
         context = fused_flex_attention(query, key, value, block_mask=self.mask)
 
         # Dropout
@@ -261,4 +293,111 @@ class FlexDotProductAttention(MegatronModule):
         new_context_shape = context.size()[:-2] + (self.hidden_size_per_partition,)
         context = context.contiguous().view(*new_context_shape)
 
+        return context
+
+    def _inference_forward(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+    ) -> Tensor:
+        """SDPA-based forward for inference with KV cache support.
+
+        Args:
+            query, key, value: [seq_len, batch, num_heads, head_dim]  (Megatron layout)
+
+        The method:
+          1. Computes position IDs accounting for cached tokens
+          2. Applies RoPE (same module as training)
+          3. Applies Llama-4 attention scaling
+          4. Concatenates new K/V with cached K/V
+          5. Applies GQA repeat_kv
+          6. Runs SDPA with causal or bidirectional mask
+          7. Optionally stores the new K/V in cache
+        """
+        sq = query.shape[0]
+        b = query.shape[1]
+
+        # Transpose to [b, np, s, hn]
+        query = query.transpose(0, 1).transpose(1, 2)
+        key = key.transpose(0, 1).transpose(1, 2)
+        value = value.transpose(0, 1).transpose(1, 2)
+
+        # Position IDs: new tokens start after the cached tokens
+        offset = self._kv_cache_seq_len
+        q_position_ids = torch.arange(offset, offset + sq, device=query.device).unsqueeze(0)
+        k_position_ids = torch.arange(offset, offset + sq, device=key.device).unsqueeze(0)
+
+        cos, sin = self.rope_embedding_module(query, q_position_ids)
+        cos_k, sin_k = self.rope_embedding_module(key, k_position_ids)
+
+        # Apply RoPE to new Q and K
+        cos_q = cos.unsqueeze(1)
+        sin_q = sin.unsqueeze(1)
+        cos_k = cos_k.unsqueeze(1)
+        sin_k = sin_k.unsqueeze(1)
+        query = (query * cos_q) + (rotate_half(query) * sin_q)
+        key = (key * cos_k) + (rotate_half(key) * sin_k)
+
+        # Llama-4 attention scaling on query
+        if self.beta is not None:
+            scale = _get_llama_4_attn_scale(
+                q_position_ids.squeeze(0), self.beta, self.max_position_embeddings
+            ).to(query.dtype)
+            query = query * scale  # broadcast [sq, 1] -> [b, np, sq, hn]
+
+        # Concatenate with KV cache
+        if self._kv_cache_k is not None:
+            full_key = torch.cat([self._kv_cache_k, key], dim=2)
+            full_value = torch.cat([self._kv_cache_v, value], dim=2)
+        else:
+            full_key = key
+            full_value = value
+
+        # Update cache if enabled
+        if self._cache_enabled:
+            self._kv_cache_k = full_key.detach()
+            self._kv_cache_v = full_value.detach()
+            self._kv_cache_seq_len = full_key.shape[2]
+
+        # GQA: repeat KV heads to match query heads
+        n_rep = self.num_attention_heads_per_partition // self.num_query_groups_per_partition
+        full_key_expanded = repeat_kv(full_key, n_rep)
+        full_value_expanded = repeat_kv(full_value, n_rep)
+
+        sk = full_key_expanded.shape[2]
+
+        # Build attention mask for SDPA
+        if not self._inference_causal:
+            # Bidirectional: no mask needed
+            attn_mask = None
+            is_causal = False
+        elif sq == sk:
+            # Full prefill: use SDPA's built-in causal
+            attn_mask = None
+            is_causal = True
+        else:
+            # Decode with KV cache: build explicit causal mask
+            q_pos = torch.arange(offset, offset + sq, device=query.device)
+            k_pos = torch.arange(sk, device=query.device)
+            mask = q_pos[:, None] >= k_pos[None, :]  # [sq, sk]
+            attn_mask = torch.zeros(sq, sk, dtype=query.dtype, device=query.device)
+            attn_mask.masked_fill_(~mask, float("-inf"))
+            attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, sq, sk]
+            is_causal = False
+
+        context = F.scaled_dot_product_attention(
+            query,
+            full_key_expanded,
+            full_value_expanded,
+            attn_mask=attn_mask,
+            dropout_p=0.0,
+            is_causal=is_causal,
+            scale=self.softmax_scale,
+        )
+
+        # Reshape back to Megatron layout: [sq, b, hp]
+        context = context.transpose(1, 2).transpose(0, 1)  # [sq, b, np, hn]
+        new_shape = context.size()[:-2] + (self.hidden_size_per_partition,)
+        context = context.contiguous().view(*new_shape)
         return context

@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.diffusion.models.dministral.dministral3_provider import DMinistral3ModelProvider
+from megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge import NemotronDiffusionBridge
 
-__all__ = ["DMinistral3ModelProvider"]
+__all__ = ["NemotronDiffusionBridge"]

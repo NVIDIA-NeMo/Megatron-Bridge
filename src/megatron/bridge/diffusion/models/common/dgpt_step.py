@@ -21,7 +21,7 @@ from typing import Iterable, Tuple
 import torch
 import torch.distributed
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.losses import SPIKY_LOSS_FACTOR, masked_next_token_loss
+from megatron.bridge.training.losses import _DEFAULT_SPIKY_LOSS_FACTOR as SPIKY_LOSS_FACTOR, masked_next_token_loss
 from megatron.bridge.training.state import GlobalState
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
@@ -171,13 +171,16 @@ class DGPTStep:
                 loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
                 return schedule_plan, loss_function
             else:
-                logits = model(**forward_args)
+                output = model(**forward_args)
+                logits = output[0] if isinstance(output, tuple) else output
 
         # Split logits: first half = DLM logits over xt, second half = AR logits over x0
         causal_logits = logits[:, input_ids_len:]
         logits = logits[:, :input_ids_len]
 
         core_model = unwrap_model(model)
+        if hasattr(core_model, "language_model"):
+            core_model = core_model.language_model
 
         # DLM cross-entropy on masked tokens, scaled by 1/p_mask
         output_tensor = core_model.compute_language_model_loss(
@@ -285,10 +288,6 @@ def _masked_loss_sbd_block_diff(
     num_tokens_ar = torch.tensor(num_tokens_ar, device=loss_mask.device, dtype=torch.int)
 
     loss = dlm_loss * dlm_loss_weight + ar_loss * ar_loss_weight
-    if divide_by_masked_tokens:
-        num_tokens = num_tokens_dlm + num_tokens_ar
-    else:
-        num_tokens = num_tokens_ar
     num_tokens = num_tokens_dlm + num_tokens_ar
     num_tokens = num_tokens.detach().to(torch.int)
 
