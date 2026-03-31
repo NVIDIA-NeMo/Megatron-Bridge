@@ -57,7 +57,7 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
-    "skills/perf-techniques/README.md",
+    "skills/**",
 ]
 
 suppress_warnings = [
