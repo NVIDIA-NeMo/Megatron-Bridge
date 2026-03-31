@@ -76,6 +76,127 @@ jobs:
     secrets:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
+  configure:
+    runs-on: ubuntu-latest
+    needs: [pre-flight]
+    outputs:
+      needs_more_tests: ${{ steps.configure.outputs.needs_more_tests }}
+      full_test_suite:  ${{ steps.configure.outputs.full_test_suite }}
+      expect_l0:        ${{ steps.configure.outputs.expect_l0 }}
+      expect_l1:        ${{ steps.configure.outputs.expect_l1 }}
+      expect_l2:        ${{ steps.configure.outputs.expect_l2 }}
+    steps:
+      - name: Get PR info
+        id: get-pr-info
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        uses: nv-gha-runners/get-pr-info@main
+
+      - name: Configure
+        id: configure
+        shell: bash -x -e -u -o pipefail {0}
+        env:
+          GH_TOKEN:      ${{ github.token }}
+          DOCS_ONLY:     ${{ needs.pre-flight.outputs.docs_only }}
+          IS_DEPLOYMENT: ${{ needs.pre-flight.outputs.is_deployment_workflow }}
+          EVENT_NAME:    ${{ github.event_name }}
+          REF:           ${{ github.ref }}
+          TEST_SUITE:    ${{ github.event.inputs.test_suite }}
+        run: |
+          PR_NUMBER=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
+
+          # Fetch labels; fall back to empty list if not a PR
+          LABELS=$(gh pr view $PR_NUMBER --repo ${{ github.repository }} --json labels --jq '[.labels[].name]' 2>/dev/null) || LABELS='[]'
+
+          NEEDS_MORE_TESTS=$(echo "$LABELS" | jq 'any(. == "needs-more-tests")')
+          FULL_TEST_SUITE=$(echo "$LABELS"  | jq 'any(. == "full-test-suite")')
+
+          # Tests are expected on every run except docs-only and deployment
+          if [[ "$DOCS_ONLY" == "true" || "$IS_DEPLOYMENT" == "true" ]]; then
+            RUN_TESTS=false
+          else
+            RUN_TESTS=true
+          fi
+
+          # L0/L1/L2 functional tests are expected when test_suite is '' (default), 'all', or 'functional-only'
+          EXPECT_FUNCTIONAL=false
+          [[ "$TEST_SUITE" == "" || "$TEST_SUITE" == "all" || "$TEST_SUITE" == "functional-only" ]] && EXPECT_FUNCTIONAL=true
+
+          # EXPECT_L0: any non-docs/deployment run that includes functional tests
+          EXPECT_L0=false
+          [[ "$RUN_TESTS" == "true" && "$EXPECT_FUNCTIONAL" == "true" ]] && EXPECT_L0=true
+
+          # EXPECT_L1: L0 conditions + event/label gate
+          EXPECT_L1=false
+          if [[ "$EXPECT_L0" == "true" ]]; then
+            if [[ "$REF" == "refs/heads/main" || "$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch" || "$EVENT_NAME" == "merge_group" || "$NEEDS_MORE_TESTS" == "true" ]]; then
+              EXPECT_L1=true
+            fi
+          fi
+
+          # EXPECT_L2: schedule or workflow_dispatch only
+          EXPECT_L2=false
+          if [[ "$EXPECT_L0" == "true" && ("$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch") ]]; then
+            EXPECT_L2=true
+          fi
+
+          echo "needs_more_tests=$NEEDS_MORE_TESTS" | tee -a "$GITHUB_OUTPUT"
+          echo "full_test_suite=$FULL_TEST_SUITE"   | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l0=$EXPECT_L0"               | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l1=$EXPECT_L1"               | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l2=$EXPECT_L2"               | tee -a "$GITHUB_OUTPUT"
+
+          # Active row markers for step summary decision tree
+          _L0=$(    [[ "$EXPECT_L0" == "true" ]] && echo "**→**" || echo "" )
+          _L1=$(    [[ "$EXPECT_L1" == "true" ]] && echo "**→**" || echo "" )
+          _L2=$(    [[ "$EXPECT_L2" == "true" ]] && echo "**→**" || echo "" )
+          _SKIP_DOCS=$(    [[ "$DOCS_ONLY"     == "true" ]] && echo "**→**" || echo "" )
+          _SKIP_DEPLOY=$(  [[ "$IS_DEPLOYMENT" == "true" ]] && echo "**→**" || echo "" )
+          _MG=$(    [[ "$EVENT_NAME" == "merge_group"       ]] && echo "**→**" || echo "" )
+          _MAIN=$(  [[ "$REF"        == "refs/heads/main"   ]] && echo "**→**" || echo "" )
+          _SCHED=$( [[ "$EVENT_NAME" == "schedule"          ]] && echo "**→**" || echo "" )
+          _WD=$(    [[ "$EVENT_NAME" == "workflow_dispatch" ]] && echo "**→**" || echo "" )
+          _NMT=$(   [[ "$NEEDS_MORE_TESTS" == "true"        ]] && echo "**→**" || echo "" )
+
+          cat <<SUMMARY >> "$GITHUB_STEP_SUMMARY"
+          ## CI Configuration
+
+          **Event:** \`$EVENT_NAME\` | **Ref:** \`$REF\` | **Test suite:** \`${TEST_SUITE:-all}\`
+
+          | Setting | Value |
+          |---|---|
+          | \`docs_only\` | \`$DOCS_ONLY\` |
+          | \`is_deployment_workflow\` | \`$IS_DEPLOYMENT\` |
+          | \`needs_more_tests\` | \`$NEEDS_MORE_TESTS\` |
+          | \`full_test_suite\` | \`$FULL_TEST_SUITE\` |
+
+          ### Expected test tiers
+
+          | | Tier | Condition |
+          |---|---|---|
+          | $_L0 | **L0** | any non-docs/deployment run |
+          | $_L1 | **L1** | \`main\` / \`schedule\` / \`workflow_dispatch\` / \`merge_group\` / label _needs-more-tests_ |
+          | $_L2 | **L2** | \`schedule\` / \`workflow_dispatch\` only |
+
+          ### Decision tree
+
+          **Why tests may be skipped**
+
+          | | Reason |
+          |---|---|
+          | $_SKIP_DOCS   | Docs-only change (no src files modified) |
+          | $_SKIP_DEPLOY | Deployment workflow (\`deploy-release/*\` branch) |
+
+          **L1/L2 active trigger**
+
+          | | Trigger |
+          |---|---|
+          | $_MAIN  | Push to \`main\` |
+          | $_SCHED | \`schedule\` |
+          | $_WD    | \`workflow_dispatch\` |
+          | $_MG    | \`merge_group\` |
+          | $_NMT   | Label: _needs-more-tests_ |
+          SUMMARY
+
   lint-check:
     name: Lint check
     runs-on: ubuntu-latest
@@ -302,36 +423,6 @@ jobs:
             ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
-
-  check-labels:
-    runs-on: ubuntu-latest
-    needs: [pre-flight, cicd-container-build]
-    outputs:
-      needs_more_tests: ${{ steps.check.outputs.needs_more_tests }}
-      full_test_suite: ${{ steps.check.outputs.full_test_suite }}
-    steps:
-      - name: Check PR labels
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [[ "${{ github.ref }}" == refs/heads/pull-request/* ]]; then
-            PR_NUMBER=$(echo "${{ github.ref }}" | sed 's|refs/heads/pull-request/||')
-            LABELS=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
-            if echo "$LABELS" | grep -q "needs-more-tests"; then
-              echo "needs_more_tests=true" >> $GITHUB_OUTPUT
-            else
-              echo "needs_more_tests=false" >> $GITHUB_OUTPUT
-            fi
-            if echo "$LABELS" | grep -q "full-test-suite"; then
-              echo "full_test_suite=true" >> $GITHUB_OUTPUT
-            else
-              echo "full_test_suite=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "needs_more_tests=false" >> $GITHUB_OUTPUT
-            echo "full_test_suite=false" >> $GITHUB_OUTPUT
-          fi
 
   cicd-unit-tests-core:
     if: |
@@ -577,7 +668,7 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l1) }}
-    needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion, check-labels]
+    needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
       (
@@ -587,7 +678,7 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
-      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.check-labels.outputs.needs_more_tests == 'true' || needs.check-labels.outputs.full_test_suite == 'true')
+      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.configure.outputs.needs_more_tests == 'true' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
@@ -646,7 +737,7 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l2) }}
-    needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion, check-labels]
+    needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
       (
@@ -656,7 +747,7 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
-      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.full_test_suite == 'true')
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
@@ -772,20 +863,13 @@ jobs:
   Nemo_CICD_Test:
     needs:
       - pre-flight
-      - check-labels
+      - configure
       - cicd-unit-tests-core
       - cicd-unit-tests-diffusion
       - cicd-functional-tests-l0
       - cicd-functional-tests-l1
       - cicd-functional-tests-l2
-    if: |
-      (
-        needs.pre-flight.outputs.docs_only == 'true'
-        || needs.pre-flight.outputs.is_deployment_workflow == 'true'
-        || needs.pre-flight.outputs.is_ci_workload == 'true'
-        || always()
-      )
-      && !cancelled()
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     permissions: write-all
     steps:
@@ -797,12 +881,9 @@ jobs:
         shell: bash -e -u -o pipefail {0}
         env:
           GH_TOKEN: ${{ github.token }}
-          # A tier is "expected" if its if-condition (excluding success()/is_ci_workload/force_run_all) would be true.
-          # Unexpected skips in an expected tier are failures.
-          # is_ci_workload must be true, otherwise docs-only/deployment runs have no tests and trigger false positives.
-          EXPECT_L0: ${{ needs.pre-flight.outputs.is_ci_workload == 'true' && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') }}
-          EXPECT_L1: ${{ needs.pre-flight.outputs.is_ci_workload == 'true' && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.check-labels.outputs.needs_more_tests == 'true') }}
-          EXPECT_L2: ${{ needs.pre-flight.outputs.is_ci_workload == 'true' && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only') && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+          EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
+          EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
+          EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
         run: |
           FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
 
