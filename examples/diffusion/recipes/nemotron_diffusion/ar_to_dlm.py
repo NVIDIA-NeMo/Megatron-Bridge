@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+NemotronDiffusion diffusion LM pretraining (no distillation).
+
+Uses the sbd_block_diff diffusion paradigm via DGPTStep. No teacher model is needed.
+Select model size with --model-size {3b,8b,14b} (default: 14b).
+Use --hf-path to override the HuggingFace model ID or local model path.
+Configuration is overridden via YAML and CLI in the same way as pretrain_ministral3_14b.py.
+"""
+
+import argparse
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Tuple
+
+import torch
+
+# Register NemotronDiffusionBridge, overriding the base Ministral3Bridge so that
+# AutoBridge returns NemotronDiffusionModelProvider (with NemotronDiffusionAttention).
+import megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge  # noqa: F401
+
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.pretrain import pretrain
+from megatron.bridge.training.utils.omegaconf_utils import (
+    apply_overrides,
+    create_omegaconf_dict_config,
+    parse_hydra_overrides,
+)
+from megatron.bridge.utils.common_utils import get_rank_safe
+from megatron.bridge.diffusion.models.common.dgpt_step import DGPTStep
+from megatron.bridge.diffusion.recipes.nemotron_diffusion.ar_to_dlm import nemotron_diffusion3_pretrain_config as pretrain_config
+from omegaconf import OmegaConf
+
+logger: logging.Logger = logging.getLogger(__name__)
+
+SCRIPT_DIR: Path = Path(__file__).parent.parent.resolve()
+DEFAULT_CONFIG_FILENAME: str = "train_local.yaml"
+DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "override_configs" / DEFAULT_CONFIG_FILENAME
+
+def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
+    parser = argparse.ArgumentParser(
+        description="NemotronDiffusion diffusion LM pretraining (no distillation)",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    parser.add_argument(
+        "--model-size",
+        type=str,
+        default="14b",
+        help="Model size to train (default: 14b).",
+    )
+    parser.add_argument(
+        "--hf-path",
+        type=str,
+        default=None,
+        help="HuggingFace model ID or local path to model weights. Overrides the default for the selected model size.",
+    )
+    parser.add_argument(
+        "--config-file",
+        type=str,
+        default=str(DEFAULT_CONFIG_FILE_PATH),
+        help="Path to YAML override file.",
+    )
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--data-paths",
+        type=str,
+        nargs="*",
+        default=None,
+        help="List of dataset file paths (space or comma-separated).",
+    )
+    parser.add_argument(
+        "--data-args-path",
+        type=str,
+        default=None,
+        help="Path to file containing data arguments.",
+    )
+
+    args, cli_dotlist_overrides = parser.parse_known_args()
+
+    if args.data_paths:
+        flattened_paths = []
+        for path in args.data_paths:
+            if "," in path:
+                flattened_paths.extend(path.split(","))
+            else:
+                flattened_paths.append(path)
+        args.data_paths = [p.strip() for p in flattened_paths if p.strip()]
+
+    return args, cli_dotlist_overrides
+
+
+def main() -> None:
+    args, cli_overrides = parse_cli_args()
+    cfg: ConfigContainer = pretrain_config(
+        data_paths=args.data_paths,
+        data_args_path=args.data_args_path,
+        hf_path=args.hf_path,
+    )
+
+    if get_rank_safe() == 0:
+        cfg.print_yaml()
+
+    merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
+
+    if args.config_file:
+        if not os.path.exists(args.config_file):
+            logger.error(f"Override YAML file not found: {args.config_file}")
+            sys.exit(1)
+        yaml_overrides_omega = OmegaConf.load(args.config_file)
+        merged_omega_conf = OmegaConf.merge(merged_omega_conf, yaml_overrides_omega)
+
+    if cli_overrides:
+        merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
+
+    final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
+    apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
+
+    if get_rank_safe() == 0:
+        logger.info("--- Final Merged Configuration ---")
+        cfg.print_yaml()
+        logger.info("----------------------------------")
+
+    pretrain(config=cfg, forward_step_func=DGPTStep())
+
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()
