@@ -2994,7 +2994,7 @@ class TestCheckpointManager:
                 checkpointing_context={"context": "data"},
                 non_persistent_ckpt=True,
                 train_data_iterator=ctx.train_data_iterator,
-                checkpoint_manager=None,
+                callback_manager=None,
             )
 
     def test_default_checkpoint_manager_load_delegates(self):
