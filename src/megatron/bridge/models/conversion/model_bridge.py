@@ -18,7 +18,7 @@ import fnmatch
 import itertools
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import (
     Callable,
     Dict,
@@ -44,6 +44,7 @@ from megatron.core.utils import (
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from transformers.modeling_utils import PreTrainedModel
 
+from megatron.bridge.models.common import ModelConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
@@ -68,6 +69,7 @@ logger = logging.getLogger(__name__)
 MappingT = TypeVar("MappingT", bound=MegatronParamMapping)
 HFPreTrained = TypeVar("HFPreTrained")
 ModelProviderTarget = TypeVar("ModelProviderTarget", bound=ModelProviderMixin)
+ModelConfigTarget = TypeVar("ModelConfigTarget", bound=ModelConfig)
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 _BridgeImplClass = TypeVar("_BridgeImplClass", bound="MegatronModelBridge")
 
@@ -240,6 +242,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     # Provider class to instantiate in provider_bridge (set via @register_bridge decorator)
     # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
     PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
+    MODEL_CONFIG_CLASS = None
+    TRANSFORMER_CONFIG_CLASS = None
 
     # Additional file patterns to automatically copy during HF export (e.g., ["*reasoning_parser.py"])
     # Set this in bridge subclasses to include model-specific files beyond standard artifacts
@@ -494,6 +498,123 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 setattr(provider, key, value)
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config) -> tuple[dict, dict]:
+        transformer_cfg_kwargs = {}
+        model_cfg_kwargs = {}
+
+        for hf_name, megatron_name in self.CONFIG_MAPPING:
+            has_value = False
+            value = None
+            if "." in hf_name:
+                # Nested dict access: "parent.child" -> getattr(config, parent).get(child)
+                parts = hf_name.split(".", 1)
+                parent = getattr(hf_config, parts[0], None)
+                if parent is not None and isinstance(parent, dict):
+                    if parts[1] in parent:
+                        value = parent[parts[1]]
+                        has_value = True
+            else:
+                value = getattr(hf_config, hf_name, None)
+                has_value = hasattr(hf_config, hf_name)
+            if has_value:
+                # Adds `name=value` to appropriate kwargs list based on whether `name` is in TransformerConfig.
+                if hasattr(TransformerConfig, megatron_name):
+                    transformer_cfg_kwargs[megatron_name] = value
+                else:
+                    model_cfg_kwargs[megatron_name] = value
+
+        if "rotary_base" not in transformer_cfg_kwargs:
+            try:
+                transformer_cfg_kwargs["rotary_base"] = rope_theta_from_hf(hf_config)
+            except ValueError:
+                pass
+
+        # Handle rope scaling: extract params from rope_scaling dict
+        # HF configs use either "type" or "rope_type" key for the scaling type
+        from megatron.bridge.models.mla_provider import MLATransformerConfig
+
+        is_mla_config = self.TRANSFORMER_CONFIG_CLASS is not None and issubclass(
+            self.TRANSFORMER_CONFIG_CLASS, MLATransformerConfig
+        )
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+
+        if rope_scaling is not None and isinstance(rope_scaling, dict):
+            rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
+            if rope_type == "yarn":
+                if is_mla_config:
+                    # MLA models: use direct field names (mscale, rotary_scaling_factor, etc.)
+                    mla_params = {}
+                    for hf_key, megatron_key in self.MLA_ROPE_SCALING_MAPPING:
+                        value = rope_scaling.get(hf_key)
+                        if value is not None:
+                            mla_params[megatron_key] = value
+                    if mla_params:
+                        transformer_cfg_kwargs["_mla_rope_params"] = mla_params
+                else:
+                    # GPT models: use yarn_ prefixed field names
+                    yarn_params = {"position_embedding_type": "yarn"}
+                    for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
+                        yarn_params[megatron_key] = rope_scaling.get(hf_key)
+                    if "truncate" in rope_scaling:
+                        yarn_params["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
+                    if yarn_params:
+                        transformer_cfg_kwargs["_yarn_params"] = yarn_params
+        elif is_mla_config:
+            # MLA provider without rope_scaling in HF config:
+            # Override rotary_scaling_factor to 1.0 (no scaling) instead of
+            # using MLATransformerConfig default of 40
+            transformer_cfg_kwargs["_mla_rope_params"] = {"rotary_scaling_factor": 1.0, "mscale_all_dim": 1.0}
+
+        # Handle vocab_size_divisible_by
+        vocab_size = model_cfg_kwargs.get("vocab_size")
+        if vocab_size is not None:
+            model_cfg_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(vocab_size)
+
+        # Determine dtype
+        params_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
+        transformer_cfg_kwargs["fp16"] = params_dtype == torch.float16
+        transformer_cfg_kwargs["bf16"] = params_dtype == torch.bfloat16
+        transformer_cfg_kwargs["params_dtype"] = params_dtype
+
+        # Convert activation function (some models use hidden_act, others use hidden_activation)
+        hidden_act = getattr(hf_config, "hidden_act", None) or getattr(hf_config, "hidden_activation", "silu")
+        transformer_cfg_kwargs["activation_func"] = self.hf_to_megatron_activation(hidden_act)
+
+        return transformer_cfg_kwargs, model_cfg_kwargs
+
+    def config_bridge(self, hf_pretrained: HFPreTrained) -> ModelConfigTarget:
+        from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+
+        hf_config = hf_pretrained.config
+
+        transformer_cfg_kwargs, model_cfg_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+
+        yarn_params = transformer_cfg_kwargs.pop("_yarn_params", None)
+        mla_rope_params = transformer_cfg_kwargs.pop("_mla_rope_params", None)
+
+        transformer_cfg_cls = (
+            self.TRANSFORMER_CONFIG_CLASS if self.TRANSFORMER_CONFIG_CLASS is not None else TransformerConfig
+        )
+        model_cfg_cls = self.MODEL_CONFIG_CLASS if self.MODEL_CONFIG_CLASS is not None else GPTModelConfig
+
+        has_transformer_cfg = "transformer" in [f.name for f in fields(model_cfg_cls)]
+        if has_transformer_cfg:
+            transformer_cfg = transformer_cfg_cls(**transformer_cfg_kwargs)
+            model_cfg = model_cfg_cls(transformer=transformer_cfg, **model_cfg_kwargs)
+        else:
+            model_cfg = model_cfg_cls(**model_cfg_kwargs)
+
+        if yarn_params and has_transformer_cfg:
+            for key, value in yarn_params.items():
+                setattr(model_cfg.transformer, key, value)
+
+        # Apply MLA rope params via setattr (for MLA models like DeepSeek, Kimi)
+        if mla_rope_params and has_transformer_cfg:
+            for key, value in mla_rope_params.items():
+                setattr(model_cfg.transformer, key, value)
+
+        return model_cfg
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:
