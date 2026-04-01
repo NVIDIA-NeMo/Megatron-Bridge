@@ -13,22 +13,18 @@
 # limitations under the License.
 
 """
-VLM generation script — converts HF checkpoint to Megatron and runs greedy
-auto-regressive generation.  Supports all VLM model families.
+Example:
+  # Vision-Language generation with image from URL:
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" --prompt="Describe this image."
 
-Example (Qwen):
-  uv run python -m torch.distributed.run --nproc_per_node=4 \
-      examples/conversion/hf_to_megatron_generate_vlm.py \
-      --hf_model_path Qwen/Qwen2.5-VL-3B-Instruct \
-      --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
-      --prompt "Describe this image." --tp 2 --pp 2
+  # Vision-Language generation with local image:
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="/path/to/image.jpg" --prompt="What do you see in this image?"
 
-Example (Kimi K2.5 — multi-node via srun):
-  srun ... uv run python -m torch.distributed.run \
-      examples/conversion/hf_to_megatron_generate_vlm.py \
-      --hf_model_path moonshotai/Kimi-K2.5 --trust_remote_code \
-      --image_path "https://example.com/image.jpeg" \
-      --prompt "Describe this image." --tp 2 --ep 48 --pp 1
+  # Text-only generation (no image):
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --prompt="Hello, how are you?"
+
+  # Load from Megatron checkpoint:
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
 """
 
 import argparse
