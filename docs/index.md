@@ -8,7 +8,7 @@
 
 parallelisms.md
 performance-summary.md
-performance-summary-archive/index.md
+performance-summary-archive.md
 performance-guide.md
 recipe-usage.md
 nemo2-migration-guide.md
