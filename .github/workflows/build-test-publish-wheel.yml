@@ -49,7 +49,7 @@ jobs:
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@v0.86.1
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@5e47529f4a12ecd39640737a56235879a9f20bc8
     with:
       dry-run: true
       python-package: megatron.bridge
@@ -63,6 +63,7 @@ jobs:
       no-build-isolation: true
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
+      extra-no-build-isolation-packages: "grpcio-tools"
     secrets:
       TWINE_USERNAME: __token__
       TWINE_PASSWORD: ${{ secrets.SVC_PYPI_TEST_TOKEN }}
