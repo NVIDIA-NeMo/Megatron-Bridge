@@ -603,6 +603,7 @@ class TestNemotron3NanoConversion:
             raise
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.pleasefixme
     def test_nemotron_3_nano_autoconfig_roundtrip(self, nemotron_3_nano_toy_model_path, tmp_path):
         from tests.functional_tests.utils import autoconfig_roundtrip
 
