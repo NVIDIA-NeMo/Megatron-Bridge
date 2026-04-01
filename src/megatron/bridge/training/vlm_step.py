@@ -451,6 +451,9 @@ def forward_step(
         }
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
+    if loss_mask is not None:
+        loss_mask = loss_mask.contiguous()
+
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss
     with straggler_timer:
