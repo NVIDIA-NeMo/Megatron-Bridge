@@ -16,7 +16,12 @@ import os
 from typing import Optional
 
 import torch
+from megatron.core.distributed import DistributedDataParallelConfig
+
 from megatron.bridge import AutoBridge
+from megatron.bridge.diffusion.models.nemotron_diffusion.nemotron_diffusion_provider import (
+    NemotronDiffusionModelProvider,
+)
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -32,11 +37,6 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
-from megatron.core.distributed import DistributedDataParallelConfig
-from typing_extensions import TypedDict, Unpack
-
-from megatron.bridge.diffusion.models.nemotron_diffusion.nemotron_diffusion_provider import NemotronDiffusionModelProvider
-from megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge import NemotronDiffusionBridge
 
 
 def nemotron_diffusion3_pretrain_config(**user_kwargs) -> ConfigContainer:
@@ -46,6 +46,7 @@ def nemotron_diffusion3_pretrain_config(**user_kwargs) -> ConfigContainer:
     """
     # Combine defaults with user kwargs; user values take precedence.
     return _nemotron_diffusion3_common(**user_kwargs)
+
 
 def _nemotron_diffusion3_common(
     model_provider: NemotronDiffusionModelProvider | None = None,
@@ -138,7 +139,7 @@ def _nemotron_diffusion3_common(
         )
     else:
         model_cfg = model_provider()
-        
+
     model_cfg.tensor_model_parallel_size = tensor_parallelism
     model_cfg.pipeline_model_parallel_size = pipeline_parallelism
     model_cfg.pipeline_dtype = pipeline_parallelism_dtype
@@ -152,7 +153,7 @@ def _nemotron_diffusion3_common(
         model_cfg.recompute_granularity = "full"
         model_cfg.recompute_method = "uniform"
         model_cfg.recompute_num_layers = 1
-    
+
     model_cfg.cross_entropy_fusion_impl = "te"
 
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing_dllm(
@@ -276,7 +277,7 @@ def distributed_fused_adam_with_cosine_annealing_dllm(
         lr_decay_style="cosine",
         lr_warmup_iters=lr_warmup_iters,
         lr_warmup_init=0.0,
-        lr_decay_iters=lr_decay_iters
+        lr_decay_iters=lr_decay_iters,
     )
 
     return optimizer, scheduler

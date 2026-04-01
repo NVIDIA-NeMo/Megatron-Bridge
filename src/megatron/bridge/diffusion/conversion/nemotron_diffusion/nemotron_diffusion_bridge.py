@@ -24,6 +24,11 @@ Supported models:
 - Ministral-3-8B-Base-2512
 """
 
+from megatron.core.models.gpt.gpt_model import GPTModel
+
+from megatron.bridge.diffusion.models.nemotron_diffusion.nemotron_diffusion_provider import (
+    NemotronDiffusionModelProvider,
+)
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -37,11 +42,10 @@ from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 # Ensure the base Ministral3Bridge is registered first so we can override it
 from megatron.bridge.models.ministral3 import Ministral3Bridge  # noqa: F401
 
-from megatron.bridge.diffusion.models.nemotron_diffusion.nemotron_diffusion_provider import NemotronDiffusionModelProvider
-from megatron.core.models.gpt.gpt_model import GPTModel
 
 try:
     from transformers import Mistral3ForConditionalGeneration
+
     HAS_MISTRAL3 = True
 except ImportError:
     Mistral3ForConditionalGeneration = None
@@ -77,26 +81,28 @@ class NemotronDiffusionBridge(MegatronModelBridge):
         }
 
         mapping_list = [AutoMapping(megatron_param=k, hf_param=v) for k, v in param_mappings.items()]
-        mapping_list.extend([
-            ReplicatedMapping(
-                megatron_param="vision_tower.**",
-                hf_param="vision_tower.**",
-            ),
-            ReplicatedMapping(
-                megatron_param="multi_modal_projector.**",
-                hf_param="multi_modal_projector.**",
-            ),
-            QKVMapping(
-                megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
-                q="language_model.model.layers.*.self_attn.q_proj.weight",
-                k="language_model.model.layers.*.self_attn.k_proj.weight",
-                v="language_model.model.layers.*.self_attn.v_proj.weight",
-            ),
-            GatedMLPMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
-                gate="language_model.model.layers.*.mlp.gate_proj.weight",
-                up="language_model.model.layers.*.mlp.up_proj.weight",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                ReplicatedMapping(
+                    megatron_param="vision_tower.**",
+                    hf_param="vision_tower.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="multi_modal_projector.**",
+                    hf_param="multi_modal_projector.**",
+                ),
+                QKVMapping(
+                    megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="language_model.model.layers.*.self_attn.q_proj.weight",
+                    k="language_model.model.layers.*.self_attn.k_proj.weight",
+                    v="language_model.model.layers.*.self_attn.v_proj.weight",
+                ),
+                GatedMLPMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
+                    gate="language_model.model.layers.*.mlp.gate_proj.weight",
+                    up="language_model.model.layers.*.mlp.up_proj.weight",
+                ),
+            ]
+        )
 
         return MegatronMappingRegistry(*mapping_list)

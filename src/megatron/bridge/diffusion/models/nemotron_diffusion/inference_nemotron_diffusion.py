@@ -9,18 +9,21 @@ The KV cache lives inside each layer's NemotronDiffusionAttention via its
 _inference_mode / _kv_cache_* attributes. No Megatron InferenceContext is used.
 """
 
-import numpy as np
 import time
+from typing import Optional
+
+import numpy as np
 import torch
 import torch.nn.functional as F
-from typing import Optional
 
 
 # ---------------------------------------------------------------------------
 # Helpers (ported from the original eval.py)
 # ---------------------------------------------------------------------------
 
+
 def add_gumbel_noise(logits, temperature):
+    """Apply Gumbel noise to logits for stochastic sampling."""
     if temperature == 0:
         return logits
     logits = logits.to(torch.float64)
@@ -30,29 +33,33 @@ def add_gumbel_noise(logits, temperature):
 
 
 def get_num_transfer_tokens(mask_index, steps):
+    """Compute the number of tokens to unmask at each diffusion step."""
     mask_num = mask_index.sum(dim=1, keepdim=True)
     base = mask_num // steps
     remainder = mask_num % steps
-    num_transfer_tokens = torch.zeros(
-        mask_num.size(0), steps, device=mask_index.device, dtype=torch.int64
-    ) + base
+    num_transfer_tokens = torch.zeros(mask_num.size(0), steps, device=mask_index.device, dtype=torch.int64) + base
     for i in range(mask_num.size(0)):
         num_transfer_tokens[i, : remainder[i]] += 1
     return num_transfer_tokens
 
 
 def get_transfer_index(
-    logits, temperature, remasking, mask_index, x,
-    num_transfer_tokens, threshold=None, neg_entropy=False,
+    logits,
+    temperature,
+    remasking,
+    mask_index,
+    x,
+    num_transfer_tokens,
+    threshold=None,
+    neg_entropy=False,
 ):
+    """Select token indices to transfer from masked to unmasked at each diffusion step."""
     logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
     x0 = torch.argmax(logits_with_noise, dim=-1)
 
     if remasking == "low_confidence":
         p = F.softmax(logits, dim=-1)
-        x0_p = torch.squeeze(
-            torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1
-        )
+        x0_p = torch.squeeze(torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1)
     elif remasking == "random":
         x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
     else:
@@ -85,6 +92,7 @@ def get_transfer_index(
 # ---------------------------------------------------------------------------
 # Core attention-layer helpers
 # ---------------------------------------------------------------------------
+
 
 def _unwrap(model):
     """Unwrap Float16Module or DDP wrappers to get the raw GPTModel."""
@@ -127,7 +135,7 @@ _TP_SRC_GLOBAL_RANK = 0
 _CMD_FORWARD = 1
 _CMD_SET_INF_MODE_ON = 2
 _CMD_SET_INF_MODE_OFF = 3
-_CMD_SET_PARAMS = 4       # followed by 2 ints: causal, cache_enabled
+_CMD_SET_PARAMS = 4  # followed by 2 ints: causal, cache_enabled
 _CMD_CLEAR_CACHE = 5
 _CMD_STOP = 0
 
@@ -196,6 +204,7 @@ def _model_forward(model, input_ids):
 # Autoregressive generation
 # ---------------------------------------------------------------------------
 
+
 @torch.no_grad()
 def generate_ar(
     model,
@@ -248,6 +257,7 @@ def generate_ar(
 # ---------------------------------------------------------------------------
 # dLLM (Block Diffusion) generation
 # ---------------------------------------------------------------------------
+
 
 @torch.no_grad()
 def generate_dllm(
@@ -302,7 +312,6 @@ def generate_dllm(
     assert steps % num_blocks == 0
     steps_per_block = steps // num_blocks
 
-
     nfe = 0
     _t_prefill_ms = 0.0
     _t_denoise_ms = 0.0
@@ -315,8 +324,7 @@ def generate_dllm(
             _step_models.extend([sched_model] * sched_steps)
         if len(_step_models) != steps_per_block:
             raise ValueError(
-                f"model_schedule total steps ({len(_step_models)}) != "
-                f"steps_per_block ({steps_per_block})"
+                f"model_schedule total steps ({len(_step_models)}) != steps_per_block ({steps_per_block})"
             )
         for sched_model, _ in model_schedule:
             _set_inference_mode(sched_model, True)
@@ -386,26 +394,33 @@ def generate_dllm(
                 if block_length == 1:
                     logits_use = next_logits_context
                 else:
-                    logits_use = torch.cat(
-                        [next_logits_context, logits_block[:, :-1, :]], dim=1
-                    )
+                    logits_use = torch.cat([next_logits_context, logits_block[:, :-1, :]], dim=1)
                 mask_use = mask_block_idx
                 x_use = x_accum[:, block_slice]
 
                 x0, transfer_idx = get_transfer_index(
-                    logits_use, temperature, remasking, mask_use, x_use,
+                    logits_use,
+                    temperature,
+                    remasking,
+                    mask_use,
+                    x_use,
                     num_transfer_tokens=num_transfer_tokens[:, i],
-                    threshold=threshold, neg_entropy=neg_entropy,
+                    threshold=threshold,
+                    neg_entropy=neg_entropy,
                 )
                 cur = x_accum[:, block_slice].clone()
                 cur[transfer_idx] = x0[transfer_idx]
                 x_accum[:, block_slice] = cur
             else:
                 x0, transfer_idx = get_transfer_index(
-                    logits_block, temperature, remasking, mask_block_idx,
+                    logits_block,
+                    temperature,
+                    remasking,
+                    mask_block_idx,
                     x_accum[:, block_slice],
                     num_transfer_tokens=num_transfer_tokens[:, i],
-                    threshold=threshold, neg_entropy=neg_entropy,
+                    threshold=threshold,
+                    neg_entropy=neg_entropy,
                 )
                 cur = x_accum[:, block_slice].clone()
                 cur[transfer_idx] = x0[transfer_idx]
@@ -448,6 +463,7 @@ def generate_dllm(
 # TP follower loop (for tp_local > 0 ranks)
 # ---------------------------------------------------------------------------
 
+
 def tp_send_stop():
     """Tell TP followers to exit their loop."""
     _tp_send_cmd(_CMD_STOP)
@@ -470,12 +486,11 @@ def tp_follower_loop(model):
         elif cmd == _CMD_FORWARD:
             input_ids = _broadcast_tensor(
                 torch.zeros(1, 1, dtype=torch.long, device="cuda"),
-                _TP_SRC_GLOBAL_RANK, _TP_GROUP,
+                _TP_SRC_GLOBAL_RANK,
+                _TP_GROUP,
             )
             seq_len = input_ids.shape[1]
-            position_ids = torch.arange(
-                seq_len, device=input_ids.device
-            ).unsqueeze(0).expand_as(input_ids)
+            position_ids = torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
             model(input_ids=input_ids, position_ids=position_ids, attention_mask=None)
         elif cmd == _CMD_SET_INF_MODE_ON:
             for attn in _get_core_attentions(model):

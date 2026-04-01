@@ -35,49 +35,49 @@ Usage (TP=2, DP=4 across 8 GPUs):
 """
 
 import json
-import time
 import logging
 import os
 import sys
+import time
 from datetime import timedelta
-from typing import List, Optional, Tuple, Type, TypeVar, Union
+from typing import List, Optional, Tuple, Type, TypeVar
+
 
 # Patch antlr4 ATNDeserializer to accept both version 3 (antlr4==4.9 grammar)
 # and version 4 (antlr4==4.11), so omegaconf grammars work regardless of installed version.
 try:
     from antlr4.atn.ATNDeserializer import ATNDeserializer
+
     _orig_check = ATNDeserializer.checkVersion
+
     def _patched_check(self):
         try:
             _orig_check(self)
         except Exception:
             pass  # accept any ATN version
+
     ATNDeserializer.checkVersion = _patched_check
 except Exception:
     pass
 
 
 import torch
-import torch.nn.functional as F
 from accelerate import Accelerator, InitProcessGroupKwargs
-from tqdm import tqdm
-from transformers import AutoTokenizer
-
-import lm_eval.models.utils as utils
-from lm_eval.api.instance import Instance
-from lm_eval.api.model import LM
-from lm_eval.api.registry import register_model
-
-from megatron.bridge import AutoBridge
-
-# Register NemotronDiffusionBridge so AutoBridge uses NemotronDiffusionAttention
-import megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge  # noqa: F401
-
 from diffusion.recipes.nemotron_diffusion.inference_nemotron_diffusion import (
     generate_ar,
     generate_dllm,
     set_tp_group,
 )
+from lm_eval.api.instance import Instance
+from lm_eval.api.model import LM
+from lm_eval.api.registry import register_model
+from tqdm import tqdm
+from transformers import AutoTokenizer
+
+# Register NemotronDiffusionBridge so AutoBridge uses NemotronDiffusionAttention
+import megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge  # noqa: F401
+from megatron.bridge import AutoBridge
+
 
 eval_logger = logging.getLogger(__name__)
 
@@ -114,8 +114,6 @@ class _DPAccelerator:
         gathered = [torch.zeros_like(tensor) for _ in range(self.num_processes)]
         torch.distributed.all_gather(gathered, tensor, group=self._dp_group)
         return torch.cat(gathered, dim=0)
-
-
 
 
 @register_model("megatron_dllm")
@@ -204,7 +202,8 @@ class MegatronDLLM(LM):
             # call model.forward() in sync.  gather/barrier use sub-groups.
             if not torch.distributed.is_initialized():
                 torch.distributed.init_process_group(
-                    backend="nccl", init_method="env://",
+                    backend="nccl",
+                    init_method="env://",
                     timeout=timedelta(hours=2),
                 )
             local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -242,14 +241,12 @@ class MegatronDLLM(LM):
         else:
             eval_logger.info(f"Loading Megatron model from {megatron_load_path} via AutoBridge...")
 
-        bridge = AutoBridge.from_hf_pretrained(
-            hf_model_id, trust_remote_code=True, torch_dtype=torch.bfloat16
-        )
+        bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True, torch_dtype=torch.bfloat16)
 
         model_provider = bridge.to_megatron_provider(load_weights=load_hf)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
-        
+
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.params_dtype = torch.bfloat16
         model_provider.seq_length = int(max_sequence_length)
@@ -260,6 +257,7 @@ class MegatronDLLM(LM):
             megatron_models = model_provider.provide_distributed_model(wrap_with_ddp=False)
         else:
             from megatron.bridge.training.model_load_save import build_and_load_model
+
             megatron_models = build_and_load_model(
                 checkpoint_path=megatron_load_path,
                 model_cfg=model_provider,
@@ -279,6 +277,7 @@ class MegatronDLLM(LM):
         self.model_schedule = None
         if cascade_schedule not in (None, "None", "none", ""):
             from megatron.bridge.training.model_load_save import build_and_load_model
+
             schedule_entries = []
             parts = str(cascade_schedule).split("|")
             if len(parts) % 3 != 0:
@@ -290,8 +289,12 @@ class MegatronDLLM(LM):
                 ckpt_path = parts[i]
                 n_steps = int(parts[i + 1])
                 sched_hf_id = parts[i + 2]
-                eval_logger.info(f"Loading cascade model from {ckpt_path} using HF config {sched_hf_id} ({n_steps} steps)")
-                eval_logger.info(f"  cascade match check: sched_hf_id={repr(sched_hf_id)} vs hf_model_id={repr(hf_model_id)}")
+                eval_logger.info(
+                    f"Loading cascade model from {ckpt_path} using HF config {sched_hf_id} ({n_steps} steps)"
+                )
+                eval_logger.info(
+                    f"  cascade match check: sched_hf_id={repr(sched_hf_id)} vs hf_model_id={repr(hf_model_id)}"
+                )
                 if os.path.normpath(sched_hf_id) == os.path.normpath(hf_model_id):
                     # Reuse primary model provider to avoid re-loading AutoBridge
                     # (needed when local HF path lacks _name_or_path in config.json)
@@ -327,6 +330,7 @@ class MegatronDLLM(LM):
         # Set up TP broadcast so _model_forward syncs tokens across TP peers.
         if tp > 1:
             from megatron.core import parallel_state as mpu
+
             tp_group = mpu.get_tensor_model_parallel_group()
             tp_src = (global_rank // tp) * tp
             set_tp_group(tp_group, src_global_rank=tp_src)
@@ -339,7 +343,11 @@ class MegatronDLLM(LM):
             _my_dp_group = self.accelerator._dp_group
 
             def _patched_gather_object(
-                obj, object_gather_list=None, dst=None, group=None, group_dst=None,
+                obj,
+                object_gather_list=None,
+                dst=None,
+                group=None,
+                group_dst=None,
             ):
                 if group is None:
                     group = _my_dp_group
@@ -349,7 +357,11 @@ class MegatronDLLM(LM):
                         group_dst = dst
                         dst = None
                 _orig_gather_object(
-                    obj, object_gather_list, dst=dst, group=group, group_dst=group_dst,
+                    obj,
+                    object_gather_list,
+                    dst=dst,
+                    group=group,
+                    group_dst=group_dst,
                 )
 
             torch.distributed.gather_object = _patched_gather_object
@@ -366,11 +378,10 @@ class MegatronDLLM(LM):
         )
 
     @classmethod
-    def create_from_arg_string(
-        cls: Type[T], arg_string: str, additional_config: Optional[dict] = None
-    ) -> T:
+    def create_from_arg_string(cls: Type[T], arg_string: str, additional_config: Optional[dict] = None) -> T:
         additional_config = {} if additional_config is None else additional_config
         from lm_eval.utils import simple_parse_args_string
+
         args = simple_parse_args_string(arg_string)
         args2 = {k: v for k, v in additional_config.items() if v is not None}
         return cls(**args, **args2)
@@ -392,9 +403,7 @@ class MegatronDLLM(LM):
         return self._world_size
 
     def tok_encode(self, text, add_special_tokens=True):
-        return self.tokenizer(
-            text, return_tensors="pt", add_special_tokens=add_special_tokens
-        ).input_ids
+        return self.tokenizer(text, return_tensors="pt", add_special_tokens=add_special_tokens).input_ids
 
     def tok_decode(self, tokens, skip_special_tokens=True):
         return self.tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
@@ -419,14 +428,10 @@ class MegatronDLLM(LM):
         if self.add_bos_token and self.tokenizer.bos_token:
             prompts = [self.tokenizer.bos_token + p for p in prompts]
 
-        prompt_ids = self.tokenizer(
-            prompts, return_tensors="pt", padding=True, padding_side="left"
-        ).input_ids
+        prompt_ids = self.tokenizer(prompts, return_tensors="pt", padding=True, padding_side="left").input_ids
 
         if prompt_ids.shape[1] > self.max_sequence_length - self.max_new_tokens:
-            eval_logger.warning(
-                f"Prompt length {prompt_ids.shape[1]} exceeds limit, truncating from left."
-            )
+            eval_logger.warning(f"Prompt length {prompt_ids.shape[1]} exceeds limit, truncating from left.")
             prompt_ids = prompt_ids[:, -(self.max_sequence_length - self.max_new_tokens) :]
 
         prompt_ids = prompt_ids.to(self.device)
@@ -462,25 +467,25 @@ class MegatronDLLM(LM):
         _latency_ms = (time.perf_counter() - _t_gen_start) * 1000.0
 
         generated_tokens = out[:, prompt_ids.shape[1] :]
-        tokenized_out = self.tokenizer.batch_decode(
-            generated_tokens, skip_special_tokens=True
-        )[0]
+        tokenized_out = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
 
         if not isinstance(tokenized_out, str):
             tokenized_out = str(tokenized_out) if tokenized_out is not None else ""
 
         if self.nfe_log_path:
             self._log_nfe(nfe)
-        self._latency_records.append({
-            "latency_ms": _latency_ms,
-            "batch_size": prompt_ids.shape[0],
-            "tokens_generated": self.max_new_tokens,
-            "ms_per_token": _latency_ms / (prompt_ids.shape[0] * self.max_new_tokens),
-            "nfe": float(nfe),
-            "prefill_ms": _timing["prefill_ms"],
-            "denoise_ms": _timing["denoise_ms"],
-            "kv_update_ms": _timing["kv_update_ms"],
-        })
+        self._latency_records.append(
+            {
+                "latency_ms": _latency_ms,
+                "batch_size": prompt_ids.shape[0],
+                "tokens_generated": self.max_new_tokens,
+                "ms_per_token": _latency_ms / (prompt_ids.shape[0] * self.max_new_tokens),
+                "nfe": float(nfe),
+                "prefill_ms": _timing["prefill_ms"],
+                "denoise_ms": _timing["denoise_ms"],
+                "kv_update_ms": _timing["kv_update_ms"],
+            }
+        )
         if self.latency_log_path:
             self._log_latency(_latency_ms, prompt_ids.shape[0], self.max_new_tokens)
 
@@ -514,12 +519,14 @@ class MegatronDLLM(LM):
                     log_data = []
             else:
                 log_data = []
-            log_data.append({
-                "latency_ms": latency_ms,
-                "batch_size": batch_size,
-                "tokens_generated": tokens_generated,
-                "ms_per_token": latency_ms / (batch_size * tokens_generated),
-            })
+            log_data.append(
+                {
+                    "latency_ms": latency_ms,
+                    "batch_size": batch_size,
+                    "tokens_generated": tokens_generated,
+                    "ms_per_token": latency_ms / (batch_size * tokens_generated),
+                }
+            )
             with open(self.latency_log_path, "w") as f:
                 json.dump(log_data, f)
         except Exception as e:
@@ -547,24 +554,12 @@ class MegatronDLLM(LM):
             pbar.update(len(contexts))
 
         if self._latency_records:
-            lats_t = torch.tensor(
-                [r["latency_ms"] for r in self._latency_records], device=self._device
-            )
-            mpt_t = torch.tensor(
-                [r["ms_per_token"] for r in self._latency_records], device=self._device
-            )
-            nfe_t = torch.tensor(
-                [r["nfe"] for r in self._latency_records], device=self._device
-            )
-            prefill_t = torch.tensor(
-                [r["prefill_ms"] for r in self._latency_records], device=self._device
-            )
-            denoise_t = torch.tensor(
-                [r["denoise_ms"] for r in self._latency_records], device=self._device
-            )
-            kv_update_t = torch.tensor(
-                [r["kv_update_ms"] for r in self._latency_records], device=self._device
-            )
+            lats_t = torch.tensor([r["latency_ms"] for r in self._latency_records], device=self._device)
+            mpt_t = torch.tensor([r["ms_per_token"] for r in self._latency_records], device=self._device)
+            nfe_t = torch.tensor([r["nfe"] for r in self._latency_records], device=self._device)
+            prefill_t = torch.tensor([r["prefill_ms"] for r in self._latency_records], device=self._device)
+            denoise_t = torch.tensor([r["denoise_ms"] for r in self._latency_records], device=self._device)
+            kv_update_t = torch.tensor([r["kv_update_ms"] for r in self._latency_records], device=self._device)
             lats_t = self.accelerator.gather(lats_t)
             mpt_t = self.accelerator.gather(mpt_t)
             nfe_t = self.accelerator.gather(nfe_t)
@@ -579,9 +574,11 @@ class MegatronDLLM(LM):
                 denoises = denoise_t.tolist()
                 kv_updates = kv_update_t.tolist()
                 n = len(lats)
+
                 def _s(vals):
                     m = sum(vals) / n
                     return m, (sum((x - m) ** 2 for x in vals) / n) ** 0.5, min(vals), max(vals)
+
                 ml, sl, mnl, mxl = _s(lats)
                 mm, sm, mnm, mxm = _s(mpt)
                 mn, sn, mnn, mxn = _s(nfes)
@@ -595,10 +592,10 @@ class MegatronDLLM(LM):
                     f"  ms/token (incl. prefill) : mean={mm:.3f}  std={sm:.3f}  min={mnm:.3f}  max={mxm:.3f}\n"
                     f"  NFE                      : mean={mn:.1f}  std={sn:.1f}  min={mnn:.1f}  max={mxn:.1f}\n"
                     f"  --- phase breakdown (mean ms/sample) ---\n"
-                    f"  prefill                  : {mp:.1f} ms  ({100*mp/ml:.1f}%)\n"
-                    f"  denoise (NFE steps)      : {md:.1f} ms  ({100*md/ml:.1f}%)\n"
-                    f"  kv_cache update          : {mk:.1f} ms  ({100*mk/ml:.1f}%)\n"
-                    f"  other (overhead)         : {ml-mp-md-mk:.1f} ms  ({100*(ml-mp-md-mk)/ml:.1f}%)\n"
+                    f"  prefill                  : {mp:.1f} ms  ({100 * mp / ml:.1f}%)\n"
+                    f"  denoise (NFE steps)      : {md:.1f} ms  ({100 * md / ml:.1f}%)\n"
+                    f"  kv_cache update          : {mk:.1f} ms  ({100 * mk / ml:.1f}%)\n"
+                    f"  other (overhead)         : {ml - mp - md - mk:.1f} ms  ({100 * (ml - mp - md - mk) / ml:.1f}%)\n"
                     f"{'=' * 60}",
                     flush=True,
                 )
@@ -609,17 +606,11 @@ class MegatronDLLM(LM):
     # ------------------------------------------------------------------
 
     def loglikelihood(self, requests: List[Instance]) -> List[Tuple[float, bool]]:
-        eval_logger.warning(
-            "loglikelihood is not fully supported for diffusion models. "
-            "Returning dummy values."
-        )
+        eval_logger.warning("loglikelihood is not fully supported for diffusion models. Returning dummy values.")
         return [(0.0, False)] * len(requests)
 
     def loglikelihood_rolling(self, requests: List[Instance]) -> List[float]:
-        eval_logger.warning(
-            "loglikelihood_rolling is not supported for diffusion models. "
-            "Returning dummy values."
-        )
+        eval_logger.warning("loglikelihood_rolling is not supported for diffusion models. Returning dummy values.")
         return [0.0] * len(requests)
 
 
