@@ -28,23 +28,21 @@
 LOG_FILE=./qwen2_audio_7b_asr.log
 exec > >(tee "${LOG_FILE}") 2>&1
 
-
-export PYTHONPATH=/workspace_yuekai/asr/Megatron-Bridge:$PYTHONPATH
 export TORCHDYNAMO_DISABLE=1
 
 set -euo pipefail
 
-WORKSPACE=${WORKSPACE:-/workspace_yuekai/asr/Megatron-Bridge/examples/models/audio_lm/qwen2_audio}
+WORKSPACE=${WORKSPACE:-/workspace/Megatron-Bridge/examples/models/audio_lm/qwen2_audio}
 NPROC=${NPROC:-8}
-HF_MODEL=${HF_MODEL:-/workspace_yuekai/HF/Qwen2-Audio-7B}
+HF_MODEL=${HF_MODEL:-Qwen/Qwen2-Audio-7B}
 
 # Before training, set WANDB_API_KEY or disable wandb logging
 # export WANDB_API_KEY=<your_wandb_api_key>
 # export WANDB_MODE=disabled
 
 # Common configurations
-MEGATRON_CKPT_DIR=${WORKSPACE}/megatron_ckpts/${MODEL_NAME:-qwen2_audio_7b}
 MODEL_NAME=qwen2_audio_7b
+MEGATRON_CKPT_DIR=${WORKSPACE}/megatron_ckpts/${MODEL_NAME:-qwen2_audio_7b}
 
 # Convert HF checkpoint to Megatron format if not already done
 if [ ! -d "${MEGATRON_CKPT_DIR}/iter_0000000" ]; then

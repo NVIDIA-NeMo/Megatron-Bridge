@@ -261,7 +261,7 @@ def make_llava_video_178k_dataset(
 
 def make_default_audio_dataset(
     path_or_dataset: str,
-    subset: str = None,
+    subset: str | None = None,
     split: str = "train",
     audio_column: str = "audio",
     text_column: str = "text",
@@ -285,7 +285,7 @@ def make_default_audio_dataset(
         if columns_to_remove:
             dataset = dataset.remove_columns(columns_to_remove)
 
-    def format(example):
+    def format_example(example):
         text = example[text_column]
         if remove_text_spaces:
             text = text.replace(" ", "")
@@ -306,7 +306,7 @@ def make_default_audio_dataset(
             "audio": (example[audio_column]["array"], example[audio_column]["sampling_rate"]),
         }
 
-    return [format(example) for example in dataset]
+    return [format_example(example) for example in dataset]
 
 
 def make_cv17_dataset(

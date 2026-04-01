@@ -61,7 +61,7 @@ def qwen2_audio_7b_finetune_config(**user_kwargs) -> ConfigContainer:
 
 def _qwen2_audio_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    output_dir: str | None = None,
     name: str = "qwen2_audio_finetune",
     pretrained_checkpoint: Optional[str] = None,
     # Model configuration

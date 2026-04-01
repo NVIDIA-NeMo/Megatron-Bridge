@@ -583,7 +583,7 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
             # Mask everything before the assistant span (prompt + special tokens)
             hf_labels[i, :found] = IGNORE_INDEX
         else:
-            warnings.warn(f"Could not find assistant span for example {i}, masking all labels")
+            warnings.warn(f"Could not find assistant span for example {i}, masking all labels", stacklevel=2)
             hf_labels[i, :] = IGNORE_INDEX
 
         # Mask padding tokens
