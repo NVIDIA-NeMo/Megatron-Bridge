@@ -88,7 +88,101 @@ uv run python examples/diffusion/recipes/flux/inference_flux.py \
 
 ---
 
-## 3. Pretraining
+## 3. Dataset Preparation
+
+This section describes how to obtain image–text data (example: [GRIT](https://huggingface.co/datasets/zzliang/GRIT)), download images, run [prepare_energon_dataset_flux.py](prepare_energon_dataset_flux.py), and package an Energon dataset for FLUX pretraining or fine-tuning.
+
+### 3.1. Download source data (GRIT)
+
+The GRIT dataset is hosted on Hugging Face and consists of image and text metadata.
+
+**Hugging Face:** [zzliang/GRIT](https://huggingface.co/datasets/zzliang/GRIT)
+
+**Important:** The initial clone/download only retrieves metadata (URLs, captions). Images must be downloaded separately using those URLs (see below).
+
+### 3.2. Cloning the Hugging Face repository
+
+The repository uses Git Large File Storage (LFS). Install LFS if needed:
+
+```bash
+apt-get update
+apt-get install -y git-lfs
+```
+
+Clone GRIT:
+
+```bash
+git lfs install
+git clone https://huggingface.co/datasets/zzliang/GRIT
+```
+
+After cloning, image–text metadata is stored as Parquet shards under **`GRIT/grit-20m/*.parquet`** (not the raw images; those are fetched in the next steps).
+
+### 3.3. Image download tool (`img2dataset`)
+
+Install [img2dataset](https://github.com/rom1504/img2dataset) to fetch images from URL columns in the metadata:
+
+```bash
+uv pip install img2dataset
+```
+
+### 3.4. Downloading images with `img2dataset`
+
+Point `--url_list` at a Parquet file under `grit-20m/` (example below uses one shard; run additional commands for other `*.parquet` files in that directory as needed, or use your `img2dataset` version’s supported way to consume multiple Parquet inputs):
+
+```bash
+img2dataset --url_list /path/to/GRIT/grit-20m/coyo_0_snappy.parquet \
+            --input_format "parquet" \
+            --url_col "url" \
+            --caption_col "caption" \
+            --output_folder /path/to/GRIT/grit_images \
+            --processes_count 4 \
+            --thread_count 64 \
+            --image_size 256 \
+            --resize_only_if_bigger=True \
+            --resize_mode="keep_ratio" \
+            --skip_reencode=True \
+            --save_additional_columns '["id","noun_chunks","ref_exps","clip_similarity_vitb32","clip_similarity_vitl14"]' \
+            --enable_wandb False
+```
+
+**Note:** The number of successfully downloaded image–text pairs is often smaller than the row count in the Parquet file because some URLs are broken or unreachable.
+
+### 3.5. Model preparation (embeddings and Energon dataset)
+
+**Generate embeddings** (T5, CLIP, VAE, etc.) and write WebDataset-style output for FLUX. `--data_folder` should be the `img2dataset` output directory (here `grit_images`):
+
+```bash
+uv run python examples/diffusion/recipes/flux/prepare_energon_dataset_flux.py \
+  --data_folder /path/to/GRIT/grit_images/ \
+  --output_dir /path/to/GRIT/grit_wds \
+  --center-crop
+```
+
+**Prepare the Energon dataset** from that output:
+
+```bash
+energon prepare /path/to/GRIT/grit_wds
+```
+
+For details on the Energon dataset format, `energon prepare`, and the data loader, see the [Megatron-Energon documentation](https://nvidia.github.io/Megatron-Energon/).
+
+When prompted, use a train/val/test split such as **8 / 1 / 1**, answer **Y** to confirmations as needed, and choose **Crude sample (11)** when offered.
+
+### 3.6. Training with the prepared dataset
+
+Use the prepared path as `dataset.path` for pretraining or fine-tuning (see [§4 Pretraining](#4-pretraining) and [§5 Fine-Tuning](#5-fine-tuning)):
+
+```bash
+uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe flux_12b_pretrain_config \
+  --step_func flux_step \
+  dataset.path=/path/to/GRIT/grit_wds/
+```
+
+---
+
+## 4. Pretraining
 
 Run FLUX pretraining with the generic **run_recipe** script (same entry point as for LLM training).
 
@@ -127,11 +221,11 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 
 **Small datasets (e.g. &lt; 100 examples):** Use a smaller `dataset.num_workers` so each DataLoader worker gets samples (e.g. `dataset.num_workers=2`), and set `train.global_batch_size` appropriately (e.g. 8 for 64 examples on 8 GPUs).
 
-For data preprocessing and WebDataset format, see the Megatron-Bridge data tutorials.
+For preparing real data (GRIT `grit-20m/*.parquet` → img2dataset → embeddings → Energon), see [§3 Dataset Preparation](#3-dataset-preparation). For other WebDataset workflows, see the Megatron-Bridge data tutorials.
 
 ---
 
-## 4. Fine-Tuning
+## 5. Fine-Tuning
 
 Run FLUX fine-tuning with the generic **run_recipe** script. Set the pretrained checkpoint via the **checkpoint.pretrained_checkpoint** CLI override (path to the Megatron checkpoint directory or a specific iteration, e.g. `.../flux.1-dev` or `.../flux.1-dev/iter_0000000`):
 
@@ -168,10 +262,13 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 2. **Inference**  
    Run [inference_flux.py](inference_flux.py) with `--flux_ckpt` (Megatron `iter_*` path), `--vae_ckpt`, and `--prompts`.
 
-3. **Pretraining**  
+3. **Dataset preparation (optional, for real training data)**  
+   Follow [§3 Dataset Preparation](#3-dataset-preparation): GRIT clone → `grit-20m/*.parquet` → `img2dataset` → `prepare_energon_dataset_flux.py` → `energon prepare` → use the resulting directory as `dataset.path`.
+
+4. **Pretraining**  
    Run `scripts/training/run_recipe.py --recipe flux_12b_pretrain_config --step_func flux_step` (optionally with `dataset.path=...` for real data and CLI overrides).
 
-4. **Fine-Tuning**  
+5. **Fine-Tuning**  
    Run `scripts/training/run_recipe.py --recipe flux_12b_sft_config --step_func flux_step checkpoint.pretrained_checkpoint=<path>` (optionally with `dataset.path=...` and overrides).
 
 For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/flux/flux.py` and `scripts/training/run_recipe.py`.
