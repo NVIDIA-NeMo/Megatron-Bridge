@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 
 from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
@@ -21,6 +22,7 @@ from utils.utils import get_workload_base_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import nemotron_3_super_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
+from megatron.core.quantization.utils import load_quantization_recipe
 
 
 logger = logging.getLogger(__name__)
@@ -47,11 +49,12 @@ def set_nemotron_3_super_common_configs(cfg: ConfigContainer, precision: str) ->
     if prec == "nvfp4":
         cfg.mixed_precision.first_last_layers_bf16 = True
         cfg.mixed_precision.num_layers_at_end_in_bf16 = 14
+        cfg.model.quant_recipe = load_quantization_recipe(
+            os.path.join(os.path.dirname(__file__), "te_quant.cfg")
+        )
 
     if prec in ("nvfp4", "fp8_mx"):
         cfg.model.moe_router_padding_for_quantization = True
-    else:
-        cfg.model.moe_router_padding_for_quantization = False
 
 
 def nemotron_3_super_pretrain_config_gb300(
