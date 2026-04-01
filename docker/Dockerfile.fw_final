@@ -129,6 +129,7 @@ RUN GRPC_VERSION=1.79.3 && \
     cd /tmp/wandb-src/core && \
     go get google.golang.org/grpc@v${GRPC_VERSION} && \
     go mod tidy && \
+    go mod vendor && \
     CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" \
         -o "${WANDB_CORE_BIN}" ./cmd/wandb-core/ && \
     rm -rf /tmp/wandb-src /tmp/go /tmp/gopath
