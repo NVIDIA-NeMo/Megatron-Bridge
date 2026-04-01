@@ -134,7 +134,7 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_NVFP4_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_B3
 
 BASE_NEMOTRON_3_SUPER_CONFIG_B200 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG,
-    moe_flex_dispatcher_backend="deepep",
+    moe_flex_dispatcher_backend="hybridep",
     expert_model_parallel_size=64,
     cuda_graph_impl="none",
     recompute_modules=["moe_act", "layernorm"],
