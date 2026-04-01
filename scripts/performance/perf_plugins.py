@@ -285,6 +285,11 @@ class PerfEnvPlugin(Plugin):
                     if gpu in ["gb300", "h100"]:
                         executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                         executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
+        if model_family_name == "qwen" and compute_dtype == "fp8_mx":
+            if model_recipe_name == "qwen3_30b_a3b":
+                executor.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] = 128
+            if model_recipe_name == "qwen3_235b_a22b" and gpu in ["gb200", "gb300"]:
+                executor.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] = 128
 
         del_cudnn_ln = True
         if gpu in ["h100"]:
