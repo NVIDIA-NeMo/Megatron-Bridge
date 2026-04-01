@@ -25,14 +25,9 @@ Performance is measured using:
 - **Tokens/sec/GPU**: Throughput per GPU
 - **Model TFLOP/sec/GPU**: Model floating-point operations per second per GPU
 
-```{contents}
-:local:
-:depth: 2
-```
-
 ## Performance Summary for Large Language Models
 
-Below are performance benchmarks for various large language models organized by release version. These results were obtained using performance recipes available [here](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance).
+Below are performance benchmarks for various large language models. These results were obtained using performance recipes available [here](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance).
 
 The performance data includes:
 
