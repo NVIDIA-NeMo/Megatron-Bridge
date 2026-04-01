@@ -88,7 +88,8 @@ RUN pip install nvidia-cudnn-frontend==1.17.0 \
     "protobuf==6.33.5" \
     "xgrammar>=0.1.32" \
     "tornado==6.5.5" \
-    "black==26.3.1"
+    "black==26.3.1" \
+    "onnx==1.21.0"
 
 # Patch jackson-core CVE inside Ray's bundled fat-jar (cannot upgrade Ray itself)
 RUN JACKSON_VERSION=2.18.6 && \
