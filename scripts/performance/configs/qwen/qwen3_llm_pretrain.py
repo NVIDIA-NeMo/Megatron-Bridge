@@ -437,5 +437,6 @@ def qwen3_next_80b_a3b_pretrain_config_h100(
 
     set_qwen3_next_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    cfg.dataset.persistent_workers = False
 
     return cfg
