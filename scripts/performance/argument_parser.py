@@ -759,6 +759,12 @@ def parse_cli_args():
         default=None,
     )
     logging_args.add_argument("--save_config_filepath", type=str, help="Path to save the task configuration file")
+    logging_args.add_argument(
+        "--dump_env",
+        action="store_true",
+        help="Write environment variables to /nemo_run/env_<SLURM_JOB_ID>.log on rank 0. "
+        "Useful for post-run debugging of NCCL, CUDA, and SLURM settings.",
+    )
 
     # Config variant selection
     config_variant_args = parser.add_argument_group("Config variant arguments")
