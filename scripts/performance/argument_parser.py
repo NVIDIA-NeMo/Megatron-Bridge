@@ -712,6 +712,14 @@ def parse_cli_args():
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
     )
+    performance_args.add_argument(
+        "--moe_flex_dispatcher_backend",
+        type=lambda x: None if x == "None" else x,
+        help="MoE flex dispatcher backend. Options- deepep, hybridep, None. If None, will use alltoall dispatcher.",
+        choices=["deepep", "hybridep", None],
+        required=False,
+        default=-1,
+    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")
