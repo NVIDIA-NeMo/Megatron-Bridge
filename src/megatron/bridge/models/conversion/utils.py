@@ -273,6 +273,18 @@ def get_causal_lm_class_name_via_auto_map(
     return None
 
 
+def conform_config_to_reference(
+    hf_config_dict: dict[str, object], reference_config: dict[str, object]
+) -> dict[str, object]:
+    """Return a projected hf_config_dict onto the reference key set, imputing missing keys with reference values."""
+    reference_config_keys = set(reference_config.keys())
+    filtered_config_dict = {key: value for (key, value) in hf_config_dict.items() if key in reference_config_keys}
+    for key, value in reference_config.items():
+        if key not in filtered_config_dict:
+            filtered_config_dict[key] = value
+    return filtered_config_dict
+
+
 def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tensor]]:
     """Return an iterator over persistent module buffers, yielding both the name of the buffer as well as the buffer itself."""
 

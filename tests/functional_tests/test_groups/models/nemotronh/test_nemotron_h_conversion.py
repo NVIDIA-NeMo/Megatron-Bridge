@@ -246,6 +246,7 @@ class TestNemotronHConversion:
         else:
             config_data["hybrid_override_pattern"] = HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"]
 
+        original_hybrid_override_pattern = config_data.get("hybrid_override_pattern")
         with open(config_file, "w") as f:
             json.dump(config_data, f, indent=2)
 
@@ -276,7 +277,10 @@ class TestNemotronHConversion:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
             )
 
             # Check that the conversion completed successfully
@@ -318,6 +322,14 @@ class TestNemotronHConversion:
         except Exception as e:
             print(f"Error during NemotronH {test_name} conversion test: {e}")
             raise
+        finally:
+            # Restore shared class-scoped fixture config to avoid test-order coupling.
+            if original_hybrid_override_pattern is not None:
+                with open(config_file) as f:
+                    current_config_data = json.load(f)
+                current_config_data["hybrid_override_pattern"] = original_hybrid_override_pattern
+                with open(config_file, "w") as f:
+                    json.dump(current_config_data, f, indent=2)
 
 
 # Overrides for Nemotron-3-Nano MoE model (30B total, 3B active)
@@ -589,6 +601,16 @@ class TestNemotron3NanoConversion:
         except Exception as e:
             print(f"Error during Nemotron-3-Nano {test_name} conversion test: {e}")
             raise
+
+    @pytest.mark.run_only_on("GPU")
+    def test_nemotron_3_nano_autoconfig_roundtrip(self, nemotron_3_nano_toy_model_path, tmp_path):
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(
+            nemotron_3_nano_toy_model_path,
+            tmp_path,
+            trust_remote_code=True,
+        )
 
 
 # Overrides for Nemotron-3-Super MoE model (120B total, 12B active)
