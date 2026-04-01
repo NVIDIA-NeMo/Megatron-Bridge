@@ -109,8 +109,7 @@ DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
 TRAIN_ITERS=500
 GLOBAL_BATCH_SIZE=32
-MICRO_BATCH_SIZE=1
-EVAL_ITERS=10
+MICRO_BATCH_SIZE=4  # tested on Blackwell GPUs; reduce for smaller VRAM
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
@@ -127,7 +126,9 @@ CONTAINER_MOUNTS=""
 # ==============================================================================
 
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
-export NCCL_NVLS_ENABLE=0
+export NCCL_NVLS_ENABLE=1
+export HTTPX_LOG_LEVEL=WARNING
+export PYTHONWARNINGS="ignore::FutureWarning:torch.cuda,ignore::UserWarning:modelopt.torch"
 
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 # export HF_HOME="/path/to/shared/HF_HOME"

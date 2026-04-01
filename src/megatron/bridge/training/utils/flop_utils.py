@@ -35,9 +35,9 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         return cfg.model._get_num_floating_point_operations(batch_size)
 
     def calculate_layer_counts():
-        """Calculate the number of attention, Mamba, MLP, and MoE layers."""
+        """Calculate the number of attention, Mamba, MLP, MoE, and GDN layers."""
         if hasattr(cfg.model, "hybrid_layer_pattern") and cfg.model.hybrid_layer_pattern:
-            counts = {"M": 0, "*": 0, "-": 0, "E": 0}
+            counts = {"M": 0, "G": 0, "*": 0, "-": 0, "E": 0}
             try:
                 parse_hybrid_pattern = importlib.import_module(
                     "megatron.core.ssm.mamba_hybrid_layer_allocation"
@@ -55,13 +55,14 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 for layer_type in cfg.model.hybrid_layer_pattern:
                     if layer_type in counts:
                         counts[layer_type] += 1
-            return counts["*"], counts["M"], counts["-"], counts["E"]
+            return counts["*"], counts["M"], counts["-"], counts["E"], counts["G"]
         else:
             num_attn_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_attention_ratio", 0))
             num_mlp_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_mlp_ratio", 0))
             num_mamba_layers = cfg.model.num_layers - num_attn_layers - num_mlp_layers
             num_moe_layers = 0
-            return num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers
+            num_gdn_layers = 0
+            return num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers
 
     def mlp_layer_flops(batch_size, seq_len, hidden_size, expansion=4.0, swiglu=False):
         """Calculate FLOPs for an MLP layer."""
@@ -137,6 +138,31 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             + (2 * batch_size * seq_len * d_in * hidden_size)  # out_proj
         )
 
+    def gdn_layer_flops(
+        batch_size,
+        seq_len,
+        hidden_size,
+        qk_head_dim=128,
+        v_head_dim=128,
+        num_qk_heads=16,
+        num_v_heads=32,
+        conv_kernel_dim=4,
+    ):
+        """Calculate FLOPs for a Gated Delta Net (GDN) layer."""
+        qk_dim = qk_head_dim * num_qk_heads
+        v_dim = v_head_dim * num_v_heads
+        return (
+            2
+            * batch_size
+            * seq_len
+            * (
+                hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                + conv_kernel_dim * (2 * qk_dim + v_dim)
+                + num_v_heads * (v_head_dim**2) * 4
+                + hidden_size * v_dim
+            )
+        )
+
     def hybrid_flops(
         batch_size,
         seq_len,
@@ -145,6 +171,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         num_mamba_layers,
         num_mlp_layers,
         num_moe_layers,
+        num_gdn_layers=0,
         mamba_state_dim=128,
         mamba_head_dim=64,
         mamba_num_groups=8,
@@ -158,6 +185,11 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         moe_ffn_hidden_size=2048,
         shared_expert_ffn_hidden_size=2048,
         num_experts_routed_to=1,
+        gdn_qk_head_dim=128,
+        gdn_v_head_dim=128,
+        gdn_num_qk_heads=16,
+        gdn_num_v_heads=32,
+        gdn_conv_kernel_dim=4,
         vocab_size=256000,
         mtp_num_layers=0,
     ):
@@ -194,6 +226,17 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 moe_latent_size,
                 swiglu,
             )
+            + num_gdn_layers
+            * gdn_layer_flops(
+                batch_size,
+                seq_len,
+                hidden_size,
+                gdn_qk_head_dim,
+                gdn_v_head_dim,
+                gdn_num_qk_heads,
+                gdn_num_v_heads,
+                gdn_conv_kernel_dim,
+            )
             + (2 * batch_size * seq_len * hidden_size * vocab_size * (1 + mtp_num_layers))  # logits computation
         )
         return flops_fwd * 3
@@ -203,7 +246,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         # TODO(helenn/dnarayanan): Refactor this to reuse the helper methods.
         # Attention projection size.
         query_projection_size = cfg.model.kv_channels * cfg.model.num_attention_heads
-        query_projection_to_hidden_size_ratio = query_projection_size / cfg.model.hidden_size
         # GQA or MHA
         num_query_groups = (
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
@@ -287,25 +329,16 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         moe_ffn_hidden_size = (
             cfg.model.ffn_hidden_size if cfg.model.moe_ffn_hidden_size is None else cfg.model.moe_ffn_hidden_size
         )
+        moe_latent_size = getattr(cfg.model, "moe_latent_size", None)
         shared_expert_ffn_hidden_size = (
             0
             if cfg.model.moe_shared_expert_intermediate_size is None
             else cfg.model.moe_shared_expert_intermediate_size
         )
-        # SwiGLU.
-        gated_linear_multiplier = (
-            3 / 2 if (cfg.model.gated_linear_unit is True and cfg.model.activation_func == F.silu) else 1
+        # SwiGLU: h->2*ffn_h and ffn_h->h = 3 projections; non-SwiGLU: h->ffn_h and ffn_h->h = 2 projections.
+        ffn_expansion_factor = (
+            3 if (cfg.model.gated_linear_unit is True and cfg.model.activation_func == F.silu) else 2
         )
-
-        # The 12x term below comes from the following factors; for more details, see
-        # "APPENDIX: FLOATING-POINT OPERATIONS" in https://arxiv.org/abs/2104.04473.
-        # - 3x: Each GEMM in the model needs to be performed 3 times (forward pass,
-        #       backward wgrad [weight gradient], backward dgrad [data gradient]).
-        # - 2x: GEMMs of a particular size are stacked twice in the standard Transformer model
-        #       architectures implemented in this codebase (e.g., h->ffn_h GEMM and ffn_h->h GEMM
-        #       in MLP layer).
-        # - 2x: A GEMM of a m*n tensor with a n*k tensor requires 2mnk floating-point operations.
-        expansion_factor = 3 * 2 * 2
 
         if cfg.model.multi_latent_attention:
             """
@@ -366,20 +399,110 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
 
         else:
             ## MHA or GQA
-            self_attn_term = (
-                expansion_factor
-                * num_layers
-                * cfg.model.hidden_size
-                * cfg.model.hidden_size
-                * (
-                    (
-                        1
-                        + (num_query_groups / cfg.model.num_attention_heads)
-                        # # Only half of the attention matrix is non-zero and needs to be multiplied with V.
-                        + (cfg.model.seq_length / cfg.model.hidden_size / 2)
+            key_projection_size = cfg.model.kv_channels * num_query_groups
+            value_projection_size = cfg.model.kv_channels * num_query_groups
+            gate_projection_size = query_projection_size if getattr(cfg.model, "attention_output_gate", False) else 0
+            proj_per_layer = (
+                cfg.model.hidden_size
+                * (query_projection_size + key_projection_size + value_projection_size + gate_projection_size)
+                + query_projection_size * cfg.model.hidden_size
+            )
+
+            window_size = getattr(cfg.model, "window_size", None)
+            window_attn_skip_freq = getattr(cfg.model, "window_attn_skip_freq", None)
+
+            if window_size is not None:
+                if isinstance(window_size, (list, tuple)):
+                    effective_window = window_size[0] + window_size[1] + 1
+                else:
+                    effective_window = window_size
+                swa_context = min(effective_window, cfg.model.seq_length)
+
+                if window_attn_skip_freq is None:
+                    num_swa_layers = num_layers
+                    num_full_attn_layers = 0
+                elif isinstance(window_attn_skip_freq, int):
+                    swa_pattern = [0 if ((i + 1) % window_attn_skip_freq == 0) else 1 for i in range(num_layers)]
+                    num_swa_layers = sum(swa_pattern)
+                    num_full_attn_layers = num_layers - num_swa_layers
+                elif isinstance(window_attn_skip_freq, list):
+                    swa_pattern = window_attn_skip_freq[:num_layers]
+                    num_swa_layers = sum(swa_pattern)
+                    num_full_attn_layers = num_layers - num_swa_layers
+                else:
+                    num_swa_layers = 0
+                    num_full_attn_layers = num_layers
+
+                full_core = query_projection_size * cfg.model.seq_length / 2 * 2
+                swa_core = query_projection_size * swa_context / 2 * 2
+
+                self_attn_term = (
+                    3
+                    * 2
+                    * (
+                        num_full_attn_layers * (proj_per_layer + full_core)
+                        + num_swa_layers * (proj_per_layer + swa_core)
                     )
-                    * query_projection_to_hidden_size_ratio
                 )
+            else:
+                full_core = query_projection_size * cfg.model.seq_length / 2 * 2
+                self_attn_term = 3 * 2 * num_layers * (proj_per_layer + full_core)
+
+        # Handle GDN (Gated DeltaNet) hybrid attention variant.
+        # When experimental_attention_variant is "gated_delta_net", a fraction of the
+        # layers use GDN instead of standard attention. Override self_attn_term with a
+        # weighted sum of GDN and standard-attention per-layer costs.
+        experimental_attention_variant = getattr(cfg.model, "experimental_attention_variant", None)
+        if experimental_attention_variant == "gated_delta_net":
+            linear_attention_freq = cfg.model.linear_attention_freq
+            if linear_attention_freq is None:
+                raise ValueError(
+                    "linear_attention_freq must be set when experimental_attention_variant='gated_delta_net'"
+                )
+            if isinstance(linear_attention_freq, int):
+                linear_attention_pattern = [
+                    0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(num_layers)
+                ]
+            elif isinstance(linear_attention_freq, list):
+                linear_attention_pattern = linear_attention_freq
+                if len(linear_attention_pattern) != num_layers:
+                    raise ValueError(
+                        f"Invalid length of linear_attention_pattern: {len(linear_attention_pattern)}, "
+                        f"expected {num_layers}, "
+                        f"current linear_attention_freq: {linear_attention_freq}"
+                    )
+            else:
+                raise TypeError(
+                    f"linear_attention_freq must be int or list, got {type(linear_attention_freq).__name__}"
+                )
+
+            num_gdn_layers = sum(linear_attention_pattern)
+            num_standard_attn_layers = num_layers - num_gdn_layers
+
+            standard_self_attn_per_layer = self_attn_term / num_layers if num_layers > 0 else 0
+
+            qk_head_dim = cfg.model.linear_key_head_dim
+            v_head_dim = cfg.model.linear_value_head_dim
+            num_qk_heads = cfg.model.linear_num_key_heads
+            num_v_heads = cfg.model.linear_num_value_heads
+            conv_kernel_dim = cfg.model.linear_conv_kernel_dim
+
+            qk_dim = qk_head_dim * num_qk_heads
+            v_dim = v_head_dim * num_v_heads
+
+            gdn_self_attn_per_layer = (
+                3
+                * 2
+                * (
+                    cfg.model.hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                    + conv_kernel_dim * (2 * qk_dim + v_dim)
+                    + num_v_heads * (v_head_dim**2) * 4
+                    + cfg.model.hidden_size * v_dim
+                )
+            )
+
+            self_attn_term = (
+                gdn_self_attn_per_layer * num_gdn_layers + standard_self_attn_per_layer * num_standard_attn_layers
             )
 
         padded_vocab_size = calculate_padded_vocab_size(
@@ -389,22 +512,33 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             logging_enabled=False,
         )
 
+        # Routed expert MLP FLOPs per layer (accounts for latent compression).
+        if moe_latent_size is None:
+            routed_expert_term = moe_ffn_hidden_size * num_experts_routed_to * ffn_expansion_factor
+        else:
+            routed_expert_term = (
+                moe_ffn_hidden_size
+                * num_experts_routed_to
+                * ffn_expansion_factor
+                * moe_latent_size
+                / cfg.model.hidden_size
+            ) + 2 * moe_latent_size
+
         total_floating_point_operations = (
             batch_size
             * cfg.model.seq_length
             * (
                 # MLP
-                expansion_factor
-                * num_layers
+                3
+                * 2
                 * cfg.model.hidden_size
                 * (
-                    # dense layer (deepseek v2, v3 style)
-                    (cfg.model.ffn_hidden_size * gated_linear_multiplier) * (num_dense_layers / num_layers)
+                    # dense layers
+                    (cfg.model.ffn_hidden_size * ffn_expansion_factor) * num_dense_layers
                     # routed experts
-                    + (moe_ffn_hidden_size * num_experts_routed_to * gated_linear_multiplier)
-                    * (num_moe_layers / num_layers)
+                    + routed_expert_term * num_moe_layers
                     # Shared Experts.
-                    + (shared_expert_ffn_hidden_size * gated_linear_multiplier) * (num_moe_layers / num_layers)
+                    + (shared_expert_ffn_hidden_size * ffn_expansion_factor) * num_moe_layers
                 )
                 # Self Attention
                 + self_attn_term
@@ -413,9 +547,9 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 * 2
                 * mtp_num_layers
                 * (
-                    # MTP eh norm + final nrom
+                    # MTP eh norm + final norm
                     3 * cfg.model.hidden_size
-                    # MTH eh proj
+                    # MTP eh proj
                     + 2 * cfg.model.hidden_size * cfg.model.hidden_size
                 )
                 # Logit.
@@ -427,7 +561,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     # Main entrypoint for FLOPs calculation.
     if getattr(cfg.model, "is_hybrid_model", False):
         # Calculate the number of each type of layer.
-        num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers = calculate_layer_counts()
+        num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers = calculate_layer_counts()
         mtp_num_layers = getattr(cfg.model, "mtp_num_layers", None)
         if mtp_num_layers is None:
             # When using unified hybrid patterns, infer MTP depth count from the pattern.
@@ -462,6 +596,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             num_mamba_layers=num_mamba_layers,
             num_mlp_layers=num_mlp_layers,
             num_moe_layers=num_moe_layers,
+            num_gdn_layers=num_gdn_layers,
             mamba_state_dim=getattr(cfg.model, "mamba_state_dim", 128),
             mamba_head_dim=getattr(cfg.model, "mamba_head_dim", 64),
             mamba_num_groups=getattr(cfg.model, "mamba_num_groups", 8),
@@ -483,6 +618,11 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 else cfg.model.moe_shared_expert_intermediate_size
             ),
             num_experts_routed_to=getattr(cfg.model, "moe_router_topk", 1),
+            gdn_qk_head_dim=getattr(cfg.model, "linear_key_head_dim", None) or 128,
+            gdn_v_head_dim=getattr(cfg.model, "linear_value_head_dim", None) or 128,
+            gdn_num_qk_heads=getattr(cfg.model, "linear_num_key_heads", None) or 16,
+            gdn_num_v_heads=getattr(cfg.model, "linear_num_value_heads", None) or 32,
+            gdn_conv_kernel_dim=getattr(cfg.model, "linear_conv_kernel_dim", None) or 4,
             vocab_size=padded_vocab_size,
             mtp_num_layers=mtp_num_layers,
         )

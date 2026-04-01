@@ -66,7 +66,7 @@ docker buildx build \
   -f docker/Dockerfile.fw_base \
   --target nemo_fw_base_final \
   --build-arg FW_DEP_BUILDER=base \
-  --build-arg FW_BASE_FINAL=fw_dep_builder \
+  --build-arg FW_BASE_FINAL=fw_toolkit_builder \
   --build-arg NEMO_FW_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.02-py3 \
   -t fw-base:latest \
   .
@@ -112,7 +112,8 @@ docker build \
 |---|---|
 | `NEMO_FW_BASE_IMAGE` | Base PyTorch container |
 | `FW_DEP_BUILDER` | Stage used as the `fw_dep_builder` base. `trtllm_builder` to include TRT-LLM, `base` to skip it |
-| `FW_BASE_FINAL` | Output stage. `trtllm_install` (with TRT-LLM) or `fw_dep_builder` (without) |
+| `FW_BASE_FINAL` | Output stage. `trtllm_install` (with TRT-LLM) or `fw_toolkit_builder` (without) |
+| `FW_NETWORK_LAYER` | Stage used as the `fw_toolkit_builder` base. `aws_ofi_builder` (default) to reinstall EFA and build AWS-OFI-NCCL from source, `fw_dep_builder` to skip it |
 | `UV_VERSION` | uv version to install |
 | `VLLM_VERSION` | vLLM git tag to build |
 | `TRT_LLM_COMMIT` | TensorRT-LLM git commit or tag |
