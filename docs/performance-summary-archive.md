@@ -1,4 +1,4 @@
-NOTE: This page contains performance summary for past releases. You can find summary for the latest releases at [performance-summary.md]((performance-summary.md))
+NOTE: This page contains performance summary for past releases. You can find summary for the latest release at [performance-summary.md](performance-summary.md).
 
 # Performance
 
