@@ -22,6 +22,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
     DirectMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     KVMapping,
     QKVMapping,
@@ -846,3 +848,125 @@ class TestAutoMappingWithPermute:
             # Without permute_dims, tensor should be passed unchanged
             passed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
             assert torch.equal(passed_tensor, hf_weight)
+
+
+class TestFusedGatedExpertMapping:
+    """Tests for FusedGatedExpertMapping.hf_to_megatron with TP > 1.
+
+    Regression: with TP=2 the target_param shape is already TP-sharded
+    (e.g. (512, 2048) for moe_ffn=512, hidden=2048).  The old code compared
+    the full HF gate_up_proj weight (1024, 2048) against that sharded shape
+    and raised ValueError.  The fix computes the full (unsharded) shape before
+    calling _align_expert_weight_to_shape so that _gated_mapping handles the
+    TP scatter.
+    """
+
+    # Model dims matching Qwen3.5-35B-A3B: hidden=2048, moe_ffn=512
+    HIDDEN = 2048
+    MOE_FFN = 512
+    NUM_EXPERTS = 4
+
+    def _make_mapping(self):
+        return FusedGatedExpertMapping(
+            megatron_param="decoder.layers.0.mlp.experts.linear_fc1.weight3",
+            hf_param="model.layers.0.mlp.experts.gate_up_proj",
+        )
+
+    def _make_hf_weights(self):
+        """Fused gate_up_proj: [num_experts, 2*moe_ffn, hidden]."""
+        return torch.randn(self.NUM_EXPERTS, 2 * self.MOE_FFN, self.HIDDEN)
+
+    @pytest.mark.parametrize("tp_size", [1, 2, 4])
+    def test_hf_to_megatron_tp_gt_1(self, mock_distributed_env, transformer_config, tp_size):
+        """gate and up passed to _gated_mapping must be full (unsharded) tensors."""
+        mock_mpu, _ = mock_distributed_env(tp_size=tp_size, tp_rank=0)
+
+        # Expert weights use the expert TP group (etp_group) for tp_size/tp_rank.
+        # Set etp_group to the same size as tp_group to match the test scenario.
+        class _MockGroup:
+            def __init__(self, size, rank):
+                self._size, self._rank = size, rank
+
+            def size(self):
+                return self._size
+
+            def rank(self):
+                return self._rank
+
+        mock_mpu.get_expert_tensor_parallel_group.return_value = _MockGroup(tp_size, 0)
+        mapping = self._make_mapping()
+        hf_weights = self._make_hf_weights()
+
+        # Megatron linear_fc1.weight shape on one TP rank: (2*moe_ffn/tp, hidden)
+        tp_sharded_shape = (2 * self.MOE_FFN // tp_size, self.HIDDEN)
+        target_param = torch.nn.Parameter(torch.empty(tp_sharded_shape))
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.param_mapping.get_module_and_param_from_name",
+                return_value=(None, target_param),
+            ),
+            patch.object(mapping, "_gated_mapping") as mock_gated,
+        ):
+            mock_gated.hf_to_megatron.return_value = torch.zeros(tp_sharded_shape)
+            mapping.hf_to_megatron(hf_weights, megatron_module=None)
+
+        call_kwargs = mock_gated.hf_to_megatron.call_args
+        gate = call_kwargs[0][0]["gate"]
+        up = call_kwargs[0][0]["up"]
+
+        # gate and up must be the full (unsharded) intermediate size
+        expected_gate_shape = (self.MOE_FFN, self.HIDDEN)
+        assert gate.shape == expected_gate_shape, (
+            f"gate.shape={gate.shape} but expected {expected_gate_shape} "
+            f"(TP={tp_size}; _gated_mapping is responsible for TP scatter)"
+        )
+        assert up.shape == expected_gate_shape, f"up.shape={up.shape} but expected {expected_gate_shape}"
+
+
+class TestFusedExpertMapping:
+    """Tests for FusedExpertMapping.hf_to_megatron with TP > 1.
+
+    Regression: with TP=2 the target_param shape (linear_fc2.weight) is already
+    TP-sharded (e.g. (2048, 256) for hidden=2048, moe_ffn=512).  The old code
+    compared the full HF down_proj weight (2048, 512) against that sharded shape
+    and raised ValueError.  The fix removes the _align call and passes the full
+    expert weight directly to AutoMapping which handles TP scatter.
+    """
+
+    HIDDEN = 2048
+    MOE_FFN = 512
+    NUM_EXPERTS = 4
+
+    def _make_mapping(self):
+        return FusedExpertMapping(
+            megatron_param="decoder.layers.0.mlp.experts.linear_fc2.weight3",
+            hf_param="model.layers.0.mlp.experts.down_proj",
+        )
+
+    def _make_hf_weights(self):
+        """Fused down_proj: [num_experts, hidden, moe_ffn]."""
+        return torch.randn(self.NUM_EXPERTS, self.HIDDEN, self.MOE_FFN)
+
+    @pytest.mark.parametrize("tp_size", [1, 2, 4])
+    def test_hf_to_megatron_tp_gt_1(self, mock_distributed_env, transformer_config, tp_size):
+        """Weight passed to AutoMapping.hf_to_megatron must be the full (unsharded) expert tensor."""
+        mock_mpu, _ = mock_distributed_env(tp_size=tp_size, tp_rank=0)
+        mapping = self._make_mapping()
+        hf_weights = self._make_hf_weights()
+
+        captured = {}
+
+        def _capture_super(hf_w, megatron_module):
+            captured["expert_weight"] = hf_w
+            return torch.zeros(self.HIDDEN, self.MOE_FFN // tp_size)
+
+        with patch.object(AutoMapping, "hf_to_megatron", side_effect=_capture_super):
+            mapping.hf_to_megatron(hf_weights, megatron_module=None)
+
+        expert_weight = captured["expert_weight"]
+        expected_shape = (self.HIDDEN, self.MOE_FFN)
+        assert expert_weight.shape == expected_shape, (
+            f"expert_weight.shape={expert_weight.shape} but expected {expected_shape} "
+            f"(TP={tp_size}; AutoMapping is responsible for TP scatter)"
+        )
