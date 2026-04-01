@@ -271,9 +271,11 @@ class PerfEnvPlugin(Plugin):
             model_family_name in ["deepseek"]
             and model_recipe_name in ["deepseek_v3"]
             and train_task == "pretrain"
-            and gpu in ["h100"]
+            and gpu in ["h100", "gb200"]
         ):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+            if gpu in ["gb200"]:
+                executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
 
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"

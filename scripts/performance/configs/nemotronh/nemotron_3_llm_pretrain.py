@@ -68,6 +68,78 @@ def nemotron_3_super_pretrain_config_gb300(
     return cfg
 
 
+def nemotron_3_super_pretrain_config_gb200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """GB200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_super",
+        gpu="gb200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_nemotron_3_super_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    return cfg
+
+
+def nemotron_3_super_pretrain_config_b300(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """B300, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_super",
+        gpu="b300",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_nemotron_3_super_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    return cfg
+
+
+def nemotron_3_super_pretrain_config_b200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """B200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_super",
+        gpu="b200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_nemotron_3_super_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    return cfg
+
+
 def nemotron_3_nano_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
