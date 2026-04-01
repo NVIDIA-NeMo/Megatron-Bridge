@@ -15,6 +15,7 @@
 import logging
 import os
 import re
+import sys
 
 import torch
 from argument_parser import parse_cli_args
@@ -94,6 +95,14 @@ def main():
         user_gbs=args.global_batch_size,
         config_variant=args.config_variant,
     )
+
+    if args.dryrun:
+        save_path = args.save_config_filepath or "ConfigContainer.yaml"
+        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        recipe.to_yaml(save_path)
+        logger.info(f"ConfigContainer saved to: {os.path.abspath(save_path)}")
+        recipe.print_yaml()
+        sys.exit(0)
 
     # Select forward step function based on the model family name.
     if args.domain == "vlm":
