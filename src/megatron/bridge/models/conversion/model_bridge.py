@@ -122,6 +122,21 @@ class WeightConversionTask(Generic[MappingT]):
     param_weight: Optional[torch.Tensor] = None
 
 
+def megatron_param_matches_skip_globs(
+    global_param_name: str, local_param_name: str, globs: Optional[List[str]]
+) -> bool:
+    """Return True if a Megatron parameter should be skipped during HF→Megatron load.
+
+    Patterns use :mod:`fnmatch` (e.g. ``*vision_model*``).
+    """
+    if not globs:
+        return False
+    for pattern in globs:
+        if fnmatch.fnmatch(global_param_name, pattern) or fnmatch.fnmatch(local_param_name, pattern):
+            return True
+    return False
+
+
 def _megatron_local_name_to_global(
     models: MegatronModule | List[MegatronModule],
     config: TransformerConfig,
@@ -796,6 +811,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         hf_pretrained: HFPreTrained,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         allowed_mismatched_params: Optional[List[str]] = None,
+        skip_megatron_param_globs: Optional[List[str]] = None,
     ) -> List[MegatronModel]:
         """Load HuggingFace weights into Megatron models.
 
@@ -813,6 +829,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 or list of model instances (one per virtual pipeline stage).
             allowed_mismatched_params (Optional[List[str]]): List of parameter names or patterns
                 to allow mismatch (skip instead of raise error).
+            skip_megatron_param_globs (Optional[List[str]]): If set, skip loading parameters whose
+                global or local name matches a :mod:`fnmatch` pattern (e.g. ``["*vision_model*"]``).
 
         Returns:
             List[MegatronModel]: The input megatron_model as a list with loaded weights.
@@ -858,6 +876,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
+                continue
+            if megatron_param_matches_skip_globs(task.global_param_name, task.param_name, skip_megatron_param_globs):
                 continue
             # 1) Fetch source tensor(s) from HF state dict, with caching for grouped mappings
             hf_param_key = str(task.mapping.hf_param)
@@ -912,6 +932,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         hf_pretrained: HFPreTrained,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        skip_megatron_param_globs: Optional[List[str]] = None,
     ) -> Iterable[MegatronWeightTuple]:
         """Generator variant of load_weights_hf_to_megatron for streaming weight conversion.
 
@@ -963,6 +984,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         for task in conversion_tasks:
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
+                continue
+            if megatron_param_matches_skip_globs(task.global_param_name, task.param_name, skip_megatron_param_globs):
                 continue
             hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state
             if isinstance(task.mapping.hf_param, str):

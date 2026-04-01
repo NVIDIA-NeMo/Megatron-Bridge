@@ -88,6 +88,30 @@ Pretraining is not verified for this model.
 
 See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning with configurable model sizes.
 
+### LLM-only fine-tuning (SQuAD, HF weights without vision)
+
+The `qwen35_llm_*_sft_config` recipes in `megatron.bridge.recipes` load **language-model weights only** from a Qwen3.5-VL HuggingFace checkpoint (vision tower stays at initialization; see `skip_megatron_param_globs` in [`qwen35_llm.py`](../../../../src/megatron/bridge/recipes/qwen_vl/qwen35_llm.py)). Training uses the default SQuAD setup from `_sft_common` and **`vlm_step`** so the hybrid stack runs on text-only batches.
+
+Run from the Bridge repo root with the generic driver [`scripts/training/run_recipe.py`](../../../../scripts/training/run_recipe.py):
+
+```bash
+# 800M dense (TP=1 PP=1, 8 GPUs)
+uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe qwen35_llm_800m_sft_config \
+  --step_func vlm_step \
+  --hf_path Qwen/Qwen3.5-0.8B
+
+# 35B-A3B MoE (TP=2 PP=1 EP=16)
+uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe qwen35_llm_35b_a3b_sft_config \
+  --step_func vlm_step \
+  --hf_path Qwen/Qwen3.5-35B-A3B
+```
+
+Available recipes: `qwen35_llm_800m_sft_config`, `qwen35_llm_2b_sft_config`, `qwen35_llm_4b_sft_config`, `qwen35_llm_9b_sft_config`, `qwen35_llm_27b_sft_config`, `qwen35_llm_35b_a3b_sft_config`, `qwen35_llm_122b_a10b_sft_config`, `qwen35_llm_397b_a17b_sft_config`.
+
+See the [llm_sft.sh](llm_sft.sh) wrapper script for a ready-to-run shell command with environment variable overrides.
+
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
 See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning with configurable model sizes.
