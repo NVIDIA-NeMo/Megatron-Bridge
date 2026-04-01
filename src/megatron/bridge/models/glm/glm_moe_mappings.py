@@ -31,8 +31,11 @@ from megatron.bridge.models.conversion.param_mapping import (
 class GLMExpertDownProjMapping(FusedExpertMapping):
     """FusedExpertMapping for GLM down-projection expert weights.
 
-    GLM down-projection weights are stored transposed relative to Megatron's layout,
-    so ``transpose_on_export`` is always enabled.
+    Grouped-export transpose is disabled for the current GLM fused-expert export
+    paths. The per-expert tensors are already in HF layout by the time they are
+    stacked into the fused expert weight, so applying an additional grouped-
+    export transpose would produce the wrong orientation.
+
     """
 
     def __init__(
@@ -41,4 +44,4 @@ class GLMExpertDownProjMapping(FusedExpertMapping):
         hf_param: str,
         permute_dims: Optional[Tuple[int, ...]] = None,
     ):
-        super().__init__(megatron_param, hf_param, permute_dims, transpose_on_export=True)
+        super().__init__(megatron_param, hf_param, permute_dims, transpose_on_export=False)
