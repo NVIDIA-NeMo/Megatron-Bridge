@@ -2312,10 +2312,9 @@ class FusedExpertMapping(AutoMapping):
 
         expert_idx = extract_expert_number_from_param(self.megatron_param)
         expert_weight = hf_weights[expert_idx] if hf_weights.ndim >= 3 else hf_weights
-
-        normalized_param = self._normalize_expert_param_name(self.megatron_param)
-        _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
-        expert_weight = _align_expert_weight_to_shape(expert_weight, target_param.shape, "expert_weight")
+        # Pass the full (unsharded) expert weight directly to AutoMapping, which handles
+        # TP scatter. We must NOT align against target_param.shape here because that shape
+        # is already TP-sharded and would fail for TP > 1.
         return super().hf_to_megatron(expert_weight, megatron_module)
 
 
@@ -2361,12 +2360,17 @@ class FusedGatedExpertMapping(AutoMapping):
             raise ValueError(f"Expected even fused dim for {self.megatron_param}, got {target_shape}.")
 
         gate_target_shape = (target_shape[0] // 2, target_shape[1])
+        # target_shape is the TP-sharded Megatron shape; compute the full (unsharded) shapes
+        # so that _align_expert_weight_to_shape can correctly match the raw HF weights.
+        # _gated_mapping.hf_to_megatron is responsible for TP scatter.
+        gate_full_shape = (gate_target_shape[0] * self.tp_size, target_shape[1])
+        gate_up_full_shape = (gate_full_shape[0] * 2, target_shape[1])
 
         if expert_weight.ndim == 3 and expert_weight.shape[0] == 2:
-            gate = _align_expert_weight_to_shape(expert_weight[0], gate_target_shape, "gate")
-            up = _align_expert_weight_to_shape(expert_weight[1], gate_target_shape, "up")
+            gate = _align_expert_weight_to_shape(expert_weight[0], gate_full_shape, "gate")
+            up = _align_expert_weight_to_shape(expert_weight[1], gate_full_shape, "up")
         else:
-            expert_weight = _align_expert_weight_to_shape(expert_weight, target_shape, "gate_up")
+            expert_weight = _align_expert_weight_to_shape(expert_weight, gate_up_full_shape, "gate_up")
             gate, up = torch.chunk(expert_weight, 2, dim=0)
 
         return self._gated_mapping.hf_to_megatron({"gate": gate, "up": up}, megatron_module)
