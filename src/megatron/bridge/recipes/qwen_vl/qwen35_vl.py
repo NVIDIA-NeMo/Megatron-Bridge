@@ -12,19 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Qwen3.5-VL finetuning recipes.
+"""Qwen3.5-VL recipes.
 
-This module provides SFT and PEFT configurations for Qwen3.5-VL models:
+This module provides pretrain, SFT, and PEFT configurations for Qwen3.5-VL models:
 
 - **Dense**: 800M, 2B, 4B, 9B, 27B
 - **MoE**: 35B-A3B, 122B-A10B, 397B-A17B
 """
 
+from __future__ import annotations
+
 import torch
+from typing_extensions import Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
+from megatron.bridge.recipes.qwen_vl.qwen3_vl import Qwen3VLCommonKwargs, _qwen3_vl_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
@@ -180,6 +184,90 @@ def _qwen35_vl_apply_peft_scheme(cfg: ConfigContainer, peft_scheme: str | PEFT) 
         cfg.peft = default_peft_config(peft_scheme)
     else:
         cfg.peft = peft_scheme
+
+
+# =============================================================================
+# Qwen3.5-VL Pretrain Configurations (mock dataset)
+# =============================================================================
+# Qwen3.5-VL reuses the Qwen3-VL _qwen3_vl_common helper for pretrain configs
+# since both families share the same VLM architecture and mock-dataset pipeline.
+
+
+def qwen35_vl_9b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3.5-VL 9B (dense).
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3.5-9B",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 1,
+        "expert_model_parallel_size": 1,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
+
+def qwen35_vl_35b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3.5-VL 35B-A3B (MoE).
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3.5-35B-A3B",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 2,
+        "expert_model_parallel_size": 4,
+        "sequence_parallel": True,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
+
+def qwen35_vl_122b_a10b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3.5-VL 122B-A10B (MoE).
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3.5-122B-A10B",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 8,
+        "expert_model_parallel_size": 8,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
+
+def qwen35_vl_397b_a17b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3.5-VL 397B-A17B (MoE).
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3.5-397B-A17B",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 16,
+        "expert_model_parallel_size": 16,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
 
 
 # =============================================================================
