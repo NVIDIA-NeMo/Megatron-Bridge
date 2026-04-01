@@ -57,6 +57,8 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
+    "skills/code-style/SKILL.md",
+    "skills/parity-testing/SKILL.md",
     "skills/perf-techniques/README.md",
 ]
 
