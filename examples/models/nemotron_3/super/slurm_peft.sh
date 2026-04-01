@@ -14,27 +14,31 @@
 # limitations under the License.
 
 # ==============================================================================
-# Nemotron 3 Nano Pretraining
+# Nemotron 3 Super Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 #
-# Nemotron 3 Nano is a 30B parameter model with A3B (Active 3 Billion) architecture
+# Nemotron 3 Super is a 120B parameter model with A12B (Active 12 Billion) architecture
+# LoRA/DoRA significantly reduces memory requirements
 # Supports multiple parallelism configs: each "TP,PP,EP,CP,SP" runs sequentially.
+#
+# Note: The default recipe uses NVFP4 mixed precision, which requires Blackwell GPUs.
+#       For Hopper GPUs, add: mixed_precision="bf16_mixed" to CLI_OVERRIDES.
 #
 # Usage:
 #   1. Modify the #SBATCH directives below for your cluster
 #   2. Set CONTAINER_IMAGE to your container path
 #   3. Set PARALLELISM_CONFIGS (TP,PP,EP,CP,SP per entry; CP = context parallel size, 1 = disabled)
-#   4. Submit: sbatch slurm_pretrain.sh
+#   4. Submit: sbatch slurm_peft.sh
 # ==============================================================================
 
-#SBATCH --job-name=nemotron3-pretrain
-#SBATCH --nodes=4
+#SBATCH --job-name=nemotron3-super-lora
+#SBATCH --nodes=8
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=24:00:00
 #SBATCH --partition=gpu
 #SBATCH --account=my_account
-#SBATCH --output=logs/nemotron3_pretrain_%j.out
-#SBATCH --error=logs/nemotron3_pretrain_%j.err
+#SBATCH --output=logs/nemotron3_super_lora_%j.out
+#SBATCH --error=logs/nemotron3_super_lora_%j.err
 #SBATCH --exclusive
 
 # ==============================================================================
@@ -45,19 +49,21 @@
 WORKSPACE=${WORKSPACE:-/workspace}
 
 # Model and training configurations
-MODEL_NAME=nemotron_3_nano
-DATASET_NAME=mock
-SEQ_LENGTH=512
+PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/NVIDIA-Nemotron-3-Super-120B-A12B-BF16}
+MODEL_NAME=nemotron_3_super
+DATASET_NAME=squad
+SEQ_LENGTH=4096
 TRAIN_ITERS=50
-GLOBAL_BATCH_SIZE=32
+GLOBAL_BATCH_SIZE=16
 MICRO_BATCH_SIZE=1
 EVAL_ITERS=10
+EVAL_INTERVAL=50
 LR_WARMUP_ITERS=5
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry
-PARALLELISM_CONFIGS=("4,1,8,1,True" "2,2,8,1,True" "2,1,8,2,True")
+PARALLELISM_CONFIGS=("8,1,64,1,True" "4,1,8,2,True")
 
 # Container image (required)
 CONTAINER_IMAGE=""
@@ -83,21 +89,22 @@ export NCCL_NVLS_ENABLE=0
 # export HF_HOME="/path/to/shared/HF_HOME"
 
 # Authentication tokens (set these for your environment)
-# export HF_TOKEN="hf_your_token_here"
-# export WANDB_API_KEY="your_wandb_key_here"
+# export HF_TOKEN=
+# export WANDB_API_KEY=
 
 # ==============================================================================
 # Job Execution
 # ==============================================================================
 
 echo "======================================"
-echo "Nemotron 3 Nano Pretraining Job"
+echo "Nemotron 3 Super LoRA Fine-Tuning Job"
 echo "======================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "GPUs per node: $SLURM_GPUS_PER_NODE"
 echo "Model: $MODEL_NAME"
 echo "Parallelism configs: ${PARALLELISM_CONFIGS[*]}"
+echo "PEFT: LoRA"
 echo "======================================"
 
 # Create logs directory if it doesn't exist
@@ -127,27 +134,33 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP, SP=$SP, CP=$CP"
     echo "======================================"
 
-    # Build CLI overrides for this config
+    # Build CLI overrides for this config (LoRA PEFT)
     CLI_OVERRIDES="\
-        model.seq_length=$SEQ_LENGTH \
+        checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         train.train_iters=$TRAIN_ITERS \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
         train.micro_batch_size=$MICRO_BATCH_SIZE \
-        train.eval_iters=$EVAL_ITERS \
+        validation.eval_interval=$EVAL_INTERVAL \
+        validation.eval_iters=$EVAL_ITERS \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
+        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_lora_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
-        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
-        dataset.sequence_length=$SEQ_LENGTH \
+        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
         model.expert_model_parallel_size=$EP \
         model.sequence_parallel=$SP \
-        model.context_parallel_size=$CP"
+        model.context_parallel_size=$CP \
+        model.calculate_per_token_loss=True \
+        dataset.packed_sequence_specs.pad_seq_to_mult=$([ "$CP" -gt 1 ] && echo $((CP * 2)) || echo 1) \
+        dataset.packed_sequence_specs.packed_sequence_size=$SEQ_LENGTH \
+        dataset.seq_length=$SEQ_LENGTH \
+        model.seq_length=$SEQ_LENGTH"
 
     CMD="uv run --no-sync python scripts/training/run_recipe.py"
-    CMD="$CMD --recipe ${MODEL_NAME}_pretrain_config"
+    CMD="$CMD --recipe ${MODEL_NAME}_peft_config"
+    CMD="$CMD --peft_scheme lora"
     CMD="$CMD $CLI_OVERRIDES"
 
     echo "Executing command..."
