@@ -18,6 +18,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import (
+    default_openmathinstruct2_gsm8k_chat_config,
     default_openmathinstruct2_gsm8k_config,
     default_peft_config,
 )
@@ -868,6 +869,34 @@ def gpt_oss_20b_sft_openmathinstruct2_gsm8k_config() -> ConfigContainer:
     # Replace dataset with OpenMathInstruct-2 in GSM8K format
     cfg.dataset = default_openmathinstruct2_gsm8k_config(seq_length=seq_length)
 
+    return cfg
+
+
+def gpt_oss_20b_sft_openmathinstruct2_gsm8k_chat_config() -> ConfigContainer:
+    """Return a SFT config for GPT-OSS 20B trained on OpenMathInstruct-2 with chat template.
+
+    Same as gpt_oss_20b_sft_openmathinstruct2_gsm8k_config but applies the GPT-OSS tokenizer
+    chat template during training, aligning with gsm8k_cot_instruct evaluation format.
+    """
+    cfg = gpt_oss_20b_sft_config()
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset = default_openmathinstruct2_gsm8k_chat_config(seq_length=seq_length)
+    return cfg
+
+
+def gpt_oss_20b_peft_openmathinstruct2_gsm8k_chat_config(
+    peft_scheme: str = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for GPT-OSS 20B trained on OpenMathInstruct-2 with chat template.
+
+    Same as gpt_oss_20b_peft_openmathinstruct2_gsm8k_config but applies the GPT-OSS tokenizer
+    chat template during training, aligning with gsm8k_cot_instruct evaluation format.
+    """
+    cfg = gpt_oss_20b_peft_config(peft_scheme=peft_scheme)
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset = default_openmathinstruct2_gsm8k_chat_config(seq_length=seq_length)
     return cfg
 
 

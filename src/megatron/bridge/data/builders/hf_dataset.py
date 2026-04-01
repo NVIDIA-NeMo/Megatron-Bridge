@@ -205,6 +205,10 @@ def preprocess_and_split_data(
                 json_line["output"] = processed_example["output"]
                 if split_name == "test":
                     json_line["original_answers"] = processed_example["original_answers"]
+                # Write any extra keys (e.g. messages for chat datasets)
+                for _key, _val in processed_example.items():
+                    if _key not in ("input", "output", "original_answers"):
+                        json_line[_key] = _val
                 f.write(json.dumps(json_line) + "\n")
 
         logger.info(f"{split_name} split saved to {output_file}")

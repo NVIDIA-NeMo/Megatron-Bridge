@@ -59,13 +59,68 @@ def process_openmathinstruct2_example(
     return ProcessExampleOutput(input=_input, output=_output, original_answers=[expected_answer])
 
 
+def _strip_intermediate_boxed(text: str) -> str:
+    """Replace all \\boxed{content} occurrences in text with just content.
+
+    Uses brace-depth counting to handle nested braces correctly
+    (e.g. \\boxed{\\frac{1}{2}} → \\frac{1}{2}).
+    """
+    marker = r"\boxed{"
+    result = []
+    i = 0
+    while i < len(text):
+        idx = text.find(marker, i)
+        if idx == -1:
+            result.append(text[i:])
+            break
+        result.append(text[i:idx])
+        depth = 0
+        end = -1
+        for j in range(idx + len(marker) - 1, len(text)):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end == -1:
+            # malformed \boxed{, keep as-is
+            result.append(text[idx:])
+            break
+        result.append(text[idx + len(marker) : end])
+        i = end + 1
+    return "".join(result)
+
+
 def _convert_boxed_to_hash(solution: str, expected_answer: str) -> str:
-    """Convert \boxed{N} ending to GSM8K #### N format."""
-    pattern = r"\$?\\boxed\{[^}]*\}\$?\.?\s*$"
-    if re.search(pattern, solution):
-        result = re.sub(pattern, "", solution).rstrip()
-        return result + "\n#### " + expected_answer
-    return solution.rstrip() + "\n#### " + expected_answer
+    """Convert \\boxed{N} ending to GSM8K #### N format.
+
+    Uses brace-depth counting to correctly handle nested braces
+    (e.g. \\boxed{\\frac{1}{2}}) and strips any trailing content after
+    the closing brace (e.g. $, \\], punctuation, whitespace).
+    Also strips intermediate \\boxed{} occurrences in the reasoning body,
+    replacing them with their content to avoid leaking the \\boxed{} format
+    into model training data.
+    """
+    marker = r"\boxed{"
+    idx = solution.rfind(marker)
+    if idx != -1:
+        depth = 0
+        end = -1
+        for i in range(idx + len(marker) - 1, len(solution)):
+            if solution[i] == "{":
+                depth += 1
+            elif solution[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end != -1:
+            prefix = re.sub(r"\$?\s*$", "", solution[:idx])
+            prefix = _strip_intermediate_boxed(prefix)
+            return prefix + "\n#### " + expected_answer
+    return _strip_intermediate_boxed(solution.rstrip()) + "\n#### " + expected_answer
 
 
 def process_openmathinstruct2_gsm8k_example(
@@ -79,3 +134,21 @@ def process_openmathinstruct2_gsm8k_example(
     _input = f"Problem: {example['problem']} Solution:"
     _output = _convert_boxed_to_hash(example["generated_solution"], str(example["expected_answer"]))
     return ProcessExampleOutput(input=_input, output=_output, original_answers=[str(example["expected_answer"])])
+
+
+def process_openmathinstruct2_gsm8k_chat_example(example: dict, _tokenizer=None) -> dict:
+    """Process OpenMathInstruct-2 example into chat (messages) format with GSM8K #### N answers.
+
+    Converts \\boxed{{N}} endings to GSM8K-compatible #### N format and wraps the
+    question/answer in HuggingFace messages format for use with GPTSFTChatDataset.
+    """
+    solution = _convert_boxed_to_hash(example["generated_solution"], str(example["expected_answer"]))
+    return {
+        "input": "",  # unused by GPTSFTChatDataset with use_hf_tokenizer_chat_template=True
+        "output": "",  # unused by GPTSFTChatDataset with use_hf_tokenizer_chat_template=True
+        "messages": [
+            {"role": "user", "content": example["problem"]},
+            {"role": "assistant", "content": solution},
+        ],
+        "original_answers": [str(example["expected_answer"])],
+    }

@@ -30,8 +30,8 @@
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=8  # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
 #SBATCH --gpus-per-node=8    # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
-#SBATCH --time=04:00:00
-#SBATCH --partition=batch
+#SBATCH --time=20:00:00
+#SBATCH --partition=batch_large_long
 #SBATCH --account=coreai_dlalgo_llm
 #SBATCH --output=logs/gpt_oss_sft_%j.out
 #SBATCH --error=logs/gpt_oss_sft_%j.err
@@ -51,22 +51,23 @@ export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
 # Use base dir (e.g. .../gpt-oss-20b) with latest_checkpointed_iteration.txt, or Bridge dir with latest_train_state.pt
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b-v2}
 MODEL_NAME=gpt_oss_20b
-RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_sft_openmathinstruct2_gsm8k_config}"  # bf16, OpenMathInstruct-2 GSM8K format
+RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_sft_openmathinstruct2_gsm8k_chat_config}"  # bf16, OpenMathInstruct-2 GSM8K format with chat template
 # RECIPE_NAME="${MODEL_NAME}_sft_fp8_current_scaling_config"           # Hopper FP8 current scaling
 # RECIPE_NAME="${MODEL_NAME}_sft_mxfp8_config"                        # Blackwell MXFP8
 DATASET_NAME=openmathinstruct2_gsm8k
 SEQ_LENGTH=4096
-TRAIN_ITERS=1000
-GLOBAL_BATCH_SIZE=8
+TRAIN_ITERS=2000
+GLOBAL_BATCH_SIZE=128
 MICRO_BATCH_SIZE=1
 EVAL_ITERS=32
 EVAL_INTERVAL=50
-LR_WARMUP_ITERS=50
+LR_WARMUP_ITERS=100
+SAVE_INTERVAL=500
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry (max(TP*CP, EP)*PP must be divisible by the total number of GPUs)
-PARALLELISM_CONFIGS=("2,2,4,1,True" "4,1,4,1,True")
+PARALLELISM_CONFIGS=("2,2,4,1,True")
 
 # Container image (required)
 CONTAINER_IMAGE="${CONTAINER_IMAGE:-$WKDIR/sqsh/nemo_26.02.rc5.sqsh}"
@@ -148,7 +149,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         validation.eval_interval=$EVAL_INTERVAL \
         validation.eval_iters=$EVAL_ITERS \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
+        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_${DATASET_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_entity=nvidia-nemo-fw-public \
@@ -162,7 +163,9 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.calculate_per_token_loss=True \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
         dataset.seq_length=$SEQ_LENGTH \
-        model.seq_length=$SEQ_LENGTH
+        model.seq_length=$SEQ_LENGTH \
+        scheduler.max_lr=1e-6 \
+        checkpoint.save_interval=$SAVE_INTERVAL
     "
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
         CMD="$CMD --recipe ${RECIPE_NAME}"

@@ -19,6 +19,7 @@ from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.hf_processors.gsm8k import process_gsm8k_example
 from megatron.bridge.data.hf_processors.openmathinstruct2 import (
     process_openmathinstruct2_example,
+    process_openmathinstruct2_gsm8k_chat_example,
     process_openmathinstruct2_gsm8k_example,
 )
 from megatron.bridge.data.hf_processors.squad import process_squad_example
@@ -101,6 +102,40 @@ def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_
         packed_sequence_specs=packed_sequence_specs,
         rewrite=False,
     )
+
+
+def default_openmathinstruct2_gsm8k_chat_config(
+    seq_length: int = 4096,
+    packed_sequence: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> HFDatasetConfig:
+    """Create OpenMathInstruct-2 dataset config in chat format for use with GPT-OSS chat template.
+
+    Same dataset as default_openmathinstruct2_gsm8k_config but wraps each example in
+    HuggingFace messages format so GPTSFTChatDataset applies the tokenizer's chat template
+    during training. Uses a separate cache directory to avoid collisions with the plain-text
+    variant.
+
+    Args:
+        seq_length: Sequence length (default 4096 for math solutions)
+        packed_sequence: Whether to enable packed sequences
+        pad_seq_to_mult: Sequence length padding multiple when packing
+
+    Returns:
+        HFDatasetConfig for OpenMathInstruct-2 in chat/messages format
+    """
+    from megatron.bridge.data.datasets.sft import get_dataset_root
+
+    cfg = default_openmathinstruct2_gsm8k_config(
+        seq_length=seq_length,
+        packed_sequence=packed_sequence,
+        pad_seq_to_mult=pad_seq_to_mult,
+    )
+    cfg.process_example_fn = process_openmathinstruct2_gsm8k_chat_example
+    cfg.dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
+    # Separate cache path so chat and plain-text JSONL files don't collide
+    cfg.dataset_root = get_dataset_root("nvidia/OpenMathInstruct-2-gsm8k-chat")
+    return cfg
 
 
 def default_openmathinstruct2_config(
