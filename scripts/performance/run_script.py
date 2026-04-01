@@ -135,7 +135,6 @@ def main():
         recipe.print_yaml()
         sys.exit(0)
 
-
     # Select forward step function based on the model family name.
     if args.domain == "vlm":
         forward_step_func = vlm_forward_step
