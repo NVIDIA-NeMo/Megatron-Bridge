@@ -305,8 +305,8 @@ uv run torchrun --nproc-per-node=8 \
 
 ## LoRA Merge
 
-After LoRA training, merge adapter weights back into the base Megatron
-checkpoint. The script reads the base checkpoint path from
+After LoRA training, export Hugging Face weights with the adapter weights
+merged into the base model. The script reads the base checkpoint path from
 `run_config.yaml` inside the LoRA checkpoint directory, so `--pretrained`
 is usually not required. Pass `--tp` to match the parallelism of the base
 checkpoint.
@@ -321,11 +321,10 @@ uv run torchrun --nproc-per-node=<NUM_GPUS> examples/peft/merge_lora.py \
     --tp <TP_SIZE>
 ```
 
-The merged checkpoint is a standard Megatron checkpoint and can be used
-directly for inference or re-exported to HF format using the standard
-export flow (see the Checkpoint Conversion section).
+The output is a merged Hugging Face checkpoint and can be used directly for
+downstream inference or serving.
 
-If the node does not have enough GPU memory, add `--cpu` to load and merge
+If the node does not have enough GPU memory, add `--cpu` to load and export
 entirely on CPU (no GPU required, but slower).
 
 ### LoRA Adapter Export

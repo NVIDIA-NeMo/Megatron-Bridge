@@ -256,9 +256,9 @@ class VLMLoRA(LoRA):
                 model.train(mode=True)
 
 
-class LoRAMerge(PEFT):
+class LoRAMerge:
     """
-    Implements the LoRA weight merge for parameter-efficient fine-tuning.
+    Tensor helper for merging LoRA adapter weights into base weights.
     """
 
     def merge(
@@ -333,62 +333,3 @@ class LoRAMerge(PEFT):
             lora_weight = alpha / dim * (linear_out @ linear_in)
 
         return base_weight + lora_weight
-
-    @torch.no_grad()
-    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
-        """
-        Merges the LoRA adapter with the base model weights.
-
-        Args:
-            m (nn.Module): The module to apply LoRA merge to.
-            name (str, optional): Name of the module to merge. Defaults to None.
-            prefix (str, optional): Prefix for the module name. Defaults to None.
-
-        Returns:
-            nn.Module: The modified module with the LoRA adapter merged into the base model weights.
-        """
-
-        if not isinstance(module, LoRALinear):
-            return module
-        merged_name = ".".join(part for part in (prefix, name) if part)
-        logger.info(f"merging {merged_name}")
-        is_expert_adapter = module.adapter.is_expert
-        merge_tp_size = (
-            parallel_state.get_expert_tensor_parallel_world_size()
-            if is_expert_adapter
-            else parallel_state.get_tensor_model_parallel_world_size()
-        )
-        merge_tp_group = (
-            parallel_state.get_expert_tensor_parallel_group()
-            if is_expert_adapter
-            else parallel_state.get_tensor_model_parallel_group()
-        )
-
-        if hasattr(module.to_wrap, "weight"):
-            base_device = module.to_wrap.weight.device
-            merged_weight = self.merge(
-                module.to_wrap.weight,
-                module.adapter.linear_out.weight.to(base_device),
-                module.adapter.linear_in.weight.to(base_device),
-                module.adapter.alpha,
-                module.adapter.dim,
-                tp_size=merge_tp_size,
-                tp_group=merge_tp_group,
-            )
-            module.to_wrap.weight.data = merged_weight
-        else:  # TE Grouped Linear
-            linear_in_weight = module.adapter.linear_in.weight
-            linear_out_weight = module.adapter.linear_out.weight
-            for i in range(module.to_wrap.num_gemms):
-                base_device = getattr(module.to_wrap, f"weight{i}").device
-                merged_weight = self.merge(
-                    getattr(module.to_wrap, f"weight{i}"),
-                    (linear_out_weight[i] if linear_out_weight.ndim == 3 else linear_out_weight).to(base_device),
-                    (linear_in_weight[i] if linear_in_weight.ndim == 3 else linear_in_weight).to(base_device),
-                    module.adapter.alpha,
-                    module.adapter.dim,
-                    tp_size=merge_tp_size,
-                    tp_group=merge_tp_group,
-                )
-                getattr(module.to_wrap, f"weight{i}").data = merged_weight
-        return module
