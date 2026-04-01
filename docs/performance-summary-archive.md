@@ -1,3 +1,5 @@
+NOTE: This page contains performance summary for past releases. You can find summary for the latest releases at [performance-summary.md]((performance-summary.md))
+
 # Performance
 
 As part of the NVIDIA NeMo Framework, Megatron Bridge, provides optimal performance for training advanced generative AI models by incorporating the most recent training techniques, such as model parallelization, optimized attention mechanisms, and more, to achieve high training throughput.
