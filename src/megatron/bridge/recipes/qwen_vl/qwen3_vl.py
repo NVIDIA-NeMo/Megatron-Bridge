@@ -208,7 +208,7 @@ def _qwen3_vl_common(
 # =============================================================================
 
 
-def qwen3_vl_8b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+def qwen3_vl_8b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
     """Return a pre-training config for Qwen3-VL 8B Instruct.
 
     See `_qwen3_vl_common` for the full list of parameters.
@@ -226,7 +226,7 @@ def qwen3_vl_8b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> C
     return _qwen3_vl_common(**combined_kwargs)
 
 
-def qwen3_vl_30b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+def qwen3_vl_30b_a3b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
     """Return a pre-training config for Qwen3-VL 30B-A3B (MoE).
 
     See `_qwen3_vl_common` for the full list of parameters.
@@ -245,7 +245,7 @@ def qwen3_vl_30b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs])
     return _qwen3_vl_common(**combined_kwargs)
 
 
-def qwen3_vl_235b_a22b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+def qwen3_vl_235b_a22b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
     """Return a pre-training config for Qwen3-VL 235B-A22B (MoE).
 
     See `_qwen3_vl_common` for the full list of parameters.

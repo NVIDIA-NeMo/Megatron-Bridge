@@ -193,7 +193,7 @@ def _qwen35_vl_apply_peft_scheme(cfg: ConfigContainer, peft_scheme: str | PEFT) 
 # since both families share the same VLM architecture and mock-dataset pipeline.
 
 
-def qwen35_vl_9b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+def qwen35_vl_9b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
     """Return a pre-training config for Qwen3.5-VL 9B (dense).
 
     See `_qwen3_vl_common` for the full list of parameters.
@@ -211,7 +211,7 @@ def qwen35_vl_9b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> 
     return _qwen3_vl_common(**combined_kwargs)
 
 
-def qwen35_vl_35b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+def qwen35_vl_35b_a3b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
     """Return a pre-training config for Qwen3.5-VL 35B-A3B (MoE).
 
     See `_qwen3_vl_common` for the full list of parameters.
@@ -230,7 +230,7 @@ def qwen35_vl_35b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]
     return _qwen3_vl_common(**combined_kwargs)
 
 
-def qwen35_vl_122b_a10b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+def qwen35_vl_122b_a10b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
     """Return a pre-training config for Qwen3.5-VL 122B-A10B (MoE).
 
     See `_qwen3_vl_common` for the full list of parameters.
@@ -250,7 +250,7 @@ def qwen35_vl_122b_a10b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwarg
     return _qwen3_vl_common(**combined_kwargs)
 
 
-def qwen35_vl_397b_a17b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+def qwen35_vl_397b_a17b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
     """Return a pre-training config for Qwen3.5-VL 397B-A17B (MoE).
 
     See `_qwen3_vl_common` for the full list of parameters.
