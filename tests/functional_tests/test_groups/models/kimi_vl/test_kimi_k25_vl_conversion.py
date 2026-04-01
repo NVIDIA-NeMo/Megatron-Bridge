@@ -80,6 +80,22 @@ class TestKimiK25VLConversion:
             if hasattr(cfg, "quantization_config"):
                 delattr(cfg, "quantization_config")
 
+        # Patch MoonViT3dEncoder before model instantiation.
+        # The HF custom code references self.use_deterministic_attn in __init__
+        # before assigning it, causing an AttributeError.  Inject a class-level
+        # default so the attribute lookup succeeds regardless of __init__ order.
+        try:
+            from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+            MoonViT3dEncoder = get_class_from_dynamic_module(
+                "modeling_kimi_k25.MoonViT3dEncoder",
+                "moonshotai/Kimi-K2.5",
+            )
+            if not hasattr(MoonViT3dEncoder, "use_deterministic_attn"):
+                MoonViT3dEncoder.use_deterministic_attn = False
+        except Exception:
+            pass
+
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
         model = model.to(dtype=torch.bfloat16)
 
