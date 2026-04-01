@@ -42,6 +42,7 @@ from megatron.core.utils import (
     unwrap_model,
 )
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -275,6 +276,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("num_experts_per_tok", "moe_router_topk"),
         ("moe_intermediate_size", "moe_ffn_hidden_size"),
         ("aux_loss_alpha", "moe_aux_loss_coeff"),
+        ("router_aux_loss_coef", "moe_aux_loss_coeff"),
         ("scoring_func", "moe_router_score_function"),
         ("n_routed_experts", "num_moe_experts"),
         ("n_group", "moe_router_num_groups"),
@@ -1121,6 +1123,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                         expected_keys = hf_pretrained.state.source.get_all_keys()
                         if "lm_head.weight" in expected_keys:
                             yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
+                    elif isinstance(hf_pretrained, PretrainedConfig):
+                        # Always emit lm_head.weight for config-only
+                        yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
                 elif embeddings_are_tied and hf_name == "lm_head.weight":
                     # This should not happen when embeddings are tied - assert error
                     raise ValueError(
@@ -1322,12 +1327,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         populated.
         """
 
-        # Ensure hf_pretrained has the required state structure
-        if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
+        has_hf_state = hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")
+        if not isinstance(hf_pretrained, PretrainedConfig) and not has_hf_state:
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
 
-        hf_keys: Iterable[str] = hf_pretrained.state.source.get_all_keys()
-
+        hf_keys: Optional[Iterable[str]] = hf_pretrained.state.source.get_all_keys() if has_hf_state else None
         mapping_registry = self.mapping_registry()
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
@@ -1363,8 +1367,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
                     continue
 
-                # ensure hf weights exist
-                if not mapping.allow_hf_name_mismatch:
+                # Ensure hf weights exist (skip for config-only export where hf_keys is None)
+                if hf_keys is not None and not mapping.allow_hf_name_mismatch:
                     if isinstance(mapping.hf_param, str):
                         if mapping.hf_param not in hf_keys:
                             logger.warning(f"WARNING: Can't find {mapping.hf_param} in hf_keys")
@@ -1558,7 +1562,7 @@ def register_bridge_implementation(
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
 
-        # allow bridge to access model config (config-only shims or raw configs lack .config)
+        # Allow bridge to access model config (config-only shims or raw configs lack .config)
         bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
 
         return bridge.stream_weights_megatron_to_hf(
