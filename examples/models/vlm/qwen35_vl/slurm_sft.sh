@@ -169,7 +169,7 @@ CLI_OVERRIDES="\
 # For multinode runs, the recipe's online HF path can be unstable. Pass --hf_path
 # with a local model directory for more reliable config loading, e.g.:
 #   --hf_path ${WORKSPACE}/models/Qwen/${HF_MODEL_NAME}
-CMD="uv run --no-sync python scripts/training/run_recipe.py \
+CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
     --step_func vlm_step \
     $CLI_OVERRIDES"

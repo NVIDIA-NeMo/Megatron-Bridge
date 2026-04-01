@@ -112,7 +112,7 @@ CLI_OVERRIDES="\
     dataset.maker_name=make_${DATASET_NAME}_dataset \
     dataset.seq_length=$SEQ_LENGTH"
 
-CMD="uv run --no-sync python scripts/training/run_recipe.py \
+CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
     --step_func vlm_step \
     $CLI_OVERRIDES"
