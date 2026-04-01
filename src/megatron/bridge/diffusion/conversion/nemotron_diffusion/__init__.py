@@ -14,4 +14,5 @@
 
 from megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge import NemotronDiffusionBridge
 
+
 __all__ = ["NemotronDiffusionBridge"]

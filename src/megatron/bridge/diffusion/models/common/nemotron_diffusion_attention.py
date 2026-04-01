@@ -20,11 +20,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
-from torch.nn.attention.flex_attention import flex_attention
-from transformers import ROPE_INIT_FUNCTIONS
-
-from megatron.bridge.diffusion.common.dllm import compute_block_mask
 from megatron.core import tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
@@ -32,14 +27,21 @@ from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import divide
+from torch import Tensor
+from torch.nn.attention.flex_attention import flex_attention
+from transformers import ROPE_INIT_FUNCTIONS
+
+from megatron.bridge.diffusion.common.dllm import compute_block_mask
 
 
 # ---------------------------------------------------------------------------
 # Compiled flex_attention kernel
 # ---------------------------------------------------------------------------
 
+
 @torch.compile(fullgraph=True, mode="max-autotune-no-cudagraphs", dynamic=False)
 def fused_flex_attention(q, k, v, score_mod=None, block_mask=None, return_lse=False):
+    """Thin compiled wrapper around flex_attention."""
     return flex_attention(q, k, v, score_mod=score_mod, block_mask=block_mask, return_lse=return_lse)
 
 
@@ -47,13 +49,16 @@ def fused_flex_attention(q, k, v, score_mod=None, block_mask=None, return_lse=Fa
 # RoPE helpers
 # ---------------------------------------------------------------------------
 
+
 def rotate_half(x):
+    """Rotate the last half of the hidden dimension for RoPE."""
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
 
 
 def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
+    """Apply rotary position embeddings to query and key tensors."""
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
@@ -78,6 +83,7 @@ def _get_llama_4_attn_scale(position_ids: torch.Tensor, beta: float, max_positio
 # ---------------------------------------------------------------------------
 # YARN-aware Rotary Embedding (supports default + yarn rope_type)
 # ---------------------------------------------------------------------------
+
 
 class Ministral3RotaryEmbedding(nn.Module):
     """RoPE with YARN support, driven by HF ``rope_parameters`` config."""
@@ -132,6 +138,7 @@ class Ministral3RotaryEmbedding(nn.Module):
 # NemotronDiffusionAttention  (sbd_block_diff only)
 # ---------------------------------------------------------------------------
 
+
 class NemotronDiffusionAttention(MegatronModule):
     """NemotronDiffusionAttention for semi-block-diffusion (sbd_block_diff) training.
 
@@ -154,20 +161,16 @@ class NemotronDiffusionAttention(MegatronModule):
         super().__init__(config=config)
         self.config = config
 
-        assert config.context_parallel_size == 1, (
-            "Context parallelism is only supported by TEDotProductAttention!"
-        )
+        assert config.context_parallel_size == 1, "Context parallelism is only supported by TEDotProductAttention!"
 
         self.layer_number = max(1, layer_number)
 
         projection_size = config.kv_channels * config.num_attention_heads
 
         if pg_collection is None:
-            pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=['tp'])
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=["tp"])
         else:
-            assert hasattr(pg_collection, 'tp'), (
-                "NemotronDiffusionAttention pg_collection must have tp process group"
-            )
+            assert hasattr(pg_collection, "tp"), "NemotronDiffusionAttention pg_collection must have tp process group"
 
         world_size = pg_collection.tp.size()
         self.hidden_size_per_partition = divide(projection_size, world_size)
@@ -190,22 +193,26 @@ class NemotronDiffusionAttention(MegatronModule):
         # Llama-4 style query-key layer scaling + YARN RoPE
         self.beta = None
         self.max_position_embeddings = None
-        if getattr(config, 'apply_llama4_style_query_key_layer_scaling', False):
+        if getattr(config, "apply_llama4_style_query_key_layer_scaling", False):
             hf_text_config = config.hf_config.text_config
             self.beta = hf_text_config.rope_parameters["llama_4_scaling_beta"]
             self.max_position_embeddings = hf_text_config.rope_parameters["original_max_position_embeddings"]
             hf_text_config.max_position_embeddings = config.seq_length
-            if hasattr(config, "yarn_rotary_scaling_factor") and config.yarn_rotary_scaling_factor != hf_text_config.rope_parameters["factor"]:
+            if (
+                hasattr(config, "yarn_rotary_scaling_factor")
+                and config.yarn_rotary_scaling_factor != hf_text_config.rope_parameters["factor"]
+            ):
                 hf_text_config.rope_parameters["factor"] = config.yarn_rotary_scaling_factor
             self.rope_embedding_module = Ministral3RotaryEmbedding(hf_text_config)
 
         # Pre-compute the sbd_block_diff block mask
         self.mask = compute_block_mask(
-            block_size=getattr(config, 'block_size', 16),
+            block_size=getattr(config, "block_size", 16),
             max_seq_length=config.seq_length,
         )
 
         import torch._dynamo.config as dcfg
+
         dcfg.cache_size_limit = 512
 
         # Inference state
@@ -241,13 +248,10 @@ class NemotronDiffusionAttention(MegatronModule):
         attention_bias: Tensor = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
     ):
-        assert packed_seq_params is None, (
-            "Packed sequence is not supported by NemotronDiffusionAttention."
-        )
+        assert packed_seq_params is None, "Packed sequence is not supported by NemotronDiffusionAttention."
 
         if self._inference_mode:
             return self._inference_forward(query, key, value)
-
 
         # Position ids for each half of the doubled sequence
         half_seq_len = query.shape[0] // 2
@@ -269,9 +273,9 @@ class NemotronDiffusionAttention(MegatronModule):
 
         # Llama-4 attention scaling
         cache_position = torch.arange(query.shape[2], device=query.device)
-        query = query * _get_llama_4_attn_scale(
-            cache_position, self.beta, self.max_position_embeddings
-        ).to(query.dtype)
+        query = query * _get_llama_4_attn_scale(cache_position, self.beta, self.max_position_embeddings).to(
+            query.dtype
+        )
 
         # GQA: expand KV heads
         n_rep = self.num_attention_heads_per_partition // self.num_query_groups_per_partition
@@ -316,7 +320,6 @@ class NemotronDiffusionAttention(MegatronModule):
           7. Optionally stores the new K/V in cache
         """
         sq = query.shape[0]
-        b = query.shape[1]
 
         # Transpose to [b, np, s, hn]
         query = query.transpose(0, 1).transpose(1, 2)
@@ -341,9 +344,9 @@ class NemotronDiffusionAttention(MegatronModule):
 
         # Llama-4 attention scaling on query
         if self.beta is not None:
-            scale = _get_llama_4_attn_scale(
-                q_position_ids.squeeze(0), self.beta, self.max_position_embeddings
-            ).to(query.dtype)
+            scale = _get_llama_4_attn_scale(q_position_ids.squeeze(0), self.beta, self.max_position_embeddings).to(
+                query.dtype
+            )
             query = query * scale  # broadcast [sq, 1] -> [b, np, sq, hn]
 
         # Concatenate with KV cache

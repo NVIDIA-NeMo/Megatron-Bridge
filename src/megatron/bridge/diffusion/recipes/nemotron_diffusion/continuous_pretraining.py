@@ -16,7 +16,7 @@ def _nemotron_diffusion_cpt_config(
     cfg = _pretrain_common()
 
     # Model configuration
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=True)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=True, hf_path=hf_path)
     cfg.model.freeze_vision_model = True
     cfg.model.seq_length = 4096
 

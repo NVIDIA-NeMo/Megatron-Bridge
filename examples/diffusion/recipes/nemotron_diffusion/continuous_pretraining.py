@@ -29,6 +29,13 @@ from pathlib import Path
 from typing import Tuple
 
 import torch
+from omegaconf import OmegaConf
+
+from megatron.bridge.diffusion.recipes.nemotron_diffusion.continuous_pretraining import (
+    nemotron_diffusion_3b_finetune_config,
+    nemotron_diffusion_8b_finetune_config,
+    nemotron_diffusion_14b_finetune_config,
+)
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -36,14 +43,9 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from megatron.bridge.utils.common_utils import get_rank_safe
 from megatron.bridge.training.vlm_step import forward_step
-from megatron.bridge.diffusion.recipes.nemotron_diffusion.continuous_pretraining import (
-    nemotron_diffusion_3b_finetune_config,
-    nemotron_diffusion_8b_finetune_config,
-    nemotron_diffusion_14b_finetune_config,
-)
-from omegaconf import OmegaConf
+from megatron.bridge.utils.common_utils import get_rank_safe
+
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -59,6 +61,7 @@ PRETRAIN_CONFIGS = {
 
 
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
+    """Parse command-line arguments for the continuous pretraining script."""
     parser = argparse.ArgumentParser(
         description="Ministral3 continued pretraining (AR)",
         formatter_class=argparse.RawTextHelpFormatter,
@@ -112,6 +115,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
 
 def main() -> None:
+    """Entry point for Ministral3 continued pretraining."""
     args, cli_overrides = parse_cli_args()
 
     pretrain_config = PRETRAIN_CONFIGS[args.model_size]

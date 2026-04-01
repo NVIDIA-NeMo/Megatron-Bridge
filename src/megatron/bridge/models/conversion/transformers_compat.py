@@ -17,20 +17,6 @@
 import transformers.utils.import_utils as _hf_import_utils
 
 
-# Alias 'ministral3' -> 'mistral' in transformers CONFIG_MAPPING.
-# The mistralai/Ministral-3-* models use "model_type": "ministral3" in their
-# text_config, but older transformers only registers "mistral". Register an alias
-# so AutoConfig.from_pretrained resolves it correctly.
-try:
-    from transformers.models.auto.configuration_auto import CONFIG_MAPPING as _CONFIG_MAPPING
-    from transformers.models.mistral.configuration_mistral import MistralConfig as _MistralConfig
-
-    if "ministral3" not in _CONFIG_MAPPING:
-        _CONFIG_MAPPING._extra_content["ministral3"] = _MistralConfig
-except Exception:
-    pass
-
-
 # Shim for is_torch_fx_available, removed in transformers 5.x but still
 # referenced by some custom model repos (e.g. Kimi-K2's modeling_deepseek.py).
 # torch.fx has been stable since PyTorch 1.10, so always return True.

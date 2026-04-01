@@ -29,15 +29,15 @@ def forward_process_simple_masking(input_ids, mask_token_id, eps=1e-3, loss_mask
         masked_indices: boolean mask of shape (b, l)
         p_mask: per-token masking probability of shape (b, l)
     """
-    b, l = input_ids.shape
+    b, seq_len = input_ids.shape
     device = input_ids.device
 
     t = torch.rand(b, device=device, generator=generator)
 
     p_mask = (1 - eps) * t + eps  # shape: (b,)
-    p_mask = p_mask[:, None].expand(-1, l)  # shape: (b, l)
+    p_mask = p_mask[:, None].expand(-1, seq_len)  # shape: (b, l)
 
-    masked_indices = torch.rand((b, l), device=device, generator=generator) < p_mask
+    masked_indices = torch.rand((b, seq_len), device=device, generator=generator) < p_mask
 
     if loss_mask is not None:
         masked_indices[loss_mask == 0] = 0
@@ -66,8 +66,8 @@ def compute_block_mask(block_size, max_seq_length):
     n = max_seq_length
 
     def sbd_block_diff_mask(b, h, q_idx, kv_idx):
-        x0_flag_q = (q_idx >= n)
-        x0_flag_kv = (kv_idx >= n)
+        x0_flag_q = q_idx >= n
+        x0_flag_kv = kv_idx >= n
 
         block_q = torch.where(x0_flag_q, (q_idx - n) // block_size, q_idx // block_size)
         block_kv = torch.where(x0_flag_kv, (kv_idx - n) // block_size, kv_idx // block_size)

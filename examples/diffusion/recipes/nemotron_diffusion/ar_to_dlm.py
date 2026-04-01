@@ -30,11 +30,15 @@ from pathlib import Path
 from typing import Tuple
 
 import torch
+from omegaconf import OmegaConf
 
 # Register NemotronDiffusionBridge, overriding the base Ministral3Bridge so that
 # AutoBridge returns NemotronDiffusionModelProvider (with NemotronDiffusionAttention).
 import megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge  # noqa: F401
-
+from megatron.bridge.diffusion.models.common.dgpt_step import DGPTStep
+from megatron.bridge.diffusion.recipes.nemotron_diffusion.ar_to_dlm import (
+    nemotron_diffusion3_pretrain_config as pretrain_config,
+)
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -43,9 +47,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     parse_hydra_overrides,
 )
 from megatron.bridge.utils.common_utils import get_rank_safe
-from megatron.bridge.diffusion.models.common.dgpt_step import DGPTStep
-from megatron.bridge.diffusion.recipes.nemotron_diffusion.ar_to_dlm import nemotron_diffusion3_pretrain_config as pretrain_config
-from omegaconf import OmegaConf
+
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -53,7 +55,9 @@ SCRIPT_DIR: Path = Path(__file__).parent.parent.resolve()
 DEFAULT_CONFIG_FILENAME: str = "train_local.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "override_configs" / DEFAULT_CONFIG_FILENAME
 
+
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
+    """Parse command-line arguments for the AR-to-DLM conversion script."""
     parser = argparse.ArgumentParser(
         description="NemotronDiffusion diffusion LM pretraining (no distillation)",
         formatter_class=argparse.RawTextHelpFormatter,
@@ -106,6 +110,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
 
 def main() -> None:
+    """Entry point for AR-to-DLM conversion and continued pretraining."""
     args, cli_overrides = parse_cli_args()
     cfg: ConfigContainer = pretrain_config(
         data_paths=args.data_paths,
