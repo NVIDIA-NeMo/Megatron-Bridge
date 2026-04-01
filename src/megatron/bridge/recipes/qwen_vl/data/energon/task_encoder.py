@@ -173,7 +173,13 @@ class QwenVLTaskSamplePacked:
 
 @dataclass
 class QwenVLTaskBatch(Batch):
-    """Encoded Batch Format For QwenVL"""
+    """Encoded Batch Format For QwenVL.
+
+    Energon 7.x ``Batch`` requires ``__key__`` and ``__restore_key__`` as
+    keyword-only init fields.  We keep ``__keys__`` (plural) for downstream
+    consumption but satisfy the parent via ``__key__`` (joined) and
+    ``__restore_key__`` (empty tuple placeholder).
+    """
 
     __keys__: List[str]
     __subflavors__: List[Dict]
@@ -644,8 +650,11 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             cu_seqlens_argmin = torch.tensor(cu_seqlens_argmin_list, dtype=torch.int32)
             max_lengths = torch.tensor(max_lengths_list, dtype=torch.int32)
 
+            sample_keys = [s.__key__ for s in samples]
             batch_obj = QwenVLTaskBatch(
-                __keys__=[s.__key__ for s in samples],
+                __key__="+".join(sample_keys),
+                __restore_key__=(),
+                __keys__=sample_keys,
                 __subflavors__=[s.__subflavors__ for s in samples],
                 pixel_values=torch.vstack(imgs) if len(imgs) > 0 else None,
                 pixel_values_videos=torch.vstack(videos) if len(videos) > 0 else None,
@@ -701,8 +710,11 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
 
         loss_mask[labels < 0] = 0.0
 
+        sample_keys = [s.__key__ for s in samples]
         batch_obj = QwenVLTaskBatch(
-            __keys__=[s.__key__ for s in samples],
+            __key__="+".join(sample_keys),
+            __restore_key__=(),
+            __keys__=sample_keys,
             __subflavors__=[s.__subflavors__ for s in samples],
             pixel_values=torch.vstack(imgs) if len(imgs) > 0 else None,
             pixel_values_videos=torch.vstack(videos) if len(videos) > 0 else None,

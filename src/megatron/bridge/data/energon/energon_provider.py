@@ -39,6 +39,9 @@ class EnergonProvider(DatasetProvider):
 
     def build_datasets(self, context: DatasetBuildContext):
         assert self.path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
+        if self.task_encoder is not None and hasattr(self.task_encoder, "seq_len"):
+            self.task_encoder.seq_len = self.seq_length
+            self.task_encoder.seq_length = self.seq_length
         dataset = EnergonMultiModalDataModule(
             path=self.path,
             tokenizer=context.tokenizer if context.tokenizer is not None else self.tokenizer,
