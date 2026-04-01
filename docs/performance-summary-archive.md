@@ -4,7 +4,7 @@ NOTE: This page contains performance summary for past releases. You can find sum
 
 As part of the NVIDIA NeMo Framework, Megatron Bridge, provides optimal performance for training advanced generative AI models by incorporating the most recent training techniques, such as model parallelization, optimized attention mechanisms, and more, to achieve high training throughput.
 
-This page provides performance benchmarks for large language models organized by release version using Megatron-Bridge across different GPU systems and configurations.
+This page provides performance benchmarks for large language models using Megatron-Bridge across different GPU systems and configurations.
 
 ## Nomenclature
 
@@ -29,7 +29,7 @@ Performance is measured using:
 
 ## Performance Summary for Large Language Models
 
-Below are performance benchmarks for various large language models. These results were obtained using performance recipes available [here](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance).
+Below are performance benchmarks for various large language models organized by release version. These results were obtained using performance recipes available [here](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance).
 
 The performance data includes:
 
