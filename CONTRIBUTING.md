@@ -243,7 +243,7 @@ Use at most one primary state label from this set at a time (see exceptions belo
 | `blocked` | Work cannot move forward until an external dependency is cleared |
 | `ready-to-merge` | PR is approved, current, and only waiting for CI to pass before merge |
 
-**Allowed combinations:** `needs-author` + `needs-follow-up` can co-exist (e.g., waiting on the author but oncall should keep tracking the item across handoffs).
+**Allowed combinations:** `needs-author` + `needs-follow-up` and `needs-follow-up` + `blocked` can co-exist (e.g., waiting on the author but oncall should keep tracking, or a blocked item that oncall should keep watching across handoffs).
 
 ### Risk Labels
 

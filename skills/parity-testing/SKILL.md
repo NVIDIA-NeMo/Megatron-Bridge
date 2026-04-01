@@ -106,6 +106,9 @@ debugging failures. They are not part of the Bridge library — copy them
 into your script as needed.
 
 ```python
+import torch
+
+
 def compare_tensors(a, b, name=""):
     """Compare two tensors and report similarity metrics."""
     max_diff = (a - b).abs().max().item()
