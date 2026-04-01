@@ -123,4 +123,4 @@ The performance data includes:
 
 ## Archive
 
-Performance summary for past releases can be found in the [archive](performance-summary-archive/index.md).
+Performance summary for past releases can be found in the [archive](performance-summary-archive.md).
