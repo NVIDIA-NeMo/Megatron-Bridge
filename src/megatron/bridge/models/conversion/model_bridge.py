@@ -50,6 +50,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
 )
 from megatron.bridge.models.conversion.peft_bridge import AdapterWeightConversionTask, MegatronPeftBridge
+from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
     get_module_and_param_from_name,
@@ -165,7 +166,7 @@ def _megatron_local_name_to_global(
     return param_name
 
 
-class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
+class MegatronModelBridge(MegatronPeftBridge, MegatronQuantizationBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
     """
     High-level orchestrator for HuggingFace ↔ Megatron model conversions.
 
@@ -722,79 +723,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     )
                 else:
                     # Regular case - yield the tensor normally
-                    yield HFWeightTuple(hf_name, final_tensor)
-
-    def stream_weights_megatron_to_hf_quant(
-        self,
-        megatron_model: Union[MegatronModel, List[MegatronModel]],
-        hf_pretrained: HFPreTrained,
-        should_quantize: callable,
-        quant_fn: callable,
-        quant_block_size: Optional[Tuple[int, int]] = None,
-        cpu: bool = True,
-        show_progress: bool = True,
-        conversion_tasks: Optional[List[WeightConversionTask]] = None,
-        merge_adapter_weights: bool = True,
-    ) -> Iterable[HFWeightTuple]:
-        """Export Megatron weights to HuggingFace format with quantization.
-        """
-
-        if not isinstance(megatron_model, list):
-            megatron_model = [megatron_model]
-
-        # Use provided conversion tasks or build them
-        if conversion_tasks is None:
-            conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
-
-        # Collect adapter conversion tasks when merge is requested
-        adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
-        if merge_adapter_weights:
-            adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
-
-        megatron_to_hf_tasks = conversion_tasks
-        unwrapped_model = unwrap_model(megatron_model)[0]
-        model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
-
-        hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
-
-        for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace (Quantized)", show_progress):
-            converted_weights_dict = task.mapping.megatron_to_hf_quant(
-                task.param_weight, task.megatron_module, should_quantize, quant_fn, quant_block_size
-            )
-            converted_weights_dict = self.maybe_modify_converted_hf_weight(
-                task,
-                converted_weights_dict,
-                hf_state_dict,
-            )
-
-            adapter_tasks = None
-            if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
-                task_global_base_prefix, _, _ = task.global_param_name.partition(".to_wrap.weight")
-                adapter_tasks = adapter_tasks_by_base.get(task_global_base_prefix)
-            if merge_adapter_weights and adapter_tasks:
-                adapter_weights = self.materialize_adapter_weights(adapter_tasks)
-                converted_weights_dict = self._merge_lora_adapter_weights(
-                    megatron_model,
-                    converted_weights_dict,
-                    adapter_weights,
-                )
-
-            for hf_name, tensor in converted_weights_dict.items():
-                final_tensor = tensor.cpu() if cpu else tensor
-
-                if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
-                    hf_name = hf_name[: -len("weight")] + "base_layer.weight"
-
-                if embeddings_are_tied and hf_name == "model.embed_tokens.weight":
-                    yield HFWeightTuple(hf_name, final_tensor)
-                    if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
-                        expected_keys = hf_pretrained.state.source.get_all_keys()
-                        if "lm_head.weight" in expected_keys:
-                            yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
-                elif embeddings_are_tied and hf_name == "lm_head.weight":
-                    raise ValueError("Encountered lm_head.weight when embeddings are tied. This indicates a mapping error.")
-                else:
                     yield HFWeightTuple(hf_name, final_tensor)
 
     def dtype_from_hf(self, config, default=None):
