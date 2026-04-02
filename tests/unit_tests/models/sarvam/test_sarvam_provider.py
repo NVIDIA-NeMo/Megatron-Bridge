@@ -16,9 +16,9 @@
 Unit tests for Sarvam provider classes.
 """
 
-import math
 from unittest.mock import patch
 
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -26,6 +26,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.sarvam.sarvam_provider import (
     SarvamMLAModelProvider,
     SarvamMoEModelProvider,
+    _get_sarvam_moe_pipeline_layout,
 )
 from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
 
@@ -205,28 +206,49 @@ class TestSarvamProviderDefaults:
 class TestSarvamMoEFinalize:
     """Tests for SarvamMoEModelProvider.finalize() uneven pipeline logic."""
 
-    def test_finalize_sets_first_stage_layers_when_pp_uneven(self):
-        """19 layers with PP=2 -> first stage gets ceil(19/2) = 10 layers."""
-        provider = SarvamMoEModelProvider(pipeline_model_parallel_size=2)
+    @pytest.mark.parametrize(
+        ("pp", "expected_layout"),
+        [
+            (2, [["embedding"] + ["decoder"] * 10, ["decoder"] * 9 + ["loss"]]),
+            (4, [["embedding"] + ["decoder"] * 5, ["decoder"] * 5, ["decoder"] * 5, ["decoder"] * 4 + ["loss"]]),
+            (
+                8,
+                [
+                    ["embedding"] + ["decoder"] * 3,
+                    ["decoder"] * 3,
+                    ["decoder"] * 3,
+                    ["decoder"] * 2,
+                    ["decoder"] * 2,
+                    ["decoder"] * 2,
+                    ["decoder"] * 2,
+                    ["decoder"] * 2 + ["loss"],
+                ],
+            ),
+        ],
+    )
+    def test_finalize_sets_pipeline_layout_when_pp_uneven(self, pp, expected_layout):
+        """19 layers use explicit layouts for the supported uneven PP sizes."""
+        provider = SarvamMoEModelProvider(pipeline_model_parallel_size=pp)
 
         with patch.object(TransformerConfig, "finalize", autospec=True) as mock_super:
             provider.finalize()
 
-        assert provider.num_layers_in_first_pipeline_stage == math.ceil(19 / 2)
+        assert provider.pipeline_model_parallel_layout == expected_layout
+        assert provider.num_layers_in_first_pipeline_stage is None
         mock_super.assert_called_once_with(provider)
 
     def test_finalize_no_change_when_pp_is_one(self):
-        """PP=1 (default) should not set num_layers_in_first_pipeline_stage."""
+        """PP=1 (default) should not set a custom pipeline layout."""
         provider = SarvamMoEModelProvider(pipeline_model_parallel_size=1)
 
         with patch.object(TransformerConfig, "finalize", autospec=True) as mock_super:
             provider.finalize()
 
-        assert provider.num_layers_in_first_pipeline_stage is None
+        assert provider.pipeline_model_parallel_layout is None
         mock_super.assert_called_once_with(provider)
 
     def test_finalize_no_change_when_pp_evenly_divides(self):
-        """When num_layers is divisible by PP, no special assignment needed."""
+        """When num_layers is divisible by PP, no special layout is needed."""
         provider = SarvamMoEModelProvider(
             num_layers=20,
             moe_layer_freq=[0] + [1] * 19,
@@ -236,18 +258,63 @@ class TestSarvamMoEFinalize:
         with patch.object(TransformerConfig, "finalize", autospec=True) as mock_super:
             provider.finalize()
 
-        assert provider.num_layers_in_first_pipeline_stage is None
+        assert provider.pipeline_model_parallel_layout is None
         mock_super.assert_called_once_with(provider)
 
-    def test_finalize_with_prime_layers_and_various_pp(self):
-        """19 layers (prime) should trigger uneven PP for any PP > 1 that doesn't divide 19."""
-        for pp in [2, 3, 4, 5, 6]:
-            provider = SarvamMoEModelProvider(pipeline_model_parallel_size=pp)
+    def test_finalize_raises_for_unsupported_uneven_pp(self):
+        """Unsupported uneven PP sizes should fail fast with a clear error."""
+        provider = SarvamMoEModelProvider(pipeline_model_parallel_size=3)
 
-            with patch.object(TransformerConfig, "finalize", autospec=True):
+        with patch.object(TransformerConfig, "finalize", autospec=True) as mock_super:
+            with pytest.raises(ValueError, match="Unsupported PP size 3"):
                 provider.finalize()
 
-            expected = math.ceil(19 / pp)
-            assert provider.num_layers_in_first_pipeline_stage == expected, (
-                f"PP={pp}: expected {expected}, got {provider.num_layers_in_first_pipeline_stage}"
-            )
+        mock_super.assert_not_called()
+
+    def test_finalize_respects_explicit_pipeline_layout(self):
+        """Caller-supplied layouts should not be overwritten."""
+        custom_layout = [["embedding"] + ["decoder"] * 7, ["decoder"] * 6, ["decoder"] * 6 + ["loss"]]
+        provider = SarvamMoEModelProvider(
+            pipeline_model_parallel_size=3,
+            pipeline_model_parallel_layout=custom_layout,
+        )
+
+        with patch.object(TransformerConfig, "finalize", autospec=True) as mock_super:
+            provider.finalize()
+
+        assert provider.pipeline_model_parallel_layout == custom_layout
+        mock_super.assert_called_once_with(provider)
+
+
+class TestSarvamMoEPipelineLayout:
+    """Tests for the Sarvam MoE PP layout helper."""
+
+    @pytest.mark.parametrize(
+        ("pp", "expected_layout"),
+        [
+            (1, None),
+            (2, [["embedding"] + ["decoder"] * 10, ["decoder"] * 9 + ["loss"]]),
+            (4, [["embedding"] + ["decoder"] * 5, ["decoder"] * 5, ["decoder"] * 5, ["decoder"] * 4 + ["loss"]]),
+            (
+                8,
+                [
+                    ["embedding"] + ["decoder"] * 3,
+                    ["decoder"] * 3,
+                    ["decoder"] * 3,
+                    ["decoder"] * 2,
+                    ["decoder"] * 2,
+                    ["decoder"] * 2,
+                    ["decoder"] * 2,
+                    ["decoder"] * 2 + ["loss"],
+                ],
+            ),
+        ],
+    )
+    def test_get_pipeline_layout_supported_sizes(self, pp, expected_layout):
+        """The helper should return the known-good layouts for supported PP sizes."""
+        assert _get_sarvam_moe_pipeline_layout(pp) == expected_layout
+
+    def test_get_pipeline_layout_invalid_pp(self):
+        """Unsupported PP sizes should raise a helpful error."""
+        with pytest.raises(ValueError, match="Unsupported PP size 16"):
+            _get_sarvam_moe_pipeline_layout(16)
