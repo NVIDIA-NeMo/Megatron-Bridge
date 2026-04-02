@@ -76,21 +76,23 @@ This family is a good reminder that dispatcher wins are workload-dependent:
 
 ### DeepEP
 
-```bash
---moe-deepep-num-sms 24
-```
-
-Treat the SM count as a tuning knob, not a constant. Common sweep points are in
-the mid-teens through low-30s.
+DeepEP is selected by setting
+`moe_token_dispatcher_type="flex"` and `moe_flex_dispatcher_backend="deepep"`.
+It does not expose an SM count tuning parameter.
 
 ### HybridEP
 
+HybridEP is selected by setting
+`moe_token_dispatcher_type="flex"` and `moe_flex_dispatcher_backend="hybridep"`.
+
 ```bash
-NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=16
+--moe-hybridep-num-sms 16
 ```
 
-Set this to match the NVLink domain size used by the deployment. If it does not
-match the actual topology, performance and sometimes correctness will suffer.
+Tune the SM count allocated to communication. Common sweep points are in the
+mid-teens through low-30s. Set `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN` to
+match the NVLink domain size of the deployment. If it does not match the actual
+topology, performance and sometimes correctness will suffer.
 
 ### Routing mode
 

@@ -36,8 +36,8 @@ Recommended order:
 
 Prefer selective recompute for MoE runs:
 
-- good first choices: `norm`, `act`, `moe_act`, `mlp`, or model-specific
-  up-projection modules
+- good first choices: `layernorm`, `core_attn`, `moe_act`, `mlp`, or
+  model-specific modules (`shared_experts`, `mla_up_proj`)
 - use full recompute only when the run still does not fit
 - revisit recompute after enabling CUDA graphs, because some graph scopes and
   full recompute paths do not mix well
@@ -87,9 +87,12 @@ larger EP degree than the dense layers can tolerate.
 
 Use dispatcher choice as a bottleneck fix, not as the first tuning knob.
 
-- `alltoall`: safest bring-up path and still fine for smaller EP sizes
-- DeepEP: strong default for H100 and B200 style deployments
-- HybridEP: strongest starting point on GB200 or GB300 NVL72 systems
+- `moe_token_dispatcher_type="alltoall"`: safest bring-up path, fine for
+  smaller EP sizes
+- `moe_token_dispatcher_type="flex"` + `moe_flex_dispatcher_backend="deepep"`:
+  strong default for H100 and B200 style deployments
+- `moe_token_dispatcher_type="flex"` + `moe_flex_dispatcher_backend="hybridep"`:
+  strongest starting point on GB200 or GB300 NVL72 systems
 
 If the all-to-all path is visible in profiles, combine dispatcher tuning with:
 

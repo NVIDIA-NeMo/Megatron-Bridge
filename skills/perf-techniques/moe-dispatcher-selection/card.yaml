@@ -24,16 +24,16 @@ validation_status:
 
 training_dimensions:
   speed:
-    effect: "HybridEP 8–20% faster than DeepEP/AlltoAll on NVL72 systems"
+    effect: "HybridEP ~10-20% faster than DeepEP/AlltoAll on NVL72 systems"
     confidence: high
     rationale: >
       Measured across DSV3 and Qwen3 on GB200/GB300. HybridEP exploits NVLink
       domain for fused intra/inter-node dispatch.
   memory:
-    effect: "HybridEP uses 10–20% less GPU memory than AlltoAll"
+    effect: "HybridEP uses ~15% less GPU memory than AlltoAll"
     confidence: high
     rationale: >
-      Measured on Qwen3 GB200: HybridEP 73% vs AlltoAll 89% memory utilization.
+      Measured on Qwen3 GB200: HybridEP ~75% vs AlltoAll ~90% memory utilization.
   scale:
     effect: "HybridEP advantage grows with EP degree"
     confidence: medium
@@ -45,19 +45,15 @@ dispatcher_recommendations:
   h100:
     recommended: DeepEP
     rationale: "HybridEP not available; DeepEP outperforms AlltoAll"
-    evidence: "DSV3 685B H100 1024 GPUs: DeepEP 344 vs AlltoAll baseline"
   b200:
     recommended: DeepEP
     rationale: "Best measured perf for cross-node EP"
-    evidence: "DSV3 685B B200: DeepEP 515–596 TFLOPS"
   gb200_nvl72:
     recommended: HybridEP
-    rationale: "Exploits NVLink domain; 8% MFU jump over optimized DeepEP"
-    evidence: "DSV3 671B GB200: HybridEP 900 vs DeepEP 830 TFLOPS"
+    rationale: "Exploits NVLink domain; ~8% MFU jump over optimized DeepEP"
   gb300_nvl72:
     recommended: HybridEP
     rationale: "Same NVLink advantage as GB200"
-    evidence: "DSV3 685B GB300: HybridEP 1234 TFLOPS"
 
 key_tuning_parameters:
   - name: moe-deepep-num-sms
@@ -79,43 +75,43 @@ best_measured_configs:
     hardware: "1024×H100"
     dispatcher: DeepEP
     precision: FP8-Block
-    mfu: "18.6%"
-    tflops: 368
+    mfu: "~19%"
+    tflops: ~370
     parallelism: "TP2 EP64 PP8 VPP4"
   - model: "DSV3 671B no MTP"
     hardware: "256×GB200"
     dispatcher: HybridEP
     precision: FP8-MX
-    mfu: "19.4%"
-    tflops: 970
+    mfu: "~19%"
+    tflops: ~1000
     parallelism: "TP1 EP32 PP8 VPP4"
   - model: "DSV3 685B w/ MTP"
     hardware: "256×GB200"
     dispatcher: HybridEP
     precision: FP8-MX
-    mfu: "22.3%"
-    tflops: 1117
+    mfu: "~22%"
+    tflops: ~1100
     parallelism: "TP1 EP64 PP4 VPP4"
   - model: "DSV3 685B w/ MTP"
     hardware: "256×GB300"
     dispatcher: HybridEP
     precision: FP8-MX
-    mfu: "24.7%"
-    tflops: 1234
+    mfu: "~25%"
+    tflops: ~1200
     parallelism: "TP1 EP64 PP4 VPP4"
   - model: "Qwen3 235B-A22B"
     hardware: "128×GB200"
     dispatcher: HybridEP
     precision: BF16
-    mfu: "27.9%"
-    tflops: 698
+    mfu: "~28%"
+    tflops: ~700
     parallelism: "TP1 EP32 PP4 VPP12"
   - model: "Qwen3 235B-A22B"
     hardware: "256×H100"
     dispatcher: DeepEP
     precision: BF16
-    mfu: "29.7%"
-    tflops: 294
+    mfu: "~30%"
+    tflops: ~300
     parallelism: "TP2 EP32 PP8 VPP4"
 
 evidence:

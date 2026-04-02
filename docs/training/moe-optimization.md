@@ -92,7 +92,7 @@ Profile the training run and identify which wall dominates:
 |---|---|
 | DP grad/param | `--overlap-grad-reduce --overlap-param-gather` |
 | TP | `--tp-comm-overlap` |
-| EP dispatcher | `--moe-token-dispatcher-type flex` + DeepEP/HybridEP |
+| EP dispatcher | `--moe-token-dispatcher-type flex --moe-flex-dispatcher-backend {deepep\|hybridep}` |
 | EP all-to-all | `--overlap-moe-expert-parallel-comm` |
 | PP send/recv | `--pipeline-model-parallel-layout` (flexible VPP) |
 
@@ -120,7 +120,7 @@ profiling the dominant wall usually matter more than any single micro-optimizati
 Attention and MoE layers have conflicting optimal parallelisms.
 Parallel Folding decouples their configurations.
 
-```
+```text
 Attention layers: TP × CP × DP × PP
 MoE layers:      ETP × EP × EDP × PP  (PP must match)
 ```
@@ -216,7 +216,7 @@ For full CUDA Graphs on dropless MoE, three techniques are needed:
 
 PP layout string controls per-stage layer distribution:
 
-```
+```bash
 --pipeline-model-parallel-layout "Et*3|(tt|)*29m|L"
 ```
 

@@ -17,7 +17,7 @@ validation_status:
 
 training_dimensions:
   speed:
-    effect: "FSDP 468 TFLOPS vs 3D Parallel 442 TFLOPS (with MBS=4 tuning)"
+    effect: "FSDP ~470 TFLOPS vs 3D Parallel ~440 TFLOPS (with MBS=4 tuning)"
     confidence: medium
     rationale: >
       FSDP is slightly faster out of the box. 3D Parallel approaches FSDP
@@ -38,8 +38,8 @@ best_configs:
     approach: FSDP
     precision: BF16
     dispatcher: HybridEP
-    tflops: 468
-    mfu: "18.7%"
+    tflops: ~470
+    mfu: "~19%"
     parallelism: "EP64 DP=64"
     batch: "MBS4 GBS256"
     recompute: full
@@ -50,8 +50,8 @@ best_configs:
     approach: FSDP
     precision: BF16
     dispatcher: AlltoAll
-    tflops: 458
-    mfu: "18.3%"
+    tflops: ~460
+    mfu: "~18%"
     parallelism: "EP8 ETP16 DP=128"
     batch: "MBS8 GBS1024"
     recompute: full
@@ -63,8 +63,8 @@ best_configs:
     approach: "3D Parallel"
     precision: BF16
     dispatcher: HybridEP
-    tflops: 442
-    mfu: "17.7%"
+    tflops: ~440
+    mfu: "~18%"
     parallelism: "EP8 ETP8 PP1 DP=8"
     batch: "MBS4 GBS1024"
     recompute: full
@@ -76,24 +76,20 @@ best_configs:
     approach: "FSDP + EDP"
     precision: BF16
     dispatcher: HybridEP
-    tflops: 260
+    tflops: ~260
     parallelism: "EP8 EDP4 PP1 VPP4"
     batch: "MBS16 GBS4096"
     cuda_graph: "attn, moe_router, moe_preprocess"
 
 key_findings:
   - name: mock_data_overestimates
-    finding: "Mock data (no images) gives 1.9× higher TFLOPS than real data"
-    evidence: "3D Parallel: 450 vs 237 TFLOPS"
+    finding: "Mock data (no images) gives ~2× higher TFLOPS than real data"
   - name: freeze_vision_helps
     finding: "Freezing vision encoder gives +5% throughput"
-    evidence: "B200 FSDP: 435→458 TFLOPS"
   - name: mbs_critical_for_3d
     finding: "MBS=4 nearly doubles 3D Parallel throughput vs MBS=1"
-    evidence: "3D Parallel: 237→442 TFLOPS at MBS 1→4"
   - name: fsdp_simpler_setup
     finding: "FSDP reaches near-best performance with fewer tuning knobs"
-    evidence: "FSDP 468 vs 3D Parallel 442 TFLOPS"
 
 evidence:
   - "[MoE Perf] MCore Release Performance Tracker - Qwen3-VL"
