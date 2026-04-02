@@ -385,13 +385,13 @@ class AutoBridge(Generic[MegatronModelT]):
     def export_hf_weights_quant(
         self,
         model: list[MegatronModelT],
-        should_quantize: callable,
+        quantization_checker: callable,
         quant_fn: callable,
         quant_block_size: Optional[Tuple[int, int]] = None,
         cpu: bool = False,
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
-        merge_adapter_weights: bool = True,
+        merge_adapter_weights: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format with quantization.
@@ -401,7 +401,7 @@ class AutoBridge(Generic[MegatronModelT]):
             dispatch_instance,
             model,
             self.hf_pretrained,
-            should_quantize,
+            quantization_checker,
             quant_fn,
             quant_block_size=quant_block_size,
             cpu=cpu,

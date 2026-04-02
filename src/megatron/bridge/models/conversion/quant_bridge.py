@@ -33,13 +33,13 @@ class MegatronQuantizationBridge:
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         hf_pretrained: HFPreTrained,
-        should_quantize: callable,
+        quantization_checker: callable,
         quant_fn: callable,
         quant_block_size: Optional[Tuple[int, int]] = None,
         cpu: bool = True,
         show_progress: bool = True,
         conversion_tasks: Optional[List["WeightConversionTask"]] = None,
-        merge_adapter_weights: bool = True,
+        merge_adapter_weights: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Export Megatron weights to HuggingFace format with quantization.
         """
@@ -63,7 +63,7 @@ class MegatronQuantizationBridge:
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace (Quantized)", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf_quant(
-                task.param_weight, task.megatron_module, should_quantize, quant_fn, quant_block_size
+                task.param_weight, task.megatron_module, quantization_checker, quant_fn, quant_block_size
             )
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
                 task,

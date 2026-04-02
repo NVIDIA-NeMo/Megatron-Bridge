@@ -158,7 +158,7 @@ class MockModule(torch.nn.Module):
         self.config = config
 
 
-def dummy_should_quantize(param_name):
+def dummy_quantization_checker(param_name):
     return True
 
 
@@ -181,7 +181,7 @@ class TestColumnParallelMappingQuant:
             result = mapping.megatron_to_hf_quant(
                 megatron_shard, 
                 None, 
-                should_quantize=dummy_should_quantize, 
+                quantization_checker=dummy_quantization_checker, 
                 quant_fn=scaled_fp8_blockwise
             )
 
@@ -209,7 +209,7 @@ class TestRowParallelMappingQuant:
             result = mapping.megatron_to_hf_quant(
                 megatron_shard, 
                 None, 
-                should_quantize=dummy_should_quantize, 
+                quantization_checker=dummy_quantization_checker, 
                 quant_fn=scaled_fp8_blockwise
             )
 
@@ -229,7 +229,7 @@ class TestReplicatedMappingQuant:
         result = mapping.megatron_to_hf_quant(
             megatron_weight, 
             None, 
-            should_quantize=dummy_should_quantize, 
+            quantization_checker=dummy_quantization_checker, 
             quant_fn=scaled_fp8_blockwise
         )
 
@@ -256,7 +256,7 @@ class TestAutoMappingQuant:
             result = mapping.megatron_to_hf_quant(
                 megatron_weight, 
                 megatron_module, 
-                should_quantize=dummy_should_quantize, 
+                quantization_checker=dummy_quantization_checker, 
                 quant_fn=scaled_fp8_blockwise
             )
             
@@ -285,7 +285,7 @@ class TestQKVMappingQuant:
         result = mapping.megatron_to_hf_quant(
             packed_qkv,
             megatron_module,
-            should_quantize=dummy_should_quantize,
+            quantization_checker=dummy_quantization_checker,
             quant_fn=scaled_fp8_blockwise,
             quant_block_size=quant_block_size,
         )
@@ -313,7 +313,7 @@ class TestGatedMLPMappingQuant:
         result = mapping.megatron_to_hf_quant(
             merged_weight, 
             megatron_module, 
-            should_quantize=dummy_should_quantize, 
+            quantization_checker=dummy_quantization_checker, 
             quant_fn=scaled_fp8_blockwise,
             quant_block_size=(16, 16)
         )

@@ -1086,13 +1086,13 @@ def stream_weights_megatron_to_hf_quant(
     dispatch_instance: MegatronModel,
     megatron_model: Union[MegatronModel, List[MegatronModel]],
     hf_pretrained: HFPreTrained,
-    should_quantize: callable,
+    quantization_checker: callable,
     quant_fn: callable,
     quant_block_size: Optional[Tuple[int, int]] = None,
     cpu: bool = True,
     show_progress: bool = True,
     conversion_tasks: Optional[List[WeightConversionTask]] = None,
-    merge_adapter_weights: bool = True,
+    merge_adapter_weights: bool = False,
 ) -> Iterable[HFWeightTuple]:
     """Bridge Megatron model state to HuggingFace format with quantization."""
     ...
@@ -1160,13 +1160,13 @@ def register_bridge_implementation(
         _,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         hf_pretrained: HFPreTrained,
-        should_quantize: callable,
+        quantization_checker: callable,
         quant_fn: callable,
         quant_block_size: Optional[Tuple[int, int]] = None,
         cpu: bool = True,
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
-        merge_adapter_weights: bool = True,
+        merge_adapter_weights: bool = False,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
 
@@ -1175,7 +1175,7 @@ def register_bridge_implementation(
         return bridge.stream_weights_megatron_to_hf_quant(
             megatron_model,
             hf_pretrained,
-            should_quantize,
+            quantization_checker,
             quant_fn,
             quant_block_size=quant_block_size,
             cpu=cpu,
