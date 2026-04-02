@@ -18,6 +18,28 @@ host-driver overhead. Bridge supports two implementations:
 | `"local"` | MCore `FullCudaGraphWrapper` wrapping entire fwd+bwd | `full_iteration` |
 | `"transformer_engine"` | TE `make_graphed_callables()` per layer | `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, `mamba` |
 
+## Quick Decision
+
+Start with TE-scoped graphs for most training workloads:
+
+- dense models: `attn`, then optionally `mlp`
+- dropless MoE: `attn moe_router moe_preprocess`
+- VLMs: the same dropless-MoE scope, but only after the real-data path is stable
+
+Use `local` + `full_iteration` only when you specifically want full-iteration
+capture and can satisfy the tighter constraints.
+
+For recompute-heavy workloads:
+
+- TE-scoped graphs pair naturally with selective recompute
+- full recompute usually pushes you toward `local` full-iteration graphs or away
+  from graphs entirely
+
+Related docs:
+
+- `docs/training/cuda-graphs.md`
+- `docs/training/activation-recomputation.md`
+
 ## Enablement
 
 ### Local full-iteration graph
@@ -78,6 +100,14 @@ Valid CLI values live in `scripts/performance/argument_parser.py`:
   TE impl asserts unconditionally)
 - CPU offloading is incompatible with CUDA graphs
 - `moe_preprocess` scope requires `moe_router` scope to also be set
+
+### Practical bring-up order
+
+1. Stabilize the eager run first.
+2. Fix sequence length and micro-batch size.
+3. Enable the narrowest useful graph scope.
+4. Confirm replay is active and memory is still acceptable.
+5. Only then widen scope or combine with overlap features.
 
 ## Code Anchors
 
@@ -244,6 +274,10 @@ def _delete_cuda_graphs(cuda_graph_helper):
 10. **MoE recompute + moe_router scope**: MoE recompute is not supported
     with `moe_router` CUDA graph scope when using `cuda_graph_impl =
     "transformer_engine"`. Enforced in MCore `transformer_config.py:1977`.
+
+11. **Benchmark numbers are workload-specific**: graph wins are usually real
+    when host overhead is visible, but the exact gain depends on batch shape,
+    PP depth, recompute, and whether the eager baseline was already optimized.
 
 ## Verification
 

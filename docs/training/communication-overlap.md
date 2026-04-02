@@ -7,8 +7,8 @@ This page is the stable guide for what communication overlap is, when it tends
 to help, and which boundaries are durable across Megatron Bridge. For exact
 knobs, code anchors, and verification commands, see:
 
-- `skills/perf-techniques/tp-dp-comm-overlap/SKILL.md`
-- `skills/perf-techniques/expert-parallel-overlap/SKILL.md`
+- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
+- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
 
 ## What It Is
 
@@ -42,8 +42,8 @@ to reduce idle time.
 
 | Dimension | Effect | Confidence | Why |
 |---|---|---|---|
-| `speed` | ~0-15% faster step time, mode-dependent | medium | The whole point is to hide communication time, but gain depends strongly on which overlap mode is active and whether communication is actually exposed. EP overlap measured flat to ~13% slower on small-EP Qwen3-30B-A3B, so gains are not guaranteed. |
-| `memory` | neutral (some modes add ~1-2 GB for buffers) | low | Overlap itself is usually not a primary memory technique, although some implementations (e.g., TP userbuffers) add buffer or scheduling constraints. |
+| `speed` | flat to moderately faster, mode-dependent | medium | The goal is to hide communication time, but gains depend strongly on which overlap mode is active and whether communication is actually exposed. Small-EP MoE runs can still be flat or even slower. |
+| `memory` | usually near-neutral; some modes add modest buffers | low | Overlap itself is usually not a primary memory technique, although some implementations add buffer or scheduling constraints. |
 | `scale` | positive at higher parallelism degrees | medium | Overlap becomes more valuable as communication dominates larger distributed runs. |
 | `convergence` | no change expected | medium | The intent is to preserve the same training math, though schedule changes can alter floating-point accumulation order. |
 | `stability` | adds operational constraints | medium | More overlap usually means tighter requirements around schedule shape, precision, runtime versions, and feature combinations. |
@@ -67,13 +67,17 @@ As a rule of thumb:
 | CP | large-context runs already using CP | Follow the CP-specific guidance rather than treating it as a separate generic knob. |
 | EP | large-scale MoE with many micro-batches and inter-node A2A cost | Most promising at larger EP and with higher-latency dispatcher backends. |
 
-Measured repo evidence today is strongest for MoE EP overlap. On
-Qwen3-30B-A3B with EP=4 and `alltoall` on 2 H100 nodes, EP overlap is
-numerically safe at GBS=8 but provides no speedup, and it is about 13% slower
-at GBS=64. On Qwen3-Next-80B-A3B with EP=8 and `alltoall` on 8 nodes, the
-overlap variants are stable while the non-overlap baseline NaNs, but
-`delay_wgrad_compute` is still about 4.8% slower than overlap-only. That makes
-EP overlap correctness-backed in this repo, but not yet broadly speedup-backed.
+Measured repo evidence today is strongest for MoE EP overlap. The pattern is
+mixed rather than universally positive:
+
+- small-EP `alltoall` runs can be correct but flat or slower
+- larger MoE runs show stronger evidence that the overlap path is operationally
+  useful
+- `delay_wgrad_compute` can help some schedules, but it is not a guaranteed
+  speedup over overlap-only
+
+So, in this repo, EP overlap is better described as correctness-backed and
+workload-sensitive rather than universally speedup-backed.
 
 ## When Not to Use It
 
@@ -114,8 +118,8 @@ on the actual bottleneck.
 
 For config examples and minimal runnable commands, see:
 
-- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
-- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
+- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
+- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
 
 ## Expected Metric Changes
 
@@ -124,9 +128,8 @@ For config examples and minimal runnable commands, see:
 | `step_time` | down | DP overlap with distributed optimizer on communication-heavy runs | expected |
 | `step_time` | down | TP overlap with `TP >= 2`, sequence parallelism, and supported TE path | expected |
 | `pipeline_idle_time` | down | interleaved PP where p2p cost is visible | expected |
-| `step_time` | flat | Qwen3-30B-A3B, EP=4, `alltoall`, 2 nodes, GBS=8 | measured: 822ms baseline vs 827ms overlap |
-| `step_time` | up | same model/config, GBS=64 | measured: 4889ms baseline vs 5538ms overlap |
-| `step_time` | up | Qwen3-Next-80B-A3B, EP=8, `alltoall`, 8 nodes, `delay_wgrad_compute=True` vs overlap-only | measured: 4912ms vs 4686ms |
+| `step_time` | flat to mixed | small-EP MoE with `alltoall` | measured |
+| `step_time` | mixed | larger MoE with EP overlap plus delayed wgrad | measured |
 
 Do not assume one overlap win transfers automatically to another mode. The
 correct question is always "which communication path is exposed in this run?"
@@ -138,14 +141,15 @@ correct question is always "which communication path is exposed in this run?"
 - EP overlap asserts when `PP > 1` but `virtual_pipeline_model_parallel_size` is unset.
 - EP overlap asserts when full recompute, recompute method, or shared-expert overlap stays enabled.
 - Setting `moe_flex_dispatcher_backend` alone does not activate DeepEP or HybridEP; the dispatcher must actually switch to `flex`.
-- Small-EP `alltoall` MoE runs can get slower because scheduling overhead is larger than the communication being hidden.
+- Small-EP `alltoall` MoE runs can get slower because scheduling overhead is
+  larger than the communication being hidden.
 
 ## Related Docs
 
 - [docs/performance-guide.md](../performance-guide.md)
 - [docs/training/cuda-graphs.md](cuda-graphs.md)
 - [docs/training/hybrid-context-parallel.md](hybrid-context-parallel.md)
-- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
-- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
-- [skills/perf-techniques/moe-comm-overlap/SKILL.md](../skills/perf-techniques/moe-comm-overlap/SKILL.md)
-- [skills/perf-techniques/moe-comm-overlap/card.yaml](../skills/perf-techniques/moe-comm-overlap/card.yaml)
+- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
+- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
+- [skills/perf-techniques/moe-comm-overlap/SKILL.md](../../skills/perf-techniques/moe-comm-overlap/SKILL.md)
+- [skills/perf-techniques/moe-comm-overlap/card.yaml](../../skills/perf-techniques/moe-comm-overlap/card.yaml)

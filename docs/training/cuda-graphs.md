@@ -6,7 +6,8 @@ every training step.
 
 This page is the stable guide for what CUDA graphs are, when they help, and
 what tradeoffs to expect. For exact enablement knobs, code anchors, and
-verification commands, see `skills/perf-techniques/cuda-graphs/SKILL.md`.
+verification commands, see
+[skills/perf-techniques/cuda-graphs/SKILL.md](../../skills/perf-techniques/cuda-graphs/SKILL.md).
 
 ## What It Is
 
@@ -42,11 +43,11 @@ It is less about changing the math and more about reducing runtime overhead.
 
 | Dimension | Effect | Confidence | Why |
 |---|---|---|---|
-| `speed` | ~15-30% faster step time | medium | Replays pre-captured GPU work and reduces launch overhead. Measured 16-24% on GPT-OSS-20B and 22% on Qwen3-30B-A3B with TE-scoped graphs. Gain depends on how launch-bound the workload is. |
-| `memory` | ~0-2 GB extra (TE scoped); 10 GB+ possible with `PP > 1` or large MoE | high | Graph buffers stay allocated for replay. TE-scoped showed no measurable increase on 20B/30B models but OOM'd on 120B at 70/79 GB. |
-| `scale` | neutral to slightly positive | low | Can help at scale if launch overhead matters, but memory overhead can gate larger configs (e.g., GPT-OSS-120B OOM). |
-| `convergence` | no change expected | medium | Intended to preserve training math when capture constraints are satisfied. Loss matched within 0.001 on Qwen3-30B-A3B over 20 iterations. |
-| `stability` | adds operational constraints | medium | Requires static shapes, specific RNG/NaN settings, and compatible scope selections. Failure modes are well-defined but add surface area. |
+| `speed` | ~10-30% faster step time | medium | Replays pre-captured GPU work and reduces launch overhead. The gain is biggest when the run is visibly launch-bound. |
+| `memory` | near-neutral to several GB higher, depending on scope | high | Graph buffers stay allocated for replay. TE-scoped paths can be modest, while larger models or deeper PP can make memory noticeably tighter. |
+| `scale` | neutral to slightly positive | low | Can help at scale if host overhead matters, but extra memory residency can also gate larger configs. |
+| `convergence` | no change expected | medium | Intended to preserve training math when capture constraints are satisfied. |
+| `stability` | adds operational constraints | medium | Requires static shapes, specific RNG or NaN settings, and compatible scope selections. Failure modes are well-defined but add surface area. |
 
 ## When to Use It
 
@@ -94,22 +95,19 @@ debugging tips.
 
 ## Bridge Configuration
 
-Minimal high-level configuration:
+Configure CUDA graphs through:
 
-```python
-cfg.model.cuda_graph_impl = "transformer_engine"   # or "local"
-cfg.model.cuda_graph_scope = ["attn"]              # or other valid scopes
-cfg.model.cuda_graph_warmup_steps = 3
-cfg.model.use_te_rng_tracker = True
-cfg.rng.te_rng_tracker = True
-```
+- `model.cuda_graph_impl`
+- `model.cuda_graph_scope`
+- `model.cuda_graph_warmup_steps`
+- `model.use_te_rng_tracker`
+- `rng.te_rng_tracker`
 
-If you use `local` + `full_iteration`, also disable:
+If you choose `local` with `full_iteration`, disable the loss and gradient NaN
+checks that conflict with full capture.
 
-```python
-cfg.rerun_state_machine.check_for_nan_in_loss = False
-cfg.ddp.check_for_nan_in_grad = False
-```
+For exact config snippets and runnable commands, see
+[skills/perf-techniques/cuda-graphs/SKILL.md](../../skills/perf-techniques/cuda-graphs/SKILL.md).
 
 ## Minimal Runnable Example
 
@@ -124,89 +122,45 @@ capture and a small model recipe.
 
 | Metric | Expected Change | Conditions | Evidence |
 |---|---|---|---|
-| `step_time` | ~15-25% down | Static shapes, MoE, TE scoped (`attn+moe_router+moe_preprocess`) | measured: Qwen3-30B-A3B 623→484ms; GPT-OSS-20B 467-520→391-399ms |
-| `tokens_per_sec` | ~20-33% up | Same as above | measured: Qwen3-30B-A3B 214→274 TFLOP/s/GPU; GPT-OSS-20B 37.9-42.2→49.4-50.4 |
-| `peak_memory` | same pre-capture | TE scoped graphs on H100 80GB | measured: no increase in allocated memory on Qwen3-30B-A3B and GPT-OSS-20B |
-| `OOM risk` | up | Tight memory budget or large MoE configs | measured: GPT-OSS-120B blocked at ~70/79 GB before capture |
+| `step_time` | ~10-25% down | Static shapes, launch-bound training, especially TE-scoped MoE paths | measured |
+| `tokens_per_sec` | ~10-30% up | Same as above | measured |
+| `peak_memory` | flat to moderately higher | TE-scoped paths with headroom | measured |
+| `OOM risk` | up | Tight memory budget or large MoE configs | measured |
 
 Do not assume a fixed throughput gain across models. The improvement depends on
 how launch-bound the workload is and how much scope is captured.
 
-## Measured Results (Qwen3-30B-A3B MoE, H100, TP2 PP2 EP4, 2 nodes)
+## Representative Validation Patterns
 
-### Pretrain
+### Mid-sized MoE pretrain
 
-TE-scoped CUDA graphs (`attn + moe_router + moe_preprocess`) on Qwen3-30B-A3B
-with mock data, GBS=8, MBS=1:
+On mid-sized MoE pretrain runs with TE-scoped graphs
+(`attn + moe_router + moe_preprocess`), the common pattern is:
 
-- **~22% faster** iteration time (484ms vs 623ms steady-state)
-- **~28% higher TFLOP/s** (274 vs 214 TFLOP/s/GPU)
-- **Loss matches** baseline within 0.001 across all 20 iterations
-- 24 graphable layers per pipeline rank, capture completes in ~5.6s
-- No memory increase pre-capture, no NCCL errors
+- low-teens to low-20s percent faster step time
+- corresponding throughput gains when the eager baseline is launch-bound
+- short-run loss behavior that stays close to baseline
+- little or no obvious memory penalty in the friendliest TE-scoped cases
 
-### SFT (packed sequences)
+### Packed-sequence SFT and LoRA
 
-SFT with packed sequences (`packed_sequence=True`, SQuAD dataset) hits a
-hard incompatibility:
+Packed-sequence finetuning remains sensitive:
 
-```
-AssertionError: CUDA graph accepts only Tensor inputs.
-inference_context and packed_seq_params are excluded from input list.
-```
+- TE-scoped graphs can fail if non-Tensor packed-sequence arguments reach the
+  captured path
+- some failures are environment or container blockers rather than graph-specific
+- treat packed-sequence plus CUDA graphs as a separate validation target, not as
+  something automatically inherited from pretrain success
 
-TE-scoped CUDA graphs require all forward inputs to be Tensors. Packed
-sequence SFT passes `packed_seq_params` (a dataclass), which is not captured.
-The baseline SFT runs fine without graphs (~880ms/iter).
+### Larger MoE pretrain
 
-Workarounds: disable packing, or use `local` full-iteration graphs. Also make
-sure the TE/container build actually supports the packed-sequence attention
-backend your recipe needs.
+Larger MoE runs can become memory-gated before graph replay pays off:
 
-## Additional Validation (GPT-OSS, H100, Mar 2026)
-
-### GPT-OSS-20B pretrain
-
-TE-scoped CUDA graphs on `gpt-oss-20b` with `TP2 PP4 EP4 CP1`, 2 nodes, and
-mock data:
-
-- capture succeeds with 6 graphable layers per pipeline rank; capture completes
-  in ~0.95s
-- steady-state iteration time improves by ~16-24% (467-520ms to 391-399ms)
-- throughput improves by ~19-33% (37.9-42.2 to 49.4-50.4 TFLOP/s/GPU)
-- the pre-capture memory report is unchanged and the 20-iteration run completes
-  without NCCL or illegal-memory-access errors
-- loss comparison is inconclusive: the first ~10 post-capture iterations are
-  close, but the run used mock data, `GBS=4`, and a production LR, so later
-  divergence is too noisy to treat as a correctness signal
-
-A cleaner loss-match pass should lower LR and/or raise GBS before drawing
-equivalence conclusions.
-
-### GPT-OSS-20B SFT and LoRA
-
-Both packed-sequence finetuning workloads were blocked in the
-`mbridge-260128.sqsh` container before any CUDA-graph-specific behavior could
-be isolated:
-
-- baseline and graphed runs both fail with no TE attention backend available
-  for the packed-sequence path
-- treat this as an environment/container blocker first, not as proof that CUDA
-  graphs are or are not the root cause
-- after upgrading TE/container support, these workloads still need separate
-  validation because packed-sequence plus TE-scoped graphs remains a sensitive
-  combination
-
-### GPT-OSS-120B pretrain
-
-`gpt-oss-120b` pretrain at `TP2 PP4 EP8`, 4 nodes, hits OOM on iteration 2:
-
-- iteration 1 already uses ~69-70 GB allocated and ~72-73 GB reserved on 79 GB
-  H100s
-- the failure is a `torch.OutOfMemoryError` on an additional 1.54 GiB
-  allocation
-- treat larger MoE rollouts as memory-gated even before capture benefits are
-  realized; more PP or different memory settings may be needed
+- a run that barely fits in eager mode may OOM once graph buffers stay resident
+- this is especially common with large MoE models, deeper PP, or already-tight
+  HBM headroom
+- treat CUDA graphs as a throughput optimization for runs with margin, not as a
+  fit-enabling technique
 
 ## Common Failure Modes
 
@@ -230,4 +184,4 @@ be isolated:
 
 - [Performance Guide](../performance-guide.md)
 - [Communication Overlap](communication-overlap.md)
-- `skills/perf-techniques/cuda-graphs/SKILL.md`
+- [skills/perf-techniques/cuda-graphs/SKILL.md](../../skills/perf-techniques/cuda-graphs/SKILL.md)
