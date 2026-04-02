@@ -49,7 +49,7 @@ nodes, causing `TypeError: 'NoneType' object is not an iterator`.
 
 ### Log Directory
 
-```
+```text
 <SHARED_FS>/logs/<job_name>_<suffix>
 ```
 
@@ -235,7 +235,7 @@ export NEMO_HOME="<SHARED_FS>/cache/nemo"
 uv sync
 ```
 
-Then run tests directly (no `uv run` prefix needed after `uv sync`):
+Then run commands with `uv run` (uses the synced virtualenv):
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 \
@@ -289,7 +289,7 @@ When a multi-node job fails:
 ### NCCL Timeout at `dist.barrier()` — "crash on rank 0"
 
 **Symptom**: All ranks on node 2+ show:
-```
+```text
 [rank8] is setting up NCCL communicator and retrieving ncclUniqueId from [0]
 ... wait timeout after 600000ms
 This may indicate a possible application crash on rank 0
@@ -323,7 +323,7 @@ except (OSError, ImportError):
 **Key insight**: TP does NOT reduce expert memory. Only EP splits experts across GPUs.
 
 **Sizing formula**:
-```
+```text
 experts_per_gpu = num_experts / EP
 expert_memory_gb ≈ experts_per_gpu * expert_params * 2 / 1e9  (bf16)
 total_per_gpu ≈ expert_memory_gb + attention_memory_gb + kv_cache_gb
