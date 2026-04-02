@@ -317,6 +317,22 @@ class AutoBridge(Generic[MegatronModelT]):
 
         cls._validate_config(config, str(path))
 
+        # Transformers 5.0+ changed `rope_scaling` to a property whose setter
+        # does `self.rope_parameters = value`, replacing the entire dict and
+        # dropping any fields (e.g. `rope_theta`) that were set during initial
+        # construction.  When a `rope_scaling` override is passed as a kwarg,
+        # `PretrainedConfig.from_dict` applies it via `setattr` *after* the
+        # initial construction, so those fields are silently lost and Megatron
+        # falls back to defaults (e.g. `rotary_base=10000`).  Pre-populate the
+        # override dict with all base-config rope fields so the setter
+        # preserves them.
+        if "rope_scaling" in kwargs and isinstance(kwargs["rope_scaling"], dict):
+            base_rope = getattr(config, "rope_scaling", None)
+            if isinstance(base_rope, dict):
+                for key, value in base_rope.items():
+                    if key not in kwargs["rope_scaling"]:
+                        kwargs["rope_scaling"][key] = value
+
         try:
             return cls(PreTrainedCausalLM.from_pretrained(path, **kwargs))
         except Exception as e:
