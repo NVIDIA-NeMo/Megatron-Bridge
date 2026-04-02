@@ -61,6 +61,14 @@ from megatron.bridge.models.gpt_oss import (
     GPTOSSBridge,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.kimi import (
+    KimiK2Bridge,
+)
+from megatron.bridge.models.kimi_vl import (
+    KimiK25VLBridge,
+    KimiK25VLModel,
+    KimiK25VLModelProvider,
+)
 from megatron.bridge.models.llama import (
     LlamaBridge,
 )
@@ -70,6 +78,9 @@ from megatron.bridge.models.llama_nemotron import (
 )
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
+from megatron.bridge.models.minimax_m2 import (
+    MiniMaxM2Bridge,
+)
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
@@ -97,29 +108,10 @@ from megatron.bridge.models.olmoe import (
     OlMoEBridge,
     OlMoEModelProvider,
 )
-from megatron.bridge.models.qwen import (
-    Qwen2ModelProvider,
-    Qwen2ModelProvider1P5B,
-    Qwen2ModelProvider7B,
-    Qwen2ModelProvider72B,
-    Qwen2ModelProvider500M,
-    Qwen3ModelProvider,
-    Qwen3ModelProvider1P7B,
-    Qwen3ModelProvider4B,
-    Qwen3ModelProvider8B,
-    Qwen3ModelProvider14B,
-    Qwen3ModelProvider32B,
-    Qwen3ModelProvider600M,
-    Qwen3MoEModelProvider,
-    Qwen3MoEModelProvider30B_A3B,
-    Qwen3MoEModelProvider235B_A22B,
-    Qwen25ModelProvider1P5B,
-    Qwen25ModelProvider3B,
-    Qwen25ModelProvider7B,
-    Qwen25ModelProvider14B,
-    Qwen25ModelProvider32B,
-    Qwen25ModelProvider72B,
-    Qwen25ModelProvider500M,
+from megatron.bridge.models.qwen_audio import (
+    Qwen2AudioBridge,
+    Qwen2AudioModel,
+    Qwen2AudioModelProvider,
 )
 from megatron.bridge.models.qwen_omni import (
     Qwen25OmniBridge,
@@ -183,6 +175,10 @@ __all__ = [
     "GPTModelProvider",
     "GPTOSSBridge",
     "T5ModelProvider",
+    "KimiK2Bridge",
+    "KimiK25VLModel",
+    "KimiK25VLBridge",
+    "KimiK25VLModelProvider",
     "LlamaBridge",
     "LlamaNemotronHeterogeneousProvider",
     "LlamaNemotronBridge",
@@ -195,35 +191,18 @@ __all__ = [
     "Ministral3ModelProvider3B",
     "Ministral3ModelProvider8B",
     "Ministral3ModelProvider14B",
+    "MiniMaxM2Bridge",
     "OlMoEBridge",
     "OlMoEModelProvider",
-    "Qwen2ModelProvider",
-    "Qwen2ModelProvider500M",
-    "Qwen2ModelProvider1P5B",
-    "Qwen2ModelProvider7B",
-    "Qwen2ModelProvider72B",
-    "Qwen25ModelProvider500M",
-    "Qwen25ModelProvider1P5B",
-    "Qwen25ModelProvider3B",
-    "Qwen25ModelProvider7B",
-    "Qwen25ModelProvider14B",
-    "Qwen25ModelProvider32B",
-    "Qwen25ModelProvider72B",
-    "Qwen3ModelProvider",
-    "Qwen3ModelProvider600M",
-    "Qwen3ModelProvider1P7B",
-    "Qwen3ModelProvider4B",
-    "Qwen3ModelProvider8B",
-    "Qwen3ModelProvider14B",
-    "Qwen3ModelProvider32B",
-    "Qwen3MoEModelProvider",
-    "Qwen3MoEModelProvider30B_A3B",
-    "Qwen3MoEModelProvider235B_A22B",
     "NemotronHBridge",
     "MambaModelProvider",
     "MimoBridge",
     # Nemotron Models
     "NemotronBridge",
+    # Audio-Language Models
+    "Qwen2AudioBridge",
+    "Qwen2AudioModel",
+    "Qwen2AudioModelProvider",
     # VL Models
     "Qwen25VLModel",
     "Qwen25VLBridge",

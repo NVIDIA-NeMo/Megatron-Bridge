@@ -18,6 +18,8 @@ Megatron Bridge Recipe Configurations
 This module exposes all recipe configurations from all model families.
 """
 
+from megatron.bridge.diffusion.recipes.flux.flux import *
+from megatron.bridge.diffusion.recipes.wan.wan import *
 from megatron.bridge.recipes.deepseek import *
 from megatron.bridge.recipes.gemma import *
 from megatron.bridge.recipes.gemma3_vl import *
@@ -25,6 +27,7 @@ from megatron.bridge.recipes.glm import *
 from megatron.bridge.recipes.glm_vl import *
 from megatron.bridge.recipes.gpt import *
 from megatron.bridge.recipes.gpt_oss import *
+from megatron.bridge.recipes.kimi_vl import *
 from megatron.bridge.recipes.llama import *
 from megatron.bridge.recipes.ministral3 import *
 from megatron.bridge.recipes.moonlight import *

@@ -18,6 +18,8 @@ This script runs inside the container and handles the actual training execution.
 """
 
 import logging
+import os
+import sys
 
 import torch
 from argument_parser import parse_cli_args
@@ -189,6 +191,14 @@ def main():
     )
 
     recipe = set_user_overrides(recipe, args)
+
+    if args.dryrun:
+        save_path = args.save_config_filepath or "ConfigContainer.yaml"
+        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        recipe.to_yaml(save_path)
+        logging.info(f"ConfigContainer saved to: {os.path.abspath(save_path)}")
+        recipe.print_yaml()
+        sys.exit(0)
 
     # Log final configuration
     if get_rank_safe() == 0:
