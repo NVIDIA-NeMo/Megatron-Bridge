@@ -2,13 +2,14 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, SchedulerConfig, TokenizerConfig
 
 
 def _nemotron_diffusion_cpt_config(
     hf_path,
     tensor_model_parallel_size,
     micro_batch_size,
+    tokenizer_model,
     data_paths=None,
     data_args_path=None,
     peft=None,
@@ -49,13 +50,17 @@ def _nemotron_diffusion_cpt_config(
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Optimizer
+    # Optimizer with WSD scheduler
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
+        lr_warmup_iters=0,
         lr_decay_iters=None,
         max_lr=1e-5,
         min_lr=1e-6,
     )
+    scheduler_cfg.lr_decay_style = "WSD"
+    scheduler_cfg.lr_warmup_fraction = 0.01
+    scheduler_cfg.lr_warmup_iters = 0
+    scheduler_cfg.lr_wsd_decay_iters = 100000
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
@@ -83,6 +88,12 @@ def _nemotron_diffusion_cpt_config(
     # Mixed precision
     cfg.mixed_precision = "bf16_mixed"
 
+    # Tokenizer
+    cfg.tokenizer = TokenizerConfig(
+        tokenizer_type="HuggingFaceTokenizer",
+        tokenizer_model=tokenizer_model,
+    )
+
     # PEFT (optional, None for full CPT)
     cfg.peft = peft
 
@@ -99,7 +110,8 @@ def nemotron_diffusion_3b_finetune_config(
     return _nemotron_diffusion_cpt_config(
         hf_path=hf_path or "mistralai/Ministral-3-3B-Base-2512",
         tensor_model_parallel_size=1,
-        micro_batch_size=1,
+        micro_batch_size=2,
+        tokenizer_model="mistralai/Ministral-3-3B-Base-2512",
         data_paths=data_paths,
         data_args_path=data_args_path,
         peft=peft,
@@ -114,9 +126,10 @@ def nemotron_diffusion_8b_finetune_config(
 ) -> ConfigContainer:
     """Return a CPT config for Nemotron-Diffusion 8B. Default: TP=4, MBS=1."""
     return _nemotron_diffusion_cpt_config(
-        hf_path=hf_path or "mistralai/Ministral-3-8B-Instruct-2512",
+        hf_path=hf_path or "mistralai/Ministral-3-8B-Base-2512",
         tensor_model_parallel_size=4,
         micro_batch_size=1,
+        tokenizer_model="mistralai/Ministral-3-8B-Base-2512",
         data_paths=data_paths,
         data_args_path=data_args_path,
         peft=peft,
@@ -129,11 +142,12 @@ def nemotron_diffusion_14b_finetune_config(
     hf_path=None,
     peft=None,
 ) -> ConfigContainer:
-    """Return a CPT config for Nemotron-Diffusion 14B. Default: TP=4, MBS=1."""
+    """Return a CPT config for Nemotron-Diffusion 14B. Default: TP=8, MBS=1."""
     return _nemotron_diffusion_cpt_config(
-        hf_path=hf_path or "mistralai/Ministral-3-14B-Instruct-2512",
-        tensor_model_parallel_size=4,
+        hf_path=hf_path or "mistralai/Ministral-3-14B-Base-2512",
+        tensor_model_parallel_size=8,
         micro_batch_size=1,
+        tokenizer_model="mistralai/Ministral-3-14B-Base-2512",
         data_paths=data_paths,
         data_args_path=data_args_path,
         peft=peft,
