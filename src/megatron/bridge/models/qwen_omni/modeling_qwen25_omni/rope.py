@@ -108,7 +108,7 @@ def get_rope_index(
                 attention_mask = attention_mask.any(dim=-1)
                 if attention_mask.dim() == 3:
                     attention_mask = attention_mask.squeeze(1)
-                attention_mask = attention_mask.to(dtype=input_ids.dtype)
+                attention_mask = attention_mask.to(dtype=torch.bool, device=input_ids.device)
         position_ids = torch.ones(
             3,
             input_ids.shape[0],
