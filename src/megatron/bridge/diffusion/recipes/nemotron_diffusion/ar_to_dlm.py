@@ -40,7 +40,10 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 def nemotron_diffusion3_pretrain_config(**user_kwargs) -> ConfigContainer:
-    """Return a pre-training config for DQwen3 8B.
+    """Return a pre-training config for NemotronDiffusion.
+
+    See `_nemotron_diffusion3_common` for the full list of parameters.
+    """
 
     See `_dqwen3_common` for the full list of parameters.
     """
