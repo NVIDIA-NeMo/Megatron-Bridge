@@ -44,11 +44,68 @@ def nemotron_diffusion3_pretrain_config(**user_kwargs) -> ConfigContainer:
 
     See `_nemotron_diffusion3_common` for the full list of parameters.
     """
-
-    See `_dqwen3_common` for the full list of parameters.
-    """
     # Combine defaults with user kwargs; user values take precedence.
     return _nemotron_diffusion3_common(**user_kwargs)
+
+
+def nemotron_diffusion3_3b_pretrain_config(**user_kwargs) -> ConfigContainer:
+    """Return a pre-training config for NemotronDiffusion 3B (TP=1, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
+    defaults = dict(
+        tensor_parallelism=1,
+        micro_batch_size=1,
+        global_batch_size=512,
+        train_iters=12500,
+        lr=1e-5,
+        min_lr=1e-6,
+        lr_decay_style="WSD",
+        lr_warmup_fraction=0.01,
+        lr_wsd_decay_iters=2500,
+        eval_interval=1000,
+        save_interval=1000,
+        tokenizer_model="mistralai/Ministral-3-3B-Base-2512",
+    )
+    defaults.update(user_kwargs)
+    return _nemotron_diffusion3_common(**defaults)
+
+
+def nemotron_diffusion3_8b_pretrain_config(**user_kwargs) -> ConfigContainer:
+    """Return a pre-training config for NemotronDiffusion 8B (TP=4, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
+    defaults = dict(
+        tensor_parallelism=4,
+        micro_batch_size=1,
+        global_batch_size=512,
+        train_iters=12500,
+        lr=1e-5,
+        min_lr=1e-6,
+        lr_decay_style="WSD",
+        lr_warmup_fraction=0.01,
+        lr_wsd_decay_iters=2500,
+        eval_interval=1000,
+        save_interval=1000,
+        tokenizer_model="mistralai/Ministral-3-8B-Base-2512",
+    )
+    defaults.update(user_kwargs)
+    return _nemotron_diffusion3_common(**defaults)
+
+
+def nemotron_diffusion3_14b_pretrain_config(**user_kwargs) -> ConfigContainer:
+    """Return a pre-training config for NemotronDiffusion 14B (TP=8, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
+    defaults = dict(
+        tensor_parallelism=8,
+        micro_batch_size=1,
+        global_batch_size=512,
+        train_iters=12500,
+        lr=1e-5,
+        min_lr=1e-6,
+        lr_decay_style="WSD",
+        lr_warmup_fraction=0.01,
+        lr_wsd_decay_iters=2500,
+        eval_interval=1000,
+        save_interval=1000,
+        tokenizer_model="mistralai/Ministral-3-14B-Base-2512",
+    )
+    defaults.update(user_kwargs)
+    return _nemotron_diffusion3_common(**defaults)
 
 
 def _nemotron_diffusion3_common(
@@ -82,6 +139,10 @@ def _nemotron_diffusion3_common(
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
     lr_decay_iters: int | None = None,
+    lr_decay_style: str = "cosine",
+    lr_warmup_fraction: float | None = None,
+    lr_wsd_decay_iters: int | None = None,
+    tokenizer_model: str | None = None,
     eval_interval: int = 500,
     save_interval: int = 500,
     pretrained_checkpoint: str | None = None,
@@ -120,6 +181,10 @@ def _nemotron_diffusion3_common(
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
         lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
+        lr_decay_style (str): LR decay style ("cosine" or "WSD").
+        lr_warmup_fraction (Optional[float]): Fraction of train_iters for warmup (WSD only).
+        lr_wsd_decay_iters (Optional[int]): Number of decay iterations for WSD scheduler.
+        tokenizer_model (Optional[str]): HuggingFace tokenizer model ID. If None, uses NullTokenizer.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
         comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
 
@@ -159,12 +224,34 @@ def _nemotron_diffusion3_common(
 
     model_cfg.cross_entropy_fusion_impl = "te"
 
-    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing_dllm(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=lr_decay_iters,
-        max_lr=lr,
-        min_lr=min_lr,
-    )
+    if lr_decay_style == "WSD":
+        opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing_dllm(
+            lr_warmup_iters=0,
+            max_lr=lr,
+            min_lr=min_lr,
+        )
+        scheduler_cfg.lr_decay_style = "WSD"
+        scheduler_cfg.lr_warmup_fraction = lr_warmup_fraction
+        scheduler_cfg.lr_warmup_iters = 0
+        scheduler_cfg.lr_wsd_decay_iters = lr_wsd_decay_iters
+    else:
+        opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing_dllm(
+            lr_warmup_iters=lr_warmup_iters,
+            lr_decay_iters=lr_decay_iters,
+            max_lr=lr,
+            min_lr=min_lr,
+        )
+
+    if tokenizer_model is not None:
+        tokenizer_cfg = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=tokenizer_model,
+        )
+    else:
+        tokenizer_cfg = TokenizerConfig(
+            tokenizer_type="NullTokenizer",
+            vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE,
+        )
 
     # Config Container
     cfg_container = ConfigContainer(
@@ -211,11 +298,7 @@ def _nemotron_diffusion3_common(
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
         ),
-        # Tokenizer will get overwritten using the yaml config
-        tokenizer=TokenizerConfig(
-            tokenizer_type="NullTokenizer",
-            vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE,
-        ),
+        tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(
             finetune=True,
             pretrained_checkpoint=pretrained_checkpoint,

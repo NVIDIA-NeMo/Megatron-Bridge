@@ -19,11 +19,9 @@ CPT fine-tunes a pretrained Ministral-3 model on new data using standard autoreg
 torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/continuous_pretraining.py \
     --model-size 3b \
     --hf-path mistralai/Ministral-3-3B-Base-2512 \
-    --data-paths /path/to/dclm/merged_tokenized_text_document \
-    --config-file examples/diffusion/recipes/nemotron_diffusion/conf/cpt_3b.yaml
+    --data-paths /path/to/dclm/merged_tokenized_text_document
 ```
 
-Available config files: [`conf/cpt_3b.yaml`](conf/cpt_3b.yaml), [`conf/cpt_8b.yaml`](conf/cpt_8b.yaml), [`conf/cpt_14b.yaml`](conf/cpt_14b.yaml).
 
 ---
 
@@ -48,12 +46,10 @@ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/ar_to_
     --model-size 3b \
     --hf-path mistralai/Ministral-3-3B-Base-2512 \
     --data-paths /path/to/dclm/merged_tokenized_text_document \
-    --config-file examples/diffusion/recipes/nemotron_diffusion/conf/ar_to_dlm_3b_dlm.yaml \
     checkpoint.finetune=true \
     checkpoint.pretrained_checkpoint=/path/to/cpt_checkpoint
 ```
 
-Available config files: [`conf/ar_to_dlm_3b_dlm.yaml`](conf/ar_to_dlm_3b_dlm.yaml), [`conf/ar_to_dlm_8b_dlm.yaml`](conf/ar_to_dlm_8b_dlm.yaml).
 
 ---
 

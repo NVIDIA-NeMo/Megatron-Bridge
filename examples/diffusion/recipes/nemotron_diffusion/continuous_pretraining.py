@@ -18,28 +18,25 @@ Ministral3 continued pretraining (CPT) — standard autoregressive training.
 
 Select model size with --model-size {3b,8b,14b} (default: 14b).
 Use --hf-path to specify a HuggingFace model ID or local path.
-Configuration is overridden via YAML and CLI.
+Configuration is overridden via CLI dotlist overrides.
 
 Examples:
     3B model:
         $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/continuous_pretraining.py \
             --model-size 3b \
             --hf-path mistralai/Ministral-3-3B-Base-2512 \
-            --config-file examples/diffusion/recipes/nemotron_diffusion/conf/cpt_3b.yaml \
             --data-paths /path/to/dclm/merged_tokenized_text_document
 
     8B model with TP=4:
         $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/continuous_pretraining.py \
             --model-size 8b \
             --hf-path mistralai/Ministral-3-8B-Base-2512 \
-            --config-file examples/diffusion/recipes/nemotron_diffusion/conf/cpt_8b.yaml \
             --data-paths /path/to/dclm/merged_tokenized_text_document
 
     14B model with TP=8:
         $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/continuous_pretraining.py \
             --model-size 14b \
             --hf-path mistralai/Ministral-3-14B-Base-2512 \
-            --config-file examples/diffusion/recipes/nemotron_diffusion/conf/cpt_14b.yaml \
             --data-paths /path/to/dclm/merged_tokenized_text_document
 """
 
@@ -71,10 +68,6 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-SCRIPT_DIR: Path = Path(__file__).parent.parent.resolve()
-DEFAULT_CONFIG_FILENAME: str = "train_local.yaml"
-DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "override_configs" / DEFAULT_CONFIG_FILENAME
-
 PRETRAIN_CONFIGS = {
     "3b": nemotron_diffusion_3b_finetune_config,
     "8b": nemotron_diffusion_8b_finetune_config,
@@ -104,7 +97,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--config-file",
         type=str,
-        default=str(DEFAULT_CONFIG_FILE_PATH),
+        default=None,
         help="Path to YAML override file.",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -153,7 +146,7 @@ def main() -> None:
 
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
 
-    if args.config_file:
+    if args.config_file is not None:
         if not os.path.exists(args.config_file):
             logger.error(f"Override YAML file not found: {args.config_file}")
             sys.exit(1)
