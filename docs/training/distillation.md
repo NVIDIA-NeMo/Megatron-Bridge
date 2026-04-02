@@ -49,7 +49,7 @@ logit_kl_temperature: 2.0
 The simplest way to run knowledge distillation is to use or adapt one of the provided recipe scripts. Here's an example for distilling Llama3.2-3B into Llama3.2-1B:
 
 ```bash
-torchrun --nproc_per_node=1 examples/distillation/llama/distill_llama32_3b-1b.py
+torchrun --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py
 ```
 
 ### Using a Custom YAML Config File
@@ -57,7 +57,7 @@ torchrun --nproc_per_node=1 examples/distillation/llama/distill_llama32_3b-1b.py
 You can provide a custom YAML configuration file to override default settings:
 
 ```bash
-torchrun --nproc_per_node=1 examples/distillation/llama/distill_llama32_3b-1b.py \
+torchrun --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py \
     --config-file my_custom_config.yaml
 ```
 
