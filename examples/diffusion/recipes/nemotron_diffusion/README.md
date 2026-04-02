@@ -23,7 +23,7 @@ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/contin
     --config-file examples/diffusion/recipes/nemotron_diffusion/conf/cpt_3b.yaml
 ```
 
-Available config files: [`conf/cpt_3b.yaml`](conf/cpt_3b.yaml), [`conf/cpt_8b.yaml`](conf/cpt_8b.yaml).
+Available config files: [`conf/cpt_3b.yaml`](conf/cpt_3b.yaml), [`conf/cpt_8b.yaml`](conf/cpt_8b.yaml), [`conf/cpt_14b.yaml`](conf/cpt_14b.yaml).
 
 ---
 
