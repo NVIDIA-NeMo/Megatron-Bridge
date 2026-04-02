@@ -3,8 +3,13 @@ name: Remove needs-author label
 on:
   issue_comment:
     types: [created]
-  pull_request:
+  pull_request_target:
     types: [synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   remove-label-on-comment:
@@ -32,7 +37,7 @@ jobs:
             });
 
   remove-label-on-push:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
       - name: Remove needs-author if author pushed commits
