@@ -72,6 +72,12 @@ class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
+    param_name_patterns_for_fp32_local_accumulation: Tuple[str, ...] = ()
+    """fnmatch patterns selecting parameters whose gradients should be locally
+    accumulated in FP32. The special pattern ``'all'`` matches every parameter.
+    Synced from MCore c586f6d56 (#4028); field will be inherited from the base
+    class after the next mcore bump."""
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
