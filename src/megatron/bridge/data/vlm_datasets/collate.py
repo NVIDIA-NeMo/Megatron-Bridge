@@ -529,13 +529,17 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     skipped_tokens = extract_skipped_token_ids(processor)
 
     # Ensure a pad_token is set so padding can produce uniform-length tensors.
-    if hasattr(processor, "tokenizer") and processor.tokenizer.pad_token is None:
-        processor.tokenizer.pad_token = processor.tokenizer.eos_token
+    tokenizer = getattr(processor, "tokenizer", None)
+    if tokenizer is not None and tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    # If pad_token is still unset after the eos_token fallback, disable padding
+    # to avoid a ValueError from apply_chat_template.
+    can_pad = tokenizer is not None and tokenizer.pad_token is not None
 
     batch = processor.apply_chat_template(
         [example["conversation"] for example in examples],
         tokenize=True,
-        padding=True,
+        padding=can_pad,
         truncation=True,
         return_tensors="pt",
         return_dict=True,
