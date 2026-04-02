@@ -112,7 +112,7 @@ def nemotron_diffusion_8b_finetune_config(
     hf_path=None,
     peft=None,
 ) -> ConfigContainer:
-    """Return a CPT config for Nemotron-Diffusion 8B. Default: TP=2, MBS=1."""
+    """Return a CPT config for Nemotron-Diffusion 8B. Default: TP=4, MBS=1."""
     return _nemotron_diffusion_cpt_config(
         hf_path=hf_path or "mistralai/Ministral-3-8B-Instruct-2512",
         tensor_model_parallel_size=4,
