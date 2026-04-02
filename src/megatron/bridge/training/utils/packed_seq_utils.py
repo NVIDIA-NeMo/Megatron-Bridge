@@ -58,6 +58,14 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
 
     max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
 
+    # Compute total_tokens so PackedSeqParams.__post_init__ can derive seq_idx,
+    # which Mamba SSM kernels need to reset state at sequence boundaries.
+    total_tokens = batch.get("total_tokens")
+    if total_tokens is not None:
+        total_tokens = total_tokens.item() if isinstance(total_tokens, torch.Tensor) else total_tokens
+    elif cu_seqlens_padded.numel() > 0:
+        total_tokens = cu_seqlens_padded[-1].item()
+
     # When cu_seqlens_unpadded is present (pad_seq_to_mult > 1), pass both unpadded and padded
     # for proper THD CP support. Otherwise, just use cu_seqlens_padded to avoid slower TE kernel.
     if cu_seqlens_unpadded is not None:
@@ -69,6 +77,7 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
             max_seqlen_q=max_seqlen,
             max_seqlen_kv=max_seqlen,
             qkv_format="thd",
+            total_tokens=total_tokens,
         )
     else:
         return PackedSeqParams(
@@ -77,4 +86,5 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
             max_seqlen_q=max_seqlen,
             max_seqlen_kv=max_seqlen,
             qkv_format="thd",
+            total_tokens=total_tokens,
         )
