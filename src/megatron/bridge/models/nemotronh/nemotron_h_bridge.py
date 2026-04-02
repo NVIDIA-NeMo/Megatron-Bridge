@@ -232,6 +232,8 @@ class NemotronHBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    # Extend CONFIG_MAPPING with Nemotron-H/Mamba-specific fields
+    # Common bidirectional config field name mapping: (hf_name, megatron_name)
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
         # Mamba-specific fields
         ("mamba_head_dim", "mamba_head_dim"),
@@ -318,6 +320,41 @@ class NemotronHBridge(MegatronModelBridge):
         so use_fast=True is required.
         """
         return {"use_fast": True}
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        hf_cfg = super().megatron_to_hf_config(provider)
+        # Clean hybrid_override_pattern: strip pipeline-parallel delimiters and validate
+        pattern = hf_cfg.pop("hybrid_override_pattern", None)
+        if pattern:
+            clean_pattern = pattern.replace("|", "")
+            valid_chars = {"M", "E", "*", "-"}
+            unknown = set(clean_pattern) - valid_chars
+            if unknown:
+                raise ValueError(
+                    f"Unknown layer type characters in hybrid_override_pattern: {unknown}. "
+                    f"Expected: M (mamba), * (attention), E (moe), - (mlp)."
+                )
+            hf_cfg["hybrid_override_pattern"] = clean_pattern
+
+        # Add auto_map for custom config/modeling classes
+        hf_cfg["auto_map"] = {
+            "AutoConfig": "configuration_nemotron_h.NemotronHConfig",
+            "AutoModel": "modeling_nemotron_h.NemotronHForCausalLM",
+            "AutoModelForCausalLM": "modeling_nemotron_h.NemotronHForCausalLM",
+        }
+
+        # We choose not to set HF-only defaults such as:
+        # Mamba: conv_kernel, time_step_*, mamba_hidden_act, etc.
+        # MoE: n_shared_experts, norm_topk_prob
+
+        # Megatron uses None="not set/disabled", but HF modeling code expects integers
+        # and will crash on None (e.g. n_routed_experts // n_group → TypeError)
+        hf_cfg["num_nextn_predict_layers"] = hf_cfg.get("num_nextn_predict_layers") or 0
+        hf_cfg["n_group"] = hf_cfg.get("n_group") or 1
+        hf_cfg["topk_group"] = hf_cfg.get("topk_group") or 1
+
+        return hf_cfg
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
