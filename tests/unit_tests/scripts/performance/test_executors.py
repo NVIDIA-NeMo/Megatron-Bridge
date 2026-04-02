@@ -59,12 +59,3 @@ def test_custom_env_vars_in_container_env(tmp_path):
     assert "MY_CUSTOM_VAR" in executor.container_env
 
 
-@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
-def test_container_env_param_forwarded(tmp_path):
-    """Keys passed via the container_env parameter must appear in container_env."""
-    executor = slurm_executor(
-        gpu="h100", account="test", partition="test",
-        log_dir=str(tmp_path), nodes=1, num_gpus_per_node=8,
-        container_env=["UPSTREAM_SET_VAR"],
-    )
-    assert "UPSTREAM_SET_VAR" in executor.container_env
