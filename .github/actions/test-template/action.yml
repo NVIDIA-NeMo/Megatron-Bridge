@@ -203,14 +203,6 @@ runs:
         echo "$cmd" | tee "job.sh"
         echo "::endgroup::"
 
-    - name: Chaos monkey
-      shell: bash
-      run: |
-        if (( RANDOM % 5 == 0 )); then
-          echo "::error::Chaos monkey struck! Failing with 20% probability."
-          exit 1
-        fi
-
     - name: Run main script
       shell: bash
       run: /bin/bash job.sh
