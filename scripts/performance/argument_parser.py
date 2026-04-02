@@ -257,7 +257,9 @@ def parse_cli_args():
     parser.add_argument(
         "-d",
         "--dryrun",
-        help="If true, prints sbatch script to terminal without launching experiment.",
+        help="Dry-run mode. In setup_experiment.py: prints the sbatch script without launching. "
+        "In run_script.py / run_recipe.py: builds the full ConfigContainer with all overrides, "
+        "saves it to --save_config_filepath (default: ConfigContainer.yaml), and exits without training.",
         required=False,
         action="store_true",
     )
@@ -711,6 +713,14 @@ def parse_cli_args():
         type=list_of_strings,
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
+    )
+    performance_args.add_argument(
+        "--moe_flex_dispatcher_backend",
+        type=lambda x: None if x == "None" else x,
+        help="MoE flex dispatcher backend. Options- deepep, hybridep, None. If None, will use alltoall dispatcher.",
+        choices=["deepep", "hybridep", None],
+        required=False,
+        default=-1,
     )
 
     # Logging

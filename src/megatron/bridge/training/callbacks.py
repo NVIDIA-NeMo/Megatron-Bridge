@@ -72,6 +72,7 @@ VALID_EVENTS: frozenset[str] = frozenset(
         "on_test_step_start",
         "on_test_step_end",
         "on_test_end",
+        "on_checkpoint_save",
     }
 )
 
@@ -187,6 +188,10 @@ class Callback:
         """Called after test completes, before model.train()."""
         pass
 
+    def on_checkpoint_save(self, context: CallbackContext) -> None:
+        """Called after checkpoint was saved"""
+        pass
+
 
 class CallbackManager:
     """Manages registration and execution of training callbacks.
@@ -271,6 +276,7 @@ class CallbackManager:
                 - "on_test_step_start"
                 - "on_test_step_end"
                 - "on_test_end"
+                - "on_checkpoint_save"
             fn: Callback function with signature (CallbackContext) -> None.
 
         Raises:

@@ -24,6 +24,7 @@ overrides = [
     { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=71bbefbf153418f943640df0f7373625dc93fa46" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
+    { name = "onnx", marker = "python_version < '3.13'", specifier = ">=1.21.0" },
 ]
 
 [[package]]

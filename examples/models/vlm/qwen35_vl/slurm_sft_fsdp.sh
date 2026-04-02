@@ -1,5 +1,4 @@
 #!/bin/bash
-set -euo pipefail
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +37,8 @@ set -euo pipefail
 #SBATCH --output=qwen35vl_sft_fsdp_%j.out
 #SBATCH --error=qwen35vl_sft_fsdp_%j.err
 #SBATCH --exclusive
+
+set -euo pipefail
 
 # ==============================================================================
 # CONFIGURATION
@@ -111,7 +112,7 @@ CLI_OVERRIDES="\
     dataset.maker_name=make_${DATASET_NAME}_dataset \
     dataset.seq_length=$SEQ_LENGTH"
 
-CMD="uv run --no-sync python scripts/training/run_recipe.py \
+CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
     --step_func vlm_step \
     $CLI_OVERRIDES"
