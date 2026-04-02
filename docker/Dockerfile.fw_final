@@ -91,6 +91,10 @@ RUN pip install nvidia-cudnn-frontend==1.17.0 \
     "black==26.3.1" \
     "onnx==1.21.0"
 
+# Remove PyTorch's bundled third-party onnx source tree (build artifact, not used at runtime).
+# The actual onnx Python package is managed above via pip/uv; this stale copy triggers CVE scanners.
+RUN rm -rf /opt/pytorch/pytorch/third_party/onnx
+
 # Patch jackson-core CVE inside Ray's bundled fat-jar (cannot upgrade Ray itself)
 RUN JACKSON_VERSION=2.18.6 && \
     TMPDIR=$(mktemp -d) && \
