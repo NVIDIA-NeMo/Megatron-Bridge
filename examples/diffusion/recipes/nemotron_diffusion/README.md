@@ -19,7 +19,7 @@ CPT fine-tunes a pretrained Ministral-3 model on new data using standard autoreg
 torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/continuous_pretraining.py \
     --model-size 3b \
     --hf-path mistralai/Ministral-3-3B-Base-2512 \
-    --data-paths /path/to/data \
+    --data-paths /path/to/dclm/merged_tokenized_text_document \
     --config-file examples/diffusion/recipes/nemotron_diffusion/conf/cpt_3b.yaml
 ```
 
@@ -31,7 +31,7 @@ Available config files: [`conf/cpt_3b.yaml`](conf/cpt_3b.yaml), [`conf/cpt_8b.ya
 
 This stage converts the CPT checkpoint into a diffusion LM. It replaces the standard attention with `NemotronDiffusionAttention` and trains with a combined diffusion + AR loss.
 
-**Key recipe:** `src/megatron/bridge/diffusion/recipes/nemotron_diffusion/ar_to_dlm.py`
+**Key recipe:** `examples/diffusion/recipes/nemotron_diffusion/ar_to_dlm.py`
 
 The model is built via `NemotronDiffusionModelProvider`, which extends `Ministral3ModelProvider` with:
 - `dlm_paradigm = "sbd_block_diff"` — semi-block diffusion with block masking
@@ -47,7 +47,7 @@ The CPT checkpoint from Stage 1 is passed via `checkpoint.pretrained_checkpoint`
 torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/ar_to_dlm.py \
     --model-size 3b \
     --hf-path mistralai/Ministral-3-3B-Base-2512 \
-    --data-paths /path/to/data \
+    --data-paths /path/to/dclm/merged_tokenized_text_document \
     --config-file examples/diffusion/recipes/nemotron_diffusion/conf/ar_to_dlm_3b_dlm.yaml \
     checkpoint.finetune=true \
     checkpoint.pretrained_checkpoint=/path/to/cpt_checkpoint
