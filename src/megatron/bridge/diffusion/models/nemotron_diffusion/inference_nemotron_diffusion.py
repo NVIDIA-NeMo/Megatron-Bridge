@@ -94,9 +94,11 @@ def get_transfer_index(
 
 
 def _unwrap(model):
-    """Unwrap Float16Module or DDP wrappers to get the raw GPTModel."""
+    """Unwrap Float16Module, DDP, or VLM wrappers to get the raw GPTModel."""
     if hasattr(model, "module"):
         return _unwrap(model.module)
+    if hasattr(model, "language_model"):
+        return _unwrap(model.language_model)
     return model
 
 
