@@ -2150,3 +2150,59 @@ def llama3_70b_lora_8gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg, cross_entropy_impl="native")
     return cfg
+
+
+# =============================================================================
+# LLaMA 3 8B — VR200 aliases: identical config to GB200 counterparts
+# =============================================================================
+
+
+def llama3_8b_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
+    """LLaMA 3 8B pretrain: 8× VR200, BF16 (alias of GB200)."""
+    return llama3_8b_pretrain_8gpu_gb200_bf16_config()
+
+
+def llama3_8b_pretrain_8gpu_vr200_fp8cs_config() -> ConfigContainer:
+    """LLaMA 3 8B pretrain: 8× VR200, FP8-CS (alias of GB200)."""
+    return llama3_8b_pretrain_8gpu_gb200_fp8cs_config()
+
+
+def llama3_8b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """LLaMA 3 8B pretrain: 8× VR200, FP8-MX (alias of GB200)."""
+    return llama3_8b_pretrain_8gpu_gb200_fp8mx_config()
+
+
+def llama3_8b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """LLaMA 3 8B pretrain: 8× VR200, NVFP4 (alias of GB200)."""
+    return llama3_8b_pretrain_8gpu_gb200_nvfp4_config()
+
+
+# =============================================================================
+# LLaMA 3 8B SFT — FP8-MX alias
+# =============================================================================
+
+
+def llama3_8b_sft_8gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """LLaMA 3 8B SFT: 8× GB200, FP8-MX (same layout as FP8-CS)."""
+    cfg = llama3_8b_sft_8gpu_gb200_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
+
+
+# =============================================================================
+# LLaMA 3 70B SFT — FP8-MX aliases
+# =============================================================================
+
+
+def llama3_70b_sft_32gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """LLaMA 3 70B SFT: 32× GB200, FP8-MX (same layout as FP8-CS)."""
+    cfg = llama3_70b_sft_32gpu_gb200_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
+
+
+def llama3_70b_sft_32gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """LLaMA 3 70B SFT: 32× GB300, FP8-MX (same layout as FP8-CS)."""
+    cfg = llama3_70b_sft_32gpu_gb300_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg

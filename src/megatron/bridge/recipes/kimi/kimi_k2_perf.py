@@ -464,3 +464,13 @@ def kimi_k2_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
+
+# =============================================================================
+# Kimi K2 — FP8-SC alias: same config as FP8-CS
+# =============================================================================
+
+
+def kimi_k2_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
+    """Kimi K2 pretrain: 1024× H100, FP8-SC (alias of FP8-CS)."""
+    return kimi_k2_pretrain_1024gpu_h100_fp8cs_config()

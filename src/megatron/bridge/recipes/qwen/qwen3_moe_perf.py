@@ -1500,3 +1500,64 @@ def qwen3_235b_a22b_pretrain_v2_256gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
+
+# =============================================================================
+# Qwen3 235B A22B — NVFP4 aliases (V1/V2): same parallelism as FP8-CS
+# =============================================================================
+
+
+def qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain: 64× GB300, NVFP4 (same layout as FP8-CS)."""
+    cfg = qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain: 64× GB200, NVFP4 (same layout as FP8-CS)."""
+    cfg = qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain: 64× B300, NVFP4 (same layout as FP8-CS)."""
+    cfg = qwen3_235b_a22b_pretrain_64gpu_b300_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain: 64× B200, NVFP4 (same layout as FP8-CS)."""
+    cfg = qwen3_235b_a22b_pretrain_64gpu_b200_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_v2_256gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain V2: 256× GB300, NVFP4 (same layout as FP8-CS)."""
+    cfg = qwen3_235b_a22b_pretrain_v2_256gpu_gb300_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_v2_256gpu_gb200_nvfp4_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain V2: 256× GB200, NVFP4 (same layout as FP8-CS)."""
+    cfg = qwen3_235b_a22b_pretrain_v2_256gpu_gb200_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_v2_256gpu_b300_nvfp4_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain V2: 256× B300, NVFP4 (same layout as FP8-CS)."""
+    cfg = qwen3_235b_a22b_pretrain_v2_256gpu_b300_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_v2_256gpu_b200_nvfp4_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain V2: 256× B200, NVFP4 (same layout as FP8-CS)."""
+    cfg = qwen3_235b_a22b_pretrain_v2_256gpu_b200_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg

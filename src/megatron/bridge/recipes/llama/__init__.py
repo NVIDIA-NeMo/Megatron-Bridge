@@ -137,6 +137,15 @@ from .llama3_perf import (
     llama3_70b_sft_32gpu_gb300_fp8cs_config,
     llama3_70b_sft_32gpu_h100_bf16_config,
     llama3_70b_sft_32gpu_h100_fp8cs_config,
+    # VR200 aliases (llama3_8b pretrain)
+    llama3_8b_pretrain_8gpu_vr200_bf16_config,
+    llama3_8b_pretrain_8gpu_vr200_fp8cs_config,
+    llama3_8b_pretrain_8gpu_vr200_fp8mx_config,
+    llama3_8b_pretrain_8gpu_vr200_nvfp4_config,
+    # SFT FP8-MX aliases
+    llama3_8b_sft_8gpu_gb200_fp8mx_config,
+    llama3_70b_sft_32gpu_gb200_fp8mx_config,
+    llama3_70b_sft_32gpu_gb300_fp8mx_config,
 )
 
 # Llama3.1 perf recipes
@@ -330,4 +339,13 @@ __all__ = [
     "llama31_405b_pretrain_v2_256gpu_gb200_nvfp4_config",
     "llama31_405b_pretrain_v2_1024gpu_h100_bf16_config",
     "llama31_405b_pretrain_v2_1024gpu_h100_fp8cs_config",
+    # LLaMA 3 8B pretrain — VR200 aliases
+    "llama3_8b_pretrain_8gpu_vr200_bf16_config",
+    "llama3_8b_pretrain_8gpu_vr200_fp8cs_config",
+    "llama3_8b_pretrain_8gpu_vr200_fp8mx_config",
+    "llama3_8b_pretrain_8gpu_vr200_nvfp4_config",
+    # LLaMA 3 SFT — FP8-MX aliases
+    "llama3_8b_sft_8gpu_gb200_fp8mx_config",
+    "llama3_70b_sft_32gpu_gb200_fp8mx_config",
+    "llama3_70b_sft_32gpu_gb300_fp8mx_config",
 ]

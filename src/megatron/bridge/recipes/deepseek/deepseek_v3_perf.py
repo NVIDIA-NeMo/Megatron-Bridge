@@ -1026,3 +1026,90 @@ def deepseek_v3_pretrain_v2_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
+
+# =============================================================================
+# DeepSeek V3 — NVFP4 aliases (V1): same parallelism as BF16, NVFP4 precision
+# =============================================================================
+
+
+def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B200, NVFP4 (same layout as BF16)."""
+    cfg = deepseek_v3_pretrain_256gpu_b200_bf16_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_b300_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B300, NVFP4 (same layout as BF16)."""
+    cfg = deepseek_v3_pretrain_256gpu_b300_bf16_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB200, NVFP4 (same layout as BF16)."""
+    cfg = deepseek_v3_pretrain_256gpu_gb200_bf16_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def deepseek_v3_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 1024× H100, FP8-SC (alias of FP8-CS)."""
+    return deepseek_v3_pretrain_1024gpu_h100_fp8cs_config()
+
+
+# =============================================================================
+# DeepSeek V3 — NVFP4 aliases (V2): same parallelism as BF16, NVFP4 precision
+# =============================================================================
+
+
+def deepseek_v3_pretrain_v2_256gpu_b200_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain V2: 256× B200, NVFP4 (same layout as BF16)."""
+    cfg = deepseek_v3_pretrain_v2_256gpu_b200_bf16_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def deepseek_v3_pretrain_v2_256gpu_b300_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain V2: 256× B300, NVFP4 (same layout as BF16)."""
+    cfg = deepseek_v3_pretrain_v2_256gpu_b300_bf16_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def deepseek_v3_pretrain_v2_256gpu_gb200_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain V2: 256× GB200, NVFP4 (same layout as BF16)."""
+    cfg = deepseek_v3_pretrain_v2_256gpu_gb200_bf16_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    return cfg
+
+
+def deepseek_v3_pretrain_v2_1024gpu_h100_fp8sc_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain V2: 1024× H100, FP8-SC (alias of FP8-CS)."""
+    return deepseek_v3_pretrain_v2_1024gpu_h100_fp8cs_config()
+
+
+# =============================================================================
+# DeepSeek V3 — VR200 aliases (V2): identical config to GB200 counterparts
+# =============================================================================
+
+
+def deepseek_v3_pretrain_v2_256gpu_vr200_bf16_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain V2: 256× VR200, BF16 (alias of GB200)."""
+    return deepseek_v3_pretrain_v2_256gpu_gb200_bf16_config()
+
+
+def deepseek_v3_pretrain_v2_256gpu_vr200_fp8cs_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain V2: 256× VR200, FP8-CS (alias of GB200)."""
+    return deepseek_v3_pretrain_v2_256gpu_gb200_fp8cs_config()
+
+
+def deepseek_v3_pretrain_v2_256gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain V2: 256× VR200, FP8-MX (alias of GB200)."""
+    return deepseek_v3_pretrain_v2_256gpu_gb200_fp8mx_config()
+
+
+def deepseek_v3_pretrain_v2_256gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain V2: 256× VR200, NVFP4 (alias of GB200)."""
+    return deepseek_v3_pretrain_v2_256gpu_gb200_nvfp4_config()

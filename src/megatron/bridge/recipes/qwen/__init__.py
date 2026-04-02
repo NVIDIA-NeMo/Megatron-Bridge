@@ -126,6 +126,15 @@ from .qwen3_moe_perf import (
     qwen3_235b_a22b_pretrain_v2_256gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_v2_256gpu_h100_bf16_config,
     qwen3_235b_a22b_pretrain_v2_256gpu_h100_fp8cs_config,
+    # Qwen3 235B-A22B NVFP4 aliases
+    qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_64gpu_b300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_v2_256gpu_gb300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_v2_256gpu_gb200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_v2_256gpu_b300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_v2_256gpu_b200_nvfp4_config,
 )
 
 # Qwen3-Next models
@@ -245,4 +254,25 @@ __all__ = [
     "qwen3_235b_a22b_pretrain_v2_256gpu_b200_fp8mx_config",
     "qwen3_235b_a22b_pretrain_v2_256gpu_h100_bf16_config",
     "qwen3_235b_a22b_pretrain_v2_256gpu_h100_fp8cs_config",
+    # Qwen3-Next perf recipes — 80B-A3B V1
+    "qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config",
+    "qwen3_next_80b_a3b_pretrain_64gpu_gb300_fp8mx_config",
+    "qwen3_next_80b_a3b_pretrain_64gpu_gb200_bf16_config",
+    "qwen3_next_80b_a3b_pretrain_64gpu_gb200_fp8mx_config",
+    "qwen3_next_80b_a3b_pretrain_64gpu_b300_bf16_config",
+    "qwen3_next_80b_a3b_pretrain_64gpu_b300_fp8mx_config",
+    "qwen3_next_80b_a3b_pretrain_64gpu_b200_bf16_config",
+    "qwen3_next_80b_a3b_pretrain_64gpu_b200_fp8mx_config",
+    "qwen3_next_80b_a3b_pretrain_128gpu_h100_bf16_config",
+    "qwen3_next_80b_a3b_pretrain_128gpu_h100_fp8cs_config",
+    # Qwen3 MoE perf recipes — 235B-A22B NVFP4 aliases (V1)
+    "qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config",
+    "qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config",
+    "qwen3_235b_a22b_pretrain_64gpu_b300_nvfp4_config",
+    "qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config",
+    # Qwen3 MoE perf recipes — 235B-A22B NVFP4 aliases (V2)
+    "qwen3_235b_a22b_pretrain_v2_256gpu_gb300_nvfp4_config",
+    "qwen3_235b_a22b_pretrain_v2_256gpu_gb200_nvfp4_config",
+    "qwen3_235b_a22b_pretrain_v2_256gpu_b300_nvfp4_config",
+    "qwen3_235b_a22b_pretrain_v2_256gpu_b200_nvfp4_config",
 ]
