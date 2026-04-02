@@ -20,9 +20,6 @@ from typing import Iterable, Tuple
 
 import torch
 import torch.distributed
-from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.losses import SPIKY_LOSS_FACTOR, masked_next_token_loss
-from megatron.bridge.training.state import GlobalState
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.num_microbatches_calculator import get_num_microbatches
@@ -30,6 +27,11 @@ from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
 
 from megatron.bridge.diffusion.common.dllm import forward_process_simple_masking
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.losses import _DEFAULT_SPIKY_LOSS_FACTOR as SPIKY_LOSS_FACTOR
+from megatron.bridge.training.losses import masked_next_token_loss
+from megatron.bridge.training.state import GlobalState
+
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Batch helpers
 # ---------------------------------------------------------------------------
+
 
 def get_batch_from_iterator(
     data_iterator: Iterable,
@@ -77,29 +80,42 @@ def get_batch_from_iterator(
 def get_batch(
     data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False
 ) -> tuple[
-    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
-    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
 ]:
     """Generate a batch."""
     if (not parallel_state.is_pipeline_first_stage()) and (not parallel_state.is_pipeline_last_stage()):
         return None, None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
-        data_iterator, use_mtp,
+        data_iterator,
+        use_mtp,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
     )
     batch = get_batch_on_this_cp_rank(batch)
 
     return (
-        batch["tokens"], batch["labels"], batch["loss_mask"],
-        batch["attention_mask"], batch["position_ids"],
-        batch.get("cu_seqlens"), batch.get("cu_seqlens_argmin"), batch.get("max_seqlen"),
+        batch["tokens"],
+        batch["labels"],
+        batch["loss_mask"],
+        batch["attention_mask"],
+        batch["position_ids"],
+        batch.get("cu_seqlens"),
+        batch.get("cu_seqlens_argmin"),
+        batch.get("max_seqlen"),
     )
 
 
 # ---------------------------------------------------------------------------
 # DGPTStep (sbd_block_diff, no KD, simple masking only)
 # ---------------------------------------------------------------------------
+
 
 class DGPTStep:
     """Forward training step for sbd_block_diff diffusion LM."""
@@ -111,11 +127,15 @@ class DGPTStep:
         self._first_call = True
 
     def __call__(
-        self, state: GlobalState, data_iterator: Iterable, model: GPTModel,
+        self,
+        state: GlobalState,
+        data_iterator: Iterable,
+        model: GPTModel,
         return_schedule_plan: bool = False,
     ) -> tuple[torch.Tensor, partial]:
         if self._first_call:
             import gc
+
             gc.collect()
             torch.cuda.empty_cache()
             self._first_call = False
@@ -130,13 +150,13 @@ class DGPTStep:
         # Per-DP-rank noise generator
         if self.config.different_seed_per_dp and self._noise_generator is None:
             noise_seed = self.seed + 100 * parallel_state.get_data_parallel_rank(with_context_parallel=True)
-            self._noise_generator = torch.Generator(device='cuda')
+            self._noise_generator = torch.Generator(device="cuda")
             self._noise_generator.manual_seed(noise_seed)
 
         timers("batch-generator", log_level=2).start()
         with straggler_timer(bdata=True):
-            tokens, labels, loss_mask, attention_mask, position_ids, cu_seqlens, cu_seqlens_argmin, max_seqlen = get_batch(
-                data_iterator, state.cfg, use_mtp
+            tokens, labels, loss_mask, attention_mask, position_ids, cu_seqlens, cu_seqlens_argmin, max_seqlen = (
+                get_batch(data_iterator, state.cfg, use_mtp)
             )
 
         # For diffusion LM: labels are the clean tokens themselves (not shifted)
@@ -145,9 +165,8 @@ class DGPTStep:
 
         timers("batch-generator").stop()
 
-        (noisy_tokens, labels, loss_mask, attention_mask, position_ids,
-         masked_indices, p_mask, input_ids_len) = self._apply_noise(
-            tokens, labels, loss_mask, attention_mask, position_ids
+        (noisy_tokens, labels, loss_mask, attention_mask, position_ids, masked_indices, p_mask, input_ids_len) = (
+            self._apply_noise(tokens, labels, loss_mask, attention_mask, position_ids)
         )
 
         forward_args = {
@@ -171,24 +190,25 @@ class DGPTStep:
                 loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
                 return schedule_plan, loss_function
             else:
-                logits = model(**forward_args)
+                output = model(**forward_args)
+                logits = output[0] if isinstance(output, tuple) else output
 
         # Split logits: first half = DLM logits over xt, second half = AR logits over x0
         causal_logits = logits[:, input_ids_len:]
         logits = logits[:, :input_ids_len]
 
         core_model = unwrap_model(model)
+        if hasattr(core_model, "language_model"):
+            core_model = core_model.language_model
 
         # DLM cross-entropy on masked tokens, scaled by 1/p_mask
-        output_tensor = core_model.compute_language_model_loss(
-            labels, logits.transpose(0, 1).contiguous()
-        )
+        output_tensor = core_model.compute_language_model_loss(labels, logits.transpose(0, 1).contiguous())
         output_tensor = output_tensor[masked_indices] / p_mask[masked_indices]
         loss_mask = masked_indices
 
         # AR cross-entropy on causal logits
-        ar_loss_weight = getattr(self.config, 'ar_loss_weight', 1.0)
-        dlm_loss_weight = getattr(self.config, 'dlm_loss_weight', 1.0)
+        ar_loss_weight = getattr(self.config, "ar_loss_weight", 1.0)
+        dlm_loss_weight = getattr(self.config, "dlm_loss_weight", 1.0)
 
         ar_output_tensor = core_model.compute_language_model_loss(
             labels_causal, causal_logits.transpose(0, 1).contiguous()
@@ -197,9 +217,12 @@ class DGPTStep:
 
         output_tensor = (output_tensor, ar_output_tensor, num_tokens_ar)
         loss_function = _create_loss_function_sbd(
-            loss_mask, check_for_nan_in_loss, check_for_spiky_loss,
-            dlm_loss_weight, ar_loss_weight,
-            divide_by_masked_tokens=getattr(self.config, 'divide_by_masked_tokens', True),
+            loss_mask,
+            check_for_nan_in_loss,
+            check_for_spiky_loss,
+            dlm_loss_weight,
+            ar_loss_weight,
+            divide_by_masked_tokens=getattr(self.config, "divide_by_masked_tokens", True),
         )
 
         self._current_microbatch += 1
@@ -210,7 +233,9 @@ class DGPTStep:
     def _apply_noise(self, tokens, labels, loss_mask, attention_mask, position_ids):
         """Apply simple uniform masking and concatenate [noisy | clean] for sbd_block_diff."""
         noisy_inputs, masked_indices, p_mask = forward_process_simple_masking(
-            tokens, mask_token_id=self.config.mask_token_id, generator=self._noise_generator,
+            tokens,
+            mask_token_id=self.config.mask_token_id,
+            generator=self._noise_generator,
             loss_mask=loss_mask,
         )
         input_ids_len = noisy_inputs.shape[1]
@@ -223,20 +248,27 @@ class DGPTStep:
 # Loss helpers
 # ---------------------------------------------------------------------------
 
+
 def _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss):
     return partial(
-        masked_next_token_loss, loss_mask,
+        masked_next_token_loss,
+        loss_mask,
         check_for_nan_in_loss=check_for_nan_in_loss,
         check_for_spiky_loss=check_for_spiky_loss,
     )
 
 
 def _create_loss_function_sbd(
-    loss_mask, check_for_nan_in_loss, check_for_spiky_loss,
-    dlm_loss_weight=1.0, ar_loss_weight=1.0, divide_by_masked_tokens=True,
+    loss_mask,
+    check_for_nan_in_loss,
+    check_for_spiky_loss,
+    dlm_loss_weight=1.0,
+    ar_loss_weight=1.0,
+    divide_by_masked_tokens=True,
 ):
     return partial(
-        _masked_loss_sbd_block_diff, loss_mask,
+        _masked_loss_sbd_block_diff,
+        loss_mask,
         check_for_nan_in_loss=check_for_nan_in_loss,
         check_for_spiky_loss=check_for_spiky_loss,
         dlm_loss_weight=dlm_loss_weight,
@@ -262,33 +294,36 @@ def _masked_loss_sbd_block_diff(
     rerun_state_machine = get_rerun_state_machine()
     if check_for_nan_in_loss:
         rerun_state_machine.validate_result(
-            result=dlm_loss, rejection_func=torch.isnan,
+            result=dlm_loss,
+            rejection_func=torch.isnan,
             message="found NaN in local forward loss calculation",
-            tolerance=0.0, fatal=True,
+            tolerance=0.0,
+            fatal=True,
         )
         rerun_state_machine.validate_result(
-            result=dlm_loss, rejection_func=torch.isinf,
+            result=dlm_loss,
+            rejection_func=torch.isinf,
             message="found Inf in local forward loss calculation",
-            tolerance=0.0, fatal=True,
+            tolerance=0.0,
+            fatal=True,
         )
     if check_for_spiky_loss:
         rerun_state_machine.validate_result(
             result=dlm_loss,
             rejection_func=partial(
                 rerun_state_machine.is_unexpectedly_large,
-                threshold=SPIKY_LOSS_FACTOR, context="dlm loss",
+                threshold=SPIKY_LOSS_FACTOR,
+                context="dlm loss",
             ),
-            message="Spiky loss", tolerance=0.0, fatal=False,
+            message="Spiky loss",
+            tolerance=0.0,
+            fatal=False,
         )
 
     num_tokens_dlm = loss_mask.sum().clone().detach().to(torch.int)
     num_tokens_ar = torch.tensor(num_tokens_ar, device=loss_mask.device, dtype=torch.int)
 
     loss = dlm_loss * dlm_loss_weight + ar_loss * ar_loss_weight
-    if divide_by_masked_tokens:
-        num_tokens = num_tokens_dlm + num_tokens_ar
-    else:
-        num_tokens = num_tokens_ar
     num_tokens = num_tokens_dlm + num_tokens_ar
     num_tokens = num_tokens.detach().to(torch.int)
 

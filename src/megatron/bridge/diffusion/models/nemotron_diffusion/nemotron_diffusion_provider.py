@@ -12,19 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DMinistral3 model provider: Ministral3 + FlexDotProductAttention for sbd_block_diff."""
+"""NemotronDiffusion model provider: Ministral3 + NemotronDiffusionAttention for sbd_block_diff."""
 
 import inspect
 from dataclasses import dataclass
 
+from megatron.bridge.diffusion.models.common.nemotron_diffusion_attention import NemotronDiffusionAttention
 from megatron.bridge.models import Ministral3ModelProvider
-from megatron.bridge.models.gpt_provider import MCoreGPTModel, ModuleSpec
-
-from megatron.bridge.diffusion.models.common.flex_dot_product_attention import FlexDotProductAttention
+from megatron.bridge.models.gpt_provider import ModuleSpec
 
 
 @dataclass
-class DMinistral3ModelProvider(Ministral3ModelProvider):
+class NemotronDiffusionModelProvider(Ministral3ModelProvider):
     """Ministral-3 with diffusion (sbd_block_diff) attention for dLLM training."""
 
     mask_token_id: int = 100
@@ -36,8 +35,9 @@ class DMinistral3ModelProvider(Ministral3ModelProvider):
     ar_loss_weight: float = 1.0
     position_embedding_type: str = "none"
     divide_by_masked_tokens: bool = True
+    freeze_vision_model: bool = True
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+    def provide(self, pre_process=None, post_process=None, vp_stage=None):
         transformer_layer_spec = self.transformer_layer_spec
         if not isinstance(transformer_layer_spec, ModuleSpec):
             if "vp_stage" in inspect.signature(transformer_layer_spec).parameters:
@@ -46,7 +46,7 @@ class DMinistral3ModelProvider(Ministral3ModelProvider):
                 transformer_layer_spec = transformer_layer_spec(self)
 
         if hasattr(transformer_layer_spec, "submodules"):
-            transformer_layer_spec.submodules.self_attention.submodules.core_attention = FlexDotProductAttention
+            transformer_layer_spec.submodules.self_attention.submodules.core_attention = NemotronDiffusionAttention
 
         self.transformer_layer_spec = transformer_layer_spec
-        return super().provide_language_model(pre_process, post_process, vp_stage)
+        return super().provide(pre_process, post_process, vp_stage)
