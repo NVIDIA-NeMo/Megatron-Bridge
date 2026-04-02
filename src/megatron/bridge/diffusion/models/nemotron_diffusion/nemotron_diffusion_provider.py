@@ -34,7 +34,6 @@ class NemotronDiffusionModelProvider(Ministral3ModelProvider):
     dlm_loss_weight: float = 0.3
     ar_loss_weight: float = 1.0
     position_embedding_type: str = "none"
-    divide_by_masked_tokens: bool = True
     freeze_vision_model: bool = True
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
@@ -48,5 +47,8 @@ class NemotronDiffusionModelProvider(Ministral3ModelProvider):
         if hasattr(transformer_layer_spec, "submodules"):
             transformer_layer_spec.submodules.self_attention.submodules.core_attention = NemotronDiffusionAttention
 
+        original_spec = self.transformer_layer_spec
         self.transformer_layer_spec = transformer_layer_spec
-        return super().provide(pre_process, post_process, vp_stage)
+        result = super().provide(pre_process, post_process, vp_stage)
+        self.transformer_layer_spec = original_spec
+        return result

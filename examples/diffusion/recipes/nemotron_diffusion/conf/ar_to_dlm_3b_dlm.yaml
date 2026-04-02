@@ -24,7 +24,7 @@ model:
   # recompute_num_layers: 1
 
 train:
-  micro_batch_size: 2
+  micro_batch_size: 1
   global_batch_size: 512
   train_iters: 12500
   eval_iters: 10

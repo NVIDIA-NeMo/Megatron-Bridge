@@ -54,7 +54,6 @@ class TestMaskedLossSbdBlockDiff:
         ar_loss_weight=1.0,
         check_for_nan=False,
         check_for_spiky=False,
-        divide_by_masked_tokens=True,
     ):
         output_tensor = (dlm_losses, ar_losses, num_tokens_ar)
         with patch(
@@ -68,7 +67,6 @@ class TestMaskedLossSbdBlockDiff:
                 check_for_spiky_loss=check_for_spiky,
                 dlm_loss_weight=dlm_loss_weight,
                 ar_loss_weight=ar_loss_weight,
-                divide_by_masked_tokens=divide_by_masked_tokens,
             )
 
     def test_returns_three_tuple(self):
@@ -552,25 +550,6 @@ class TestMaskedLossSbdBlockDiffNanSpiky:
             )
         assert mock_rsm.validate_result.call_count >= 3
 
-    def test_divide_by_masked_tokens_false_still_computes_loss(self):
-        """divide_by_masked_tokens=False runs without error and returns a valid loss."""
-        dlm = torch.tensor([2.0])
-        ar = torch.tensor([3.0])
-        mask = torch.ones(1, 2, dtype=torch.bool)
-        mock_rsm = MagicMock()
-        with patch(
-            "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
-            return_value=mock_rsm,
-        ):
-            loss, num_tokens, report = _masked_loss_sbd_block_diff(
-                mask,
-                (dlm, ar, 2),
-                check_for_nan_in_loss=False,
-                check_for_spiky_loss=False,
-                divide_by_masked_tokens=False,
-            )
-        assert isinstance(loss, torch.Tensor)
-
 
 # ---------------------------------------------------------------------------
 # TestCreateLossFunction
@@ -648,7 +627,6 @@ def _make_call_context(batch_size=2, seq_len=8, vocab_size=20, different_seed=Fa
         different_seed_per_dp=different_seed,
         ar_loss_weight=1.0,
         dlm_loss_weight=1.0,
-        divide_by_masked_tokens=True,
         mask_token_id=100,
         block_size=4,
         seq_length=seq_len,
