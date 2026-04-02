@@ -9,12 +9,12 @@ Convert single-node `uv run python -m torch.distributed.run` commands into multi
 
 ## Two Approaches: srun-native vs uv run torch.distributed
 
-| Approach | `ntasks-per-node` | Process spawning | MASTER_ADDR/PORT | Best for |
-|---|---|---|---|---|
-| **srun-native** (preferred) | 8 | Slurm spawns 8 tasks/node | Auto from SLURM env vars | Conversion, inference, Bridge scripts |
-| **uv run torch.distributed** (legacy) | 1 | `uv run python -m torch.distributed.run` spawns 8 procs/node | Must set manually | MLM pretrain_gpt.py |
+| Approach | `ntasks-per-node` | Process spawning | Best for |
+|---|---|---|---|
+| **srun-native** (preferred) | 8 | Slurm spawns 8 tasks/node | Conversion, inference, Bridge scripts |
+| **uv run torch.distributed** (legacy) | 1 | `uv run python -m torch.distributed.run` spawns 8 procs/node | MLM pretrain_gpt.py |
 
-**Prefer srun-native** — simpler, avoids shell escaping issues with TRAIN_CMD, no MASTER_ADDR/PORT management. Megatron Bridge's `model_provider.py` auto-populates PyTorch env vars from SLURM equivalents.
+**Prefer srun-native** — simpler, avoids shell escaping issues with TRAIN_CMD. Megatron Bridge auto-derives `RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `MASTER_ADDR`, `MASTER_PORT` from SLURM env vars (`SLURM_PROCID`, `SLURM_NTASKS`, `SLURM_LOCALID`, `SLURM_NODELIST`) via `common_utils.py` helpers called during `initialize.py` distributed init, so you never need to set them manually.
 
 ## Cluster Environment
 
@@ -55,7 +55,7 @@ nodes, causing `TypeError: 'NoneType' object is not an iterator`.
 
 ## srun-native Approach (Preferred)
 
-Slurm spawns all processes directly. No `torch.distributed.run`, no MASTER_ADDR/PORT, no TRAIN_CMD escaping.
+Slurm spawns all processes directly. No `torch.distributed.run`, no TRAIN_CMD escaping.
 
 ### SBATCH Headers
 
@@ -73,27 +73,33 @@ Slurm spawns all processes directly. No `torch.distributed.run`, no MASTER_ADDR/
 
 ### Build and Launch
 
+Two-phase srun: first a single-process srun to populate the uv cache, then the full multi-node srun.
+
 ```bash
 # Env exports at sbatch level (before srun)
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
 
-# Build command — simple string, no escaping needed
-CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 10; fi && "
-CMD="${CMD}uv run --no-sync python <script.py> <args>"
+# Phase 1: Single-process uv sync to build/populate the shared cache
+srun --mpi=pmix -N 1 --ntasks=1 \
+  --container-image="$CONTAINER_IMAGE" \
+  --container-mounts="$CONTAINER_MOUNTS" \
+  --no-container-mount-home \
+  bash -c "cd $WORKDIR && uv sync"
 
+# Phase 2: Full multi-node run (uv sync is a fast no-op since cache is warm)
 srun --mpi=pmix \
   --container-image="$CONTAINER_IMAGE" \
   --container-mounts="$CONTAINER_MOUNTS" \
   --no-container-mount-home \
-  bash -c "cd $WORKDIR && $CMD"
+  bash -c "cd $WORKDIR && uv sync && uv run --no-sync python <script.py> <args>"
 ```
 
 ### srun-native Key Points
 
-- `uv sync` guard uses `SLURM_LOCALID` (per-node local rank), NOT `SLURM_PROCID` (global rank)
-- `uv run --no-sync` after sync avoids re-resolving on every rank
-- `model_provider.py` auto-sets `RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `MASTER_ADDR`, `MASTER_PORT` from SLURM env vars
+- Phase 1 runs `uv sync` once on a single node/process, building all wheels into the shared cache on Lustre
+- Phase 2's `uv sync` is a fast no-op (everything is cached) — safe to run on all ranks without sleep guards
+- `initialize.py` + `common_utils.py` auto-set `RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `MASTER_ADDR`, `MASTER_PORT` from SLURM env vars
 - Env vars like `HF_TOKEN`, `HF_HOME`, `UV_CACHE_DIR` exported at sbatch level are inherited by srun tasks
 - Reference: `examples/models/vlm/glm_45v/slurm_sft.sh`, `examples/models/minimax_m2/slurm_conversion.sh`
 
@@ -101,7 +107,7 @@ srun --mpi=pmix \
 
 ## uv run torch.distributed Approach (Legacy)
 
-Use when the script requires `torch.distributed.run` (e.g., MLM pretrain_gpt.py) or when `model_provider.py` is not in the call path.
+Use when the script requires `torch.distributed.run` (e.g., MLM pretrain_gpt.py) or when Bridge's `initialize.py` is not in the call path.
 
 ### 1. Add SBATCH Headers
 
@@ -135,14 +141,14 @@ uv run python -m torch.distributed.run \
   --nproc_per_node=8 \
   --nnodes=\${SLURM_JOB_NUM_NODES} \
   --node_rank=\${SLURM_NODEID} \
-  --master_addr=\${MASTER_ADDR} \
-  --master_port=\${MASTER_PORT} \
   <script> <args>
 ```
 
-### 3. Wrap in TRAIN_CMD + srun
+`MASTER_ADDR` and `MASTER_PORT` are auto-derived from SLURM env vars by `initialize.py` / `common_utils.py` — no need to set them.
 
-The training command must be a string passed to `srun ... bash -c "$TRAIN_CMD"` so it runs inside the container on each node.
+### 3. Wrap in TRAIN_CMD + two-phase srun
+
+Use the same two-phase pattern: first a single-process srun to warm the uv cache, then the full run.
 
 **Environment exports go inside TRAIN_CMD** (they must be set inside the container):
 
@@ -159,17 +165,22 @@ export UV_CACHE_DIR=$UV_CACHE_DIR && \
 wandb login \$WANDB_API_KEY && \
 mkdir -p $LOGDIR && \
 cd $WORKDIR && \
-if [ \"\${SLURM_PROCID}\" = \"0\" ]; then uv sync; else sleep 5; fi && \
+uv sync && \
 <training command here>
 "
 ```
 
-### 4. Set MASTER_ADDR and Launch
+### 4. Launch (two-phase)
 
 ```bash
-export MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
-export MASTER_PORT=6000
+# Phase 1: Single-process uv sync to build/populate the shared cache
+srun --mpi=pmix -N 1 --ntasks=1 \
+  --container-image="$CONTAINER_IMAGE" \
+  --container-mounts="$CONTAINER_MOUNTS" \
+  --no-container-mount-home \
+  bash -c "cd $WORKDIR && uv sync"
 
+# Phase 2: Full multi-node run (uv sync in TRAIN_CMD is a fast no-op)
 srun --mpi=pmix --no-kill \
   --container-image="$CONTAINER_IMAGE" \
   --container-mounts="$CONTAINER_MOUNTS" \
@@ -362,7 +373,7 @@ if os.environ.get("WORLD_SIZE") is None and os.environ.get("SLURM_NTASKS") is No
     sys.exit(1)
 ```
 
-And ensure `model_provider.py` populates env vars from SLURM:
+Bridge's `common_utils.py` helpers (called by `initialize.py`) populate env vars from SLURM:
 ```python
 if "RANK" not in os.environ:
     os.environ["RANK"] = str(get_rank_safe())          # uses SLURM_PROCID
@@ -378,16 +389,12 @@ if "MASTER_PORT" not in os.environ:
 
 ## Key Gotchas
 
-1. **`uv sync` only on rank 0**: Other ranks `sleep 5` to wait. Pattern:
-   ```bash
-   if [ \"${SLURM_PROCID}\" = \"0\" ]; then uv sync; else sleep 5; fi
-   ```
+1. **Two-phase srun for `uv sync`**: Run a single-process srun first to warm the cache, then the full multi-node srun. The second `uv sync` is a fast no-op since everything is already cached on the shared filesystem.
 
 2. **`--no-container-mount-home`** is an `srun` flag, NOT an `#SBATCH` directive.
 
 3. **Escaping inside TRAIN_CMD**: Since `TRAIN_CMD` is a double-quoted string, escape inner `$` for Slurm variables that must expand at runtime (not sbatch time):
    - `\${SLURM_PROCID}`, `\${SLURM_JOB_NUM_NODES}`, `\${SLURM_NODEID}`
-   - `\${MASTER_ADDR}`, `\${MASTER_PORT}`
    - Host-side variables like `$GH_TOKEN`, `$LOGDIR`, `$WORKDIR` expand at sbatch time — no escaping needed.
 
 4. **Bridge `rm -rf nemo_experiments`**: Add before training to avoid stale checkpoint auto-resume.
@@ -466,7 +473,7 @@ export NEMO_HOME=$NEMO_HOME && \
 wandb login \$WANDB_API_KEY && \
 mkdir -p $LOGDIR && \
 cd $WORKDIR && \
-if [ \"\${SLURM_PROCID}\" = \"0\" ]; then uv sync; else sleep 5; fi && \
+uv sync && \
 <TRAINING_COMMAND_HERE>
 "
 
@@ -476,9 +483,14 @@ echo \"Job: \$SLURM_JOB_ID | Nodes: \$SLURM_JOB_NUM_NODES\"
 echo \"TP=\$TP PP=\$PP EP=\$EP MBS=\$MBS GBS=\$GBS\"
 echo \"======================================\"
 
-export MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
-export MASTER_PORT=6000
+# Phase 1: Single-process uv sync to build/populate the shared cache
+srun --mpi=pmix -N 1 --ntasks=1 \
+  --container-image="$CONTAINER_IMAGE" \
+  --container-mounts="$CONTAINER_MOUNTS" \
+  --no-container-mount-home \
+  bash -c "cd $WORKDIR && uv sync"
 
+# Phase 2: Full multi-node run (uv sync in TRAIN_CMD is a fast no-op)
 srun --mpi=pmix --no-kill \
   --container-image="$CONTAINER_IMAGE" \
   --container-mounts="$CONTAINER_MOUNTS" \
@@ -500,8 +512,6 @@ uv run python -m torch.distributed.run \
   --nproc_per_node=8 \
   --nnodes=\${SLURM_JOB_NUM_NODES} \
   --node_rank=\${SLURM_NODEID} \
-  --master_addr=\${MASTER_ADDR} \
-  --master_port=\${MASTER_PORT} \
   scripts/training/run_recipe.py \
   --recipe <recipe_name> \
   model.tensor_model_parallel_size=$TP \
@@ -517,8 +527,6 @@ uv run python -m torch.distributed.run \
   --nproc_per_node=8 \
   --nnodes=\${SLURM_JOB_NUM_NODES} \
   --node_rank=\${SLURM_NODEID} \
-  --master_addr=\${MASTER_ADDR} \
-  --master_port=\${MASTER_PORT} \
   3rdparty/Megatron-LM/pretrain_gpt.py \
   --tensor-model-parallel-size $TP \
   --pipeline-model-parallel-size $PP \
