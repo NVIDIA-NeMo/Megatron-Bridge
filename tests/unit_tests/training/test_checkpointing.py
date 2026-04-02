@@ -2983,7 +2983,7 @@ class TestCheckpointManager:
         ):
             mock_init_ctx.return_value = {"context": "data"}
             manager = DefaultCheckpointManager(config)
-            manager.save(ctx)
+            manager.save(ctx, None)
 
             mock_save.assert_called_once_with(
                 state=mock_state,
@@ -2994,6 +2994,7 @@ class TestCheckpointManager:
                 checkpointing_context={"context": "data"},
                 non_persistent_ckpt=True,
                 train_data_iterator=ctx.train_data_iterator,
+                callback_manager=None,
             )
 
     def test_default_checkpoint_manager_load_delegates(self):
