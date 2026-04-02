@@ -20,6 +20,7 @@ import megatron.bridge.data.vlm_datasets.collate as collate
 class _DummyProcessor:
     class _Tok:
         pad_token_id = 0
+        pad_token = "<pad>"
         added_tokens_decoder = {}
 
     def __init__(self):
