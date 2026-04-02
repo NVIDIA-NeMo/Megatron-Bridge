@@ -9,6 +9,8 @@ body:
     attributes:
       value: |
         Thanks for taking the time to file a bug report. Please keep the report focused and include the smallest repro you can share.
+
+        **If you already have a proposed fix, please open a PR alongside this issue.** We can discuss the solution there and help get it merged.
   - type: textarea
     id: problem
     attributes:

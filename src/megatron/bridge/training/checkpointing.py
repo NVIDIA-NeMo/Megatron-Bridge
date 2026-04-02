@@ -104,6 +104,11 @@ try:
 except ImportError:
     HAVE_MEGATRON_FSDP = False
 
+try:
+    from megatron.core.transformer.fsdp_dtensor_checkpoint import handle_gdn_in_state_dict
+except ImportError:
+    handle_gdn_in_state_dict = None
+
 TRACKER_PREFIX = "latest"
 _CHECKPOINT_VERSION = None
 
@@ -827,10 +832,13 @@ def save_checkpoint(
         pg_collection=pg_collection,
     )
 
-    # Save LayerWiseDistributedOptimizer
-    if isinstance(optimizer, LayerWiseDistributedOptimizer):
+    # Save LayerWiseDistributedOptimizer state - only for 'torch' (local) checkpoints.
+    # For torch_dist/fsdp_dtensor formats, optimizer state is already included in the
+    # distributed checkpoint via optimizer.sharded_state_dict(), so writing separate
+    # per-rank files is unnecessary and the files would never be loaded on resume.
+    if isinstance(optimizer, LayerWiseDistributedOptimizer) and ckpt_format == "torch":
         dp_rank = pg_collection.dp.rank()
-        optim_checkpoint_name = os.path.join(os.path.dirname(checkpoint_name), f"layer_wise_optimizer_{dp_rank}.pt")
+        optim_checkpoint_name = os.path.join(save_dir, f"layer_wise_optimizer_{dp_rank}.pt")
         ensure_directory_exists(optim_checkpoint_name)
         if not optimizer.is_stub_optimizer:
             optimizer.save_state_dict_to_file(optim_checkpoint_name)
@@ -1458,6 +1466,7 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     Handles:
     - FP8 extra state
     - SWiGLU weight splitting
+    - GDN (Gated DeltaNet) fused projection splitting (in_proj / conv1d)
     - Expert parameter reindexing for Expert Parallel
     - Uneven DTensor preprocessing
 
@@ -1489,6 +1498,21 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
             state_dict["optimizer"] = optimizer_state_dict
         else:
             model_state_dict, _ = handle_swiglu_in_state_dict(model, state_dict["model"], None)
+            state_dict["model"] = model_state_dict
+
+    # Handle GDN (Gated DeltaNet) fused projections — split in_proj / conv1d
+    # into per-component sub-tensors for TP-correct checkpoint resharding.
+    # No-op when handle_gdn_in_state_dict is unavailable (older megatron-core)
+    # or when the model contains no GDN layers.
+    if handle_gdn_in_state_dict is not None:
+        if "optimizer" in state_dict:
+            model_state_dict, optimizer_state_dict = handle_gdn_in_state_dict(
+                model, state_dict["model"], state_dict["optimizer"]
+            )
+            state_dict["model"] = model_state_dict
+            state_dict["optimizer"] = optimizer_state_dict
+        else:
+            model_state_dict, _ = handle_gdn_in_state_dict(model, state_dict["model"], None)
             state_dict["model"] = model_state_dict
 
     # Handle expert parameters for Expert Parallel (DeepSeek-v3 style MoE)
@@ -2004,12 +2028,22 @@ def _load_checkpoint_from_path(
                 and optimizer is not None
                 and not getattr(optimizer, "is_stub_optimizer", False)
             ):
-                # torch.no_grad() is needed for local checkpoints: the
-                # DistributedOptimizer copies loaded tensors into main
-                # params via .copy_(), which fails on leaf Variables that
-                # require grad without this context.
-                with torch.no_grad():
-                    optimizer.load_state_dict(state_dict["optimizer"])
+                if isinstance(optimizer, LayerWiseDistributedOptimizer) and ckpt_type == CheckpointType.LOCAL:
+                    # Local checkpoints save LayerWiseDistributedOptimizer state to a
+                    # separate per-rank file at the base local checkpoint directory rather
+                    # than embedding it in the sharded distributed checkpoint.
+                    # Load it back from that file here.
+                    dp_rank = pg_collection.dp.rank()
+                    local_ckpt_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
+                    optim_ckpt_path = os.path.join(local_ckpt_dir, f"layer_wise_optimizer_{dp_rank}.pt")
+                    optimizer.load_state_dict_from_file(optim_ckpt_path)
+                else:
+                    # torch.no_grad() is needed for local checkpoints: the
+                    # DistributedOptimizer copies loaded tensors into main
+                    # params via .copy_(), which fails on leaf Variables that
+                    # require grad without this context.
+                    with torch.no_grad():
+                        optimizer.load_state_dict(state_dict["optimizer"])
 
             if opt_param_scheduler is not None:
                 if "lr_scheduler" in state_dict:

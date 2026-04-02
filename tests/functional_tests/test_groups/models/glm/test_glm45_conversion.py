@@ -34,7 +34,7 @@ HF_GLM45_TOY_MODEL_CONFIG = {
     "initializer_range": 0.02,
     "intermediate_size": 2048,
     "max_position_embeddings": 8192,
-    "model_type": "glm",
+    "model_type": "glm4_moe",
     "moe_intermediate_size": 512,
     "n_routed_experts": 8,
     "n_shared_experts": 1,
@@ -186,7 +186,7 @@ class TestGLM45Conversion:
         with open(config_file) as f:
             config_data = json.load(f)
 
-        assert config_data["model_type"] == "glm"
+        assert config_data["model_type"] == "glm4_moe"
         assert config_data["hidden_size"] == 1024
         assert config_data["intermediate_size"] == 2048
         assert config_data["num_hidden_layers"] == 2
@@ -321,7 +321,7 @@ class TestGLM45Conversion:
             with open(config_file) as f:
                 saved_config = json.load(f)
 
-            assert saved_config["model_type"] == "glm", (
+            assert saved_config["model_type"] == "glm4_moe", (
                 "Model type should be glm (GLM 4.5 MoE uses Glm4MoeForCausalLM)"
             )
             assert saved_config["hidden_size"] == 1024, "Hidden size should match toy config"
@@ -340,3 +340,9 @@ class TestGLM45Conversion:
         except Exception as e:
             print(f"Error during GLM 4.5 MoE {test_name} conversion test: {e}")
             raise
+
+    @pytest.mark.run_only_on("GPU")
+    def test_glm45_autoconfig_roundtrip(self, glm45_toy_model_path, tmp_path):
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(glm45_toy_model_path, tmp_path)
