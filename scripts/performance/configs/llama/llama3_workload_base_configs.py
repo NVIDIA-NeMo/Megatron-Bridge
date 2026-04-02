@@ -564,7 +564,7 @@ LLAMA3_70B_SFT_CONFIG_H100_FP8_CS_V1 = replace(
     _LLAMA3_70B_SFT_CONFIG_H100,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope="mlp",
-    recompute_num_layers=1,
+    recompute_modules=["core_attn"],
 )
 
 # =============================================================================
