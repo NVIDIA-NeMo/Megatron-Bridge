@@ -22,19 +22,19 @@ both YAML configuration files and command-line overrides using Hydra-style synta
 
 Examples:
     Basic usage with default configuration:
-        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py
+        $ torchrun --nproc_per_node=2 distill_llama32_3b-1b.py
 
     Using a custom YAML config file:
-        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py --config-file my_custom_config.yaml
+        $ torchrun --nproc_per_node=2 distill_llama32_3b-1b.py --config-file my_custom_config.yaml
 
     Using CLI overrides:
-        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py \
+        $ torchrun --nproc_per_node=4 distill_llama32_3b-1b.py \
         model.tensor_model_parallel_size=4 \
         model.teacher.tensor_model_parallel_size=4 \
         train.train_iters=100000
 
     Combining YAML and CLI overrides (CLI takes precedence):
-        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py --config-file conf/my_config.yaml \
+        $ torchrun --nproc_per_node=2 distill_llama32_3b-1b.py --config-file conf/my_config.yaml \
         model.pipeline_dtype=torch.float16 \
         model.teacher.pipeline_dtype=torch.float16 \
         train.global_batch_size=512
@@ -128,10 +128,10 @@ def main() -> None:
 
     Examples of CLI usage:
         # Use default config with custom learning rate
-        torchrun --nproc_per_node=8 distill_llama32_3b-1b.py optimizer.lr=0.0002
+        torchrun --nproc_per_node=2 distill_llama32_3b-1b.py optimizer.lr=0.0002
 
         # Custom config file with additional overrides
-        torchrun --nproc_per_node=8 distill_llama32_3b-1b.py --config-file my_config.yaml train.train_iters=50000
+        torchrun --nproc_per_node=2 distill_llama32_3b-1b.py --config-file my_config.yaml train.train_iters=50000
 
         # Multiple overrides for distributed training
         torchrun --nproc_per_node=8 distill_llama32_3b-1b.py \
