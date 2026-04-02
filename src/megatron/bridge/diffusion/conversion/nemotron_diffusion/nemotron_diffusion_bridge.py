@@ -52,6 +52,9 @@ except ImportError:
     HAS_MISTRAL3 = False
 
 
+# TODO: Check if NemotronDiffusion has a dedicated HuggingFace model class (e.g. NemotronDiffusionForCausalLM)
+# and use it as source instead of Mistral3ForConditionalGeneration to avoid overwriting the
+# Ministral3Bridge registration in get_model_bridge dispatch.
 @MegatronModelBridge.register_bridge(source=Mistral3ForConditionalGeneration, target=GPTModel)
 class NemotronDiffusionBridge(MegatronModelBridge):
     """HF <-> Megatron bridge for NemotronDiffusion diffusion language models."""

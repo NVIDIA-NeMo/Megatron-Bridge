@@ -190,20 +190,22 @@ class NemotronDiffusionAttention(MegatronModule):
             config.attention_dropout if attention_dropout is None else attention_dropout
         )
 
-        # Llama-4 style query-key layer scaling + YARN RoPE
+        # RoPE setup (always required)
+        hf_text_config = config.hf_config.text_config
+        hf_text_config.max_position_embeddings = config.seq_length
+        self.rope_embedding_module = Ministral3RotaryEmbedding(hf_text_config)
+
+        # Llama-4 style query scaling (optional)
         self.beta = None
         self.max_position_embeddings = None
         if getattr(config, "apply_llama4_style_query_key_layer_scaling", False):
-            hf_text_config = config.hf_config.text_config
             self.beta = hf_text_config.rope_parameters["llama_4_scaling_beta"]
             self.max_position_embeddings = hf_text_config.rope_parameters["original_max_position_embeddings"]
-            hf_text_config.max_position_embeddings = config.seq_length
             if (
                 hasattr(config, "yarn_rotary_scaling_factor")
                 and config.yarn_rotary_scaling_factor != hf_text_config.rope_parameters["factor"]
             ):
                 hf_text_config.rope_parameters["factor"] = config.yarn_rotary_scaling_factor
-            self.rope_embedding_module = Ministral3RotaryEmbedding(hf_text_config)
 
         # Pre-compute the sbd_block_diff block mask
         self.mask = compute_block_mask(
@@ -272,10 +274,11 @@ class NemotronDiffusionAttention(MegatronModule):
         key = torch.cat([k1, k2], dim=2)
 
         # Llama-4 attention scaling
-        cache_position = torch.arange(query.shape[2], device=query.device)
-        query = query * _get_llama_4_attn_scale(cache_position, self.beta, self.max_position_embeddings).to(
-            query.dtype
-        )
+        if self.beta is not None:
+            cache_position = torch.arange(query.shape[2], device=query.device)
+            query = query * _get_llama_4_attn_scale(cache_position, self.beta, self.max_position_embeddings).to(
+                query.dtype
+            )
 
         # GQA: expand KV heads
         n_rep = self.num_attention_heads_per_partition // self.num_query_groups_per_partition

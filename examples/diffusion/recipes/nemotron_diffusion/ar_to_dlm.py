@@ -14,12 +14,41 @@
 # limitations under the License.
 
 """
-NemotronDiffusion diffusion LM pretraining (no distillation).
+NemotronDiffusion diffusion LM pretraining.
 
-Uses the sbd_block_diff diffusion paradigm via DGPTStep. No teacher model is needed.
-Select model size with --model-size {3b,8b,14b} (default: 14b).
+Uses the sbd_block_diff diffusion paradigm via DGPTStep.
 Use --hf-path to override the HuggingFace model ID or local model path.
-Configuration is overridden via YAML and CLI in the same way as pretrain_ministral3_14b.py.
+
+Examples:
+    3B model, first job from AR checkpoint (finetune=true skips optimizer state):
+        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/ar_to_dlm.py \
+            --hf-path mistralai/Ministral-3-3B-Base-2512 \
+            --config-file examples/diffusion/recipes/nemotron_diffusion/conf/ar_to_dlm_3b_dlm.yaml \
+            --data-paths /path/to/dclm/merged_tokenized_text_document \
+            checkpoint.pretrained_checkpoint=/path/to/hf_to_mb_3b \
+            checkpoint.finetune=true
+
+    3B model, subsequent jobs (resume from DLM checkpoint):
+        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/ar_to_dlm.py \
+            --hf-path mistralai/Ministral-3-3B-Base-2512 \
+            --config-file examples/diffusion/recipes/nemotron_diffusion/conf/ar_to_dlm_3b_dlm.yaml \
+            --data-paths /path/to/dclm/merged_tokenized_text_document
+
+    8B model with TP=4:
+        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/ar_to_dlm.py \
+            --hf-path mistralai/Ministral-3-8B-Base-2512 \
+            --config-file examples/diffusion/recipes/nemotron_diffusion/conf/ar_to_dlm_8b_dlm.yaml \
+            --data-paths /path/to/dclm/merged_tokenized_text_document \
+            checkpoint.pretrained_checkpoint=/path/to/hf_to_mb_8b \
+            checkpoint.finetune=true
+
+    14B model with TP=8:
+        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_diffusion/ar_to_dlm.py \
+            --hf-path mistralai/Ministral-3-14B-Base-2512 \
+            --config-file examples/diffusion/recipes/nemotron_diffusion/conf/ar_to_dlm_14b_dlm.yaml \
+            --data-paths /path/to/dclm/merged_tokenized_text_document \
+            checkpoint.pretrained_checkpoint=/path/to/hf_to_mb_14b \
+            checkpoint.finetune=true
 """
 
 import argparse
@@ -61,12 +90,6 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(
         description="NemotronDiffusion diffusion LM pretraining (no distillation)",
         formatter_class=argparse.RawTextHelpFormatter,
-    )
-    parser.add_argument(
-        "--model-size",
-        type=str,
-        default="14b",
-        help="Model size to train (default: 14b).",
     )
     parser.add_argument(
         "--hf-path",

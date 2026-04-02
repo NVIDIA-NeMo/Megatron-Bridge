@@ -222,7 +222,6 @@ class DGPTStep:
             check_for_spiky_loss,
             dlm_loss_weight,
             ar_loss_weight,
-            divide_by_masked_tokens=getattr(self.config, "divide_by_masked_tokens", True),
         )
 
         self._current_microbatch += 1
@@ -264,7 +263,6 @@ def _create_loss_function_sbd(
     check_for_spiky_loss,
     dlm_loss_weight=1.0,
     ar_loss_weight=1.0,
-    divide_by_masked_tokens=True,
 ):
     return partial(
         _masked_loss_sbd_block_diff,
@@ -273,7 +271,6 @@ def _create_loss_function_sbd(
         check_for_spiky_loss=check_for_spiky_loss,
         dlm_loss_weight=dlm_loss_weight,
         ar_loss_weight=ar_loss_weight,
-        divide_by_masked_tokens=divide_by_masked_tokens,
     )
 
 
@@ -284,7 +281,6 @@ def _masked_loss_sbd_block_diff(
     check_for_spiky_loss: bool = False,
     dlm_loss_weight: float = 1.0,
     ar_loss_weight: float = 1.0,
-    divide_by_masked_tokens: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
     """Combined DLM + AR loss for sbd_block_diff training."""
     dlm_losses, ar_losses, num_tokens_ar = output_tensor
@@ -293,32 +289,34 @@ def _masked_loss_sbd_block_diff(
 
     rerun_state_machine = get_rerun_state_machine()
     if check_for_nan_in_loss:
-        rerun_state_machine.validate_result(
-            result=dlm_loss,
-            rejection_func=torch.isnan,
-            message="found NaN in local forward loss calculation",
-            tolerance=0.0,
-            fatal=True,
-        )
-        rerun_state_machine.validate_result(
-            result=dlm_loss,
-            rejection_func=torch.isinf,
-            message="found Inf in local forward loss calculation",
-            tolerance=0.0,
-            fatal=True,
-        )
+        for loss_val, name in ((dlm_loss, "dlm"), (ar_loss, "ar")):
+            rerun_state_machine.validate_result(
+                result=loss_val,
+                rejection_func=torch.isnan,
+                message=f"found NaN in {name} loss",
+                tolerance=0.0,
+                fatal=True,
+            )
+            rerun_state_machine.validate_result(
+                result=loss_val,
+                rejection_func=torch.isinf,
+                message=f"found Inf in {name} loss",
+                tolerance=0.0,
+                fatal=True,
+            )
     if check_for_spiky_loss:
-        rerun_state_machine.validate_result(
-            result=dlm_loss,
-            rejection_func=partial(
-                rerun_state_machine.is_unexpectedly_large,
-                threshold=SPIKY_LOSS_FACTOR,
-                context="dlm loss",
-            ),
-            message="Spiky loss",
-            tolerance=0.0,
-            fatal=False,
-        )
+        for loss_val, name in ((dlm_loss, "dlm loss"), (ar_loss, "ar loss")):
+            rerun_state_machine.validate_result(
+                result=loss_val,
+                rejection_func=partial(
+                    rerun_state_machine.is_unexpectedly_large,
+                    threshold=SPIKY_LOSS_FACTOR,
+                    context=name,
+                ),
+                message="Spiky loss",
+                tolerance=0.0,
+                fatal=False,
+            )
 
     num_tokens_dlm = loss_mask.sum().clone().detach().to(torch.int)
     num_tokens_ar = torch.tensor(num_tokens_ar, device=loss_mask.device, dtype=torch.int)

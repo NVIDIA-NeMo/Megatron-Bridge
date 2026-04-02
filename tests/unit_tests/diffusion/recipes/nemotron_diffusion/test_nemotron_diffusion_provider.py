@@ -95,9 +95,6 @@ class TestNemotronDiffusionModelProviderDefaults:
     def test_position_embedding_type_default(self):
         assert self.provider.position_embedding_type == "none"
 
-    def test_divide_by_masked_tokens_default(self):
-        assert self.provider.divide_by_masked_tokens is True
-
     def test_freeze_vision_model_default(self):
         assert self.provider.freeze_vision_model is True
 
