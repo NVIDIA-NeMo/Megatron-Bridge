@@ -40,6 +40,13 @@ skills/perf-techniques/moe-comm-overlap/SKILL
 ```
 
 ```{toctree}
+:caption: Cluster & Debugging
+:maxdepth: 1
+
+skills/multi-node-slurm/SKILL
+```
+
+```{toctree}
 :caption: Resiliency
 :maxdepth: 1
 
