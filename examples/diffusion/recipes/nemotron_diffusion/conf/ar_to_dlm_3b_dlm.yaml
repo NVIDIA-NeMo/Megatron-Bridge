@@ -71,7 +71,7 @@ logger:
 
 tokenizer:
   tokenizer_type: HuggingFaceTokenizer
-  tokenizer_model: /lustre/fsw/portfolios/nvr/users/snorouzi/models/Ministral-3-3B-Base-2512_converted
+  tokenizer_model: mistralai/Ministral-3-3B-Base-2512
 
 dataset:
   sequence_length: ${model.seq_length}
