@@ -97,7 +97,6 @@ dependencies = [
     "mlflow>=3.5.0",
     "comet-ml>=3.50.0",
     "torch>=2.6.0",
-    "langchain~=1.0.0",
 ]
 
 
