@@ -206,16 +206,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     _pg_collection: Optional[ProcessGroupCollection] = None
 
-    @property
-    def padded_vocab_size(self) -> int:
-        """Return the vocab size after padding, matching the value passed to MCoreGPTModel."""
-        assert self.vocab_size is not None, "vocab_size must be set before accessing padded_vocab_size"
-        if self.should_pad_vocab:
-            return calculate_padded_vocab_size(
-                self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
-            )
-        return self.vocab_size
-
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
 
