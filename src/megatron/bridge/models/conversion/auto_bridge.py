@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import warnings
 from functools import cached_property, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
@@ -217,11 +216,9 @@ class AutoBridge(Generic[MegatronModelT]):
         # 1. Load config from both sides
         megatron_cfg, _ = load_model_config(str(run_config.parent))
         if trust_remote_code:
-            warnings.warn(
+            logger.warning(
                 "Loading a model with trust_remote_code=True allows arbitrary code execution "
-                "from the model repository. Only use this with models you trust.",
-                UserWarning,
-                stacklevel=2,
+                "from the model repository. Only use this with models you trust."
             )
         hf_cfg = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
         # 2. Translate Megatron config -> HF, conforming to reference config
@@ -323,11 +320,9 @@ class AutoBridge(Generic[MegatronModelT]):
         # First load just the config to check architecture support
         # Use thread-safe config loading to prevent race conditions
         if kwargs.get("trust_remote_code", False):
-            warnings.warn(
+            logger.warning(
                 "Loading a model with trust_remote_code=True allows arbitrary code execution "
-                "from the model repository. Only use this with models you trust.",
-                UserWarning,
-                stacklevel=2,
+                "from the model repository. Only use this with models you trust."
             )
         config = safe_load_config_with_retry(path, trust_remote_code=kwargs.get("trust_remote_code", False))
 
