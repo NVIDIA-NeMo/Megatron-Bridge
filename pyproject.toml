@@ -29,7 +29,7 @@ description = "Megatron Bridge: Training Recipes for Megatron-based LLM and VLM 
 readme = "README.md"
 dynamic = ["version"]
 license = {file = "LICENSE"}
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 authors = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
 maintainers = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
 keywords = [
@@ -173,7 +173,7 @@ dev = [
     "ruff>=0.9.9",
     "mypy>=1.8.0",
 ]
-build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy<2.0.0", "ninja", "nvidia-mathdx"]
+build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy", "ninja", "nvidia-mathdx"]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"
