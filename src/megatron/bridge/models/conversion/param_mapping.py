@@ -1256,6 +1256,9 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             else:
                 # Receive from owning rank
                 self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
+                if self._detected_type is None:
+                    # PP group likely has 1 member - skipping.
+                    return {}
 
             self._mapping = self._get_or_create_mapping(self._detected_type)
 

@@ -53,6 +53,7 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         provider.share_embeddings_and_output_weights = False
         provider.qk_layernorm = True
         provider.multi_latent_attention = True
+        provider.q_lora_rank = hf_config.q_lora_rank
 
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = True

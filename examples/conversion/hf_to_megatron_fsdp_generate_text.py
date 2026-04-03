@@ -43,8 +43,8 @@ class SingleBatchIterator:
     Required by the forward_backward_func function.
     """
 
-    def __init__(self, input_ids, position_ids):
-        self.batch = {"tokens": input_ids, "position_ids": position_ids}
+    def __init__(self, input_ids, position_ids, attention_mask=None):
+        self.batch = {"tokens": input_ids, "position_ids": position_ids, "attention_mask": attention_mask}
         self._yielded = False
 
     def __iter__(self):
@@ -55,6 +55,22 @@ class SingleBatchIterator:
             raise StopIteration
         self._yielded = True
         return self.batch
+
+
+def _pad_to_tp_multiple(
+    input_ids: torch.Tensor,
+    tp_size: int,
+    pad_token_id: int,
+) -> tuple[torch.Tensor, torch.Tensor, int]:
+    """Pad input_ids along sequence dim to be divisible by tp_size."""
+    seq_len = input_ids.size(1)
+    remainder = seq_len % tp_size
+    if remainder != 0:
+        pad_len = tp_size - remainder
+        input_ids = torch.nn.functional.pad(input_ids, (0, pad_len), value=pad_token_id)
+    attention_mask = torch.zeros(input_ids.shape, dtype=torch.long, device=input_ids.device)
+    attention_mask[:, :seq_len] = 1
+    return input_ids, attention_mask, seq_len
 
 
 def text_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
@@ -163,11 +179,7 @@ def main(
         tokenizer.pad_token = tokenizer.eos_token
 
     prompt = "what is reinforcement learning?"
-    input_ids = tokenizer.encode(prompt, return_tensors="pt").cuda()
-    position_ids = (
-        torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
-    )
-    generated_ids = input_ids.clone()
+    generated_ids = tokenizer.encode(prompt, return_tensors="pt").cuda()
 
     stop_tokens = [tokenizer.eos_token_id]
     max_new_tokens = 100
@@ -175,8 +187,17 @@ def main(
         with torch.no_grad():
             print_rank_0(f"Generation step {step}")
 
+            input_ids, attention_mask, actual_seq_len = _pad_to_tp_multiple(
+                generated_ids, tp_size=tp, pad_token_id=tokenizer.pad_token_id
+            )
+            position_ids = (
+                torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device)
+                .unsqueeze(0)
+                .expand_as(input_ids)
+            )
+
             fwd_bwd_function = get_forward_backward_func()
-            iterator = SingleBatchIterator(input_ids, position_ids)
+            iterator = SingleBatchIterator(input_ids, position_ids, attention_mask=attention_mask)
 
             output = fwd_bwd_function(
                 forward_step_func=text_forward_step,
@@ -197,11 +218,12 @@ def main(
                 dist.all_gather(gathered_tensors, output, group=parallel_state.get_tensor_model_parallel_group())
                 # Concatenate along last dimension (dim=2)
                 output = torch.cat(gathered_tensors, dim=2)
-                next_token_ids = torch.argmax(output[:, -1], dim=-1, keepdim=True)
+                last_real_pos = actual_seq_len - 1
+                next_token_ids = torch.argmax(output[:, last_real_pos], dim=-1, keepdim=True)
 
                 if step < 5:  # Only for first few iterations
                     print_rank_0(f"Step {step}: output shape={output.shape}, var={output.var():.4f}")
-                    logits = output[0, -1, :]
+                    logits = output[0, last_real_pos, :]
                     top5_vals, top5_ids = torch.topk(logits, 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
                     print_rank_0(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
@@ -213,13 +235,6 @@ def main(
 
             torch.distributed.broadcast(next_token_ids, get_last_rank())
             generated_ids = torch.cat([generated_ids, next_token_ids], dim=-1)
-
-            input_ids = generated_ids
-            position_ids = (
-                torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device)
-                .unsqueeze(0)
-                .expand_as(input_ids)
-            )
             # If the generated token is the end of sequence token, stop generating
             if next_token_ids.item() in stop_tokens:
                 break

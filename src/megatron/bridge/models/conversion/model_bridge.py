@@ -985,11 +985,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             if isinstance(task.param_weight, DTensor):
                 from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
-                    gather_uneven_dtensor_to_full_tensor,
+                    uneven_dtensor_to_full_tensor,
                 )
 
-                full_tensor = gather_uneven_dtensor_to_full_tensor(task.param_weight)
-                megatron_weights = full_tensor.to_local()
+                megatron_weights = uneven_dtensor_to_full_tensor(task.param_weight)
             else:
                 megatron_weights = task.param_weight
             converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, task.megatron_module)
