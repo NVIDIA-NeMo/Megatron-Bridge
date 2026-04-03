@@ -78,25 +78,30 @@ def train_step_mimo(
     seq_length: int,
     micro_batch_size: int,
 ) -> Tuple[Dict[str, torch.Tensor], Optional[float], Optional[int]]:
-    """Single MIMO training step.
-
-    Args:
-        forward_step_func: Forward step function (wrapped with GlobalState).
-        data_iterator: Iterator over the dataset.
-        model: MimoModel instance.
-        optimizer: MimoOptimizer managing per-module optimizers.
-        schedulers: Per-module learning rate schedulers {module_name: scheduler}.
-        global_state: GlobalState containing timers, config, train_state.
-        multimodule_communicator: MultiModulePipelineCommunicator for P2P.
-        multimodule_pg_collection: PG collection for schedule.
-        infra: MimoModelInfra with grids, topology, pg_collections.
-        module_to_grid_tuple: List of (module, grid) tuples.
-        num_microbatches: Number of microbatches per iteration.
-        seq_length: Sequence length.
-        micro_batch_size: Micro batch size.
-
+    """
+    Execute a single MIMO training iteration: run forward/backward pipelined across modules, perform the coordinated optimizer update, advance per-module schedulers on success, reduce per-stage losses on the pipeline's final stage, and broadcast the final loss dictionary to the logging rank.
+    
+    Parameters:
+        forward_step_func (Callable): Wrapped forward step function used by the pipeline.
+        data_iterator (Iterator): Iterator yielding training microbatches.
+        model (MimoModel): The MIMO-wrapped model participating in the pipeline.
+        optimizer (MimoOptimizer): Optimizer that manages per-module updates and returns update status and gradient statistics.
+        schedulers (Dict[str, OptimizerParamScheduler]): Per-module learning-rate schedulers; any None entries are skipped.
+        global_state (GlobalState): Global training state and timers (provides cfg.data_parallel_size and timers).
+        multimodule_communicator (MultiModulePipelineCommunicator): P2P communicator used by the multimodule pipeline schedule.
+        multimodule_pg_collection: Process-group collection used by the pipeline schedule.
+        infra (MimoModelInfra): MIMO infra containing module grids and pg_collections (used for final-stage reductions and optional all-reduce).
+        module_to_grid_tuple (List): Mapping of modules to their device/grid tuples used for gradient clearing.
+        num_microbatches (int): Number of microbatches per training iteration.
+        seq_length (int): Sequence length for the forward step.
+        micro_batch_size (int): Micro-batch size.
+    
     Returns:
-        Tuple of (loss_dict, skipped_iter, grad_norm, num_zeros_in_grad).
+        Tuple containing:
+          - loss_dict (Dict[str, torch.Tensor]): Reduced loss metrics produced by the pipeline's last stage (empty if no losses produced on this rank). All tensors are on the local CUDA device for the logging rank.
+          - skipped_iter (int): `0` if the optimizer update succeeded and schedulers were stepped, `1` if the update was skipped.
+          - grad_norm (Optional[float]): Global gradient norm computed by the optimizer, or `None` if unavailable.
+          - num_zeros_in_grad (Optional[int]): Number of zero gradients reported by the optimizer, or `None` if unavailable.
     """
     timers = global_state.timers
 
@@ -197,33 +202,25 @@ def train_mimo(
     mimo_infra: "MimoModelInfra",
     multimodule_communicator: "MultiModulePipelineCommunicator",
 ) -> None:
-    """Main MIMO training loop.
-
-    Key differences from standard train():
-    - Creates MultiModuleProcessGroupCollection for the schedule
-    - Uses forward_backward_pipelining_without_interleaving with multimodule support
-    - Uses zero_grad_buffer_for_multimodule() for gradient clearing
-    - Uses MimoOptimizer for coordinated gradient clipping with global norm
-
-    Reuses from existing Bridge training:
-    - GlobalState for timers, config, train_state
-    - training_log() for metrics reporting
-    - handle_profiling_step() and handle_profiling_stop() for profiler lifecycle
-    - save_checkpoint() with MimoOptimizer for checkpointing
-    - evaluate_and_print_results() for validation with multimodule support
-    - maybe_finalize_async_save() for async checkpoint finalization
-
-
-    Args:
-        forward_step_func: Forward step function.
-        model: MimoModel instance.
-        optimizer: MimoOptimizer managing per-module optimizers.
-        schedulers: Per-module learning rate schedulers {module_name: scheduler}.
-        train_data_iterator: Training data iterator.
-        valid_data_iterator: Validation data iterator (optional).
-        global_state: GlobalState containing timers, config, train_state.
-        mimo_infra: MimoModelInfra with grids, topology, pg_collections.
-        multimodule_communicator: MultiModulePipelineCommunicator for P2P.
+    """
+    Run the full MIMO training loop coordinating multimodule pipelining, optimization, scheduling, logging, evaluation, and checkpointing.
+    
+    This function:
+    - Builds multimodule process-group collection and validates MIMO-specific requirements.
+    - Configures model gradient hooks for multimodule training and prepares the forward step.
+    - Iterates until the configured number of training iterations, calling train_step_mimo each iteration, updating training state, stepping per-module schedulers on successful updates, logging metrics, running evaluation, and saving checkpoints (including async finalize behavior).
+    - Manages optional profiling and ensures graceful shutdown of profilers and async checkpoint saves.
+    
+    Parameters:
+        forward_step_func (Callable): Per-microbatch forward function; will be wrapped with GlobalState.
+        model (MimoModel): The distributed MIMO model to train.
+        optimizer (MimoOptimizer): Optimizer coordinating per-module optimizer behavior and gradient scaling.
+        schedulers (Dict[str, OptimizerParamScheduler]): Mapping of module names to their learning-rate schedulers.
+        train_data_iterator (Iterator): Iterator yielding training microbatches.
+        valid_data_iterator (Optional[Iterator]): Optional iterator for validation/evaluation.
+        global_state (GlobalState): Global training state and configuration (timers, train_state, loggers).
+        mimo_infra (MimoModelInfra): MIMO infrastructure describing module grids, topology, and process-group collections.
+        multimodule_communicator (MultiModulePipelineCommunicator): Communicator for cross-module point-to-point pipeline transfers.
     """
     timers = global_state.timers
     train_state = global_state.train_state

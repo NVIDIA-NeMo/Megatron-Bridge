@@ -226,6 +226,12 @@ def build_train_valid_test_data_loaders(
     exit_signal = cfg.train.exit_signal
 
     def worker_init_fn(_):
+        """
+        Install the distributed exit signal handler in a dataloader worker process.
+        
+        Parameters:
+            _ (int): Worker process index (unused).
+        """
         DistributedSignalHandler(exit_signal).__enter__()
 
     maybe_worker_init_fn = worker_init_fn if cfg.train.exit_signal_handler_for_dataloader else None
@@ -322,18 +328,19 @@ def build_train_valid_test_data_iterators(
     build_train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
 ) -> tuple[Optional[RerunDataIterator], Optional[RerunDataIterator], Optional[RerunDataIterator]]:
-    """Build train, validation, and test data iterators.
-
-    Builds the data loaders first, then wraps them in appropriate iterators
-    (e.g., RerunDataIterator, cyclic_iter) based on the configuration.
-
-    Args:
-        cfg: The main configuration container.
-        train_state: The current training state.
-        build_train_valid_test_datasets_provider: A function to build the datasets.
-
+    """
+    Build iterators for training, validation, and testing data.
+    
+    Wraps dataloaders produced by build_train_valid_test_data_loaders into iterator objects according to the dataset's dataloader_type; uses a "cyclic" iterator for validation when the dataset is a GPTDatasetConfig. For "external" dataloaders, preserves list or single dataloader semantics.
+    
+    Parameters:
+        cfg (ConfigContainer): Configuration that determines dataloader types and dataset settings.
+        train_state (TrainState): Current training state used when constructing dataloaders.
+        build_train_valid_test_datasets_provider (Callable): Provider used to build datasets for the dataloaders.
+        dp_group (torch.distributed.ProcessGroup): Data-parallel process group used when building dataloaders.
+    
     Returns:
-        A tuple (train_data_iterator, valid_data_iterator, test_data_iterator).
+        tuple: (train_data_iterator, valid_data_iterator, test_data_iterator) where each element is a RerunDataIterator or a list of RerunDataIterator for "external" dataloaders, or `None` if the corresponding dataloader was not created.
     """
 
     # Build loaders.

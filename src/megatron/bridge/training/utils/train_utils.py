@@ -350,32 +350,31 @@ def training_log(
     pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
 ) -> bool:
-    """Log training stats (losses, learning rate, timings, etc.).
-
-    Aggregates losses, logs metrics to TensorBoard and WandB (if enabled),
-    and prints a formatted log string to the console on the last rank.
-
-    Args:
-        loss_dict (dict[str, torch.Tensor]): Dictionary of losses for the current step.
-        total_loss_dict (dict[str, Any]): Dictionary to accumulate losses and stats
-                                         across logging intervals.
-        learning_rate (Optional[float]): Current learning rate.
-        decoupled_learning_rate (Optional[float]): Current decoupled learning rate (if used).
-        loss_scale (float): Current loss scale value.
-        report_memory_flag (bool): Flag to indicate if memory usage should be reported.
-        skipped_iter (int): 1 if the iteration was skipped, 0 otherwise.
-        grad_norm (Optional[float]): Gradient norm if computed, else None.
-        params_norm (Optional[float]): Parameter L2 norm if computed, else None.
-        num_zeros_in_grad (Optional[int]): Number of zeros in gradient if computed, else None.
-        config: The main configuration container.
-        global_state: The global training state.
-        history_wct (list): list of elapsed time per each iteration.
-        model (list[MegatronModule]): megatron model state.
-        pg_collection (Optional[Any]): ProcessGroupCollection to use for logging reductions.
-            If None, falls back to extracting from model wrappers.
-        log_max_attention_logit (Optional[float]): Maximum attention logit if available, None otherwise.
+    """
+    Log and report training metrics (losses, timing, throughput, memory, and auxiliary model metrics).
+    
+    Aggregates per-step losses into `total_loss_dict`, writes configured scalars to TensorBoard / Weights & Biases / MLflow / Comet, prints a periodic console summary on the last rank, and tracks MoE/MTP specific metrics when enabled.
+    
+    Parameters:
+        loss_dict (dict[str, torch.Tensor]): Loss tensors for the current iteration.
+        total_loss_dict (dict[str, Any]): Accumulator for losses and counters across the logging interval.
+        learning_rate (Optional[float]): Current learning rate (may be None on ranks without trainable params).
+        decoupled_learning_rate (Optional[float]): Current decoupled learning rate for optimizers that use it.
+        loss_scale (float): Current loss scaling factor.
+        report_memory_flag (bool): If True, report memory usage on this logging iteration and then set False.
+        skipped_iter (int): 1 if the current iteration was skipped, 0 otherwise.
+        grad_norm (Optional[float]): Computed gradient L2 norm, or None if not available.
+        params_norm (Optional[float]): Computed parameter L2 norm, or None if not available.
+        num_zeros_in_grad (Optional[int]): Number of zero entries in gradients, or None if not available.
+        config (ConfigContainer): Global configuration container.
+        global_state (GlobalState): Global training state and utilities (timers, loggers, counters).
+        history_wct (list): Wall-clock time history for recent iterations (used for throughput rollups).
+        model (list[MegatronModule]): Model wrapper(s) used to derive process-group collection when needed.
+        pg_collection (Optional[Any]): Optional ProcessGroupCollection to use for reductions; if None, it is derived from `model`.
+        log_max_attention_logit (Optional[float]): Maximum attention logit observed this iteration, if provided.
+    
     Returns:
-        bool: The updated report_memory_flag.
+        bool: `True` if memory reporting should remain enabled for subsequent logging iterations, `False` otherwise.
     """
     timers = global_state.timers
     train_state = global_state.train_state

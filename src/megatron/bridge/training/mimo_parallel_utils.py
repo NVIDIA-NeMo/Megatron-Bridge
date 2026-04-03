@@ -60,13 +60,14 @@ def unwrap_mimo_model(model) -> MimoModel:
 
 
 def is_current_rank_in_grid(grid: "HyperCommGrid") -> bool:
-    """Check if current rank participates in the given grid.
-
-    Args:
-        grid: HyperCommGrid to check participation in.
-
+    """
+    Determine whether the current distributed process rank lies within the grid's contiguous rank range.
+    
+    Parameters:
+        grid (HyperCommGrid): Grid whose rank range will be checked.
+    
     Returns:
-        True if current rank is within the grid's rank range.
+        `true` if the current process rank is within the grid's rank range, `false` otherwise.
     """
     current_rank = dist.get_rank()
     return grid.rank_offset <= current_rank < (grid.rank_offset + grid.size)
@@ -76,14 +77,15 @@ def get_module_to_grid_tuple(
     mimo_model: MimoModel,
     infra: MimoModelInfra,
 ) -> List[Tuple]:
-    """Build list of (module, grid) tuples for all modules the current rank participates in.
-
-    Args:
-        mimo_model: The MimoModel instance.
-        infra: MimoModelInfra containing module_to_grid_map.
-
+    """
+    Map participating submodules of the provided MimoModel to their corresponding HyperCommGrid entries.
+    
+    Parameters:
+        mimo_model (MimoModel): The MimoModel to inspect; wrapped models (e.g., DDP/Float16Module) are unwrapped.
+        infra (MimoModelInfra): Infrastructure containing `module_to_grid_map` that associates module names with grids.
+    
     Returns:
-        List of (module, grid) tuples for modules this rank participates in.
+        List[Tuple]: A list of (module, grid) tuples for each submodule whose grid includes the current rank.
     """
     module_to_grid_tuple = []
 
@@ -109,19 +111,16 @@ def get_module_to_grid_tuple(
 
 
 def build_pg_collection_for_schedule(infra: MimoModelInfra):
-    """Build pg_collection compatible with schedule.
-
-    Primary: Use MultiModuleProcessGroupCollection if PR 3212 allows
-             missing LLM PG on encoder-only ranks.
-    Fallback: Return list of ProcessGroupCollections for participating modules.
-
-    IMPORTANT: Uses infra.pg_collections directly. Do NOT rebuild PGs.
-
-    Args:
-        infra: MimoModelInfra with pg_collections for each module.
-
+    """
+    Constructs a schedule-compatible process-group collection from the infra's per-module process groups.
+    
+    Prefers an aggregated MultiModuleProcessGroupCollection when available; otherwise returns a list of the existing per-module ProcessGroupCollection objects. Uses the mappings in `infra.pg_collections` and does not create or rebuild process groups.
+    
+    Parameters:
+        infra (MimoModelInfra): Infrastructure object containing `pg_collections` mapping module names to their ProcessGroupCollection (or None).
+    
     Returns:
-        MultiModuleProcessGroupCollection or list of ProcessGroupCollections.
+        MultiModuleProcessGroupCollection or list: A MultiModuleProcessGroupCollection aggregating the per-module PGs when supported, or a list of the existing per-module ProcessGroupCollection instances otherwise.
     """
     try:
         from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
@@ -141,17 +140,13 @@ def build_pg_collection_for_schedule(infra: MimoModelInfra):
 
 @contextmanager
 def multimodule_no_sync(*, module_to_grid_tuple: List[Tuple]):
-    """Context manager to disable gradient sync for all modules during microbatch accumulation.
-
-    This function is designed to be used with functools.partial() to pre-bind
-    the module_to_grid_tuple parameter, since the schedule calls no_sync_func()
-    with no arguments.
-
-    Args:
-        module_to_grid_tuple: List of (module, grid) tuples (keyword-only, bound via partial).
-
-    Yields:
-        None - context manager for gradient sync control.
+    """
+    Disable gradient synchronization for all participating modules by entering each module's `no_sync()` context.
+    
+    This context manager enters `no_sync()` for every module in `module_to_grid_tuple` whose grid includes the current rank, yielding control while those contexts are active and exiting them on completion.
+    
+    Parameters:
+        module_to_grid_tuple (List[Tuple]): List of `(module, grid)` pairs; modules that are `None` or whose grid does not include the current rank are ignored.
     """
     contexts = []
     for module, grid in module_to_grid_tuple:
@@ -179,21 +174,18 @@ def finalize_model_grads_multimodule(
     infra: MimoModelInfra,
     module_to_grid_tuple: List[Tuple],
 ):
-    """Finalize gradients for each module using infra.pg_collections.
-
-    IMPORTANT: Signature matches schedule's call pattern:
-        config.finalize_model_grads_func([model], num_tokens, pg_collection, force_all_reduce=flag)
-
-    The `infra` and `module_to_grid_tuple` parameters are pre-bound via partial().
-    We ignore the schedule-provided `pg_collection` and use per-module PGs.
-
-    Args:
-        model: Model list (passed by schedule, ignored - we use module_to_grid_tuple).
-        num_tokens: Token count for gradient scaling.
-        pg_collection: Schedule-provided PG (ignored - we use per-module PGs).
-        force_all_reduce: Schedule-provided flag (ignored - per-module PGs control sync).
-        infra: MimoModelInfra with per-module pg_collections (keyword-only, bound via partial).
-        module_to_grid_tuple: List of (module, grid) tuples (keyword-only, bound via partial).
+    """
+    Finalize gradients for each participating MIMO submodule using that module's process-group collection.
+    
+    For every (module, grid) in `module_to_grid_tuple` where the current rank belongs to `grid`, this calls Megatron's internal finalize routine for that single module using the per-module PG from `infra.pg_collections`. This function intentionally ignores the schedule-provided `pg_collection` and `force_all_reduce` arguments; `infra` and `module_to_grid_tuple` are expected to be pre-bound (e.g., via partial).
+    
+    Parameters:
+        model: Ignored. Present to match the schedule's call signature.
+        num_tokens: Token count forwarded to the underlying finalize call for gradient scaling.
+        pg_collection: Ignored. Per-module PGs from `infra.pg_collections` are used instead.
+        force_all_reduce: Ignored. Per-module PG behavior determines synchronization.
+        infra: MimoModelInfra providing `module_to_grid_map` and `pg_collections`.
+        module_to_grid_tuple: List of (module, grid) tuples indicating modules and their grids; only modules whose grid contains the current rank are finalized.
     """
     for module, grid in module_to_grid_tuple:
         if module is not None and is_current_rank_in_grid(grid):
@@ -210,10 +202,13 @@ def finalize_model_grads_multimodule(
 
 
 def zero_grad_buffer_for_multimodule(module_to_grid_tuple: List[Tuple]):
-    """Reset gradient buffers for all DDP-wrapped modules.
-
-    Args:
-        module_to_grid_tuple: List of (module, grid) tuples.
+    """
+    Reset gradient buffers for participating multimodule submodules that expose `zero_grad_buffer`.
+    
+    Parameters:
+        module_to_grid_tuple (List[Tuple]): Sequence of `(module, grid)` pairs. For each pair,
+            if the current rank is inside `grid` and `module` implements `zero_grad_buffer()`,
+            that method will be invoked.
     """
     for module, grid in module_to_grid_tuple:
         if module is not None and is_current_rank_in_grid(grid):
@@ -257,21 +252,21 @@ def validate_data_loader_contract(
     micro_batch_size: int,
     num_microbatches: int,
 ):
-    """Validate data loading constraints for multimodule training.
-
-    Checks:
-    - Global batch size divisible by all module DP sizes
-    - Micro-batch size consistent with per-module sharding
-    - num_microbatches * micro_batch_size == global_batch_size / DP_size (per module)
-
-    Args:
-        infra: MimoModelInfra with module_to_grid_map.
-        global_batch_size: Total batch size across all data parallel ranks.
-        micro_batch_size: Batch size per microbatch.
-        num_microbatches: Number of microbatches per iteration.
-
+    """
+    Validate that global and microbatch sizes satisfy each module's data-parallel constraints.
+    
+    Checks per configured module that (1) `global_batch_size` is divisible by the module's data-parallel (DP) size and (2) `num_microbatches * micro_batch_size` equals the per-DP partition of `global_batch_size`.
+    
+    Parameters:
+        infra (MimoModelInfra): Infrastructure containing `module_to_grid_map`.
+        global_batch_size (int): Total batch size across all data-parallel ranks.
+        micro_batch_size (int): Batch size for a single microbatch.
+        num_microbatches (int): Number of microbatches accumulated per iteration.
+    
     Raises:
-        ValueError: If any constraint is violated.
+        ValueError: If `global_batch_size` is not divisible by a module's DP size, or if
+            `num_microbatches * micro_batch_size` does not equal `global_batch_size // dp_size`
+            for any module.
     """
     for module_name, grid in infra.module_to_grid_map.items():
         # Get DP size from grid

@@ -8,6 +8,20 @@ import pytest
 
 
 def _make_cfg():
+    """
+    Create and return a test mock configuration with sensible default training fields.
+    
+    The returned object is a MagicMock with a `train` SimpleNamespace containing:
+    - `rampup_batch_size = None`
+    - `global_batch_size = 1`
+    - `micro_batch_size = 1`
+    - `decrease_batch_size_if_needed = False`
+    
+    Also sets `data_parallel_size = 1` on the mock.
+    
+    Returns:
+        MagicMock: A mock configuration object with the `train` namespace and `data_parallel_size` set.
+    """
     cfg = MagicMock()
     cfg.train = SimpleNamespace(
         rampup_batch_size=None,
@@ -20,6 +34,21 @@ def _make_cfg():
 
 
 def _make_setup_output(module_to_grid_map):
+    """
+    Create a SimpleNamespace that mimics the structure returned by setup_mimo for unit tests.
+    
+    Parameters:
+        module_to_grid_map (dict): Mapping from module name to grid object used by tests (e.g., {"vision": grid}).
+    
+    Returns:
+        SimpleNamespace: Namespace with the following test-oriented attributes:
+            - model: a MagicMock representing the model.
+            - mimo_infra: SimpleNamespace with `module_to_grid_map` set to the provided mapping.
+            - multimodule_communicator: a MagicMock representing inter-module communication.
+            - train_data_iterator: an empty iterator for training data.
+            - valid_data_iterator: None (no validation iterator).
+            - global_state: a MagicMock representing global training state.
+    """
     return SimpleNamespace(
         model=MagicMock(),
         mimo_infra=SimpleNamespace(module_to_grid_map=module_to_grid_map),

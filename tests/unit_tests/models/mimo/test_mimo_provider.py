@@ -175,7 +175,11 @@ class TestMimoModelProvider:
     @patch("torch.distributed.get_rank")
     @patch("megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids")
     def test_build_infra_is_idempotent(self, mock_build_grids, mock_get_rank, mock_get_pg_ranks, mock_new_group):
-        """Test build_infra() can be called multiple times."""
+        """
+        Verifies that calling build_infra() multiple times produces consistent participating_modules across calls.
+        
+        Ensures repeated invocations return infra objects with equivalent participating_modules when a mimo_parallelism_config is present.
+        """
         mock_get_rank.return_value = 0
         mock_get_pg_ranks.return_value = [0, 1]
         mock_new_group.return_value = MagicMock()
@@ -656,7 +660,11 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
     @patch("megatron.bridge.models.mimo.mimo_provider.populate_embedding_and_position_groups")
     @patch("torch.distributed.get_rank")
     def test_pg_collection_includes_composite_groups(self, mock_get_rank, mock_populate, mock_is_first, mock_is_last):
-        """Test that pg_collection includes mp, tp_ep_pp, and expt_dp composite groups."""
+        """
+        Verify that the process-group collection for the "language" module contains the expected primitive and composite process groups.
+        
+        Asserts that `tp`, `dp`, `pp`, `cp`, `ep`, and the composite groups `dp_cp`, `mp` (from `("tp","pp")`), and `tp_ep_pp` (from `("tp","ep","pp")`) are present and mapped to the corresponding process-group objects.
+        """
         mock_get_rank.return_value = 0
         mock_populate.return_value = (MagicMock(), MagicMock())
         mock_is_first.return_value = True

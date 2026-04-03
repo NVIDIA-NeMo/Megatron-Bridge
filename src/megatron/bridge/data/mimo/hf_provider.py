@@ -122,7 +122,15 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
         return tokenizer
 
     def _load_hf_dataset(self, split: str) -> Any:
-        """Load a HuggingFace dataset split."""
+        """
+        Load a specified split from the configured HuggingFace dataset.
+        
+        Parameters:
+            split (str): Name of the split to load (e.g., "train", "validation", "test").
+        
+        Returns:
+            dataset (Any): The loaded dataset split, or `None` if the requested split does not exist.
+        """
         try:
             dataset = load_dataset(
                 self.hf_dataset_path,
@@ -146,7 +154,16 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
         processors: Dict[str, Any],
         tokenizer: Any,
     ) -> Optional[MimoDataset]:
-        """Build dataset for a single split."""
+        """
+        Create a MimoDataset for the specified HuggingFace dataset split.
+        
+        Parameters:
+            split: The name of the dataset split to load (e.g., "train", "validation", "test").
+            target_samples: Maximum number of examples to include; if less than or equal to 0 the function returns `None`.
+        
+        Returns:
+            MimoDataset: A dataset configured with the loaded split, processors, tokenizer, and provider settings, or `None` if the split is missing or `target_samples` is <= 0.
+        """
         if target_samples <= 0:
             return None
 
@@ -170,14 +187,14 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
     def build_datasets(
         self, context: DatasetBuildContext
     ) -> Tuple[Optional[Dataset], Optional[Dataset], Optional[Dataset]]:
-        """Build train, validation, and test datasets.
-
-        Args:
-            context: Build context with sample counts.
-
+        """
+        Build datasets for training, validation, and testing from the configured HuggingFace dataset.
+        
+        Parameters:
+            context (DatasetBuildContext): Provides target sample counts for train, valid, and test builds.
+        
         Returns:
-            Tuple of (train_dataset, valid_dataset, test_dataset).
-            Any element can be None if split doesn't exist or sample count is 0.
+            tuple: (train_dataset, valid_dataset, test_dataset) where each element is a Dataset or `None` if the corresponding split is missing or the requested sample count is less than or equal to zero.
         """
         processors = self._load_processors()
         tokenizer = self._load_tokenizer()

@@ -47,13 +47,22 @@ def _set_mimo_random_seeds(
     cfg: ConfigContainer,
     mimo_infra: "MimoModelInfra",
 ) -> None:
-    """Initialize random seeds with per-module TP/PP awareness.
-
-    Mirrors the standard path's ``_set_random_seed()`` but derives TP/PP ranks
-    from the per-module HyperCommGrids instead of global MPU state.
-
-    Must be called **after** ``build_infra()`` (grids exist) and **before**
-    ``provide_distributed_model()`` (weight init needs the CUDA RNG tracker).
+    """
+    Set random seeds for Python, NumPy, PyTorch, and (if available) CUDA using the
+    tensor-parallel (TP) and pipeline-parallel (PP) ranks derived from the MIMO
+    module grids.
+    
+    This function reads the base seed from `cfg.seed` or `cfg.rng.seed` (default 1234),
+    determines the TP and PP ranks for the current process by inspecting
+    `mimo_infra.module_to_grid_map`, offsets the base seed by `100 * pp_rank`, and
+    applies the resulting seed to Python `random`, `numpy.random`, `torch.manual_seed`,
+    and the Megatron tensor-parallel CUDA RNG initializer.
+    
+    Parameters:
+        cfg: Configuration container exposing `seed` or `rng.seed`.
+        mimo_infra: MIMO infrastructure containing `module_to_grid_map` used to
+            determine per-module TP/PP ranks.
+    
     """
     import random
 
@@ -120,28 +129,19 @@ def setup_mimo(
     build_data_iterators_fn: Optional[Callable] = None,
     global_state: Optional[GlobalState] = None,
 ) -> MimoSetupOutput:
-    """MIMO-specific setup helper.
-
-    This function sets up all components needed for MIMO training:
-    - Builds distributed model via MimoModelProvider
-    - Builds MIMO infrastructure (grids, topology, pg_collections)
-    - Creates MultiModulePipelineCommunicator
-    - Builds data iterators (if function provided)
-    - Validates configuration
-
-    Args:
-        cfg: ConfigContainer with training configuration.
-        mimo_provider: MimoModelProvider for building model and infrastructure.
-        build_data_iterators_fn: Optional function to build data iterators.
-            Should have signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
-        global_state: Optional GlobalState. If not provided, creates a new one.
-
+    """
+    Set up all components required for MIMO pretraining and return them as a MimoSetupOutput.
+    
+    This initializes GlobalState if absent, finalizes and builds MIMO infrastructure, seeds RNGs per module grid, constructs the distributed model and the MultiModulePipelineCommunicator, prepares scheduling/gradient helper structures, and optionally builds train/validation data iterators.
+    
+    Parameters:
+    	cfg (ConfigContainer): Global configuration container.
+    	mimo_provider (MimoModelProvider): Provider responsible for finalizing and constructing MIMO model and infra.
+    	build_data_iterators_fn (Optional[Callable]): Optional callable with signature (cfg, mimo_infra) -> (train_iter, valid_iter) to create data iterators.
+    	global_state (Optional[GlobalState]): Pre-existing GlobalState to reuse; if omitted a new GlobalState is created.
+    
     Returns:
-        MimoSetupOutput containing all components for training.
-
-    Reuses from setup.py:
-        - Logging setup (via global_state)
-        - Timer infrastructure (via global_state)
+    	MimoSetupOutput: Container with the constructed model, mimo_infra, multimodule_pg_collection, multimodule_communicator, module_to_grid_tuple, train/valid iterators (may be None), and the GlobalState.
     """
     # Create GlobalState if not provided
     if global_state is None:
@@ -259,23 +259,19 @@ def pretrain_mimo(
     schedulers: Optional[Dict[str, "OptimizerParamScheduler"]] = None,
     global_state: Optional[GlobalState] = None,
 ) -> None:
-    """Entry point for MIMO pretraining.
-
-    Steps:
-    1. Call setup_mimo() to get model, infra, communicators
-    2. Validate constructor-time MIMO config wiring
-    3. Create MimoOptimizer using get_mimo_optimizer()
-    4. Call train_mimo() with all components
-
-    Args:
-        cfg: ConfigContainer with training configuration.
-        mimo_provider: MimoModelProvider for building model and infrastructure.
-        forward_step_func: Forward step function for training.
-        build_data_iterators_fn: Function to build data iterators.
-            Signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
-        opt_config: OptimizerConfig for creating MimoOptimizer.
-        schedulers: Per-module learning rate schedulers {module_name: scheduler}.
-        global_state: Optional GlobalState. If not provided, creates a new one.
+    """
+    Orchestrate MIMO pretraining: prepare infrastructure and model, create optimizer and schedulers, and run the training loop.
+    
+    Sets up MIMO infrastructure and distributed model via the provided provider, constructs a MIMO optimizer from the unwrapped model and the given optimizer configuration, optionally auto-creates per-module learning-rate schedulers when `schedulers` is empty, and executes the training loop using the supplied forward step and data iterators.
+    
+    Parameters:
+        cfg: Configuration container with training, model, scheduler, and logging settings.
+        mimo_provider: Provider responsible for finalizing and constructing the MIMO model and infra.
+        forward_step_func: Callable that performs a single forward/backward step for training.
+        build_data_iterators_fn: Callable used to build data iterators. Signature: (cfg, mimo_infra) -> (train_iter, valid_iter).
+        opt_config: Optimizer configuration used to construct the MIMO optimizer; if it exposes `finalize()`, that will be invoked.
+        schedulers: Optional mapping of module name to OptimizerParamScheduler; if empty or None, per-module schedulers are created automatically.
+        global_state: Optional GlobalState to use for timers and training state; if omitted, a new GlobalState is created by setup.
     """
     if schedulers is None:
         schedulers = {}

@@ -58,19 +58,14 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor) -> Tuple:
 
 
 def get_batch(data_iterator: Iterable) -> Optional[Dict[str, torch.Tensor]]:
-    """Get batch from data iterator.
-
-    Returns dict with:
-    - input_ids, labels, loss_mask, position_ids (for LLM)
-    - modality_inputs: {modality_name: preprocessed_tensors} (for encoders)
-
-    Uses existing MimoDataset format from Phase 3.
-
-    Args:
-        data_iterator: Iterator over the dataset.
-
+    """
+    Retrieve the next dataset batch and move any contained torch.Tensors to CUDA.
+    
+    Parameters:
+        data_iterator (Iterable): Iterator over dataset batches; may be None.
+    
     Returns:
-        Batch dictionary or None if iterator is exhausted.
+        dict or None: The next batch dictionary with tensors transferred to CUDA (non-blocking), or `None` if `data_iterator` is None or exhausted. The batch follows the MimoDataset format and typically includes keys such as `input_ids`, `labels`, `loss_mask`, `position_ids`, and `modality_inputs` (a mapping of modality names to preprocessed tensors).
     """
     if data_iterator is None:
         return None
@@ -82,6 +77,15 @@ def get_batch(data_iterator: Iterable) -> Optional[Dict[str, torch.Tensor]]:
 
     # Move tensors to GPU if not already there
     def _move_to_cuda(obj):
+        """
+        Recursively move any torch.Tensor values found in obj to CUDA, preserving container types and leaving non-tensor values unchanged.
+        
+        Parameters:
+            obj (Any): A tensor, dict, list, tuple, or nested combination thereof.
+        
+        Returns:
+            Any: The same structure as `obj` with all torch.Tensor instances moved to CUDA (using non_blocking=True) if they were not already on CUDA.
+        """
         if isinstance(obj, torch.Tensor):
             return obj.cuda(non_blocking=True) if not obj.is_cuda else obj
         if isinstance(obj, dict):
@@ -102,30 +106,24 @@ def forward_step(
     data_iterator: Iterable,
     model: MimoModel,
 ) -> Tuple[torch.Tensor, Optional[partial]]:
-    """Forward step for MIMO model training.
-
-    Uses 3-arg signature with GlobalState for Bridge compatibility.
-    The training loop wraps this with prepare_forward_step_func() which:
-    - Injects GlobalState automatically if forward_step accepts it
-    - Provides access to state.timers, state.cfg, state.train_state
-
-    The MimoModel handles dict-based tensor flow internally:
-    - Encoder modules produce activations sent via BridgeCommunicator
-    - LLM module receives encoder outputs and produces loss
-
-    At terminal stage: returns (loss_tensor, loss_func)
-    At intermediate stages: returns (output_dict, None) - schedule handles communication
-
-    GUARDRAIL: At last stage, assert output is scalar tensor (not dict) to catch
-    misconfigurations early with a clear error message.
-
-    Args:
-        state: GlobalState containing timers, config, train_state.
-        data_iterator: Iterator over the dataset.
-        model: MimoModel instance.
-
+    """
+    Perform a pipeline-compatible forward pass for a MIMO model, returning either the terminal-stage loss tensor and a loss-function partial or intermediate activations and None.
+    
+    Determines whether the current pipeline rank requires dataset inputs, fetches or constructs the appropriate data batch, runs model(**data_batch), and normalizes model outputs to (output_tensor, optional_loss_mask). If this rank is the language-module's last pipeline stage, returns the scalar loss tensor and a callable (partial of loss_func) that, when invoked with that tensor, computes (total_loss, total_tokens, {"lm loss": reporting_loss}). For non-terminal stages, returns activations and None so the pipeline schedule can pass them to other stages.
+    
+    Parameters:
+        state (GlobalState): Bridge-compatible global state (timers, config, train_state).
+        data_iterator (Iterable): Iterator over dataset batches; may be None for non-data ranks.
+        model (MimoModel): The wrapped MIMO model to execute.
+    
     Returns:
-        Tuple of (output_tensor, loss_function or None).
+        Tuple[torch.Tensor, Optional[partial]]:
+            - First element: the model's output tensor (scalar loss at terminal language stage or activations at intermediate stages).
+            - Second element: a `functools.partial` of `loss_func` bound to the applicable loss mask for terminal language-stage losses, or `None` for intermediate stages.
+    
+    Raises:
+        RuntimeError: If this rank requires data but get_batch returns None (indicates data-loading/parallelism misconfiguration).
+        ValueError: If the terminal language-stage returns a dict instead of a scalar loss tensor.
     """
     # Get the model's role to determine if we're at first pipeline stage
     mimo_model = unwrap_mimo_model(model)

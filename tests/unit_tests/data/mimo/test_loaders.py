@@ -10,6 +10,13 @@ from megatron.bridge.data.mimo.loaders import build_mimo_data_loaders
 
 class FakeMimoModelProvider:
     def __init__(self, mimo_parallelism_config, grids=None):
+        """
+        Initialize the fake MimoModelProvider test double.
+        
+        Parameters:
+            mimo_parallelism_config: Configuration object describing MIMO parallelism; stored as `mimo_parallelism_config`.
+            grids (optional): Mapping of grid names to grid objects; stored as `_grids`. Provide `None` when no grids are available.
+        """
         self.mimo_parallelism_config = mimo_parallelism_config
         self._grids = grids
 
@@ -50,6 +57,11 @@ def test_build_mimo_data_loaders_raises_when_model_not_mimo(monkeypatch):
 
 
 def test_build_mimo_data_loaders_raises_when_parallelism_missing(monkeypatch):
+    """
+    Verifies that build_mimo_data_loaders raises a ValueError when the model's mimo_parallelism_config is None.
+    
+    Sets up a fake MIMO provider class and a config whose model has mimo_parallelism_config=None and asserts that calling build_mimo_data_loaders raises ValueError with message matching "mimo_parallelism_config must be set".
+    """
     _patch_mimo_provider_class(monkeypatch)
     cfg = SimpleNamespace(
         model=FakeMimoModelProvider(mimo_parallelism_config=None, grids={"llm": object()}),

@@ -29,19 +29,21 @@ def wrap_mimo_model_distributed(
     grids: Dict[str, "HyperCommGrid"],
     pg_collections: Dict[str, Optional["ProcessGroupCollection"]],
 ) -> "MimoModel":
-    """Wrap MIMO model's submodules with DDP.
-
-    Modifies mimo_model in-place and returns it.
-
-    Args:
-        mimo_model: The MimoModel to wrap.
-        ddp_config: DDP configuration from Bridge.
-        mimo_parallelism_config: MIMO parallelism configuration.
-        grids: Module name to HyperCommGrid mapping.
-        pg_collections: Module name to ProcessGroupCollection mapping.
-
+    """
+    Wraps the MimoModel's language model and modality submodules with Megatron DistributedDataParallel (DDP) in-place for ranks that participate in each module's HyperCommGrid.
+    
+    Parameters:
+        mimo_model: The MimoModel to modify in-place.
+        ddp_config: DDP configuration used for each DistributedDataParallel wrapper.
+        mimo_parallelism_config: MIMO parallelism configuration (accepted but not used by this function).
+        grids: Mapping from module name keys to HyperCommGrid instances; presence and membership determine whether a module is wrapped.
+        pg_collections: Mapping from module name keys to ProcessGroupCollection instances; a module is wrapped only if its process-group collection is present.
+    
     Returns:
-        The same mimo_model with wrapped submodules.
+        The same mimo_model instance with any wrapped submodules replaced by DistributedDataParallel wrappers.
+    
+    Raises:
+        AttributeError: If a modality submodule has encoders but the selected first encoder lacks a `config` attribute (required for DDP configuration).
     """
     from megatron.core.distributed import DistributedDataParallel
 
