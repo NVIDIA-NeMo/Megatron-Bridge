@@ -21,7 +21,6 @@ model-specific encoders.
 
 import json
 import logging
-import pickle
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -32,6 +31,8 @@ from megatron.energon.epathlib.epath import EPath
 from megatron.energon.flavors.base_dataset import Sample
 from megatron.energon.flavors.webdataset import DefaultDecoderWebdatasetFactory
 from webdataset.autodecode import Decoder, imagehandler
+
+from megatron.bridge.utils.safe_pickle import safe_pickle_loads
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +229,7 @@ class videohandler:
         extension = re.sub(r".*[.]", "", key)
         if extension.lower() not in self.extensions:
             return None
-        data = pickle.loads(data)
+        data = safe_pickle_loads(data)
         key = self.extensions_mapping[extension]
         if extension.lower() == "jpgs":
             data = [self.image_handler(key, d) for d in data]
