@@ -102,7 +102,7 @@ def _qwen2_audio_common(
     wandb_exp_name: Optional[str] = None,
 ) -> ConfigContainer:
     """Create a fine-tuning configuration for Qwen2-Audio models."""
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
+    base_output_dir = output_dir if output_dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
     run_output_dir = os.path.join(base_output_dir, name)
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")

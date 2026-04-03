@@ -604,15 +604,15 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
             torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1).clone().contiguous()
         )
 
-    # Wrap audio tensors in Qwen2AudioInputs and attach as visual_inputs
-    visual_inputs = Qwen2AudioInputs(
+    # Wrap audio tensors in Qwen2AudioInputs and attach as audio_inputs
+    audio_inputs = Qwen2AudioInputs(
         input_features=batch.get("input_features"),
         feature_attention_mask=batch.get("feature_attention_mask"),
     )
     for key in ("input_features", "feature_attention_mask"):
         if key in batch:
             del batch[key]
-    batch["visual_inputs"] = visual_inputs
+    batch["audio_inputs"] = audio_inputs
 
     return batch
 
