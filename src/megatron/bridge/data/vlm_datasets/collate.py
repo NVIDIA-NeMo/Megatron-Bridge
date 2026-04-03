@@ -315,10 +315,13 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
             return_tensors="pt",
         )
     else:
+        # Ensure a pad_token is set so padding can produce uniform-length tensors.
+        if processor.tokenizer.pad_token is None:
+            processor.tokenizer.pad_token = processor.tokenizer.eos_token
         batch = processor.apply_chat_template(
             [example["conversation"] for example in examples],
             tokenize=True,
-            padding=processor.tokenizer.pad_token is not None,
+            padding=True,
             truncation=True,
             return_tensors="pt",
             return_dict=True,
@@ -358,7 +361,7 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
 
     key = "pixel_values_videos" if is_video else "pixel_values"
     pv = batch[key].to(torch.bfloat16)
-    del batch[key]
+    batch[key] = pv
     batch["visual_inputs"] = GenericVisualInputs(pixel_values=pv)
     # roll label by 1 and fill last token with IGNORE_INDEX
     labels = batch["input_ids"].clone()[:, 1:]
@@ -468,6 +471,56 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     return batch
 
 
+def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+    """Collate function for GLM-4.5V model.
+
+    GLM-4.5V requires ``mm_token_type_ids`` to distinguish image (1) and video (2)
+    tokens from text (0) when computing 3D MRoPE positions.  The processor returns
+    this field by default (``return_mm_token_type_ids=True`` in Glm4vProcessor
+    defaults).  We wrap all visual tensors — including ``mm_token_type_ids`` — in
+    :class:`GenericVisualInputs` so they flow through ``vlm_step.py`` to the model.
+    """
+    skipped_tokens = extract_skipped_token_ids(processor)
+
+    batch = processor.apply_chat_template(
+        [example["conversation"] for example in examples],
+        tokenize=True,
+        padding=True,
+        truncation=True,
+        return_tensors="pt",
+        return_dict=True,
+    )
+
+    if "position_ids" not in batch:
+        batch_size, seq_len = batch["input_ids"].shape
+        batch["position_ids"] = (
+            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
+        )
+
+    labels = batch["input_ids"].clone()[:, 1:]
+    labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
+    labels[torch.isin(labels, skipped_tokens)] = -100
+    batch["labels"] = labels
+
+    loss_masks = [
+        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
+        for example, input_ids in zip(examples, batch["input_ids"])
+    ]
+    loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=batch["input_ids"].device)
+    loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
+    batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
+    batch["loss_mask"] = loss_mask_t
+
+    # Wrap visual tensors in GenericVisualInputs (includes mm_token_type_ids for GLM)
+    visual_kwargs = {}
+    for vk in ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "mm_token_type_ids"):
+        if vk in batch:
+            visual_kwargs[vk] = batch.pop(vk)
+    batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
+
+    return batch
+
+
 def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     """Default collate function for VLM models."""
     if not HAVE_QWEN_VL_UTILS:
@@ -475,10 +528,18 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 
     skipped_tokens = extract_skipped_token_ids(processor)
 
+    # Ensure a pad_token is set so padding can produce uniform-length tensors.
+    tokenizer = getattr(processor, "tokenizer", None)
+    if tokenizer is not None and tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    # If pad_token is still unset after the eos_token fallback, disable padding
+    # to avoid a ValueError from apply_chat_template.
+    can_pad = tokenizer is not None and tokenizer.pad_token is not None
+
     batch = processor.apply_chat_template(
         [example["conversation"] for example in examples],
         tokenize=True,
-        padding=True,
+        padding=can_pad,
         truncation=True,
         return_tensors="pt",
         return_dict=True,
@@ -757,6 +818,7 @@ COLLATE_FNS = {
     "Qwen3VLProcessor": qwen2_5_collate_fn,
     "NemotronNanoVLV2Processor": nemotron_nano_v2_vl_collate_fn,
     "PixtralProcessor": ministral3_collate_fn,  # Ministral3 uses PixtralProcessor
+    "Glm4vProcessor": glm4v_collate_fn,
     "KimiK25Processor": kimi_k25_vl_collate_fn,
     "default": default_collate_fn,
 }
