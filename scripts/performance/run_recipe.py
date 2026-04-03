@@ -32,9 +32,27 @@ from utils.utils import get_library_recipe
 
 from megatron.bridge.utils.common_utils import get_rank_safe
 
+# Diffusion model families manage their own dataset configs and require
+# a dedicated forward step function rather than the standard GPT step.
+DIFFUSION_FAMILIES = frozenset({"flux", "wan"})
+
+
+def _get_diffusion_step(model_family_name: str):
+    """Return the appropriate forward step instance for a diffusion model family."""
+    if model_family_name == "flux":
+        from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
+
+        return FluxForwardStep()
+    elif model_family_name == "wan":
+        from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
+
+        return WanForwardStep()
+    raise ValueError(f"Unknown diffusion model family: {model_family_name!r}")
+
 
 def set_user_overrides(config, args):
     """Apply CLI arguments to ConfigContainer fields."""
+    is_diffusion = args.model_family_name in DIFFUSION_FAMILIES
 
     # Training configuration
     if args.max_steps:
@@ -67,42 +85,46 @@ def set_user_overrides(config, args):
         config.checkpoint.most_recent_k = args.most_recent_k
 
     # Dataset configuration
-    logging.info(f"Configuring dataset: type={args.data}")
+    # Diffusion models (FLUX, WAN) configure their own dataset inside the recipe
+    # (data_paths=None → mock/synthetic data by default). Replacing config.dataset
+    # with a GPT-style mock config would break them, so skip this block entirely.
+    if not is_diffusion:
+        logging.info(f"Configuring dataset: type={args.data}")
 
-    cp_size = getattr(config.model, "context_parallel_size", 1) or 1
-    pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
+        cp_size = getattr(config.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
 
-    # Create dataset configuration based on type
-    if args.data == "mock":
-        config.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
-    elif args.data == "rp2":
-        if not args.dataset_paths or not args.index_mapping_dir:
-            raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
-        config.dataset = create_rp2_dataset_config(
-            dataset_paths=args.dataset_paths,
-            seq_length=args.seq_length or 8192,
-            index_mapping_dir=args.index_mapping_dir,
-        )
-    elif args.data == "squad":
-        if not args.dataset_root:
-            raise ValueError("--dataset-root is required for squad dataset")
-        config.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root,
-            seq_length=args.seq_length or 8192,
-            packed=False,
-            pad_seq_to_mult=pad_seq_to_mult,
-        )
-    elif args.data == "squad_packed":
-        if not args.dataset_root:
-            raise ValueError("--dataset-root is required for squad_packed dataset")
-        config.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root,
-            seq_length=args.seq_length or 8192,
-            packed=True,
-            pad_seq_to_mult=pad_seq_to_mult,
-        )
-    else:
-        raise ValueError(f"Unknown dataset type: {args.data}")
+        # Create dataset configuration based on type
+        if args.data == "mock":
+            config.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
+        elif args.data == "rp2":
+            if not args.dataset_paths or not args.index_mapping_dir:
+                raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
+            config.dataset = create_rp2_dataset_config(
+                dataset_paths=args.dataset_paths,
+                seq_length=args.seq_length or 8192,
+                index_mapping_dir=args.index_mapping_dir,
+            )
+        elif args.data == "squad":
+            if not args.dataset_root:
+                raise ValueError("--dataset-root is required for squad dataset")
+            config.dataset = create_squad_dataset_config(
+                dataset_root=args.dataset_root,
+                seq_length=args.seq_length or 8192,
+                packed=False,
+                pad_seq_to_mult=pad_seq_to_mult,
+            )
+        elif args.data == "squad_packed":
+            if not args.dataset_root:
+                raise ValueError("--dataset-root is required for squad_packed dataset")
+            config.dataset = create_squad_dataset_config(
+                dataset_root=args.dataset_root,
+                seq_length=args.seq_length or 8192,
+                packed=True,
+                pad_seq_to_mult=pad_seq_to_mult,
+            )
+        else:
+            raise ValueError(f"Unknown dataset type: {args.data}")
 
     # Tokenizer configuration
     from megatron.bridge.training.config import TokenizerConfig
@@ -122,7 +144,8 @@ def set_user_overrides(config, args):
         )
 
     # Model configuration
-    if args.seq_length:
+    # Diffusion models use fixed image/latent dimensions; seq_length is not applicable.
+    if args.seq_length and not is_diffusion:
         config.model.seq_length = args.seq_length
     if args.tensor_model_parallel_size:
         config.model.tensor_model_parallel_size = args.tensor_model_parallel_size
@@ -207,8 +230,12 @@ def main():
 
     if args.task == "pretrain":
         logging.info("Starting pretraining")
-        from megatron.bridge.training.gpt_step import forward_step
         from megatron.bridge.training.pretrain import pretrain
+
+        if args.model_family_name in DIFFUSION_FAMILIES:
+            forward_step = _get_diffusion_step(args.model_family_name)
+        else:
+            from megatron.bridge.training.gpt_step import forward_step
 
         pretrain(config=recipe, forward_step_func=forward_step)
     elif args.task in ["sft", "lora"]:
