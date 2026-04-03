@@ -294,7 +294,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        should_quantize: callable,
+        quantization_checker: callable,
         quant_fn: callable,
         quant_block_size: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, torch.Tensor]:
@@ -945,12 +945,12 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        should_quantize: callable,
+        quantization_checker: callable,
         quant_fn: callable,
         quant_block_size: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, torch.Tensor]:
         """Gather from all TP ranks and concatenate with quantization before PP broadcast."""
-        if not should_quantize(str(self.megatron_param)):
+        if not quantization_checker(str(self.megatron_param)):
             return self.megatron_to_hf(megatron_weights, megatron_module)
 
         q_weight, scale = None, None
@@ -1090,12 +1090,12 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        should_quantize: callable,
+        quantization_checker: callable,
         quant_fn: callable,
         quant_block_size: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, torch.Tensor]:
         """Gather from all TP ranks and concatenate with quantization before PP broadcast."""
-        if not should_quantize(str(self.megatron_param)):
+        if not quantization_checker(str(self.megatron_param)):
             return self.megatron_to_hf(megatron_weights, megatron_module)
 
         q_weight, scale = None, None
@@ -1201,7 +1201,7 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        should_quantize: callable,
+        quantization_checker: callable,
         quant_fn: callable,
         quant_block_size: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, torch.Tensor]:
@@ -1457,7 +1457,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        should_quantize: callable,
+        quantization_checker: callable,
         quant_fn: callable,
         quant_block_size: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, torch.Tensor]:
@@ -1473,7 +1473,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
                 self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
             self._mapping = self._get_or_create_mapping(self._detected_type)
 
-        result = self._mapping.megatron_to_hf_quant(megatron_weights, megatron_module, should_quantize, quant_fn, quant_block_size)
+        result = self._mapping.megatron_to_hf_quant(megatron_weights, megatron_module, quantization_checker, quant_fn, quant_block_size)
 
         # Apply reverse permutation if specified (after gathering)
         if self.permute_dims is not None and result:
@@ -1627,12 +1627,12 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        should_quantize: callable,
+        quantization_checker: callable,
         quant_fn: callable,
         quant_block_size: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, torch.Tensor]:
         """Convert weights FROM Megatron format with quantization before PP broadcast."""
-        if not should_quantize(str(self.megatron_param)):
+        if not quantization_checker(str(self.megatron_param)):
             return self.megatron_to_hf(megatron_weights, megatron_module)
 
         if megatron_module is None:
@@ -2349,12 +2349,12 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        should_quantize: callable,
+        quantization_checker: callable,
         quant_fn: callable,
         quant_block_size: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, torch.Tensor]:
         """Convert weights FROM Megatron format with quantization before PP broadcast."""
-        if not should_quantize(str(self.megatron_param)):
+        if not quantization_checker(str(self.megatron_param)):
             return self.megatron_to_hf(megatron_weights, megatron_module)
 
         fused_q, fused_scale = None, None
