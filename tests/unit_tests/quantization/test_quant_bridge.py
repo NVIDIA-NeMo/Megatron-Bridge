@@ -168,10 +168,11 @@ class TestColumnParallelMappingQuant:
         mock_distributed_env(tp_size=2, tp_rank=tp_rank)
         mapping = ColumnParallelMapping("col.weight", "hf.weight")
         megatron_shard = torch.randn(16, 16)
+        quant_block_size = (4,4)
 
         with patch.object(mapping, "gather_from_tp_ranks") as mock_gather:
             full_weight = torch.randn(32, 16)
-            q_full, scale_full = scaled_fp8_blockwise(full_weight)
+            q_full, scale_full = scaled_fp8_blockwise(full_weight, quant_block_size)
             
             mock_gather.side_effect = [
                 list(torch.chunk(q_full, 2, dim=0)),
@@ -182,7 +183,8 @@ class TestColumnParallelMappingQuant:
                 megatron_shard, 
                 None, 
                 quantization_checker=dummy_quantization_checker, 
-                quant_fn=scaled_fp8_blockwise
+                quant_fn=scaled_fp8_blockwise,
+                quant_block_size=quant_block_size,
             )
 
             assert "hf.weight" in result
@@ -196,10 +198,11 @@ class TestRowParallelMappingQuant:
         mock_distributed_env(tp_size=2, tp_rank=tp_rank)
         mapping = RowParallelMapping("row.weight", "hf.weight")
         megatron_shard = torch.randn(16, 16)
+        quant_block_size = (4,4)
 
         with patch.object(mapping, "gather_from_tp_ranks") as mock_gather:
             full_weight = torch.randn(16, 32)
-            q_full, scale_full = scaled_fp8_blockwise(full_weight, None)
+            q_full, scale_full = scaled_fp8_blockwise(full_weight, quant_block_size)
             
             mock_gather.side_effect = [
                 list(torch.chunk(q_full, 2, dim=1)),
@@ -210,7 +213,8 @@ class TestRowParallelMappingQuant:
                 megatron_shard, 
                 None, 
                 quantization_checker=dummy_quantization_checker, 
-                quant_fn=scaled_fp8_blockwise
+                quant_fn=scaled_fp8_blockwise,
+                quant_block_size=quant_block_size
             )
 
             assert "hf.weight" in result
@@ -248,20 +252,23 @@ class TestAutoMappingQuant:
             
         megatron_module = MyCol()
         megatron_weight = torch.randn(16, 16)
+        quant_block_size = (4,4)
         
         with patch.object(ColumnParallelMapping, "megatron_to_hf_quant") as mock_quant:
-            q_full, _ = scaled_fp8_blockwise(megatron_weight, None)
-            mock_quant.return_value = {"hf.weight": q_full}
+            q_full, scale_full = scaled_fp8_blockwise(megatron_weight, None)
+            mock_quant.return_value = {"hf.weight": q_full, "hf.weight_scale_inv": scale_full}
             
             result = mapping.megatron_to_hf_quant(
                 megatron_weight, 
                 megatron_module, 
                 quantization_checker=dummy_quantization_checker, 
-                quant_fn=scaled_fp8_blockwise
+                quant_fn=scaled_fp8_blockwise,
+                quant_block_size=quant_block_size
             )
             
             assert "hf.weight" in result
-            assert torch.equal(result["hf.weight"], q_full)
+            assert torch.equal(result["hf.weight"].to(torch.float32), q_full.to(torch.float32))
+            assert torch.equal(result["hf.weight_scale_inv"], scale_full)
 
 
 class TestQKVMappingQuant:
@@ -269,15 +276,15 @@ class TestQKVMappingQuant:
         mock_distributed_env()
         mapping = QKVMapping(megatron_param="qkv.weight", q="q.weight", k="k.weight", v="v.weight")
 
-        q = torch.randn(32, 32)
-        k = torch.randn(16, 32)
-        v = torch.randn(16, 32)
+        q = torch.randn(32, 32).cuda()
+        k = torch.randn(16, 32).cuda()
+        v = torch.randn(16, 32).cuda()
         packed_qkv = merge_qkv_weights(transformer_config, q, k, v)
         megatron_module = MockModule(transformer_config, weight_shape=(64, 32))
         megatron_module.tensor_model_parallel = True
         megatron_module.partition_dim = 0
 
-        quant_block_size = (16, 16)
+        quant_block_size = (4, 4)
         exp_q, exp_q_scale = scaled_fp8_blockwise(q, quant_block_size)
         exp_k, exp_k_scale = scaled_fp8_blockwise(k, quant_block_size)
         exp_v, exp_v_scale = scaled_fp8_blockwise(v, quant_block_size)
