@@ -10,7 +10,23 @@ def make_sample(
     seq_length: int = 64,
     modalities: dict = None,
 ) -> dict:
-    """Create a sample item for testing."""
+    """
+    Create a synthetic sample dictionary for tests containing token and modality fields.
+    
+    Parameters:
+    	seq_length (int): Sequence length for 1D token tensors (default 64).
+    	modalities (dict | None): Mapping of modality name to its tensors. If None, a default
+    		vision modality with `pixel_values` of shape (3, 224, 224) is used.
+    
+    Returns:
+    	dict: A sample with the following keys:
+    		- `input_ids` (Tensor): random integers of shape (seq_length,).
+    		- `labels` (Tensor): random integers of shape (seq_length,).
+    		- `loss_mask` (Tensor): ones of dtype `float32` and shape (seq_length,).
+    		- `attention_mask` (Tensor): ones of shape (seq_length,).
+    		- `position_ids` (Tensor): range tensor of shape (seq_length,).
+    		- `modality_inputs` (dict): the provided or default modality tensors.
+    """
     if modalities is None:
         modalities = {"vision": {"pixel_values": torch.randn(3, 224, 224)}}
 

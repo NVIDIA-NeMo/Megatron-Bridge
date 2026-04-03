@@ -13,43 +13,28 @@ def mimo_collate_fn(
     batch: List[Dict[str, Any]],
     modality_names: List[str],
 ) -> Dict[str, Any]:
-    """Collate function for MIMO datasets.
-
-    Stacks batch items and organizes modality inputs into a structure
-    suitable for MIMO model forward pass.
-
-    Args:
-        batch: List of examples from MimoDataset, each containing:
-            - input_ids: Token IDs with placeholder tokens
-            - labels: Labels for causal LM training
-            - attention_mask: Attention mask
-            - position_ids: Position indices
-            - modality_inputs: Dict[str, Dict[str, Any]] with preprocessed inputs
-        modality_names: List of modality names to collate.
-
+    """
+    Collate a list of MIMO dataset examples into a batched dict suitable for model input.
+    
+    Parameters:
+        batch: List of example dictionaries. Each example is expected to contain:
+            - input_ids: Tensor of token IDs.
+            - labels: Tensor of target token IDs.
+            - attention_mask: Tensor attention mask aligning with tokens.
+            - position_ids: Tensor of position indices for tokens.
+            - loss_mask: Tensor indicating per-token loss contribution.
+            - modality_inputs: Dict[str, Dict[str, Any]] mapping modality names to modality-specific preprocessed inputs.
+        modality_names: List of modality names to gather from each example's `modality_inputs`.
+    
     Returns:
-        Dict containing:
-            - input_ids: (batch, seq) stacked token IDs
-            - labels: (batch, seq) stacked labels
-            - attention_mask: (batch, seq) attention mask
-            - position_ids: (batch, seq) position indices
-            - modality_inputs: Dict[str, Dict[str, Tensor]] with batched modality tensors
-              Each modality's tensors are stacked along batch dimension.
-
-    Example:
-        >>> batch = [
-        ...     {
-        ...         "input_ids": torch.tensor([32000, 1, 2, 3]),
-        ...         "labels": torch.tensor([32000, 1, 2, 3]),
-        ...         "attention_mask": torch.ones(4),
-        ...         "position_ids": torch.arange(4),
-        ...         "modality_inputs": {
-        ...             "vision": {"pixel_values": torch.randn(3, 224, 224)},
-        ...         },
-        ...     },
-        ...     # ... more examples
-        ... ]
-        >>> collated = mimo_collate_fn(batch, modality_names=["vision"])
+        A dictionary with the following entries:
+            - input_ids: Tensor shaped (batch, seq) of stacked input IDs.
+            - labels: Tensor shaped (batch, seq) of stacked labels.
+            - loss_mask: Tensor shaped (batch, seq) of stacked loss masks.
+            - attention_mask: Tensor shaped (batch, seq) of stacked attention masks.
+            - position_ids: Tensor shaped (batch, seq) of stacked position indices.
+            - modality_inputs: Dict mapping each present modality name to a dict of batched modality values.
+              For each modality key, tensor values are stacked along the batch dimension when shapes permit; values that cannot be stacked or non-tensor values are returned as lists of per-example entries.
     """
     if not batch:
         return {}

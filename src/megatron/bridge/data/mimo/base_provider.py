@@ -39,25 +39,23 @@ class MimoDatasetProvider(DatasetProvider):
     def build_datasets(
         self, context: DatasetBuildContext
     ) -> Tuple[Optional[Dataset], Optional[Dataset], Optional[Dataset]]:
-        """Build train, validation, and test datasets.
+        """
+        Construct the provider's train, validation, and test datasets.
         
-        Args:
-            context: Build context with sample counts.
-            
+        Parameters:
+            context (DatasetBuildContext): Build context containing sample counts used during dataset construction.
+        
         Returns:
-            Tuple of (train_dataset, valid_dataset, test_dataset).
-            Any element can be None if not needed.
+            Tuple[Optional[Dataset], Optional[Dataset], Optional[Dataset]]: A 3-tuple (train_dataset, valid_dataset, test_dataset); any element may be `None` if that split is not produced.
         """
         ...
     
     @abstractmethod
     def get_collate_fn(self) -> Callable:
-        """Return the collate function for batching.
-        
-        The collate function should handle the modality_inputs dict
-        and batch them appropriately for the model.
+        """
+        Provide the callable used to collate a list of samples into a batched `modality_inputs` dictionary.
         
         Returns:
-            Callable that takes a list of samples and returns a batch dict.
+            Callable[[List[Any]], Dict[str, Any]]: A callable that accepts a list of samples and returns a dictionary mapping modality keys to their batched tensors/structures.
         """
         ...

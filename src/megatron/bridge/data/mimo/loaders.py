@@ -26,41 +26,21 @@ def build_mimo_data_loaders(
     valid_samples: int,
     test_samples: int,
 ) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
-    """Build MIMO data loaders with per-module DP settings.
-
-    Creates data loaders with DP-aware sampling based on the MIMO parallelism
-    configuration. Only ranks that need data (first/last PP stage) will get
-    non-None loaders.
-
-    Args:
-        cfg: Configuration container with MimoModelProvider as cfg.model.
-        train_state: Current training state.
-        mimo_provider: MIMO dataset provider (e.g., MockMimoDatasetProvider)
-            with get_collate_fn() method.
-        train_samples: Number of training samples.
-        valid_samples: Number of validation samples.
-        test_samples: Number of test samples.
-
+    """
+    Build MIMO data loaders using per-module data-parallel (DP) sampling derived from the MIMO parallelism configuration.
+    
+    Parameters:
+        cfg: Configuration container whose `model` must be a `MimoModelProvider` with a populated `_grids` attribute and a non-`None` `mimo_parallelism_config`.
+        mimo_provider: MIMO dataset provider that exposes `build_datasets(context)` and `get_collate_fn()`, and provides loader settings (`num_workers`, `pin_memory`, `drop_last`).
+        train_samples (int): Number of training samples to request when building datasets.
+        valid_samples (int): Number of validation samples to request when building datasets.
+        test_samples (int): Number of test samples to request when building datasets.
+    
     Returns:
-        Tuple of (train_loader, valid_loader, test_loader).
-        Returns (None, None, None) if this rank doesn't need data.
-
+        Tuple of `(train_loader, valid_loader, test_loader)`. Each element is a `torch.utils.data.DataLoader` configured with DP-aware `DistributedSampler`, or `None` when no dataset was built or when the current rank does not require data (in which case all three are `None`).
+    
     Raises:
-        ValueError: If cfg.model is not MimoModelProvider or mimo_parallelism_config is None.
-
-    Example:
-        >>> from megatron.bridge.data.mimo import MockMimoProvider, build_mimo_data_loaders
-        >>> provider = MockMimoProvider(
-        ...     seq_length=2048,
-        ...     processor_paths={"vision": "openai/clip-vit-large-patch14"},
-        ...     tokenizer_path="meta-llama/Llama-2-7b-hf",
-        ...     special_token_ids={"vision": 32000},
-        ...     modality_configs={"vision": {"type": "image", "width": 224, "height": 224}},
-        ... )
-        >>> train_loader, valid_loader, test_loader = build_mimo_data_loaders(
-        ...     cfg, train_state, provider,
-        ...     train_samples=10000, valid_samples=1000, test_samples=1000,
-        ... )
+        ValueError: If `cfg.model` is not a `MimoModelProvider`, if `cfg.model.mimo_parallelism_config` is `None`, or if `cfg.model._grids` is `None` (indicating model infra has not been built).
     """
     from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 
@@ -105,6 +85,16 @@ def build_mimo_data_loaders(
     micro_batch_size = cfg.train.micro_batch_size
 
     def _make_loader(dataset, shuffle: bool = True) -> Optional[DataLoader]:
+        """
+        Create a DataLoader for the given dataset configured with a DistributedSampler for the current MIMO data-parallel replica.
+        
+        Parameters:
+            dataset: The dataset to load; if `None`, no loader is created and `None` is returned.
+            shuffle (bool): Whether the distributed sampler should shuffle sample order for this split.
+        
+        Returns:
+            DataLoader or `None`: A DataLoader using the configured `DistributedSampler` and provider settings, or `None` when `dataset` is `None`.
+        """
         if dataset is None:
             return None
         sampler = torch.utils.data.DistributedSampler(

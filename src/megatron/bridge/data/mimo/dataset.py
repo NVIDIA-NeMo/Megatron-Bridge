@@ -112,17 +112,22 @@ class MimoDataset(Dataset):
         return self._size
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        """Get a single example with preprocessed modality inputs.
-
+        """
+        Retrieve and preprocess a single dataset example, producing tokenized input IDs with modality placeholder tokens, next-token prediction labels, masking tensors, and per-modality processed inputs.
+        
+        The returned dictionary contains:
+        - input_ids: 1D tensor of token IDs of length `seq_length`, with modality placeholder token IDs prepended and padded/truncated to fit.
+        - labels: 1D tensor of next-token targets where labels[i] == input_ids[i+1], the final position is set to `-100`, and any position corresponding to padding or a modality placeholder is set to `-100` so it is ignored by loss.
+        - loss_mask: 1D float tensor with `1.0` for positions contributing to the loss and `0.0` for positions that should be ignored (padding, modality placeholders, and the final position).
+        - attention_mask: 1D tensor indicating non-padded token positions.
+        - position_ids: 1D tensor of position indices (0..seq_length-1).
+        - modality_inputs: dict mapping modality name to the processor outputs for that modality (tensors with batch dim removed where applicable).
+        
+        Parameters:
+            idx (int): Index of the example to retrieve.
+        
         Returns:
-            Dict containing:
-                - input_ids: Tokenized text with placeholder tokens
-                - labels: Shifted input_ids for next-token prediction (-100 for masked positions)
-                - loss_mask: Float mask (0.0 for padding/image placeholder targets, 1.0 otherwise)
-                - attention_mask: Attention mask
-                - position_ids: Position indices
-                - modality_inputs: Dict[str, Any] with preprocessed inputs per modality
-                  e.g., {"vision": {"pixel_values": tensor, ...}}
+            dict: A mapping with keys `"input_ids"`, `"labels"`, `"loss_mask"`, `"attention_mask"`, `"position_ids"`, and `"modality_inputs"` as described above.
         """
         if idx >= self._size:
             raise IndexError(f"Index {idx} out of range for dataset of size {self._size}")

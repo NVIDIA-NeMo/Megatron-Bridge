@@ -84,7 +84,15 @@ class MimoParallelismConfig:
         return max(ranges) if ranges else 0
 
     def _validate_heterogeneous(self) -> None:
-        """Validate heterogeneous deployment: no overlapping rank ranges."""
+        """
+        Ensure module rank ranges do not overlap in a heterogeneous deployment.
+        
+        This verifies that every module has `data_parallel_size` set and that the half-open rank ranges
+        defined by (`rank_offset`, `rank_offset + total_ranks`) for all modules are non-overlapping.
+        Raises:
+            ValueError: If a module's `data_parallel_size` is `None`.
+            ValueError: If any module's rank range overlaps a previous module's range.
+        """
         ranges = []
         for name, parallelism in self.module_parallelisms.items():
             if parallelism.data_parallel_size is None:
@@ -99,13 +107,25 @@ class MimoParallelismConfig:
                 raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
 
     def _validate_parallelism_constraints(self) -> None:
-        """Validate parallelism constraints for cross-module communication.
-
-        - TP sizes must be powers of 2
-        - DP sizes must be pairwise divisible (one divides the other)
+        """
+        Validate that module parallelism settings meet constraints required for cross-module communication and embedding alignment.
+        
+        Performs these checks:
+        - Tensor-parallel (TP) sizes for every module must be powers of two.
+        - Data-parallel (DP) sizes between every pair of modules (when both are set) must be divisible (one must divide the other).
+        - For embedding alignment, every non-language ("encoder") module's DP (when set) must be greater than or equal to the language module's DP.
+        
+        Raises:
+            ValueError: If any TP is not a power of two, if any pair of set DP sizes are not divisible, or if an encoder module's DP is less than the language module's DP.
         """
 
         def is_power_of_two(n: int) -> bool:
+            """
+            Check whether an integer is a power of two.
+            
+            Returns:
+                `True` if `n` is a power of two and greater than zero, `False` otherwise.
+            """
             return n > 0 and (n & (n - 1)) == 0
 
         # Validate TP is power of 2
@@ -148,11 +168,16 @@ class MimoParallelismConfig:
                     )
 
     def finalize(self, world_size: int) -> None:
-        """Finalize parallelism config: compute data_parallel_size and validate.
-
-        Args:
-            world_size: Total number of ranks in the distributed world.
-                MIMO requires a distributed environment, so this must always be provided.
+        """
+        Finalize and validate all module parallelism configurations against the provided world size.
+        
+        Parameters:
+            world_size (int): Total number of ranks in the distributed world; must match the computed total from module configurations.
+        
+        Raises:
+            ValueError: If the language module (MIMO_LANGUAGE_MODULE_KEY) is missing from module_parallelisms.
+            ValueError: If any module's configuration is invalid or inconsistent with heterogeneous constraints.
+            ValueError: If the provided world_size does not equal the computed total world size when the computed total is non-zero.
         """
         if MIMO_LANGUAGE_MODULE_KEY not in self.module_parallelisms:
             raise ValueError(

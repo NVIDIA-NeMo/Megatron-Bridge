@@ -33,11 +33,32 @@ class FakeGrid:
         }
 
     def get_pg(self, dims):
+        """
+        Return the process group associated with the given parallelism dimension keys.
+        
+        Parameters:
+            dims (Iterable): Sequence of dimension identifiers used as the lookup key (e.g., ('dp',), ('pp',)).
+        
+        Returns:
+            FakePG: The process group mapped to the provided dimensions.
+        
+        Raises:
+            KeyError: If no process group exists for the given dimensions.
+        """
         return self._pgs[tuple(dims)]
 
 
 def _make_mimo_cfg() -> MimoParallelismConfig:
-    """Create test MIMO config for heterogeneous deployment."""
+    """
+    Constructs a MIMO parallelism configuration for tests with heterogeneous module settings.
+    
+    Creates a MimoParallelismConfig whose module_parallelisms map contains:
+    - "vision": tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0
+    - "language": tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=4
+    
+    Returns:
+        MimoParallelismConfig: Configuration with the above per-module parallelism settings.
+    """
     module_parallelisms = {
         "vision": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0),
         "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=4),

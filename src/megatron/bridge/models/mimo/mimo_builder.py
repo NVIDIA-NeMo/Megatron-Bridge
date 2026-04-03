@@ -15,16 +15,16 @@ if TYPE_CHECKING:
 def build_hypercomm_grids(
     mimo_parallelism_config: MimoParallelismConfig,
 ) -> Dict[str, "HyperCommGrid"]:
-    """Create HyperCommGrid objects per module from MIMO parallelism config.
-
-    Creates grids on ALL ranks (required for consistent collective calls),
-    but only ranks in each grid's range will participate in its operations.
-
-    Args:
-        mimo_parallelism_config: MimoParallelismConfig specifying parallelism per module.
-
+    """
+    Constructs a HyperCommGrid for each module in the given MIMO parallelism configuration.
+    
+    Grids are created on all ranks (so collective operations are consistent); only ranks within a grid's range participate in that grid's operations.
+    
+    Parameters:
+        mimo_parallelism_config (MimoParallelismConfig): Configuration mapping module names to their parallelism specifications.
+    
     Returns:
-        Dict mapping module names to their HyperCommGrids.
+        Dict[str, "HyperCommGrid"]: Mapping from module name to its HyperCommGrid.
     """
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
@@ -59,20 +59,16 @@ def build_hypercomm_grids(
 def populate_embedding_and_position_groups(
     pp_group: dist.ProcessGroup,
 ) -> Tuple[Optional[dist.ProcessGroup], Optional[dist.ProcessGroup]]:
-    """Create embedding-related process groups from PP group ranks.
-
-    Following MCore semantics:
-    - pos_embd_pg: Only rank 0 of PP (first stage) - for position embeddings
-    - embd_pg: Ranks 0 and -1 of PP (first and last stages) - for tied word embeddings
-
-    IMPORTANT: This calls dist.new_group which is a collective operation.
-    Must be called on all ranks that could participate.
-
+    """
+    Create process groups for position embeddings and tied word embeddings based on pipeline-parallel ranks.
+    
+    Position-embedding group contains only the first PP stage rank; embedding group contains the first and, if different, the last PP stage ranks. This operation calls `dist.new_group`, which is a collective and must be invoked on all ranks that could participate.
+    
     Args:
-        pp_group: The pipeline parallel process group.
-
+        pp_group (dist.ProcessGroup): The pipeline-parallel process group or `None`.
+    
     Returns:
-        Tuple of (pos_embd_pg, embd_pg). Returns (None, None) if pp_group is None.
+        Tuple[Optional[dist.ProcessGroup], Optional[dist.ProcessGroup]]: `(pos_embd_pg, embd_pg)` where `pos_embd_pg` is the group for position embeddings and `embd_pg` is the group for tied word embeddings; returns `(None, None)` if `pp_group` is `None`.
     """
     if pp_group is None:
         return None, None
@@ -93,7 +89,15 @@ def populate_embedding_and_position_groups(
 
 
 def is_pp_first_stage(pp_group: Optional[dist.ProcessGroup]) -> bool:
-    """Check if current rank is first stage in pipeline."""
+    """
+    Determine whether the current process is the first stage in the given pipeline-parallel process group.
+    
+    Parameters:
+        pp_group (Optional[dist.ProcessGroup]): The pipeline-parallel process group to inspect. If `None`, the current process is treated as first stage.
+    
+    Returns:
+        bool: `true` if the current rank equals the smallest rank in `pp_group` or if `pp_group` is `None`, `false` otherwise.
+    """
     if pp_group is None:
         return True
     pp_ranks = sorted(dist.get_process_group_ranks(pp_group))
@@ -101,7 +105,15 @@ def is_pp_first_stage(pp_group: Optional[dist.ProcessGroup]) -> bool:
 
 
 def is_pp_last_stage(pp_group: Optional[dist.ProcessGroup]) -> bool:
-    """Check if current rank is last stage in pipeline."""
+    """
+    Determine whether the current process is the last stage of the given pipeline-parallel process group.
+    
+    Parameters:
+        pp_group (Optional[dist.ProcessGroup]): The pipeline-parallel process group to inspect. If `None`, the pipeline is treated as a single-stage group.
+    
+    Returns:
+        `true` if the current process rank is the last rank in `pp_group`, `false` otherwise.
+    """
     if pp_group is None:
         return True
     pp_ranks = sorted(dist.get_process_group_ranks(pp_group))

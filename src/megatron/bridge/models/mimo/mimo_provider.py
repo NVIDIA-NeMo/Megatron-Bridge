@@ -134,18 +134,15 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     init_model_with_meta_device: bool = False
 
     def build_infra(self) -> MimoModelInfra:
-        """Build MIMO parallelism infrastructure.
-
-        This method builds HyperCommGrids, ProcessGroupCollections, and topology
-        for MIMO's heterogeneous parallelism. It is idempotent and does not
-        mutate provider state (results are not cached).
-
-        Can be called before or after provide(). Call finalize() first to
-        validate the parallelism configuration.
-
+        """
+        Builds the MIMO parallelism infrastructure and returns a MimoModelInfra describing it.
+        
+        Builds per-module HyperCommGrids (when a MIMO parallelism config is provided), derives per-module ProcessGroupCollections for the current rank, constructs the module topology (using provider `topology` if set, otherwise a default routing where each modality maps to the language module), and determines which modules this rank participates in. This method caches the created grids on the provider in the private `_grids` attribute.
+        
+        Call `finalize()` before invoking this method to validate the parallelism configuration. If `mimo_parallelism_config` is None, returned `module_to_grid_map` and `pg_collections` will be empty; topology will still be derived from `modality_submodules_spec` (or from `self.topology` when provided).
+        
         Returns:
-            MimoModelInfra containing grids, topology, pg_collections,
-            and the list of modules this rank participates in.
+            MimoModelInfra: contains `module_to_grid_map` (module → HyperCommGrid), `topology` (module DAG), `pg_collections` (module → ProcessGroupCollection or None for non-participating ranks), `participating_modules` (list of modules with non-None pg_collections), and `module_output_ndim` (module → expected output tensor ndim).
         """
         if self.mimo_parallelism_config is not None:
             grids = build_hypercomm_grids(self.mimo_parallelism_config)
@@ -184,10 +181,14 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         self,
         grids: Dict[str, "HyperCommGrid"],
     ) -> Dict[str, Optional[ProcessGroupCollection]]:
-        """Get ProcessGroupCollections from HyperCommGrids.
-
-        Creates all standard process groups plus embedding groups for PP > 1.
-        Returns None for modules this rank doesn't participate in.
+        """
+        Construct per-module ProcessGroupCollection objects from provided HyperCommGrid instances.
+        
+        Parameters:
+            grids (Dict[str, HyperCommGrid]): Mapping from module name to its HyperCommGrid.
+        
+        Returns:
+            Dict[str, Optional[ProcessGroupCollection]]: Mapping from module name to a ProcessGroupCollection containing the standard process groups and, when applicable, embedding/position groups; `None` for modules in which the current rank does not participate.
         """
         pg_collections: Dict[str, Optional[ProcessGroupCollection]] = {}
         current_rank = dist.get_rank()
@@ -228,7 +229,18 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         pre_process: Optional[bool] = None,
         post_process: Optional[bool] = None,
     ) -> ModuleSpec:
-        """Deep copy language model spec and inject stage-aware params."""
+        """
+        Deep-copy a language ModuleSpec and inject MIMO process-group information and optional pipeline stage flags.
+        
+        Parameters:
+            spec (ModuleSpec): Language model module specification to copy and modify.
+            pg_collection (ProcessGroupCollection): Process-group collection to attach to the spec's params.
+            pre_process (Optional[bool]): If provided, set `params["pre_process"]` to this value to indicate the module runs in a pre-processing PP stage.
+            post_process (Optional[bool]): If provided, set `params["post_process"]` to this value to indicate the module runs in a post-processing PP stage.
+        
+        Returns:
+            ModuleSpec: A deep-copied spec with `params["pg_collection"]` set and `params["pre_process"]`/`params["post_process"]` set when provided.
+        """
         spec = copy.deepcopy(spec)
         if spec.params is None:
             spec.params = {}
@@ -244,7 +256,20 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         spec: ModuleSpec,
         pg_collection: ProcessGroupCollection,
     ) -> ModuleSpec:
-        """Inject pg_collection into encoder specs within a modality submodule."""
+        """
+        Create and return a copy of a modality ModuleSpec with MIMO process-group information injected into its submodules.
+        
+        The returned spec is a deep copy of `spec` where:
+        - `pg_collection` is assigned to `params` of each encoder spec found under `submodules["encoders"]`.
+        - `tp_group` is assigned to `params` of each ModuleSpec found in `submodules["input_projections"]` if `tp_group` is not already present.
+        
+        Parameters:
+            spec (ModuleSpec): The modality module specification to copy and modify.
+            pg_collection (ProcessGroupCollection): The process-group collection whose `tp` group and full collection are injected.
+        
+        Returns:
+            ModuleSpec: A deep-copied ModuleSpec with the injected `pg_collection` and `tp_group`.
+        """
         spec = copy.deepcopy(spec)
 
         # Inject into encoders
@@ -271,27 +296,20 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         post_process: Optional[bool] = None,
         vp_stage: Optional[int] = None,
     ) -> MimoModel:
-        """Build and return the MimoModel instance.
-
-        This method follows the standard ModelProviderMixin.provide() contract,
-        returning only the model instance. For infrastructure metadata (grids,
-        topology, pg_collections), use build_infra() separately.
-
-        Args:
-            pre_process: Unused for MIMO (accepted for API compatibility).
-            post_process: Unused for MIMO (accepted for API compatibility).
-            vp_stage: Unused for MIMO (accepted for API compatibility).
-
+        """
+        Constructs and returns a CPU MimoModel with per-module process-group injections applied when MIMO parallelism is configured.
+        
+        Parameters:
+            pre_process (Optional[bool]): Accepted for API compatibility; ignored by this provider.
+            post_process (Optional[bool]): Accepted for API compatibility; ignored by this provider.
+            vp_stage (Optional[int]): Accepted for API compatibility; ignored by this provider.
+        
         Returns:
-            MimoModel instance.
-
-        Note:
-            Device/dtype handling is done by provide_distributed_model(),
-            consistent with other providers. This method returns a CPU model.
-
+            MimoModel: The constructed model; language and modality specs will have module-specific
+                process-group information injected when a MIMO parallelism configuration is present.
+        
         Raises:
-            ValueError: If language_model_spec is not set, or if this rank
-                doesn't participate in any module.
+            ValueError: If `language_model_spec` is not set prior to calling this method.
         """
         if self.language_model_spec is None:
             raise ValueError(
@@ -518,7 +536,17 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         )
 
     def _apply_freezing(self, model: MimoModel) -> None:
-        """Apply freezing based on configuration."""
+        """
+        Apply configured parameter freezing to the provided MimoModel.
+        
+        Sets requires_grad = False for:
+        - the entire language model when `self.freeze_language_model` is True and the model has `language_model`;
+        - encoder parameters of modalities listed in `self.freeze_modality_encoders` where the value is True and the model has the modality with an `encoders` attribute;
+        - input projection parameters of modalities listed in `self.freeze_modality_projections` where the value is True and the model has the modality with an `input_projections` attribute.
+        
+        Parameters:
+            model (MimoModel): The MIMO model whose submodule parameters will be frozen according to provider settings.
+        """
         if self.freeze_language_model and hasattr(model, "language_model"):
             for param in model.language_model.parameters():
                 param.requires_grad = False
@@ -539,16 +567,16 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                             param.requires_grad = False
 
     def finalize(self) -> None:
-        """Finalize MIMO parallelism configuration.
-
-        This validates the parallelism config and should be called before
-        build_infra() or provide(). It is called automatically by
-        provide_distributed_model().
-
+        """
+        Finalize the MIMO parallelism configuration by validating it against the current distributed world size.
+        
+        Validates that torch.distributed is initialized and then calls the configured
+        MIMO parallelism config's finalize routine with the current world size.
+        
         Raises:
-            ValueError: If any rank doesn't participate in at least one module.
-                This indicates the parallelism configuration doesn't cover all
-                ranks in the world (validated by MimoParallelismConfig.finalize()).
+            RuntimeError: If torch.distributed is not initialized prior to calling finalize().
+            ValueError: If the parallelism configuration is invalid for the current world size
+                (propagated from MimoParallelismConfig.finalize()).
         """
         if self.mimo_parallelism_config is not None:
             if not dist.is_initialized():

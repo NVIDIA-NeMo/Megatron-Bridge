@@ -19,31 +19,21 @@ def get_mimo_dp_info(
     mimo_cfg: "MimoParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
 ) -> Tuple[int, int, bool, str]:
-    """Get DP rank, size, data-loading responsibility, and loader module for MIMO.
-
-    Determines which module's DP settings to use for data loading based on
-    current rank's participation in heterogeneous deployment.
-
-    In heterogeneous mode, each rank uses its own module's DP settings.
-
-    Args:
-        mimo_cfg: MIMO parallelism configuration.
-        grids: Module name to HyperCommGrid mapping from build_hypercomm_grids().
-
+    """
+    Return the DP rank and size, whether the current rank must load data, and which module's DP settings to use for the current distributed rank.
+    
+    Determines which module (from `grids`) contains the current global rank and computes the DP process-group rank and size. If the rank does not belong to any provided grid, returns defaults for a non-participating rank: (0, 1, False, MIMO_LANGUAGE_MODULE_KEY). `needs_data` is true for the language module when the rank is on the first or last PP stage; for other modules it is true only on the first PP stage.
+    
+    Parameters:
+        mimo_cfg (MimoParallelismConfig): MIMO parallelism configuration (kept for API compatibility).
+        grids (Dict[str, HyperCommGrid]): Mapping from module name to its HyperCommGrid produced by build_hypercomm_grids().
+    
     Returns:
-        Tuple of (dp_rank, dp_size, needs_data, loader_module):
-        - dp_rank: This rank's position in DP group.
-        - dp_size: Size of DP group for data sharding.
-        - needs_data: Whether this rank needs to load data (first/last PP stage).
-        - loader_module: Which module's DP settings are being used.
-
-    Example:
-        >>> from megatron.bridge.models.mimo.mimo_builder import build_hypercomm_grids
-        >>> grids = build_hypercomm_grids(mimo_cfg)
-        >>> dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(mimo_cfg, grids)
-        >>> if needs_data:
-        ...     # Build data loader with dp_rank and dp_size
-        ...     sampler = DistributedSampler(dataset, num_replicas=dp_size, rank=dp_rank)
+        Tuple[int, int, bool, str]: `(dp_rank, dp_size, needs_data, loader_module)` where
+            - `dp_rank`: this rank's index within its DP process group,
+            - `dp_size`: size of the DP process group used for data sharding,
+            - `needs_data`: `True` if the rank should load data, `False` otherwise,
+            - `loader_module`: name of the module whose DP settings should be used (or `MIMO_LANGUAGE_MODULE_KEY` for non-participating ranks).
     """
     current_rank = dist.get_rank()
 

@@ -23,7 +23,17 @@ from megatron.bridge.training.config import DatasetBuildContext
 
 
 def _generate_random_image(width: int, height: int, rng: np.random.Generator) -> Image.Image:
-    """Generate a random RGB image."""
+    """
+    Create a PIL RGB image of the given pixel dimensions with random pixel values.
+    
+    Parameters:
+        width (int): Image width in pixels.
+        height (int): Image height in pixels.
+        rng (np.random.Generator): NumPy random number generator used to sample uint8 RGB pixel values deterministically when seeded.
+    
+    Returns:
+        Image.Image: A PIL Image in "RGB" mode containing random pixels.
+    """
     pixels = rng.integers(low=0, high=256, size=(height, width, 3), dtype=np.uint8)
     return Image.fromarray(pixels, mode="RGB")
 
@@ -110,7 +120,17 @@ class MockMimoProvider(MimoDatasetProvider):
         return processors
 
     def _load_tokenizer(self) -> Any:
-        """Load HuggingFace tokenizer."""
+        """
+        Load and cache the HuggingFace tokenizer specified by `tokenizer_path`.
+        
+        If a tokenizer is already cached on this instance, the cached object is returned. Ensures the tokenizer has a `pad_token` by assigning `eos_token` to `pad_token` when missing and stores the loaded tokenizer in `self._tokenizer`.
+        
+        Raises:
+            ValueError: If `self.tokenizer_path` is empty or falsy.
+        
+        Returns:
+            tokenizer: The loaded HuggingFace tokenizer instance.
+        """
         if self._tokenizer is not None:
             return self._tokenizer
 

@@ -50,11 +50,40 @@ def test_build_datasets_happy_path(monkeypatch):
     calls = Calls()
 
     def fake_is_safe_repo(trust_remote_code, hf_path):
+        """
+        Test helper that records an invocation and always reports the repository as not safe.
+        
+        Parameters:
+            trust_remote_code: Ignored.
+            hf_path: Ignored.
+        
+        Returns:
+            False: Indicates the repository is not considered safe. Also increments `calls.is_safe_repo` as a side effect.
+        """
         del trust_remote_code, hf_path
         calls.is_safe_repo += 1
         return False
 
     def fake_load_dataset(path, name=None, split=None, trust_remote_code=None, data_files=None):
+        """
+        Test stub that simulates loading a dataset for unit tests.
+        
+        Parameters:
+            path (str): Ignored.
+            name (str | None): Ignored.
+            split (str | None): If equal to "validation", a `ValueError` is raised to simulate a missing split.
+            trust_remote_code: Ignored.
+            data_files: Ignored.
+        
+        Side effects:
+            Increments `calls.load_dataset` to record an invocation.
+        
+        Returns:
+            list[dict]: A single-record dataset: [{"text": "hello", "image": "image_0.jpg"}].
+        
+        Raises:
+            ValueError: If `split` is "validation".
+        """
         del path, name, trust_remote_code, data_files
         calls.load_dataset += 1
         if split == "validation":
