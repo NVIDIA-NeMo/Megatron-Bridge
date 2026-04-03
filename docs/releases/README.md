@@ -6,6 +6,7 @@ This directory contains release information, version history, and known issues f
 
 | Document | Purpose | When to Read |
 |----------|---------|--------------|
+| **[Release Process](release-process.md)** | Release cycle, RC cadence, code-freeze, golden values, CI annotations | Participating in or understanding a release |
 | **[Software Versions](software-versions.md)** | Current software versions and dependencies | Checking compatibility, planning upgrades |
 | **[Changelog](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases)** | Detailed release history and changes | Understanding what changed in each release |
 | **[Known Issues](known-issues.md)** | Known bugs, limitations, and workarounds | Troubleshooting issues, planning workarounds |
