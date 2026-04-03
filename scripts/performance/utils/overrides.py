@@ -219,6 +219,10 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cpu_offloading_num_layers=settings.cpu_offloading_num_layers,
         recompute_num_layers=settings.recompute_num_layers,
     )
+    if settings.te_precision_config_file is not None:
+        from megatron.core.quantization.utils import load_quantization_recipe
+
+        cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
 
     return cfg
@@ -274,11 +278,6 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recompute_modules=args.recompute_modules,
     )
     _set_moe_a2a_overlap_overrides(recipe, moe_a2a_overlap=args.moe_a2a_overlap)
-
-    if args.te_precision_config_file is not None:
-        from megatron.core.quantization.utils import load_quantization_recipe
-
-        recipe.model.quant_recipe = load_quantization_recipe(args.te_precision_config_file)
 
     if args.use_tokendrop is True:
         recipe.model = apply_moe_token_drop(recipe.model)

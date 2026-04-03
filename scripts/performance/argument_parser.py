@@ -712,14 +712,6 @@ def parse_cli_args():
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
     )
-    performance_args.add_argument(
-        "--te_precision_config_file",
-        type=str,
-        help="Path to a TransformerEngine precision config file (e.g. te_quant.cfg) for per-module "
-        "precision overrides. See TransformerEngineMixedPrecision.md for the YAML format.",
-        required=False,
-        default=None,
-    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")
