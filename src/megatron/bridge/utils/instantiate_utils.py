@@ -33,6 +33,36 @@ class InstantiationException(Exception):
     ...
 
 
+_ALLOWED_TARGET_PREFIXES: set[str] = {
+    "megatron.",
+    "torch.",
+    "nvidia.",
+    "transformers.",
+    "numpy.",
+    "nemo.",
+}
+
+
+def register_allowed_target_prefix(prefix: str) -> None:
+    """Register an additional allowed module prefix for _target_ instantiation.
+
+    This allows extending the default allowlist for use cases that require
+    instantiating classes from other packages.
+    """
+    _ALLOWED_TARGET_PREFIXES.add(prefix)
+
+
+def _validate_target_prefix(target: str, full_key: str) -> None:
+    """Validate that a _target_ string starts with an allowed module prefix."""
+    if not any(target.startswith(prefix) for prefix in _ALLOWED_TARGET_PREFIXES):
+        raise InstantiationException(
+            f"Instantiation of '{target}' is not allowed. "
+            f"The target must start with one of the allowed prefixes: {sorted(_ALLOWED_TARGET_PREFIXES)}. "
+            f"Use register_allowed_target_prefix() to add additional allowed prefixes."
+            + (f"\nfull_key: {full_key}" if full_key else "")
+        )
+
+
 class InstantiationMode(Enum):
     """Enum for instantiation modes."""
 
@@ -429,6 +459,7 @@ def _resolve_target(
 ) -> Union[type, Callable[..., Any], object]:
     """Resolve target string, type or callable into type or callable."""
     if isinstance(target, str):
+        _validate_target_prefix(target, full_key)
         try:
             target = _locate(target)
         except Exception as e:
