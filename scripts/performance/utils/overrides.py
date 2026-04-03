@@ -131,7 +131,7 @@ def _set_recompute_overrides(
     recompute_modules: Optional[List[str]] = None,
 ) -> ConfigContainer:
     """Set the recompute and CPU offloading overrides."""
-    if cpu_offloading_num_layers is not None:
+    if cpu_offloading_num_layers is not None and cpu_offloading_num_layers > 0:
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
