@@ -29,7 +29,7 @@ description = "Megatron Bridge: Training Recipes for Megatron-based LLM and VLM 
 readme = "README.md"
 dynamic = ["version"]
 license = {file = "LICENSE"}
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 authors = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
 maintainers = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
 keywords = [
@@ -125,6 +125,7 @@ override-dependencies = [
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt>=0.42.0a0",
     "urllib3>=2.6.3",    # To address CVE-2026-21441
+    "onnx>=1.21.0; python_version < '3.13'",  # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
 ]
 
 [[tool.uv.index]]
@@ -172,7 +173,7 @@ dev = [
     "ruff>=0.9.9",
     "mypy>=1.8.0",
 ]
-build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy<2.0.0", "ninja", "nvidia-mathdx"]
+build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy", "ninja", "nvidia-mathdx"]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"
