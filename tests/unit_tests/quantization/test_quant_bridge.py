@@ -255,7 +255,7 @@ class TestAutoMappingQuant:
         quant_block_size = (4,4)
         
         with patch.object(ColumnParallelMapping, "megatron_to_hf_quant") as mock_quant:
-            q_full, scale_full = scaled_fp8_blockwise(megatron_weight, None)
+            q_full, scale_full = scaled_fp8_blockwise(megatron_weight, quant_block_size)
             mock_quant.return_value = {"hf.weight": q_full, "hf.weight_scale_inv": scale_full}
             
             result = mapping.megatron_to_hf_quant(
