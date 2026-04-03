@@ -373,9 +373,9 @@ class _TextMemMapDataset(Dataset):
             # load index file into memory map
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
-                midx = msc.numpy.load(idx_fn + ".npy", allow_pickle=True, mmap_mode="r")
+                midx = msc.numpy.load(idx_fn + ".npy", allow_pickle=False, mmap_mode="r")
             else:
-                midx = np.load(idx_fn + ".npy", allow_pickle=True, mmap_mode="r")
+                midx = np.load(idx_fn + ".npy", allow_pickle=False, mmap_mode="r")
 
             # test for header
             if len(midx) < self._header_lines:
@@ -798,7 +798,7 @@ def _get_samples_mapping(
             2 if binary_head else 1,
         )
         logger.info(" > done building samples index maping")
-        np.save(indexmap_filename, samples_mapping, allow_pickle=True)
+        np.save(indexmap_filename, samples_mapping, allow_pickle=False)
         logger.info(" > saved the index mapping in {}".format(indexmap_filename))
         # Make sure all the ranks have built the mapping
         logger.info(
@@ -814,7 +814,7 @@ def _get_samples_mapping(
     if samples_mapping is None:
         logger.info(" > loading indexed mapping from {}".format(indexmap_filename))
         start_time = time.time()
-        samples_mapping = np.load(indexmap_filename, allow_pickle=True, mmap_mode="r")
+        samples_mapping = np.load(indexmap_filename, allow_pickle=False, mmap_mode="r")
         logger.info("    loaded indexed file in {:3.3f} seconds".format(time.time() - start_time))
         logger.info("    total number of samples: {}".format(samples_mapping.shape[0]))
 
@@ -1256,9 +1256,9 @@ def _build_memmap_index_files(newline_int, build_index_fn, fn, index_mapping_dir
         logger.info(f"Saving idx file = {idx_fn}.npy")
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
-            msc.numpy.save(idx_fn + ".npy", midx, allow_pickle=True)
+            msc.numpy.save(idx_fn + ".npy", midx, allow_pickle=False)
         else:
-            np.save(idx_fn + ".npy", midx, allow_pickle=True)
+            np.save(idx_fn + ".npy", midx, allow_pickle=False)
         logger.info(f"Saving metadata file = {idx_fn}.info")
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
