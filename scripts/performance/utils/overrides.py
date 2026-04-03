@@ -275,6 +275,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     )
     _set_moe_a2a_overlap_overrides(recipe, moe_a2a_overlap=args.moe_a2a_overlap)
 
+    if args.te_precision_config_file is not None:
+        from megatron.core.quantization.utils import load_quantization_recipe
+
+        recipe.model.quant_recipe = load_quantization_recipe(args.te_precision_config_file)
+
     if args.use_tokendrop is True:
         recipe.model = apply_moe_token_drop(recipe.model)
         recipe.model.moe_router_force_load_balancing = False
