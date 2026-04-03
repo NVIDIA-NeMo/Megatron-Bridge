@@ -64,7 +64,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         vision_config = hf_config.vision_config
 
         provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-        provider_kwargs.pop("_mla_rope_params", None)
+        mla_rope_params = provider_kwargs.pop("_mla_rope_params", None)
         valid_fields = KimiK25VLModelProvider.__dataclass_fields__
         provider = KimiK25VLModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
 
@@ -77,6 +77,11 @@ class KimiK25VLBridge(MegatronModelBridge):
         provider.qk_layernorm = True
         provider.multi_latent_attention = True
         provider.position_embedding_type = "rope"
+
+        # Apply MLA rope params, otherwise rope scaling factor will be wrong.
+        if mla_rope_params:
+            for key, value in mla_rope_params.items():
+                setattr(provider, key, value)
 
         # MoE settings
         provider.moe_grouped_gemm = True
