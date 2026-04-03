@@ -6,12 +6,12 @@ training Mixture-of-Experts models with Megatron-Core. It is based on
 
 For tuning knobs, hardware-specific configs, and benchmark-oriented guidance, see:
 
-- [skills/perf-techniques/moe-optimization-workflow/SKILL.md](../../skills/perf-techniques/moe-optimization-workflow/SKILL.md)
-- [skills/perf-techniques/moe-dispatcher-selection/SKILL.md](../../skills/perf-techniques/moe-dispatcher-selection/SKILL.md)
-- [skills/perf-techniques/moe-long-context/SKILL.md](../../skills/perf-techniques/moe-long-context/SKILL.md)
-- [skills/perf-techniques/moe-hardware-configs/SKILL.md](../../skills/perf-techniques/moe-hardware-configs/SKILL.md)
-- [skills/perf-techniques/moe-vlm-training/SKILL.md](../../skills/perf-techniques/moe-vlm-training/SKILL.md)
-- [skills/perf-techniques/moe-comm-overlap/SKILL.md](../../skills/perf-techniques/moe-comm-overlap/SKILL.md)
+- [skills/perf-techniques/moe-optimization-workflow/SKILL.md](../skills/perf-techniques/moe-optimization-workflow/SKILL.md)
+- [skills/perf-techniques/moe-dispatcher-selection/SKILL.md](../skills/perf-techniques/moe-dispatcher-selection/SKILL.md)
+- [skills/perf-techniques/moe-long-context/SKILL.md](../skills/perf-techniques/moe-long-context/SKILL.md)
+- [skills/perf-techniques/moe-hardware-configs/SKILL.md](../skills/perf-techniques/moe-hardware-configs/SKILL.md)
+- [skills/perf-techniques/moe-vlm-training/SKILL.md](../skills/perf-techniques/moe-vlm-training/SKILL.md)
+- [skills/perf-techniques/moe-comm-overlap/SKILL.md](../skills/perf-techniques/moe-comm-overlap/SKILL.md)
 
 ## The Three Walls
 

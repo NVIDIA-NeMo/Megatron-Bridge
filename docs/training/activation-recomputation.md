@@ -193,3 +193,5 @@ up-projection modules than to enable blanket full recomputation immediately.
 
 - [docs/training/cuda-graphs.md](cuda-graphs.md)
 - [docs/training/moe-optimization.md](moe-optimization.md)
+- [skills/perf-techniques/activation-recompute/SKILL.md](../skills/perf-techniques/activation-recompute/SKILL.md) — per-module cost/savings data, measured results
+- [skills/perf-techniques/memory-tuning/SKILL.md](../skills/perf-techniques/memory-tuning/SKILL.md) — VPP tuning and other memory reduction strategies

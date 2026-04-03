@@ -275,7 +275,22 @@ def _delete_cuda_graphs(cuda_graph_helper):
     with `moe_router` CUDA graph scope when using `cuda_graph_impl =
     "transformer_engine"`. Enforced in MCore `transformer_config.py:1977`.
 
-11. **Benchmark numbers are workload-specific**: graph wins are usually real
+11. **Layer-level recompute requires `full_iteration` scope**: Using
+    `recompute_granularity="full"` with `recompute_num_layers` (recompute N
+    whole transformer layers) is incompatible with TE-scoped graphs. MCore
+    calls this "full" granularity even though you're selecting how many
+    layers — the name refers to recomputing the full layer, not full model.
+    Any TE-scoped scope (`attn`, `mlp`, `moe_router`, etc.) will assert:
+    `AssertionError: full recompute is only supported with full iteration CUDA graph.`
+    This commonly hits FP8 configs that default to TE-scoped graphs (e.g.
+    `LLAMA3_70B_SFT_CONFIG_H100_FP8_CS_V1` uses `cuda_graph_impl=
+    "transformer_engine"`, `cuda_graph_scope="mlp"`). Fix: use submodule
+    recompute (`recompute_granularity="selective"` + `recompute_modules`),
+    disable CUDA graphs, or switch to `local` + `full_iteration`. Enforced
+    in MCore `transformer_config.py:2001-2005`. See also
+    `skills/perf-techniques/activation-recompute/SKILL.md`.
+
+12. **Benchmark numbers are workload-specific**: graph wins are usually real
     when host overhead is visible, but the exact gain depends on batch shape,
     PP depth, recompute, and whether the eager baseline was already optimized.
 
