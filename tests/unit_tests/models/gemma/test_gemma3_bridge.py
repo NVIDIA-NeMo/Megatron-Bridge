@@ -439,6 +439,40 @@ class TestMegatronGemma3Bridge:
         assert result.softmax_scale == expected_softmax_scale
         assert abs(result.softmax_scale - (1.0 / math.sqrt(168))) < 1e-6  # 168 for 27B model
 
+    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
+    def test_megatron_to_hf_config_reconstructs_gemma3_special_fields(
+        self, mock_autoconfig, mock_pretrained_gemma3_4b, gemma3_4b_config
+    ):
+        """Test Gemma3 reverse export reconstructs rope and scaling fields."""
+        mock_autoconfig.return_value = gemma3_4b_config
+        bridge = Gemma3ModelBridge()
+
+        provider = bridge.provider_bridge(mock_pretrained_gemma3_4b)
+        hf_config = bridge.megatron_to_hf_config(provider)
+
+        assert hf_config["rope_theta"] == gemma3_4b_config.rope_theta
+        assert hf_config["rope_local_base_freq"] == gemma3_4b_config.rope_local_base_freq
+        assert hf_config["sliding_window"] == gemma3_4b_config.sliding_window
+        assert hf_config["query_pre_attn_scalar"] == gemma3_4b_config.query_pre_attn_scalar
+        assert hf_config["rope_scaling"] == {"factor": 8.0, "type": "linear"}
+
+    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
+    def test_megatron_to_hf_config_omits_rope_scaling_when_disabled(
+        self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config
+    ):
+        """Test Gemma3 reverse export leaves rope_scaling unset when no scaling is active."""
+        mock_autoconfig.return_value = gemma3_1b_config
+        bridge = Gemma3ModelBridge()
+
+        provider = bridge.provider_bridge(mock_pretrained_gemma3_1b)
+        hf_config = bridge.megatron_to_hf_config(provider)
+
+        assert hf_config["rope_theta"] == gemma3_1b_config.rope_theta
+        assert hf_config["rope_local_base_freq"] == gemma3_1b_config.rope_local_base_freq
+        assert hf_config["query_pre_attn_scalar"] == gemma3_1b_config.query_pre_attn_scalar
+        assert hf_config["sliding_window"] == gemma3_1b_config.sliding_window
+        assert "rope_scaling" not in hf_config
+
     def test_mapping_registry_implementation(self, mock_pretrained_gemma3_1b):
         """Test that mapping_registry returns a proper MegatronMappingRegistry."""
         bridge = Gemma3ModelBridge()
