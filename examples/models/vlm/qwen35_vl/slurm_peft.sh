@@ -1,5 +1,4 @@
 #!/bin/bash
-set -euo pipefail
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +49,8 @@ set -euo pipefail
 #SBATCH --output=qwen35vl_lora_%j.out
 #SBATCH --error=qwen35vl_lora_%j.err
 #SBATCH --exclusive
+
+set -euo pipefail
 
 # ==============================================================================
 # Parse arguments
@@ -166,7 +167,7 @@ CLI_OVERRIDES="\
 # For multinode runs, the recipe's online HF path can be unstable. Pass --hf_path
 # with a local model directory for more reliable config loading, e.g.:
 #   --hf_path ${WORKSPACE}/models/Qwen/${HF_MODEL_NAME}
-CMD="uv run --no-sync python scripts/training/run_recipe.py \
+CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
     --step_func vlm_step \
     --peft_scheme lora \

@@ -20,6 +20,7 @@ import megatron.bridge.data.vlm_datasets.collate as collate
 class _DummyProcessor:
     class _Tok:
         pad_token_id = 0
+        pad_token = "<pad>"
         added_tokens_decoder = {}
 
     def __init__(self):
@@ -146,3 +147,164 @@ def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
     vi = batch["visual_inputs"]
     # Ensure fields exist when images present
     assert hasattr(vi, "pixel_values")
+
+
+def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
+    image_token_id = 163605
+    input_ids = torch.tensor([11, image_token_id, 22, image_token_id, 33])
+    attention_mask = torch.ones_like(input_ids)
+    grid_thws = torch.tensor([[1, 4, 4], [2, 6, 4]])
+
+    expanded_input_ids, expanded_attention_mask = collate._expand_image_tokens(
+        input_ids,
+        attention_mask,
+        grid_thws,
+        image_token_id,
+    )
+
+    expected = [11] + [image_token_id] * 4 + [22] + [image_token_id] * 12 + [33]
+    assert expanded_input_ids.tolist() == expected
+    assert expanded_attention_mask.tolist() == [1] * len(expected)
+
+
+# ---------------------------------------------------------------------------
+# kimi_k25_vl_collate_fn tests
+# ---------------------------------------------------------------------------
+
+MEDIA_TOKEN_ID = 163605  # default Kimi K2.5 media placeholder
+
+
+class _KimiDummyTokenizer:
+    """Minimal tokenizer mock for kimi_k25_vl_collate_fn tests."""
+
+    pad_token_id = 0
+    added_tokens_decoder = {}
+
+    def convert_tokens_to_ids(self, token):
+        return MEDIA_TOKEN_ID
+
+    def __call__(self, text, add_special_tokens=True, **kwargs):
+        # Return a fixed token sequence so loss-mask search can find the span.
+        return {"input_ids": [10, 11, 12]}
+
+
+class _KimiDummyProcessor:
+    """Minimal processor mock that mimics KimiK25Processor behaviour."""
+
+    media_placeholder_token_id = MEDIA_TOKEN_ID
+
+    def __init__(self, *, include_image: bool = False):
+        self.tokenizer = _KimiDummyTokenizer()
+        self._include_image = include_image
+
+    def apply_chat_template(self, conversation, add_generation_prompt=False, tokenize=False, **kwargs):
+        return "dummy text"
+
+    def __call__(self, text=None, medias=None, return_tensors="pt", **kwargs):
+        # Build minimal processor output with or without image data.
+        seq = [1, 2, MEDIA_TOKEN_ID, 10, 11, 12, 3] if self._include_image else [1, 10, 11, 12, 3]
+        input_ids = torch.tensor([seq])
+        attention_mask = torch.ones_like(input_ids)
+        out = {"input_ids": input_ids, "attention_mask": attention_mask}
+        if self._include_image and medias:
+            out["pixel_values"] = torch.randn(1, 3, 4, 4)
+            out["grid_thws"] = torch.tensor([[1, 2, 2]])  # expands to 1 token
+        return out
+
+
+def test_kimi_k25_vl_collate_fn_text_only():
+    """Text-only batch: no pixel_values / grid_thws in result."""
+    proc = _KimiDummyProcessor(include_image=False)
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+            ]
+        },
+    ]
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    assert "input_ids" in batch
+    assert "labels" in batch
+    assert "loss_mask" in batch
+    assert "position_ids" in batch
+    assert "visual_inputs" in batch
+    # No image data → visual_inputs fields should be None
+    vi = batch["visual_inputs"]
+    assert vi.pixel_values is None
+    assert vi.image_grid_thw is None
+    # Shapes consistent
+    B, L = batch["input_ids"].shape
+    assert batch["labels"].shape == (B, L)
+    assert batch["loss_mask"].shape == (B, L)
+    assert batch["position_ids"].shape == (B, L)
+
+
+def test_kimi_k25_vl_collate_fn_with_image():
+    """Image batch: pixel_values and grid_thws forwarded to visual_inputs."""
+    proc = _KimiDummyProcessor(include_image=True)
+    examples = [
+        {
+            "conversation": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": "dummy.jpg"},
+                        {"type": "text", "text": "describe"},
+                    ],
+                },
+                {"role": "assistant", "content": [{"type": "text", "text": "it's a cat"}]},
+            ]
+        },
+    ]
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    vi = batch["visual_inputs"]
+    assert vi.pixel_values is not None
+    assert vi.image_grid_thw is not None
+    # input_ids should not contain raw pixel_values / grid_thws keys
+    assert "pixel_values" not in batch
+    assert "grid_thws" not in batch
+
+
+def test_kimi_k25_vl_collate_fn_pads_to_max_length():
+    """max_length is respected: short sequences padded, long ones truncated."""
+    proc = _KimiDummyProcessor(include_image=False)
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+            ]
+        },
+    ]
+    max_length = 20
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc, max_length=max_length)
+
+    assert batch["input_ids"].shape[1] == max_length
+    assert batch["attention_mask"].shape[1] == max_length
+
+
+def test_kimi_k25_vl_collate_fn_multi_sample_batch():
+    """Multiple samples are batched correctly with equal sequence lengths."""
+    proc = _KimiDummyProcessor(include_image=False)
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q1"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "a1"}]},
+            ]
+        },
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q2"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "a2"}]},
+            ]
+        },
+    ]
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    assert batch["input_ids"].shape[0] == 2
+    # All sequences must have the same length after collation
+    assert batch["input_ids"].shape[1] == batch["labels"].shape[1]

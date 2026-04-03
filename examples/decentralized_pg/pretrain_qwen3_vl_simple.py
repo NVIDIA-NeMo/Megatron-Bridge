@@ -32,7 +32,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/decentralized
 
 import torch
 
-from megatron.bridge.recipes.qwen_vl.qwen3_vl import qwen3_vl_30b_a3b_pretrain_config
+from megatron.bridge.recipes.qwen_vl.qwen3_vl import qwen3_vl_30b_a3b_pretrain_mock_config
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.vlm_step import forward_step
 
@@ -40,7 +40,7 @@ from megatron.bridge.training.vlm_step import forward_step
 def main() -> None:
     """Run Qwen3 pretraining with decentralized process groups enabled."""
     # Get the standard Qwen3 4B pretrain config with overrides
-    cfg = qwen3_vl_30b_a3b_pretrain_config(
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config(
         # Use mock data for demo
         mock=True,
         # Parallelism
