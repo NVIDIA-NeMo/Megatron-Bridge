@@ -285,12 +285,6 @@ class PerfEnvPlugin(Plugin):
                     if gpu in ["gb300", "h100"]:
                         executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                         executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
-        if model_family_name == "qwen" and compute_dtype == "fp8_mx":
-            if model_recipe_name == "qwen3_30b_a3b":
-                executor.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] = "128"
-            if model_recipe_name == "qwen3_235b_a22b" and gpu in ["gb200", "gb300"]:
-                executor.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] = "128"
-
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
@@ -357,6 +351,9 @@ class PerfEnvPlugin(Plugin):
                 executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
                 executor.env_vars["USE_MNNVL"] = "1"
                 executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(ep_size)
+            # Workaround for unfused combine performance regression in DeepEP hybrid-ep.
+            # Remove after https://github.com/NVIDIA/Megatron-LM/pull/4089 lands.
+            executor.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] = "128"
 
     def _set_nccl_pp_comm_chunksize(
         self,
