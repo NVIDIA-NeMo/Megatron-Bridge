@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import warnings
 from functools import cached_property, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
@@ -168,7 +169,7 @@ class AutoBridge(Generic[MegatronModelT]):
         return any(arch.endswith(SUPPORTED_HF_ARCHITECTURES) for arch in architectures)
 
     @classmethod
-    def from_auto_config(cls, megatron_path: str, hf_model_id: str) -> "AutoBridge":
+    def from_auto_config(cls, megatron_path: str, hf_model_id: str, trust_remote_code: bool = False) -> "AutoBridge":
         """
         Create a config-only AutoBridge by synthesizing an HF config from a Megatron checkpoint.
 
@@ -181,6 +182,9 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_path: Directory path where the Megatron checkpoint is stored
             hf_model_id: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
+            trust_remote_code: Whether to trust remote code when loading config.
+                Defaults to False for security. Set to True only for models that
+                require custom modeling code from the repository.
 
         Returns:
             AutoBridge: Bridge instance configured for the architecture
@@ -212,7 +216,14 @@ class AutoBridge(Generic[MegatronModelT]):
 
         # 1. Load config from both sides
         megatron_cfg, _ = load_model_config(str(run_config.parent))
-        hf_cfg = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=True)
+        if trust_remote_code:
+            warnings.warn(
+                "Loading a model with trust_remote_code=True allows arbitrary code execution "
+                "from the model repository. Only use this with models you trust.",
+                UserWarning,
+                stacklevel=2,
+            )
+        hf_cfg = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
         # 2. Translate Megatron config -> HF, conforming to reference config
         bridge = cls.from_hf_config(hf_cfg)
         megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
@@ -311,6 +322,13 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         # First load just the config to check architecture support
         # Use thread-safe config loading to prevent race conditions
+        if kwargs.get("trust_remote_code", False):
+            warnings.warn(
+                "Loading a model with trust_remote_code=True allows arbitrary code execution "
+                "from the model repository. Only use this with models you trust.",
+                UserWarning,
+                stacklevel=2,
+            )
         config = safe_load_config_with_retry(path, trust_remote_code=kwargs.get("trust_remote_code", False))
 
         cls._validate_config(config, str(path))
