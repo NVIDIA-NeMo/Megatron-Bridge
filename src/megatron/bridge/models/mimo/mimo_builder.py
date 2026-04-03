@@ -50,6 +50,7 @@ def build_hypercomm_grids(
         _ = grid.create_pg(["tp", "pp"])
         _ = grid.create_pg(["tp", "ep", "pp"])
         _ = grid.create_pg(["dp", "ep"])
+        _ = grid.create_pg(["tp", "cp", "ep", "pp", "dp"])
 
         grids[module_name] = grid
 

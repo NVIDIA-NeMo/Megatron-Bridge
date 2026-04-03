@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from megatron.core.models.mimo.optimizer import MimoOptimizer
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
     from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
+    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
 
     from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra
 
@@ -196,11 +197,13 @@ def train_mimo(
     global_state: GlobalState,
     mimo_infra: "MimoModelInfra",
     multimodule_communicator: "MultiModulePipelineCommunicator",
+    multimodule_pg_collection: Optional["MultiModuleProcessGroupCollection"] = None,
+    module_to_grid_tuple: Optional[List] = None,
 ) -> None:
     """Main MIMO training loop.
 
     Key differences from standard train():
-    - Creates MultiModuleProcessGroupCollection for the schedule
+    - Uses MultiModuleProcessGroupCollection for the schedule
     - Uses forward_backward_pipelining_without_interleaving with multimodule support
     - Uses zero_grad_buffer_for_multimodule() for gradient clearing
     - Uses MimoOptimizer for coordinated gradient clipping with global norm
@@ -213,7 +216,6 @@ def train_mimo(
     - evaluate_and_print_results() for validation with multimodule support
     - maybe_finalize_async_save() for async checkpoint finalization
 
-
     Args:
         forward_step_func: Forward step function.
         model: MimoModel instance.
@@ -224,6 +226,10 @@ def train_mimo(
         global_state: GlobalState containing timers, config, train_state.
         mimo_infra: MimoModelInfra with grids, topology, pg_collections.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
+        multimodule_pg_collection: Pre-built PG collection for the pipeline schedule.
+            If None, built from mimo_infra.
+        module_to_grid_tuple: Pre-built (module, grid) pairs for gradient ops.
+            If None, built from model and mimo_infra.
     """
     timers = global_state.timers
     train_state = global_state.train_state
@@ -238,11 +244,11 @@ def train_mimo(
     # Prepare forward step function with GlobalState injection
     wrapped_forward_step_func = prepare_forward_step_func(forward_step_func, global_state)
 
-    # Build module-to-grid mapping for gradient operations
-    module_to_grid_tuple = get_module_to_grid_tuple(model, mimo_infra)
-
-    # Build pg_collection for schedule
-    multimodule_pg_collection = build_pg_collection_for_schedule(mimo_infra)
+    # Use pre-built objects from setup_mimo if provided, otherwise build them.
+    if module_to_grid_tuple is None:
+        module_to_grid_tuple = get_module_to_grid_tuple(model, mimo_infra)
+    if multimodule_pg_collection is None:
+        multimodule_pg_collection = build_pg_collection_for_schedule(mimo_infra)
 
     # Guard against list fallback - MIMO training requires MultiModuleProcessGroupCollection
     if isinstance(multimodule_pg_collection, list):

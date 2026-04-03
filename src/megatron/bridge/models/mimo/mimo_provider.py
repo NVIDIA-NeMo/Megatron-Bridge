@@ -190,17 +190,16 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         Returns None for modules this rank doesn't participate in.
         """
         pg_collections: Dict[str, Optional[ProcessGroupCollection]] = {}
-        current_rank = dist.get_rank()
 
         for module_name, grid in grids.items():
-            # Check if current rank is in this grid's range
-            if grid.rank_offset <= current_rank < (grid.rank_offset + grid.size):
-                pp_group = grid.get_pg(["pp"])
+            pp_group = grid.get_pg(["pp"])
 
-                # Create embedding groups for PP > 1 (collective operation on all PP ranks)
-                pos_embd_pg, embd_pg = populate_embedding_and_position_groups(pp_group)
+            # dist.new_group() is a collective on the default PG — all ranks must
+            # call it in the same global order regardless of module membership.
+            pos_embd_pg, embd_pg = populate_embedding_and_position_groups(pp_group)
 
-                # Only assign embedding groups to ranks that should have them
+            # Only build a full PG collection for ranks that participate in this module.
+            if grid.is_current_rank_in_grid():
                 first_stage = is_pp_first_stage(pp_group)
                 last_stage = is_pp_last_stage(pp_group)
 

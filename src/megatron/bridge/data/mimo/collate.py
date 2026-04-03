@@ -22,6 +22,7 @@ def mimo_collate_fn(
         batch: List of examples from MimoDataset, each containing:
             - input_ids: Token IDs with placeholder tokens
             - labels: Labels for causal LM training
+            - loss_mask: Per-token loss mask
             - attention_mask: Attention mask
             - position_ids: Position indices
             - modality_inputs: Dict[str, Dict[str, Any]] with preprocessed inputs
@@ -31,6 +32,7 @@ def mimo_collate_fn(
         Dict containing:
             - input_ids: (batch, seq) stacked token IDs
             - labels: (batch, seq) stacked labels
+            - loss_mask: (batch, seq) stacked per-token loss mask
             - attention_mask: (batch, seq) attention mask
             - position_ids: (batch, seq) position indices
             - modality_inputs: Dict[str, Dict[str, Tensor]] with batched modality tensors

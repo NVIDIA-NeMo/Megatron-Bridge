@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional
 
 import torch.distributed as dist
 from megatron.core.models.mimo import MimoModel
@@ -34,8 +34,9 @@ from megatron.bridge.training.train_mimo import train_mimo
 
 
 if TYPE_CHECKING:
-    from megatron.core.optimizer.optimizer_config import OptimizerConfig
+    from megatron.core.models.mimo.optimizer import MimoOptimizer
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
+    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
 
     from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra, MimoModelProvider
 
@@ -61,7 +62,7 @@ def _set_mimo_random_seeds(
     import torch
     from megatron.core import tensor_parallel
 
-    seed = getattr(cfg, "seed", None) or getattr(getattr(cfg, "rng", None), "seed", None) or 1234
+    seed = cfg.rng.seed
 
     current_rank = dist.get_rank()
 
@@ -99,6 +100,8 @@ class MimoSetupOutput:
         multimodule_pg_collection: PG collection for schedule.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
         module_to_grid_tuple: List of (module, grid) tuples for gradient handling.
+        optimizer: MimoOptimizer (None when ``build_optimizer=False``).
+        schedulers: Per-module LR schedulers (empty when ``build_optimizer=False``).
         train_data_iterator: Training data iterator.
         valid_data_iterator: Validation data iterator (optional).
         global_state: GlobalState containing timers, config, train_state.
@@ -106,9 +109,11 @@ class MimoSetupOutput:
 
     model: "MimoModel"
     mimo_infra: "MimoModelInfra"
-    multimodule_pg_collection: Any
+    multimodule_pg_collection: "MultiModuleProcessGroupCollection"
     multimodule_communicator: MultiModulePipelineCommunicator
     module_to_grid_tuple: List
+    optimizer: Optional["MimoOptimizer"]
+    schedulers: Dict[str, "OptimizerParamScheduler"]
     train_data_iterator: Iterator
     valid_data_iterator: Optional[Iterator]
     global_state: GlobalState
@@ -118,6 +123,7 @@ def setup_mimo(
     cfg: ConfigContainer,
     mimo_provider: "MimoModelProvider",
     build_data_iterators_fn: Optional[Callable] = None,
+    build_optimizer: bool = True,
     global_state: Optional[GlobalState] = None,
 ) -> MimoSetupOutput:
     """MIMO-specific setup helper.
@@ -126,14 +132,18 @@ def setup_mimo(
     - Builds distributed model via MimoModelProvider
     - Builds MIMO infrastructure (grids, topology, pg_collections)
     - Creates MultiModulePipelineCommunicator
+    - Creates MimoOptimizer and per-module LR schedulers (when ``build_optimizer=True``)
     - Builds data iterators (if function provided)
     - Validates configuration
 
     Args:
-        cfg: ConfigContainer with training configuration.
+        cfg: ConfigContainer with training configuration.  ``cfg.optimizer``
+            is used to create the optimizer when ``build_optimizer=True``.
         mimo_provider: MimoModelProvider for building model and infrastructure.
         build_data_iterators_fn: Optional function to build data iterators.
             Should have signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
+        build_optimizer: Whether to create optimizer and schedulers.  Set to
+            ``False`` for inference or evaluation-only callers.
         global_state: Optional GlobalState. If not provided, creates a new one.
 
     Returns:
@@ -229,108 +239,30 @@ def setup_mimo(
     # Build module-to-grid tuple for gradient operations
     module_to_grid_tuple = get_module_to_grid_tuple(model, mimo_infra)
 
-    # Build data iterators if function provided
-    train_data_iterator = None
-    valid_data_iterator = None
-    if build_data_iterators_fn is not None:
-        logger.info(f"Rank {dist.get_rank()}: Building data iterators")
-        train_data_iterator, valid_data_iterator = build_data_iterators_fn(cfg, mimo_infra)
+    # Build optimizer and per-module LR schedulers
+    optimizer = None
+    schedulers: Dict[str, "OptimizerParamScheduler"] = {}
+    if build_optimizer:
+        unwrapped_model = unwrap_mimo_model(model)
+        if mimo_infra.module_to_grid_map:
+            assert unwrapped_model.mimo_config.module_to_grid_map is not None, (
+                "MimoModelConfig.module_to_grid_map must be set at model construction time. "
+                "Ensure MimoModelProvider.provide() passes module_to_grid_map for MIMO parallelism."
+            )
 
-    logger.info(f"Rank {dist.get_rank()}: MIMO setup complete")
+        logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
+        from megatron.core.models.mimo.optimizer import get_mimo_optimizer
 
-    return MimoSetupOutput(
-        model=model,
-        mimo_infra=mimo_infra,
-        multimodule_pg_collection=multimodule_pg_collection,
-        multimodule_communicator=multimodule_communicator,
-        module_to_grid_tuple=module_to_grid_tuple,
-        train_data_iterator=train_data_iterator,
-        valid_data_iterator=valid_data_iterator,
-        global_state=global_state,
-    )
+        opt_config = cfg.optimizer
+        if hasattr(opt_config, "finalize"):
+            opt_config.finalize()
 
+        optimizer = get_mimo_optimizer(unwrapped_model, opt_config)
 
-def pretrain_mimo(
-    cfg: ConfigContainer,
-    mimo_provider: "MimoModelProvider",
-    forward_step_func: Callable,
-    build_data_iterators_fn: Callable,
-    opt_config: "OptimizerConfig",
-    schedulers: Optional[Dict[str, "OptimizerParamScheduler"]] = None,
-    global_state: Optional[GlobalState] = None,
-) -> None:
-    """Entry point for MIMO pretraining.
-
-    Steps:
-    1. Call setup_mimo() to get model, infra, communicators
-    2. Validate constructor-time MIMO config wiring
-    3. Create MimoOptimizer using get_mimo_optimizer()
-    4. Call train_mimo() with all components
-
-    Args:
-        cfg: ConfigContainer with training configuration.
-        mimo_provider: MimoModelProvider for building model and infrastructure.
-        forward_step_func: Forward step function for training.
-        build_data_iterators_fn: Function to build data iterators.
-            Signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
-        opt_config: OptimizerConfig for creating MimoOptimizer.
-        schedulers: Per-module learning rate schedulers {module_name: scheduler}.
-        global_state: Optional GlobalState. If not provided, creates a new one.
-    """
-    if schedulers is None:
-        schedulers = {}
-
-    logger.info("Starting MIMO pretraining")
-
-    # Ensure optimizer config computes derived fields expected by core optimizers.
-    if hasattr(opt_config, "finalize"):
-        opt_config.finalize()
-
-    # Initialize num-microbatches calculator if not already set.
-    from megatron.core import num_microbatches_calculator as nmc
-
-    if nmc._GLOBAL_NUM_MICROBATCHES_CALCULATOR is None:
-        nmc.init_num_microbatches_calculator(
-            dist.get_rank(),
-            getattr(cfg.train, "rampup_batch_size", None),
-            cfg.train.global_batch_size,
-            cfg.train.micro_batch_size,
-            cfg.data_parallel_size,
-            getattr(cfg.train, "decrease_batch_size_if_needed", False),
-        )
-
-    # Setup MIMO components
-    setup_output = setup_mimo(
-        cfg=cfg,
-        mimo_provider=mimo_provider,
-        build_data_iterators_fn=build_data_iterators_fn,
-        global_state=global_state,
-    )
-
-    # Unwrap Float16Module/DDP wrapper to access mimo_config on the underlying MimoModel
-    unwrapped_model = unwrap_mimo_model(setup_output.model)
-    if setup_output.mimo_infra.module_to_grid_map:
-        # Role/materialization decisions happen in MimoModel.__init__. Provider wiring
-        # must pass these fields at construction time, not by mutating afterwards.
-        assert unwrapped_model.mimo_config.module_to_grid_map is not None, (
-            "MimoModelConfig.module_to_grid_map must be set at model construction time. "
-            "Ensure MimoModelProvider.provide() passes module_to_grid_map for MIMO parallelism."
-        )
-    logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
-
-    # Create MimoOptimizer using the factory function
-    # Note: get_mimo_optimizer needs the unwrapped MimoModel to access mimo_config and submodules
-    from megatron.core.models.mimo.optimizer import get_mimo_optimizer
-
-    optimizer = get_mimo_optimizer(unwrapped_model, opt_config)
-
-    # Auto-create per-module LR schedulers when none are provided
-    if not schedulers:
+        # Auto-create per-module LR schedulers
         cfg._calculate_scheduler_steps()
-
         from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 
-        schedulers = {}
         for name, info in optimizer.module_infos.items():
             if info.is_active and info.optimizer is not None:
                 schedulers[name] = OptimizerParamScheduler(
@@ -352,19 +284,105 @@ def pretrain_mimo(
                 )
         logger.info(f"Rank {dist.get_rank()}: Auto-created schedulers for modules: {list(schedulers.keys())}")
 
+    # Build data iterators if function provided
+    train_data_iterator = None
+    valid_data_iterator = None
+    if build_data_iterators_fn is not None:
+        logger.info(f"Rank {dist.get_rank()}: Building data iterators")
+        train_data_iterator, valid_data_iterator = build_data_iterators_fn(cfg, mimo_infra)
+
+    logger.info(f"Rank {dist.get_rank()}: MIMO setup complete")
+
+    return MimoSetupOutput(
+        model=model,
+        mimo_infra=mimo_infra,
+        multimodule_pg_collection=multimodule_pg_collection,
+        multimodule_communicator=multimodule_communicator,
+        module_to_grid_tuple=module_to_grid_tuple,
+        optimizer=optimizer,
+        schedulers=schedulers,
+        train_data_iterator=train_data_iterator,
+        valid_data_iterator=valid_data_iterator,
+        global_state=global_state,
+    )
+
+
+def pretrain_mimo(
+    cfg: ConfigContainer,
+    mimo_provider: "MimoModelProvider",
+    forward_step_func: Callable,
+    build_data_iterators_fn: Callable,
+    schedulers: Optional[Dict[str, "OptimizerParamScheduler"]] = None,
+    global_state: Optional[GlobalState] = None,
+) -> None:
+    """Entry point for MIMO pretraining.
+
+    Steps:
+    1. Call setup_mimo() to get model, optimizer, schedulers, infra, communicators
+    2. Call train_mimo() with all components
+
+    Args:
+        cfg: ConfigContainer with training configuration.  ``cfg.optimizer``
+            (a ``BridgeOptimizerConfig``, which inherits from MCore's
+            ``OptimizerConfig``) is used to create the ``MimoOptimizer``
+            and per-module LR schedulers.
+        mimo_provider: MimoModelProvider for building model and infrastructure.
+        forward_step_func: Forward step function for training.
+        build_data_iterators_fn: Function to build data iterators.
+            Signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
+        schedulers: Per-module learning rate schedulers {module_name: scheduler}.
+            If not provided, auto-created from ``cfg.optimizer`` and ``cfg.scheduler``.
+        global_state: Optional GlobalState. If not provided, creates a new one.
+    """
+    logger.info("Starting MIMO pretraining")
+
+    # MIMO: data_parallel_size is always 1 from the training loop's perspective.
+    # All ranks load the same global micro-batch; per-module DP sharding is handled
+    # by slice_batch_for_mimo() in the forward step, not by the data loader or
+    # training loop.  Hard-coding this avoids requiring callers to set it manually
+    # and prevents incorrect consumed-sample / scheduler-increment calculations.
+    cfg.data_parallel_size = 1
+
+    # Initialize num-microbatches calculator if not already set.
+    from megatron.core import num_microbatches_calculator as nmc
+
+    if nmc._GLOBAL_NUM_MICROBATCHES_CALCULATOR is None:
+        nmc.init_num_microbatches_calculator(
+            dist.get_rank(),
+            getattr(cfg.train, "rampup_batch_size", None),
+            cfg.train.global_batch_size,
+            cfg.train.micro_batch_size,
+            cfg.data_parallel_size,
+            getattr(cfg.train, "decrease_batch_size_if_needed", False),
+        )
+
+    # Setup all MIMO components (model, optimizer, schedulers, data, communicators)
+    setup_output = setup_mimo(
+        cfg=cfg,
+        mimo_provider=mimo_provider,
+        build_data_iterators_fn=build_data_iterators_fn,
+        build_optimizer=True,
+        global_state=global_state,
+    )
+
+    # Allow caller-provided schedulers to override auto-created ones
+    final_schedulers = schedulers if schedulers else setup_output.schedulers
+
     logger.info(f"Rank {dist.get_rank()}: Starting training loop")
 
     # Run training loop
     train_mimo(
         forward_step_func=forward_step_func,
         model=setup_output.model,
-        optimizer=optimizer,
-        schedulers=schedulers,
+        optimizer=setup_output.optimizer,
+        schedulers=final_schedulers,
         train_data_iterator=setup_output.train_data_iterator,
         valid_data_iterator=setup_output.valid_data_iterator,
         global_state=setup_output.global_state,
         mimo_infra=setup_output.mimo_infra,
         multimodule_communicator=setup_output.multimodule_communicator,
+        multimodule_pg_collection=setup_output.multimodule_pg_collection,
+        module_to_grid_tuple=setup_output.module_to_grid_tuple,
     )
 
     logger.info("MIMO pretraining completed")
