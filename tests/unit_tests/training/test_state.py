@@ -521,9 +521,7 @@ class TestGlobalState:
         mock_async_queue_cls = MagicMock(return_value=mock_async_queue)
         mock_modules = {"AsyncCallsQueue": mock_async_queue_cls, "get_write_results_queue": MagicMock()}
 
-        with patch(
-            "megatron.bridge.training.state.get_async_strategy", return_value=("mcore", mock_modules)
-        ):
+        with patch("megatron.bridge.training.state.get_async_strategy", return_value=("mcore", mock_modules)):
             state.initialize_async_checkpoint_worker()
 
             mock_async_queue_cls.assert_called_once_with(persistent=True)
