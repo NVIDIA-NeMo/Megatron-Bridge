@@ -2556,13 +2556,19 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
 
 
 def split_qkv_weights(
-    provider: TransformerConfig, qkv: torch.Tensor
+    provider: TransformerConfig,
+    qkv: torch.Tensor,
+    feature_dim: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Split Megatron's interleaved QKV tensor into separate Q, K, V matrices.
 
     Args:
         provider (TransformerConfig): Model configuration provider.
         qkv (torch.Tensor): Interleaved QKV weights in Megatron format.
+        feature_dim: Trailing tensor dimension used for reshape/split.
+            Defaults to ``provider.hidden_size`` for base weights, but LoRA
+            paths can pass the adapter rank here to bypass the FP8 scale
+            inference logic.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple of (Q, K, V)
@@ -2583,6 +2589,10 @@ def split_qkv_weights(
     if is_bias:
         hidden_size = 1
         qkv_reshaped = qkv.view(qkv_total_dim, head_size)
+    elif feature_dim is not None:
+        # Explicit feature_dim (e.g. LoRA rank) — use it directly, no FP8 inference.
+        hidden_size = feature_dim
+        qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
     else:
         hidden_size = qkv.shape[-1]
         qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
