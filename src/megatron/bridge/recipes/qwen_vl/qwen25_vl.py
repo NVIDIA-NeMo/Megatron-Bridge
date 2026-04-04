@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Qwen2.5-VL finetuning recipes with parameterless API.
+"""Qwen2.5-VL and Qwen2.5-Omni finetuning recipes with parameterless API.
 
-This module provides SFT and PEFT configurations for Qwen2.5-VL models (3B, 7B, 32B, 72B).
+This module provides SFT and PEFT configurations for Qwen2.5-VL models (3B, 7B, 32B, 72B)
+and Qwen2.5-Omni 7B (``qwen25_omni_7b_*`` entry points).
 """
 
 import torch
+from typing import Any
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
@@ -1054,12 +1056,15 @@ def _qwen25_omni_7b_peft_branch(peft_scheme: str | PEFT) -> ConfigContainer:
     return cfg
 
 
-def qwen25_omni_7b_finetune_config(peft_scheme: str | PEFT | None = None) -> ConfigContainer:
+def qwen25_omni_7b_finetune_config(peft_scheme: str | PEFT | None = None, **_kwargs: Any) -> ConfigContainer:
     """Fine-tuning entry point for Qwen2.5-Omni 7B (full SFT vs PEFT).
 
     - ``peft_scheme`` is ``None`` or ``"none"`` → full SFT (TP=4, sequence parallel).
     - Otherwise → PEFT (``"lora"``, ``"dora"``, or a :class:`~megatron.bridge.peft.base.PEFT` instance).
+    ``finetune_qwen_vl.py`` may pass ``peft=`` via kwargs instead of ``peft_scheme``.
     """
+    if peft_scheme is None and "peft" in _kwargs:
+        peft_scheme = _kwargs.get("peft")
     is_full_sft = peft_scheme is None or (
         isinstance(peft_scheme, str) and peft_scheme.lower() == "none"
     )
@@ -1068,7 +1073,7 @@ def qwen25_omni_7b_finetune_config(peft_scheme: str | PEFT | None = None) -> Con
     return _qwen25_omni_7b_peft_branch(peft_scheme)
 
 
-def qwen25_omni_7b_pretrain_config() -> ConfigContainer:
+def qwen25_omni_7b_pretrain_config(**_kwargs: Any) -> ConfigContainer:
     """Pre-training style preset: freeze language + vision towers, train projection (Omni 7B)."""
     cfg = _sft_common_vlm()
     hf_path = "Qwen/Qwen2.5-Omni-7B-Instruct"
@@ -1126,3 +1131,10 @@ def qwen25_omni_7b_pretrain_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.mixed_precision = "bf16_mixed"
     return cfg
+
+
+# Docstring / CLI examples refer to *_finetune_config; SFT entry points are the canonical implementations.
+qwen25_vl_3b_finetune_config = qwen25_vl_3b_sft_config
+qwen25_vl_7b_finetune_config = qwen25_vl_7b_sft_config
+qwen25_vl_32b_finetune_config = qwen25_vl_32b_sft_config
+qwen25_vl_72b_finetune_config = qwen25_vl_72b_sft_config

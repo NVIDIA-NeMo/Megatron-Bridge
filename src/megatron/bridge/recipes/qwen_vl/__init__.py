@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Qwen2.5-VL models
+# Qwen2.5-VL and Qwen2.5-Omni models
 # Qwen3-VL models
 from .qwen3_vl import (
     qwen3_vl_8b_peft_config,
@@ -24,6 +24,8 @@ from .qwen3_vl import (
     qwen3_vl_235b_a22b_sft_config,
 )
 from .qwen25_vl import (
+    qwen25_omni_7b_finetune_config,
+    qwen25_omni_7b_pretrain_config,
     qwen25_vl_3b_peft_config,
     qwen25_vl_3b_sft_config,
     qwen25_vl_7b_peft_config,
@@ -86,6 +88,9 @@ __all__ = [
     "qwen25_vl_7b_peft_config",
     "qwen25_vl_32b_peft_config",
     "qwen25_vl_72b_peft_config",
+    # Qwen2.5-Omni (thinker-side; HF Qwen2.5-Omni-7B-Instruct)
+    "qwen25_omni_7b_finetune_config",
+    "qwen25_omni_7b_pretrain_config",
     # Qwen3-VL SFT configs
     "qwen3_vl_8b_sft_config",
     "qwen3_vl_30b_a3b_sft_config",

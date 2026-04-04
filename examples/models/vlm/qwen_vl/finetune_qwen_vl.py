@@ -16,8 +16,8 @@
 """
 Unified Qwen-VL Finetuning Script with YAML and CLI Configuration Overrides.
 
-Supports both Qwen2.5-VL and Qwen3-VL models (dense and MoE variants).
-You can pick a specific recipe via `--recipe`.
+Supports Qwen2.5-VL, Qwen2.5-Omni (via the same training stack as 2.5-VL), and Qwen3-VL
+models (dense and MoE variants). You can pick a specific recipe via `--recipe`.
 
 Examples:
     Convert HF checkpoint to Megatron format:
@@ -52,6 +52,11 @@ Examples:
                 --recipe qwen25_vl_7b_finetune_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen25_vl_7b
 
+        Qwen2.5-Omni 7B (full SFT defaults to TP=4 and sequence parallel; use PEFT for smaller TP):
+            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \\
+                --recipe qwen25_omni_7b_finetune_config \\
+                --pretrained-checkpoint ./logs/checkpoints/qwen25_omni_7b
+
         Qwen3-VL 8B (dense):
             $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen3_vl_8b_finetune_config \\
@@ -79,6 +84,10 @@ Available Recipes:
     Qwen2.5-VL:
         - qwen25_vl_3b_finetune_config: 3B model
         - qwen25_vl_7b_finetune_config: 7B model
+
+    Qwen2.5-Omni:
+        - qwen25_omni_7b_finetune_config: 7B Omni (image/video/text; recipes align with TP/SP defaults in code)
+        - qwen25_omni_7b_pretrain_config: projection-focused pretrain preset (freezes LM and vision encoder by default)
 
     Qwen3-VL:
         - qwen3_vl_8b_finetune_config: Dense 8B model
@@ -119,7 +128,7 @@ DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     """Parse known script args and return remaining as Hydra-style overrides."""
     parser = argparse.ArgumentParser(
-        description="Finetune Qwen-VL models (Qwen2.5-VL and Qwen3-VL) with YAML and CLI overrides",
+        description="Finetune Qwen-VL models (Qwen2.5-VL, Qwen2.5-Omni, Qwen3-VL) with YAML and CLI overrides",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -165,6 +174,9 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
             "Qwen2.5-VL recipes:\n"
             "  - qwen25_vl_3b_finetune_config: 3B model (default)\n"
             "  - qwen25_vl_7b_finetune_config: 7B model\n"
+            "Qwen2.5-Omni recipes:\n"
+            "  - qwen25_omni_7b_finetune_config: 7B Omni instruct\n"
+            "  - qwen25_omni_7b_pretrain_config: 7B Omni pretrain preset\n"
             "Qwen3-VL recipes:\n"
             "  - qwen3_vl_8b_finetune_config: Dense 8B model\n"
             "  - qwen3_vl_30b_a3b_finetune_config: MoE 30B model\n"
@@ -212,9 +224,9 @@ def main() -> None:
         recipe_module = qwen3_vl_recipes
         model_family = "Qwen3-VL"
         forward_step_func = qwen3_vl_forward_step
-    elif recipe_name.startswith("qwen25"):  # qwen25
+    elif recipe_name.startswith("qwen25"):  # qwen25_vl_* and qwen25_omni_*
         recipe_module = qwen25_vl_recipes
-        model_family = "Qwen2.5-VL"
+        model_family = "Qwen2.5-Omni" if "omni" in recipe_name else "Qwen2.5-VL"
         forward_step_func = vlm_forward_step
     else:
         raise ValueError(f"Unknown recipe name: {recipe_name}")

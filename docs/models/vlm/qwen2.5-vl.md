@@ -122,6 +122,32 @@ model.freeze_vision_projection=False \
 checkpoint.save=$SAVE_DIR/<experiment name>
 ```
 
+### Qwen2.5-Omni
+
+[Qwen2.5-Omni](https://huggingface.co/Qwen/Qwen2.5-Omni-7B) extends the Qwen2.5-VL stack with audio and speech-generation heads in Hugging Face. In Megatron Bridge, checkpoint conversion and training for the **thinker** (language + vision + audio tower weights) follow the same tooling as Qwen2.5-VL: `Qwen25OmniBridge` maps
+`Qwen2_5OmniForConditionalGeneration` to the Megatron `Qwen25OmniModel` stack (thinker/talker/token2wav), with weight mappings for `thinker.*`, `talker.*`, and `token2wav.*` so round-trip conversion stays consistent with the HF checkpoint layout.
+
+Use the unified finetune entrypoint `examples/models/vlm/qwen_vl/finetune_qwen_vl.py` with the Omni-specific recipes (defaults include **sequence parallel** when tensor parallelism is enabled, and full SFT uses a higher default TP than PEFT):
+
+```bash
+torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \
+--pretrained-checkpoint $MEGATRON_MODEL_PATH \
+--recipe qwen25_omni_7b_finetune_config \
+--dataset-type hf \
+dataset.maker_name=make_cord_v2_dataset \
+train.global_batch_size=<batch size> \
+train.train_iters=<number of iterations> \
+checkpoint.save=$SAVE_DIR/<experiment name>
+```
+
+For the pretrain-style preset (freezes language and vision by default; trains projection path per recipe), use `qwen25_omni_7b_pretrain_config`.
+
+Recipe identifiers:
+- `qwen25_omni_7b_finetune_config` — 7B instruct; full SFT defaults to larger TP and sequence parallel; PEFT defaults to TP=1.
+- `qwen25_omni_7b_pretrain_config` — 7B with frozen LM and vision encoder unless overridden.
+
+Set `HF_MODEL_PATH=Qwen/Qwen2.5-Omni-7B-Instruct` (or the base weight you imported) for conversion commands in the sections above; the import/export CLI is unchanged from Qwen2.5-VL.
+
 
 ## Example Datasets
 
@@ -140,4 +166,6 @@ To change the dataset, specify `dataset.maker_name=make_raven_dataset`
 - Qwen2.5-VL-7B: `https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct`
 - Qwen2.5-VL-32B: `https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct`
 - Qwen2.5-VL-72B: `https://huggingface.co/Qwen/Qwen2.5-VL-72B-Instruct`
+- Qwen2.5-Omni-7B: `https://huggingface.co/Qwen/Qwen2.5-Omni-7B`
+- Qwen2.5-Omni-7B Instruct: `https://huggingface.co/Qwen/Qwen2.5-Omni-7B-Instruct`
 

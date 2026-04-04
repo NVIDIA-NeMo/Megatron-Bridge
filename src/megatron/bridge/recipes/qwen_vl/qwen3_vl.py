@@ -908,3 +908,9 @@ def qwen3_vl_8b_peft_energon_config(peft_scheme: str | PEFT = "lora") -> ConfigC
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
     cfg.dataset = _make_energon_dataset(hf_path, 4096, cfg.train.micro_batch_size, cfg.train.global_batch_size)
     return cfg
+
+
+# Docstring / CLI examples refer to *_finetune_config; SFT entry points are the canonical implementations.
+qwen3_vl_8b_finetune_config = qwen3_vl_8b_sft_config
+qwen3_vl_30b_a3b_finetune_config = qwen3_vl_30b_a3b_sft_config
+qwen3_vl_235b_a22b_finetune_config = qwen3_vl_235b_a22b_sft_config
