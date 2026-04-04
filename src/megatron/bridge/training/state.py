@@ -397,9 +397,7 @@ class GlobalState:
         ):
             async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
             async_calls_queue_cls = async_modules["AsyncCallsQueue"]
-            self._async_calls_queue = async_calls_queue_cls(
-                persistent=self.cfg.checkpoint.use_persistent_ckpt_worker
-            )
+            self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
 
             if self.cfg.checkpoint.use_persistent_ckpt_worker:
                 warmup_kwargs = {
