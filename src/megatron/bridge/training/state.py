@@ -412,7 +412,7 @@ class GlobalState:
                 async_modules["get_write_results_queue"]("fork")
 
     @property
-    def async_calls_queue(self) -> Optional["AsyncCallsQueue"]:
+    def async_calls_queue(self) -> Optional[Any]:
         """The AsyncCallsQueue instance for handling asynchronous checkpoint saves."""
         return self._async_calls_queue
 
