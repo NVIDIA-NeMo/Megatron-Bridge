@@ -220,6 +220,10 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cpu_offloading_num_layers=settings.cpu_offloading_num_layers,
         recompute_num_layers=settings.recompute_num_layers,
     )
+    if settings.te_precision_config_file is not None:
+        from megatron.core.quantization.utils import load_quantization_recipe
+
+        cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
 
     if settings.moe_flex_dispatcher_backend is not None:
