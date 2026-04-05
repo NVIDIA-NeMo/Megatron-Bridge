@@ -106,9 +106,9 @@ class GPTOSSBridge(MegatronModelBridge):
     ) -> torch.Tensor:
         """Load weights from HuggingFace state dict with MXFP4 dequantization support.
 
-        down_proj expert weights are stored transposed vs Megatron (HF: [in, out], Megatron: [out, in]).
-        We transpose them once here so that GPTOSSMLPDownProjMapping.hf_to_megatron can treat the
-        per-expert slice as-is, and megatron_to_hf symmetrically transposes back on export.
+        down_proj transpose on export is handled in GPTOSSMLPDownProjMapping.megatron_to_hf,
+        which transposes the per-expert weight from Megatron's [in, out] storage to
+        HF's expected [out, in] layout.
 
         gate_up_proj is handled directly in GPTOSSMLPGateUpProjMapping.hf_to_megatron via
         _align_expert_weight_to_shape, which auto-detects the orientation difference between
@@ -118,15 +118,11 @@ class GPTOSSBridge(MegatronModelBridge):
         if isinstance(hf_param, str):
             if hf_param in hf_state_dict:
                 hf_weights = hf_state_dict[hf_param]
-                if ".mlp.experts.down_proj" in hf_param and hf_weights.ndim == 3:
-                    hf_weights = hf_weights.transpose(-1, -2)
                 return hf_weights
             blocks_key = hf_param + "_blocks"
             scales_key = hf_param + "_scales"
             if blocks_key in hf_state_dict and scales_key in hf_state_dict:
                 hf_weights = _dequantize_mxfp4(hf_state_dict[blocks_key], hf_state_dict[scales_key])
-                if ".mlp.experts.down_proj" in hf_param and hf_weights.ndim == 3:
-                    hf_weights = hf_weights.transpose(-1, -2)
                 return hf_weights
             raise KeyError(
                 f"Cannot locate weights for '{hf_param}'. Missing both de-quantized tensor and "
@@ -218,7 +214,8 @@ class GPTOSSBridge(MegatronModelBridge):
 class GPTOSSMLPDownProjMapping(AutoMapping):
     """MLPDownProj for expert weights in GPT-OSS models.
 
-    GPT-OSS stores fc2 weight transposed vs Megatron when using BF16.
+    megatron_to_hf transposes the per-expert weight from Megatron's [in, out]
+    storage to HF's expected [out, in] layout.
     """
 
     is_grouped_export = True
