@@ -19,12 +19,12 @@ src/megatron/bridge/recipes/<family>/
 Each model size gets dedicated functions for SFT, PEFT, and optionally pretrain:
 
 ```python
-def <model>_<size>_sft_config(hf_path: str = "<org>/<default-model>") -> ConfigContainer:
+def <model>_<size>_sft_config() -> ConfigContainer:
     """SFT config for <Model> <Size>."""
     cfg = _sft_common()  # or _sft_common_vlm() for VLMs
 
     # Model
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_provider(load_weights=False)
 
     # Parallelism
     cfg.model.tensor_model_parallel_size = 4
@@ -49,13 +49,12 @@ def <model>_<size>_sft_config(hf_path: str = "<org>/<default-model>") -> ConfigC
 
 
 def <model>_<size>_peft_config(
-    hf_path: str = "<org>/<default-model>",
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """PEFT config for <Model> <Size>."""
     cfg = _peft_common()  # or _peft_common_vlm() for VLMs
 
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_provider(load_weights=False)
 
     # PEFT typically uses smaller parallelism
     cfg.model.tensor_model_parallel_size = 1
