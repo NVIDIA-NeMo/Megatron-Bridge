@@ -22,11 +22,9 @@ MiMo-V2-Flash from Xiaomi features:
 - Dual rope bases: 5M (full attn) and 10K (SWA)
 """
 
-from functools import partial
 from typing import Mapping
 
 import torch
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -35,17 +33,49 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
     QKVMapping,
+    merge_qkv_weights,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider import MiMoV2FlashModelProvider
 
 
-try:
-    import transformer_engine  # noqa: F401
+# softmax_offset (attention sink bias) is shape [num_heads], sharded along dim 0 by TP
+# (see TE's sharded_state_dict: {'softmax_offset': 0})
+AutoMapping.register_module_type("MiMoV2FlashTEDotProductAttention", "column")
 
-    HAVE_TE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TE = False
+
+class MiMoV2FlashQKVMapping(QKVMapping):
+    """QKV mapping for MiMo-V2-Flash asymmetric head dims.
+
+    MiMo-V2-Flash uses head_dim=192 for Q/K but v_head_dim=128 for V.
+    Standard merge_qkv_weights uses kv_channels (192) for all three,
+    causing a shape mismatch for V. We temporarily patch v_head_dim onto
+    the config before merging.
+    """
+
+    def hf_to_megatron(self, hf_weights, megatron_module):
+        if self.tp_rank == 0:
+            config = self._get_config(megatron_module)
+            q, k, v = hf_weights["q"], hf_weights["k"], hf_weights["v"]
+            if q.ndim == 2:
+                num_heads = config.num_attention_heads
+                num_qg = config.num_query_groups
+                heads_per_group = num_heads // num_qg
+                qk_ch = config.kv_channels
+                v_ch = config.v_head_dim
+
+                merged_rows = []
+                for i in range(num_qg):
+                    merged_rows.append(q[i * heads_per_group * qk_ch : (i + 1) * heads_per_group * qk_ch])
+                    merged_rows.append(k[i * qk_ch : (i + 1) * qk_ch])
+                    merged_rows.append(v[i * v_ch : (i + 1) * v_ch])
+                merged = torch.cat(merged_rows, dim=0)
+            else:
+                merged = merge_qkv_weights(config, q, k, v)
+        else:
+            merged = None
+        return self._tp_mapping.hf_to_megatron(merged, megatron_module)
+
 
 _FP8_BLOCK_SIZE = 128
 
@@ -79,9 +109,6 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        # Required for mixed dense+MoE layers (moe_layer_freq)
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
-
         # Dual RoPE bases: (SWA local theta, full attention global theta)
         provider.rotary_base = (hf_config.swa_rope_theta, hf_config.rope_theta)
 
@@ -90,6 +117,12 @@ class MiMoV2FlashBridge(MegatronModelBridge):
 
         # Sliding window size for SWA layers
         provider.window_size = hf_config.sliding_window_size
+
+        # HF uses non-standard "layernorm_epsilon" name; CONFIG_MAPPING expects rms_norm_eps
+        provider.layernorm_epsilon = hf_config.layernorm_epsilon
+
+        # Asymmetric V head dimension (Q/K use kv_channels, V uses v_head_dim)
+        provider.v_head_dim = hf_config.v_head_dim
 
         # Per-layer KV head counts (full attention vs SWA layers)
         provider.full_attn_num_query_groups = hf_config.num_key_value_heads
@@ -112,7 +145,7 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         provider.add_swa_attention_sink_bias = hf_config.add_swa_attention_sink_bias
         provider.add_full_attention_sink_bias = hf_config.add_full_attention_sink_bias
 
-        # Attention value scale (0.707)
+        # Attention value scale
         provider.attention_value_scale = hf_config.attention_value_scale
 
         return provider
@@ -135,6 +168,9 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         hf_cfg["sliding_window_size"] = window
         hf_cfg["sliding_window"] = window
 
+        # Asymmetric V head dim
+        hf_cfg["v_head_dim"] = provider.v_head_dim
+
         # Per-layer KV heads
         hf_cfg["num_key_value_heads"] = provider.full_attn_num_query_groups
         hf_cfg["swa_num_key_value_heads"] = provider.swa_num_query_groups
@@ -148,6 +184,9 @@ class MiMoV2FlashBridge(MegatronModelBridge):
 
         # Attention value scale
         hf_cfg["attention_value_scale"] = provider.attention_value_scale
+
+        # MCore renormalizes top-k probs for sigmoid scoring with topk > 1 (moe_utils.py:797)
+        hf_cfg["norm_topk_prob"] = True
 
         # layernorm_epsilon: HF config uses this name, CONFIG_MAPPING maps rms_norm_eps so it's missed
         hf_cfg["layernorm_epsilon"] = provider.layernorm_epsilon
@@ -164,17 +203,39 @@ class MiMoV2FlashBridge(MegatronModelBridge):
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
             # Attention 
-            "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             "decoder.layers.*.self_attention.core_attention.softmax_offset": "model.layers.*.self_attn.attention_sink_bias",
             "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
             # Dense MLP
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
             # MoE
             "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
             "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
             "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
         }
+        mapping_list.extend([
+            # QKV projection — uses custom mapping to handle asymmetric v_head_dim
+            MiMoV2FlashQKVMapping(
+                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                q="model.layers.*.self_attn.q_proj.weight",
+                k="model.layers.*.self_attn.k_proj.weight",
+                v="model.layers.*.self_attn.v_proj.weight",
+            ),
+            # Dense MLP gate+up
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
+                gate="model.layers.*.mlp.gate_proj.weight",
+                up="model.layers.*.mlp.up_proj.weight",
+            ),
+            # MoE experts gate+up
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                gate="model.layers.*.mlp.experts.*.gate_proj.weight",
+                up="model.layers.*.mlp.experts.*.up_proj.weight",
+            ),
+        ])
         mtp_keys = {
             "enorm.weight" : "enorm.weight",
             "eh_proj.weight" : "eh_proj.weight",
@@ -206,7 +267,7 @@ class MiMoV2FlashBridge(MegatronModelBridge):
             layer_path = f"mtp.layers.*.{layer_prefix}"
             mapping_list.extend(
                 [
-                    QKVMapping(
+                    MiMoV2FlashQKVMapping(
                         megatron_param=f"{layer_path}.self_attention.linear_qkv.weight",
                         q="model.mtp.layers.*.self_attn.q_proj.weight",
                         k="model.mtp.layers.*.self_attn.k_proj.weight",
