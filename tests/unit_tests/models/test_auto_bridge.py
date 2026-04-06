@@ -405,6 +405,82 @@ class TestAutoBridge:
         with pytest.raises(ValueError, match="Model architecture not supported by AutoBridge"):
             AutoBridge.from_hf_config(config)
 
+    def test_from_auto_config_happy_path(self, tmp_path):
+        """from_auto_config synthesizes config and tags bridge with source model id."""
+        ckpt_dir = tmp_path / "ckpt"
+        ckpt_dir.mkdir()
+        (ckpt_dir / "run_config.yaml").write_text("dummy: true\n")
+
+        mock_hf_cfg = Mock()
+        mock_hf_cfg.to_dict.return_value = {"vocab_size": 32000}
+
+        first_bridge = Mock()
+        first_bridge._model_bridge.megatron_to_hf_config.return_value = {"vocab_size": 64000}
+        second_bridge = Mock()
+
+        hf_model_id = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+
+        with patch("transformers.AutoConfig.from_pretrained", return_value=mock_hf_cfg) as mock_auto_cfg:
+            with patch(
+                "megatron.bridge.training.model_load_save.load_model_config",
+                return_value=(Mock(name="megatron_cfg"), None),
+            ) as mock_load_cfg:
+                with patch(
+                    "megatron.bridge.models.conversion.utils.conform_config_to_reference",
+                    return_value={"vocab_size": 64000},
+                ) as mock_conform:
+                    with patch.object(AutoBridge, "from_hf_config", side_effect=[first_bridge, second_bridge]):
+                        bridge = AutoBridge.from_auto_config(str(ckpt_dir), hf_model_id)
+
+        assert bridge is second_bridge
+        assert second_bridge.hf_model_id == hf_model_id
+        mock_auto_cfg.assert_called_once_with(hf_model_id, trust_remote_code=False)
+        mock_load_cfg.assert_called_once_with(str(ckpt_dir))
+        mock_conform.assert_called_once_with({"vocab_size": 64000}, {"vocab_size": 32000})
+
+    def test_from_auto_config_uses_latest_iter_run_config(self, tmp_path):
+        """from_auto_config falls back to latest iter_* directory for run_config.yaml."""
+        ckpt_dir = tmp_path / "ckpt"
+        ckpt_dir.mkdir()
+        (ckpt_dir / "iter_0000001").mkdir()
+        iter_latest = ckpt_dir / "iter_0000003"
+        iter_latest.mkdir()
+        (iter_latest / "run_config.yaml").write_text("dummy: true\n")
+
+        mock_hf_cfg = Mock()
+        mock_hf_cfg.to_dict.return_value = {"vocab_size": 32000}
+        first_bridge = Mock()
+        first_bridge._model_bridge.megatron_to_hf_config.return_value = {"vocab_size": 64000}
+        second_bridge = Mock()
+
+        with patch("transformers.AutoConfig.from_pretrained", return_value=mock_hf_cfg):
+            with patch(
+                "megatron.bridge.training.model_load_save.load_model_config",
+                return_value=(Mock(name="megatron_cfg"), None),
+            ) as mock_load_cfg:
+                with patch(
+                    "megatron.bridge.models.conversion.utils.conform_config_to_reference",
+                    return_value={"vocab_size": 64000},
+                ):
+                    with patch.object(AutoBridge, "from_hf_config", side_effect=[first_bridge, second_bridge]):
+                        AutoBridge.from_auto_config(str(ckpt_dir), "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
+
+        mock_load_cfg.assert_called_once_with(str(iter_latest))
+
+    def test_from_auto_config_missing_checkpoint_path(self):
+        """from_auto_config fails with clear message for nonexistent checkpoint root."""
+        with pytest.raises(FileNotFoundError, match="Megatron checkpoint not found"):
+            AutoBridge.from_auto_config("/definitely/not/a/path", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
+
+    def test_from_auto_config_missing_run_config(self, tmp_path):
+        """from_auto_config fails if no run_config.yaml is found."""
+        ckpt_dir = tmp_path / "ckpt"
+        ckpt_dir.mkdir()
+        (ckpt_dir / "iter_0000001").mkdir()
+
+        with pytest.raises(FileNotFoundError, match="Could not find run_config.yaml"):
+            AutoBridge.from_auto_config(str(ckpt_dir), "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
+
     def test_supports_method(self):
         """Test the supports class method."""
         # Supported config
