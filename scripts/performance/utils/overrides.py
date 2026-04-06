@@ -22,6 +22,7 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipelin
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
@@ -131,7 +132,7 @@ def _set_recompute_overrides(
     recompute_modules: Optional[List[str]] = None,
 ) -> ConfigContainer:
     """Set the recompute and CPU offloading overrides."""
-    if cpu_offloading_num_layers is not None:
+    if cpu_offloading_num_layers is not None and cpu_offloading_num_layers > 0:
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
@@ -219,7 +220,16 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cpu_offloading_num_layers=settings.cpu_offloading_num_layers,
         recompute_num_layers=settings.recompute_num_layers,
     )
+    if settings.te_precision_config_file is not None:
+        from megatron.core.quantization.utils import load_quantization_recipe
+
+        cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
+
+    if settings.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)
+    else:
+        cfg.model.moe_token_dispatcher_type = "alltoall"
 
     return cfg
 
@@ -427,6 +437,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
 
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
+
+    if args.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
+    else:
+        recipe.model.moe_token_dispatcher_type = "alltoall"
 
     return recipe
 

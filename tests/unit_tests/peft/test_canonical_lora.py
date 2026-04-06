@@ -51,24 +51,24 @@ class SimpleModel(nn.Module):
 class MockMegatronLinear(nn.Module):
     """Mock Megatron linear layer that's not nn.Linear to trigger parallel adapter path."""
 
-    def __init__(self, in_features, out_features, kv_channels=None, num_query_groups=None):
+    def __init__(self, in_features, out_features, kv_channels=None, num_query_groups=None, moe_router_topk=None):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
         self.in_features = in_features
         self.out_features = out_features
 
-        # Mock config
         class MockConfig:
             def __init__(self):
                 self.kv_channels = kv_channels or 64
                 self.num_query_groups = num_query_groups or 8
                 self.num_attention_heads = self.num_query_groups
                 self.sequence_parallel = False
+                self.moe_router_topk = moe_router_topk
 
         self.config = MockConfig()
 
     def forward(self, x):
-        return self.linear(x), None  # Return tuple like Megatron layers
+        return self.linear(x), None
 
 
 class MegatronStyleModel(nn.Module):
@@ -100,7 +100,7 @@ class VisionLanguageMegatronStyleModel(nn.Module):
 class MoEMegatronStyleModel(nn.Module):
     """Model with dense, expert, and shared-expert linear_fc1 modules."""
 
-    def __init__(self):
+    def __init__(self, moe_router_topk=None):
         super().__init__()
         self.language_model = nn.Module()
         self.language_model.decoder = nn.Module()
@@ -108,11 +108,11 @@ class MoEMegatronStyleModel(nn.Module):
 
         layer = self.language_model.decoder.layers[0]
         layer.mlp = nn.Module()
-        layer.mlp.linear_fc1 = MockMegatronLinear(512, 2048)
+        layer.mlp.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
         layer.mlp.experts = nn.Module()
-        layer.mlp.experts.linear_fc1 = MockMegatronLinear(512, 2048)
+        layer.mlp.experts.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
         layer.mlp.shared_experts = nn.Module()
-        layer.mlp.shared_experts.linear_fc1 = MockMegatronLinear(512, 2048)
+        layer.mlp.shared_experts.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
 
 
 class NestedModel(nn.Module):
@@ -359,6 +359,79 @@ class TestCanonicalLoRA:
         assert isinstance(layer.mlp.experts.linear_fc1, LoRALinear)
         assert not isinstance(layer.mlp.experts.linear_fc1, LoRALinearSplitFC1UpGate)
         assert isinstance(layer.mlp.shared_experts.linear_fc1, LoRALinearSplitFC1UpGate)
+
+    def test_canonical_lora_normalize_moe_lora_reduces_expert_dim(self):
+        """Expert linear_fc1 should get reduced dim when normalize_moe_lora is enabled."""
+        model = MoEMegatronStyleModel(moe_router_topk=2)
+        lora = CanonicalLoRA(
+            target_modules=["linear_fc1_up", "linear_fc1_gate"],
+            dim=32,
+            normalize_moe_lora=True,
+        )
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch(
+            "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
+        ):
+            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+                lora(model, training=True)
+
+        expert_calls = {}
+        non_expert_calls = {}
+        for call in mock_adapter.call_args_list:
+            kwargs = call.kwargs
+            name = kwargs.get("base_linear_name", "")
+            dim_used = kwargs.get("dim")
+            if ".mlp.experts." in name and ".shared_experts." not in name:
+                expert_calls[name] = dim_used
+            else:
+                non_expert_calls[name] = dim_used
+
+        assert len(expert_calls) > 0, "Should have expert adapter calls"
+        assert len(non_expert_calls) > 0, "Should have non-expert adapter calls"
+
+        for name, dim_used in expert_calls.items():
+            assert dim_used == 16, f"Expert {name} should get dim=16 (32 // 2), got {dim_used}"
+
+        for name, dim_used in non_expert_calls.items():
+            assert dim_used == 32, f"Non-expert {name} should get full dim=32, got {dim_used}"
+
+    def test_canonical_lora_normalize_moe_lora_indivisible_raises(self):
+        """Should raise ValueError when dim is not divisible by moe_router_topk."""
+        model = MoEMegatronStyleModel(moe_router_topk=3)
+        lora = CanonicalLoRA(
+            target_modules=["linear_fc1_up", "linear_fc1_gate"],
+            dim=32,
+            normalize_moe_lora=True,
+        )
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch(
+            "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
+        ):
+            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+                with pytest.raises(ValueError, match="must be divisible by moe_router_topk"):
+                    lora(model, training=True)
 
     def test_canonical_lora_transform_nested_model(self):
         """Test CanonicalLoRA transformation on nested model structures."""
