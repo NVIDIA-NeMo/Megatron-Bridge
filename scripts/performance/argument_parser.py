@@ -447,6 +447,21 @@ def parse_cli_args():
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
         required=False,
     )
+    slurm_args.add_argument(
+        "--numa_mode",
+        type=str,
+        choices=["auto", "off", "override"],
+        default="auto",
+        help="NUMA binding mode: 'auto' detects GPU-NUMA locality via sysfs at runtime, "
+        "'off' disables NUMA binding, 'override' uses a YAML file (see --numa_override_file)",
+    )
+    slurm_args.add_argument(
+        "--numa_override_file",
+        type=str,
+        default=None,
+        help="Path to YAML file with per-rank NUMA binding overrides. "
+        "Requires --numa_mode=override. See docs for YAML format.",
+    )
 
     # DGXCloud
     dgxc_args = parser.add_argument_group("DGXCloud arguments")

@@ -233,6 +233,8 @@ def main(
     dgxc_project_name: str,
     dgxc_pvc_claim_name: str,
     dgxc_pvc_mount_path: str,
+    numa_mode: str = "auto",
+    numa_override_file: Optional[str] = None,
     config_variant: str = "v1",
 ):
     """Sets up the experiment and runs it."""
@@ -307,6 +309,26 @@ def main(
     if nccl_ub:
         custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
 
+    # Validate NUMA override file at setup time (before submitting to Slurm)
+    if numa_override_file:
+        if numa_mode != "override":
+            raise ValueError("--numa_override_file requires --numa_mode=override")
+        numa_override_path = Path(numa_override_file).resolve()
+        if not numa_override_path.is_file():
+            raise FileNotFoundError(f"NUMA override file not found: {numa_override_path}")
+        try:
+            from utils.numa_bind import validate_override_file
+        except ImportError:
+            from .utils.numa_bind import validate_override_file
+        validate_override_file(str(numa_override_path))
+        # Mount the override file into the container so numa_bind.py can read it
+        override_mount = f"{numa_override_path}:{numa_override_path}"
+        if override_mount not in custom_mounts:
+            custom_mounts.append(override_mount)
+        numa_override_file = str(numa_override_path)
+    elif numa_mode == "override":
+        raise ValueError("--numa_mode=override requires --numa_override_file")
+
     if not dgxc_cluster:
         executor = slurm_executor(
             gpu=gpu,
@@ -327,6 +349,8 @@ def main(
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
             wandb_key=wandb_key,
+            numa_mode=numa_mode,
+            numa_override_file=numa_override_file,
         )
     else:
         executor = dgxc_executor(
@@ -625,5 +649,7 @@ if __name__ == "__main__":
         dgxc_project_name=args.dgxc_project_name,
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
+        numa_mode=args.numa_mode,
+        numa_override_file=args.numa_override_file,
         config_variant=config_variant,
     )

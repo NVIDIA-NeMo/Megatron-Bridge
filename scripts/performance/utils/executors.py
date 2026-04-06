@@ -68,6 +68,8 @@ def slurm_executor(
     custom_bash_cmds: List[List[str]] = None,
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
+    numa_mode: str = "auto",
+    numa_override_file: Optional[str] = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -129,9 +131,15 @@ def slurm_executor(
                     segment = segment_candidate
                     break
 
-    numa_divisor = 2 if gpu.lower() in ["gb200", "gb300"] else 4
-    numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
-    custom_bash_cmds.append(numa_cmd)
+    # NUMA binding: delegate to numa_bind.py wrapper which runs on the compute node
+    # and detects GPU-to-NUMA locality via sysfs at runtime.
+    if numa_mode != "off":
+        numa_bind_script = Path(__file__).parent.resolve() / "numa_bind.py"
+        numa_wrapper = f"python3 {numa_bind_script} --mode {numa_mode}"
+        if numa_override_file:
+            numa_wrapper += f" --override-file {numa_override_file}"
+        numa_wrapper += " --"
+        custom_bash_cmds.append(numa_wrapper)
 
     launcher = SlurmTemplate(
         template_inline=INLINE_TEMPLATE,
