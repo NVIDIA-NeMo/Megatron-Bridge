@@ -18,7 +18,6 @@ Note: Stub ranks are disallowed - validated at setup time.
 from __future__ import annotations
 
 import logging
-from functools import partial
 from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Tuple
 
 import torch
@@ -26,15 +25,12 @@ import torch.distributed as dist
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
-from megatron.core.utils import get_model_config
 
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
-    finalize_model_grads_multimodule,
     get_module_to_grid_tuple,
-    multimodule_no_sync,
     unwrap_mimo_model,
     zero_grad_buffer_for_multimodule,
 )
@@ -268,28 +264,6 @@ def train_mimo(
             "No local ProcessGroupCollection found for this rank. "
             "Ensure rank participation is correctly configured in MIMO infrastructure."
         )
-
-    # Configure gradient hooks on model config
-    model_config = get_model_config(model)
-
-    # Bind custom parameters via partial(), leaving schedule-provided args unbound
-    model_config.no_sync_func = partial(multimodule_no_sync, module_to_grid_tuple=module_to_grid_tuple)
-
-    model_config.finalize_model_grads_func = partial(
-        finalize_model_grads_multimodule,
-        infra=mimo_infra,
-        module_to_grid_tuple=module_to_grid_tuple,
-    )
-
-    # Optional: Set grad_scale_func from MimoOptimizer
-    if optimizer is not None and hasattr(optimizer, "scale_loss"):
-        model_config.grad_scale_func = optimizer.scale_loss
-
-    # Validation: variable_seq_lengths should already be True (set by MimoModelProvider)
-    assert model_config.variable_seq_lengths, (
-        "variable_seq_lengths must be True for MIMO training. "
-        "This should be set by MimoModelProvider.provide_distributed_model()."
-    )
 
     # Initialize tracking variables
     total_loss_dict = {}

@@ -119,6 +119,49 @@ class MimoSetupOutput:
     global_state: GlobalState
 
 
+def _update_mimo_model_config_funcs(
+    model: "MimoModel",
+    optimizer: Optional["MimoOptimizer"],
+    mimo_infra: "MimoModelInfra",
+    module_to_grid_tuple: List,
+) -> None:
+    """Set model config hooks for MIMO training.
+
+    Mirrors the standard path's ``_update_model_config_funcs`` (in ``setup.py``)
+    but uses per-module gradient operations instead of global ones.
+
+    Sets:
+    - ``no_sync_func``: per-module ``no_sync`` via ``multimodule_no_sync``
+    - ``finalize_model_grads_func``: per-module grad all-reduce via
+      ``finalize_model_grads_multimodule``
+    - ``grad_scale_func``: loss scaling from ``MimoOptimizer`` (if present)
+    """
+    from functools import partial
+
+    from megatron.bridge.training.mimo_parallel_utils import (
+        finalize_model_grads_multimodule,
+        multimodule_no_sync,
+    )
+
+    model_config = get_model_config(model)
+
+    model_config.no_sync_func = partial(multimodule_no_sync, module_to_grid_tuple=module_to_grid_tuple)
+
+    model_config.finalize_model_grads_func = partial(
+        finalize_model_grads_multimodule,
+        infra=mimo_infra,
+        module_to_grid_tuple=module_to_grid_tuple,
+    )
+
+    if optimizer is not None and hasattr(optimizer, "scale_loss"):
+        model_config.grad_scale_func = optimizer.scale_loss
+
+    assert model_config.variable_seq_lengths, (
+        "variable_seq_lengths must be True for MIMO training. "
+        "This should be set by MimoModelProvider.provide_distributed_model()."
+    )
+
+
 def setup_mimo(
     cfg: ConfigContainer,
     mimo_provider: "MimoModelProvider",
@@ -283,6 +326,8 @@ def setup_mimo(
                     lr_wsd_decay_style=cfg.scheduler.lr_wsd_decay_style,
                 )
         logger.info(f"Rank {dist.get_rank()}: Auto-created schedulers for modules: {list(schedulers.keys())}")
+
+    _update_mimo_model_config_funcs(model, optimizer, mimo_infra, module_to_grid_tuple)
 
     # Build data iterators if function provided
     train_data_iterator = None
