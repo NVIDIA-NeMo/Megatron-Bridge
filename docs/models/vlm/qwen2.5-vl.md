@@ -124,8 +124,8 @@ checkpoint.save=$SAVE_DIR/<experiment name>
 
 ### Qwen2.5-Omni
 
-[Qwen2.5-Omni](https://huggingface.co/Qwen/Qwen2.5-Omni-7B) extends the Qwen2.5-VL stack with audio and speech-generation heads in Hugging Face. In Megatron Bridge, checkpoint conversion and training for the **thinker** (language + vision + audio tower weights) follow the same tooling as Qwen2.5-VL: `Qwen25OmniBridge` maps
-`Qwen2_5OmniForConditionalGeneration` to the Megatron `Qwen25OmniModel` stack (thinker/talker/token2wav), with weight mappings for `thinker.*`, `talker.*`, and `token2wav.*` so round-trip conversion stays consistent with the HF checkpoint layout.
+[Qwen2.5-Omni](https://huggingface.co/Qwen/Qwen2.5-Omni-7B) extends the Qwen2.5-VL stack with audio and speech-generation heads in Hugging Face. In Megatron Bridge, checkpoint conversion and training for the **thinker** (language + vision + audio tower weights) use `megatron.bridge.models.qwen_omni`: `Qwen25OmniBridge` maps
+`Qwen2_5OmniForConditionalGeneration` to the `Qwen25OmniModel` / `Qwen25OmniModelProvider` stack (thinker/talker/token2wav), with weight mappings for `thinker.*`, `talker.*`, and `token2wav.*` so round-trip conversion stays consistent with the HF checkpoint layout. See [Qwen2.5-Omni](qwen2.5-omni.md) for the dedicated doc page.
 
 Use the unified finetune entrypoint `examples/models/vlm/qwen_vl/finetune_qwen_vl.py` with the Omni-specific recipes (defaults include **sequence parallel** when tensor parallelism is enabled, and full SFT uses a higher default TP than PEFT):
 

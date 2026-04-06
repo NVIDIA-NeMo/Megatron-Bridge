@@ -1,3 +1,3 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
-"""Qwen3-Omni functional test package."""
+"""Functional tests for Qwen2.5-Omni and Qwen3-Omni (Megatron Bridge)."""
