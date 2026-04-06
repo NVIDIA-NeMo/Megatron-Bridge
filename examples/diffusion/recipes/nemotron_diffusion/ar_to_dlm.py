@@ -56,15 +56,11 @@ import argparse
 import logging
 import os
 import sys
-from pathlib import Path
 from typing import Tuple
 
 import torch
 from omegaconf import OmegaConf
 
-# Register NemotronDiffusionBridge, overriding the base Ministral3Bridge so that
-# AutoBridge returns NemotronDiffusionModelProvider (with NemotronDiffusionAttention).
-import megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge  # noqa: F401
 from megatron.bridge.diffusion.models.common.dgpt_step import DGPTStep
 from megatron.bridge.diffusion.recipes.nemotron_diffusion.ar_to_dlm import (
     nemotron_diffusion3_3b_pretrain_config,
