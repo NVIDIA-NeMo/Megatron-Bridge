@@ -64,6 +64,20 @@ class Gemma2Bridge(MegatronModelBridge):
 
         return provider
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Gemma2ModelProvider) -> dict:
+        """Convert Gemma2 provider config back to HuggingFace config."""
+        hf_config = super().megatron_to_hf_config(provider)
+
+        hf_config["query_pre_attn_scalar"] = provider.query_pre_attn_scalar
+        hf_config["attn_logit_softcapping"] = provider.attn_logit_softcapping
+        hf_config["final_logit_softcapping"] = provider.final_logit_softcapping
+
+        if getattr(provider, "window_size", None) is not None:
+            hf_config["sliding_window"] = provider.window_size[0] + 1
+
+        return hf_config
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format.
         Returns:

@@ -33,7 +33,7 @@ The preprocessing script reads the CSV caption file and creates a sidecar `.json
 
 ```bash
 cd ${MBRIDGE_PATH}
-python examples/diffusion/recipes/wan/prepare_dataset/openvid1M_preprocess.py \
+python examples/diffusion/recipes/wan/prepare_dataset/openvid1M_dataset/openvid1M_preprocess.py \
   --csv_path ${PROCESSED_DATA_PATH}/OpenVidHD.csv \
   --video_dir ${PROCESSED_DATA_PATH}/OpenVidHD_part_1
 ```
