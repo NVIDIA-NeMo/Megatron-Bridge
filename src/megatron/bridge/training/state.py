@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
-from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
+from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
 from megatron.core.energy_monitor import EnergyMonitor
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
@@ -134,7 +134,7 @@ class GlobalState:
         self.start_time: float = time.time()
         self._ft_state: Optional[FaultToleranceState] = None
         self._straggler_timer: Optional[StragglerDetector] = None
-        self._async_calls_queue: Optional[AsyncCallsQueue] = None
+        self._async_calls_queue: Optional[Any] = None
         self._nvrx_straggler_manager: Optional[NVRxStragglerDetectionManager] = None
         self._nvrx_straggler_created: bool = False
         self._energy_monitor: Optional[EnergyMonitor] = None
@@ -395,10 +395,25 @@ class GlobalState:
             and self.cfg.checkpoint.save is not None
             and self.cfg.checkpoint.async_save
         ):
-            self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+            async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
+            async_calls_queue_cls = async_modules["AsyncCallsQueue"]
+            self._async_calls_queue = async_calls_queue_cls(
+                persistent=self.cfg.checkpoint.use_persistent_ckpt_worker
+            )
+
+            if self.cfg.checkpoint.use_persistent_ckpt_worker:
+                warmup_kwargs = {
+                    "cpu_priority": self.cfg.checkpoint.async_ckpt_cpu_priority,
+                    "io_priority": self.cfg.checkpoint.async_ckpt_io_priority,
+                }
+
+            if async_strategy == "mcore":
+                warmup_kwargs["mp_mode"] = "spawn"
+                self._async_calls_queue.warmup_persistent_caller(get_rank_safe(), **warmup_kwargs)
+                async_modules["get_write_results_queue"]("fork")
 
     @property
-    def async_calls_queue(self) -> Optional[AsyncCallsQueue]:
+    def async_calls_queue(self) -> Optional[Any]:
         """The AsyncCallsQueue instance for handling asynchronous checkpoint saves."""
         return self._async_calls_queue
 
