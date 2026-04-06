@@ -12,12 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .wan import (
-    wan_1_3b_pretrain_config,
-    wan_14b_pretrain_config,
-)
-
-__all__ = [
-    "wan_1_3b_pretrain_config",
-    "wan_14b_pretrain_config",
-]
+from megatron.bridge.diffusion.recipes.wan import *  # noqa: F401, F403
