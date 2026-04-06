@@ -142,6 +142,7 @@ def export_megatron_to_hf(
     hf_path: str,
     show_progress: bool = True,
     strict: bool = True,
+    trust_remote_code: bool = False,
 ) -> None:
     """
     Export a Megatron checkpoint to HuggingFace format.
@@ -152,6 +153,7 @@ def export_megatron_to_hf(
         hf_path: Directory path where the HuggingFace model will be saved
         show_progress: Display progress bar during weight export
         strict: Whether to perform strict validation during weight export
+        trust_remote_code: Whether to trust remote code when loading config
     """
     print(f"🔄 Starting export: {megatron_path} -> {hf_path}")
 
@@ -177,7 +179,7 @@ def export_megatron_to_hf(
     print(f"📋 Found configuration: {config_files[0]}")
 
     # Export always uses the config synthesized from checkpoint + HF reference.
-    bridge = AutoBridge.from_auto_config(megatron_path, hf_model)
+    bridge = AutoBridge.from_auto_config(megatron_path, hf_model, trust_remote_code=trust_remote_code)
 
     # Export using the convenience method
     print("📤 Exporting to HuggingFace format...")
@@ -238,6 +240,7 @@ def main():
     export_parser.add_argument(
         "--not-strict", action="store_true", help="Allow source and target checkpoint to have different keys"
     )
+    export_parser.add_argument("--trust-remote-code", action="store_true", help="Allow custom model code execution")
     args = parser.parse_args()
 
     if not args.command:
@@ -260,6 +263,7 @@ def main():
             hf_path=args.hf_path,
             show_progress=not args.no_progress,
             strict=not args.not_strict,
+            trust_remote_code=args.trust_remote_code,
         )
     else:
         raise RuntimeError(f"Unknown command: {args.command}")
