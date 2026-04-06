@@ -27,7 +27,9 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "scripts" / "performance"))
 
 from utils.numa_bind import (
+    _normalize_bdf,
     build_numactl_args,
+    detect_all_numa_nodes,
     detect_numa_node,
     eval_binding_expr,
     load_override_file,
@@ -224,11 +226,25 @@ class TestValidateOverrideFile:
 # ---------------------------------------------------------------------------
 
 
+class TestNormalizeBdf:
+    def test_4_digit_domain_unchanged(self):
+        assert _normalize_bdf("0000:07:00.0") == "0000:07:00.0"
+
+    def test_8_digit_domain_trimmed(self):
+        assert _normalize_bdf("00000000:19:00.0") == "0000:19:00.0"
+
+    def test_uppercase_lowered(self):
+        assert _normalize_bdf("00000000:AE:00.0") == "0000:ae:00.0"
+
+    def test_whitespace_stripped(self):
+        assert _normalize_bdf("  0000:07:00.0\n") == "0000:07:00.0"
+
+
 class TestDetectNumaNode:
     def test_success(self):
         mock_result = mock.MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "0000:07:00.0\n"
+        mock_result.stdout = "00000000:07:00.0\n"
 
         with mock.patch("utils.numa_bind.subprocess.run", return_value=mock_result):
             with mock.patch("utils.numa_bind.Path.exists", return_value=True):
@@ -283,6 +299,37 @@ class TestDetectNumaNode:
         with mock.patch("utils.numa_bind.subprocess.run", return_value=mock_result):
             node = detect_numa_node(0)
         assert node is None
+
+
+class TestDetectAllNumaNodes:
+    def test_multiple_gpus(self):
+        mock_result = mock.MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "00000000:19:00.0\n00000000:2D:00.0\n00000000:3F:00.0\n00000000:66:00.0\n"
+
+        def fake_exists(self):
+            return True
+
+        def fake_read_text(self):
+            # Map BDFs to NUMA nodes: first two -> node 0, last two -> node 1
+            bdf = str(self).split("/")[-2]
+            node_map = {"0000:19:00.0": "0", "0000:2d:00.0": "0", "0000:3f:00.0": "1", "0000:66:00.0": "1"}
+            return node_map.get(bdf, "-1") + "\n"
+
+        with mock.patch("utils.numa_bind.subprocess.run", return_value=mock_result):
+            with mock.patch("utils.numa_bind.Path.exists", fake_exists):
+                with mock.patch("utils.numa_bind.Path.read_text", fake_read_text):
+                    nodes = detect_all_numa_nodes()
+        assert nodes == [0, 0, 1, 1]
+
+    def test_nvidia_smi_failure(self):
+        mock_result = mock.MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "error"
+
+        with mock.patch("utils.numa_bind.subprocess.run", return_value=mock_result):
+            nodes = detect_all_numa_nodes()
+        assert nodes is None
 
 
 # ---------------------------------------------------------------------------
