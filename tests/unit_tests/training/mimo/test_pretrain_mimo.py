@@ -1,5 +1,5 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-"""Unit tests for MIMO pretrain entrypoint wiring."""
+"""Unit tests for MIMO pretrain and setup wiring."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -9,12 +9,10 @@ import pytest
 
 def _make_cfg():
     cfg = MagicMock()
-    cfg.train = SimpleNamespace(
-        rampup_batch_size=None,
-        global_batch_size=1,
-        micro_batch_size=1,
-        decrease_batch_size_if_needed=False,
-    )
+    cfg.train.rampup_batch_size = None
+    cfg.train.global_batch_size = 1
+    cfg.train.micro_batch_size = 1
+    cfg.train.decrease_batch_size_if_needed = False
     cfg.data_parallel_size = 1
     return cfg
 
@@ -35,13 +33,13 @@ def _make_setup_output(module_to_grid_map):
 
 
 @patch(
-    "megatron.bridge.training.pretrain_mimo.is_current_rank_in_grid",
+    "megatron.bridge.training.setup_mimo.is_current_rank_in_grid",
     side_effect=lambda grid: grid.rank_offset <= 4 < (grid.rank_offset + grid.size),
 )
-@patch("megatron.bridge.training.pretrain_mimo.dist")
+@patch("megatron.bridge.training.setup_mimo.dist")
 def test_set_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mock_dist, _mock_in_grid):
     """_set_mimo_random_seeds should derive TP/PP ranks from grids and call model_parallel_cuda_manual_seed."""
-    from megatron.bridge.training.pretrain_mimo import _set_mimo_random_seeds
+    from megatron.bridge.training.setup_mimo import _set_mimo_random_seeds
 
     mock_dist.get_rank.return_value = 4  # e.g. first rank of vision encoder
 
@@ -69,13 +67,13 @@ def test_set_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mock_dist, 
 
 
 @patch(
-    "megatron.bridge.training.pretrain_mimo.is_current_rank_in_grid",
+    "megatron.bridge.training.setup_mimo.is_current_rank_in_grid",
     side_effect=lambda grid: grid.rank_offset <= 2 < (grid.rank_offset + grid.size),
 )
-@patch("megatron.bridge.training.pretrain_mimo.dist")
+@patch("megatron.bridge.training.setup_mimo.dist")
 def test_set_mimo_random_seeds_offsets_by_pp_rank(mock_dist, _mock_in_grid):
     """PP rank > 0 should offset the seed by 100 * pp_rank."""
-    from megatron.bridge.training.pretrain_mimo import _set_mimo_random_seeds
+    from megatron.bridge.training.setup_mimo import _set_mimo_random_seeds
 
     mock_dist.get_rank.return_value = 2
 
@@ -115,28 +113,23 @@ def test_pretrain_mimo_calls_setup_and_train(mock_dist, mock_setup_mimo, mock_tr
     setup_output = _make_setup_output(module_to_grid_map={"language": MagicMock()})
     mock_setup_mimo.return_value = setup_output
 
-    with (
-        patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
-        patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
-    ):
-        pretrain_mimo(
-            cfg=cfg,
-            mimo_provider=MagicMock(),
-            forward_step_func=MagicMock(),
-            build_data_iterators_fn=MagicMock(),
-            global_state=MagicMock(),
-        )
+    pretrain_mimo(
+        cfg=cfg,
+        forward_step_func=MagicMock(),
+        build_data_iterators_fn=MagicMock(),
+        global_state=MagicMock(),
+    )
 
     mock_setup_mimo.assert_called_once()
     mock_train_mimo.assert_called_once()
 
 
-@patch("megatron.bridge.training.pretrain_mimo.unwrap_mimo_model")
-@patch("megatron.bridge.training.pretrain_mimo.get_model_config")
-@patch("megatron.bridge.training.pretrain_mimo.dist")
+@patch("megatron.bridge.training.setup_mimo.unwrap_mimo_model")
+@patch("megatron.bridge.training.setup_mimo.get_model_config")
+@patch("megatron.bridge.training.setup_mimo.dist")
 def test_setup_mimo_asserts_when_constructor_fields_missing(mock_dist, mock_get_model_config, mock_unwrap_mimo_model):
     """setup_mimo guardrail should fail when module_to_grid_map is missing at construction."""
-    from megatron.bridge.training.pretrain_mimo import setup_mimo
+    from megatron.bridge.training.setup_mimo import setup_mimo
 
     cfg = _make_cfg()
     mock_dist.get_rank.return_value = 0
@@ -152,26 +145,26 @@ def test_setup_mimo_asserts_when_constructor_fields_missing(mock_dist, mock_get_
     mock_model_config.bf16 = True
     mock_get_model_config.return_value = mock_model_config
 
-    # Provider that returns infra with an active grid map
-    mock_provider = MagicMock()
+    # Set cfg.model to a provider that returns infra with an active grid map
     mock_infra = MagicMock()
     mock_infra.module_to_grid_map = {"language": MagicMock()}
     mock_infra.topology = {"language": []}
     mock_infra.module_output_ndim = {"language": 3}
-    mock_provider.build_infra.return_value = mock_infra
-    mock_provider.provide_distributed_model.return_value = [MagicMock()]
+    cfg.model.build_infra.return_value = mock_infra
+    cfg.model.provide_distributed_model.return_value = [MagicMock()]
 
     with (
-        patch("megatron.bridge.training.pretrain_mimo.validate_no_stub_ranks"),
-        patch("megatron.bridge.training.pretrain_mimo._set_mimo_random_seeds"),
-        patch("megatron.bridge.training.pretrain_mimo.build_pg_collection_for_schedule"),
-        patch("megatron.bridge.training.pretrain_mimo.get_module_to_grid_tuple"),
-        patch("megatron.bridge.training.pretrain_mimo.MultiModulePipelineCommunicator"),
+        patch("megatron.bridge.training.setup_mimo.validate_no_stub_ranks"),
+        patch("megatron.bridge.training.setup_mimo._set_mimo_random_seeds"),
+        patch("megatron.bridge.training.setup_mimo.build_pg_collection_for_schedule"),
+        patch("megatron.bridge.training.setup_mimo.get_module_to_grid_tuple"),
+        patch("megatron.bridge.training.setup_mimo.MultiModulePipelineCommunicator"),
+        patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
+        patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
     ):
         with pytest.raises(AssertionError, match="module_to_grid_map must be set"):
             setup_mimo(
                 cfg=cfg,
-                mimo_provider=mock_provider,
                 build_optimizer=True,
                 global_state=MagicMock(),
             )
