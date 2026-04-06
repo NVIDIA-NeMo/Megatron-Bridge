@@ -51,20 +51,32 @@ class Gemma2Bridge(MegatronModelBridge):
         provider.query_pre_attn_scalar = hf_config.query_pre_attn_scalar
         provider.attn_logit_softcapping = hf_config.attn_logit_softcapping
         provider.final_logit_softcapping = hf_config.final_logit_softcapping
-        provider.window_size = (hf_config.sliding_window, 0)
+        provider.window_size = (hf_config.sliding_window - 1, 0)
 
         provider.normalization = "RMSNorm"
         provider.activation_func = fast_gelu
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.attention_dropout = 0.0
         provider.hidden_dropout = 0.0
         provider.share_embeddings_and_output_weights = True
         provider.layernorm_zero_centered_gamma = True
-        provider.gradient_accumulation_fusion = False
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Gemma2ModelProvider) -> dict:
+        """Convert Gemma2 provider config back to HuggingFace config."""
+        hf_config = super().megatron_to_hf_config(provider)
+
+        hf_config["query_pre_attn_scalar"] = provider.query_pre_attn_scalar
+        hf_config["attn_logit_softcapping"] = provider.attn_logit_softcapping
+        hf_config["final_logit_softcapping"] = provider.final_logit_softcapping
+
+        if getattr(provider, "window_size", None) is not None:
+            hf_config["sliding_window"] = provider.window_size[0] + 1
+
+        return hf_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format.

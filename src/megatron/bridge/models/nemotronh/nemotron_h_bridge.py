@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import logging
+from typing import Dict, Optional, Tuple
 
+import torch
 from megatron.core.activations import squared_relu
 from megatron.core.models.mamba import MambaModel
 
@@ -24,6 +26,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     MambaConv1dMapping,
     MambaInProjMapping,
+    MegatronParamMapping,
     QKVMapping,
     RowParallelMapping,
 )
@@ -32,6 +35,181 @@ from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
 logger = logging.getLogger(__name__)
+
+
+def _replace_wildcards(pattern: str, captures: Tuple[str, ...]) -> str:
+    """Replace ** then * sequentially with captures."""
+    out = pattern
+    capture_index = 0
+    while "**" in out and capture_index < len(captures):
+        out = out.replace("**", captures[capture_index], 1)
+        capture_index += 1
+    while "*" in out and capture_index < len(captures):
+        out = out.replace("*", captures[capture_index], 1)
+        capture_index += 1
+    return out
+
+
+class _MTPFlatteningMapping(MegatronParamMapping[torch.Tensor]):
+    """
+    Pattern mapping that flattens Megatron's two-level MTP indices:
+
+      megatron: mtp.layers.{outer}.mtp_model_layer.layers.{inner}.<...>
+      hf:       mtp.layers.{outer * L + inner}.<...>
+
+    Also supports an optional `inner_override` for parameters that live outside
+    `mtp_model_layer.layers.*` in Megatron but should attach to a specific inner
+    layer in HF (e.g., eh_proj on inner=0, final_layernorm on inner=L-1).
+    """
+
+    def __init__(
+        self,
+        megatron_param: str,
+        hf_param: str,
+        *,
+        mtp_layers_per_block: int,
+        inner_override: Optional[int] = None,
+    ):
+        # NOTE: We intentionally bypass wildcard validation because Megatron has
+        # 2+N wildcards while HF has 1+N in the flattened scheme.
+        self.megatron_param = megatron_param
+        self.hf_param = hf_param
+        self._mtp_layers_per_block = int(mtp_layers_per_block)
+        self._inner_override = inner_override
+
+        if self._mtp_layers_per_block <= 0:
+            raise ValueError(
+                "mtp_layers_per_block must be > 0 for MTP flattening mappings. "
+                "This should come from len(hf_config.mtp_hybrid_override_pattern)."
+            )
+
+        # minimal init for PP/TP groups (copied pattern from MegatronParamMapping.__init__)
+        self._broadcast_obj_cache = {}
+        self._tensor_spec_output_cache = {}
+        if torch.distributed.is_available():
+            # Groups are populated in MegatronParamMapping when mpu is initialized.
+            # Here we don't need them because this class resolves into AutoMapping/QKVMapping
+            # (which will handle TP/PP), and we never run conversions on this instance.
+            self.pp_group = None
+            self.ep_group = None
+            self._tp_group = None
+            self._etp_group = None
+
+        # Precompute wildcard counts to disambiguate resolve() calls coming from
+        # megatron_to_hf_lookup vs hf_to_megatron_lookup.
+        self._megatron_wc = MegatronParamMapping._count_wildcard_groups(self.megatron_param)
+        self._hf_wc = (
+            MegatronParamMapping._count_wildcard_groups(self.hf_param) if isinstance(self.hf_param, str) else 0
+        )
+
+    def resolve(self, captures: Tuple[str, ...]) -> MegatronParamMapping:
+        # We primarily expect captures from Megatron pattern matching.
+        # If called from HF reverse lookup, captures length will typically match hf wildcards.
+        treat_as_hf = (len(captures) == self._hf_wc) and (self._hf_wc != self._megatron_wc)
+
+        if treat_as_hf:
+            # captures: (flat_layer_idx, [maybe more like expert idx...])
+            flat = int(captures[0])
+            outer = flat // self._mtp_layers_per_block
+            inner = flat % self._mtp_layers_per_block
+            # For outer-only megatron params (eh_proj, etc.) we only need `outer`.
+            # If the megatron pattern contains an inner wildcard, use computed `inner`.
+            # Build a synthetic capture tuple matching the megatron pattern.
+            # We replace the first two megatron wildcards with outer/inner unless inner_override is set.
+            inner_eff = self._inner_override if self._inner_override is not None else inner
+            # Preserve any remaining captures (e.g., expert id) after the flat idx.
+            remaining = captures[1:]
+            megatron_captures = (str(outer), str(inner_eff), *remaining)
+            resolved_megatron = _replace_wildcards(self.megatron_param, megatron_captures)
+            resolved_hf = _replace_wildcards(self.hf_param, captures)
+            return AutoMapping(megatron_param=resolved_megatron, hf_param=resolved_hf)
+
+        # Treat captures as coming from the Megatron pattern.
+        # captures: (outer, inner, [maybe expert idx...]) for nested params
+        # or (outer,) for outer-only params like eh_proj.
+        if len(captures) < 1:
+            raise ValueError(f"Expected at least 1 capture for MTP mapping, got {captures}")
+
+        outer = int(captures[0])
+
+        # Determine the effective inner index
+        if self._inner_override is not None:
+            inner_eff = self._inner_override
+            remaining = captures[1:]
+        else:
+            if len(captures) < 2:
+                raise ValueError(f"Expected 2 captures (outer, inner) for MTP nested mapping, got {captures}")
+            inner_eff = int(captures[1])
+            remaining = captures[2:]
+
+        flat = outer * self._mtp_layers_per_block + inner_eff
+
+        resolved_megatron = _replace_wildcards(self.megatron_param, captures)
+
+        # Resolve HF: first wildcard is the flattened idx, remaining wildcards pass through.
+        hf_captures = (str(flat), *remaining)
+        resolved_hf = _replace_wildcards(self.hf_param, hf_captures)
+
+        return AutoMapping(megatron_param=resolved_megatron, hf_param=resolved_hf)
+
+    # Required by ABC but never called at runtime: resolve() always returns an
+    # AutoMapping, so hf_to_megatron/megatron_to_hf are invoked on that resolved
+    # instance, not on this class.
+    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: torch.nn.Module) -> torch.Tensor:
+        raise NotImplementedError
+
+    def megatron_to_hf(
+        self, megatron_weights: Optional[torch.Tensor], megatron_module: Optional[torch.nn.Module]
+    ) -> Dict[str, torch.Tensor]:
+        raise NotImplementedError
+
+
+class _MTPFlatteningQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+    """Resolve-time wrapper that flattens MTP indices then delegates to QKVMapping."""
+
+    def __init__(
+        self,
+        megatron_param: str,
+        *,
+        q: str,
+        k: str,
+        v: str,
+        mtp_layers_per_block: int,
+    ):
+        # Bypass wildcard validation (2 wildcards on Megatron side vs 1 on HF q/k/v).
+        self.megatron_param = megatron_param
+        self.hf_param = {"q": q, "k": k, "v": v}
+        self._mtp_layers_per_block = int(mtp_layers_per_block)
+        if self._mtp_layers_per_block <= 0:
+            raise ValueError("mtp_layers_per_block must be > 0 for MTP flattening QKV mapping.")
+        self._megatron_wc = MegatronParamMapping._count_wildcard_groups(self.megatron_param)
+        self._hf_wc = MegatronParamMapping._count_wildcard_groups(q)  # q/k/v share pattern structure here
+
+    def resolve(self, captures: Tuple[str, ...]) -> MegatronParamMapping:
+        # Expect captures from Megatron lookup: (outer, inner)
+        if len(captures) < 2:
+            raise ValueError(f"Expected (outer, inner) captures for MTP QKV mapping, got {captures}")
+        outer = int(captures[0])
+        inner = int(captures[1])
+        flat = outer * self._mtp_layers_per_block + inner
+
+        resolved_megatron = _replace_wildcards(self.megatron_param, captures)
+        resolved_q = _replace_wildcards(self.hf_param["q"], (str(flat),))
+        resolved_k = _replace_wildcards(self.hf_param["k"], (str(flat),))
+        resolved_v = _replace_wildcards(self.hf_param["v"], (str(flat),))
+
+        return QKVMapping(megatron_param=resolved_megatron, q=resolved_q, k=resolved_k, v=resolved_v)
+
+    # Required by ABC but never called at runtime: resolve() always returns a
+    # QKVMapping, so hf_to_megatron/megatron_to_hf are invoked on that resolved
+    # instance, not on this class.
+    def hf_to_megatron(self, hf_weights: Dict[str, torch.Tensor], megatron_module: torch.nn.Module) -> torch.Tensor:
+        raise NotImplementedError
+
+    def megatron_to_hf(
+        self, megatron_weights: Optional[torch.Tensor], megatron_module: Optional[torch.nn.Module]
+    ) -> Dict[str, torch.Tensor]:
+        raise NotImplementedError
 
 
 @MegatronModelBridge.register_bridge(
@@ -55,13 +233,14 @@ class NemotronHBridge(MegatronModelBridge):
     """
 
     # Extend CONFIG_MAPPING with Nemotron-H/Mamba-specific fields
+    # Common bidirectional config field name mapping: (hf_name, megatron_name)
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
         # Mamba-specific fields
         ("mamba_head_dim", "mamba_head_dim"),
         ("mamba_num_heads", "mamba_num_heads"),
         ("n_groups", "mamba_num_groups"),
         ("ssm_state_size", "mamba_state_dim"),
-        ("hybrid_override_pattern", "hybrid_override_pattern"),
+        ("hybrid_override_pattern", "hybrid_layer_pattern"),
         ("residual_in_fp32", "fp32_residual_connection"),
         ("use_bias", "add_bias_linear"),
         ("layer_norm_epsilon", "layernorm_epsilon"),
@@ -72,11 +251,29 @@ class NemotronHBridge(MegatronModelBridge):
     # Additional files to copy during HF export (reasoning parser utilities)
     ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py"]
 
+    def __init__(self):
+        super().__init__()
+        self._mtp_layers_per_block: Optional[int] = None
+
+    def build_conversion_tasks(self, hf_pretrained: PreTrainedCausalLM, megatron_model):
+        # Cache MTP block depth (len of mtp_hybrid_override_pattern) so mapping_registry()
+        # can compute the flattened HF layer indices deterministically.
+        mtp_pattern = getattr(getattr(hf_pretrained, "config", None), "mtp_hybrid_override_pattern", None)
+        if mtp_pattern is not None:
+            self._mtp_layers_per_block = len(mtp_pattern)
+        else:
+            self._mtp_layers_per_block = 0
+
+        return super().build_conversion_tasks(hf_pretrained, megatron_model)
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MambaModelProvider:
         """Convert HuggingFace Nemotron-H config to MambaModelProvider."""
         # Use base class for common config conversion
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
+
+        # Mamba doesn't use position embeddings; override the base class default of "rope"
+        provider.position_embedding_type = "none"
 
         # Nemotron-H specific defaults
         provider.activation_func = squared_relu
@@ -87,19 +284,77 @@ class NemotronHBridge(MegatronModelBridge):
         provider.first_last_layers_bf16 = True
         provider.is_hybrid_model = True
 
-        # MoE-specific defaults (only if MoE is enabled)
-        if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts > 0:
-            provider.moe_aux_loss_coeff = 0.0001
-            provider.moe_router_score_function = "sigmoid"
-            provider.moe_router_enable_expert_bias = True
-            provider.moe_router_load_balancing_type = "seq_aux_loss"
-            provider.moe_router_dtype = "fp32"
-            provider.moe_grouped_gemm = True
-            provider.moe_token_dispatcher_type = "alltoall"
-            provider.moe_permute_fusion = True
-            provider.moe_shared_expert_overlap = True
+        # Handle kv_channels from head_dim or attention_head_dim
+        kv_channels = getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None)
+        if kv_channels is not None:
+            provider.kv_channels = kv_channels
+
+        provider.moe_aux_loss_coeff = 0.0001
+        provider.moe_router_score_function = "sigmoid"
+        provider.moe_router_enable_expert_bias = True
+        provider.moe_router_load_balancing_type = "seq_aux_loss"
+        provider.moe_router_dtype = "fp32"
+        provider.moe_grouped_gemm = True
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_permute_fusion = True
+        provider.moe_shared_expert_overlap = True
+
+        if hasattr(hf_config, "moe_latent_size"):
+            provider.moe_latent_size = hf_config.moe_latent_size
+        if hasattr(hf_config, "moe_shared_expert_overlap"):
+            provider.moe_shared_expert_overlap = hf_config.moe_shared_expert_overlap
+        if hasattr(hf_config, "num_nextn_predict_layers"):
+            provider.mtp_num_layers = hf_config.num_nextn_predict_layers
+        if hasattr(hf_config, "mtp_hybrid_override_pattern"):
+            provider.mtp_hybrid_override_pattern = hf_config.mtp_hybrid_override_pattern
+        if hasattr(hf_config, "keep_mtp_spec_in_bf16"):
+            provider.keep_mtp_spec_in_bf16 = hf_config.keep_mtp_spec_in_bf16
 
         return provider
+
+    @classmethod
+    def get_hf_tokenizer_kwargs(cls) -> dict:
+        """Return HuggingFace tokenizer kwargs for Nemotron-H models.
+
+        Nemotron-H models only provide a fast tokenizer (tokenizer.json),
+        so use_fast=True is required.
+        """
+        return {"use_fast": True}
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        hf_cfg = super().megatron_to_hf_config(provider)
+        # Clean hybrid_override_pattern: strip pipeline-parallel delimiters and validate
+        pattern = hf_cfg.pop("hybrid_override_pattern", None)
+        if pattern:
+            clean_pattern = pattern.replace("|", "")
+            valid_chars = {"M", "E", "*", "-"}
+            unknown = set(clean_pattern) - valid_chars
+            if unknown:
+                raise ValueError(
+                    f"Unknown layer type characters in hybrid_override_pattern: {unknown}. "
+                    f"Expected: M (mamba), * (attention), E (moe), - (mlp)."
+                )
+            hf_cfg["hybrid_override_pattern"] = clean_pattern
+
+        # Add auto_map for custom config/modeling classes
+        hf_cfg["auto_map"] = {
+            "AutoConfig": "configuration_nemotron_h.NemotronHConfig",
+            "AutoModel": "modeling_nemotron_h.NemotronHForCausalLM",
+            "AutoModelForCausalLM": "modeling_nemotron_h.NemotronHForCausalLM",
+        }
+
+        # We choose not to set HF-only defaults such as:
+        # Mamba: conv_kernel, time_step_*, mamba_hidden_act, etc.
+        # MoE: n_shared_experts, norm_topk_prob
+
+        # Megatron uses None="not set/disabled", but HF modeling code expects integers
+        # and will crash on None (e.g. n_routed_experts // n_group → TypeError)
+        hf_cfg["num_nextn_predict_layers"] = hf_cfg.get("num_nextn_predict_layers") or 0
+        hf_cfg["n_group"] = hf_cfg.get("n_group") or 1
+        hf_cfg["topk_group"] = hf_cfg.get("topk_group") or 1
+
+        return hf_cfg
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
@@ -129,20 +384,89 @@ class NemotronHBridge(MegatronModelBridge):
             # MoE layers
             "decoder.layers.*.mlp.router.weight": "backbone.layers.*.mixer.gate.weight",
             "decoder.layers.*.mlp.router.expert_bias": "backbone.layers.*.mixer.gate.e_score_correction_bias",
-            "decoder.layers.*.mlp.shared_experts.linear_fc1.weight": "backbone.layers.*.mixer.shared_experts.up_proj.weight",
-            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "backbone.layers.*.mixer.shared_experts.down_proj.weight",
+            "decoder.layers.*.mlp.fc1_latent_proj.weight": "backbone.layers.*.mixer.fc1_latent_proj.weight",
+            "decoder.layers.*.mlp.fc2_latent_proj.weight": "backbone.layers.*.mixer.fc2_latent_proj.weight",
             # GroupedMLP (moe_grouped_gemm=True): expert weights are stored as weight0, weight1, ...
             "decoder.layers.*.mlp.experts.linear_fc1.weight*": "backbone.layers.*.mixer.experts.*.up_proj.weight",
             "decoder.layers.*.mlp.experts.linear_fc2.weight*": "backbone.layers.*.mixer.experts.*.down_proj.weight",
-            # SequentialMLP (moe_grouped_gemm=False): expert weights are stored per local_expert
-            "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight": "backbone.layers.*.mixer.experts.*.up_proj.weight",
-            "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "backbone.layers.*.mixer.experts.*.down_proj.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc1.weight": "backbone.layers.*.mixer.shared_experts.up_proj.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "backbone.layers.*.mixer.shared_experts.down_proj.weight",
         }
+
+        mtp_layers_per_block = int(self._mtp_layers_per_block or 0)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+
+        # -----------------------------
+        # MTP (flattened HF structure)
+        # -----------------------------
+        #
+        # Megatron stores MTP in a nested form:
+        #   mtp.layers.{outer}.mtp_model_layer.layers.{inner}.<...>
+        # while HF stores it as:
+        #   mtp.layers.{outer * L + inner}.<...>
+        #
+        # Additionally, some MTP parameters live outside mtp_model_layer in Megatron
+        # (eh_proj/enorm/hnorm/final_layernorm) but attach to the first/last inner layer
+        # in HF.
+        if mtp_layers_per_block > 0:
+            # First-inner (inner=0) params
+            for p in ["eh_proj.weight", "enorm.weight", "hnorm.weight"]:
+                mapping_list.append(
+                    _MTPFlatteningMapping(
+                        megatron_param=f"mtp.layers.*.{p}",
+                        hf_param=f"mtp.layers.*.{p}",
+                        mtp_layers_per_block=mtp_layers_per_block,
+                        inner_override=0,
+                    )
+                )
+
+            # Last-inner (inner=L-1) params
+            mapping_list.append(
+                _MTPFlatteningMapping(
+                    megatron_param="mtp.layers.*.final_layernorm.weight",
+                    hf_param="mtp.layers.*.final_layernorm.weight",
+                    mtp_layers_per_block=mtp_layers_per_block,
+                    inner_override=mtp_layers_per_block - 1,
+                )
+            )
+
+            # Nested MTP transformer block params
+            mtp_nested = {
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.linear_fc1.weight": "mtp.layers.*.mixer.up_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.linear_fc2.weight": "mtp.layers.*.mixer.down_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.self_attention.linear_proj.weight": "mtp.layers.*.mixer.o_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mixer.in_proj.layer_norm_weight": "mtp.layers.*.norm.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.linear_fc1.layer_norm_weight": "mtp.layers.*.norm.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.*.norm.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.router.weight": "mtp.layers.*.mixer.gate.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.router.expert_bias": "mtp.layers.*.mixer.gate.e_score_correction_bias",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.linear_fc1.weight*": "mtp.layers.*.mixer.experts.*.up_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.linear_fc2.weight*": "mtp.layers.*.mixer.experts.*.down_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.fc1_latent_proj.weight": "mtp.layers.*.mixer.fc1_latent_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.fc2_latent_proj.weight": "mtp.layers.*.mixer.fc2_latent_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.shared_experts.linear_fc1.weight": "mtp.layers.*.mixer.shared_experts.up_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.shared_experts.linear_fc2.weight": "mtp.layers.*.mixer.shared_experts.down_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.pre_mlp_layernorm.weight": "mtp.layers.*.norm.weight",
+            }
+
+            for megatron_param, hf_param in mtp_nested.items():
+                mapping_list.append(
+                    _MTPFlatteningMapping(
+                        megatron_param=megatron_param,
+                        hf_param=hf_param,
+                        mtp_layers_per_block=mtp_layers_per_block,
+                        inner_override=None,
+                    )
+                )
+        else:
+            logger.warning(
+                "mtp_layers_per_block is not set (or 0). Skipping MTP flattening mappings. "
+                "If you are converting a model with MTP enabled, ensure hf_pretrained.config.mtp_hybrid_override_pattern is present."
+            )
 
         # Handling Mamba Mixer submodules separately for more clarity
         # Special Handling for InProj and Conv1d due to specific TP logic
@@ -192,5 +516,18 @@ class NemotronHBridge(MegatronModelBridge):
                 ),
             ]
         )
+
+        if mtp_layers_per_block > 0:
+            mapping_list.extend(
+                [
+                    _MTPFlatteningQKVMapping(
+                        megatron_param="mtp.layers.*.mtp_model_layer.layers.*.self_attention.linear_qkv.weight",
+                        q="mtp.layers.*.mixer.q_proj.weight",
+                        k="mtp.layers.*.mixer.k_proj.weight",
+                        v="mtp.layers.*.mixer.v_proj.weight",
+                        mtp_layers_per_block=mtp_layers_per_block,
+                    ),
+                ]
+            )
 
         return MegatronMappingRegistry(*mapping_list)
