@@ -199,6 +199,34 @@ class GlobalState:
                 config_dict = self.cfg.to_dict()
                 sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
 
+                # Capture git commit hash for experiment traceability
+                import subprocess
+
+                try:
+                    git_hash = (
+                        subprocess.check_output(
+                            ["git", "rev-parse", "HEAD"],
+                            cwd=os.path.dirname(__file__),
+                            stderr=subprocess.DEVNULL,
+                        )
+                        .decode()
+                        .strip()
+                    )
+                    git_branch = (
+                        subprocess.check_output(
+                            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                            cwd=os.path.dirname(__file__),
+                            stderr=subprocess.DEVNULL,
+                        )
+                        .decode()
+                        .strip()
+                    )
+                except Exception:
+                    git_hash, git_branch = "unknown", "unknown"
+
+                sanitized_config["git_commit"] = git_hash
+                sanitized_config["git_branch"] = git_branch
+
                 # Strip whitespace from WANDB_API_KEY if it exists in environment
                 if "WANDB_API_KEY" in os.environ:
                     os.environ["WANDB_API_KEY"] = os.environ["WANDB_API_KEY"].strip()
