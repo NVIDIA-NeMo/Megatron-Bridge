@@ -407,7 +407,7 @@ class GlobalState:
                 if async_strategy == "mcore":
                     warmup_kwargs["mp_mode"] = "spawn"
                 self._async_calls_queue.warmup_persistent_caller(get_rank_safe(), **warmup_kwargs)
-                async_modules["get_write_results_queue"]("fork")
+                async_modules["get_write_results_queue"](self.cfg.checkpoint.async_write_results_mp_mode)
 
     @property
     def async_calls_queue(self) -> Optional[Any]:
