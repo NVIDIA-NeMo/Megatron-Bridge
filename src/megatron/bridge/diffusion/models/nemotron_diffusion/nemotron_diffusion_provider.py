@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NemotronDiffusion model provider: Ministral3 + NemotronDiffusionAttention for sbd_block_diff."""
+"""NemotronDiffusion model provider: text-only GPTModel + NemotronDiffusionAttention for sbd_block_diff."""
 
 import inspect
 from dataclasses import dataclass
@@ -24,7 +24,7 @@ from megatron.bridge.models.gpt_provider import ModuleSpec
 
 @dataclass
 class NemotronDiffusionModelProvider(Ministral3ModelProvider):
-    """Ministral-3 with diffusion (sbd_block_diff) attention for dLLM training."""
+    """Text-only diffusion LM with NemotronDiffusionAttention (sbd_block_diff) for dLLM training."""
 
     mask_token_id: int = 100
     dlm_paradigm: str = "sbd_block_diff"
@@ -34,7 +34,6 @@ class NemotronDiffusionModelProvider(Ministral3ModelProvider):
     dlm_loss_weight: float = 0.3
     ar_loss_weight: float = 1.0
     position_embedding_type: str = "none"
-    freeze_vision_model: bool = True
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         transformer_layer_spec = self.transformer_layer_spec
@@ -49,6 +48,6 @@ class NemotronDiffusionModelProvider(Ministral3ModelProvider):
 
         original_spec = self.transformer_layer_spec
         self.transformer_layer_spec = transformer_layer_spec
-        result = super().provide(pre_process, post_process, vp_stage)
+        result = super().provide_language_model(pre_process, post_process, vp_stage)
         self.transformer_layer_spec = original_spec
         return result

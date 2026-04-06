@@ -86,11 +86,10 @@ The `--tp` argument must match the tensor parallelism degree of the saved checkp
 
 ## Checkpoint Conversion (Bridge)
 
-The `NemotronDiffusionBridge` converts between HuggingFace `Mistral3ForConditionalGeneration` and Megatron-Bridge distributed checkpoint format. It handles:
+The `NemotronDiffusionBridge` converts between HuggingFace `MinistralDiffEncoderModel` and Megatron-Bridge distributed checkpoint format. It handles:
 
-- **Language model weights** — mapped between HF (`language_model.model.*`) and Megatron (`language_model.decoder.*`) with proper QKV merging and tensor-parallel sharding.
-- **Vision encoder weights** (`vision_tower.**`) — replicated across tensor-parallel ranks (no sharding needed).
-- **Multimodal projector weights** (`multi_modal_projector.**`) — replicated similarly.
+- **Language model weights** — mapped between HF (`encoder.*`) and Megatron (`language_model.decoder.*`) with proper QKV merging and tensor-parallel sharding.
+- **Diffusion head** (`diffusion_head.weight`) — mapped to Megatron's `language_model.output_layer.weight`.
 
 The conversion script is [`convert_checkpoints.py`](convert_checkpoints.py).
 
@@ -98,20 +97,20 @@ The conversion script is [`convert_checkpoints.py`](convert_checkpoints.py).
 
 ```bash
 python examples/diffusion/recipes/nemotron_diffusion/convert_checkpoints.py import \
-    --hf-model mistralai/Ministral-3-3B-Base-2512 \
+    --hf-model nvidia/Nemotron-Diffusion-Exp-Ministral-3B \
     --megatron-path /path/to/checkpoints/hf_to_mb_3b \
     --torch-dtype bfloat16
 ```
 
-The Megatron checkpoint is written under `--megatron-path` (e.g. `.../hf_to_mb_3b/iter_0000000/`). Use the parent directory for CPT training with `checkpoint.load`.
-
 For the 8B model (TP=4):
 ```bash
 python examples/diffusion/recipes/nemotron_diffusion/convert_checkpoints.py import \
-    --hf-model mistralai/Ministral-3-8B-Base-2512 \
+    --hf-model nvidia/Nemotron-Diffusion-Exp-Ministral-8B \
     --megatron-path /path/to/checkpoints/hf_to_mb_8b \
     --torch-dtype bfloat16
 ```
+
+The Megatron checkpoint is written under `--megatron-path` (e.g. `.../hf_to_mb_3b/iter_0000000/`). Use the parent directory for training with `checkpoint.load`.
 
 ### Export: Megatron → HuggingFace
 
@@ -119,13 +118,11 @@ Export a trained Megatron checkpoint back to HuggingFace format. A reference HF 
 
 ```bash
 python examples/diffusion/recipes/nemotron_diffusion/convert_checkpoints.py export \
-    --hf-model mistralai/Ministral-3-3B-Base-2512 \
+    --hf-model nvidia/Nemotron-Diffusion-Exp-Ministral-3B \
     --megatron-path /path/to/checkpoints/ar_to_dlm_3b \
     --hf-path /path/to/checkpoints/mb_to_hf_3b
 ```
 
 The `--hf-model` argument is used as the reference for config, tokenizer, and any non-LM artifacts. The exported directory contains a self-contained HuggingFace model.
-
-**Note:** If the reference HF model does not include vision tower weights (e.g. an LM-only checkpoint), warnings of the form `Can't find vision_tower.* in hf_keys` are expected and benign — the LM weights are still exported correctly.
 
 ---

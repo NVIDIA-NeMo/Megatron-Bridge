@@ -13,15 +13,16 @@
 # limitations under the License.
 
 """
-Megatron Bridge for NemotronDiffusion 3 (diffusion) Vision-Language Models.
+Megatron Bridge for NemotronDiffusion diffusion language models.
 
-Converts between HuggingFace Mistral3ForConditionalGeneration and
-Megatron-Core GPTModel format, using NemotronDiffusionModelProvider which
-replaces core attention with NemotronDiffusionAttention for sbd_block_diff.
+Converts between HuggingFace and Megatron-Core GPTModel format, using
+NemotronDiffusionModelProvider which replaces core attention with
+NemotronDiffusionAttention for sbd_block_diff.
 
-Supported models:
-- Ministral-3-3B-Base-2512
-- Ministral-3-8B-Base-2512
+Supports two HF checkpoint formats (auto-detected from config):
+- Text-only (NemotronDiffusion): encoder.*, diffusion_head.weight
+- VLM source (Ministral CPT): language_model.model.*, language_model.lm_head.weight
+  (vision_tower and multi_modal_projector weights are ignored)
 """
 
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -30,38 +31,34 @@ from megatron.bridge.diffusion.models.nemotron_diffusion.nemotron_diffusion_prov
     NemotronDiffusionModelProvider,
 )
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, register_bridge_implementation
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
     QKVMapping,
-    ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-
-# Ensure the base Ministral3Bridge is registered first so we can override it
-from megatron.bridge.models.ministral3 import Ministral3Bridge  # noqa: F401
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
-try:
-    from transformers import Mistral3ForConditionalGeneration
-
-    HAS_MISTRAL3 = True
-except ImportError:
-    Mistral3ForConditionalGeneration = None
-    HAS_MISTRAL3 = False
-
-
-# TODO: Check if NemotronDiffusion has a dedicated HuggingFace model class (e.g. NemotronDiffusionForCausalLM)
-# and use it as source instead of Mistral3ForConditionalGeneration to avoid overwriting the
-# Ministral3Bridge registration in get_model_bridge dispatch.
-@MegatronModelBridge.register_bridge(source=Mistral3ForConditionalGeneration, target=GPTModel)
 class NemotronDiffusionBridge(MegatronModelBridge):
-    """HF <-> Megatron bridge for NemotronDiffusion diffusion language models."""
+    """HF <-> Megatron bridge for NemotronDiffusion diffusion language models.
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> NemotronDiffusionModelProvider:
+    Handles both text-only (encoder.*) and VLM (language_model.model.*) HF formats.
+    The format is auto-detected in provider_bridge() and used in mapping_registry().
+
+    The Megatron target is a bare GPTModel (not wrapped in Ministral3Model), so
+    Megatron-side keys use embedding.*, decoder.*, output_layer.* (no language_model. prefix).
+    """
+
+    _is_text_only: bool = True
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronDiffusionModelProvider:
         hf_config = hf_pretrained.config
         text_config = getattr(hf_config, "text_config", hf_config)
+
+        # Auto-detect checkpoint format: VLM configs nest text params under text_config
+        self._is_text_only = not hasattr(hf_config, "text_config")
+
         return NemotronDiffusionModelProvider(
             hidden_size=text_config.hidden_size,
             ffn_hidden_size=text_config.intermediate_size,
@@ -72,40 +69,79 @@ class NemotronDiffusionBridge(MegatronModelBridge):
             hf_config=hf_config,
         )
 
-    def mapping_registry(self) -> MegatronMappingRegistry:
+    def _text_only_mappings(self) -> list:
+        """Mappings for text-only NemotronDiffusion checkpoints (encoder.*, diffusion_head.weight)."""
         param_mappings = {
-            "language_model.embedding.word_embeddings.weight": "language_model.model.embed_tokens.weight",
-            "language_model.output_layer.weight": "language_model.lm_head.weight",
-            "language_model.decoder.final_layernorm.weight": "language_model.model.norm.weight",
-            "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "language_model.model.layers.*.input_layernorm.weight",
-            "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "language_model.model.layers.*.post_attention_layernorm.weight",
-            "language_model.decoder.layers.*.self_attention.linear_proj.weight": "language_model.model.layers.*.self_attn.o_proj.weight",
-            "language_model.decoder.layers.*.mlp.linear_fc2.weight": "language_model.model.layers.*.mlp.down_proj.weight",
+            "embedding.word_embeddings.weight": "encoder.embed_tokens.weight",
+            "output_layer.weight": "diffusion_head.weight",
+            "decoder.final_layernorm.weight": "encoder.norm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "encoder.layers.*.input_layernorm.weight",
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "encoder.layers.*.post_attention_layernorm.weight",
+            "decoder.layers.*.self_attention.linear_proj.weight": "encoder.layers.*.self_attn.o_proj.weight",
+            "decoder.layers.*.mlp.linear_fc2.weight": "encoder.layers.*.mlp.down_proj.weight",
         }
-
         mapping_list = [AutoMapping(megatron_param=k, hf_param=v) for k, v in param_mappings.items()]
         mapping_list.extend(
             [
-                ReplicatedMapping(
-                    megatron_param="vision_tower.**",
-                    hf_param="vision_tower.**",
-                ),
-                ReplicatedMapping(
-                    megatron_param="multi_modal_projector.**",
-                    hf_param="multi_modal_projector.**",
-                ),
                 QKVMapping(
-                    megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="encoder.layers.*.self_attn.q_proj.weight",
+                    k="encoder.layers.*.self_attn.k_proj.weight",
+                    v="encoder.layers.*.self_attn.v_proj.weight",
+                ),
+                GatedMLPMapping(
+                    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
+                    gate="encoder.layers.*.mlp.gate_proj.weight",
+                    up="encoder.layers.*.mlp.up_proj.weight",
+                ),
+            ]
+        )
+        return mapping_list
+
+    def _vlm_mappings(self) -> list:
+        """Mappings for VLM Ministral CPT source checkpoints (language_model.model.*).
+
+        Vision keys (vision_tower.**, multi_modal_projector.**) are absent from
+        the Megatron GPTModel side and are naturally ignored.
+        """
+        param_mappings = {
+            "embedding.word_embeddings.weight": "language_model.model.embed_tokens.weight",
+            "output_layer.weight": "language_model.lm_head.weight",
+            "decoder.final_layernorm.weight": "language_model.model.norm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "language_model.model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "language_model.model.layers.*.post_attention_layernorm.weight",
+            "decoder.layers.*.self_attention.linear_proj.weight": "language_model.model.layers.*.self_attn.o_proj.weight",
+            "decoder.layers.*.mlp.linear_fc2.weight": "language_model.model.layers.*.mlp.down_proj.weight",
+        }
+        mapping_list = [AutoMapping(megatron_param=k, hf_param=v) for k, v in param_mappings.items()]
+        mapping_list.extend(
+            [
+                QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                     q="language_model.model.layers.*.self_attn.q_proj.weight",
                     k="language_model.model.layers.*.self_attn.k_proj.weight",
                     v="language_model.model.layers.*.self_attn.v_proj.weight",
                 ),
                 GatedMLPMapping(
-                    megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
+                    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
                     gate="language_model.model.layers.*.mlp.gate_proj.weight",
                     up="language_model.model.layers.*.mlp.up_proj.weight",
                 ),
             ]
         )
+        return mapping_list
 
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        if self._is_text_only:
+            mapping_list = self._text_only_mappings()
+        else:
+            mapping_list = self._vlm_mappings()
         return MegatronMappingRegistry(*mapping_list)
+
+
+# Register for the custom HF architecture (available via auto_map, not a standard transformers class)
+register_bridge_implementation(
+    source="MinistralDiffEncoderModel",
+    target=GPTModel,
+    bridge_class=NemotronDiffusionBridge,
+)

@@ -191,7 +191,7 @@ class NemotronDiffusionAttention(MegatronModule):
         )
 
         # RoPE setup (always required)
-        hf_text_config = config.hf_config.text_config
+        hf_text_config = getattr(config.hf_config, "text_config", config.hf_config)
         hf_text_config.max_position_embeddings = config.seq_length
         self.rope_embedding_module = Ministral3RotaryEmbedding(hf_text_config)
 

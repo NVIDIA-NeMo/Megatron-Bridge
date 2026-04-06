@@ -1,8 +1,12 @@
-from megatron.bridge import AutoBridge
+from functools import partial
+
+from megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge import NemotronDiffusionBridge
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.training.config import ConfigContainer, SchedulerConfig, TokenizerConfig
+from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 
 
 def _nemotron_diffusion_cpt_config(
@@ -16,9 +20,22 @@ def _nemotron_diffusion_cpt_config(
 ) -> ConfigContainer:
     cfg = _pretrain_common()
 
-    # Model configuration
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=True, hf_path=hf_path)
-    cfg.model.freeze_vision_model = True
+    # Model configuration — load HF config to build a standard Ministral3-based GPTModel
+    # (no diffusion attention), and use NemotronDiffusionBridge for weight loading
+    # which strips the vision encoder from VLM checkpoints.
+    hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path)
+    bridge = NemotronDiffusionBridge()
+    provider = bridge.provider_bridge(hf_pretrained)
+    # For CPT, use standard attention (not NemotronDiffusionAttention) by calling
+    # the grandparent's provide method which creates a plain GPTModel
+    provider.provide = (
+        lambda pre_process=None, post_process=None, vp_stage=None: Ministral3ModelProvider.provide_language_model(
+            provider, pre_process, post_process, vp_stage
+        )
+    )
+    cfg.model = provider
+    cfg.model.perform_initialization = False
+    cfg.model.register_pre_wrap_hook(partial(bridge.load_weights_hf_to_megatron, hf_pretrained))
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -44,6 +61,9 @@ def _nemotron_diffusion_cpt_config(
 
     # Training config
     cfg.train.train_iters = 500000
+    cfg.train.eval_interval = 5000
+    cfg.train.eval_iters = 10
+    cfg.train.save_interval = 5000
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = micro_batch_size
     cfg.train.manual_gc = True
@@ -62,6 +82,7 @@ def _nemotron_diffusion_cpt_config(
     scheduler_cfg.lr_warmup_iters = 0
     scheduler_cfg.lr_wsd_decay_iters = 100000
     cfg.optimizer = opt_cfg
+    cfg.optimizer.adam_beta2 = 0.95
     cfg.scheduler = scheduler_cfg
 
     # Dataset configuration
@@ -72,8 +93,9 @@ def _nemotron_diffusion_cpt_config(
     cfg.dataset.seq_length = 4096
     cfg.dataset.blend = blend
     cfg.dataset.blend_per_split = blend_per_split
-    cfg.dataset.split = split
-    cfg.dataset.num_workers = 8
+    cfg.dataset.split = "950,50,0"
+    cfg.dataset.num_workers = 10
+    cfg.dataset.dataloader_type = "cyclic"
     cfg.dataset.mmap_bin_files = False
 
     # DDP settings
@@ -84,6 +106,9 @@ def _nemotron_diffusion_cpt_config(
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+
+    # Distributed timeout
+    cfg.dist.distributed_timeout_minutes = 240
 
     # Mixed precision
     cfg.mixed_precision = "bf16_mixed"
@@ -106,11 +131,11 @@ def nemotron_diffusion_3b_finetune_config(
     hf_path=None,
     peft=None,
 ) -> ConfigContainer:
-    """Return a CPT config for Nemotron-Diffusion 3B. Default: TP=1, MBS=2."""
+    """Return a CPT config for Nemotron-Diffusion 3B. Default: TP=1, MBS=1."""
     return _nemotron_diffusion_cpt_config(
         hf_path=hf_path or "mistralai/Ministral-3-3B-Base-2512",
         tensor_model_parallel_size=1,
-        micro_batch_size=2,
+        micro_batch_size=1,
         tokenizer_model="mistralai/Ministral-3-3B-Base-2512",
         data_paths=data_paths,
         data_args_path=data_args_path,

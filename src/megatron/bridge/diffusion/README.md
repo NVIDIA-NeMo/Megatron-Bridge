@@ -17,7 +17,7 @@ diffusion/
 ├── conversion/       # HF ↔ Megatron checkpoint conversion bridges
 │   ├── flux/         # FLUX bridge and HF pretrained adapter
 │   ├── wan/          # WAN bridge and HF pretrained adapter
-│   └── nemotron_diffusion/   # NemotronDiffusion bridge (Mistral3ForConditionalGeneration ↔ GPTModel)
+│   └── nemotron_diffusion/   # NemotronDiffusion bridge (MinistralDiffEncoderModel ↔ GPTModel)
 ├── data/             # Data loading and task encoders
 │   ├── common/       # Shared data modules (energon, diffusion samples, sequence packing)
 │   ├── dit/          # DiT task encoder and mock data
