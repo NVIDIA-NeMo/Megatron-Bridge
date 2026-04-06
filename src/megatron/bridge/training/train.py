@@ -508,6 +508,7 @@ def train(
                 history_wct,
                 model,
                 log_max_attention_logit,
+                start_iteration=start_iteration,
             )
 
         if (
