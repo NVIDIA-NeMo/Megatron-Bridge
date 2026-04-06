@@ -47,7 +47,7 @@ fi
 
 apt-get install -y --no-install-recommends \
     libcublas-dev-${CUDA_MAJOR}-${CUDA_MINOR}=${CUBLAS_VER} \
-    libcublaslt-dev-${CUDA_MAJOR}-${CUDA_MINOR}=${CUBLAS_VER}
+    libcublaslt12=${CUBLAS_VER}
 
 apt-get clean
 rm -rf /var/lib/apt/lists/*
