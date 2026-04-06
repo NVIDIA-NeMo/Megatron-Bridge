@@ -74,6 +74,16 @@ concurrently without interfering with each other.
 # Create branch and worktree
 WORKTREE_DIR=~/code/Megatron-Bridge-worktrees/autoresearch-<idea-name>
 git worktree add ${WORKTREE_DIR} -b autoresearch/<idea-name>
+
+# IMPORTANT: Git worktrees do NOT include submodules. The 3rdparty/Megatron-LM
+# directory will be empty, causing "No module named megatron.core" errors.
+# Fix by symlinking to the main repo's submodule:
+rm -rf ${WORKTREE_DIR}/3rdparty/Megatron-LM
+ln -s ~/code/Megatron-Bridge/3rdparty/Megatron-LM ${WORKTREE_DIR}/3rdparty/Megatron-LM
+
+# Also symlink untracked directories that are not part of git but needed at runtime:
+ln -s ~/code/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/conf \
+  ${WORKTREE_DIR}/examples/diffusion/recipes/nemotron_diffusion/conf
 ```
 
 All code changes for this experiment are made in `${WORKTREE_DIR}`, not in the
@@ -109,6 +119,7 @@ so all existing scripts work without modification.
 bash submit_pretraining_3b.sh --direct
 ```
 This runs on localhost with `global_batch_size=8, micro_batch_size=1`.
+The script automatically uses the `_debug` data config (smaller dataset) in `--direct` mode.
 
 **Step 3 — Verify:**
 - Training starts without errors
@@ -215,3 +226,8 @@ like the training job.
 - If a failure is unrecoverable, mark the idea as ❌ and continue to the next
 - If no GPU is available for interactive test, wait and retry
 - The user can interrupt at any time; the agent should checkpoint its state in IDEAS.md
+- **Sleep conservatively:** Use appropriate wait times for each context:
+  - Interactive session (srun): set the Bash tool's timeout to ~4 minutes.
+    Do NOT sleep 10 minutes waiting for a node.
+  - Training job polling (squeue): 10-minute intervals are fine — jobs run for hours.
+  - Eval job polling: 5-minute intervals are fine.

@@ -46,6 +46,9 @@ GPUS_PER_NODE=8
 PARTITION="batch"
 ACCOUNT="coreai_dlalgo_llm"
 DATA_ARGS_PATH=examples/diffusion/recipes/nemotron_diffusion/conf/climb_nm5.5_phase3_mistral_nemo.sh
+if [ "$DIRECT" = "true" ]; then
+    DATA_ARGS_PATH=examples/diffusion/recipes/nemotron_diffusion/conf/climb_nm5.5_phase3_mistral_nemo_debug.sh
+fi
 hf_path="/lustre/fsw/portfolios/nvr/users/snorouzi/models/Ministral-3-3B-Base-2512_converted"
 pretrained_checkpoint="/lustre/fsw/portfolios/coreai/users/snorouzi/checkpoints/hf_to_mb_3b"
 ar_teacher_model_path="/lustre/fsw/portfolios/nvr/users/snorouzi/models/Ministral-3-8B-Base-2512_1t_ft"
