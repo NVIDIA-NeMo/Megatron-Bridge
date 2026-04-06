@@ -60,8 +60,8 @@ def nemotron_diffusion3_3b_pretrain_config(**user_kwargs) -> ConfigContainer:
         lr_decay_style="WSD",
         lr_warmup_fraction=0.01,
         lr_wsd_decay_iters=2500,
-        eval_interval=1000,
-        save_interval=1000,
+        eval_interval=5000,
+        save_interval=5000,
         tokenizer_model="mistralai/Ministral-3-3B-Base-2512",
     )
     defaults.update(user_kwargs)
@@ -80,8 +80,8 @@ def nemotron_diffusion3_8b_pretrain_config(**user_kwargs) -> ConfigContainer:
         lr_decay_style="WSD",
         lr_warmup_fraction=0.01,
         lr_wsd_decay_iters=2500,
-        eval_interval=1000,
-        save_interval=1000,
+        eval_interval=5000,
+        save_interval=5000,
         tokenizer_model="mistralai/Ministral-3-8B-Base-2512",
     )
     defaults.update(user_kwargs)
@@ -100,8 +100,8 @@ def nemotron_diffusion3_14b_pretrain_config(**user_kwargs) -> ConfigContainer:
         lr_decay_style="WSD",
         lr_warmup_fraction=0.01,
         lr_wsd_decay_iters=2500,
-        eval_interval=1000,
-        save_interval=1000,
+        eval_interval=5000,
+        save_interval=5000,
         tokenizer_model="mistralai/Ministral-3-14B-Base-2512",
     )
     defaults.update(user_kwargs)
@@ -222,6 +222,7 @@ def _nemotron_diffusion3_common(
         model_cfg.recompute_method = "uniform"
         model_cfg.recompute_num_layers = 1
 
+    model_cfg.cross_entropy_loss_fusion = True
     model_cfg.cross_entropy_fusion_impl = "te"
 
     if lr_decay_style == "WSD":
@@ -242,16 +243,19 @@ def _nemotron_diffusion3_common(
             min_lr=min_lr,
         )
 
-    if tokenizer_model is not None:
+    effective_tokenizer_model = tokenizer_model if tokenizer_model is not None else hf_path
+    if effective_tokenizer_model is not None:
         tokenizer_cfg = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model=tokenizer_model,
+            tokenizer_model=effective_tokenizer_model,
         )
     else:
         tokenizer_cfg = TokenizerConfig(
             tokenizer_type="NullTokenizer",
             vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE,
         )
+
+    opt_cfg.adam_beta2 = 0.95
 
     # Config Container
     cfg_container = ConfigContainer(
@@ -287,10 +291,12 @@ def _nemotron_diffusion3_common(
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,
-            split=split,
+            split="950,50,0" if split == "9999,8,2" else split,
             # Dataloader config parameters
             data_sharding=True,
             dataloader_type="cyclic",
+            num_workers=10,
+            mmap_bin_files=False,
             skip_getting_attention_mask_from_dataset=False,
         ),
         logger=LoggerConfig(
@@ -313,6 +319,7 @@ def _nemotron_diffusion3_common(
         mixed_precision=precision_config,
     )
 
+    cfg_container.dist.distributed_timeout_minutes = 240
     return cfg_container
 
 
