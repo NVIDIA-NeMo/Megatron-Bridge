@@ -30,6 +30,7 @@ from typing import Callable, List, Optional, Union, Tuple
 import torch
 from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.transformer import ModuleSpec, TransformerConfig
@@ -40,10 +41,13 @@ from torch import Tensor
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.import_utils import safe_import_from
+from megatron.core.transformer.spec_utils import build_module
 
 TEDotProductAttention, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEDotProductAttention")
 TELayerNormColumnParallelLinear, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TELayerNormColumnParallelLinear")
 TERowParallelLinear, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TERowParallelLinear")
+SplitAlongDim, _ = safe_import_from("megatron.core.extensions.transformer_engine", "SplitAlongDim")
+
 
 
 class MiMoV2FlashRotaryEmbedding(RotaryEmbedding):
@@ -100,17 +104,18 @@ def _is_local_attn_layer(
 
 
 class MiMoV2FlashSelfAttention(SelfAttention):
-    """MoMoV2Flash self attention.
+    """MiMo-V2-Flash self attention.
 
-    Uses local rope embedding for local layers,
-    global rope embedding for global layers.
-    Per-layer KV head count: SWA layers use swa_num_query_groups, full layers use full_attn_num_query_groups.
+    Customizations over standard SelfAttention (following OLMoE pattern):
+    - Per-layer KV head count: SWA layers use swa_num_query_groups, full layers use full_attn_num_query_groups
+    - Asymmetric V head dim: Q/K use qk_channels=192, V uses v_head_dim=128
+    - Dual RoPE: local rope for SWA layers, global rope for full layers
     """
 
     def __init__(
         self,
         config: TransformerConfig,
-        submodules,
+        submodules: SelfAttentionSubmodules,
         layer_number: int,
         *args,
         **kwargs,
@@ -121,6 +126,76 @@ class MiMoV2FlashSelfAttention(SelfAttention):
         else:
             config.num_query_groups = config.full_attn_num_query_groups
         super().__init__(config, submodules, layer_number, *args, **kwargs)
+
+        # --- Asymmetric V head dim fixup ---
+        v_head_dim = config.v_head_dim
+        qk_channels = config.kv_channels  # MCore stores QK head dim as kv_channels
+
+        self.val_hidden_size = v_head_dim
+
+        self.query_projection_size = qk_channels * config.num_attention_heads
+        self.key_projection_size = qk_channels * config.num_query_groups
+        self.value_projection_size = v_head_dim * config.num_query_groups
+        self.linear_qkv_out_dim = (
+            self.query_projection_size + self.key_projection_size + self.value_projection_size
+        )
+        self.linear_qkv = build_module(
+            submodules.linear_qkv,
+            config.hidden_size,
+            self.linear_qkv_out_dim,
+            config=config,
+            init_method=config.init_method,
+            gather_output=False,
+            bias=config.add_bias_linear or config.add_qkv_bias,
+            skip_bias_add=False,
+            is_expert=False,
+            tp_comm_buffer_name='qkv',
+            tp_group=self.pg_collection.tp,
+        )
+
+        self.linear_proj = build_module(
+            submodules.linear_proj,
+            v_head_dim * config.num_attention_heads,
+            config.hidden_size,
+            config=config,
+            init_method=config.output_layer_init_method,
+            bias=config.add_bias_linear,
+            input_is_parallel=True,
+            skip_bias_add=True,
+            is_expert=False,
+            tp_comm_buffer_name='proj',
+            tp_group=self.pg_collection.tp,
+        )
+
+    def get_query_key_value_tensors(self, hidden_states, key_value_states=None, **kwargs):
+        """Split fused QKV with asymmetric V head dim."""
+        mixed_qkv, _ = self.linear_qkv(hidden_states)
+
+        qk_ch = self.hidden_size_per_attention_head
+        v_ch = self.config.v_head_dim
+
+        # [sq, b, hp] -> [sq, b, ng, (heads_per_group*qk_ch + qk_ch + v_ch)]
+        new_tensor_shape = mixed_qkv.size()[:-1] + (
+            self.num_query_groups_per_partition,
+            (self.num_attention_heads_per_partition // self.num_query_groups_per_partition) * qk_ch + qk_ch + v_ch,
+        )
+        mixed_qkv = mixed_qkv.view(*new_tensor_shape)
+
+        split_arg_list = [
+            (self.num_attention_heads_per_partition // self.num_query_groups_per_partition) * qk_ch,  # Q
+            qk_ch,                     # K
+            v_ch,                      # V
+        ]
+
+        if SplitAlongDim is not None:
+            (query, key, value) = SplitAlongDim(mixed_qkv, 3, split_arg_list)
+        else:
+            (query, key, value) = torch.split(mixed_qkv, split_arg_list, dim=3)
+
+        # [sq, b, ng, heads_per_group * qk_ch] -> [sq, b, np, qk_ch]
+        query = query.reshape(query.size(0), query.size(1), -1, qk_ch)
+
+        return query, key, value
 
     def forward(
         self,
@@ -203,6 +278,19 @@ class MiMoV2FlashTEDotProductAttention(TEDotProductAttention):
 
 
 
+def mimo_v2_flash_layer_spec(config) -> ModuleSpec:
+    """Layer spec for MiMo-V2-Flash with custom hybrid attention modules.
+
+    Builds the block spec (handles MoE/dense split) then injects custom
+    self-attention and core-attention modules into every layer spec.
+    """
+    spec = get_gpt_decoder_block_spec(config, use_transformer_engine=True)
+    for layer_spec in spec.layer_specs:
+        layer_spec.submodules.self_attention.module = MiMoV2FlashSelfAttention
+        layer_spec.submodules.self_attention.submodules.core_attention = MiMoV2FlashTEDotProductAttention
+    return spec
+
+# TODO: MTP -- apparently there is no MTP in HF. SHould I implement it ?
 @dataclass
 class MiMoV2FlashModelProvider(GPTModelProvider):
     """Configuration and provider for MiMo-V2-Flash models.
@@ -215,6 +303,10 @@ class MiMoV2FlashModelProvider(GPTModelProvider):
     with a dual-base version (same pattern as Gemma3ModelProvider).
     """
 
+    transformer_layer_spec: Union[ModuleSpec, Callable[["MiMoV2FlashModelProvider"], ModuleSpec]] = field(
+        default_factory=lambda: mimo_v2_flash_layer_spec
+    )
+
     # Hybrid attention: 0=full, 1=SWA, one entry per layer
     hybrid_attention_pattern: Optional[List[int]] = None
     window_size: Union[int, tuple, None] = 128
@@ -226,7 +318,7 @@ class MiMoV2FlashModelProvider(GPTModelProvider):
     full_attn_num_query_groups: int = 4
     swa_num_query_groups: int = 8
 
-    # Asymmetric V head dimension (Q/K use kv_channels=192, V uses v_head_dim=128)
+    # Asymmetric V head dimension (Q/K use qk_channels=192, V uses v_head_dim=128)
     v_head_dim: int = 128
 
     # Attention sink bias
@@ -260,12 +352,6 @@ class MiMoV2FlashModelProvider(GPTModelProvider):
         self.rotary_base = rotary_base_local
         model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
         self.rotary_base = (rotary_base_local, rotary_base_global)
-
-        # Patch layer specs to use custom hybrid attention modules.
-        # get_gpt_decoder_block_spec already handled MoE/dense split
-        for layer_spec in model.decoder.submodules.layer_specs:
-            layer_spec.submodules.self_attention.module = MiMoV2FlashSelfAttention
-            layer_spec.submodules.self_attention.submodules.core_attention = MiMoV2FlashTEDotProductAttention
 
         # Replace model's RoPE with dual-base version
         model.rotary_pos_emb = MiMoV2FlashRotaryEmbedding(
