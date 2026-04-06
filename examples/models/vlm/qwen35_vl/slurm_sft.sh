@@ -1,5 +1,4 @@
 #!/bin/bash
-set -euo pipefail
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +50,8 @@ set -euo pipefail
 #SBATCH --output=qwen35vl_sft_%j.out
 #SBATCH --error=qwen35vl_sft_%j.err
 #SBATCH --exclusive
+
+set -euo pipefail
 
 # ==============================================================================
 # Parse arguments
@@ -109,8 +110,7 @@ DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
 TRAIN_ITERS=500
 GLOBAL_BATCH_SIZE=32
-MICRO_BATCH_SIZE=1
-EVAL_ITERS=10
+MICRO_BATCH_SIZE=4  # tested on Blackwell GPUs; reduce for smaller VRAM
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
@@ -127,7 +127,9 @@ CONTAINER_MOUNTS=""
 # ==============================================================================
 
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
-export NCCL_NVLS_ENABLE=0
+export NCCL_NVLS_ENABLE=1
+export HTTPX_LOG_LEVEL=WARNING
+export PYTHONWARNINGS="ignore::FutureWarning:torch.cuda,ignore::UserWarning:modelopt.torch"
 
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 # export HF_HOME="/path/to/shared/HF_HOME"
@@ -167,7 +169,7 @@ CLI_OVERRIDES="\
 # For multinode runs, the recipe's online HF path can be unstable. Pass --hf_path
 # with a local model directory for more reliable config loading, e.g.:
 #   --hf_path ${WORKSPACE}/models/Qwen/${HF_MODEL_NAME}
-CMD="uv run --no-sync python scripts/training/run_recipe.py \
+CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
     --step_func vlm_step \
     $CLI_OVERRIDES"

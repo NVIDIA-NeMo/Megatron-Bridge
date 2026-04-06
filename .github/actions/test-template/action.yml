@@ -52,6 +52,10 @@ inputs:
   test-data-path:
     description: "Test data path"
     required: true
+  script_dir:
+    description: "Subdirectory within launch_scripts/ for functional tests (active or flaky)"
+    required: false
+    default: "active"
   runner:
     description: "Runner to use for test"
     required: true
@@ -60,25 +64,10 @@ runs:
   using: "composite"
   steps:
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v6
       with:
         path: ${{ github.workspace }}/Megatron-Bridge
         submodules: recursive
-
-    - name: Update MCore submodule (if triggered from MCore)
-      if: ${{ github.event.inputs.mcore_commit != '' }}
-      shell: bash
-      working-directory: ${{ github.workspace }}/Megatron-Bridge
-      run: |
-        echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_commit }}"
-        echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
-        cd 3rdparty/Megatron-LM
-        git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
-        git checkout ${{ github.event.inputs.mcore_commit }}
-
-        ACTUAL_COMMIT=$(git rev-parse HEAD)
-        echo "✅ MCore submodule updated to: ${ACTUAL_COMMIT}"
-        git log -1 --oneline
 
     - name: Install Azure CLI
       if: ${{ inputs.has-azure-credentials == 'true' }}
@@ -125,6 +114,7 @@ runs:
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
         docker container rm -f nemo_container_${{ github.run_id }} || true
+
         docker run \
           --rm \
           -d \
@@ -137,8 +127,8 @@ runs:
           --env HF_HOME=/home/TestData/HF_HOME \
           --env NEMO_HOME=/home/TestData/nemo_home \
           --env RUN_ID=${{ github.run_id }} \
+          --env UV_NO_SYNC=1 \
           --workdir /opt/Megatron-Bridge \
-          --volume ${{ github.workspace }}/Megatron-Bridge:/opt/Megatron-Bridge \
           $VOLUME_ARGS \
           ${{ inputs.container-image }} \
           bash -c "sleep $(( ${{ inputs.timeout }} * 60 + 60 ))"
@@ -197,7 +187,7 @@ runs:
             echo "📝 Stored MCore commit SHA: ${{ github.event.inputs.mcore_commit }}"
           fi
 
-          timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || 'functional_tests' }}/${{ inputs.script }}.sh || EXIT_CODE=$?
+          timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/${{ inputs.script }}.sh || EXIT_CODE=$?
 
           if [[ "$EXIT_CODE" -eq 124 ]]; then
             echo "::error:: Test timed out after ${{ inputs.timeout }} minutes. Please reach out to the PIC."
@@ -250,7 +240,7 @@ runs:
         echo "::endgroup::"
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       if: ${{ steps.check.outputs.coverage_report != 'none' }}
       with:
         name: ${{ steps.check.outputs.coverage_report }}
