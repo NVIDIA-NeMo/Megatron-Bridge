@@ -251,8 +251,8 @@ def _build_config(
     max_dp = max(p.data_parallel_size for p in par_cfg.module_parallelisms.values())
 
     train_cfg = TrainingConfig(
-        micro_batch_size=1,
-        global_batch_size=max_dp,
+        micro_batch_size=max_dp,
+        global_batch_size=max_dp * max_dp,
         train_iters=train_iters,
     )
     train_cfg.num_microbatches = 1
