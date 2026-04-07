@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+
 # scripts/performance is not an installed package; add it to sys.path so we
 # can import ``utils.executors`` the same way the scripts themselves do.
 _PERF_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts" / "performance"
@@ -40,8 +41,12 @@ if HAS_NEMO_RUN:
 def test_container_env_includes_perf_vars(tmp_path):
     """PERF_ENV_VARS keys must appear in container_env so they override container defaults."""
     executor = slurm_executor(
-        gpu="h100", account="test", partition="test",
-        log_dir=str(tmp_path), nodes=1, num_gpus_per_node=8,
+        gpu="h100",
+        account="test",
+        partition="test",
+        log_dir=str(tmp_path),
+        nodes=1,
+        num_gpus_per_node=8,
     )
     assert executor.container_env is not None, "container_env is None — was the field removed from the executor?"
     missing = set(PERF_ENV_VARS) - set(executor.container_env)
@@ -52,10 +57,12 @@ def test_container_env_includes_perf_vars(tmp_path):
 def test_custom_env_vars_in_container_env(tmp_path):
     """Vars passed via custom_env_vars must also appear in container_env."""
     executor = slurm_executor(
-        gpu="h100", account="test", partition="test",
-        log_dir=str(tmp_path), nodes=1, num_gpus_per_node=8,
+        gpu="h100",
+        account="test",
+        partition="test",
+        log_dir=str(tmp_path),
+        nodes=1,
+        num_gpus_per_node=8,
         custom_env_vars={"MY_CUSTOM_VAR": "1"},
     )
     assert "MY_CUSTOM_VAR" in executor.container_env
-
-
