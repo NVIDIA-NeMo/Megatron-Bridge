@@ -163,6 +163,8 @@ class _FakeProvider:
         self.freeze_language_model = False
         self.freeze_vision_model = False
         self.freeze_audio_model = False
+        self.vit_gradient_checkpointing = False
+        self.multimodal_attn_impl = "auto"
         self.transformer_impl = "transformer_engine"
         self.cuda_graph_impl = "none"
         self.attention_backend = "auto"
@@ -196,6 +198,8 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is False
     assert cfg.model.freeze_audio_model is False
+    assert cfg.model.vit_gradient_checkpointing is False
+    assert cfg.model.multimodal_attn_impl == "auto"
 
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.pack_sequences_in_batch is False

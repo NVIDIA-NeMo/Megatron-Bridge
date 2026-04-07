@@ -31,7 +31,27 @@ from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config imp
     Qwen3OmniTransformerConfig,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
+    split_data_cp_rank,
+    split_deepstack_embs,
+)
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+
+
+def _deep_getattr(module: torch.nn.Module, attr_path: str) -> torch.nn.Module:
+    value = module
+    for attr in attr_path.split("."):
+        value = getattr(value, attr)
+    return value
+
+
+def _patch_get_input_embeddings(module: torch.nn.Module, attr_path: str) -> None:
+    """Match ms-swift's tower patching for gradient-checkpoint input hooks."""
+
+    def _get_input_embeddings(self) -> torch.nn.Module:
+        return _deep_getattr(self, attr_path)
+
+    module.get_input_embeddings = _get_input_embeddings.__get__(module, module.__class__)
 
 
 def _build_text_only_mrope_position_ids(input_ids: torch.Tensor) -> torch.Tensor:
@@ -40,6 +60,64 @@ def _build_text_only_mrope_position_ids(input_ids: torch.Tensor) -> torch.Tensor
     base = torch.arange(seq_len, device=input_ids.device, dtype=torch.long)
     base = base.unsqueeze(0).expand(batch_size, -1)
     return torch.stack([base, base, base], dim=0)
+
+
+def _configure_multimodal_attn_impl(config: object, attn_impl: str | None) -> None:
+    """Apply a requested attention implementation to HF multimodal configs."""
+    if not attn_impl or attn_impl == "auto":
+        return
+
+    setattr(config, "_attn_implementation", attn_impl)
+    setattr(config, "_attn_implementation_internal", attn_impl)
+    setattr(config, "attn_implementation", attn_impl)
+
+    use_flash_attn = attn_impl in {"flash_attn", "flash_attention_2"}
+    setattr(config, "use_flash_attn", use_flash_attn)
+    setattr(config, "_use_flash_attention_2", use_flash_attn)
+    setattr(config, "_flash_attn_2_enabled", use_flash_attn)
+
+
+def _enable_multimodal_gradient_checkpointing(module: torch.nn.Module) -> None:
+    """Best-effort enable gradient checkpointing for HF multimodal towers."""
+    if hasattr(module, "gradient_checkpointing_enable"):
+        try:
+            module.gradient_checkpointing_enable()
+        except TypeError:
+            module.gradient_checkpointing_enable({})
+        except NotImplementedError:
+            pass
+
+    if hasattr(module, "enable_input_require_grads"):
+        try:
+            module.enable_input_require_grads()
+        except AttributeError:
+            pass
+        except NotImplementedError:
+            pass
+
+
+def _trim_feature_sequence(
+    features: torch.Tensor | None,
+    multiscale_features: list[torch.Tensor] | None,
+    expected_tokens: int,
+    feature_name: str,
+) -> tuple[torch.Tensor | None, list[torch.Tensor] | None]:
+    if features is None:
+        return None, multiscale_features
+
+    produced_tokens = int(features.shape[0])
+    if expected_tokens > produced_tokens:
+        raise ValueError(
+            f"{feature_name} placeholders exceed produced features: expected={expected_tokens}, produced={produced_tokens}"
+        )
+    if expected_tokens == produced_tokens:
+        return features, multiscale_features
+
+    trimmed_features = features[:expected_tokens]
+    trimmed_multiscale = None
+    if multiscale_features is not None:
+        trimmed_multiscale = [feature[:expected_tokens] for feature in multiscale_features]
+    return trimmed_features, trimmed_multiscale
 
 
 class Qwen3OmniThinkerModel(MegatronModule):
@@ -81,12 +159,27 @@ class Qwen3OmniThinkerModel(MegatronModule):
         self.audio_start_token_id = language_transformer_config.audio_start_token_id
         self.position_id_per_seconds = language_transformer_config.position_id_per_seconds
         self.seconds_per_chunk = language_transformer_config.seconds_per_chunk
+        self.thinker_transformer_config = thinker_transformer_config
 
         if self.pre_process:
+            multimodal_attn_impl = getattr(language_transformer_config, "multimodal_attn_impl", "auto")
+            _configure_multimodal_attn_impl(thinker_transformer_config.vision_config, multimodal_attn_impl)
+            _configure_multimodal_attn_impl(thinker_transformer_config.audio_config, multimodal_attn_impl)
+
             self.visual = Qwen3OmniMoeVisionEncoderHF._from_config(thinker_transformer_config.vision_config)
             hook_hf_module_setattr_for_tp_grad_sync(self.visual)
             self.audio_model = Qwen3OmniMoeAudioEncoderHF._from_config(thinker_transformer_config.audio_config)
             hook_hf_module_setattr_for_tp_grad_sync(self.audio_model)
+            _patch_get_input_embeddings(self.visual, "patch_embed")
+            _patch_get_input_embeddings(self.audio_model, "conv_out")
+
+            _configure_multimodal_attn_impl(getattr(self.visual, "config", self.thinker_transformer_config.vision_config), multimodal_attn_impl)
+            _configure_multimodal_attn_impl(
+                getattr(self.audio_model, "config", self.thinker_transformer_config.audio_config), multimodal_attn_impl
+            )
+            if getattr(language_transformer_config, "vit_gradient_checkpointing", False):
+                _enable_multimodal_gradient_checkpointing(self.visual)
+                _enable_multimodal_gradient_checkpointing(self.audio_model)
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
@@ -106,9 +199,6 @@ class Qwen3OmniThinkerModel(MegatronModule):
         )
 
         self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
-
-        # Keep the HF configs attached for later-stage vision/audio integration.
-        self.thinker_transformer_config = thinker_transformer_config
 
     def shared_embedding_or_output_weight(self):
         if self.add_decoder:
@@ -196,6 +286,7 @@ class Qwen3OmniThinkerModel(MegatronModule):
         input_features: torch.FloatTensor,
         feature_attention_mask: torch.LongTensor | None = None,
         audio_feature_lengths: torch.LongTensor | None = None,
+        expected_audio_token_counts: torch.LongTensor | None = None,
     ) -> torch.Tensor:
         if feature_attention_mask is not None:
             audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
@@ -209,7 +300,26 @@ class Qwen3OmniThinkerModel(MegatronModule):
             input_features.to(dtype=target_dtype),
             feature_lens=audio_feature_lengths,
         )
-        return audio_outputs.last_hidden_state
+        audio_embeds = audio_outputs.last_hidden_state
+
+        if expected_audio_token_counts is None:
+            return audio_embeds
+
+        _, produced_output_lengths = self.audio_model._get_feat_extract_output_lengths(audio_feature_lengths)
+        expected_audio_token_counts = expected_audio_token_counts.to(produced_output_lengths.device)
+
+        trimmed_embeds = []
+        start = 0
+        for produced_len, expected_len in zip(produced_output_lengths.tolist(), expected_audio_token_counts.tolist(), strict=True):
+            end = start + int(produced_len)
+            if expected_len > produced_len:
+                raise ValueError(
+                    f"Audio token placeholders exceed produced audio features: expected={expected_len}, produced={produced_len}"
+                )
+            trimmed_embeds.append(audio_embeds[start : start + int(expected_len)])
+            start = end
+
+        return torch.cat(trimmed_embeds, dim=0) if trimmed_embeds else audio_embeds.new_zeros((0, audio_embeds.shape[-1]))
 
     def forward(
         self,
@@ -235,8 +345,11 @@ class Qwen3OmniThinkerModel(MegatronModule):
             raise NotImplementedError("Qwen3-Omni Megatron inference is not implemented yet.")
         if packed_seq_params is not None:
             raise NotImplementedError("Qwen3-Omni packed sequence support is not implemented yet.")
-        if self.config.sequence_parallel and any(value is not None for value in (pixel_values, pixel_values_videos)):
-            raise NotImplementedError("Qwen3-Omni vision runtime does not yet support sequence parallel.")
+
+        cp_size = self.pg_collection.cp.size() if self.pg_collection is not None else 1
+        cp_rank = self.pg_collection.cp.rank() if self.pg_collection is not None else 0
+        tp_size = self.pg_collection.tp.size() if self.pg_collection is not None else 1
+        tp_rank = self.pg_collection.tp.rank() if self.pg_collection is not None else 0
 
         if audio_feature_lengths is None and feature_attention_mask is not None:
             audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
@@ -284,6 +397,12 @@ class Qwen3OmniThinkerModel(MegatronModule):
                     image_embeds, image_embeds_multiscale = self.get_image_features(pixel_values, image_grid_thw)
                     image_embeds = image_embeds.to(inputs_embeds_bsh.device, inputs_embeds_bsh.dtype)
                     image_embeds_multiscale = [embed.to(inputs_embeds_bsh.device, inputs_embeds_bsh.dtype) for embed in image_embeds_multiscale]
+                    image_embeds, image_embeds_multiscale = _trim_feature_sequence(
+                        image_embeds,
+                        image_embeds_multiscale,
+                        expected_tokens=int((input_ids == self.image_token_id).sum().item()),
+                        feature_name="Image features",
+                    )
 
                 video_embeds = None
                 video_embeds_multiscale = None
@@ -293,6 +412,12 @@ class Qwen3OmniThinkerModel(MegatronModule):
                     video_embeds, video_embeds_multiscale = self.get_video_features(pixel_values_videos, video_grid_thw)
                     video_embeds = video_embeds.to(inputs_embeds_bsh.device, inputs_embeds_bsh.dtype)
                     video_embeds_multiscale = [embed.to(inputs_embeds_bsh.device, inputs_embeds_bsh.dtype) for embed in video_embeds_multiscale]
+                    video_embeds, video_embeds_multiscale = _trim_feature_sequence(
+                        video_embeds,
+                        video_embeds_multiscale,
+                        expected_tokens=int((input_ids == self.video_token_id).sum().item()),
+                        feature_name="Video features",
+                    )
 
                 image_mask, video_mask = self._get_placeholder_mask(
                     input_ids=input_ids,
@@ -334,10 +459,12 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 deepstack_visual_embeds = None
 
             if input_features is not None:
+                expected_audio_token_counts = (input_ids == self.audio_token_id).sum(dim=1)
                 audio_embeds = self.get_audio_features(
                     input_features,
                     feature_attention_mask=feature_attention_mask,
                     audio_feature_lengths=audio_feature_lengths,
+                    expected_audio_token_counts=expected_audio_token_counts,
                 )
                 audio_embeds = audio_embeds.to(combined_embeddings.device, combined_embeddings.dtype)
                 combined_embeddings_bsh = combined_embeddings.transpose(0, 1).contiguous()
@@ -353,13 +480,38 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 )
                 combined_embeddings = combined_embeddings_bsh.transpose(0, 1).contiguous()
 
+            if combined_embeddings is not None and cp_size > 1 and packed_seq_params is None:
+                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
+
+            sp_pad_len = 0
             if self.config.sequence_parallel:
+                seq_len = combined_embeddings.shape[0]
+                sp_pad_len = (tp_size - seq_len % tp_size) % tp_size
+                if sp_pad_len > 0:
+                    combined_embeddings = torch.nn.functional.pad(combined_embeddings, (0, 0, 0, 0, 0, sp_pad_len))
+                    if visual_pos_masks is not None:
+                        visual_pos_masks = torch.nn.functional.pad(visual_pos_masks, (0, sp_pad_len), value=False)
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
                 combined_embeddings = combined_embeddings.contiguous()
         else:
             combined_embeddings = None
             visual_pos_masks = None
             deepstack_visual_embeds = None
+            sp_pad_len = 0
+
+        if sp_pad_len > 0 and position_ids is not None:
+            position_ids = torch.nn.functional.pad(position_ids, (0, sp_pad_len), mode="replicate")
+
+        if self.config.sequence_parallel or cp_size > 1:
+            visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
+                visual_pos_masks,
+                deepstack_visual_embeds,
+                tp_size=tp_size,
+                tp_rank=tp_rank,
+                cp_size=cp_size,
+                cp_rank=cp_rank,
+                sequence_parallel=self.config.sequence_parallel,
+            )
 
         return self.language_model(
             input_ids=None if combined_embeddings is not None else input_ids,

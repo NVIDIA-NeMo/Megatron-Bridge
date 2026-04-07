@@ -42,6 +42,15 @@ def get_llm_pos_ids_for_vision(
     return torch.stack([t_index, h_index, w_index]) + start_idx
 
 
+def _count_run(tokens: list[int], start: int, token_id: int) -> int:
+    count = 0
+    idx = start
+    while idx < len(tokens) and tokens[idx] == token_id:
+        count += 1
+        idx += 1
+    return count
+
+
 def get_rope_index(
     spatial_merge_size: int,
     image_token_id: int,
@@ -69,8 +78,15 @@ def get_rope_index(
         image_grid_thw is not None or video_grid_thw is not None or audio_seqlens is not None
     ):
         total_input_ids = input_ids
-        if attention_mask is not None:
-            attention_mask = attention_mask == 1
+        if attention_mask is None:
+            attention_mask = torch.ones_like(total_input_ids)
+        elif attention_mask.dim() > 2:
+            # Collapse broadcast attention masks such as [b, 1, s, s] back to [b, s].
+            attention_mask = attention_mask.any(dim=-1)
+            if attention_mask.dim() == 3:
+                attention_mask = attention_mask.squeeze(1)
+            attention_mask = attention_mask.to(dtype=total_input_ids.dtype)
+        attention_mask = attention_mask.to(total_input_ids.device).bool()
         position_ids = torch.zeros(
             3,
             input_ids.shape[0],
@@ -80,8 +96,7 @@ def get_rope_index(
         )
         image_idx, video_idx, audio_idx = 0, 0, 0
         for i, batch_input_ids in enumerate(total_input_ids):
-            if attention_mask is not None:
-                batch_input_ids = batch_input_ids[attention_mask[i]]
+            batch_input_ids = batch_input_ids[attention_mask[i]]
             vision_start_indices = torch.argwhere(batch_input_ids == vision_start_token_id).squeeze(1)
             vision_tokens = batch_input_ids[vision_start_indices + 1]
             audio_nums = torch.sum(batch_input_ids == audio_start_token_id)
@@ -123,8 +138,14 @@ def get_rope_index(
                 st_idx += bos_len
 
                 if min_ed == ed_audio_start:
-                    assert audio_seqlens is not None
-                    audio_len = _get_feat_extract_output_lengths(audio_seqlens[audio_idx])
+                    if audio_seqlens is not None:
+                        audio_len = _get_feat_extract_output_lengths(audio_seqlens[audio_idx])
+                    else:
+                        audio_len = 0
+                    audio_len = min(
+                        int(audio_len),
+                        _count_run(input_tokens, ed_audio_start + bos_len, audio_token_id),
+                    )
                     llm_pos_ids = torch.arange(audio_len).view(1, -1).expand(3, -1) + st_idx
                     llm_pos_ids_list.append(llm_pos_ids)
 
@@ -169,6 +190,10 @@ def get_rope_index(
                     assert video_grid_thw is not None
                     assert second_per_grids is not None
                     audio_len = _get_feat_extract_output_lengths(audio_seqlens[audio_idx])
+                    audio_len = min(
+                        int(audio_len),
+                        _count_run(input_tokens, ed_audio_start + bos_len, audio_token_id),
+                    )
                     audio_llm_pos_ids = torch.arange(audio_len).view(1, -1).expand(3, -1) + st_idx
                     grid_t = video_grid_thw[video_idx][0]
                     grid_hs = video_grid_thw[:, 1]
@@ -208,11 +233,14 @@ def get_rope_index(
                 llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
 
             llm_positions = torch.cat([item.float() for item in llm_pos_ids_list], dim=1).reshape(3, -1)
+            valid_token_count = int(attention_mask[i].sum().item())
+            if llm_positions.shape[-1] > valid_token_count:
+                # `input_ids` may already be truncated to `seq_length` while multimodal
+                # metadata (audio/image/video lengths) still reflects the original sample.
+                # Keep RoPE aligned to the surviving prefix tokens actually present.
+                llm_positions = llm_positions[:, :valid_token_count]
 
-            if attention_mask is not None:
-                position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(position_ids.device)
-            else:
-                position_ids[..., i, :] = llm_positions.to(position_ids.device)
+            position_ids[..., i, attention_mask[i]] = llm_positions.to(position_ids.device)
             mrope_position_deltas.append(llm_positions.max() + 1 - len(batch_input_ids))
         mrope_position_deltas = torch.tensor(mrope_position_deltas, device=input_ids.device).unsqueeze(1)
 

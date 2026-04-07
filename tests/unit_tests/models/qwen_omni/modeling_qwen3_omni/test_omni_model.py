@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import datetime
 import os
 import socket
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -31,6 +33,7 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
 
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.rope import get_rope_index
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import _trim_feature_sequence
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
     Qwen3OmniTransformerConfig,
 )
@@ -221,6 +224,60 @@ class TestQwen3OmniModel:
             pg_collection=pg_collection,
         )
 
+    def test_multimodal_runtime_switches_are_applied(self, thinker_config, monkeypatch):
+        self._setup_parallel_state(tp_size=1, pp_size=1)
+        thinker_config = copy.deepcopy(thinker_config)
+
+        calls = {"vision_gc": 0, "audio_gc": 0, "vision_inputs_grad": 0, "audio_inputs_grad": 0}
+
+        class _FakeTower(torch.nn.Module):
+            def __init__(self, gc_key: str, input_key: str, embed_attr: str):
+                super().__init__()
+                self.config = SimpleNamespace()
+                self._gc_key = gc_key
+                self._input_key = input_key
+                setattr(self, embed_attr, torch.nn.Linear(4, 4, bias=False))
+
+            def gradient_checkpointing_enable(self):
+                calls[self._gc_key] += 1
+
+            def enable_input_require_grads(self):
+                calls[self._input_key] += 1
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model.Qwen3OmniMoeVisionEncoderHF._from_config",
+            lambda _cfg: _FakeTower("vision_gc", "vision_inputs_grad", "patch_embed"),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model.Qwen3OmniMoeAudioEncoderHF._from_config",
+            lambda _cfg: _FakeTower("audio_gc", "audio_inputs_grad", "conv_out"),
+        )
+
+        cfg = self._make_language_config()
+        cfg.vit_gradient_checkpointing = True
+        cfg.multimodal_attn_impl = "flash_attention_2"
+
+        model = Qwen3OmniModel(
+            language_transformer_config=cfg,
+            language_transformer_layer_spec=self._make_layer_spec(),
+            thinker_transformer_config=thinker_config,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
+        )
+
+        assert calls["vision_gc"] == 1
+        assert calls["audio_gc"] == 1
+        assert calls["vision_inputs_grad"] == 1
+        assert calls["audio_inputs_grad"] == 1
+        assert getattr(model.thinker.visual.config, "_attn_implementation") == "flash_attention_2"
+        assert getattr(model.thinker.audio_model.config, "_attn_implementation") == "flash_attention_2"
+        assert getattr(model.thinker.visual.config, "use_flash_attn") is True
+        assert getattr(model.thinker.audio_model.config, "use_flash_attn") is True
+        assert model.thinker.visual.get_input_embeddings() is model.thinker.visual.patch_embed
+        assert model.thinker.audio_model.get_input_embeddings() is model.thinker.audio_model.conv_out
+
     def test_model_freeze_api(self, thinker_config):
         model = self._build_model(thinker_config)
         model.freeze(freeze_language_model=True)
@@ -275,6 +332,54 @@ class TestQwen3OmniModel:
             image_grid_thw=image_grid_thw,
         )
         assert output is not None
+
+    def test_image_forward_sequence_parallel_path(self, thinker_config, monkeypatch):
+        model = self._build_model(thinker_config)
+        model.thinker.config.sequence_parallel = True
+
+        calls = {"scatter": 0, "split": 0}
+
+        def _identity_scatter(x):
+            calls["scatter"] += 1
+            return x
+
+        def _identity_split(visual_pos_masks, deepstack_visual_embeds, **kwargs):
+            calls["split"] += 1
+            return visual_pos_masks, deepstack_visual_embeds
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model.tensor_parallel.scatter_to_sequence_parallel_region",
+            _identity_scatter,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model.split_deepstack_embs",
+            _identity_split,
+        )
+
+        if torch.cuda.is_available():
+            model = model.to("cuda")
+            device = "cuda"
+        else:
+            device = "cpu"
+
+        input_ids = torch.tensor(
+            [[VISION_START_TOKEN_ID, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, IMAGE_TOKEN_ID, 12, 13, 14]],
+            device=device,
+        )
+        labels = torch.randint(0, 1000, input_ids.shape, device=device)
+        pixel_values = torch.randn(4, 3 * 1 * 2 * 2, device=device)
+        image_grid_thw = torch.tensor([[1, 2, 2]], device=device)
+
+        output = model(
+            input_ids=input_ids,
+            labels=labels,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+        )
+
+        assert output is not None
+        assert calls["scatter"] == 1
+        assert calls["split"] == 1
 
     def test_audio_forward(self, thinker_config):
         model = self._build_model(thinker_config)
@@ -339,3 +444,70 @@ class TestQwen3OmniModel:
 
         assert position_ids.shape == (3, 1, input_ids.shape[1])
         assert mrope_position_deltas.shape == (1, 1)
+
+    def test_audio_rope_index_accepts_multidim_attention_mask(self):
+        input_ids = torch.tensor([[AUDIO_START_TOKEN_ID, AUDIO_TOKEN_ID, AUDIO_TOKEN_ID, 17, 18]])
+        audio_seqlens = torch.tensor([16])
+        attention_mask = torch.zeros(1, 1, input_ids.shape[1], input_ids.shape[1], dtype=torch.long)
+        attention_mask[:, :, :, : input_ids.shape[1]] = 1
+
+        position_ids, mrope_position_deltas = get_rope_index(
+            spatial_merge_size=1,
+            image_token_id=IMAGE_TOKEN_ID,
+            video_token_id=VIDEO_TOKEN_ID,
+            audio_token_id=AUDIO_TOKEN_ID,
+            vision_start_token_id=VISION_START_TOKEN_ID,
+            audio_start_token_id=AUDIO_START_TOKEN_ID,
+            position_id_per_seconds=25,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            audio_seqlens=audio_seqlens,
+        )
+
+        assert position_ids.shape == (3, 1, input_ids.shape[1])
+        assert mrope_position_deltas.shape == (1, 1)
+
+    def test_audio_rope_index_truncates_positions_to_surviving_tokens(self):
+        seq_len = 8
+        input_ids = torch.tensor([[AUDIO_START_TOKEN_ID] + [AUDIO_TOKEN_ID] * (seq_len - 1)])
+        attention_mask = torch.ones(1, seq_len, dtype=torch.long)
+        audio_seqlens = torch.tensor([512])
+
+        position_ids, mrope_position_deltas = get_rope_index(
+            spatial_merge_size=1,
+            image_token_id=IMAGE_TOKEN_ID,
+            video_token_id=VIDEO_TOKEN_ID,
+            audio_token_id=AUDIO_TOKEN_ID,
+            vision_start_token_id=VISION_START_TOKEN_ID,
+            audio_start_token_id=AUDIO_START_TOKEN_ID,
+            position_id_per_seconds=25,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            audio_seqlens=audio_seqlens,
+        )
+
+        assert position_ids.shape == (3, 1, seq_len)
+        assert mrope_position_deltas.shape == (1, 1)
+
+    def test_trim_feature_sequence_clips_to_surviving_placeholders(self):
+        features = torch.randn(12, HIDDEN_SIZE)
+        multiscale = [torch.randn(12, HIDDEN_SIZE), torch.randn(12, HIDDEN_SIZE)]
+
+        trimmed_features, trimmed_multiscale = _trim_feature_sequence(
+            features,
+            multiscale,
+            expected_tokens=5,
+            feature_name="Image features",
+        )
+
+        assert trimmed_features is not None
+        assert trimmed_multiscale is not None
+        assert trimmed_features.shape == (5, HIDDEN_SIZE)
+        assert all(feature.shape == (5, HIDDEN_SIZE) for feature in trimmed_multiscale)
+
+    def test_model_wrapper_exposes_pipeline_flags(self, thinker_config):
+        model = self._build_model(thinker_config)
+
+        assert model.pre_process is True
+        assert model.post_process is True
+        assert model.share_embeddings_and_output_weights == model.thinker.share_embeddings_and_output_weights

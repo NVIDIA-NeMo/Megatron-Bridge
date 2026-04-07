@@ -17,6 +17,7 @@ import torch
 from megatron.bridge.models.qwen_omni.qwen3_omni_step import (
     _normalize_multimodal_inputs,
     forward_step,
+    get_batch,
     get_batch_from_iterator,
 )
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
@@ -216,3 +217,31 @@ def test_forward_step_passes_omni_multimodal_args(monkeypatch):
     assert "pixel_values" in model.kwargs
     assert "input_features" in model.kwargs
     assert "audio_feature_lengths" in model.kwargs
+
+
+def test_get_batch_pads_2d_attention_mask_for_pipeline_parallel():
+    batch = _make_batch()
+    for key, value in list(batch.items()):
+        if isinstance(value, torch.Tensor):
+            batch[key] = _as_nocuda(value)
+
+    cfg = type(
+        "Cfg",
+        (),
+        {
+            "dataset": type("D", (), {"skip_getting_attention_mask_from_dataset": False})(),
+            "model": type("M", (), {"pipeline_model_parallel_size": 2, "seq_length": 8})(),
+        },
+    )()
+    pg_collection = type("PG", (), {"pp": object()})()
+
+    tokens, labels, loss_mask, attention_mask, position_ids, multimodal_inputs = get_batch(
+        _Iterator(batch), cfg, pg_collection=pg_collection
+    )
+
+    assert tokens.shape == (1, 8)
+    assert labels.shape == (1, 8)
+    assert loss_mask.shape == (1, 8)
+    assert attention_mask.shape == (1, 8)
+    assert position_ids.shape == (1, 8)
+    assert multimodal_inputs["pixel_values"].shape == (2, 3, 4, 4)

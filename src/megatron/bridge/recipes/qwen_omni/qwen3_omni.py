@@ -124,6 +124,8 @@ def _qwen3_omni_apply_common(
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_audio_model = False
+    cfg.model.vit_gradient_checkpointing = False
+    cfg.model.multimodal_attn_impl = "auto"
 
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.cuda_graph_impl = "none"

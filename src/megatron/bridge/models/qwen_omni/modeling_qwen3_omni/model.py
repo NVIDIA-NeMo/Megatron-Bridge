@@ -49,6 +49,9 @@ class Qwen3OmniModel(MegatronModule):
     ) -> None:
         super().__init__(config=language_transformer_config)
 
+        self.pre_process = pre_process
+        self.post_process = post_process
+
         self.thinker = Qwen3OmniThinkerModel(
             language_transformer_config,
             language_transformer_layer_spec,
@@ -63,6 +66,7 @@ class Qwen3OmniModel(MegatronModule):
 
         self.talker_transformer_config = talker_transformer_config
         self.code2wav_transformer_config = code2wav_transformer_config
+        self.share_embeddings_and_output_weights = self.thinker.share_embeddings_and_output_weights
 
     def shared_embedding_or_output_weight(self):
         return self.thinker.shared_embedding_or_output_weight()

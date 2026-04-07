@@ -69,6 +69,8 @@ class Qwen3OmniModelProvider(Qwen3MoEModelProvider):
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_audio_model: bool = False
+    vit_gradient_checkpointing: bool = False
+    multimodal_attn_impl: str = "auto"
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         pp_group = self._pg_collection.pp if self._pg_collection is not None else None
