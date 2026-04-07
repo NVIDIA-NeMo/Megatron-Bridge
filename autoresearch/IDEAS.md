@@ -98,6 +98,23 @@
 **Expected metric:** GSM8k, MBPP
 
 ---
+
+### 6. DLM Loss Weighting by Mask Ratio
+**Status:** 🆕
+
+**Date proposed:** 2026-04-07
+
+**Hypothesis:** The current DLM loss weights each masked token by 1/p_mask (inverse of masking probability), which up-weights tokens from low-mask-ratio samples. An alternative is to use a different weighting scheme — e.g., sqrt(1/p_mask) or a learned schedule — to shift the loss emphasis toward harder (high mask ratio) or easier (low mask ratio) denoising. Since mask scheduling experiments showed GSM8k benefits from early easy examples, loss re-weighting could achieve a similar effect without actually changing the mask distribution, avoiding the MBPP+ regression.
+
+**Related Works:** MDLM (Sahoo et al. 2024), Score Entropy Discrete Diffusion
+
+**Complexity:** Low (modify loss computation in dgpt_step.py, config-only exponent param)
+
+**Files to modify:** `src/megatron/bridge/diffusion/models/common/dgpt_step.py` (loss weighting)
+
+**Expected metric:** GSM8k, MBPP
+
+---
 ## Adding New Ideas
 
 Copy this template:
