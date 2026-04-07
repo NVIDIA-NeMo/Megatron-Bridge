@@ -30,12 +30,12 @@ from nemo_run.config import get_nemorun_home
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
-    from utils.executors import dgxc_executor, slurm_executor
+    from utils.executors import dgxc_executor, kubeflow_executor, slurm_executor
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
-    from .utils.executors import dgxc_executor, slurm_executor
+    from .utils.executors import dgxc_executor, kubeflow_executor, slurm_executor
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
 try:
@@ -241,8 +241,13 @@ def main(
     dgxc_project_name: str,
     dgxc_pvc_claim_name: str,
     dgxc_pvc_mount_path: str,
+    kubeflow_namespace: str,
+    kubeflow_workdir_pvc: str,
+    kubeflow_workdir_pvc_path: str,
+    kubeflow_image_pull_secrets: List[str],
     config_variant: str = "v1",
     gres: Optional[str] = None,
+    packager: str = "git",
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -311,7 +316,37 @@ def main(
     if nccl_ub:
         custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
 
-    if not dgxc_cluster:
+    if kubeflow_namespace:
+        executor = kubeflow_executor(
+            namespace=kubeflow_namespace,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
+            container_image=container_image,
+            workdir_pvc=kubeflow_workdir_pvc,
+            workdir_pvc_path=kubeflow_workdir_pvc_path,
+            image_pull_secrets=kubeflow_image_pull_secrets,
+            custom_env_vars=custom_env_vars,
+            wandb_key=wandb_key,
+            hf_token=hf_token,
+        )
+    elif dgxc_cluster:
+        executor = dgxc_executor(
+            dgxc_base_url=dgxc_base_url,
+            dgxc_cluster=dgxc_cluster,
+            dgxc_kube_apiserver_url=dgxc_kube_apiserver_url,
+            dgxc_app_id=dgxc_app_id,
+            dgxc_app_secret=dgxc_app_secret,
+            dgxc_project_name=dgxc_project_name,
+            dgxc_pvc_claim_name=dgxc_pvc_claim_name,
+            dgxc_pvc_mount_path=dgxc_pvc_mount_path,
+            custom_env_vars=custom_env_vars,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
+            container_image=container_image,
+            wandb_key=wandb_key,
+            hf_token=hf_token,
+        )
+    else:
         executor = slurm_executor(
             gpu=gpu,
             account=account,
@@ -330,23 +365,7 @@ def main(
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
             wandb_key=wandb_key,
-        )
-    else:
-        executor = dgxc_executor(
-            dgxc_base_url=dgxc_base_url,
-            dgxc_cluster=dgxc_cluster,
-            dgxc_kube_apiserver_url=dgxc_kube_apiserver_url,
-            dgxc_app_id=dgxc_app_id,
-            dgxc_app_secret=dgxc_app_secret,
-            dgxc_project_name=dgxc_project_name,
-            dgxc_pvc_claim_name=dgxc_pvc_claim_name,
-            dgxc_pvc_mount_path=dgxc_pvc_mount_path,
-            custom_env_vars=custom_env_vars,
-            nodes=-(num_gpus // -gpus_per_node),
-            num_gpus_per_node=gpus_per_node,
-            container_image=container_image,
-            wandb_key=wandb_key,
-            hf_token=hf_token,
+            packager=packager,
         )
 
     plugins = []
@@ -422,7 +441,7 @@ def main(
     error_msg = None
     n_attempts = 0
     exp_name = (
-        exp_name[:33] if dgxc_cluster is not None else exp_name
+        exp_name[:33] if (dgxc_cluster is not None or kubeflow_namespace is not None) else exp_name
     )  # Some k8s clusters have a limit on the length of the experiment name.
     wandb_run_id = None
     while n_attempts <= max_retries:
@@ -669,6 +688,11 @@ if __name__ == "__main__":
         dgxc_project_name=args.dgxc_project_name,
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
+        kubeflow_namespace=args.kubeflow_namespace,
+        kubeflow_workdir_pvc=args.kubeflow_workdir_pvc,
+        kubeflow_workdir_pvc_path=args.kubeflow_workdir_pvc_path,
+        kubeflow_image_pull_secrets=args.kubeflow_image_pull_secrets,
         config_variant=config_variant,
         gres=args.gres,
+        packager=args.packager,
     )

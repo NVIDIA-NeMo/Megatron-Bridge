@@ -53,7 +53,10 @@ from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
-from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
+from megatron.bridge.training.checkpointing import (
+    CheckpointManager,
+    CheckpointSaveContext,
+)
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
@@ -93,7 +96,7 @@ def train(
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     valid_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     global_state: GlobalState,
-    checkpointing_context: dict[str, Any],
+    checkpoint_manager: CheckpointManager,
     pg_collection: ProcessGroupCollection,
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
@@ -112,7 +115,7 @@ def train(
         train_data_iterator: Iterator for the training dataset.
         valid_data_iterator: Iterator for the validation dataset.
         global_state: The GlobalState object holding various training states.
-        checkpointing_context: Context dictionary for checkpointing.
+        checkpoint_manager: The checkpoint manager for save/load operations.
         process_non_loss_data_func: Optional function to process non-loss data during evaluation.
         non_loss_data_func: Optional function to compute non-loss data during evaluation.
         callback_manager: Optional CallbackManager for custom callback execution.
@@ -296,7 +299,7 @@ def train(
             nsys_nvtx_context = nvtx_ctx
 
         fault_tolerance.on_checkpointing_start(global_state)
-        maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
+        checkpoint_manager.finalize_async_saves(state=global_state, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
         # Update the timeout for all process groups after initialization
@@ -324,9 +327,10 @@ def train(
                     optimizer,
                     scheduler,
                     num_floating_point_operations_so_far,
-                    checkpointing_context,
+                    checkpoint_manager,
                     non_persistent_ckpt=False,  # TODO: implement non-persistent checkpointing
                     train_data_iterator=train_data_iterator,
+                    callback_manager=callback_manager,
                 )
         num_microbatches = get_num_microbatches()
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
@@ -415,9 +419,10 @@ def train(
                 optimizer,
                 scheduler,
                 num_floating_point_operations_so_far,
-                checkpointing_context,
+                checkpoint_manager,
                 train_data_iterator=train_data_iterator,
                 non_persistent_ckpt=False,  # TODO: implement non-persistent checkpointing
+                callback_manager=callback_manager,
             )
         if should_exit:
             break
@@ -582,8 +587,9 @@ def train(
             optimizer,
             scheduler,
             num_floating_point_operations_so_far,
-            checkpointing_context,
+            checkpoint_manager,
             train_data_iterator,
+            callback_manager,
         )
         if should_exit:
             break
@@ -605,8 +611,9 @@ def train(
                 optimizer,
                 scheduler,
                 num_floating_point_operations_so_far,
-                checkpointing_context,
+                checkpoint_manager,
                 train_data_iterator=train_data_iterator,
+                callback_manager=callback_manager,
             )
 
     _delete_cuda_graphs(cuda_graph_helper)
@@ -623,7 +630,7 @@ def train(
     # This will finalize all unfinalized async request and terminate
     # a persistent async worker if persistent ckpt worker is enabled
     fault_tolerance.on_checkpointing_start(global_state)
-    maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
+    checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
     fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
     # Shutdown NVRx straggler detection if enabled
@@ -639,7 +646,7 @@ def train(
     if should_exit:
         # Close NVIDIA DLFw Inspect if enabled
         tensor_inspect_end_if_enabled(config.tensor_inspect)
-        maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
+        checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
         wandb_writer = global_state.wandb_logger
         if wandb_writer:
             wandb_writer.finish()
@@ -1015,6 +1022,7 @@ def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, fl
     start_time = None
     start_num_floating_point_operations = None
     latest_num_floating_point_operations = 0
+    latest_num_floating_point_operations_uncommitted = None
 
     def _get_field(string, type):
         return type(string.split(": ")[1])
@@ -1026,6 +1034,12 @@ def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, fl
             world_size_in_line = _get_field(line_tokens[2], int)
             if line_tokens[3] == "Saved checkpoint":
                 latest_num_floating_point_operations = _get_field(line_tokens[7], float)
+            elif line_tokens[3] == "Saving async checkpoint":
+                latest_num_floating_point_operations_uncommitted = _get_field(line_tokens[7], float)
+            elif line_tokens[3] == "Saved async checkpoint":
+                if latest_num_floating_point_operations_uncommitted is not None:
+                    latest_num_floating_point_operations = latest_num_floating_point_operations_uncommitted
+                    latest_num_floating_point_operations_uncommitted = None
             if world_size_in_line != get_world_size_safe():
                 # Re-start search if we see a different world size.
                 start_time = None
@@ -1091,13 +1105,14 @@ def save_checkpoint_and_time(
     optimizer: MegatronOptimizer,
     opt_param_scheduler: OptimizerParamScheduler,
     num_floating_point_operations_so_far: float,
-    checkpointing_context: dict[str, Any],
+    checkpoint_manager: CheckpointManager,
     non_persistent_ckpt: bool = False,
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]] = None,
+    callback_manager: Optional[CallbackManager] = None,
 ) -> None:
     """Saves a checkpoint and logs the timing.
 
-    Wraps the `save_checkpoint` function with timers and forces parameter
+    Wraps the checkpoint manager's save method with timers and forces parameter
     synchronization when using distributed optimizer with overlapped parameter
     gather to ensure checkpoint correctness.
 
@@ -1107,7 +1122,7 @@ def save_checkpoint_and_time(
         optimizer: The optimizer instance.
         opt_param_scheduler: The optimizer parameter scheduler instance.
         num_floating_point_operations_so_far: Cumulative Model TFLOPs up to this point.
-        checkpointing_context: Dictionary holding checkpointing-related state.
+        checkpoint_manager: The checkpoint manager for save operations.
         non_persistent_ckpt: Flag indicating if this is a non-persistent
                              (local) checkpoint. Defaults to False.
         train_data_iterator: Optional training data iterator to save its state.
@@ -1142,16 +1157,19 @@ def save_checkpoint_and_time(
             model_chunk.free_overlap_buffers()
     torch.cuda.empty_cache()
 
-    save_checkpoint(
-        state,
-        model,
-        optimizer,
-        opt_param_scheduler,
-        num_floating_point_operations_so_far,
-        checkpointing_context=checkpointing_context,
-        non_persistent_ckpt=non_persistent_ckpt,
-        train_data_iterator=train_data_iterator,
+    checkpoint_manager.save(
+        CheckpointSaveContext(
+            state=state,
+            model=model,
+            optimizer=optimizer,
+            opt_param_scheduler=opt_param_scheduler,
+            num_floating_point_operations_so_far=int(num_floating_point_operations_so_far),
+            train_data_iterator=train_data_iterator,
+            non_persistent_ckpt=non_persistent_ckpt,
+        ),
+        callback_manager,
     )
+
     if state.cfg.model.fp8 is not None:
         # Run garbage collection after checkpoint saving to free memory from
         # dequantized bf16 tensors that were temporarily created during fp8
@@ -1175,8 +1193,9 @@ def checkpoint_and_decide_exit(
     optimizer: MegatronOptimizer,
     opt_param_scheduler: OptimizerParamScheduler,
     num_floating_point_operations_so_far: float,
-    checkpointing_context: dict[str, Any],
+    checkpoint_manager: CheckpointManager,
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    callback_manager: Optional[CallbackManager],
 ) -> bool:
     """Handles checkpointing decisions and determines if training should exit.
 
@@ -1190,7 +1209,7 @@ def checkpoint_and_decide_exit(
         optimizer: The optimizer instance.
         opt_param_scheduler: The optimizer parameter scheduler instance.
         num_floating_point_operations_so_far: Cumulative TFLOPs up to this point.
-        checkpointing_context: Dictionary holding checkpointing-related state.
+        checkpoint_manager: The checkpoint manager for save operations.
         train_data_iterator: Optional training data iterator to save its state.
 
     Returns:
@@ -1209,8 +1228,9 @@ def checkpoint_and_decide_exit(
                     optimizer,
                     opt_param_scheduler,
                     num_floating_point_operations_so_far,
-                    checkpointing_context,
+                    checkpoint_manager,
                     train_data_iterator=train_data_iterator,
+                    callback_manager=callback_manager,
                 )
             barrier_and_log("exiting program after receiving SIGTERM.")
 
@@ -1228,8 +1248,9 @@ def checkpoint_and_decide_exit(
             optimizer,
             opt_param_scheduler,
             num_floating_point_operations_so_far,
-            checkpointing_context,
+            checkpoint_manager,
             train_data_iterator=train_data_iterator,
+            callback_manager=callback_manager,
         )
         saved_checkpoint = True
 
@@ -1244,9 +1265,10 @@ def checkpoint_and_decide_exit(
             optimizer,
             opt_param_scheduler,
             num_floating_point_operations_so_far,
-            checkpointing_context,
+            checkpoint_manager,
             non_persistent_ckpt=True,
             train_data_iterator=train_data_iterator,
+            callback_manager=callback_manager,
         )
         saved_checkpoint = True
 
@@ -1264,8 +1286,9 @@ def checkpoint_and_decide_exit(
                     optimizer,
                     opt_param_scheduler,
                     num_floating_point_operations_so_far,
-                    checkpointing_context,
+                    checkpoint_manager,
                     train_data_iterator=train_data_iterator,
+                    callback_manager=callback_manager,
                 )
             barrier_and_log(f"exiting program after {train_time} minutes")
 
@@ -1280,8 +1303,9 @@ def checkpoint_and_decide_exit(
                 optimizer,
                 opt_param_scheduler,
                 num_floating_point_operations_so_far,
-                checkpointing_context,
+                checkpoint_manager,
                 train_data_iterator=train_data_iterator,
+                callback_manager=callback_manager,
             )
         barrier_and_log(f"exiting program at iteration {state.train_state.step}")
 
@@ -1296,7 +1320,7 @@ def checkpoint_and_decide_exit(
                 optimizer,
                 opt_param_scheduler,
                 num_floating_point_operations_so_far,
-                checkpointing_context,
+                checkpoint_manager,
                 train_data_iterator=train_data_iterator,
             )
         barrier_and_log("Exiting program due to straggler detection.")
@@ -1305,14 +1329,18 @@ def checkpoint_and_decide_exit(
     return False
 
 
-def _finish_train(global_state: GlobalState):
-    ckpt_cfg = global_state.cfg.checkpoint
+def _finish_train(global_state: GlobalState, checkpoint_manager: CheckpointManager):
+    """Cleanup function called at the end of training.
 
+    Args:
+        global_state: The global training state.
+        checkpoint_manager: The checkpoint manager for finalizing async saves.
+    """
     # Shutdown NVRx straggler detection if enabled
     safe_shutdown_nvrx_straggler_manager(global_state.nvrx_straggler_manager)
 
     fault_tolerance.on_checkpointing_start(global_state)
-    maybe_finalize_async_save(global_state=global_state, blocking=True, terminate=True, ckpt_cfg=ckpt_cfg)
+    checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
     fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
     fault_tolerance.shutdown(global_state)
 
@@ -1343,7 +1371,7 @@ def _should_skip_and_handle_iteration(
         bool: True if the iteration was skipped, False otherwise
     """
     cfg = global_state.cfg
-    if global_state.train_state.step not in cfg.train.iterations_to_skip:
+    if (global_state.train_state.step + 1) not in cfg.train.iterations_to_skip:
         return False
 
     # Perform dummy train step to fast forward train_data_iterator
@@ -1410,6 +1438,11 @@ def _handle_mxfp8_param_buffer_copy(
     2. Without forward_pre_hook, finish_param_sync() won't be called to zero the grad buffer,
        so the main grads will be polluted by the main params.
 
+    Exception: when a full-iteration CUDA graph has been captured, the all-gather
+    and subsequent param_data zero are baked into the graph and replay
+    unconditionally. We must populate param_data so the replayed AG gathers
+    correct weights, even when forward pre-hooks are disabled (first iteration).
+
     Args:
         optimizer: The MegatronOptimizer instance
         model: List of model chunks (MegatronModule instances)
@@ -1419,7 +1452,8 @@ def _handle_mxfp8_param_buffer_copy(
     if reuse_grad_buf_for_mxfp8_param_ag and overlap_param_gather:
         # Check if forward_pre_hook is enabled by checking if hooks are registered.
         forward_pre_hook_enabled = len(model[0].remove_forward_pre_hook_handles) > 0
-        if forward_pre_hook_enabled:
+        full_cg_captured = FullCudaGraphWrapper.cuda_graph.get("training") is not None
+        if forward_pre_hook_enabled or full_cg_captured:
             for optim_instance in optimizer.chained_optimizers:
                 if isinstance(optim_instance, DistributedOptimizer):
                     optim_instance._copy_main_params_to_param_buffer()

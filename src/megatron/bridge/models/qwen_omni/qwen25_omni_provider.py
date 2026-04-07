@@ -30,15 +30,14 @@ from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import (
     Qwen2_5OmniToken2WavConfig,
 )
 
-from megatron.bridge.models import Qwen2ModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.model import Qwen25OmniModel
 
 
 @dataclass
-class Qwen25OmniModelProvider(Qwen2ModelProvider):
+class Qwen25OmniModelProvider(GPTModelProvider):
     """
     Base model provider for Qwen2.5 Omni Models.
-    Inherits language model configuration from Qwen2ModelProvider (dense, Qwen2 architecture).
 
     Key differences from Qwen3OmniMoeModelProvider:
     - Dense LLM (Qwen2), not MoE

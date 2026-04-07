@@ -12,19 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Qwen3.5-VL finetuning recipes.
+"""Qwen3.5-VL recipes.
 
-This module provides SFT and PEFT configurations for Qwen3.5-VL models:
+This module provides pretrain, SFT, and PEFT configurations for Qwen3.5-VL models:
 
 - **Dense**: 800M, 2B, 4B, 9B, 27B
 - **MoE**: 35B-A3B, 122B-A10B, 397B-A17B
 """
 
+from __future__ import annotations
+
 import torch
+from typing_extensions import Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
+from megatron.bridge.recipes.qwen_vl.qwen3_vl import Qwen3VLCommonKwargs, _qwen3_vl_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
@@ -83,6 +87,7 @@ def _qwen35_vl_apply_common(
 
     # Kernel selections
     cfg.model.attention_backend = "auto"
+    cfg.model.gradient_accumulation_fusion = True
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -95,7 +100,7 @@ def _qwen35_vl_apply_common(
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = gbs
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 4  # tested on Blackwell GPUs; reduce for smaller VRAM
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -138,15 +143,18 @@ def _qwen35_vl_apply_common(
 def _qwen35_vl_apply_moe(cfg: ConfigContainer, *, ep: int, etp: int = 1) -> None:
     """Apply MoE-specific settings on top of the common configuration.
 
-    Enables expert parallelism, sequence parallelism, MoE kernels, and
-    sets MoE-specific overlap / balance / FP8-padding defaults.
+    Enables expert parallelism, sequence parallelism, token dispatcher,
+    MoE kernels, and sets MoE-specific overlap / balance / FP8-padding defaults.
     """
     cfg.model.expert_model_parallel_size = ep
     cfg.model.expert_tensor_parallel_size = etp
     cfg.model.sequence_parallel = True
 
+    # MoE dispatcher (alltoall is the standard choice for EP>1)
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     # MoE kernel selections
-    cfg.model.moe_router_fusion = False
+    cfg.model.moe_router_fusion = True
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
 
@@ -176,6 +184,90 @@ def _qwen35_vl_apply_peft_scheme(cfg: ConfigContainer, peft_scheme: str | PEFT) 
         cfg.peft = default_peft_config(peft_scheme)
     else:
         cfg.peft = peft_scheme
+
+
+# =============================================================================
+# Qwen3.5-VL Pretrain Configurations (mock dataset)
+# =============================================================================
+# Qwen3.5-VL reuses the Qwen3-VL _qwen3_vl_common helper for pretrain configs
+# since both families share the same VLM architecture and mock-dataset pipeline.
+
+
+def qwen35_vl_9b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3.5-VL 9B (dense).
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3.5-9B",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 1,
+        "expert_model_parallel_size": 1,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
+
+def qwen35_vl_35b_a3b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3.5-VL 35B-A3B (MoE).
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3.5-35B-A3B",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 2,
+        "expert_model_parallel_size": 4,
+        "sequence_parallel": True,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
+
+def qwen35_vl_122b_a10b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3.5-VL 122B-A10B (MoE).
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3.5-122B-A10B",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 8,
+        "expert_model_parallel_size": 8,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
+
+def qwen35_vl_397b_a17b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3.5-VL 397B-A17B (MoE).
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3.5-397B-A17B",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 16,
+        "expert_model_parallel_size": 16,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
 
 
 # =============================================================================
@@ -290,6 +382,42 @@ def qwen35_vl_35b_a3b_sft_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> Confi
     cfg = _sft_common_vlm()
     _qwen35_vl_apply_common(cfg, hf_path, tp=2, pp=1, max_lr=2e-5, min_lr=2e-6)
     _qwen35_vl_apply_moe(cfg, ep=16)
+    return cfg
+
+
+def qwen35_vl_35b_a3b_fsdp_sft_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> ConfigContainer:
+    """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE) with Megatron FSDP.
+
+    Uses Megatron FSDP for memory-efficient training with AG/RS overlap.
+    Requires fsdp_dtensor checkpoint format (convert offline with
+    checkpoint_inspector.py convert-torch-dist-to-fsdp-dtensor).
+
+    Default configuration: 2 nodes, 16 GPUs
+    - TP=1, PP=1, EP=2
+    - Megatron FSDP with double buffering
+    - NCCL UB disabled (heterogeneous FSDP units cause hangs)
+    - LR=2e-5 (full SFT)
+    - Sequence length: 4096
+
+    Args:
+        hf_path: HuggingFace model ID or local path to model directory.
+    """
+    cfg = _sft_common_vlm()
+    _qwen35_vl_apply_common(cfg, hf_path, tp=1, pp=1, max_lr=2e-5, min_lr=2e-6)
+    _qwen35_vl_apply_moe(cfg, ep=2)
+
+    # _apply_moe enables SP, but SP requires TP>1
+    cfg.model.sequence_parallel = False
+
+    # Megatron FSDP settings
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.fsdp_double_buffer = True
+    cfg.ddp.nccl_ub = False
+    cfg.ddp.fsdp_db_use_persist_buf_on_alloc_fail = True
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.num_distributed_optimizer_instances = 1
+
     return cfg
 
 

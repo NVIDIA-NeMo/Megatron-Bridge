@@ -126,6 +126,7 @@ class TestCallback:
         callback.on_test_step_start(mock_context)
         callback.on_test_step_end(mock_context)
         callback.on_test_end(mock_context)
+        callback.on_checkpoint_save(mock_context)
 
     def test_subclass_can_override_methods(self):
         """Subclasses can override specific methods."""
@@ -527,6 +528,7 @@ class TestValidEvents:
             "on_test_step_start",
             "on_test_step_end",
             "on_test_end",
+            "on_checkpoint_save",
         }
         assert VALID_EVENTS == expected
 

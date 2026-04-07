@@ -113,6 +113,7 @@ class _MockPGCollection:
 
     def __init__(self, cp_size=1):
         self.pp = _MockProcessGroup()
+        self.tp = _MockProcessGroup()
         self._cp_size = cp_size
 
     @property
@@ -364,6 +365,7 @@ def test_forward_step_schedule_plan(monkeypatch):
     class _MockPGCollection:
         def __init__(self):
             self.pp = _MockProcessGroup()
+            self.tp = _MockProcessGroup()
             self.cp = _MockProcessGroup()
 
     # Dummy model with required interface

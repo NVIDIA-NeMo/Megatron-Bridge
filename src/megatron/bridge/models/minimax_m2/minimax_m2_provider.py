@@ -43,13 +43,20 @@ class _FullDimRMSNorm(nn.Module):
     This keeps the normalization denominator identical to the single-GPU case.
     """
 
-    def __init__(self, local_dim: int, global_dim: int, tp_group_getter, eps: float = 1e-6):
+    def __init__(
+        self,
+        local_dim: int,
+        global_dim: int,
+        tp_group_getter,
+        eps: float = 1e-6,
+        dtype: torch.dtype | None = None,
+    ):
         super().__init__()
         self.local_dim = local_dim
         self.global_dim = global_dim
         self._tp_group_getter = tp_group_getter
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(local_dim))
+        self.weight = nn.Parameter(torch.ones(local_dim, dtype=dtype))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [sq, b, num_heads_per_partition, head_dim]
@@ -114,7 +121,7 @@ class FullDimQNorm:
         num_heads = config.num_attention_heads
         local_dim = (num_heads // tp) * hidden_size
         global_dim = num_heads * hidden_size
-        return _FullDimRMSNorm(local_dim, global_dim, _get_tp_group, eps)
+        return _FullDimRMSNorm(local_dim, global_dim, _get_tp_group, eps, dtype=config.params_dtype)
 
 
 class FullDimKNorm:
@@ -129,7 +136,7 @@ class FullDimKNorm:
         num_kv_heads = config.num_query_groups or config.num_attention_heads
         local_dim = (num_kv_heads // tp) * hidden_size
         global_dim = num_kv_heads * hidden_size
-        return _FullDimRMSNorm(local_dim, global_dim, _get_tp_group, eps)
+        return _FullDimRMSNorm(local_dim, global_dim, _get_tp_group, eps, dtype=config.params_dtype)
 
 
 def minimax_m2_layer_spec(config: "GPTModelProvider") -> ModuleSpec:  # noqa: F821

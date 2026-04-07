@@ -31,7 +31,6 @@ from utils.utils import WorkloadBaseConfig
 
 BASE_QWEN3_235B_A22B_CONFIG = WorkloadBaseConfig(
     expert_tensor_parallel_size=1,
-    moe_flex_dispatcher_backend="deepep",
 )
 
 
@@ -39,7 +38,6 @@ BASE_QWEN3_30B_A3B_CONFIG = WorkloadBaseConfig(
     expert_model_parallel_size=8,
     expert_tensor_parallel_size=1,
     global_batch_size=512,
-    moe_flex_dispatcher_backend="deepep",
 )
 
 BASE_QWEN3_NEXT_80B_A3B_CONFIG = WorkloadBaseConfig(
@@ -475,24 +473,28 @@ QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_FP8_MX_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=64,
     micro_batch_size=2,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=64,
     micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_FP8_MX_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=64,
     micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=64,
     micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 

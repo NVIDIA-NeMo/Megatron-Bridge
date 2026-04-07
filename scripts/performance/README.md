@@ -158,6 +158,7 @@ python scripts/performance/setup_experiment.py
 - `-cs/--custom_srun_args`: Comma-separated string of srun arguments.
 - `--gres`: Slurm generic resources to request (e.g., `gpu:4`).
 - `--additional_slurm_params`: Additional SLURM parameters as key=value pairs. Use semicolons (`;`) to separate parameters when values contain commas. Examples: `nodelist=node001,node002;constraint=gpu` or `reservation=my_res;exclusive`.
+- `--packager`: How code is packaged for the job. `git` snapshots the repo at submission time (default). `none` skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.
 
 ##### DGXCloud arguments
 
