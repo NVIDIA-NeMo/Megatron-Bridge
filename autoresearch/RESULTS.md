@@ -7,8 +7,8 @@
 | Rank | Experiment | Branch | Train Steps | Inference | GSM8k Strict | GSM8k Flex | MBPP | MBPP+ | Avg | Delta vs Baseline | Status | Date |
 |------|-----------|--------|------------|-----------|-------------|------------|------|-------|-----|-------------------|--------|------|
 | 0 | **baseline** | `main` | 5k | dLLM (NFE=256/512, block=32) | 79.98% | 80.44% | 55.00% | 72.49% | 71.98% | — | ✅ | 2026-04-06 |
-| 1 | mask_schedule |
-| 2 | gentle_mask | `autoresearch-gentle-mask-schedule` | 5k | dLLM (NFE=256/512, block=32) | 77.56% | 78.77% | 55.60% | 70.11% | 70.51% | -1.47% | ❌ | 2026-04-07 | `autoresearch-mask-scheduling` | 5k | dLLM (NFE=256/512, block=32) | 81.27% | 81.80% | 55.20% | 70.90% | 72.29% | +0.31% | ❌ | 2026-04-06 |
+| 1 | mask_schedule | `autoresearch-mask-scheduling` | 5k | dLLM (NFE=256/512, block=32) | 81.27% | 81.80% | 55.20% | 70.90% | 72.29% | +0.31% | ❌ | 2026-04-06 |
+| 2 | gentle_mask | `autoresearch-gentle-mask-schedule` | 5k | dLLM (NFE=256/512, block=32) | 77.56% | 78.77% | 55.60% | 70.11% | 70.51% | -1.47% | ❌ | 2026-04-07 |
 
 > **Avg** = mean of (GSM8k Strict, GSM8k Flex, MBPP, MBPP+). An experiment is **positive** if Avg exceeds baseline Avg (71.98%) by ~0.5% (i.e., Avg >= ~72.5%).
 

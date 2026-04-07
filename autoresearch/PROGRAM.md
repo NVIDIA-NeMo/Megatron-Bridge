@@ -18,19 +18,17 @@ When triggered, the agent executes this loop **without waiting for user input** 
 3. PICK    — Select the highest-priority 🆕 idea
 4. BRANCH  — Create git branch autoresearch/<idea-name> and a git worktree for isolation
 5. IMPLEMENT — Make the code/config changes in the worktree
-6. SESSION — Request an interactive Slurm session (GPU node with container)
-7. TEST    — Run training in --direct mode inside the session
-8. FIX     — If test fails, diagnose and fix. The interactive session is available up to 4 hours.
-9. COMMIT  — Commit all changes and record the git hash in the experiment README
-10. SUBMIT  — Submit Slurm job for full training
-11. WAIT    — Poll Slurm job status until complete
-12. EVAL   — Run GSM8k and MBPP evaluation
-13. RECORD — Save results and update RESULTS.md, update IDEAS.md, commit to branch
-14. DECIDE — If positive, create PR. If negative, just document learnings.
-15. REFLECT — Analyze all results so far. Propose a new experiment and add it to IDEAS.md.
+6. TEST    — Request interactive Slurm session, run training in --direct mode, fix if needed (up to 4 hours)
+7. COMMIT  — Commit all changes and record the git hash in the experiment README
+8. SUBMIT  — Submit Slurm job for full training
+9. WAIT    — Poll Slurm job status until complete
+10. EVAL   — Run GSM8k and MBPP evaluation
+11. RECORD — Save results and update RESULTS.md, update IDEAS.md, commit to branch
+12. DECIDE — If positive, create PR. If negative, just document learnings.
+13. REFLECT — Analyze all results so far. Propose a new experiment and add it to IDEAS.md.
                If existing directions look unpromising, research new approaches (papers, techniques)
                and add a fresh idea with justification.
-16. LOOP   — Return to step 1 for the next idea
+14. LOOP   — Return to step 1 for the next idea
 ```
 
 The agent stops the loop when:
@@ -84,6 +82,12 @@ ln -s ~/code/Megatron-Bridge/3rdparty/Megatron-LM ${WORKTREE_DIR}/3rdparty/Megat
 # Also symlink untracked directories that are not part of git but needed at runtime:
 ln -s ~/code/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/conf \
   ${WORKTREE_DIR}/examples/diffusion/recipes/nemotron_diffusion/conf
+
+# Symlink untracked eval scripts needed for the evaluation phase:
+for f in eval_megatron.py eval_megatron.sh patch_minerva_deps.py collect_results.py; do
+  ln -sf ~/code/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/$f \
+    ${WORKTREE_DIR}/examples/diffusion/recipes/nemotron_diffusion/$f
+done
 ```
 
 All code changes for this experiment are made in `${WORKTREE_DIR}`, not in the
@@ -136,18 +140,25 @@ The script automatically uses the `_debug` data config (smaller dataset) in `--d
 If validation fails, the agent should:
 1. Read the error from the log
 2. Diagnose the root cause
-3. Fix the code **inside the same interactive session** (it stays open for up to 4 hours)
-4. Retry — keep iterating as long as the interactive session is alive
-5. If the session expires before a successful run, mark idea as ❌ with reason and move on
+3. Fix the code
+4. Retry — keep iterating up to 2 hours
+5. If even after 2 hours there is no successful run, mark idea as ❌ with reason and move on
+
+**Step 4 — Kill the interactive session after successful validation:**
+Once training runs successfully for ~20 iterations with decreasing loss and no errors,
+immediately kill the interactive session (`scancel` or `exit`) to free up the GPU node.
+Do not leave the interactive session running — GPU hours are expensive and shared.
 
 ### Phase: Full Training
 Submit the Slurm job from within the worktree. Set `MB_DIR` to point to the
-worktree so the container mounts the correct code:
+worktree so the container mounts the correct code.
+
+Submit using `--train-iters` and `--job-name` flags (do NOT manually edit the script):
 ```bash
 cd ${WORKTREE_DIR}
-MB_DIR=${WORKTREE_DIR} bash submit_pretraining_3b.sh 2
+MB_DIR=${WORKTREE_DIR} bash submit_pretraining_3b.sh --train-iters 5000 --job-name "autoresearch-<idea-name>"
 ```
-Training runs for ~5000 iterations on 16 nodes (~4 hours).
+Training runs for 5000 iterations on 16 nodes (~3 hours).
 
 To poll job status:
 ```bash
