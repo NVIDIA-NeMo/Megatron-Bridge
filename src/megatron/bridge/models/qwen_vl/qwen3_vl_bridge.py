@@ -442,6 +442,10 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             if len(self.hf_weights_cache[key]) == num_experts:
                 logging.debug(f"All experts are loaded for {key}")
                 merged = torch.cat([self.hf_weights_cache[key][i].unsqueeze(0) for i in range(num_experts)], dim=0)
+                if key in hf_state_dict:
+                    expected = hf_state_dict[key].shape
+                    if merged.shape != expected and merged.transpose(-1, -2).shape == expected:
+                        merged = merged.transpose(-1, -2).contiguous()
                 del self.hf_weights_cache[key]
                 return {key: merged}
             else:
