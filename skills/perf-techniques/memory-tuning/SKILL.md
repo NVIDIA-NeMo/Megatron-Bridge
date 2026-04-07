@@ -1,6 +1,6 @@
 ---
 name: memory-tuning
-description: Techniques for reducing peak GPU memory in Megatron Bridge — VPP tuning, parallelism resizing, CPU offloading constraints, and future memory reduction strategies.
+description: Techniques for reducing peak GPU memory in Megatron Bridge — expandable segments, parallelism resizing, activation recompute, CPU offloading constraints, and common OOM fixes.
 ---
 
 # Memory Tuning
@@ -10,74 +10,112 @@ Card: `card.yaml` (co-located)
 
 ## What It Is
 
-Virtual pipeline parallelism (VPP) divides each pipeline stage's layers into
-multiple smaller chunks that are processed in an interleaved schedule. Increasing
-VPP reduces the number of transformer layers in-flight per micro-batch in each
-chunk, which directly reduces peak activation memory:
+GPU OOM failures during training often stem from memory **fragmentation** rather
+than raw capacity.  PyTorch's default CUDA allocator can leave unusable gaps
+between allocations.  The single most effective fix is:
 
-```
-layers_per_chunk = num_layers / (PP * VPP)
+```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ```
 
-Doubling VPP halves the layers per chunk and roughly halves the peak activation
-footprint from those layers — often enough to fix borderline OOM.
+This tells PyTorch to use expandable (non-fixed-size) memory segments, which
+dramatically reduces fragmentation and often eliminates borderline OOM without
+any model or parallelism changes.
+
+Beyond fragmentation, actual peak memory is determined by:
+
+- **Parameter + optimizer state memory** — controlled by TP, PP, DP sharding
+  (distributed optimizer, FSDP)
+- **Activation memory** — controlled by activation recompute, sequence length,
+  micro-batch size
+- **Temporary / workspace memory** — CUDA kernels, NCCL buffers, CUDA graphs
 
 ## Quick Decision
 
-When a training run OOMs or is close to the memory limit with PP already in use:
+When a training run OOMs or is close to the memory limit:
 
-1. **Try VPP increase first.** It preserves TP, PP, and DP, so throughput impact
-   is minimal (~1-2%).
-2. **Avoid increasing TP** as a memory fix — doubling TP dramatically increases
+1. **Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` first.** This fixes
+   fragmentation-induced OOM with zero performance cost. Most Slurm launch
+   templates already include it.
+2. **Add selective activation recompute** (`recompute_modules=[core_attn]`) if
+   not already enabled. See `skills/perf-techniques/activation-recompute/SKILL.md`.
+3. **Avoid increasing TP** as a memory fix — doubling TP dramatically increases
    NVLink all-reduce volume and often kills throughput (-28% on Llama3 70B).
-3. **Avoid increasing PP at the cost of DP** — halving DP doubles gradient
+4. **Avoid increasing PP at the cost of DP** — halving DP doubles gradient
    accumulation steps and hurts throughput (~6%).
-4. Consider `mlp` recompute only if VPP increase is not possible (layer count
-   not divisible). See `skills/perf-techniques/activation-recompute/SKILL.md`.
-5. CPU offloading is **blocked when PP > 1**.
+5. Consider `mlp` recompute if still OOM. Saves ~3 GB but costs ~16% GPU
+   utilization on large dense models (Llama3 70B).
+6. CPU offloading is **blocked when PP > 1**.
 
 ## Enablement
 
-### Calculating VPP
+### Expandable segments (recommended first step)
 
-```
-num_layers = 80  (Llama3 70B)
-PP = 4
-
-VPP=5:  layers_per_chunk = 80 / (4 * 5)  = 4 layers/chunk
-VPP=10: layers_per_chunk = 80 / (4 * 10) = 2 layers/chunk  ← winner
-VPP=20: layers_per_chunk = 80 / (4 * 20) = 1 layer/chunk
-```
-
-Constraint: `num_layers % (PP * VPP) == 0`
-
-### Config
-
-```python
-cfg.model.pipeline_model_parallel_size = 4
-cfg.model.virtual_pipeline_model_parallel_size = 10  # was 5, doubled to fix OOM
-```
-
-### Performance harness CLI
+Set in the job's environment before launching:
 
 ```bash
-python scripts/performance/run_performance_workload.py \
-  --pipeline_model_parallel_size 4 \
-  --virtual_pipeline_model_parallel_size 10 \
-  ...
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ```
+
+In Slurm scripts this is typically placed alongside other env vars:
+
+```bash
+export CUDA_DEVICE_MAX_CONNECTIONS=1
+export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+```
+
+No model config changes needed. Zero throughput cost.
+
+### Parallelism resizing
+
+If the model genuinely does not fit (not fragmentation), adjust parallelism:
+
+| Strategy | Memory effect | Throughput cost | Notes |
+|---|---|---|---|
+| Increase PP (keeping DP) | Fewer layers per stage | Moderate (~6% if DP halved) | Only if GPU count allows |
+| Increase TP | Fewer params per GPU | Severe (-28% on 70B) | Last resort |
+| Distributed optimizer | Shards optimizer state across DP ranks | ~1-2% | Recommended for large models |
+| FSDP | Shards params + grads + optimizer | Varies | See `skills/perf-techniques/megatron-fsdp/` |
+
+### Activation recompute
+
+See `skills/perf-techniques/activation-recompute/SKILL.md` for full details.
+
+### CPU offloading
+
+```python
+cfg.model.cpu_offloading = True
+```
+
+**Incompatible with PP > 1.** Only usable when `pipeline_model_parallel_size = 1`.
+
+## A Note on VPP
+
+Virtual pipeline parallelism (VPP) is primarily a **throughput** optimization
+that reduces pipeline bubble overhead by interleaving smaller model chunks. Its
+effect on peak memory is minimal — changing VPP does not meaningfully change
+the total activation, parameter, or optimizer memory on a GPU.
+
+In earlier experiments we incorrectly attributed an OOM fix to VPP tuning
+(VPP 5→10). The actual fix was `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+which eliminated memory fragmentation. The VPP=10 run actually used slightly
+**more** peak memory (60.2 GB vs 58.8 GB) but did not OOM because expandable
+segments prevented fragmentation.
+
+VPP should be tuned for pipeline bubble reduction (see `docs/parallelisms.md`),
+not as a memory fix.
 
 ## Compatibility and Constraints
 
-- Requires `pipeline_model_parallel_size > 1`
-- `num_layers` must be divisible by `PP * VPP` on each pipeline stage
-- `account_for_embedding_in_pipeline_split` and
-  `account_for_loss_in_pipeline_split` change the layer count per stage and
-  must still be divisible by VPP
-- Very high VPP with few micro-batches per global batch can worsen the pipeline
-  bubble ratio (more interleaved chunks but less compute to hide the bubble)
-- VPP increases P2P send/recv volume proportionally (each chunk needs
-  activation/gradient transfers between stages)
+- `expandable_segments:True` is incompatible with `--use-nccl-ub` (NCCL
+  user-buffer registration). See Megatron-FSDP docs.
+- When using CUDA graphs with `expandable_segments:True`, set
+  `NCCL_GRAPH_REGISTER=0` (required on pre-Blackwell GPUs, enforced by MCore
+  `CudaGraphManager`).
+- CPU offloading requires `pipeline_model_parallel_size = 1`.
+- Distributed optimizer requires `use_distributed_optimizer = True` in the
+  optimizer config.
 
 ## Measured Results
 
@@ -86,20 +124,20 @@ Llama3 70B SFT on 32x H100 80GB, FP8 (Current Scaling):
 - Golden GPU utilization: 709.93 TFLOP/s/GPU
 - Regression threshold: 5%
 
-### Strategy comparison: memory reduction approaches
+### Strategy comparison: parallelism changes for memory reduction
 
 | Experiment | TP | PP | VPP | DP | TFLOP/s/GPU | vs Golden | Peak Mem (GB) | Result |
 |---|---|---|---|---|---|---|---|---|
-| Baseline | 4 | 4 | 5 | 2 | ~704 | -0.8% | 58.8 | OOM |
+| Baseline | 4 | 4 | 5 | 2 | ~704 | -0.8% | 58.8 | OOM (fragmentation) |
 | More PP | 4 | 8 | 5 | 1 | 668.0 | -5.9% | 53.2 | Borderline perf |
 | More TP | 8 | 4 | 5 | 1 | 508.7 | -28.4% | 50.2 | Severe regression |
-| **More VPP** | **4** | **4** | **10** | **2** | **698.9** | **-1.6%** | **60.2** | **Passed** |
+| Baseline + expandable_segments | 4 | 4 | 5 | 2 | ~704 | -0.8% | ~59 | **Passed** |
 
 Key takeaways:
 
-- **VPP=10 is the winner.** Doubling virtual pipeline chunks (5→10) reduced
-  layers-in-flight per chunk from 4 to 2, while keeping TP/PP/DP unchanged.
-  Only -1.6% GPU utilization — well within the 5% threshold.
+- **`expandable_segments:True` is the winner.** The baseline OOM was caused by
+  memory fragmentation, not insufficient capacity. Setting this env var
+  eliminated the OOM with zero throughput cost and no parallelism changes.
 - **PP=8 works for memory but loses DP** (2→1), meaning 32 gradient accumulation
   steps per batch, which hurts throughput by ~6%.
 - **TP=8 is catastrophic** (-28%) because doubling TP increases all-reduce
@@ -125,6 +163,15 @@ Selective activation recompute with `mlp` saved ~3 GB peak memory but cost
 
 ## Code Anchors
 
+### CPU offloading PP incompatibility (MCore)
+
+```1303:1306:3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
+        if self.cpu_offloading and self.pipeline_model_parallel_size > 1:
+            raise ValueError(
+                "Currently there is no support for Pipeline parallelism with CPU offloading"
+            )
+```
+
 ### VPP config and layer divisibility validation (MCore)
 
 ```1581:1592:3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
@@ -140,30 +187,6 @@ Selective activation recompute with `mlp` saved ~3 GB peak memory but cost
                         f"{num_layers_per_middle_pipeline_rank} must be divisible by virtual"
                         f"pipeline parallel degree {self.virtual_pipeline_model_parallel_size}"
                     )
-```
-
-### Llama3 70B SFT H100 workload config (VPP=5 baseline)
-
-```551:560:scripts/performance/configs/llama/llama3_workload_base_configs.py
-_LLAMA3_70B_SFT_CONFIG_H100 = replace(
-    BASE_LLAMA3_70B_CONFIG,
-    num_gpus=32,
-    peft="none",
-    tensor_model_parallel_size=4,
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=5,
-    micro_batch_size=1,
-    global_batch_size=32,
-)
-```
-
-### CPU offloading PP incompatibility (MCore)
-
-```1303:1306:3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
-        if self.cpu_offloading and self.pipeline_model_parallel_size > 1:
-            raise ValueError(
-                "Currently there is no support for Pipeline parallelism with CPU offloading"
-            )
 ```
 
 ### Parallelism docs on interleaved pipeline schedule
@@ -182,38 +205,26 @@ model_config = GPTModelProvider(
 
 | Symptom | Cause | Confirm | Fix |
 |---|---|---|---|
-| `ValueError: must be divisible by VPP` | num_layers / PP not divisible by VPP | check `num_layers % (PP * VPP)` | choose VPP that divides evenly |
-| Throughput regression > budget | too many virtual chunks or too few micro-batches | profile P2P comm time | reduce VPP or increase GBS |
-| Still OOM after VPP increase | memory pressure from non-activation sources | check `nvidia-smi` for param/optimizer memory | consider FSDP or distributed optimizer |
-| `ValueError: PP + CPU offloading` | using cpu_offloading with PP > 1 | check PP config | use VPP or recompute instead |
+| OOM on a single rank despite headroom on others | Memory fragmentation | check if `expandable_segments:True` is set | set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` |
+| OOM with `expandable_segments` already set | Genuine capacity limit | check `nvidia-smi` for param/optimizer memory | increase PP, use distributed optimizer, or add recompute |
+| `ValueError: PP + CPU offloading` | using cpu_offloading with PP > 1 | check PP config | disable CPU offloading or set PP=1 |
+| `RuntimeError` with `--use-nccl-ub` + expandable segments | NCCL UB incompatible with expandable allocator | check env vars | remove `expandable_segments:True` or disable `--use-nccl-ub` |
 
 ## Known Limitations
 
-- Not all layer counts allow arbitrary VPP values (divisibility constraint)
-- Memory reduction is indirect — fewer layers in-flight, not a fixed GB value
-- Optimal VPP depends on model depth, PP, GBS, and hardware
-- Very high VPP with low GBS can worsen pipeline bubble ratio
+- `expandable_segments:True` is incompatible with NCCL user-buffer registration
+- CPU offloading is blocked when PP > 1
+- Parallelism resizing (TP/PP) often has significant throughput costs
+- No automatic memory profiling to recommend the optimal strategy
 
 ## Verification
 
-Quick check that VPP=10 initializes and trains:
+Quick check that `expandable_segments:True` is active:
 
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 uv run python -m torch.distributed.run --nproc_per_node=8 \
-  scripts/training/run_recipe.py \
-  --recipe llama3_70b_pretrain_config \
-  model.pipeline_model_parallel_size=4 \
-  model.tensor_model_parallel_size=2 \
-  model.virtual_pipeline_model_parallel_size=10 \
-  train.train_iters=3 train.global_batch_size=8 train.micro_batch_size=1 \
-  scheduler.lr_warmup_iters=0 \
-  validation.eval_iters=0 validation.eval_interval=0 \
-  checkpoint.save_interval=0 \
-  logger.log_interval=1
+```python
+import os
+assert "expandable_segments:True" in os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "")
 ```
 
-Success criteria:
-
-- exit code 0
-- finite loss at iteration 3
-- log shows PP=4 VPP=10 layout
+For Slurm jobs, verify the env var is exported before the training command
+in the launch script.

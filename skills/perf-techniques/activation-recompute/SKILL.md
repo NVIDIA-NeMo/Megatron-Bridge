@@ -25,16 +25,17 @@ how many layers via `recompute_num_layers`.
 
 ## Quick Decision
 
-1. Start with `recompute_granularity=selective`, `recompute_modules=[core_attn]`
+1. **Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` first** — most
+   borderline OOMs are caused by memory fragmentation, not capacity. This
+   fixes it at zero cost. See `skills/perf-techniques/memory-tuning/SKILL.md`.
+2. Start with `recompute_granularity=selective`, `recompute_modules=[core_attn]`
    (often already the default in recipes).
-2. If still OOM, consider **VPP tuning first** —    it is usually cheaper than
-   adding `mlp` recompute. See `skills/perf-techniques/memory-tuning/SKILL.md`.
 3. Add `layernorm` to recompute modules — nearly free compute-wise but saves
    negligible memory. Only helps in extremely borderline cases.
 4. Add `mlp` as a last resort — saves ~3 GB but costs ~16% GPU utilization on
    large dense models (Llama3 70B).
-5. Use `recompute_granularity=full` only when selective recompute + VPP tuning
-   still does not fit.
+5. Use `recompute_granularity=full` only when selective recompute still does
+   not fit.
 
 CPU offloading (`cpu_offloading=True`) is an alternative that avoids recompute
 cost entirely, but it is **incompatible with PP > 1**.
@@ -125,8 +126,8 @@ Key takeaways:
 - `mlp` recompute saves ~3 GB peak but costs ~16% because the Llama3 70B FFN
   (hidden=28672) is expensive to recompute
 - Combining `mlp` + `core_attn` is slightly worse than `mlp` alone
-- For this workload, **  VPP tuning (VPP 5→10) was the winning fix** at only
-  -1.6% cost. See `skills/perf-techniques/memory-tuning/SKILL.md`.
+- For this workload, the actual OOM fix was `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+  (memory fragmentation, not capacity). See `skills/perf-techniques/memory-tuning/SKILL.md`.
 
 ## Code Anchors
 
@@ -177,8 +178,8 @@ Key takeaways:
 
 | Symptom | Cause | Confirm | Fix |
 |---|---|---|---|
-| >15% GPU utilization drop | mlp recompute on large FFN | check `recompute_modules` includes `mlp` | use VPP tuning instead |
-| Still OOM after adding layernorm | layernorm activations are too small | compare peak memory before/after | add mlp or use VPP tuning |
+| >15% GPU utilization drop | mlp recompute on large FFN | check `recompute_modules` includes `mlp` | check `expandable_segments:True` is set; consider reducing MBS |
+| Still OOM after adding layernorm | layernorm activations are too small | compare peak memory before/after | add mlp recompute or check `expandable_segments:True` |
 | `AssertionError: full recompute is only supported with full iteration CUDA graph` | layer-level recompute (`recompute_granularity=full` + `recompute_num_layers`) with TE-scoped graphs. FP8 CS configs default to `cuda_graph_impl=transformer_engine`, `scope=mlp`. | check `cuda_graph_impl` and `cuda_graph_scope` | use submodule recompute (`selective` + `recompute_modules`), or `cuda_graph_impl=none`, or `local` + `full_iteration` |
 | ValueError: PP + CPU offloading | `cpu_offloading=True` with `pipeline_model_parallel_size > 1` | check PP config | disable CPU offloading or set PP=1 |
 | mlp+core_attn worse than mlp alone | double recompute overhead | compare Exp 1 vs Exp 2 | use mlp alone |
