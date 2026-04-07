@@ -505,9 +505,13 @@ def forward_step(
 
         if last_boundary < physical_seq_len:
             # Trailing padding exists: extend the last real segment's padded
-            # boundary to cover the tail padding instead of creating an extra
-            # zero-length segment (which would cause GDN FLA kernels to process
-            # an isolated padding-only segment and diverge to NaN).
+            # boundary to cover the tail so that all layers (TE attention, GDN,
+            # etc.) see the same sequence boundaries.  We intentionally do NOT
+            # set cu_seqlens_unpadded here so that cu_seqlens_q_padded stays
+            # None — this forces every layer to treat pad tokens identically to
+            # real tokens, avoiding undefined attention output at pad positions
+            # that would otherwise propagate NaN through subsequent layers and
+            # into the backward pass.  loss_mask already zeros pad positions.
             cu_padded = cu_clean.clone()
             cu_padded[-1] = physical_seq_len
 
@@ -518,8 +522,6 @@ def forward_step(
                 "cu_seqlens": cu_padded,
                 "cu_seqlens_argmin": torch.tensor(n_valid),
                 "max_seqlen": max_seqlen_padded,
-                "cu_seqlens_unpadded": cu_clean,
-                "cu_seqlens_unpadded_argmin": torch.tensor(n_valid),
             }
         else:
             # No trailing padding (content fills the full sequence length).

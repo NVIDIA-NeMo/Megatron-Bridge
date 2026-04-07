@@ -71,9 +71,15 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
             qkv_format="thd",
         )
     else:
+        # Follow Megatron-LM data_schedule.py convention: set all four
+        # cu_seqlens fields to padded values so every downstream op (RoPE,
+        # TE attention, GDN) sees consistent boundaries without relying on
+        # fallback logic.
         return PackedSeqParams(
             cu_seqlens_q=cu_seqlens_padded,
             cu_seqlens_kv=cu_seqlens_padded,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
             max_seqlen_q=max_seqlen,
             max_seqlen_kv=max_seqlen,
             qkv_format="thd",
