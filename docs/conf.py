@@ -18,7 +18,17 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 import os
+import shutil
 import sys
+
+
+_SKILLS_SRC = os.path.join(os.path.dirname(__file__), os.pardir, "skills")
+_SKILLS_DST = os.path.join(os.path.dirname(__file__), "skills")
+
+if os.path.isdir(_SKILLS_SRC):
+    if os.path.exists(_SKILLS_DST):
+        shutil.rmtree(_SKILLS_DST)
+    shutil.copytree(_SKILLS_SRC, _SKILLS_DST)
 
 
 # -- Project information -----------------------------------------------------
@@ -43,7 +53,18 @@ extensions = [
 ]
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "skills/code-style/SKILL.md",
+    "skills/parity-testing/SKILL.md",
+    "skills/perf-techniques/README.md",
+]
+
+suppress_warnings = [
+    "misc.highlighting_failure",  # skills use Cursor-specific code reference syntax
+]
 
 # -- Options for MyST Parser (Markdown) --------------------------------------
 # MyST Parser settings
@@ -116,4 +137,7 @@ html_extra_path = ["project.json", "versions1.json"]
 linkcheck_ignore = [
     ".*github\\.com.*",
     ".*githubusercontent\\.com.*",
+    ".*sched\\.com.*",
 ]
+linkcheck_retries = 10
+linkcheck_rate_limit_timeout = 600

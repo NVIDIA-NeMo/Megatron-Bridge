@@ -1,0 +1,386 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Build layer variables
+# To install trtllm set FW_DEP_BUILDER=trtllm_builder, FW_BASE_FINAL=trtllm_install
+# To exclude trtllm set FW_DEP_BUILDER=base, FW_BASE_FINAL=fw_toolkit_builder
+# To skip AWS-OFI-NCCL set FW_NETWORK_LAYER=fw_dep_builder
+ARG FW_DEP_BUILDER
+ARG FW_BASE_FINAL
+ARG FW_NETWORK_LAYER=aws_ofi_builder
+
+ARG NEMO_FW_BASE_IMAGE
+FROM ${NEMO_FW_BASE_IMAGE} AS base
+
+ENV NVIDIA_PRODUCT_NAME="NeMo Framework"
+ENV PIP_NO_CACHE_DIR=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /opt
+
+##############################################################################
+##
+## VLLM wheel
+##
+##############################################################################
+
+FROM base AS vllm_wheel
+
+ARG VLLM_VERSION
+ARG MAX_JOBS=4
+ENV VLLM_VERSION=$VLLM_VERSION
+
+WORKDIR /src/vllm
+
+# Build vllm
+RUN git clone https://github.com/vllm-project/vllm.git . && \
+    echo "Building vLLM version: $VLLM_VERSION" && \
+    git checkout $VLLM_VERSION && \
+    python use_existing_torch.py && \
+    pip install -r requirements/build.txt && \
+    sed -i "/xgrammar/d" requirements/common.txt && \
+    pip wheel --no-deps --no-build-isolation -v .
+
+##############################################################################
+##
+## TRT-LLM repo
+##
+##############################################################################
+
+FROM base AS trtllm_repo
+
+ARG TRT_LLM_COMMIT
+ARG CUDA_VER
+ARG NVRTC_VER
+ARG TRT_VER
+
+WORKDIR /src/tensorrt_llm
+
+RUN apt-get update && apt-get install -y --no-install-recommends git-lfs && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
+
+RUN git clone https://github.com/NVIDIA/TensorRT-LLM . && \
+    git pull && \
+    git fetch origin $TRT_LLM_COMMIT && \
+    git checkout -f FETCH_HEAD && \
+    git submodule update --init --recursive && \
+    git lfs install && git lfs pull && \
+    sed -i "s/NVRTC_VER=\"[^\"]*\"/NVRTC_VER=\"${NVRTC_VER}\"/g" /src/tensorrt_llm/docker/common/install_tensorrt.sh && \
+    sed -i "s/TRT_CUDA_VERSION=\"[^\"]*\"/TRT_CUDA_VERSION=\"${CUDA_VER}\"/g" /src/tensorrt_llm/docker/common/install_tensorrt.sh && \
+    sed -i "s/CUDA_RUNTIME==\"[^\"]*\"/CUDA_RUNTIME==\"${NVRTC_VER}\"/g" /src/tensorrt_llm/docker/common/install_tensorrt.sh && \
+    sed -i "/triton/d" requirements.txt && \
+    sed -i "s/tensorrt~=[0-9.]*/tensorrt~=${TRT_VER}/g" requirements.txt && \
+    sed -i "/flashinfer-python/d" requirements.txt && \
+    sed -i "/nvidia-nccl-cu13/d" requirements.txt && \
+    sed -i "/nvidia-cuda-nvrtc/d" requirements.txt && \
+    sed -i "/torch/d" requirements.txt && \
+    sed -i "/xgrammar/d" requirements.txt;
+
+##############################################################################
+##
+## TRT-LLM builder
+##
+## When REINSTALL_TRTLLM is True, trtllm_builder will be used as new base
+## FW_DEP_BUILDER=trtllm_builder
+##
+##############################################################################
+
+FROM base AS trtllm_builder
+
+# Download & install internal TRT release
+# Install latest Polygraphy and mpi4py
+ARG TRT_VER
+ARG CUDA_VER
+ARG CUDNN_VER
+ARG NCCL_VER
+ARG CUBLAS_VER
+ARG TRT_LLM_COMMIT
+ARG TRT_LLM_VERSION
+ENV TRT_VER=$TRT_VER
+ENV NEMO_FW_TRT_LLM_COMMIT=$TRT_LLM_COMMIT
+ENV NEMO_FW_TRT_LLM_VERSION=$TRT_LLM_VERSION
+RUN --mount=type=bind,from=trtllm_repo,source=/src/tensorrt_llm/docker/common,target=tensorrt_llm/docker/common/ \
+    apt-get remove --purge -y libnvinfer* tensorrt* || true && \
+    pip3 uninstall -y tensorrt || true && \
+    bash tensorrt_llm/docker/common/install_tensorrt.sh \
+    --TRT_VER=${TRT_VER} \
+    --CUDA_VER=${CUDA_VER} \
+    --CUDNN_VER=${CUDNN_VER} \
+    --NCCL_VER=${NCCL_VER} \
+    --CUBLAS_VER=${CUBLAS_VER} && \
+    pip install "polygraphy==0.49.9" && \
+    bash tensorrt_llm/docker/common/install_mpi4py.sh
+
+##############################################################################
+##
+## TRT-LLM wheel
+##
+##############################################################################
+
+FROM trtllm_builder AS trtllm_wheel
+
+ARG BUILD_WHEEL_ARGS="--clean --trt_root /usr/local/tensorrt --benchmarks"
+
+WORKDIR /src/tensorrt_llm
+
+COPY --from=trtllm_repo /src/tensorrt_llm .
+
+RUN bash docker/common/install_base.sh && \
+    bash docker/common/install_cmake.sh && \
+    bash docker/common/install_ccache.sh
+
+ARG TARGET_ARCH
+RUN if [ "$TARGET_ARCH" = "arm" ]; then JOB_COUNT=16; else JOB_COUNT=32; fi && \
+    python3 scripts/build_wheel.py --job_count $JOB_COUNT ${BUILD_WHEEL_ARGS}
+
+##############################################################################
+##
+## Top layer of FW_BASE container
+##
+## When TRTLLM is re-installed, FW_DEP_BUILDER=trtllm_builder
+## default, FW_DEP_BUILDER=base
+##
+##############################################################################
+
+FROM ${FW_DEP_BUILDER} AS fw_dep_builder
+
+##############################################################################
+##
+## UV setup and UV python configuration
+##
+## Setup ipykernel to use uv python
+## Fix torchrun shebang to use uv python
+##
+##############################################################################
+
+ARG UV_VERSION
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+ENV UV_CACHE_DIR=/opt/uv_cache
+ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+ENV UV_LINK_MODE=copy
+RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | XDG_BIN_HOME=/usr/local/bin sh && \
+    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
+    python -m ipykernel install --name=python3 --display-name="Python 3 (ipykernel)" && \
+    if [ -f /usr/local/bin/torchrun ]; then \
+    sed -i '1s|#!/usr/bin/python|#!/usr/bin/env python|' /usr/local/bin/torchrun; \
+    fi
+
+##############################################################################
+##
+## AWS-OFI-NCCL upgrade stage
+##
+## Upgrade AWS-OFI-NCCL from v1.17.0 to v1.17.3
+##
+## IMPORTANT: Do NOT remove ibverbs/libmlx5 packages — they are required for
+## InfiniBand/RDMA transport on Slurm clusters with Mellanox ConnectX adapters.
+## The EFA stack is installed alongside (not replacing) the existing IB stack.
+##
+## To skip this stage, set FW_NETWORK_LAYER=fw_dep_builder
+##
+##############################################################################
+
+FROM fw_dep_builder AS aws_ofi_builder
+
+RUN apt-get update -y
+
+#################################################
+## Remove existing EFA and aws-ofi-nccl only (preserve ibverbs/mlx5)
+RUN rm -rf /opt/amazon
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated \
+    autoconf \
+    automake \
+    build-essential \
+    check \
+    cmake \
+    curl \
+    git \
+    gcc \
+    libtool \
+    pkg-config
+
+## Install EFA installer (coexists with Mellanox IB stack)
+ARG EFA_INSTALLER_VERSION=1.46.0
+RUN cd $HOME \
+&& curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \
+&& tar -xf $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \
+&& cd aws-efa-installer \
+&& ./efa_installer.sh -y -g -d --skip-kmod --skip-limit-conf --no-verify \
+&& rm -rf $HOME/aws-efa-installer
+
+## EFA installer re-creates /opt/amazon/ofi-nccl with an EFA-specific libnccl-net.so
+## and registers it via 100_ofinccl.conf in ldconfig. On Slurm, this causes NCCL to
+## load the EFA plugin instead of /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+## (HPC-X RDMA SHARP), which has no Mellanox IB support → 18% regression.
+## Remove it so Slurm gets the HPC-X plugin. AWS uses LD_LIBRARY_PATH in settings.sh.
+RUN rm -rf /opt/amazon/ofi-nccl \
+    && rm -f /etc/ld.so.conf.d/100_ofinccl.conf \
+    && ldconfig
+
+## Reinstall ibverbs/mlx5 packages in case EFA installer overwrote them
+RUN apt-get update && apt-get install -y --allow-change-held-packages \
+    ibverbs-utils \
+    libibverbs-dev \
+    libibverbs1 \
+    libmlx5-1 \
+    && apt-get clean
+
+## Build aws-ofi-nccl v1.17.3 WITHOUT --enable-platform-aws so it works on
+## both AWS EFA and Slurm IB infrastructure. The FI_PROVIDER=efa env var in
+## settings.sh already ensures EFA is selected on AWS at runtime.
+ENV AWS_OFI_NCCL_VERSION=v1.17.3
+RUN export LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/openmpi/lib:${LD_LIBRARY_PATH} && \
+    export PATH=/opt/amazon/efa/bin:/opt/amazon/openmpi/bin:${PATH} && \
+    rm -rf /opt/amazon/aws-ofi-nccl && \
+    apt-get update && \
+    apt-get install -y libhwloc-dev && \
+    apt-get clean && \
+    curl -OL https://github.com/aws/aws-ofi-nccl/releases/download/${AWS_OFI_NCCL_VERSION}/aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz \
+    && tar -xf aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz \
+    && cd aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v} \
+    && ./configure --prefix=/opt/amazon/aws-ofi-nccl \
+        --with-mpi=/usr/local/mpi \
+        --with-libfabric=/opt/amazon/efa \
+        --with-cuda=/usr/local/cuda \
+        --disable-nccl-net-library \
+    && make -j $(nproc) install \
+    && rm -f /opt/amazon/aws-ofi-nccl/lib/lib*.la /opt/amazon/aws-ofi-nccl/lib/libnccl-ofi-tuner.so \
+    && cd .. \
+    && rm -rf aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v} \
+    && rm aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz
+
+##############################################################################
+##
+## CUDA toolkit + DeepEP stage
+##
+## Chains from FW_NETWORK_LAYER (default: aws_ofi_builder).
+## Set FW_NETWORK_LAYER=fw_dep_builder to skip the AWS-OFI-NCCL stage.
+##
+##############################################################################
+
+FROM ${FW_NETWORK_LAYER} AS fw_toolkit_builder
+
+##############################################################################
+##
+## Reinstall CUDA toolkit packages
+##
+##############################################################################
+
+ARG REINSTALL_NSYS
+ARG NSYS_VERSION
+ARG REINSTALL_CUDNN
+ARG CUDNN_VERSION
+ENV NSIGHT_SYSTEMS_VERSION $NSYS_VERSION
+ARG REINSTALL_NCCL
+ARG NCCL_VERSION
+ARG REINSTALL_CUBLAS
+ARG CUBLAS_VERSION
+
+RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_nsys.sh \
+    --mount=type=bind,source=docker/common/install_cudnn.sh,target=/opt/install_cudnn.sh \
+    --mount=type=bind,source=docker/common/install_nccl.sh,target=/opt/install_nccl.sh \
+    --mount=type=bind,source=docker/common/install_cublas.sh,target=/opt/install_cublas.sh \
+    if [ $REINSTALL_NSYS = "True" ]; then \
+    bash /opt/install_nsys.sh --NSYS_VERSION=$NSYS_VERSION; \
+    fi && \
+    if [ $REINSTALL_CUDNN = "True" ]; then \
+    bash /opt/install_cudnn.sh --CUDNN_VERSION=$CUDNN_VERSION --DEVEL; \
+    fi && \
+    if [ $REINSTALL_NCCL = "True" ]; then \
+    bash /opt/install_nccl.sh --NCCL_VER=$NCCL_VERSION; \
+    fi && \
+    if [ $REINSTALL_CUBLAS = "True" ]; then \
+    bash /opt/install_cublas.sh --CUBLAS_VER=$CUBLAS_VERSION; \
+    fi
+
+##############################################################################
+##
+## Install DeepEP and nvshmem
+## Install DeepEP, nvshmem and rdma-core
+##
+##############################################################################
+
+ARG INSTALL_DEEPEP
+ARG DEEPEP_COMMIT
+
+ENV HYBRID_EP_MULTINODE=1
+ENV RDMA_CORE_HOME=/opt/rdma-core/build
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/:$LD_LIBRARY_PATH
+RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
+    if [ "$INSTALL_DEEPEP" = "True" ]; then \
+    # README for rdma-core installation- https://github.com/deepseek-ai/DeepEP/blob/hybrid-ep/Hybrid-EP_Implementation.md#multi-node-rdma-installation
+    git clone https://github.com/linux-rdma/rdma-core.git && \
+    pushd rdma-core && \
+        git checkout tags/v60.0 && \
+        TORCH_CUDA_ARCH_LIST="9.0;10.0;12.0" && sh build.sh && \
+    popd && \
+    git clone https://github.com/deepseek-ai/DeepEP.git && \
+    pushd DeepEP && \
+        git pull && \
+        git fetch origin $DEEPEP_COMMIT && \
+        git checkout FETCH_HEAD && \
+        patch -p1 < /opt/deepep.patch && \
+        pip install --no-cache-dir nvidia-nvshmem-cu13==3.4.5 && \
+        # Create symlink for libnvshmem_host.so (required for DeepEP fabric handle operations)
+        NVSHMEM_LIB_PATH=$(pip show nvidia-nvshmem-cu13 | grep "Location:" | cut -d' ' -f2)/nvidia/nvshmem/lib && \
+        ln -sf ${NVSHMEM_LIB_PATH}/libnvshmem_host.so.3 ${NVSHMEM_LIB_PATH}/libnvshmem_host.so && \
+        apt-get update && \
+        apt-get install -y --no-install-recommends libnvidia-ml-dev && \
+        TORCH_CUDA_ARCH_LIST="9.0 10.0 12.0" pip install --no-cache-dir --no-build-isolation -v . && \
+        apt-get purge -y libnvidia-ml-dev && \
+        apt-get autoremove -y && \
+        rm -rf /var/lib/apt/lists/* && \
+    popd; \
+    fi
+
+##############################################################################
+##
+## Install TRT-LLM and vLLM
+##
+##############################################################################
+
+FROM fw_toolkit_builder AS trtllm_install
+
+WORKDIR /opt/tensorrt_llm
+
+# Copy Wheels
+RUN --mount=type=bind,from=trtllm_wheel,source=/src/tensorrt_llm/build/,target=/tmp/tensorrt_llm/build/ \
+    --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
+    --mount=type=bind,source=docker/patches/vllm.patch,target=/opt/vllm.patch \
+    pip install --upgrade --ignore-installed wheel && \
+    pip install --no-deps xgrammar==0.1.25 && \
+    pip install /tmp/vllm/vllm*.whl && \
+    pushd /usr/local/lib/python3.12/dist-packages/vllm && \
+    patch -p1 < /opt/vllm.patch && \
+    popd && \
+    pip install /tmp/tensorrt_llm/build/tensorrt_llm*.whl --extra-index-url https://pypi.nvidia.com && \
+    ln -sv $(/usr/bin/python -c 'import site; print(f"{site.getsitepackages()[0]}/tensorrt_llm/libs")') lib && \
+    test -f lib/libnvinfer_plugin_tensorrt_llm.so && \
+    ln -sv lib/libnvinfer_plugin_tensorrt_llm.so lib/libnvinfer_plugin_tensorrt_llm.so.9 && \
+    echo "/opt/tensorrt_llm/lib" > /etc/ld.so.conf.d/tensorrt_llm.conf && \
+    ldconfig
+
+##############################################################################
+##
+## Final layer of FW_BASE container
+##
+## When TRTLLM is re-installed, FW_BASE_FINAL=trtllm_install
+## default, FW_BASE_FINAL=fw_toolkit_builder
+##
+##############################################################################
+
+FROM ${FW_BASE_FINAL} AS nemo_fw_base_final
+
+WORKDIR /opt

@@ -28,7 +28,7 @@ jobs:
   pre-flight:
     runs-on: ubuntu-latest
     outputs:
-      bump-branch: bump-ci-container-${{ steps.ref.outputs.date }}-${{ inputs.target-branch }}
+      bump-branch: bump-ci-container-${{ steps.ref.outputs.date }}-${{ inputs.target-branch }}-${{ inputs.mcore-branch }}
       date: ${{ steps.ref.outputs.date }}
     steps:
       - name: Get date
@@ -43,7 +43,7 @@ jobs:
       TARGET_BRANCH: ${{ inputs.target-branch }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ env.TARGET_BRANCH }}
           token: ${{ secrets.PAT }}
@@ -63,17 +63,28 @@ jobs:
           fi
 
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ env.SOURCE_BRANCH }}
           token: ${{ secrets.PAT }}
           submodules: recursive
 
       - name: Update submodules
+        id: mlm-commit
+        env:
+          TARGET_BRANCH: ${{ inputs.mcore-branch }}
         run: |
-          cd 3rdparty/Megatron-LM
-          git fetch origin ${{ inputs.mcore-branch }}
-          git checkout FETCH_HEAD
+          pushd 3rdparty/Megatron-LM
+            git fetch origin ${{ inputs.mcore-branch }}
+            git checkout FETCH_HEAD
+            MLM_COMMIT=$(git rev-parse HEAD)
+          popd
+
+          if [[ "$TARGET_BRANCH" == "main" ]]; then
+            echo $MLM_COMMIT > .main.commit
+          elif [[ "$TARGET_BRANCH" == "dev" ]]; then
+            echo $MLM_COMMIT > .dev.commit
+          fi
 
       - name: Upgrade lock file
         env:
@@ -88,10 +99,10 @@ jobs:
           bash -c 'uv lock --upgrade'
 
       - name: Create Bump PR
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v7
         id: create-pull-request
         env:
-          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ inputs.target-branch}}) (${{ needs.pre-flight.outputs.date }})"
+          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"
         with:
           branch: ${{ env.SOURCE_BRANCH }}
           base: ${{ env.TARGET_BRANCH }}
@@ -104,6 +115,7 @@ jobs:
           commit-message: ${{ env.title }}
           signoff: true
           committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          labels: full-test-suite
 
       - name: Post /ok to test comment
         env:
@@ -183,9 +195,22 @@ jobs:
             sleep 30
           done
 
+      - name: Revert submodule bump for dev branch
+        if: ${{ inputs.mcore-branch == 'dev' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin ${{ env.TARGET_BRANCH }}
+          TARGET_MLM_COMMIT=$(git ls-tree origin/${{ env.TARGET_BRANCH }} -- 3rdparty/Megatron-LM | awk '{print $3}')
+          git -C 3rdparty/Megatron-LM checkout "$TARGET_MLM_COMMIT"
+          git restore --source=origin/${{ env.TARGET_BRANCH }} -- uv.lock
+          git add 3rdparty/Megatron-LM uv.lock
+          git commit -m "Revert submodule bump for dev branch"
+          git push origin ${{ env.SOURCE_BRANCH }}
+
       - name: Merge PR
         env:
-          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}) (${{ needs.pre-flight.outputs.date }})"
+          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"
         run: |
           PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
           if [ -z "$PR_NUMBER" ]; then

@@ -219,6 +219,56 @@ def llama3_70b_pretrain_config_h100(
 # Llama3 8B configs ---------------------------------------------------------
 
 
+def llama3_8b_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_8b",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_llama3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
+
+    return cfg
+
+
+def llama3_8b_pretrain_config_r100(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """R100, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_8b",
+        gpu="r100",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_llama3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
+
+    return cfg
+
+
 def llama3_8b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:

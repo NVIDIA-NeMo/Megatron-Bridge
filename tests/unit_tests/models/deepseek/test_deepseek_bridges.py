@@ -176,19 +176,22 @@ class TestDeepSeekV2Bridge:
         assert kwargs["yarn_rotary_scaling_factor"] is None
 
     def test_megatron_to_hf_config_yarn_none_value(self, mock_pretrained_v2):
-        """Test that YARN_ROPE_SCALING_MAPPING preserves None values on provider."""
+        """Test that YARN_ROPE_SCALING_MAPPING omits None values on provider.
+
+        Since yarn_* fields are now proper dataclass fields defaulting to None,
+        None means 'unset' and should not appear in the exported rope_scaling dict.
+        """
         bridge = DeepSeekV2Bridge()
         provider = bridge.provider_bridge(mock_pretrained_v2)
-        # Ensure YARN rope_scaling block is emitted
         provider.yarn_rotary_scaling_factor = 40
-        # Set a YARN key to None — should still appear in hf_config["rope_scaling"]
         provider.yarn_mscale = None
 
         hf_config = bridge.megatron_to_hf_config(provider)
 
         assert "rope_scaling" in hf_config
-        assert "mscale" in hf_config["rope_scaling"]
-        assert hf_config["rope_scaling"]["mscale"] is None
+        assert hf_config["rope_scaling"]["rope_type"] == "yarn"
+        assert hf_config["rope_scaling"]["factor"] == 40
+        assert "mscale" not in hf_config["rope_scaling"]
 
 
 class TestDeepSeekV3Bridge:
