@@ -68,6 +68,8 @@ def _make_vision_config() -> TransformerConfig:
     cfg.apply_rope_fusion = False
     # CLIP uses "quick_gelu", not standard gelu
     cfg.activation_func = lambda x: x * torch.sigmoid(1.702 * x)
+    cfg.calculate_per_token_loss = False
+
     return cfg
 
 
@@ -111,6 +113,7 @@ def _make_language_config() -> TransformerConfig:
     cfg.bf16 = True
     cfg.cross_entropy_loss_fusion = True
     cfg.variable_seq_lengths = True
+    cfg.calculate_per_token_loss = False
 
     return cfg
 
@@ -122,6 +125,8 @@ def _make_projection_config(hidden_size: int = 4096) -> TransformerConfig:
     cfg.bias_activation_fusion = True
     cfg.add_bias_linear = True
     cfg.activation_func = torch.nn.functional.gelu
+    cfg.calculate_per_token_loss = False
+
     return cfg
 
 
@@ -634,6 +639,9 @@ def parse_args():
         "--lr-warmup-iters", type=int, default=20, help="Number of iterations to linearly warmup learning rate"
     )
     parser.add_argument("--dataset-root", type=str, required=True, help="Root directory of the LLaVA-Pretrain dataset")
+    parser.add_argument("--freeze-vision", type=bool, default=True, help="Freeze the vision encoder (default: True)")
+    parser.add_argument("--freeze-llm", type=bool, default=True, help="Freeze the language model (default: True)")
+    parser.add_argument("--freeze-projector", type=bool, default=False, help="Freeze the projector (default: False)")
     return parser.parse_args()
 
 
@@ -698,8 +706,9 @@ def main():
         topology={"images": ["language"], "language": []},
         use_cpu_initialization=True,
         bf16=True,
-        freeze_language_model=True,
-        freeze_modality_encoders={"images": True},
+        freeze_language_model=args.freeze_llm,
+        freeze_modality_encoders={"images": args.freeze_vision},
+        freeze_modality_projections={"images": args.freeze_projector},
     )
     # Register per-module checkpoint loading hook (runs before DDP wrapping)
     if args.language_model_checkpoint or args.vision_encoder_checkpoint:
