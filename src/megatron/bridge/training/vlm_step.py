@@ -70,8 +70,12 @@ def get_batch_from_iterator(
 
     if "cu_seqlens" in batch:
         required_device_keys.add("cu_seqlens")
+        if "cu_seqlens_unpadded" in batch:
+            required_device_keys.add("cu_seqlens_unpadded")
         required_host_keys.add("cu_seqlens_argmin")
         required_host_keys.add("max_seqlen")
+        if "cu_seqlens_unpadded_argmin" in batch:
+            required_host_keys.add("cu_seqlens_unpadded_argmin")
 
     required_device_keys.update(("tokens", "input_ids", "position_ids"))
     if is_last_pp_stage:
@@ -485,14 +489,50 @@ def forward_step(
 
     # Add packed sequence support
     if cu_seqlens is not None:
-        packed_seq_dict = {
-            "cu_seqlens": cu_seqlens,
-            "max_seqlen": max_seqlen,
-        }
+        physical_seq_len = tokens.shape[-1]
+
+        # Determine the number of valid entries in cu_seqlens.
+        cu = cu_seqlens.squeeze()
         if cu_seqlens_argmin is not None:
-            packed_seq_dict["cu_seqlens_argmin"] = cu_seqlens_argmin
-        elif cu_seqlens.dim() == 1:
-            packed_seq_dict["cu_seqlens_argmin"] = torch.tensor(len(cu_seqlens))
+            n_valid = int(cu_seqlens_argmin.item())
+        elif cu.dim() == 1:
+            n_valid = len(cu)
+        else:
+            n_valid = int(torch.argmin(cu).item())
+
+        cu_clean = cu[:n_valid]
+        last_boundary = int(cu_clean[-1].item())
+
+        if last_boundary < physical_seq_len:
+            # Trailing padding exists: build padded/unpadded pair following sft.py convention.
+            # Padded: append physical_seq_len (padding segment covers the tail).
+            # Unpadded: repeat last boundary (padding segment has 0 real tokens).
+            device, dtype = cu_clean.device, cu_clean.dtype
+            cu_padded = torch.cat([cu_clean, torch.tensor([physical_seq_len], device=device, dtype=dtype)])
+            cu_unpadded = torch.cat([cu_clean, torch.tensor([last_boundary], device=device, dtype=dtype)])
+            new_n_valid = torch.tensor(n_valid + 1)
+
+            padded_diffs = cu_padded[1:] - cu_padded[:-1]
+            max_seqlen_padded = padded_diffs.max()
+
+            packed_seq_dict = {
+                "cu_seqlens": cu_padded,
+                "cu_seqlens_argmin": new_n_valid,
+                "max_seqlen": max_seqlen_padded,
+                "cu_seqlens_unpadded": cu_unpadded,
+                "cu_seqlens_unpadded_argmin": new_n_valid,
+            }
+        else:
+            # No trailing padding (content fills the full sequence length).
+            packed_seq_dict = {
+                "cu_seqlens": cu_seqlens,
+                "max_seqlen": max_seqlen,
+            }
+            if cu_seqlens_argmin is not None:
+                packed_seq_dict["cu_seqlens_argmin"] = cu_seqlens_argmin
+            elif cu_seqlens.dim() == 1:
+                packed_seq_dict["cu_seqlens_argmin"] = torch.tensor(len(cu_seqlens))
+
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_dict)
 
     if loss_mask is not None:
