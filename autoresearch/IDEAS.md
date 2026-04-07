@@ -81,6 +81,23 @@
 
 ---
 
+
+### 5. Cosine Mask Schedule (Gentler Warmup)
+**Status:** 🆕
+
+**Date proposed:** 2026-04-07
+
+**Hypothesis:** The mask scheduling experiment (#2) showed that curriculum mask ratio warmup helps GSM8k (+1.3%) but hurts MBPP+ (-1.6%). The linear warmup from 0.1 was too aggressive — the model spent too many early iterations with very few masked tokens, under-training its denoising ability for code. A cosine schedule with a higher minimum (0.3) and shorter warmup (1000 iters) may preserve the GSM8k gains while reducing the MBPP+ regression.
+
+**Related Works:** Derived from experiment #2 results.
+
+**Complexity:** Low (config-only change: mask_schedule_min_ratio=0.3, mask_schedule_warmup_iters=1000)
+
+**Files to modify:** Config only (submit_pretraining_3b.sh)
+
+**Expected metric:** GSM8k, MBPP
+
+---
 ## Adding New Ideas
 
 Copy this template:
