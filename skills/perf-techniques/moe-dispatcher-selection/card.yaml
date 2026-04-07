@@ -57,9 +57,13 @@ dispatcher_recommendations:
 
 key_tuning_parameters:
   - name: moe-deepep-num-sms
-    default: varies
-    recommended: 24
-    rationale: "Optimal for DSV3 on GB200; tune per workload"
+    default: 20
+    recommended: "tune per workload"
+    rationale: "Controls SM count for DeepEP communication kernels; default 20 is a starting point"
+  - name: moe-hybridep-num-sms
+    default: 16
+    recommended: "16-32 range, tune per workload"
+    rationale: "Controls SM count for HybridEP communication; recipes default to 16, perf harness uses 32"
   - name: NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN
     default: varies
     recommended: "match NVLink domain size (e.g., 16 for GB200)"

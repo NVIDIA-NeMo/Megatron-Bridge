@@ -78,7 +78,13 @@ This family is a good reminder that dispatcher wins are workload-dependent:
 
 DeepEP is selected by setting
 `moe_token_dispatcher_type="flex"` and `moe_flex_dispatcher_backend="deepep"`.
-It does not expose an SM count tuning parameter.
+
+```bash
+--moe-deepep-num-sms 20
+```
+
+Tune the SM count allocated to DeepEP communication kernels (default 20).
+The optimal value depends on the workload and EP degree.
 
 ### HybridEP
 
@@ -89,10 +95,12 @@ HybridEP is selected by setting
 --moe-hybridep-num-sms 16
 ```
 
-Tune the SM count allocated to communication. Common sweep points are in the
-mid-teens through low-30s. Set `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN` to
-match the NVLink domain size of the deployment. If it does not match the actual
-topology, performance and sometimes correctness will suffer.
+Tune the SM count allocated to HybridEP communication (default 16). The
+performance harness uses 32 for HybridEP workloads. Sweep between 16 and 32
+for the target hardware. Set
+`NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN` to match the NVLink domain size of
+the deployment. If it does not match the actual topology, performance and
+sometimes correctness will suffer.
 
 ### Routing mode
 
@@ -142,7 +150,8 @@ more comparable across dispatcher backends.
 2. **HybridEP is topology-sensitive**: it is not a universal win outside the
    hardware it was designed for.
 
-3. **DeepEP needs tuning**: default SM partitioning is often not the best point.
+3. **Both dispatchers need SM tuning**: default `moe_deepep_num_sms` (20) and
+   `moe_hybridep_num_sms` (16) are reasonable starting points but rarely optimal.
 
 4. **Force-balance and dropless are not interchangeable baselines**: keep the
    routing mode fixed when comparing dispatcher backends.
