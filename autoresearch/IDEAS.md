@@ -83,7 +83,7 @@
 
 
 ### 5. Cosine Mask Schedule (Gentler Warmup)
-**Status:** 🆕
+**Status:** ❌ Avg 70.51% (-1.47%), worse than baseline. Mask scheduling direction abandoned.
 
 **Date proposed:** 2026-04-07
 
