@@ -175,7 +175,7 @@ python scripts/performance/setup_experiment.py
 - `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`).
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
-- `-lgc/--lock_gpu_freq`: Lock GPU graphics clock to a fixed frequency in MHz (e.g. `2100`). Useful for reducing run-to-run variance in benchmarks. Runs `nvidia-smi -lgc <freq>` once per node before training. Use `nvidia-smi -rgc` to reset after the job. Disabled by default.
+- `-lgc/--lock_gpu_freq`: Lock GPU graphics clock to a fixed frequency in MHz (e.g. `1200`). Used for silicon simulation correlation studies. Disabled by default.
 - `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
 - `-pyp/--pytorch_profiler`: Enable PyTorch profiler. Pass `true` or `false`. Disabled by default.
 - `--profiling_start_step`: Defines start step for profiling. Default `10`.

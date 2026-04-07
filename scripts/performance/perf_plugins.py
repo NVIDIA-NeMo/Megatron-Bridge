@@ -424,9 +424,8 @@ class PerfEnvPlugin(Plugin):
     ):
         """Lock GPU graphics clocks to a fixed frequency before training.
 
-        This is useful for performance benchmarking where consistent GPU clock speeds
-        are needed to reduce run-to-run variance. Runs ``nvidia-smi -lgc <freq>`` once
-        per node via srun before the main training command.
+        Used for silicon simulation correlation studies where a fixed GPU
+        clock frequency is required to match simulation assumptions.
         """
         def get_lock_gpu_freq_srun_cmd(job_dir, freq_mhz):
             import shlex
