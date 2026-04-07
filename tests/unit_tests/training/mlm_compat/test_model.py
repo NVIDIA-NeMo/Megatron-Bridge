@@ -71,7 +71,6 @@ def common_mock_args() -> argparse.Namespace:
     # MoE and expert parameters
     args.num_experts = None
     args.moe_grouped_gemm = False
-    args.moe_use_legacy_grouped_gemm = False
     args.qk_layernorm = False
     args.qk_l2_norm = False
 
@@ -105,7 +104,6 @@ class TestTransformerLayerSpecRouter:
             moe_grouped_gemm=False,
             qk_layernorm=False,
             multi_latent_attention=False,
-            moe_use_legacy_grouped_gemm=False,
             qk_l2_norm=False,
             use_kitchen=False,
         )
@@ -120,7 +118,6 @@ class TestTransformerLayerSpecRouter:
             moe_grouped_gemm=False,
             qk_layernorm=False,
             multi_latent_attention=False,
-            moe_use_legacy_grouped_gemm=False,
             normalization="LayerNorm",
             use_kitchen=True,
         )
@@ -370,9 +367,11 @@ class TestMambaModelProvider:
         args.spec = "megatron.core.models.mamba.mamba_layer_specs.mamba_stack_spec"
 
         # Hybrid model parameters
-        args.hybrid_attention_ratio = 0.3
-        args.hybrid_mlp_ratio = 0.3
+        args.hybrid_layer_pattern = None
         args.hybrid_override_pattern = None
+        args.mtp_hybrid_override_pattern = None
+        args.use_legacy_models = False
+        args.rank = 0
 
         return args
 
@@ -417,9 +416,7 @@ class TestMambaModelProvider:
             vocab_size=32000,
             max_sequence_length=2048,
             pre_process=True,
-            hybrid_attention_ratio=0.3,
-            hybrid_mlp_ratio=0.3,
-            hybrid_override_pattern=None,
+            hybrid_layer_pattern=None,
             post_process=True,
             fp16_lm_cross_entropy=False,
             parallel_output=True,
@@ -427,6 +424,7 @@ class TestMambaModelProvider:
             position_embedding_type="rope",
             rotary_percent=1.0,
             rotary_base=10000,
+            vp_stage=None,
         )
 
     @patch("megatron.bridge.training.mlm_compat.model.import_module")
@@ -463,4 +461,134 @@ class TestMambaModelProvider:
         mock_args.spec = None
 
         with pytest.raises(AssertionError, match="You must provide a valid Mamba layer spec!"):
+            _mamba_provider(mock_args)
+
+    @patch("megatron.bridge.training.mlm_compat.model.import_module")
+    @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
+    @patch("megatron.bridge.training.mlm_compat.model.MambaModel")
+    def test_mamba_provider_migrates_hybrid_override_to_layer_pattern(
+        self,
+        mock_mamba_model_class,
+        mock_config_func,
+        mock_import,
+        mock_args,
+        mock_transformer_config,
+        mock_mamba_stack_spec,
+    ):
+        """Test that deprecated hybrid_override_pattern is migrated to hybrid_layer_pattern."""
+        mock_import.return_value = mock_mamba_stack_spec
+        mock_config_func.return_value = mock_transformer_config
+        mock_mamba_model_class.return_value = MagicMock()
+
+        # Set deprecated pattern, leave hybrid_layer_pattern as None
+        mock_args.hybrid_override_pattern = "M-M-M*-M-M"
+        mock_args.hybrid_layer_pattern = None
+
+        _mamba_provider(mock_args)
+
+        # Should migrate to hybrid_layer_pattern
+        assert mock_args.hybrid_layer_pattern == "M-M-M*-M-M"
+        assert mock_args.hybrid_override_pattern is None
+
+    @patch("megatron.bridge.training.mlm_compat.model.import_module")
+    @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
+    @patch("megatron.bridge.training.mlm_compat.model.MambaModel")
+    def test_mamba_provider_legacy_mtp_pattern_unification(
+        self,
+        mock_mamba_model_class,
+        mock_config_func,
+        mock_import,
+        mock_args,
+        mock_transformer_config,
+        mock_mamba_stack_spec,
+    ):
+        """Test that separate mtp_hybrid_override_pattern is unified into hybrid_layer_pattern."""
+        mock_import.return_value = mock_mamba_stack_spec
+        mock_config_func.return_value = mock_transformer_config
+        mock_mamba_model_class.return_value = MagicMock()
+
+        mock_args.hybrid_layer_pattern = "M-M*-M"
+        mock_args.mtp_hybrid_override_pattern = "*E"
+        mock_args.mtp_num_layers = 2
+
+        _mamba_provider(mock_args)
+
+        # Should unify: main_pattern + sep + mtp_pattern * mtp_num_layers
+        sep = "/"  # Symbols.MTP_SEPARATOR
+        assert mock_args.hybrid_layer_pattern == f"M-M*-M{sep}*E{sep}*E"
+        assert mock_args.mtp_hybrid_override_pattern is None
+
+    @patch("megatron.bridge.training.mlm_compat.model.import_module")
+    @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
+    @patch("megatron.bridge.training.mlm_compat.model.MambaModel")
+    def test_mamba_provider_infers_mtp_num_layers_from_pattern(
+        self,
+        mock_mamba_model_class,
+        mock_config_func,
+        mock_import,
+        mock_args,
+        mock_transformer_config,
+        mock_mamba_stack_spec,
+    ):
+        """Test that mtp_num_layers is inferred from unified pattern when not set."""
+        mock_import.return_value = mock_mamba_stack_spec
+        mock_config_func.return_value = mock_transformer_config
+        mock_mamba_model_class.return_value = MagicMock()
+
+        # Unified pattern with 2 MTP depths (2 sections after separator)
+        mock_args.hybrid_layer_pattern = "M-M*/*E/*E"
+        mock_args.mtp_num_layers = None
+        mock_args.use_legacy_models = False
+
+        _mamba_provider(mock_args)
+
+        assert mock_args.mtp_num_layers == 2
+
+    @patch("megatron.bridge.training.mlm_compat.model.import_module")
+    @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
+    @patch("megatron.bridge.training.mlm_compat.model.MambaModel")
+    def test_mamba_provider_mtp_num_layers_conflict_uses_inferred(
+        self,
+        mock_mamba_model_class,
+        mock_config_func,
+        mock_import,
+        mock_args,
+        mock_transformer_config,
+        mock_mamba_stack_spec,
+    ):
+        """Test that inferred mtp_num_layers overrides conflicting explicit value."""
+        mock_import.return_value = mock_mamba_stack_spec
+        mock_config_func.return_value = mock_transformer_config
+        mock_mamba_model_class.return_value = MagicMock()
+
+        # Pattern has 2 MTP depths but args says 5
+        mock_args.hybrid_layer_pattern = "M-M*/*E/*E"
+        mock_args.mtp_num_layers = 5
+        mock_args.use_legacy_models = False
+
+        _mamba_provider(mock_args)
+
+        # Inferred (2) should win over explicit (5)
+        assert mock_args.mtp_num_layers == 2
+
+    @patch("megatron.bridge.training.mlm_compat.model.import_module")
+    @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
+    def test_mamba_provider_mtp_validation_rejects_learned_embeddings(
+        self,
+        mock_config_func,
+        mock_import,
+        mock_args,
+        mock_transformer_config,
+        mock_mamba_stack_spec,
+    ):
+        """Test that MTP validation rejects unsupported position embedding types."""
+        mock_import.return_value = mock_mamba_stack_spec
+        mock_config_func.return_value = mock_transformer_config
+
+        mock_args.hybrid_layer_pattern = "M-M*"
+        mock_args.mtp_num_layers = 1
+        mock_args.use_legacy_models = False
+        mock_args.position_embedding_type = "learned_absolute"
+
+        with pytest.raises(AssertionError, match="not supported"):
             _mamba_provider(mock_args)

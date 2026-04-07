@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 
 from megatron.bridge.models.mimo.llava_provider import LlavaMimoProvider
 from megatron.bridge.models.mimo.mimo_config import (

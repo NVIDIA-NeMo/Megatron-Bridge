@@ -22,6 +22,7 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipelin
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
@@ -131,7 +132,7 @@ def _set_recompute_overrides(
     recompute_modules: Optional[List[str]] = None,
 ) -> ConfigContainer:
     """Set the recompute and CPU offloading overrides."""
-    if cpu_offloading_num_layers is not None:
+    if cpu_offloading_num_layers is not None and cpu_offloading_num_layers > 0:
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
@@ -219,7 +220,16 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cpu_offloading_num_layers=settings.cpu_offloading_num_layers,
         recompute_num_layers=settings.recompute_num_layers,
     )
+    if settings.te_precision_config_file is not None:
+        from megatron.core.quantization.utils import load_quantization_recipe
+
+        cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
+
+    if settings.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)
+    else:
+        cfg.model.moe_token_dispatcher_type = "alltoall"
 
     return cfg
 
@@ -336,7 +346,12 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             # Override the dataset configuration for LLM models.
             # For vlm models, use the default dataset configuration in model recipe,
             # becuase preprocess of dataset is different for each vlm model.
-            recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
+            recipe.dataset = create_mock_dataset_config(
+                seq_length=args.seq_length or recipe.model.seq_length,
+                num_workers=recipe.dataset.num_workers,
+                pin_memory=recipe.dataset.pin_memory,
+                persistent_workers=recipe.dataset.persistent_workers,
+            )
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
@@ -344,6 +359,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             dataset_paths=args.dataset_paths,
             seq_length=recipe.dataset.sequence_length,
             index_mapping_dir=args.index_mapping_dir,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
         )
     elif args.data == "squad":
         if not args.dataset_root:
@@ -355,6 +373,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             seq_length=args.seq_length or recipe.model.seq_length,
             packed=False,
             pad_seq_to_mult=pad_seq_to_mult,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
@@ -366,6 +387,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             seq_length=args.seq_length or recipe.model.seq_length,
             packed=True,
             pad_seq_to_mult=pad_seq_to_mult,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
         )
         if recipe.model.cuda_graph_impl != "none":
             recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
@@ -397,21 +421,27 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
     if model_recipe_name == "kimi_k2":
         if pp_size is not None or vp_size != -1:
-            try:
-                layout = _get_kimi_k2_pipeline_layout(
-                    recipe.model.pipeline_model_parallel_size, recipe.model.virtual_pipeline_model_parallel_size
-                )
-                recipe.model.pipeline_model_parallel_layout = layout
-            except ValueError:
-                logger.warning(
-                    f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout for Kimi-K2. Using default layout."
-                )
-                recipe.model.pipeline_model_parallel_layout = None
+            if not isinstance(recipe.model.pipeline_model_parallel_layout, str):
+                try:
+                    layout = _get_kimi_k2_pipeline_layout(
+                        recipe.model.pipeline_model_parallel_size, recipe.model.virtual_pipeline_model_parallel_size
+                    )
+                    recipe.model.pipeline_model_parallel_layout = layout
+                except ValueError:
+                    logger.warning(
+                        f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout for Kimi-K2. Using default layout."
+                    )
+                    recipe.model.pipeline_model_parallel_layout = None
         if pipeline_model_parallel_layout is not None:
             recipe.model.pipeline_model_parallel_layout = pipeline_model_parallel_layout
 
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
+
+    if args.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
+    else:
+        recipe.model.moe_token_dispatcher_type = "alltoall"
 
     return recipe
 

@@ -12,15 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import dataclasses
+import logging
 from functools import cached_property, partial
 from pathlib import Path
-from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optional, Type, TypeVar, Union
 
+import torch
 import torch.distributed as dist
 import transformers
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.peft.base import PEFT
+
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
+from modelopt.torch.quantization.utils import is_quantized
+from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
@@ -38,6 +49,8 @@ from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
 
 
+logger = logging.getLogger(__name__)
+
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")
 
@@ -46,7 +59,16 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForCausalLM",
     "ForConditionalGeneration",
     "NemotronH_Nano_VL_V2",
+    "Qwen2_5OmniModel",
 )
+
+# Mapping from non-standard HF architecture names to their actual transformers class names.
+# Some HF model configs report architecture names that don't follow the standard
+# 'ForCausalLM'/'ForConditionalGeneration' convention and don't directly map to a
+# transformers class. This dict resolves those aliases.
+HF_ARCHITECTURE_ALIASES: dict[str, str] = {
+    "Qwen2_5OmniModel": "Qwen2_5OmniForConditionalGeneration",
+}
 
 # Preformatted display string for error/help messages
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
@@ -101,6 +123,9 @@ class AutoBridge(Generic[MegatronModelT]):
         if not isinstance(hf_pretrained, (PreTrainedCausalLM, PretrainedConfig)):
             raise ValueError("hf_pretrained must be a PreTrainedCausalLM or PretrainedConfig instance")
         self.hf_pretrained: PreTrainedCausalLM | PretrainedConfig = hf_pretrained
+        # Data type for exporting weights
+        self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
+        self.hf_model_id: Optional[str] = None
 
     @classmethod
     def list_supported_models(cls) -> list[str]:
@@ -143,6 +168,63 @@ class AutoBridge(Generic[MegatronModelT]):
         if not architectures:
             return False
         return any(arch.endswith(SUPPORTED_HF_ARCHITECTURES) for arch in architectures)
+
+    @classmethod
+    def from_auto_config(cls, megatron_path: str, hf_model_id: str) -> "AutoBridge":
+        """
+        Create a config-only AutoBridge by synthesizing an HF config from a Megatron checkpoint.
+
+        This method creates a bridge instace from a Megatron checkpoint and reference hf_model_id,
+        without loading any weights. This enables exporting of:
+        - Custom small models of popular architectures
+        - Models pruned from a larger teacher model
+
+        Args:
+            megatron_path: Directory path where the Megatron checkpoint is stored
+            hf_model_id: HuggingFace model ID or path to model directory
+                Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
+
+        Returns:
+            AutoBridge: Bridge instance configured for the architecture
+
+        Raises:
+            FileNotFoundError: If run_config.yaml is not found in the Megatron path
+        """
+        from transformers import AutoConfig
+
+        from megatron.bridge.models.conversion.utils import conform_config_to_reference
+        from megatron.bridge.training.model_load_save import load_model_config
+
+        checkpoint_path = Path(megatron_path)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Megatron checkpoint not found: {checkpoint_path}")
+
+        # Look for configuration files to determine the model type
+        run_config = checkpoint_path / "run_config.yaml"
+        if not run_config.exists():
+            iter_dirs = [d for d in checkpoint_path.iterdir() if d.is_dir() and d.name.startswith("iter_")]
+            if iter_dirs:
+                latest_iter = max(iter_dirs, key=lambda d: int(d.name.replace("iter_", "")))
+                run_config = latest_iter / "run_config.yaml"
+
+        if not run_config.exists():
+            raise FileNotFoundError(
+                f"Could not find run_config.yaml in {checkpoint_path}. Ensure this is a valid Megatron checkpoint."
+            )
+
+        # 1. Load config from both sides
+        megatron_cfg, _ = load_model_config(str(run_config.parent))
+        hf_cfg = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=True)
+        # 2. Translate Megatron config -> HF, conforming to reference config
+        bridge = cls.from_hf_config(hf_cfg)
+        megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
+        megatron_hf_cfg_dict = conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
+        # 3. Build final bridge from the synthesized config
+        synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)
+        bridge = cls.from_hf_config(synthesized_config)
+        bridge.hf_model_id = hf_model_id
+
+        return bridge
 
     @classmethod
     def from_hf_config(cls, config: PretrainedConfig) -> "AutoBridge":
@@ -235,6 +317,22 @@ class AutoBridge(Generic[MegatronModelT]):
 
         cls._validate_config(config, str(path))
 
+        # Transformers 5.0+ changed `rope_scaling` to a property whose setter
+        # does `self.rope_parameters = value`, replacing the entire dict and
+        # dropping any fields (e.g. `rope_theta`) that were set during initial
+        # construction.  When a `rope_scaling` override is passed as a kwarg,
+        # `PretrainedConfig.from_dict` applies it via `setattr` *after* the
+        # initial construction, so those fields are silently lost and Megatron
+        # falls back to defaults (e.g. `rotary_base=10000`).  Pre-populate the
+        # override dict with all base-config rope fields so the setter
+        # preserves them.
+        if "rope_scaling" in kwargs and isinstance(kwargs["rope_scaling"], dict):
+            base_rope = getattr(config, "rope_scaling", None)
+            if isinstance(base_rope, dict):
+                for key, value in base_rope.items():
+                    if key not in kwargs["rope_scaling"]:
+                        kwargs["rope_scaling"][key] = value
+
         try:
             return cls(PreTrainedCausalLM.from_pretrained(path, **kwargs))
         except Exception as e:
@@ -319,10 +417,10 @@ class AutoBridge(Generic[MegatronModelT]):
             # Preserve trust_remote_code setting from the original bridge instance
             trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
             pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
-        self._model_bridge.load_weights_hf_to_megatron(
-            pre_trained, model, allowed_mismatched_params=allowed_mismatched_params
-        )
-
+        bridge = self._model_bridge
+        bridge.load_weights_hf_to_megatron(pre_trained, model, allowed_mismatched_params=allowed_mismatched_params)
+        # Get unquantized_state_dict from the bridge instance that was used for optimizer reload
+        self.unquantized_state_dict = getattr(bridge, "unquantized_state_dict", None)
         return model
 
     def export_hf_weights(
@@ -371,6 +469,14 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     cpu=True
             ... ))
         """
+        # Build conversion tasks based on export_weight_dtype configuration
+        if conversion_tasks is None and self.export_weight_dtype == "fp8":
+            if not isinstance(model, list):
+                model = [model]
+            self._validate_fp8_export_config(model)
+            # Use FP8 export tasks for blockwise FP8 weights
+            conversion_tasks = self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
+
         dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         return model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance,
@@ -410,6 +516,98 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
         )
 
+    def save_hf_adapter(
+        self,
+        model: list[MegatronModelT],
+        path: str | Path,
+        peft_config: "PEFT",
+        base_model_name_or_path: Optional[str] = None,
+        show_progress: bool = True,
+    ) -> None:
+        """Save LoRA adapter weights as a HuggingFace PEFT-compatible directory.
+
+        The output directory contains ``adapter_config.json`` and
+        ``adapter_model.safetensors`` and can be loaded directly with
+        ``peft.PeftModel.from_pretrained(base_model, path)``.
+
+        Args:
+            model: Megatron model instance or list of instances.
+            path: Directory path where the adapter files will be saved.
+            peft_config: The LoRA / DoRA config used during training (provides
+                ``dim``, ``alpha``, ``dropout``, etc.).
+            base_model_name_or_path: HuggingFace model identifier or local path
+                of the base model this adapter was trained on.  If *None*, the
+                value is inferred from ``hf_pretrained.model_name_or_path``.
+            show_progress: Display progress bar during export.
+
+        Example:
+            >>> bridge.save_hf_adapter(
+            ...     megatron_model,
+            ...     "./my-lora-adapter",
+            ...     peft_config=lora,
+            ...     base_model_name_or_path="Qwen/Qwen3-4B",
+            ... )
+            >>> # Load with HuggingFace PEFT
+            >>> from peft import PeftModel
+            >>> from transformers import AutoModelForCausalLM
+            >>> base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-4B")
+            >>> model = PeftModel.from_pretrained(base, "./my-lora-adapter")
+
+        Note:
+            This method is collective -- all ranks must call it.  Only rank 0
+            writes files to disk; the other ranks participate in the generator
+            to gather distributed (TP/PP/EP) tensors.
+        """
+        import json
+
+        from safetensors.torch import save_file
+
+        from megatron.bridge.models.conversion.peft_bridge import (
+            build_adapter_config_dict,
+            infer_target_modules_from_adapter_weights,
+        )
+
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
+
+        adapter_state: dict[str, torch.Tensor] = {}
+        for name, tensor in self.export_adapter_weights(model, cpu=True, show_progress=show_progress):
+            adapter_state[f"base_model.model.{name}"] = tensor.clone().float()
+
+        if not adapter_state:
+            raise RuntimeError(
+                "No adapter weights were found on the model. "
+                "Ensure the model has PEFT adapters applied before calling save_hf_adapter()."
+            )
+
+        is_rank0 = not (dist.is_available() and dist.is_initialized()) or dist.get_rank() == 0
+        if is_rank0:
+            save_dir = Path(path)
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            if base_model_name_or_path is None:
+                base_model_name_or_path = str(
+                    getattr(self.hf_pretrained, "model_name_or_path", "")
+                    or getattr(self.hf_pretrained, "name_or_path", "")
+                )
+
+            target_modules = infer_target_modules_from_adapter_weights(adapter_state.keys())
+            adapter_config = build_adapter_config_dict(
+                peft_config,
+                target_modules=target_modules,
+                base_model_name_or_path=base_model_name_or_path,
+            )
+
+            config_path = save_dir / "adapter_config.json"
+            with open(config_path, "w") as f:
+                json.dump(adapter_config, f, indent=2)
+
+            weights_path = save_dir / "adapter_model.safetensors"
+            save_file(adapter_state, str(weights_path))
+
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
+
     def save_hf_pretrained(
         self,
         model: list[MegatronModelT],
@@ -435,6 +633,9 @@ class AutoBridge(Generic[MegatronModelT]):
         If the original model was loaded with trust_remote_code=True, any custom
         modeling files (e.g., modeling_*.py, configuration_*.py) will be preserved
         to ensure the saved model can be loaded properly.
+
+        Config-only bridges are supported when created via the auto-config
+        flow in convert_checkpoints.py.
 
         Args:
             model: Megatron model instance or list of instances
@@ -467,29 +668,58 @@ class AutoBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
-        if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
-            raise ValueError(
-                "save_hf_pretrained requires a pretrained HuggingFace model. "
-                "AutoBridge.from_hf_config() creates a config-only bridge; "
-                "use AutoBridge.from_hf_pretrained(...) instead."
-            )
+        if not isinstance(self.hf_pretrained, (PreTrainedCausalLM, PretrainedConfig)):
+            raise ValueError("save_hf_pretrained requires a pretrained HuggingFace model or config.")
+        is_config_only = isinstance(self.hf_pretrained, PretrainedConfig)
 
-        # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured
-        additional_files = None
-        if hasattr(self._model_bridge, "ADDITIONAL_FILE_PATTERNS") and self._model_bridge.ADDITIONAL_FILE_PATTERNS:
-            additional_files = self._model_bridge.ADDITIONAL_FILE_PATTERNS
+        def _save_artifacts():
+            if is_config_only:
+                import json
 
-        if dist.is_available() and dist.is_initialized():
-            # Distributed training, only rank 0 saves artifacts
-            if dist.get_rank() == 0:
+                # Config-only path: write config.json and download modeling files from Hub.
+                Path(path).mkdir(parents=True, exist_ok=True)
+                config_dict = self.hf_pretrained.to_dict()
+                with open(Path(path) / "config.json", "w") as _f:
+                    json.dump(config_dict, _f, indent=2, sort_keys=True, allow_nan=True)
+
+                # Download custom modeling files so the output is loadable with from_pretrained().
+                hub_repo = self.hf_model_id
+                if hub_repo:
+                    try:
+                        from huggingface_hub import hf_hub_download, list_repo_files
+
+                        repo_files = list_repo_files(hub_repo)
+                        py_files = [f for f in repo_files if f.endswith(".py")]
+                        for py_file in py_files:
+                            hf_hub_download(
+                                repo_id=hub_repo,
+                                filename=py_file,
+                                local_dir=path,
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "Could not download modeling files from %s: %s. "
+                            "This is expected for models that use standard transformers "
+                            "modeling classes and do not define custom .py files.",
+                            hub_repo,
+                            exc,
+                        )
+
+            else:
+                # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured
+                mb = self._model_bridge
+                additional_files = None
+                if hasattr(mb, "ADDITIONAL_FILE_PATTERNS") and mb.ADDITIONAL_FILE_PATTERNS:
+                    additional_files = mb.ADDITIONAL_FILE_PATTERNS
                 self.hf_pretrained.save_artifacts(
                     path, original_source_path=source_path, additional_files=additional_files
                 )
+
+        if dist.is_available() and dist.is_initialized():
+            if dist.get_rank() == 0:
+                _save_artifacts()
         else:
-            # No distributed training, save artifacts
-            self.hf_pretrained.save_artifacts(
-                path, original_source_path=source_path, additional_files=additional_files
-            )
+            _save_artifacts()
 
         self.save_hf_weights(
             model,
@@ -563,6 +793,19 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
             merge_adapter_weights=merge_adapter_weights,
         )
+        model_instance = self._get_model_instance(model)
+        quant_tensors = None
+        if is_quantized(model_instance):
+            quant_tensors = {}
+
+            def _filter_quant(gen):
+                for name, tensor in gen:
+                    if "_quantizer." in name:
+                        quant_tensors[name] = tensor
+                        continue
+                    yield name, tensor
+
+            generator = _filter_quant(generator)
 
         # Check if the state source is SafeTensorsStateSource for streaming save.
         if (
@@ -578,7 +821,43 @@ class AutoBridge(Generic[MegatronModelT]):
                 save_every_n_ranks=save_every_n_ranks,
             )
         else:
-            raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
+            # Config-only path: shard and write safetensors directly
+            import json
+
+            from huggingface_hub import split_torch_state_dict_into_shards
+
+            # NOTE: Collects the full state dict into CPU memory before sharding.
+            # For very large models (>70B), this may require significant host RAM.
+            is_distributed = dist.is_available() and dist.is_initialized()
+            rank = dist.get_rank() if is_distributed else 0
+
+            if rank == 0:
+                state_dict = {name: tensor.contiguous().cpu() for name, tensor in generator}
+            else:
+                for _ in generator:
+                    pass
+                state_dict = None
+
+            if rank == 0:
+                plan = split_torch_state_dict_into_shards(state_dict)
+                safe_dir = Path(path)
+                safe_dir.mkdir(parents=True, exist_ok=True)
+                for filename, tensors in plan.filename_to_tensors.items():
+                    shard = {k: state_dict[k] for k in tensors}
+                    save_file(shard, safe_dir / filename)
+                if plan.is_sharded:
+                    index = {"metadata": plan.metadata, "weight_map": plan.tensor_to_filename}
+                    with open(safe_dir / "model.safetensors.index.json", "w") as f:
+                        json.dump(index, f, indent=2)
+
+        # Save quantizer/amax sidecar after the main generator is consumed (rank 0 only).
+        if quant_tensors:
+            is_distributed = dist.is_available() and dist.is_initialized()
+            rank = dist.get_rank() if is_distributed else 0
+            if rank == 0 and quant_tensors:
+                sidecar_path = Path(path) / "modelopt_weights.pt"
+                sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(quant_tensors, sidecar_path)
 
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
@@ -764,9 +1043,14 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
         # Save as Megatron checkpoint
-        hf_tokenizer_kwargs = None
+        hf_tokenizer_kwargs = {}
         if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
             hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
+        # Forward trust_remote_code to the tokenizer (needed for repos with custom code)
+        if kwargs.get("trust_remote_code"):
+            if hf_tokenizer_kwargs is None:
+                hf_tokenizer_kwargs = {}
+            hf_tokenizer_kwargs.setdefault("trust_remote_code", True)
         bridge.save_megatron_model(
             megatron_model,
             megatron_path,
@@ -789,8 +1073,9 @@ class AutoBridge(Generic[MegatronModelT]):
         This is a convenience method that loads a Megatron checkpoint and
         exports it to HuggingFace format. This is useful for sharing trained
         models or deploying them with HuggingFace inference tools.
-        Requires a bridge created with `from_hf_pretrained` so the tokenizer
-        and other HuggingFace artifacts can be saved alongside the weights.
+
+        Also supports config-only bridges created via the auto-config
+        flow in convert_checkpoints.py.
 
         Args:
             megatron_path: Directory path where the Megatron checkpoint is stored
@@ -809,7 +1094,6 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     "./megatron_checkpoints/my_model",
             ...     "./hf_exports/my_model"
             ... )
-
             >>> # Export with specific settings
             >>> bridge.export_ckpt(
             ...     "./megatron_checkpoints/my_model",
@@ -821,12 +1105,6 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> from transformers import AutoModelForCausalLM
             >>> hf_model = AutoModelForCausalLM.from_pretrained("./hf_exports/my_model")
         """
-        if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
-            raise ValueError(
-                "export_ckpt requires a pretrained HuggingFace model. "
-                "AutoBridge.from_hf_config() creates a config-only bridge; "
-                "use AutoBridge.from_hf_pretrained(...) instead."
-            )
         try:
             from megatron.bridge.training.model_load_save import temporary_distributed_context
         except ImportError:
@@ -844,6 +1122,127 @@ class AutoBridge(Generic[MegatronModelT]):
                 show_progress=show_progress,
                 source_path=source_path,
                 strict=strict,
+            )
+
+    def export_adapter_ckpt(
+        self,
+        peft_checkpoint: str | Path,
+        output_path: str | Path,
+        show_progress: bool = True,
+    ) -> None:
+        """Export LoRA adapter weights from a Megatron PEFT checkpoint to HuggingFace PEFT format.
+
+        This convenience method loads a Megatron-Bridge fine-tuning checkpoint,
+        reconstructs the LoRA adapter structure from ``run_config.yaml``, and
+        writes a HuggingFace PEFT-compatible directory containing
+        ``adapter_config.json`` and ``adapter_model.safetensors``.
+
+        The bridge must be created with ``from_hf_pretrained`` so that
+        base weights are available for the conversion mapping.
+
+        Args:
+            peft_checkpoint: Path to the Megatron-Bridge distributed checkpoint
+                that contains LoRA adapter weights (produced by a PEFT
+                fine-tuning run).  May point at the top-level run directory
+                (containing ``iter_*`` folders) or directly at an iteration
+                directory.
+            output_path: Directory where the adapter files will be saved.
+            show_progress: Display progress bar during export.
+
+        Example:
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+            >>> bridge.export_adapter_ckpt(
+            ...     "/path/to/finetune_ckpt",
+            ...     "./my_adapter",
+            ... )
+            >>> # Load with HuggingFace PEFT
+            >>> from peft import PeftModel
+            >>> from transformers import AutoModelForCausalLM
+            >>> base = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
+            >>> model = PeftModel.from_pretrained(base, "./my_adapter")
+        """
+        import logging
+
+        from megatron.core import dist_checkpointing
+
+        from megatron.bridge.peft.lora import LoRA, VLMLoRA
+        from megatron.bridge.training.checkpointing import (
+            _generate_model_state_dict,
+            apply_peft_adapter_filter_to_state_dict,
+        )
+        from megatron.bridge.training.model_load_save import temporary_distributed_context
+        from megatron.bridge.training.utils.checkpoint_utils import read_run_config
+
+        _logger = logging.getLogger(__name__)
+
+        ckpt_path = Path(peft_checkpoint).expanduser().resolve()
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"PEFT checkpoint not found: {ckpt_path}")
+
+        peft_class: type = LoRA
+        peft_cfg: dict = {}
+        cfg_file = ckpt_path / "run_config.yaml"
+        if not cfg_file.exists() and ckpt_path.parent != ckpt_path:
+            cfg_file = ckpt_path.parent / "run_config.yaml"
+        if cfg_file.exists():
+            try:
+                run_cfg_dict = read_run_config(str(cfg_file))
+                peft_cfg = run_cfg_dict.get("peft", {}) or {}
+                if "VLMLoRA" in peft_cfg.get("_target_", ""):
+                    peft_class = VLMLoRA
+                allowed_keys = {
+                    "target_modules",
+                    "dim",
+                    "alpha",
+                    "dropout",
+                    "dropout_position",
+                    "freeze_language_model",
+                    "freeze_vision_model",
+                    "freeze_vision_projection",
+                }
+                peft_cfg = {k: v for k, v in peft_cfg.items() if k in allowed_keys}
+            except Exception as err:
+                _logger.warning(f"Failed to read LoRA settings from {cfg_file}: {err}. Using defaults.")
+        else:
+            _logger.warning("run_config.yaml not found in PEFT checkpoint; using default LoRA settings.")
+
+        lora = peft_class(**peft_cfg)
+
+        # Materialise model with base weights + LoRA structure.
+        # Use float32 so adapter weights are exported at full precision;
+        # bfloat16 matmul in downstream PEFT merges causes ~1e-3 weight
+        # errors that compound into large logit diffs.
+        provider = self.to_megatron_provider(load_weights=True)
+        provider.pipeline_dtype = torch.float32
+        provider.params_dtype = torch.float32
+        provider.finalize()
+        provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
+
+        with temporary_distributed_context(backend="gloo"):
+            model = provider.provide_distributed_model(
+                wrap_with_ddp=False,
+                use_cpu_initialization=True,
+                init_model_with_meta_device=False,
+            )
+
+            # Load adapter weights from the PEFT checkpoint
+            sharded_state_dict = _generate_model_state_dict(model, {})
+            sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora)
+            loaded_sd = dist_checkpointing.load(sharded_state_dict, str(ckpt_path))
+            model_key = "model" if "model" in loaded_sd else next(k for k in loaded_sd if k.startswith("model"))
+            model[0].load_state_dict(loaded_sd[model_key], strict=False)
+
+            # Export
+            base_model_name = str(
+                getattr(self.hf_pretrained, "model_name_or_path", "")
+                or getattr(self.hf_pretrained, "name_or_path", "")
+            )
+            self.save_hf_adapter(
+                model,
+                path=output_path,
+                peft_config=lora,
+                base_model_name_or_path=base_model_name,
+                show_progress=show_progress,
             )
 
     def push_to_hub(self, path: str | Path) -> None: ...
@@ -1051,7 +1450,9 @@ class AutoBridge(Generic[MegatronModelT]):
             else:
                 hf_config = self.hf_pretrained
 
-        return model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
+        bridge = model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
+        bridge.export_weight_dtype = self.export_weight_dtype
+        return bridge
 
     @property
     def _provider_bridge_input(self) -> PreTrainedCausalLM | _ConfigOnlyPretrainedShim:
@@ -1111,11 +1512,14 @@ class AutoBridge(Generic[MegatronModelT]):
             # For auto_map models, return the class name as a string
             return cls_name
 
+        # Resolve non-standard architecture names via alias mapping
+        resolved_arch = HF_ARCHITECTURE_ALIASES.get(causal_lm_arch, causal_lm_arch)
+
         try:
-            return getattr(transformers, causal_lm_arch)
+            return getattr(transformers, resolved_arch)
         except AttributeError:
             raise ValueError(
-                f"\n✗ Architecture class '{causal_lm_arch}' not found in transformers\n\n"
+                f"\n✗ Architecture class '{resolved_arch}' not found in transformers\n\n"
                 f"This could mean:\n"
                 f"1. The model requires a newer version of transformers\n"
                 f"2. The model uses a custom modeling file not in the standard library\n"
@@ -1152,8 +1556,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 # For auto_map models, use class-name string
                 arch_key = arch_name
             else:
+                # Resolve non-standard architecture names via alias mapping
+                resolved_arch = HF_ARCHITECTURE_ALIASES.get(architecture, architecture)
                 try:
-                    arch_class = getattr(transformers, architecture)
+                    arch_class = getattr(transformers, resolved_arch)
                     arch_key = arch_class
                 except AttributeError:
                     # Fall back to name-based registration
@@ -1246,3 +1652,17 @@ class AutoBridge(Generic[MegatronModelT]):
             lines_for_build.append("  (model_bridge): ")  # Fallback for empty repr
 
         return f"{class_name}(\n" + "\n".join(lines_for_build) + "\n)"
+
+    def _validate_fp8_export_config(self, model: list[MegatronModelT]) -> None:
+        """Validate runtime Megatron config before enabling FP8 export tasks."""
+        model_instance = self._get_model_instance(model)
+        model_config = getattr(model_instance, "config", None)
+        fp8 = getattr(model_config, "fp8", None)
+        fp8_recipe = getattr(model_config, "fp8_recipe", None)
+        fp8_param = getattr(model_config, "fp8_param", None)
+        if fp8 is None or fp8_recipe != "blockwise" or not fp8_param:
+            raise ValueError(
+                "export_weight_dtype='fp8' only supports blockwise FP8 parameter export. "
+                f"Expected fp8 to be enabled, fp8_recipe='blockwise', and fp8_param=True, "
+                f"but got fp8={fp8!r}, fp8_recipe={fp8_recipe!r}, fp8_param={fp8_param!r}."
+            )

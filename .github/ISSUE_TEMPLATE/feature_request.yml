@@ -1,0 +1,70 @@
+name: Feature request
+description: Propose a new capability or enhancement for Megatron Bridge.
+title: "[feature] "
+labels:
+  - feature
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for new functionality, enablement work, or product improvements. Keep the request focused on the user problem and desired outcome.
+
+        **If you already have a proposed solution, please open a PR alongside this issue.** We can discuss the implementation there and help get it merged.
+  - type: textarea
+    id: user-problem
+    attributes:
+      label: User problem
+      description: What pain point or limitation are you trying to solve?
+      placeholder: Describe the concrete problem you are facing today.
+    validations:
+      required: true
+  - type: textarea
+    id: desired-outcome
+    attributes:
+      label: Desired outcome
+      description: What should happen if this request is addressed?
+      placeholder: Describe the desired workflow, behavior, or capability.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds, competing designs, or other options have you considered?
+      placeholder: List any alternatives or partial workarounds you already evaluated.
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Choose the closest primary area.
+      options:
+        - area:model
+        - area:recipe
+        - area:training
+        - area:data
+        - area:ckpt
+        - area:peft
+        - area:perf
+        - area:build
+        - area:misc
+        - unsure
+    validations:
+      required: true
+  - type: dropdown
+    id: urgency
+    attributes:
+      label: Urgency / use case
+      description: How should maintainers think about the urgency of this request?
+      options:
+        - Blocking current work
+        - Important but not blocking
+        - Nice to have
+        - Exploratory / long-term
+    validations:
+      required: true
+  - type: textarea
+    id: extra-context
+    attributes:
+      label: Extra context
+      description: Add examples, links, screenshots, or related issues if helpful.

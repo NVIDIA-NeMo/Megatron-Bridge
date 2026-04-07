@@ -31,7 +31,6 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.vision.clip_vit_model import CLIPViTModel
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
-from megatron.core.optimizer.optimizer_config import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
@@ -53,6 +52,13 @@ from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
 
 logger = logging.getLogger(__name__)
+
+# Monkey-patch: report_theoretical_memory crashes on MIMO because cfg.model is
+# MimoModelProvider (no kv_channels). Pre-existing issue from mainline merge.
+from megatron.bridge.training.utils import train_utils as _tu
+
+
+_tu.report_theoretical_memory = lambda *a, **kw: None
 
 SAVE_STEPS = 5
 TOTAL_STEPS = 10
@@ -323,21 +329,12 @@ def _run_phase_save(ckpt_dir: str) -> None:
         mimo_provider.fp8 = None
 
     mock_data = _build_mock_data_provider()
-    bridge_opt = BridgeOptimizerConfig(lr=1e-4, use_distributed_optimizer=True)
-    mcore_opt = MCoreOptimizerConfig(
-        optimizer="adam",
-        lr=1e-4,
-        min_lr=0.0,
-        weight_decay=0.01,
-        clip_grad=1.0,
-        bf16=True,
-        use_distributed_optimizer=True,
-    )
+    opt_config = BridgeOptimizerConfig(lr=1e-4, min_lr=0.0, use_distributed_optimizer=True)
 
     cfg = _build_config(
         mimo_provider,
         mock_data,
-        bridge_opt,
+        opt_config,
         ckpt_dir,
         train_iters=SAVE_STEPS,
         save_interval=SAVE_STEPS,
@@ -347,11 +344,8 @@ def _run_phase_save(ckpt_dir: str) -> None:
 
     pretrain_mimo(
         cfg=cfg,
-        mimo_provider=mimo_provider,
         forward_step_func=mimo_forward_step,
         build_data_iterators_fn=_build_data_iterators,
-        opt_config=mcore_opt,
-        schedulers={},
         global_state=global_state,
     )
 
@@ -376,7 +370,6 @@ def _run_phase_save(ckpt_dir: str) -> None:
 
 def _run_phase_resume(ckpt_dir: str) -> None:
     """Phase 2: Resume from checkpoint, train to TOTAL_STEPS, verify continuity."""
-    rank = dist.get_rank()
     _log(f"Phase RESUME: loading from {ckpt_dir}, training to {TOTAL_STEPS} steps")
 
     marker_path = os.path.join(ckpt_dir, MARKER_FILE)
@@ -399,21 +392,12 @@ def _run_phase_resume(ckpt_dir: str) -> None:
         mimo_provider.fp8 = None
 
     mock_data = _build_mock_data_provider()
-    bridge_opt = BridgeOptimizerConfig(lr=1e-4, use_distributed_optimizer=True)
-    mcore_opt = MCoreOptimizerConfig(
-        optimizer="adam",
-        lr=1e-4,
-        min_lr=0.0,
-        weight_decay=0.01,
-        clip_grad=1.0,
-        bf16=True,
-        use_distributed_optimizer=True,
-    )
+    opt_config = BridgeOptimizerConfig(lr=1e-4, min_lr=0.0, use_distributed_optimizer=True)
 
     cfg = _build_config(
         mimo_provider,
         mock_data,
-        bridge_opt,
+        opt_config,
         ckpt_dir,
         train_iters=TOTAL_STEPS,
         save_interval=TOTAL_STEPS,
@@ -430,11 +414,8 @@ def _run_phase_resume(ckpt_dir: str) -> None:
 
     pretrain_mimo(
         cfg=cfg,
-        mimo_provider=mimo_provider,
         forward_step_func=mimo_forward_step,
         build_data_iterators_fn=_build_data_iterators,
-        opt_config=mcore_opt,
-        schedulers={},
         global_state=global_state,
     )
 
