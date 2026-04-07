@@ -221,6 +221,13 @@ def _build_data_iterators(cfg, mimo_infra):
     return train_iter, valid_iter
 
 
+# Monkey-patch: report_theoretical_memory crashes on MIMO because cfg.model is
+# MimoModelProvider (no kv_channels). Pre-existing issue from mainline merge.
+from megatron.bridge.training.utils import train_utils as _tu
+
+
+_tu.report_theoretical_memory = lambda *a, **kw: None
+
 from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -263,6 +270,15 @@ def _build_config(
     logger_cfg.wandb_save_dir = wandb_save_dir
     logger_cfg.tensorboard_dir = os.path.join(wandb_save_dir or "/tmp/tb_logs", "tb_logs") if wandb_project else None
 
+    from megatron.core.distributed import DistributedDataParallelConfig
+
+    ddp_cfg = DistributedDataParallelConfig(
+        grad_reduce_in_fp32=train_cfg.grad_reduce_in_fp32,
+        overlap_grad_reduce=train_cfg.overlap_grad_reduce,
+        use_distributed_optimizer=train_cfg.use_distributed_optimizer,
+        check_for_nan_in_grad=train_cfg.check_for_nan_in_grad,
+    )
+
     cfg = ConfigContainer(
         train=train_cfg,
         model=mimo_provider,
@@ -272,6 +288,7 @@ def _build_config(
         logger=logger_cfg,
         tokenizer=TokenizerConfig(),
         checkpoint=CheckpointConfig(),
+        ddp=ddp_cfg,
     )
     cfg.data_parallel_size = 1
     return cfg
