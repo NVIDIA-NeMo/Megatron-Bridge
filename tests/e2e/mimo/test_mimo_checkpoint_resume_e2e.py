@@ -262,11 +262,16 @@ def _build_config(
         train_iters=train_iters,
     )
     train_cfg.num_microbatches = 1
-    train_cfg.grad_reduce_in_fp32 = False
-    train_cfg.overlap_grad_reduce = False
-    train_cfg.use_distributed_optimizer = True
-    train_cfg.check_for_nan_in_grad = False
     train_cfg.log_interval = 1
+
+    from megatron.core.distributed import DistributedDataParallelConfig
+
+    ddp_cfg = DistributedDataParallelConfig(
+        grad_reduce_in_fp32=False,
+        overlap_grad_reduce=False,
+        use_distributed_optimizer=True,
+        check_for_nan_in_grad=False,
+    )
 
     logger_cfg = LoggerConfig()
     logger_cfg.log_interval = 1
@@ -297,6 +302,7 @@ def _build_config(
         logger=logger_cfg,
         tokenizer=TokenizerConfig(),
         checkpoint=ckpt_cfg,
+        ddp=ddp_cfg,
     )
     cfg.data_parallel_size = max_dp
     return cfg
