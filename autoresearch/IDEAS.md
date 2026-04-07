@@ -31,7 +31,7 @@
 ---
 
 ### 2. Mask Scheduling
-**Status:** 🆕
+**Status:** ❌ Avg 72.29% (+0.31%), below threshold. GSM8k +1.3% but MBPP+ -1.6%.
 
 **Date proposed:** 2026-04-06
 
