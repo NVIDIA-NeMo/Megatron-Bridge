@@ -74,6 +74,12 @@ declare -a CONFIGS_8GPU=(
     "tp2_dp2_both|2|1|2|0|2|1|2|4|4"
     "tp2_pp2_llm_tp4_vision|2|2|1|0|4|1|1|4|4"
     "tp1_dp4_both|1|1|4|0|1|1|4|4|4"
+    "pp4_llm_tp4_vision|1|4|1|0|4|1|1|4|4"
+    "pp4_llm_dp4_vision|1|4|1|0|1|1|4|4|4"
+    "pp2_dp2_llm_tp2_dp2|1|2|2|0|2|1|2|4|4"
+    "tp4_llm_dp4_vision|4|1|1|0|1|1|4|4|4"
+    "tp2_pp2_llm_tp2_dp2_vision|2|2|1|0|2|1|2|4|4"
+    "tp2_dp2_llm_dp4_vision|2|1|2|0|1|1|4|4|4"
     # Asymmetric configs
     "asymmetric_2_6|1|2|1|0|2|1|3|2|3"
     "asymmetric_2_6|2|1|1|0|2|1|3|2|3"
