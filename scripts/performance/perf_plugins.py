@@ -422,6 +422,12 @@ class PerfEnvPlugin(Plugin):
     def _set_lock_gpu_freq(
         self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", lock_gpu_freq: int | None
     ):
+        """Lock GPU graphics clocks to a fixed frequency before training.
+
+        This is useful for performance benchmarking where consistent GPU clock speeds
+        are needed to reduce run-to-run variance. Runs ``nvidia-smi -lgc <freq>`` once
+        per node via srun before the main training command.
+        """
         def get_lock_gpu_freq_srun_cmd(job_dir, freq_mhz):
             import shlex
 
