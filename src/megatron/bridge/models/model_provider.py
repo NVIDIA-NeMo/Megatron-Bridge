@@ -508,7 +508,7 @@ def get_model(
             Uses the provide() method with optional pre_process(bool), post_process(bool),
             vp_stage(int) arguments for pipeline parallelism
         ddp_config: Configuration for distributed data parallel training
-        model_type: Type of model (encoder, decoder, or encoder_and_decoder)
+        model_type: Type of model (encoder_or_decoder)
         overlap_param_gather_with_optimizer_step: Whether to overlap parameter
             gathering with optimizer step for performance optimization
         fp16: Enable FP16 mixed precision training. If None, uses model config
@@ -634,7 +634,7 @@ def _create_model(
     vp_size = getattr(model_provider, "virtual_pipeline_model_parallel_size", None)
     pp_group = pg_collection.pp
     if (pp_group.size() > 1) and (vp_size is not None):
-        assert model_type != ModelType.encoder_and_decoder, (
+        assert model_type == ModelType.encoder_or_decoder, (
             "Interleaved schedule not supported for model with both encoder and decoder"
         )
         model = []
@@ -651,14 +651,10 @@ def _create_model(
     else:
         pre_process = is_pp_first_stage(pp_group)
         post_process = is_pp_last_stage(pp_group)
-        if model_type == ModelType.encoder_and_decoder:
-            # Deprecated in upstream; simplify to first/last stage semantics
-            model = model_provider.provide()
-        else:
-            model = model_provider.provide(
-                pre_process=pre_process,
-                post_process=post_process,
-            )
+        model = model_provider.provide(
+            pre_process=pre_process,
+            post_process=post_process,
+        )
         model.model_type = model_type
 
     if not isinstance(model, list):
