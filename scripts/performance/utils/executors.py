@@ -159,6 +159,48 @@ def slurm_executor(
     return executor
 
 
+def kubeflow_executor(
+    namespace: str,
+    nodes: int,
+    num_gpus_per_node: int,
+    container_image: str = "nvcr.io/nvidia/nemo:dev",
+    volumes: List[Dict[str, Any]] = None,
+    volume_mounts: List[Dict[str, Any]] = None,
+    workdir_pvc: Optional[str] = None,
+    workdir_pvc_path: str = "/nemo_run",
+    image_pull_secrets: List[str] = None,
+    wandb_key: str = None,
+    hf_token: str = None,
+    custom_env_vars: Dict[str, str] = None,
+) -> run.KubeflowExecutor:
+    """
+    Kubeflow Training Operator executor definition with appropriate cluster params and NeMo container
+    params needed for pre-training and fine-tuning experiments on Kubernetes.
+    """
+    env_vars = dict(PERF_ENV_VARS)
+    if wandb_key is not None:
+        env_vars["WANDB_API_KEY"] = wandb_key
+    if hf_token is not None:
+        env_vars.update({"HF_TOKEN": hf_token, "TRANSFORMERS_OFFLINE": "0"})
+    if custom_env_vars:
+        env_vars.update(custom_env_vars)
+
+    executor = run.KubeflowExecutor(
+        namespace=namespace,
+        image=container_image,
+        num_nodes=nodes,
+        gpus_per_node=num_gpus_per_node,
+        volumes=volumes or [],
+        volume_mounts=volume_mounts or [],
+        workdir_pvc=workdir_pvc,
+        workdir_pvc_path=workdir_pvc_path,
+        image_pull_secrets=image_pull_secrets or [],
+        env_vars=env_vars,
+        packager=run.GitArchivePackager(include_submodules=False),
+    )
+    return executor
+
+
 def dgxc_executor(
     dgxc_base_url: str,
     dgxc_cluster: str,

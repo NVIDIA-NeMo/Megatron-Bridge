@@ -263,21 +263,29 @@ class PerfEnvPlugin(Plugin):
             model_family_name in ["llama"]
             and model_recipe_name in ["llama31_405b"]
             and train_task == "pretrain"
-            and gpu in ["gb200"]
+            and gpu in ["gb200", "gb300"]
         ):
             if compute_dtype in ["fp8_cs", "fp8_mx"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+                executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         elif (
             model_family_name in ["deepseek"]
             and model_recipe_name in ["deepseek_v3"]
             and train_task == "pretrain"
-            and gpu in ["h100"]
+            and gpu in ["h100", "gb200"]
         ):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+            if gpu in ["gb200"]:
+                executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
 
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
-
+        if model_recipe_name in ["llama3_70b"]:
+            if compute_dtype in ["fp8_cs", "fp8_mx"]:
+                if train_task in ["sft"]:
+                    if gpu in ["gb300", "h100"]:
+                        executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+                        executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
@@ -344,6 +352,9 @@ class PerfEnvPlugin(Plugin):
                 executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
                 executor.env_vars["USE_MNNVL"] = "1"
                 executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(ep_size)
+            # Workaround for unfused combine performance regression in DeepEP hybrid-ep.
+            # Remove after https://github.com/NVIDIA/Megatron-LM/pull/4089 lands.
+            executor.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] = "128"
 
     def _set_nccl_pp_comm_chunksize(
         self,

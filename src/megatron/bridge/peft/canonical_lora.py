@@ -31,6 +31,12 @@ from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attrib
 logger = logging.getLogger(__name__)
 
 
+def _should_treat_linear_fc1_as_unfused(full_name: str) -> bool:
+    """Return True when CanonicalLoRA should keep linear_fc1 as a single adapter."""
+
+    return full_name.startswith("vision_model.") or full_name.endswith(".mlp.experts.linear_fc1")
+
+
 class ModuleDict(nn.ModuleDict):
     """
     nn.ModuleDict with a sharded_state_dict implementation for checkpointing
@@ -192,6 +198,9 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
         lora_A_init_method (str): Initialization method for LoRA A matrix. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for LoRA B matrix. Defaults to "zero".
+        normalize_moe_lora (bool): When True, expert linear layers use dim // moe_router_topk as the LoRA rank
+            while non-expert layers keep the full dim. This normalizes the total adapter capacity for MoE models
+            so it is comparable to a dense model. Defaults to False.
     """
 
     target_modules: List[str] = field(
@@ -211,6 +220,23 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
     dropout_position: Literal["pre", "post"] = "pre"
     lora_A_init_method: str = "xavier"
     lora_B_init_method: str = "zero"
+    normalize_moe_lora: bool = False
+
+    def _get_effective_dim(self, m: nn.Module, is_expert: bool) -> int:
+        """Return the LoRA rank to use, reduced for expert layers when normalize_moe_lora is enabled."""
+        if not self.normalize_moe_lora or not is_expert:
+            return self.dim
+        topk = getattr(getattr(m, "config", None), "moe_router_topk", None)
+        if topk is None or topk <= 0:
+            raise ValueError(
+                f"normalize_moe_lora is enabled but moe_router_topk is {topk!r}; "
+                f"it must be set to a positive integer on the model config"
+            )
+        if self.dim % topk != 0:
+            raise ValueError(
+                f"LoRA dim={self.dim} must be divisible by moe_router_topk={topk} when normalize_moe_lora is enabled"
+            )
+        return self.dim // topk
 
     def __post_init__(self) -> None:
         """
@@ -283,8 +309,10 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(m, is_expert=is_expert)
 
+            dim = self._get_effective_dim(m, is_expert)
+
             adapter_kwargs = dict(
-                dim=self.dim,
+                dim=dim,
                 base_linear_name=full_name,
                 activation="identity",
                 norm_type=None,
@@ -301,6 +329,11 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                 base_linear_is_parallel=attrs.base_linear_is_parallel,
             )
+
+            if name == "linear_fc1" and _should_treat_linear_fc1_as_unfused(full_name):
+                logger.info(f"Adding lora to: {full_name} (treating unsupported canonical linear_fc1 as unfused)")
+                adapter = ParallelLinearAdapter(attrs.in_features, attrs.out_features, **adapter_kwargs)
+                return LoRALinear(m, adapter)
 
             canonical_submodules = self.canonical_mapping[match]
             logger.info(f"Adding lora to: {full_name} ({canonical_submodules})")

@@ -28,6 +28,15 @@ import torch
 
 
 _qwen35_vl_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.qwen35_vl")
+_qwen3_vl_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.qwen3_vl")
+
+# Pretrain mock configs (accept **user_kwargs, delegate to _qwen3_vl_common)
+_QWEN35_VL_PRETRAIN_MOCK_FUNCS = [
+    _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config,
+    _qwen35_vl_module.qwen35_vl_35b_a3b_pretrain_mock_config,
+    _qwen35_vl_module.qwen35_vl_122b_a10b_pretrain_mock_config,
+    _qwen35_vl_module.qwen35_vl_397b_a17b_pretrain_mock_config,
+]
 
 # SFT configs (parameterless)
 _QWEN35_VL_SFT_FUNCS = [
@@ -37,6 +46,7 @@ _QWEN35_VL_SFT_FUNCS = [
     _qwen35_vl_module.qwen35_vl_9b_sft_config,
     _qwen35_vl_module.qwen35_vl_27b_sft_config,
     _qwen35_vl_module.qwen35_vl_35b_a3b_sft_config,
+    _qwen35_vl_module.qwen35_vl_35b_a3b_fsdp_sft_config,
     _qwen35_vl_module.qwen35_vl_122b_a10b_sft_config,
     _qwen35_vl_module.qwen35_vl_397b_a17b_sft_config,
 ]
@@ -371,8 +381,35 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 16
     assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.moe_grouped_gemm is True
+    assert cfg.model.moe_permute_fusion is True
     assert cfg.peft is None
     assert cfg.optimizer.lr == 2e-5
+
+
+def test_qwen35_vl_35b_a3b_fsdp_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """35B-A3B FSDP SFT should have FSDP-specific parallelism and settings."""
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_fsdp_sft_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 2
+    assert cfg.peft is None
+    assert cfg.optimizer.lr == 2e-5
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.fsdp_double_buffer is True
+    assert cfg.ddp.nccl_ub is False
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.ddp.num_distributed_optimizer_instances == 1
 
 
 def test_qwen35_vl_35b_a3b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -556,7 +593,7 @@ def test_qwen35_vl_training_config(monkeypatch: pytest.MonkeyPatch):
     _assert_basic_config(cfg)
     assert cfg.train.train_iters == 300000
     assert cfg.train.global_batch_size == 32
-    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.micro_batch_size == 4
     assert cfg.train.manual_gc is True
     assert cfg.train.manual_gc_interval == 100
 
@@ -590,6 +627,7 @@ def test_qwen35_vl_kernel_settings(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
     assert cfg.model.attention_backend == "auto"
+    assert cfg.model.gradient_accumulation_fusion is True
     assert cfg.model.cross_entropy_loss_fusion is True
     assert cfg.model.cross_entropy_fusion_impl == "native"
 
@@ -627,3 +665,161 @@ def test_qwen35_vl_memory_saving_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.recompute_modules is None
     assert cfg.model.fine_grained_activation_offloading is False
     assert cfg.model.offload_modules is None
+
+
+# =============================================================================
+# Qwen3.5-VL Pretrain Mock Config Tests
+# =============================================================================
+# Pretrain configs delegate to _qwen3_vl_common (from qwen3_vl module), so
+# AutoBridge must be patched in the qwen3_vl module where it's called.
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN35_VL_PRETRAIN_MOCK_FUNCS)
+def test_each_qwen35_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that each Qwen3.5-VL pretrain mock recipe builds a valid ConfigContainer."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = recipe_func()
+
+    _assert_basic_config(cfg)
+
+    assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+    assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
+    assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+    assert cfg.model.freeze_language_model is True
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
+
+    assert cfg.peft is None
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN35_VL_PRETRAIN_MOCK_FUNCS)
+def test_qwen35_vl_pretrain_mock_uses_mock_dataset(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that pretrain mock configs use MockVLMConversationProvider."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = recipe_func()
+
+    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
+
+    assert isinstance(cfg.dataset, MockVLMConversationProvider)
+
+
+def test_qwen35_vl_9b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 9B pretrain mock has correct default parallelism."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
+
+    _assert_basic_config(cfg)
+
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.pipeline_dtype is None
+    assert cfg.model.expert_model_parallel_size == 1
+
+    assert cfg.train.train_iters == 300000
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 2
+    assert cfg.optimizer.lr == 3e-4
+    assert cfg.mixed_precision == "bf16_mixed"
+
+
+def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 35B-A3B pretrain mock has correct MoE parallelism."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_pretrain_mock_config()
+
+    _assert_basic_config(cfg)
+
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.pipeline_dtype is not None  # PP > 1 => bf16
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.sequence_parallel is True
+
+
+def test_qwen35_vl_122b_a10b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 122B-A10B pretrain mock has correct large MoE parallelism."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_122b_a10b_pretrain_mock_config()
+
+    _assert_basic_config(cfg)
+
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.pipeline_dtype is not None
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.model.sequence_parallel is True
+
+
+def test_qwen35_vl_397b_a17b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 397B-A17B pretrain mock has correct large MoE parallelism."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_397b_a17b_pretrain_mock_config()
+
+    _assert_basic_config(cfg)
+
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 16
+    assert cfg.model.pipeline_dtype is not None
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.model.sequence_parallel is True
+
+
+def test_qwen35_vl_pretrain_mock_ddp_config(monkeypatch: pytest.MonkeyPatch):
+    """Test that pretrain mock DDP config is correctly set."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
+
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.ddp.use_distributed_optimizer is True
+
+
+def test_qwen35_vl_pretrain_mock_user_kwargs_override(monkeypatch: pytest.MonkeyPatch):
+    """Test that user kwargs properly override recommended defaults."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config(
+        train_iters=500,
+        global_batch_size=8,
+        micro_batch_size=1,
+        lr=1e-5,
+    )
+
+    _assert_basic_config(cfg)
+
+    assert cfg.train.train_iters == 500
+    assert cfg.train.global_batch_size == 8
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.optimizer.lr == 1e-5
+
+
+def test_qwen35_vl_pretrain_mock_checkpoint_config(monkeypatch: pytest.MonkeyPatch):
+    """Test that pretrain mock checkpoint config is correctly set."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
+
+    assert cfg.checkpoint.ckpt_format == "torch_dist"
+    assert cfg.checkpoint.save_interval == 500
+    assert cfg.checkpoint.fully_parallel_save is True
+
+
+def test_qwen35_vl_pretrain_mock_rng_seed(monkeypatch: pytest.MonkeyPatch):
+    """Test that pretrain mock RNG seed is set."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
+
+    assert cfg.rng.seed == 1234

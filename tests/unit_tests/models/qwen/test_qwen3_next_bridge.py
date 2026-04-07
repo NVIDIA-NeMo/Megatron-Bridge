@@ -22,9 +22,9 @@ import pytest
 import torch
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_next_bridge import Qwen3NextBridge
-from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
 
 
 class TestQwen3NextBridge:
@@ -80,15 +80,21 @@ class TestQwen3NextBridge:
         config = Mock()
         for key, value in qwen3_next_80b_a3b_config_dict.items():
             setattr(config, key, value)
+        # Explicitly set to None so hf_config_to_provider_kwargs skips them.
+        # Qwen3-Next is not an MLA model and not a DeepSeek-style MoE / MTP model.
         for null_attr in (
+            # MLA attrs
             "q_lora_rank",
             "kv_lora_rank",
             "qk_nope_head_dim",
             "qk_rope_head_dim",
             "v_head_dim",
+            # Alternative MoE expert count attrs (would overwrite num_experts=512)
             "n_routed_experts",
             "num_local_experts",
+            # MTP attrs (not used by Qwen3-Next, but truthy in Mock)
             "num_nextn_predict_layers",
+            "mtp_num_hidden_layers",
         ):
             setattr(config, null_attr, None)
         return config
@@ -115,8 +121,8 @@ class TestQwen3NextBridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3_next)
 
-        # Check that it returns a Qwen3NextModelProvider instance
-        assert isinstance(result, Qwen3NextModelProvider)
+        # Check that it returns a GPTModelProvider instance (not a model-specific subclass)
+        assert isinstance(result, GPTModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == mock_qwen3_next_config.num_hidden_layers
