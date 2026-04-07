@@ -427,6 +427,7 @@ class PerfEnvPlugin(Plugin):
         Used for silicon simulation correlation studies where a fixed GPU
         clock frequency is required to match simulation assumptions.
         """
+
         def get_lock_gpu_freq_srun_cmd(job_dir, freq_mhz):
             import shlex
 
