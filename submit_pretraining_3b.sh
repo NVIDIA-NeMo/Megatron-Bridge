@@ -5,10 +5,14 @@ set -x
 DIRECT=false
 N_JOBS=1
 INITIAL_JOB_ID=""
+TRAIN_ITERS=""
+CUSTOM_JOB_NAME=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --direct) DIRECT=true; shift ;;
+        --train-iters) TRAIN_ITERS=$2; shift 2 ;;
+        --job-name) CUSTOM_JOB_NAME=$2; shift 2 ;;
         *) 
             if [[ -z "$N_JOBS_SET" ]]; then
                 N_JOBS=$1; N_JOBS_SET=1
@@ -22,13 +26,13 @@ done
 # Validate arguments
 if ! [[ "$N_JOBS" =~ ^[0-9]+$ ]] || [ "$N_JOBS" -lt 1 ]; then
     echo "Error: n must be a positive integer"
-    echo "Usage: bash submit_pretraining_3b.sh [--direct] [n] [initial_job_id]"
+    echo "Usage: bash submit_pretraining_3b.sh [--direct] [--train-iters N] [--job-name NAME] [n] [initial_job_id]"
     exit 1
 fi
 
 if [ -n "$INITIAL_JOB_ID" ] && ! [[ "$INITIAL_JOB_ID" =~ ^[0-9]+$ ]]; then
     echo "Error: initial_job_id must be a numeric job ID"
-    echo "Usage: bash submit_pretraining_3b.sh [--direct] [n] [initial_job_id]"
+    echo "Usage: bash submit_pretraining_3b.sh [--direct] [--train-iters N] [--job-name NAME] [n] [initial_job_id]"
     exit 1
 fi
 
@@ -36,8 +40,11 @@ fi
 # Job Configuration (cluster-specific)
 # ============================================
 JOB_FAMILY="ministral_3b"
-JOB_NAME="v2"
+JOB_NAME="v3"
 JOB_NAME="${JOB_FAMILY}_${JOB_NAME}"
+if [ -n "$CUSTOM_JOB_NAME" ]; then
+    JOB_NAME="$CUSTOM_JOB_NAME"
+fi
 DURATION=4  # hours
 
 # Cluster-specific configurations
@@ -111,7 +118,6 @@ for ((i=1; i<=N_JOBS; i++)); do
   checkpoint.pretrained_checkpoint=${pretrained_checkpoint} \
   model.calculate_per_token_loss=true \
   model.different_seed_per_dp=true \
-  model.mask_schedule_warmup_iters=2500 \
   model.tensor_model_parallel_size=${TENSOR_MODEL_PARALLEL_SIZE} \
   logger.wandb_project=megatron \
   logger.wandb_exp_name=${UNIQUE_JOB_NAME} \
@@ -120,6 +126,10 @@ for ((i=1; i<=N_JOBS; i++)); do
   checkpoint.save=${USER_PATH}/${USER}/megatron_exp/${JOB_NAME} \
   checkpoint.load=${USER_PATH}/${USER}/megatron_exp/${JOB_NAME} \
   --model-size 3b"
+
+    if [ -n "$TRAIN_ITERS" ]; then
+        TRAIN_CMD="${TRAIN_CMD} train.train_iters=${TRAIN_ITERS}"
+    fi
 
     FULL_CMD="export CUDA_DEVICE_MAX_CONNECTIONS=1; export PYTORCH_ALLOC_CONF=expandable_segments:True; export TRANSFORMERS_OFFLINE=1; export HF_DATASETS_OFFLINE=1; \
   export USER=snorouzi; \

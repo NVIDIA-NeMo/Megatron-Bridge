@@ -62,8 +62,8 @@ LOG_ROOT="${USER_PATH}/logs"
 # --- Paths ---
 CODE_ROOT="/root/code"
 MEGATRON_BRIDGE="${CODE_ROOT}/Megatron-Bridge"
-EVAL_SCRIPT="${MEGATRON_BRIDGE}/examples/diffusion/recipes/nemotron_diffusion/eval_megatron.py"
-EVAL_SCRIPT_CONTAINER="/opt/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/eval_megatron.py"
+EVAL_SCRIPT="${MEGATRON_BRIDGE}/examples/diffusion/recipes/nemotron_diffusion/eval/eval_megatron.py"
+EVAL_SCRIPT_CONTAINER="/opt/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/eval/eval_megatron.py"
 IMAGE_PATH="nvcr.io/nvidian/nemo:26.04.rc4"
 MB_DIR=${MB_DIR:-/home/snorouzi/code/Megatron-Bridge}
 MOUNTS="${MB_DIR}:/opt/Megatron-Bridge,${MB_DIR}/3rdparty/Megatron-LM:/opt/megatron-lm"
@@ -354,7 +354,7 @@ elif [ "$PARALLEL_TASKS" = true ]; then
 
             CURRENT_JOB_NAME="${JOB_NAME}_${exp_name}_${task}_ns${nshot}_s${seed}_${job_counter}"
             TASK_CMD=$(build_eval_command "$model_idx" "$task_idx" "$seed")
-            INNER_COMMAND="python /opt/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/patch_minerva_deps.py; export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/examples:/opt/Megatron-Bridge:/opt/megatron-lm:\${PYTHONPATH:-}; export HF_ALLOW_CODE_EVAL=1; export HF_HOME=/lustre/fsw/portfolios/coreai/users/snorouzi/hf_cache; export HF_TOKEN=$(cat ~/hf_token.txt 2>/dev/null || true); ${TASK_CMD}"
+            INNER_COMMAND="python /opt/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/eval/patch_minerva_deps.py; export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/examples:/opt/Megatron-Bridge:/opt/megatron-lm:\${PYTHONPATH:-}; export HF_ALLOW_CODE_EVAL=1; export HF_HOME=/lustre/fsw/portfolios/coreai/users/snorouzi/hf_cache; export HF_TOKEN=$(cat ~/hf_token.txt 2>/dev/null || true); ${TASK_CMD}"
             INNER_COMMAND_ONELINE=$(echo "${INNER_COMMAND}" | tr -s ' ' | sed 's/ \\ / /g' | tr -d '\n')
 
             SUBMIT_CMD="submit_job --account ${ACCOUNT} \
@@ -389,7 +389,7 @@ elif [ "$PARALLEL_MODELS" = true ]; then
         exp_name="${exp_names[$model_idx]}"
         CURRENT_JOB_NAME="${JOB_NAME}_${exp_name}_${job_counter}"
 
-        INNER_COMMAND="python /opt/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/patch_minerva_deps.py; export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/examples:/opt/Megatron-Bridge:/opt/megatron-lm:\${PYTHONPATH:-}; export HF_ALLOW_CODE_EVAL=1; export HF_HOME=/lustre/fsw/portfolios/coreai/users/snorouzi/hf_cache; export HF_TOKEN=$(cat ~/hf_token.txt 2>/dev/null || true)"
+        INNER_COMMAND="python /opt/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/eval/patch_minerva_deps.py; export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/examples:/opt/Megatron-Bridge:/opt/megatron-lm:\${PYTHONPATH:-}; export HF_ALLOW_CODE_EVAL=1; export HF_HOME=/lustre/fsw/portfolios/coreai/users/snorouzi/hf_cache; export HF_TOKEN=$(cat ~/hf_token.txt 2>/dev/null || true)"
 
         for task_idx in "${!tasks[@]}"; do
             for seed in "${SEEDS[@]}"; do
