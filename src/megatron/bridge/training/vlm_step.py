@@ -504,23 +504,22 @@ def forward_step(
         last_boundary = int(cu_clean[-1].item())
 
         if last_boundary < physical_seq_len:
-            # Trailing padding exists: build padded/unpadded pair following sft.py convention.
-            # Padded: append physical_seq_len (padding segment covers the tail).
-            # Unpadded: repeat last boundary (padding segment has 0 real tokens).
-            device, dtype = cu_clean.device, cu_clean.dtype
-            cu_padded = torch.cat([cu_clean, torch.tensor([physical_seq_len], device=device, dtype=dtype)])
-            cu_unpadded = torch.cat([cu_clean, torch.tensor([last_boundary], device=device, dtype=dtype)])
-            new_n_valid = torch.tensor(n_valid + 1)
+            # Trailing padding exists: extend the last real segment's padded
+            # boundary to cover the tail padding instead of creating an extra
+            # zero-length segment (which would cause GDN FLA kernels to process
+            # an isolated padding-only segment and diverge to NaN).
+            cu_padded = cu_clean.clone()
+            cu_padded[-1] = physical_seq_len
 
             padded_diffs = cu_padded[1:] - cu_padded[:-1]
             max_seqlen_padded = padded_diffs.max()
 
             packed_seq_dict = {
                 "cu_seqlens": cu_padded,
-                "cu_seqlens_argmin": new_n_valid,
+                "cu_seqlens_argmin": torch.tensor(n_valid),
                 "max_seqlen": max_seqlen_padded,
-                "cu_seqlens_unpadded": cu_unpadded,
-                "cu_seqlens_unpadded_argmin": new_n_valid,
+                "cu_seqlens_unpadded": cu_clean,
+                "cu_seqlens_unpadded_argmin": torch.tensor(n_valid),
             }
         else:
             # No trailing padding (content fills the full sequence length).
