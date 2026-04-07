@@ -98,6 +98,7 @@ BASE_NEMOTRON_3_SUPER_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     expert_tensor_parallel_size=1,
     expert_model_parallel_size=64,
+    moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "mamba", "moe_router", "moe_preprocess"],
 )
@@ -153,10 +154,7 @@ BASE_NEMOTRON_3_SUPER_CONFIG_GB200 = replace(
 
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_BF16_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_GB200
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_GB200
-NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_NVFP4_V1 = replace(
-    BASE_NEMOTRON_3_SUPER_CONFIG_GB200,
-    tensor_model_parallel_size=1,
-)
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_NVFP4_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_GB200
 
 
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_BF16_V1 = BASE_NEMOTRON_3_SUPER_CONFIG
