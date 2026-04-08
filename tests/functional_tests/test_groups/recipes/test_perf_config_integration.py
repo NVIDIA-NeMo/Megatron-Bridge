@@ -93,6 +93,16 @@ class TestPerfConfigIntegration:
         assert cfg.model is not None
         assert cfg.comm_overlap is not None
 
+    def test_qwen3_next_80b_a3b_perf_config_instantiation(self):
+        """Test that Qwen3 Next 80B A3B perf configs can be instantiated correctly."""
+        from configs.qwen.qwen3_llm_pretrain import qwen3_next_80b_a3b_pretrain_config_h100
+
+        cfg = qwen3_next_80b_a3b_pretrain_config_h100(precision="bf16", mock=True)
+
+        assert cfg is not None
+        assert cfg.model is not None
+        assert cfg.comm_overlap is not None
+
     def test_nemotronh_56b_perf_config_instantiation(self):
         """Test that NemotronH 56B perf configs can be instantiated correctly."""
         from configs.nemotronh.nemotronh_llm_pretrain import nemotronh_56b_pretrain_config_h100
