@@ -207,16 +207,10 @@ def main(
             ):
                 compare_param = param.float()
                 compare_original = original_param.float()
-                # Some bridges intentionally transpose on export (e.g. GPT-OSS down_proj).
-                if compare_param.shape != compare_original.shape:
-                    compare_original = compare_original.transpose(-1, -2)
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
             # --- Case 3: regular param → direct allclose ---
             else:
-                # Some bridges intentionally transpose on export (e.g. GPT-OSS down_proj).
-                if compare_param.shape != compare_original.shape:
-                    compare_original = compare_original.transpose(-1, -2)
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
             all_match = all_match and match
