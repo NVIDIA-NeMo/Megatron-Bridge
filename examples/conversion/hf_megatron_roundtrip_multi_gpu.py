@@ -164,6 +164,20 @@ def main(
         console.print(f"[yellow]Expert parallel size: {model_provider.expert_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/yellow]")
 
+    # Weight comparison handles three situations:
+    #
+    # 1. FP8 params (float8_e4m3fn / float8_e5m2)  →  SKIP allclose.
+    #    Block-wise dequantisation on import is inherently lossy; the
+    #    original fp8 bit-pattern cannot be reconstructed, so comparing
+    #    values is meaningless.  (e.g. MiniMax-M2 expert & attention weights)
+    #
+    # 2. Non-FP8 dtype mismatch or IGNORE_PRECISION_PARAMS  →  CAST to
+    #    float32, then allclose.  Covers norms stored as bf16 in HF but
+    #    fp32 in Megatron (or vice-versa for gates), and params known to
+    #    have precision differences.
+    #
+    # 3. Regular params (same dtype, not in ignore list)  →  direct allclose.
+
     all_match = True
     fp8_skip_count = 0
     fp8_skip_samples: list[str] = []
@@ -173,8 +187,7 @@ def main(
             compare_param = param
             compare_original = original_param
 
-            # FP8 weights are dequantised on import (lossy) — the original
-            # fp8 values cannot be reconstructed, so allclose is meaningless.
+            # --- Case 1: FP8 → skip (lossy dequantisation) ---
             if original_param.dtype in _FP8_DTYPES or compare_param.dtype in _FP8_DTYPES:
                 fp8_skip_count += 1
                 if len(fp8_skip_samples) < 20:
@@ -182,14 +195,17 @@ def main(
                         f"{name}: exported {compare_param.dtype} vs original {original_param.dtype}"
                     )
                 match = True
+
+            # --- Case 2: non-FP8 dtype mismatch or known precision param → cast to fp32 ---
+            elif compare_param.dtype != compare_original.dtype or any(
+                p in name for p in IGNORE_PRECISION_PARAMS
+            ):
+                compare_param = param.float()
+                compare_original = original_param.float()
+                match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
+
+            # --- Case 3: regular param → direct allclose ---
             else:
-                # Cast to float32 for comparison when dtypes differ (e.g. bf16
-                # vs fp32 for norms/gates) or for known precision params.
-                if compare_param.dtype != compare_original.dtype or any(
-                    p in name for p in IGNORE_PRECISION_PARAMS
-                ):
-                    compare_param = param.float()
-                    compare_original = original_param.float()
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
             all_match = all_match and match
