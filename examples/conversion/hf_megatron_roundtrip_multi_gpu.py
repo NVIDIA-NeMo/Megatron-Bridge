@@ -67,6 +67,9 @@ IGNORE_PRECISION_PARAMS = [
     "dt_bias",
 ]
 
+# FP8 dtypes whose dequantisation is inherently lossy — allclose is meaningless.
+_FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
+
 
 @torchrun_main
 def main(
@@ -162,31 +165,31 @@ def main(
         console.print(f"[yellow]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/yellow]")
 
     all_match = True
-    dtype_mismatch_count = 0
-    dtype_mismatch_samples: list[str] = []
+    fp8_skip_count = 0
+    fp8_skip_samples: list[str] = []
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
             original_param = bridge.hf_pretrained.state[name]
             compare_param = param
             compare_original = original_param
-            # Cast to float32 for params with known precision mismatches.
-            # Any new known mismatch should be recorded in IGNORE_PRECISION_PARAMS above.
-            if any(p in name for p in IGNORE_PRECISION_PARAMS):
-                compare_param = param.float()
-                compare_original = original_param.float()
 
-            # When dtypes diverge (e.g. fp8 vs bf16), skip allclose — the
-            # dequantisation is inherently lossy so a value comparison is
-            # meaningless and the extra float32 casts would slow rank 0
-            # enough to trigger NCCL timeouts on other ranks.
-            if compare_param.dtype != compare_original.dtype:
-                dtype_mismatch_count += 1
-                if len(dtype_mismatch_samples) < 20:
-                    dtype_mismatch_samples.append(
-                        f"{name}: exported {compare_param.dtype} vs original {compare_original.dtype}"
+            # FP8 weights are dequantised on import (lossy) — the original
+            # fp8 values cannot be reconstructed, so allclose is meaningless.
+            if original_param.dtype in _FP8_DTYPES or compare_param.dtype in _FP8_DTYPES:
+                fp8_skip_count += 1
+                if len(fp8_skip_samples) < 20:
+                    fp8_skip_samples.append(
+                        f"{name}: exported {compare_param.dtype} vs original {original_param.dtype}"
                     )
-                match = True  # dtype mismatch is expected for fp8 models
+                match = True
             else:
+                # Cast to float32 for comparison when dtypes differ (e.g. bf16
+                # vs fp32 for norms/gates) or for known precision params.
+                if compare_param.dtype != compare_original.dtype or any(
+                    p in name for p in IGNORE_PRECISION_PARAMS
+                ):
+                    compare_param = param.float()
+                    compare_original = original_param.float()
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
             all_match = all_match and match
@@ -199,15 +202,15 @@ def main(
             )
 
     if is_rank_0:
-        if dtype_mismatch_count > 0:
+        if fp8_skip_count > 0:
             console.print(
-                f"[yellow]WARNING: {dtype_mismatch_count} params had dtype mismatches "
-                f"(skipped allclose — dequantisation is lossy):[/yellow]"
+                f"[yellow]WARNING: {fp8_skip_count} FP8 params skipped allclose "
+                f"(dequantisation is lossy):[/yellow]"
             )
-            for entry in dtype_mismatch_samples:
+            for entry in fp8_skip_samples:
                 console.print(f"  [yellow]{entry}[/yellow]")
-            if dtype_mismatch_count > len(dtype_mismatch_samples):
-                console.print(f"  [yellow]... and {dtype_mismatch_count - len(dtype_mismatch_samples)} more[/yellow]")
+            if fp8_skip_count > len(fp8_skip_samples):
+                console.print(f"  [yellow]... and {fp8_skip_count - len(fp8_skip_samples)} more[/yellow]")
         console.print(table)
         console.print(f"Saving HF-ckpt in {save_path}...")
 
