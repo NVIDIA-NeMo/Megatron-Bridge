@@ -233,12 +233,16 @@ def main(
             if fp8_skip_count > len(fp8_skip_samples):
                 console.print(f"  [yellow]... and {fp8_skip_count - len(fp8_skip_samples)} more[/yellow]")
         console.print(table)
-        console.print(f"Saving HF-ckpt in {save_path}...")
+
+    if not all_match:
+        raise ValueError("Weight mismatch detected")
 
     if skip_save:
         if is_rank_0:
             console.print("[green]--skip-save: skipping HF/Megatron save (verification only)[/green]")
     else:
+        if is_rank_0:
+            console.print(f"Saving HF-ckpt in {save_path}...")
         bridge.save_hf_pretrained(megatron_model, save_path, strict=strict)
 
         # Save in Megatron format if path is provided
@@ -246,9 +250,6 @@ def main(
             if is_rank_0:
                 console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
             bridge.save_megatron_model(megatron_model, megatron_save_path)
-
-    if not all_match:
-        raise ValueError("Weight mismatch detected")
 
 
 if __name__ == "__main__":
