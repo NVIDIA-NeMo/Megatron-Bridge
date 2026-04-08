@@ -519,9 +519,18 @@ def forward_step(
                         )
         state._debug_iter_count = _iter + 1
 
+    # For Qwen-VL, let model compute MRoPE position_ids from multimodal tokens.
+    # Passing 1D sequential position_ids from dataloader would bypass that path.
+    model_position_ids = None if visual_inputs is not None else position_ids
+    if _iter < 2:
+        logger.info(
+            "  forward position_ids mode = %s",
+            "None (compute MRoPE in model)" if model_position_ids is None else "provided-from-dataloader",
+        )
+
     forward_args = {
         "input_ids": tokens,
-        "position_ids": position_ids,
+        "position_ids": model_position_ids,
         "attention_mask": attention_mask,
         "labels": labels,
         "loss_mask": loss_mask,  # Pass full loss_mask so model can slice it consistently with labels
