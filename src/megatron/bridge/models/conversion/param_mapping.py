@@ -2370,7 +2370,20 @@ class FusedGatedExpertMapping(AutoMapping):
             gate = _align_expert_weight_to_shape(expert_weight[0], gate_full_shape, "gate")
             up = _align_expert_weight_to_shape(expert_weight[1], gate_full_shape, "up")
         else:
-            expert_weight = _align_expert_weight_to_shape(expert_weight, gate_up_full_shape, "gate_up")
+            hidden_size = target_shape[1]
+            # Some HF models (e.g. Qwen3-VL MoE) store gate_up as (hidden_size, 2*intermediate)
+            # rather than (2*intermediate, hidden_size). Detect and transpose directly instead of
+            # relying on _align_expert_weight_to_shape auto-detect, which requires an accurate
+            # gate_up_full_shape and fails when etp_group is not yet initialized (tp_size==1).
+            if (
+                expert_weight.ndim == 2
+                and expert_weight.shape[0] == hidden_size
+                and expert_weight.shape[1] != hidden_size
+            ):
+                expert_weight = expert_weight.t().contiguous()
+            else:
+                gate_up_full_shape = (gate_full_shape[0] * 2, target_shape[1])
+                expert_weight = _align_expert_weight_to_shape(expert_weight, gate_up_full_shape, "gate_up")
             gate, up = torch.chunk(expert_weight, 2, dim=0)
 
         return self._gated_mapping.hf_to_megatron({"gate": gate, "up": up}, megatron_module)
