@@ -20,12 +20,19 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
-from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
 from megatron.core.energy_monitor import EnergyMonitor
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.utils.tensorboard.writer import SummaryWriter
+
+
+# TODO: Remove try/except once `get_async_strategy` lands in mcore dev.
+#       The function was added to mcore main but has not yet been merged into dev.
+try:
+    from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
+except ImportError:
+    get_async_strategy = None  # type: ignore[assignment]
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
@@ -395,6 +402,11 @@ class GlobalState:
             and self.cfg.checkpoint.save is not None
             and self.cfg.checkpoint.async_save
         ):
+            if get_async_strategy is None:
+                raise RuntimeError(
+                    "get_async_strategy is required for async checkpointing but is not available "
+                    "in the current mcore version. Please use mcore main or a newer mcore dev branch."
+                )
             async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
             async_calls_queue_cls = async_modules["AsyncCallsQueue"]
             self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
