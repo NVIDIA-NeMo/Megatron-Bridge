@@ -221,13 +221,6 @@ def _build_data_iterators(cfg, mimo_infra):
     return train_iter, valid_iter
 
 
-# Monkey-patch: report_theoretical_memory crashes on MIMO because cfg.model is
-# MimoModelProvider (no kv_channels). Pre-existing issue from mainline merge.
-from megatron.bridge.training.utils import train_utils as _tu
-
-
-_tu.report_theoretical_memory = lambda *a, **kw: None
-
 from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,

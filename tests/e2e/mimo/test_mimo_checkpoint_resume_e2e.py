@@ -53,13 +53,6 @@ from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
 logger = logging.getLogger(__name__)
 
-# Monkey-patch: report_theoretical_memory crashes on MIMO because cfg.model is
-# MimoModelProvider (no kv_channels). Pre-existing issue from mainline merge.
-from megatron.bridge.training.utils import train_utils as _tu
-
-
-_tu.report_theoretical_memory = lambda *a, **kw: None
-
 SAVE_STEPS = 5
 TOTAL_STEPS = 10
 _ENCODER_SEQ_LEN = 197
