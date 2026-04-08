@@ -38,6 +38,10 @@ from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubm
 from megatron.core.transformer.enums import AttnBackend, AttnMaskType
 from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
 from torch import Tensor
+from megatron.bridge.models import gpt_provider
+from megatron.core.models.gpt.gpt_layer_specs import (                                                                                                                                                                                                                                            
+          get_gpt_layer_with_transformer_engine_spec, get_gpt_mtp_block_spec,                                                                                                                                                                                                                           
+      ) 
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.import_utils import safe_import_from
@@ -99,7 +103,6 @@ def _is_local_attn_layer(
     layer_number: int,
     hybrid_attention_pattern: List[int],
 ) -> bool:
-    # MCore layer_number starts at 1, pattern is 0-indexed
     return hybrid_attention_pattern[layer_number - 1] == 1
 
 
@@ -261,6 +264,9 @@ class MiMoV2FlashTEDotProductAttention(TEDotProductAttention):
             config.window_size = None
             config.softmax_type = "learnable" if config.add_full_attention_sink_bias else "vanilla"
         self._attention_value_scale = getattr(config, "attention_value_scale", None)
+        # Pass k_channels/v_channels to TE so it knows about asymmetric V head dim
+        kwargs["k_channels"] = config.kv_channels
+        kwargs["v_channels"] = config.v_head_dim
         super().__init__(
             config=config,
             layer_number=layer_number,
@@ -271,12 +277,23 @@ class MiMoV2FlashTEDotProductAttention(TEDotProductAttention):
         )
 
     def forward(self, query, key, value, attention_mask, attn_mask_type, **kwargs):
-        if self._attention_value_scale is not None:
-            # MiMoV2Flash uses an attention value scale factor
-            value = value * self._attention_value_scale
+        # NOTE: HF modeling code does NOT apply attention_value_scale, so we skip it too.
+        # if self._attention_value_scale is not None:
+        #     value = value * self._attention_value_scale
         return super().forward(query, key, value, attention_mask, attn_mask_type, **kwargs)
 
+class MiMoV2FlashMTPSelfAttention(MiMoV2FlashSelfAttention):                                                                                                                                                                                                                   
+      def __init__(self, config, submodules, layer_number, *args, **kwargs):                                                                                                                                                                                                                            
+          config = copy.deepcopy(config)
+          config.hybrid_attention_pattern = [1] * config.mtp_num_layers
+          super().__init__(config, submodules, layer_number, *args, **kwargs)
 
+
+class MiMoV2FlashMTPTEDotProductAttention(MiMoV2FlashTEDotProductAttention):
+    def __init__(self, config, layer_number, *args, **kwargs): 
+        config = copy.deepcopy(config)
+        config.hybrid_attention_pattern = [1] * config.mtp_num_layers
+        super().__init__(config, layer_number, *args, **kwargs)
 
 def mimo_v2_flash_layer_spec(config) -> ModuleSpec:
     """Layer spec for MiMo-V2-Flash with custom hybrid attention modules.
@@ -349,8 +366,27 @@ class MiMoV2FlashModelProvider(GPTModelProvider):
             rotary_base_local = 10_000
             rotary_base_global = self.rotary_base
 
+        # MTP spec patch
+        def mimov2flash_mtp_block_spec(config, vp_stage=None):                                                                                                                                                                                                                                                
+          if not getattr(config, "mtp_num_layers", None):
+              return None
+          dense_spec = get_gpt_layer_with_transformer_engine_spec(
+              num_experts=None,
+              moe_grouped_gemm=False,
+              qk_layernorm=False,
+              multi_latent_attention=False,
+          )
+          dense_spec.submodules.self_attention.module = MiMoV2FlashMTPSelfAttention                                                                                                                                                                                                                        
+          dense_spec.submodules.self_attention.submodules.core_attention = MiMoV2FlashMTPTEDotProductAttention                                                                                                                                                                                             
+          return get_gpt_mtp_block_spec(config, dense_spec, use_transformer_engine=True, vp_stage=vp_stage)
+        
+        original_mtp_block_spec = gpt_provider.mtp_block_spec
+        gpt_provider.mtp_block_spec = mimov2flash_mtp_block_spec
         self.rotary_base = rotary_base_local
-        model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        try:
+            model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        finally:
+            gpt_provider.mtp_block_spec = original_mtp_block_spec
         self.rotary_base = (rotary_base_local, rotary_base_global)
 
         # Replace model's RoPE with dual-base version
