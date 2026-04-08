@@ -490,8 +490,7 @@ def main(
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
-            if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]:
-                raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
+            terminal_failure = job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]
 
             if detach:
                 is_finished_experiment = True
@@ -508,6 +507,11 @@ def main(
                     job_status == "SUCCEEDED" or check_training_finished(log_file_paths, is_long_convergence_run=False)
                 )
             )
+
+            # Raise on terminal failures only if training didn't actually complete —
+            # a job can time out due to hanging on teardown after all steps finished.
+            if terminal_failure and not is_finished_experiment:
+                raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
                 n_attempts=n_attempts,
