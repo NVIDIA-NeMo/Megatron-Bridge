@@ -476,6 +476,15 @@ def parse_cli_args():
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
         required=False,
     )
+    slurm_args.add_argument(
+        "--packager",
+        type=str,
+        choices=["git", "none"],
+        default="git",
+        help="How code is packaged for the job. 'git' snapshots the repo at submission time (default). "
+        "'none' skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.",
+        required=False,
+    )
 
     # DGXCloud
     dgxc_args = parser.add_argument_group("DGXCloud arguments")
