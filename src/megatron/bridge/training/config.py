@@ -33,15 +33,62 @@ from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
-from megatron.training.config import CheckpointConfig as MTrainCheckpointConfig
-from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
-from megatron.training.config import LoggerConfig as MTrainLoggerConfig
-from megatron.training.config import ProfilingConfig as MTrainProfilingConfig
-from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
-from megatron.training.config import RNGConfig, ValidationConfig
-from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
-from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
-from megatron.training.config import TrainingConfig as MTrainTrainingConfig
+
+
+# TODO: Remove try/except once `megatron.training` lands in mcore dev.
+#       The megatron.training package was added to mcore main but has not yet been merged into dev.
+try:
+    from megatron.training.config import CheckpointConfig as MTrainCheckpointConfig
+    from megatron.training.config import DistributedInitConfig as MTrainDistributedInitConfig
+    from megatron.training.config import LoggerConfig as MTrainLoggerConfig
+    from megatron.training.config import ProfilingConfig as MTrainProfilingConfig
+    from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
+    from megatron.training.config import RNGConfig, ValidationConfig
+    from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
+    from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
+    from megatron.training.config import TrainingConfig as MTrainTrainingConfig
+except ImportError:
+    from dataclasses import dataclass as _dc
+
+    @_dc(kw_only=True)
+    class MTrainCheckpointConfig:  # type: ignore[no-redef]
+        """Stub: megatron.training not available in this mcore version."""
+
+    @_dc(kw_only=True)
+    class MTrainDistributedInitConfig:  # type: ignore[no-redef]
+        """Stub: megatron.training not available in this mcore version."""
+
+    @_dc(kw_only=True)
+    class MTrainLoggerConfig:  # type: ignore[no-redef]
+        """Stub: megatron.training not available in this mcore version."""
+
+    @_dc(kw_only=True)
+    class MTrainProfilingConfig:  # type: ignore[no-redef]
+        """Stub: megatron.training not available in this mcore version."""
+
+    @_dc(kw_only=True)
+    class MTrainRerunStateMachineConfig:  # type: ignore[no-redef]
+        """Stub: megatron.training not available in this mcore version."""
+
+    @_dc(kw_only=True)
+    class RNGConfig:  # type: ignore[no-redef]
+        """Stub: megatron.training not available in this mcore version."""
+
+    @_dc(kw_only=True)
+    class ValidationConfig:  # type: ignore[no-redef]
+        """Stub: megatron.training not available in this mcore version."""
+
+    @_dc(kw_only=True)
+    class MTrainSchedulerConfig:  # type: ignore[no-redef]
+        """Stub: megatron.training not available in this mcore version."""
+
+    @_dc(kw_only=True)
+    class MTrainStragglerDetectionConfig:  # type: ignore[no-redef]
+        """Stub: megatron.training not available in this mcore version."""
+
+    @_dc(kw_only=True)
+    class MTrainTrainingConfig:  # type: ignore[no-redef]
+        """Stub: megatron.training not available in this mcore version."""
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
