@@ -66,7 +66,7 @@ docker buildx build \
   -f docker/Dockerfile.fw_base \
   --target nemo_fw_base_final \
   --build-arg FW_DEP_BUILDER=base \
-  --build-arg FW_BASE_FINAL=fw_dep_builder \
+  --build-arg FW_BASE_FINAL=fw_toolkit_builder \
   --build-arg NEMO_FW_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.02-py3 \
   -t fw-base:latest \
   .
@@ -112,7 +112,8 @@ docker build \
 |---|---|
 | `NEMO_FW_BASE_IMAGE` | Base PyTorch container |
 | `FW_DEP_BUILDER` | Stage used as the `fw_dep_builder` base. `trtllm_builder` to include TRT-LLM, `base` to skip it |
-| `FW_BASE_FINAL` | Output stage. `trtllm_install` (with TRT-LLM) or `fw_dep_builder` (without) |
+| `FW_BASE_FINAL` | Output stage. `trtllm_install` (with TRT-LLM) or `fw_toolkit_builder` (without) |
+| `FW_NETWORK_LAYER` | Stage used as the `fw_toolkit_builder` base. `aws_ofi_builder` (default) to reinstall EFA and build AWS-OFI-NCCL from source, `fw_dep_builder` to skip it |
 | `UV_VERSION` | uv version to install |
 | `VLLM_VERSION` | vLLM git tag to build |
 | `TRT_LLM_COMMIT` | TensorRT-LLM git commit or tag |
@@ -131,6 +132,8 @@ docker build \
 | `CUDNN_VERSION` | cuDNN apt version (e.g. `9.18.1.3-1`) |
 | `REINSTALL_NCCL` | Set to `True` to reinstall NCCL from the NVIDIA apt repo |
 | `NCCL_VERSION` | NCCL apt version (e.g. `2.28.9-1+cuda13.0`) |
+| `REINSTALL_CUBLAS` | Set to `True` to reinstall cuBLAS and cuBLASLt from the NVIDIA apt repo |
+| `CUBLAS_VERSION` | cuBLAS apt version (e.g. `13.2.1.1-1`) |
 
 ### `Dockerfile.ci`
 
@@ -157,6 +160,7 @@ docker build \
 | File | Description |
 |---|---|
 | `common/fw_pyproject.toml` | uv project config for the NeMo-FW virtual environment (copied into the fw-final container as `pyproject.toml`) |
+| `common/install_cublas.sh` | Reinstall cuBLAS and cuBLASLt from the public NVIDIA CUDA apt repo |
 | `common/install_nccl.sh` | Reinstall NCCL from the public NVIDIA CUDA apt repo |
 | `common/install_cudnn.sh` | Reinstall cuDNN from the public NVIDIA CUDA apt repo |
 | `common/install_nsys.sh` | Reinstall Nsight Systems from the public NVIDIA CUDA apt repo |

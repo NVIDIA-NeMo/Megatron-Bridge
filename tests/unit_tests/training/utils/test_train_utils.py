@@ -1315,6 +1315,7 @@ class TestTrainingLog:
         # Remove loggers
         mock_global_state.tensorboard_logger = None
         mock_global_state.wandb_logger = None
+        mock_global_state.mlflow_logger = None
 
         # Set iteration to match logging intervals
         mock_global_state.train_state.step = 10

@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import logging
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional, Union
 
 import torch
@@ -23,11 +24,13 @@ from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as def
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.post_training.modelopt.mamba.model_specs import get_mamba_stack_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, parse_hybrid_pattern
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.utils import fusions
 from megatron.bridge.utils.common_utils import get_rank_safe
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
@@ -39,6 +42,14 @@ try:
 except ImportError:
     # TODO(yuya): remove fallback once MCore pin includes get_hybrid_total_layer_count
     _mcore_get_hybrid_total_layer_count = None
+
+# MCore renamed `hybrid_override_pattern` → `hybrid_layer_pattern` in the dev branch.
+# Support both main and dev branch submodule by detecting which parameter is present at import time.
+# TODO: remove fallback once the dev rename lands in main and Bridge pins the new main commit.
+_MCORE_MAMBA_INIT_PARAMS = set(inspect.signature(MCoreMambaModel.__init__).parameters)
+_HYBRID_LAYER_PATTERN_KWARG = (
+    "hybrid_layer_pattern" if "hybrid_layer_pattern" in _MCORE_MAMBA_INIT_PARAMS else "hybrid_override_pattern"
+)
 
 
 logger = logging.getLogger(__name__)
@@ -153,6 +164,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     deallocate_pipeline_outputs: bool = True
     bias_dropout_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
+    gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
     mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec], Callable[["MambaModelProvider"], ModuleSpec]] = (
         get_default_mamba_stack_spec
     )
@@ -160,6 +172,12 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     should_pad_vocab: bool = False
     hf_model_id: Optional[str] = None
     _pg_collection: Optional[ProcessGroupCollection] = None
+
+    # MTP
+    mtp_num_layers: int = 0
+    mtp_hybrid_override_pattern: Optional[str] = None
+    keep_mtp_spec_in_bf16: bool = False
+
     """Optional HuggingFace model identifier associated with this provider."""
 
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
@@ -186,6 +204,48 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             self.hybrid_layer_pattern = self.hybrid_override_pattern
             self.hybrid_override_pattern = None
             used_hybrid_override_pattern = True
+
+        # --- MTP pattern construction ---
+        # Combine hybrid_layer_pattern (main decoder) with mtp_hybrid_override_pattern
+        # into a single unified pattern that MCoreMambaModel can parse.
+        # Format: "MAIN_PATTERN/MTP_BLOCK/MTP_BLOCK/..."
+        # This must happen before num_layers derivation so the count reflects
+        # only the main decoder layers (get_hybrid_total_layer_count strips MTP).
+        if self.hybrid_layer_pattern is not None and self.mtp_hybrid_override_pattern:
+            sep = Symbols.MTP_SEPARATOR
+            main_pattern = self.hybrid_layer_pattern.split(sep)[0]
+            # When mtp_use_repeated_layer=True, the shared MTP layer always exists
+            # in the model and mtp_num_layers controls forward pass repetitions.
+            # Include the pattern at least once so the MTP block (and its weights)
+            # are created even when mtp_num_layers=0.
+            if self.mtp_use_repeated_layer:
+                num_pattern_copies = max(1, self.mtp_num_layers)
+            else:
+                num_pattern_copies = self.mtp_num_layers
+            self.hybrid_layer_pattern = (
+                main_pattern + sep + sep.join([self.mtp_hybrid_override_pattern] * num_pattern_copies)
+            )
+
+            # Validate mtp_num_layers against the constructed pattern
+            if sep in self.hybrid_layer_pattern:
+                parsed = parse_hybrid_pattern(self.hybrid_layer_pattern)
+                if parsed.mtp_pattern and parsed.mtp_num_depths > 0:
+                    inferred_mtp_num_layers = parsed.mtp_num_depths
+                    if self.mtp_num_layers is None:
+                        self.mtp_num_layers = inferred_mtp_num_layers
+                    elif self.mtp_use_repeated_layer:
+                        # With repeated layers, pattern count reflects architecture
+                        # (always 1 shared layer) while mtp_num_layers controls
+                        # forward pass repetitions. They are intentionally decoupled.
+                        pass
+                    elif self.mtp_num_layers != inferred_mtp_num_layers:
+                        logger.warning(
+                            f"mtp_num_layers ({self.mtp_num_layers}) conflicts with "
+                            f"MTP depth count ({inferred_mtp_num_layers}) in pattern "
+                            f"'{self.hybrid_layer_pattern}'. "
+                            f"Using the inferred value ({inferred_mtp_num_layers})."
+                        )
+                        self.mtp_num_layers = inferred_mtp_num_layers
 
         # Check if hybrid_layer_pattern is specified and derive num_layers from pattern
         if self.hybrid_layer_pattern is not None:
@@ -247,7 +307,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             mamba_stack_spec=mamba_stack_spec,
             vocab_size=padded_vocab_size,
             max_sequence_length=self.seq_length,
-            hybrid_layer_pattern=self.hybrid_layer_pattern,
+            **{_HYBRID_LAYER_PATTERN_KWARG: self.hybrid_layer_pattern},
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
             parallel_output=self.parallel_output,
             share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,

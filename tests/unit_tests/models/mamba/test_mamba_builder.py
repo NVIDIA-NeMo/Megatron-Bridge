@@ -238,6 +238,16 @@ class TestMambaModelConfigSetAttr:
         assert "hidden_size" not in self.config.__dict__
 
 
+class TestMambaModelConfigFinalize:
+    """Tests for MambaModelConfig.finalize() — validation logic."""
+
+    def test_calls_transformer_finalize(self):
+        config = _make_mamba_config()
+        with patch.object(config.transformer, "finalize") as mock_finalize:
+            config.finalize()
+        mock_finalize.assert_called_once()
+
+
 # =============================================================================
 # Section 3 — MambaModelBuilder
 # =============================================================================

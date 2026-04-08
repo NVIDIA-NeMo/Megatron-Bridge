@@ -23,7 +23,7 @@ version = { attr = "_version.__version__" }
 name = "NeMo-FW"
 dynamic = ["version"]
 description = "NeMo FW container"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.12,<3.13"
 license = { text = "Apache 2.0" }
 
 # Define the core libraries
@@ -34,6 +34,8 @@ dependencies = [
     "nemo-toolkit[tts]",
     "nemo-run",
     "nvidia-lm-eval",
+    "langchain~=1.0.0",
+    "langchain-core~=1.2.22", # GHSA-qh6h-p6c9-ff54
 ]
 
 [dependency-groups]
@@ -49,38 +51,38 @@ test = ["coverage>=7.8.1"]
 prerelease = "allow"
 override-dependencies = [
     # Force core libraries to be installed from the local paths
-    "megatron-core[dev,mlm]; sys_platform == 'never'",   # Installed by MBridge
+    "megatron-core[dev,mlm]; sys_platform == 'never'", # Installed by MBridge
     "nemo-export-deploy @ /opt/Export-Deploy",
-    "megatron-bridge; sys_platform == 'never'",          # Installed by MBridge
+    "megatron-bridge; sys_platform == 'never'",        # Installed by MBridge
     "nemo-toolkit[audio] @ /opt/NeMo[audio]",
     "nemo-toolkit[tts] @ /opt/NeMo[tts]",
     "nemo-run @ /opt/Run",
-    "transformer-engine; sys_platform == 'never'",       # Installed by MBridge
+    "transformer-engine; sys_platform == 'never'",     # Installed by MBridge
     # Pinning versions to solve conflicts
-    "av==15.1.0",                                        # Version 16.0.0 released recently and fails to install
-    "webdataset==0.2.86",                                # fix for SB multimodal
+    "av==15.1.0",                               # Version 16.0.0 released recently and fails to install
+    "webdataset==0.2.86",                       # fix for SB multimodal
     "pandas==2.2.3",
     "ctc_segmentation==1.7.4",
-    "pyzmq==25.1.2",                                     # @URL: https://github.com/NVIDIA/NeMo/issues/13625
-    "tiktoken>=0.9.0",                                   # let megatron-hub win over nemo-toolkit
+    "pyzmq==25.1.2",                            # @URL: https://github.com/NVIDIA/NeMo/issues/13625
+    "tiktoken>=0.9.0",                          # let megatron-hub win over nemo-toolkit
     "datasets==3.1.0",
     "fsspec[http]>=2023.1.0,<=2024.9.0",
-    "transformers; sys_platform == 'never'",             # Defer to transformers in MBridge install
+    "transformers; sys_platform == 'never'",    # Defer to transformers in MBridge install
     "packaging>=25.0",
     "nvidia-pytriton>=0.7.0",
     "urllib3>=2.0.7",
     "sh==2.2.2",
     "jupyter-core==5.8.1",
-    "pillow==11.3.0",
-    "protobuf==4.25.8",
+    "pillow==12.1.1",
+    "protobuf==6.33.5",
     "cuda-python>=13.0.0",
     "multi-storage-client!=0.36.0",
     "levenshtein; sys_platform == 'never'",
     "pytest==8.4.2",
-    "wandb==0.24.0",
+    "wandb>=0.25.0",
     "nvidia-lm-eval==25.11.1",
     "lilcom==1.8.1",
-    "onnx==1.18.0",                                     # TRT-LLM hard dependency
+    "onnx==1.21.0",                             # TRT-LLM hard dependency
     "pytest-coverage; sys_platform == 'never'",
     "future; sys_platform == 'never'",
     # Never install the following dependencies
@@ -103,12 +105,14 @@ override-dependencies = [
     "tensorrt; sys_platform == 'never'",
     "tensorrt-cu12-libs; sys_platform == 'never'",
     "vllm; sys_platform == 'never'",
-    "bitsandbytes; sys_platform == 'never'",            # We prefer a source install
-    "nvidia-resiliency-ext; sys_platform == 'never'",   # Installed by MBridge
-    "nvidia-modelopt; sys_platform == 'never'",         # Installed by MBridge
-    "setuptools<80.0.0",                                # Required by vllm
-    "open-clip-torch>=3.2.0",                           # Required by megatron-bridge, override nemo-toolkit's 2.24.0 constraint
+    "bitsandbytes; sys_platform == 'never'",             # We prefer a source install
+    "nvidia-resiliency-ext; sys_platform == 'never'",    # Installed by MBridge
+    "nvidia-modelopt; sys_platform == 'never'",          # Installed by MBridge
+    "setuptools>=82.0.0",                                # Required by vllm
+    "open-clip-torch>=3.2.0",                            # Required by megatron-bridge, override nemo-toolkit's 2.24.0 constraint
     "lilcom!=1.8.2",
-    "cryptography>=43.0.0,<47",                         # Required by megatron-bridge, override nemo-run's constraint
-    "opencv-python; sys_platform == 'never'"            # Use the dependency from the base pytorch container
+    "cryptography>=43.0.0,<47",                          # Required by megatron-bridge, override nemo-run's constraint
+    "opencv-python; sys_platform == 'never'",            # Use the dependency from the base pytorch container
+    "langchain~=1.0.0",
+    "langchain-core~=1.2.22",                            # GHSA-qh6h-p6c9-ff54
 ]

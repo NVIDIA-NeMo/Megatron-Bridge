@@ -34,6 +34,7 @@ from megatron.bridge.models.conversion.utils import (
     is_modelopt_dynamic_module,
     remove_non_pickleables,
 )
+from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
@@ -530,7 +531,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather(gathered, tensor, group=self.tp_group)
         return gathered
 
-    def _count_wildcard_groups(self, pattern: str) -> int:
+    @staticmethod
+    def _count_wildcard_groups(pattern: str) -> int:
         """Count the number of wildcard capture groups in a pattern.
 
         Args:
@@ -557,7 +559,13 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         return count
 
     def _validate_patterns(self):
-        """Validate wildcard consistency between patterns."""
+        """Validate wildcard consistency between patterns.
+
+        Skipped automatically for grouped-export mappings where the megatron
+        side intentionally has more wildcards than the HF side.
+        """
+        if getattr(self, "is_grouped_export", False):
+            return
         megatron_param_wildcards = self._count_wildcard_groups(self.megatron_param)
         if isinstance(self.hf_param, str):
             hf_param_wildcards = self._count_wildcard_groups(self.hf_param)
@@ -673,13 +681,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             num_experts_per_rank = num_experts // self.ep_size
             num_experts_per_rank = self.broadcast_obj_from_pp_rank(num_experts_per_rank, "num_experts_per_rank")
 
-        # Extract local expert number from parameter name
-        # Handle both .weight and .bias suffixes
-        local_expert_number = None
-        for key in (".weight", ".bias"):
-            if key in self.megatron_param:
-                global_expert_number = int(self.megatron_param.split(key)[-1])
-                local_expert_number = global_expert_number % num_experts_per_rank
+        global_expert_number = extract_expert_number_from_param(self.megatron_param)
+        local_expert_number = global_expert_number % num_experts_per_rank
 
         # Compute global expert numbers for all EP ranks
         # use regex to replace the local expert number with the global expert number
@@ -809,16 +812,17 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             if hf_weights is None:
                 raise ValueError("hf_weights should not be None on rank 0")
 
-            # For MCore MambaMixer, A_log is initialized in FP32 but cast to BF16 when
-            # saving ckpts, including the ckpt uploaded to HF. Without this cast,
-            # self.scatter_to_tp_ranks will try to scatter the HF A_log weights in BF16 to
-            # the Megatron tensor which is in FP32. This will error. So we cast before the scatter.
+            # Dtype may differ (e.g. MambaMixer A_log is FP32 in MCore but BF16
+            # in HF checkpoints). Cast to match the Megatron parameter so the
+            # scatter doesn't fail on dtype mismatch.
             if hf_weights.dtype != target_param.dtype:
-                logger.warning(
-                    f"Dtype mismatch: HF weights are {hf_weights.dtype} but "
-                    f"Megatron module expects {target_param.dtype}. "
-                    f"Casting HF weights to {target_param.dtype}."
-                )
+                if not getattr(ColumnParallelMapping, "_dtype_warned", False):
+                    ColumnParallelMapping._dtype_warned = True
+                    logger.warning(
+                        f"Dtype mismatch: HF weights are {hf_weights.dtype} but Megatron "
+                        f"module uses {target_param.dtype}. Casting all mismatched weights "
+                        f"to {target_param.dtype} (further warnings suppressed)."
+                    )
                 hf_weights = hf_weights.to(target_param.dtype)
 
             # For bias (1D), we still split along dim 0
@@ -2220,6 +2224,183 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
         return {key: value}
 
 
+def _align_expert_weight_to_shape(
+    weight: torch.Tensor,
+    target_shape: torch.Size,
+    name: str,
+    transpose_hint: bool | None = None,
+) -> torch.Tensor:
+    """Align an expert weight tensor to match a Megatron target shape.
+
+    Args:
+        weight: The weight tensor to align.
+        target_shape: The expected Megatron parameter shape.
+        name: Name used in error messages.
+        transpose_hint: If ``True``, transpose the last two dims unconditionally.
+            If ``False``, return as-is (assert shape already matches).
+            If ``None`` (default), auto-detect: returns the tensor directly if
+            the shape matches, transposes the last two dims if the transposed
+            shape matches, or raises ``ValueError`` otherwise. Auto-detection
+            is ambiguous for square 2-D weights — pass an explicit
+            ``transpose_hint`` in that case.
+    """
+    if transpose_hint is True:
+        result = weight.t().contiguous() if weight.ndim == 2 else weight.transpose(-1, -2).contiguous()
+        if tuple(result.shape) != tuple(target_shape):
+            raise ValueError(
+                f"Unexpected {name} shape after transpose: {tuple(result.shape)}; expected {tuple(target_shape)}."
+            )
+        return result
+    if transpose_hint is False:
+        if tuple(weight.shape) != tuple(target_shape):
+            raise ValueError(f"Unexpected {name} shape {tuple(weight.shape)}; expected {tuple(target_shape)}.")
+        return weight
+    # Auto-detect (transpose_hint is None)
+    if tuple(weight.shape) == tuple(target_shape):
+        return weight
+    if weight.ndim == 2 and weight.shape[0] == weight.shape[1]:
+        raise ValueError(
+            f"Cannot auto-detect transpose for square {name} weight {tuple(weight.shape)}; "
+            f"pass an explicit transpose_hint=True/False."
+        )
+    if weight.ndim == 2 and tuple(weight.t().shape) == tuple(target_shape):
+        return weight.t().contiguous()
+    raise ValueError(f"Unexpected {name} shape {tuple(weight.shape)}; expected {tuple(target_shape)}.")
+
+
+class _LooseGatedMLPMapping(GatedMLPMapping):
+    """GatedMLPMapping that skips wildcard validation for fused expert mappings."""
+
+    is_grouped_export = True
+
+
+class FusedExpertMapping(AutoMapping):
+    """Mapping for fused expert weights: 1 HF tensor [num_experts, ...] <-> N Megatron per-expert tensors.
+
+    HF side: Single tensor with shape [num_experts, ...]
+    Megatron side: Per-expert tensors (one param per expert)
+
+    Import: Extracts single expert from fused HF tensor, auto-aligns shape,
+            delegates to AutoMapping for TP distribution.
+    Export: AutoMapping handles TP/EP gathering per expert, then the conversion
+            loop merges all experts via the ``is_grouped_export`` protocol.
+
+    Replaces per-model expert mapping classes and eliminates the need for
+    ``maybe_modify_converted_hf_weight`` / ``hf_weights_cache`` on bridges.
+    """
+
+    is_grouped_export = True
+
+    def __init__(
+        self,
+        megatron_param: str,
+        hf_param: str,
+        permute_dims: Optional[Tuple[int, ...]] = None,
+        transpose_on_export: bool = False,
+    ):
+        super().__init__(megatron_param, hf_param, permute_dims)
+        self.allow_hf_name_mismatch = True
+        self.transpose_on_export = transpose_on_export
+
+    @property
+    def group_key(self) -> str:
+        """Tasks sharing the same group_key are merged during export."""
+        return self.hf_param
+
+    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
+        from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+
+        expert_idx = extract_expert_number_from_param(self.megatron_param)
+        expert_weight = hf_weights[expert_idx] if hf_weights.ndim >= 3 else hf_weights
+        # Pass the full (unsharded) expert weight directly to AutoMapping, which handles
+        # TP scatter. We must NOT align against target_param.shape here because that shape
+        # is already TP-sharded and would fail for TP > 1.
+        return super().hf_to_megatron(expert_weight, megatron_module)
+
+
+class FusedGatedExpertMapping(AutoMapping):
+    """Mapping for fused gated expert weights (gate+up projection).
+
+    HF side: Single tensor with shape [num_experts, 2*intermediate, hidden]
+    Megatron side: Per-expert linear_fc1 tensors (with gate+up interleaved)
+
+    Import: Extracts single expert, splits into gate+up, delegates to
+            GatedMLPMapping for interleaved TP distribution.
+    Export: GatedMLPMapping handles TP/EP gathering, gate+up are fused back,
+            conversion loop merges all experts via the ``is_grouped_export`` protocol.
+    """
+
+    is_grouped_export = True
+
+    def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
+        super().__init__(megatron_param, hf_param, permute_dims)
+        self.allow_hf_name_mismatch = True
+        self._gated_mapping = _LooseGatedMLPMapping(
+            megatron_param=self.megatron_param,
+            gate=f"{self.hf_param}.gate",
+            up=f"{self.hf_param}.up",
+        )
+
+    @property
+    def group_key(self) -> str:
+        """Tasks sharing the same group_key are merged during export."""
+        return self.hf_param
+
+    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
+        from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+
+        expert_idx = extract_expert_number_from_param(self.megatron_param)
+        expert_weight = hf_weights[expert_idx] if hf_weights.ndim >= 3 else hf_weights
+
+        normalized_param = self._normalize_expert_param_name(self.megatron_param)
+        _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
+        target_shape = target_param.shape
+
+        if target_shape[0] % 2 != 0:
+            raise ValueError(f"Expected even fused dim for {self.megatron_param}, got {target_shape}.")
+
+        gate_target_shape = (target_shape[0] // 2, target_shape[1])
+        # target_shape is the TP-sharded Megatron shape; compute the full (unsharded) shapes
+        # so that _align_expert_weight_to_shape can correctly match the raw HF weights.
+        # _gated_mapping.hf_to_megatron is responsible for TP scatter.
+        gate_full_shape = (gate_target_shape[0] * self.tp_size, target_shape[1])
+        gate_up_full_shape = (gate_full_shape[0] * 2, target_shape[1])
+
+        if expert_weight.ndim == 3 and expert_weight.shape[0] == 2:
+            gate = _align_expert_weight_to_shape(expert_weight[0], gate_full_shape, "gate")
+            up = _align_expert_weight_to_shape(expert_weight[1], gate_full_shape, "up")
+        else:
+            expert_weight = _align_expert_weight_to_shape(expert_weight, gate_up_full_shape, "gate_up")
+            gate, up = torch.chunk(expert_weight, 2, dim=0)
+
+        return self._gated_mapping.hf_to_megatron({"gate": gate, "up": up}, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        converted = self._gated_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        if not converted:
+            return {}
+
+        fused: Dict[str, torch.Tensor] = {}
+        for name, tensor in converted.items():
+            if not name.endswith(".gate"):
+                continue
+            base_name = name[: -len(".gate")]
+            up_tensor = converted.get(f"{base_name}.up")
+            if up_tensor is None:
+                continue
+            concat_dim = 0 if tensor.ndim == 2 else 1
+            fused[base_name] = torch.cat([tensor, up_tensor], dim=concat_dim)
+        return fused
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(resolved_megatron_param, resolved_hf_param, self.permute_dims)
+
+
 def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     """Merge separate Q, K, V bias vectors into Megatron's interleaved QKV format.
 
@@ -2375,13 +2556,19 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
 
 
 def split_qkv_weights(
-    provider: TransformerConfig, qkv: torch.Tensor
+    provider: TransformerConfig,
+    qkv: torch.Tensor,
+    feature_dim: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Split Megatron's interleaved QKV tensor into separate Q, K, V matrices.
 
     Args:
         provider (TransformerConfig): Model configuration provider.
         qkv (torch.Tensor): Interleaved QKV weights in Megatron format.
+        feature_dim: Trailing tensor dimension used for reshape/split.
+            Defaults to ``provider.hidden_size`` for base weights, but LoRA
+            paths can pass the adapter rank here to bypass the FP8 scale
+            inference logic.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple of (Q, K, V)
@@ -2402,9 +2589,42 @@ def split_qkv_weights(
     if is_bias:
         hidden_size = 1
         qkv_reshaped = qkv.view(qkv_total_dim, head_size)
-    else:
-        hidden_size = qkv.shape[-1]
+    elif feature_dim is not None:
+        # Explicit feature_dim (e.g. LoRA rank) — use it directly, no FP8 inference.
+        hidden_size = feature_dim
         qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
+    else:
+        # NOTE: For standard (BF16/FP16) weights, `head_size` is the usual kv_channels/head_dim.
+        # For blockwise FP8 scale tensors (e.g. Float8BlockwiseQTensor._rowwise_scale_inv),
+        # the last dim is typically compressed by a block-size factor (e.g. 4096 -> 32).
+        # In that case we infer a divisor and scale down `head_size` accordingly so that the
+        # same QKV slicing logic works for both weight tensors and their scale tensors.
+        orig_hidden_size = provider.hidden_size
+        current_last_dim = qkv.shape[-1]
+
+        # If last dim matches the model hidden size, it's a normal weight.
+        # Otherwise, treat it as a "scale-domain" tensor with compressed dims.
+        if current_last_dim == orig_hidden_size:
+            hidden_size = current_last_dim
+            scaled_head_size = head_size
+        else:
+            # Infer block divisor (e.g., 4096 / 32 = 128).
+            if orig_hidden_size % current_last_dim != 0:
+                raise ValueError(
+                    f"Cannot infer block divisor for qkv tensor: "
+                    f"provider.hidden_size={orig_hidden_size} is not divisible by qkv.shape[-1]={current_last_dim}"
+                )
+            divisor = orig_hidden_size // current_last_dim
+            if head_size % divisor != 0:
+                raise ValueError(
+                    f"Cannot scale head_size for qkv tensor: "
+                    f"head_size={head_size} is not divisible by divisor={divisor} "
+                    f"(provider.hidden_size={orig_hidden_size}, qkv.shape[-1]={current_last_dim})"
+                )
+            hidden_size = current_last_dim
+            scaled_head_size = head_size // divisor
+
+        qkv_reshaped = qkv.view(qkv_total_dim, scaled_head_size, hidden_size)
 
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
@@ -2500,12 +2720,26 @@ def merge_gdn_linear_weights(
     return in_proj
 
 
-def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor, tp_size: int = 1) -> torch.Tensor:
-    """Split GDN linear weights into QKVZ and BA."""
+def split_gdn_linear_weights(
+    provider: TransformerConfig,
+    in_proj: torch.Tensor,
+    tp_size: int = 1,
+    feature_dim: Optional[int] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Split GDN linear weights into QKVZ and BA.
+
+    Args:
+        provider: Transformer config with GDN dimensions.
+        in_proj: Packed in-proj tensor.
+        tp_size: Tensor-parallel world size used for packing layout.
+        feature_dim: Trailing tensor dimension used for reshape/split.
+            Defaults to ``provider.hidden_size`` for base weights, but LoRA
+            paths can pass the adapter rank here.
+    """
 
     assert tp_size >= 1, f"tp_size must be greater than 0, but got {tp_size=}"
 
-    hidden_size = provider.hidden_size
+    feature_dim = provider.hidden_size if feature_dim is None else feature_dim
     qk_head_dim = provider.linear_key_head_dim
     v_head_dim = provider.linear_value_head_dim
     num_qk_heads = provider.linear_num_key_heads
@@ -2514,7 +2748,7 @@ def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor,
     qk_dim_local_tp = qk_head_dim * num_qk_heads_local_tp
     v_dim_local_tp = v_head_dim * num_v_heads_local_tp
 
-    in_proj = in_proj.reshape(tp_size, -1, hidden_size)
+    in_proj = in_proj.reshape(tp_size, -1, feature_dim)
     q, k, v, z, b, a = torch.split(
         in_proj,
         [
@@ -2528,12 +2762,12 @@ def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor,
         dim=1,
     )
 
-    q, k, v, z, b, a = [weight.reshape(num_qk_heads, -1, hidden_size) for weight in [q, k, v, z, b, a]]
+    q, k, v, z, b, a = [weight.reshape(num_qk_heads, -1, feature_dim) for weight in [q, k, v, z, b, a]]
     qkvz = torch.cat([q, k, v, z], dim=1)
     ba = torch.cat([b, a], dim=1)
 
-    qkvz = qkvz.reshape(-1, hidden_size)
-    ba = ba.reshape(-1, hidden_size)
+    qkvz = qkvz.reshape(-1, feature_dim)
+    ba = ba.reshape(-1, feature_dim)
 
     assert qkvz.numel() + ba.numel() == in_proj.numel(), (
         f"QKVZBA weights are not correctly split, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
@@ -2606,6 +2840,7 @@ def _split_gdn_grouped_to_separate(
     config: TransformerConfig,
     qkvz: torch.Tensor,
     ba: torch.Tensor,
+    feature_dim: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Convert head-grouped ``qkvz`` and ``ba`` tensors (as produced by
     :func:`split_gdn_linear_weights`) back into four flat tensors.
@@ -2613,7 +2848,7 @@ def _split_gdn_grouped_to_separate(
     Returns:
         Tuple of (qkv, z, b, a) where each tensor has a flat per-component layout.
     """
-    hidden_size = config.hidden_size
+    feature_dim = config.hidden_size if feature_dim is None else feature_dim
     qk_head_dim = config.linear_key_head_dim
     v_head_dim = config.linear_value_head_dim
     num_qk_heads = config.linear_num_key_heads
@@ -2622,31 +2857,31 @@ def _split_gdn_grouped_to_separate(
 
     expected_qkvz_dim0 = num_qk_heads * (qk_head_dim * 2 + v_per_group * v_head_dim * 2)
     expected_ba_dim0 = num_qk_heads * v_per_group * 2
-    if qkvz.ndim != 2 or qkvz.shape[0] != expected_qkvz_dim0 or qkvz.shape[1] != hidden_size:
+    if qkvz.ndim != 2 or qkvz.shape[0] != expected_qkvz_dim0 or qkvz.shape[1] != feature_dim:
         raise ValueError(
-            f"qkvz shape mismatch: expected ({expected_qkvz_dim0}, {hidden_size}), got {tuple(qkvz.shape)}"
+            f"qkvz shape mismatch: expected ({expected_qkvz_dim0}, {feature_dim}), got {tuple(qkvz.shape)}"
         )
-    if ba.ndim != 2 or ba.shape[0] != expected_ba_dim0 or ba.shape[1] != hidden_size:
-        raise ValueError(f"ba shape mismatch: expected ({expected_ba_dim0}, {hidden_size}), got {tuple(ba.shape)}")
+    if ba.ndim != 2 or ba.shape[0] != expected_ba_dim0 or ba.shape[1] != feature_dim:
+        raise ValueError(f"ba shape mismatch: expected ({expected_ba_dim0}, {feature_dim}), got {tuple(ba.shape)}")
 
     # --- Split grouped QKVZ ---
-    qkvz_g = qkvz.reshape(num_qk_heads, -1, hidden_size)
+    qkvz_g = qkvz.reshape(num_qk_heads, -1, feature_dim)
     q_g, k_g, v_g, z_g = torch.split(
         qkvz_g,
         [qk_head_dim, qk_head_dim, v_per_group * v_head_dim, v_per_group * v_head_dim],
         dim=1,
     )
-    q_flat = q_g.reshape(-1, hidden_size)
-    k_flat = k_g.reshape(-1, hidden_size)
-    v_flat = v_g.reshape(-1, hidden_size)
-    z_flat = z_g.reshape(-1, hidden_size)
+    q_flat = q_g.reshape(-1, feature_dim)
+    k_flat = k_g.reshape(-1, feature_dim)
+    v_flat = v_g.reshape(-1, feature_dim)
+    z_flat = z_g.reshape(-1, feature_dim)
     qkv = torch.cat([q_flat, k_flat, v_flat], dim=0)
 
     # --- Split grouped BA ---
-    ba_g = ba.reshape(num_qk_heads, -1, hidden_size)
+    ba_g = ba.reshape(num_qk_heads, -1, feature_dim)
     b_g, a_g = torch.split(ba_g, [v_per_group, v_per_group], dim=1)
-    b_flat = b_g.reshape(-1, hidden_size)
-    a_flat = a_g.reshape(-1, hidden_size)
+    b_flat = b_g.reshape(-1, feature_dim)
+    a_flat = a_g.reshape(-1, feature_dim)
 
     return qkv, z_flat, b_flat, a_flat
 

@@ -194,9 +194,11 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 - `-gn/--gpus_per_node`: GPUs per node. Default `None`. If not provided, it is inferred from the GPU type.
 - `-cm/--custom_mounts`: Comma-separated list of host mounts to expose inside the container.
 - `-ce/--custom_env_vars`: Comma-separated string of environment variables (format: `key1=value1,key2=value2`).
+- `-E/--env`: Set environment variable (repeatable arg). This is an alternative to `--custom_env_vars`. (`--custom_env_vars` is preferred for most cases). Example: `-E var1=value1,value2 -E var2=value3"`.
 - `-cs/--custom_srun_args`: Comma-separated string of srun arguments.
 - `--gres`: Slurm generic resources to request (e.g., `gpu:4`).
 - `--additional_slurm_params`: Additional SLURM parameters as key=value pairs. Use semicolons (`;`) to separate parameters when values contain commas. Examples: `nodelist=node001,node002;constraint=gpu` or `reservation=my_res;exclusive`.
+- `--packager`: How code is packaged for the job. `git` snapshots the repo at submission time (default). `none` skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.
 
 ##### DGXCloud arguments
 

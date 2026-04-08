@@ -17,6 +17,7 @@
 import glob
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -30,12 +31,12 @@ from nemo_run.config import get_nemorun_home
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
-    from utils.executors import dgxc_executor, slurm_executor
+    from utils.executors import dgxc_executor, kubeflow_executor, slurm_executor
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
-    from .utils.executors import dgxc_executor, slurm_executor
+    from .utils.executors import dgxc_executor, kubeflow_executor, slurm_executor
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
 try:
@@ -62,21 +63,39 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
 
 
-def check_training_finished(log_file_paths: List[str]) -> bool:
-    """Check if training is finished."""
-    all_lines = []
+def check_training_finished(log_file_paths: List[str], is_long_convergence_run: bool = True) -> bool:
+    """Check if training is finished.
+
+    For long convergence runs, returns True when a clean-exit marker is found in the logs.
+    For normal runs, returns True when the last logged iteration matches the total number
+    of iterations (catches jobs that completed all training steps but hung on teardown
+    before the job reached SUCCEEDED status).
+    """
+    found_exit_marker = False
+    max_iter_seen = 0
+    total_iters = None
+
     for log_path in log_file_paths:
         with open(log_path, "r", errors="replace") as f:
             for line in f:
-                all_lines.append(
-                    (
-                        "StopIteration" in line
-                        or "after training is done" in line
-                        or "exiting program at iteration" in line
-                        or "AssertionError: no samples left to consume:" in line
-                    )
-                )
-    return any(all_lines)
+                if (
+                    "StopIteration" in line
+                    or "after training is done" in line
+                    or "exiting program at iteration" in line
+                    or "AssertionError: no samples left to consume:" in line
+                ):
+                    found_exit_marker = True
+
+                m = re.search(r"iteration\s+(\d+)/\s*(\d+)", line)
+                if m:
+                    current, total = int(m.group(1)), int(m.group(2))
+                    max_iter_seen = max(max_iter_seen, current)
+                    total_iters = total
+
+    if is_long_convergence_run:
+        return found_exit_marker
+
+    return total_iters is not None and max_iter_seen >= total_iters
 
 
 def check_slurm_timeout(log_file_path: str) -> bool:
@@ -241,8 +260,13 @@ def main(
     dgxc_project_name: str,
     dgxc_pvc_claim_name: str,
     dgxc_pvc_mount_path: str,
+    kubeflow_namespace: str,
+    kubeflow_workdir_pvc: str,
+    kubeflow_workdir_pvc_path: str,
+    kubeflow_image_pull_secrets: List[str],
     config_variant: str = "v1",
     gres: Optional[str] = None,
+    packager: str = "git",
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -315,7 +339,37 @@ def main(
     if nccl_ub:
         custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
 
-    if not dgxc_cluster:
+    if kubeflow_namespace:
+        executor = kubeflow_executor(
+            namespace=kubeflow_namespace,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
+            container_image=container_image,
+            workdir_pvc=kubeflow_workdir_pvc,
+            workdir_pvc_path=kubeflow_workdir_pvc_path,
+            image_pull_secrets=kubeflow_image_pull_secrets,
+            custom_env_vars=custom_env_vars,
+            wandb_key=wandb_key,
+            hf_token=hf_token,
+        )
+    elif dgxc_cluster:
+        executor = dgxc_executor(
+            dgxc_base_url=dgxc_base_url,
+            dgxc_cluster=dgxc_cluster,
+            dgxc_kube_apiserver_url=dgxc_kube_apiserver_url,
+            dgxc_app_id=dgxc_app_id,
+            dgxc_app_secret=dgxc_app_secret,
+            dgxc_project_name=dgxc_project_name,
+            dgxc_pvc_claim_name=dgxc_pvc_claim_name,
+            dgxc_pvc_mount_path=dgxc_pvc_mount_path,
+            custom_env_vars=custom_env_vars,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
+            container_image=container_image,
+            wandb_key=wandb_key,
+            hf_token=hf_token,
+        )
+    else:
         executor = slurm_executor(
             gpu=gpu,
             account=account,
@@ -335,23 +389,7 @@ def main(
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
             wandb_key=wandb_key,
-        )
-    else:
-        executor = dgxc_executor(
-            dgxc_base_url=dgxc_base_url,
-            dgxc_cluster=dgxc_cluster,
-            dgxc_kube_apiserver_url=dgxc_kube_apiserver_url,
-            dgxc_app_id=dgxc_app_id,
-            dgxc_app_secret=dgxc_app_secret,
-            dgxc_project_name=dgxc_project_name,
-            dgxc_pvc_claim_name=dgxc_pvc_claim_name,
-            dgxc_pvc_mount_path=dgxc_pvc_mount_path,
-            custom_env_vars=custom_env_vars,
-            nodes=-(num_gpus // -gpus_per_node),
-            num_gpus_per_node=gpus_per_node,
-            container_image=container_image,
-            wandb_key=wandb_key,
-            hf_token=hf_token,
+            packager=packager,
         )
 
     plugins = []
@@ -375,10 +413,10 @@ def main(
         )
 
     if enable_nsys:
-        if compute_dtype == "fp8_mx" and nsys_trace is None:
-            logger.warning("Using `cuda-sw` trace mode for MXFP8 profiling")
-            logger.warning("MXFP8 profiling results might not be accurate due to software tracing limitations.")
-            # TODO: Remove this once the functional issues associated with PyT 26.02 are resolved.
+        if nsys_trace is None:
+            logger.warning("Using `cuda-sw` trace mode for profiling")
+            logger.warning("Profiling results might not be accurate due to software tracing limitations.")
+            # TODO: Remove this once the associated functional issues are resolved.
             nsys_trace = ["cuda-sw", "nvtx"]
         plugins.append(
             NsysPlugin(
@@ -426,7 +464,7 @@ def main(
     error_msg = None
     n_attempts = 0
     exp_name = (
-        exp_name[:33] if dgxc_cluster is not None else exp_name
+        exp_name[:33] if (dgxc_cluster is not None or kubeflow_namespace is not None) else exp_name
     )  # Some k8s clusters have a limit on the length of the experiment name.
     wandb_run_id = None
     while n_attempts <= max_retries:
@@ -458,8 +496,7 @@ def main(
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
-            if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]:
-                raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
+            terminal_failure = job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]
 
             if detach:
                 is_finished_experiment = True
@@ -470,8 +507,17 @@ def main(
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
-                check_training_finished(log_file_paths) if is_long_convergence_run else (job_status == "SUCCEEDED")
+                check_training_finished(log_file_paths, is_long_convergence_run=True)
+                if is_long_convergence_run
+                else (
+                    job_status == "SUCCEEDED" or check_training_finished(log_file_paths, is_long_convergence_run=False)
+                )
             )
+
+            # Raise on terminal failures only if training didn't actually complete —
+            # a job can time out due to hanging on teardown after all steps finished.
+            if terminal_failure and not is_finished_experiment:
+                raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
                 n_attempts=n_attempts,
@@ -579,6 +625,10 @@ if __name__ == "__main__":
     if unknown_args:
         logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
 
+    env = dict(args.env or [])
+    custom_env_vars = args.custom_env_vars
+    custom_env_vars.update(env)
+
     # Handle --list_config_variants: show available variants and interactively select
     config_variant = args.config_variant
     if args.list_config_variants:
@@ -632,7 +682,7 @@ if __name__ == "__main__":
         time_limit=args.time_limit,
         container_image=args.container_image,
         custom_mounts=args.custom_mounts,
-        custom_env_vars=args.custom_env_vars,
+        custom_env_vars=custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
         nccl_ub=args.nccl_ub,
@@ -669,6 +719,11 @@ if __name__ == "__main__":
         dgxc_project_name=args.dgxc_project_name,
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
+        kubeflow_namespace=args.kubeflow_namespace,
+        kubeflow_workdir_pvc=args.kubeflow_workdir_pvc,
+        kubeflow_workdir_pvc_path=args.kubeflow_workdir_pvc_path,
+        kubeflow_image_pull_secrets=args.kubeflow_image_pull_secrets,
         config_variant=config_variant,
         gres=args.gres,
+        packager=args.packager,
     )

@@ -512,14 +512,19 @@ class TestGlobalState:
         mock_config.checkpoint.save = "/tmp/checkpoints"
         mock_config.checkpoint.async_save = True
         mock_config.checkpoint.use_persistent_ckpt_worker = True
+        mock_config.checkpoint.async_strategy = "mcore"
+        mock_config.checkpoint.async_ckpt_cpu_priority = 10
+        mock_config.checkpoint.async_ckpt_io_priority = 3
         state._cfg = mock_config
 
         mock_async_queue = MagicMock()
+        mock_async_queue_cls = MagicMock(return_value=mock_async_queue)
+        mock_modules = {"AsyncCallsQueue": mock_async_queue_cls, "get_write_results_queue": MagicMock()}
 
-        with patch("megatron.bridge.training.state.AsyncCallsQueue", return_value=mock_async_queue) as mock_acq:
+        with patch("megatron.bridge.training.state.get_async_strategy", return_value=("mcore", mock_modules)):
             state.initialize_async_checkpoint_worker()
 
-            mock_acq.assert_called_once_with(persistent=True)
+            mock_async_queue_cls.assert_called_once_with(persistent=True)
             assert state._async_calls_queue == mock_async_queue
 
     def test_initialize_async_checkpoint_worker_disabled(self):
@@ -530,10 +535,10 @@ class TestGlobalState:
         mock_config.checkpoint.async_save = False
         state._cfg = mock_config
 
-        with patch("megatron.bridge.training.state.AsyncCallsQueue") as mock_acq:
+        with patch("megatron.bridge.training.state.get_async_strategy") as mock_gas:
             state.initialize_async_checkpoint_worker()
 
-            mock_acq.assert_not_called()
+            mock_gas.assert_not_called()
             assert state._async_calls_queue is None
 
     def test_async_calls_queue_property(self):
@@ -821,6 +826,7 @@ class TestGlobalState:
         state._tensorboard_logger = MagicMock()
         state._wandb_logger = MagicMock()
         state._mlflow_logger = MagicMock()
+        state._comet_logger = MagicMock()
         state._energy_monitor = MagicMock()
         state._energy_monitor_created = True
         state._signal_handler = MagicMock()
@@ -837,6 +843,7 @@ class TestGlobalState:
         assert state._tensorboard_logger is None
         assert state._wandb_logger is None
         assert state._mlflow_logger is None
+        assert state._comet_logger is None
         assert state._energy_monitor is None
         assert state._energy_monitor_created is False
         assert state._signal_handler is None
@@ -982,3 +989,204 @@ class TestTimersWriteToMlflow:
 
         with pytest.raises(AssertionError):
             _timers_write_to_mlflow(mock_timers, names=["forward"], logger=mock_mlflow, iteration=100, normalizer=-1.0)
+
+
+@pytest.mark.unit
+class TestCometLoggerProperty:
+    """Tests for the comet_logger property on GlobalState."""
+
+    def test_comet_logger_property_disabled(self):
+        """Test comet logger when disabled."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.comet_project = None
+        state._cfg = mock_config
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+        ):
+            logger = state.comet_logger
+
+            assert logger is None
+            assert state._comet_logger is None
+
+    def test_comet_logger_property_when_cfg_is_none(self):
+        """Test comet logger returns None when cfg is None."""
+        state = GlobalState()
+        state._cfg = None
+
+        logger = state.comet_logger
+
+        assert logger is None
+        assert state._comet_logger is None
+
+    def test_comet_logger_not_on_last_rank(self):
+        """Test comet logger returns None for non-last rank."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.comet_project = "my_project"
+        mock_config.logger.comet_experiment_name = "my_experiment"
+        state._cfg = mock_config
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+        ):
+            logger = state.comet_logger
+
+            assert logger is None
+            assert state._comet_logger is None
+
+    def test_comet_logger_property_missing_experiment_name(self):
+        """Test comet logger raises error when experiment name is empty."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.comet_project = "my_project"
+        mock_config.logger.comet_experiment_name = ""
+        state._cfg = mock_config
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+        ):
+            with pytest.raises(ValueError, match="comet_experiment_name"):
+                _ = state.comet_logger
+
+    def test_timers_property_has_write_to_comet(self):
+        """Test that timers property patches write_to_comet method."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.timing_log_level = 1
+        mock_config.logger.timing_log_option = "minmax"
+        state._cfg = mock_config
+
+        mock_timers = MagicMock()
+
+        with patch("megatron.bridge.training.state.Timers", return_value=mock_timers):
+            _ = state.timers
+
+            assert hasattr(mock_timers, "write_to_comet")
+
+    def test_reset_for_restart_clears_comet_logger(self):
+        """Test reset_for_restart clears comet logger."""
+        state = GlobalState()
+        state._comet_logger = MagicMock()
+
+        state.reset_for_restart()
+
+        assert state._comet_logger is None
+
+
+@pytest.mark.unit
+class TestTimersWriteToComet:
+    """Test suite for _timers_write_to_comet function."""
+
+    def test_writes_metrics_to_comet(self):
+        """Test that timer metrics are logged to Comet ML."""
+        from megatron.bridge.training.state import _timers_write_to_comet
+
+        mock_timers = MagicMock()
+        mock_timers._get_global_min_max_time.return_value = {
+            "forward": (0.1, 0.5),
+            "backward": (0.2, 0.8),
+        }
+
+        mock_comet = MagicMock()
+
+        _timers_write_to_comet(
+            mock_timers, names=["forward", "backward"], logger=mock_comet, iteration=100, normalizer=1.0
+        )
+
+        mock_timers._get_global_min_max_time.assert_called_once_with(["forward", "backward"], True, False, 1.0)
+        mock_comet.log_metrics.assert_called_once()
+        call_args = mock_comet.log_metrics.call_args
+        metrics = call_args[0][0]
+        assert "forward-time" in metrics
+        assert "backward-time" in metrics
+        assert metrics["forward-time"] == 0.5
+        assert metrics["backward-time"] == 0.8
+        assert call_args[1]["step"] == 100
+
+    def test_preserves_slash_in_metric_names(self):
+        """Test that Comet preserves slashes in metric names (unlike MLflow)."""
+        from megatron.bridge.training.state import _timers_write_to_comet
+
+        mock_timers = MagicMock()
+        mock_timers._get_global_min_max_time.return_value = {
+            "train/forward": (0.1, 0.5),
+            "train/backward/compute": (0.2, 0.8),
+        }
+
+        mock_comet = MagicMock()
+
+        _timers_write_to_comet(
+            mock_timers, names=["train/forward", "train/backward/compute"], logger=mock_comet, iteration=100
+        )
+
+        call_args = mock_comet.log_metrics.call_args
+        metrics = call_args[0][0]
+        assert "train/forward-time" in metrics
+        assert "train/backward/compute-time" in metrics
+
+    def test_noop_when_logger_is_none(self):
+        """Test that no error is raised when logger is None."""
+        from megatron.bridge.training.state import _timers_write_to_comet
+
+        mock_timers = MagicMock()
+        mock_timers._get_global_min_max_time.return_value = {"forward": (0.1, 0.5)}
+
+        _timers_write_to_comet(mock_timers, names=["forward"], logger=None, iteration=100)
+
+    def test_handles_exception_gracefully(self):
+        """Test that exceptions from Comet are caught and logged as warning."""
+        import warnings
+
+        from megatron.bridge.training.state import _timers_write_to_comet
+
+        mock_timers = MagicMock()
+        mock_timers._get_global_min_max_time.return_value = {"forward": (0.1, 0.5)}
+
+        mock_comet = MagicMock()
+        mock_comet.log_metrics.side_effect = Exception("Comet connection error")
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _timers_write_to_comet(mock_timers, names=["forward"], logger=mock_comet, iteration=100)
+
+            assert len(w) == 1
+            assert "Failed to log timer metrics to Comet ML" in str(w[0].message)
+
+    def test_with_custom_normalizer(self):
+        """Test timer metrics with custom normalizer."""
+        from megatron.bridge.training.state import _timers_write_to_comet
+
+        mock_timers = MagicMock()
+        mock_timers._get_global_min_max_time.return_value = {"forward": (0.1, 0.5)}
+
+        mock_comet = MagicMock()
+
+        _timers_write_to_comet(
+            mock_timers,
+            names=["forward"],
+            logger=mock_comet,
+            iteration=100,
+            normalizer=2.0,
+            reset=False,
+            barrier=True,
+        )
+
+        mock_timers._get_global_min_max_time.assert_called_once_with(["forward"], False, True, 2.0)
+
+    def test_asserts_positive_normalizer(self):
+        """Test that normalizer must be positive."""
+        from megatron.bridge.training.state import _timers_write_to_comet
+
+        mock_timers = MagicMock()
+        mock_comet = MagicMock()
+
+        with pytest.raises(AssertionError):
+            _timers_write_to_comet(mock_timers, names=["forward"], logger=mock_comet, iteration=100, normalizer=0.0)
+
+        with pytest.raises(AssertionError):
+            _timers_write_to_comet(mock_timers, names=["forward"], logger=mock_comet, iteration=100, normalizer=-1.0)

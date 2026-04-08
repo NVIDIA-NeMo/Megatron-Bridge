@@ -156,8 +156,8 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
     # Optimizer hyperparameters
     cfg.optimizer.lr = 1.6e-3
     cfg.optimizer.weight_decay = 0.1
-    cfg.scheduler.min_lr = 1.6e-5
-    cfg.scheduler.warmup_iters = 333
+    cfg.optimizer.min_lr = 1.6e-5
+    cfg.scheduler.lr_warmup_iters = 333
 
     # Communication Overlap
     cfg.comm_overlap = CommOverlapConfig(
@@ -187,7 +187,6 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
 
     cfg.model.init_method_std = 0.0173
     cfg.model.apply_rope_fusion = False
-    cfg.model.gradient_accumulation_fusion = True
     cfg.model.use_fused_weighted_squared_relu = True
 
     return cfg
@@ -252,7 +251,6 @@ def nemotron_3_nano_sft_config() -> ConfigContainer:
         # Extra config
         apply_rope_fusion=False,
         attention_backend="fused",
-        gradient_accumulation_fusion=True,
         init_method_std=0.0173,
         use_fused_weighted_squared_relu=True,
         calculate_per_token_loss=True,
@@ -442,7 +440,6 @@ def nemotron_3_nano_peft_config(
         # Extra config
         apply_rope_fusion=False,
         attention_backend="fused",
-        gradient_accumulation_fusion=True,
         init_method_std=0.0173,
         use_fused_weighted_squared_relu=True,
         calculate_per_token_loss=True,
