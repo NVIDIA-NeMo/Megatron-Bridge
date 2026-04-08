@@ -33,6 +33,7 @@ from megatron.bridge.training.checkpointing import load_checkpoint
 from megatron.bridge.training.config import ConfigContainer, mimo_runtime_config_update
 from megatron.bridge.training.setup_mimo import setup_mimo
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.train import _finish_train
 from megatron.bridge.training.train_mimo import train_mimo
 from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
 
@@ -175,5 +176,11 @@ def pretrain_mimo(
         multimodule_pg_collection=setup_output.multimodule_pg_collection,
         module_to_grid_tuple=setup_output.module_to_grid_tuple,
     )
+
+    _finish_train(setup_output.global_state, setup_output.checkpoint_manager)
+
+    if dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()
 
     logger.info("MIMO pretraining completed")

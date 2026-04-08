@@ -432,13 +432,6 @@ def train_mimo(
         nsys_nvtx_context,
     )
 
-    # Finalize any remaining async saves before exit
-    checkpoint_manager.finalize_async_saves(
-        state=global_state,
-        blocking=True,
-        terminate=True,
-    )
-
     timers("interval-time").stop()
 
     logger.info(f"Rank {dist.get_rank()}: MIMO training completed")

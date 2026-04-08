@@ -293,6 +293,7 @@ class TestPretrainMimoSetup:
             patch("megatron.bridge.training.pretrain_mimo.mimo_runtime_config_update") as m_runtime,
             patch("megatron.bridge.training.pretrain_mimo.setup_mimo", return_value=setup_output),
             patch("megatron.bridge.training.pretrain_mimo.train_mimo"),
+            patch("megatron.bridge.training.pretrain_mimo._finish_train"),
             patch("megatron.bridge.training.pretrain_mimo.dist") as m_dist,
             patch("megatron.bridge.training.pretrain_mimo.checkpoint_exists", return_value=False),
             patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
@@ -525,16 +526,16 @@ class TestTrainMimoCheckpointIntegration:
         )
 
         # finalize_async_saves is called on the checkpoint_manager:
-        # 2 non-blocking calls (top of each iteration) + 1 blocking call (shutdown)
-        assert ckpt_mgr.finalize_async_saves.call_count == 3
+        # 2 non-blocking calls (top of each iteration).
+        # The blocking shutdown call is now in _finish_train (pretrain_mimo.py).
+        assert ckpt_mgr.finalize_async_saves.call_count == 2
 
         non_blocking_calls = [
             c for c in ckpt_mgr.finalize_async_saves.call_args_list if c.kwargs.get("blocking") is False
         ]
-        blocking_calls = [c for c in ckpt_mgr.finalize_async_saves.call_args_list if c.kwargs.get("blocking") is True]
         assert len(non_blocking_calls) == 2
-        assert len(blocking_calls) == 1
-        assert blocking_calls[0].kwargs.get("terminate") is True
+        # The blocking shutdown call (blocking=True, terminate=True) is now in
+        # _finish_train (pretrain_mimo.py), tested separately.
 
     @patch("megatron.bridge.training.train_mimo.checkpoint_and_decide_exit", return_value=False)
     @patch("megatron.bridge.training.train_mimo.train_step_mimo")
@@ -711,6 +712,7 @@ def _run_pretrain_mimo(
         ) as m_ckpt_exists,
         patch("megatron.bridge.training.pretrain_mimo.dist") as m_dist,
         patch("megatron.bridge.training.pretrain_mimo.mimo_runtime_config_update"),
+        patch("megatron.bridge.training.pretrain_mimo._finish_train"),
         patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
         patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
         patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
