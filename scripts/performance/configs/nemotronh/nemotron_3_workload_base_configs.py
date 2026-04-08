@@ -156,7 +156,7 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_FP8_MX_V1 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG_B200,
     tensor_model_parallel_size=2,
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["mamba", "attn"],
+    cuda_graph_scope=["mamba", "attn", "moe_router", "moe_preprocess"],
 )
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_NVFP4_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_FP8_MX_V1
 
