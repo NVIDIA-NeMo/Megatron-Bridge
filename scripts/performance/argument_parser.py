@@ -170,7 +170,7 @@ def parse_cli_args():
     parser.add_argument(
         "--domain",
         type=lower_str,
-        choices=["llm", "vlm", "qwen3vl"],
+        choices=["llm", "vlm", "qwen3vl", "diffusion"],
         help="Domain to use for experiment.",
         default="llm",
     )
