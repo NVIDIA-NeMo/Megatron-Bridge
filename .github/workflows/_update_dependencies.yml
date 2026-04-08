@@ -80,10 +80,10 @@ jobs:
             MLM_COMMIT=$(git rev-parse HEAD)
           popd
 
-          if [[ "$TARGET_BRANCH" == "main" ]]; then
-            echo $MLM_COMMIT > .main.commit
-          elif [[ "$TARGET_BRANCH" == "dev" ]]; then
+          if [[ "$TARGET_BRANCH" == "dev" ]]; then
             echo $MLM_COMMIT > .dev.commit
+          else
+            echo $MLM_COMMIT > .main.commit
           fi
 
       - name: Upgrade lock file
