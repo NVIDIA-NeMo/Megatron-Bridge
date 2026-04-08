@@ -55,6 +55,16 @@ class TestGptOssConversion:
         if hasattr(model, "bfloat16"):
             model = model.bfloat16()
 
+        # Transpose down_proj expert weights to match real GPT-OSS checkpoint layout.
+        # Real checkpoints store down_proj as [num_experts, hidden, intermediate] but
+        # HF model init produces [num_experts, intermediate, hidden].
+        import torch
+
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if ".mlp.experts.down_proj" in name and param.ndim == 3:
+                    param.data = param.data.transpose(-1, -2).contiguous()
+
         # Save tokenizer (fallback to gpt2 tokenizer if GPT-OSS doesn't ship one)
         try:
             from transformers import AutoTokenizer
