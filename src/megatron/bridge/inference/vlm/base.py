@@ -205,7 +205,9 @@ def generate(
             tokenizer=tokenizer,
             image_processor=image_processor,
         )
-    mcore_engine = VLMEngine(text_generation_controller=text_generation_controller, random_seed=random_seed)
+    mcore_engine = VLMEngine(
+        text_generation_controller=text_generation_controller, random_seed=random_seed, legacy=True
+    )
 
     if sampling_params is None:
         sampling_params = SamplingParams(num_tokens_to_generate=50)
