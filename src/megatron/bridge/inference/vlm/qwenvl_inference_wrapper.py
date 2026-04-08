@@ -102,9 +102,8 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
             "image_grid_thw": inference_input.get("image_grid_thw"),
             "mm_token_type_ids": inference_input.get("mm_token_type_ids"),
         }
-        mm = inference_input.get("mm_token_type_ids")
-        if mm is not None:
-            out["mm_token_type_ids"] = mm[:, :context_end_position]
+        if out["mm_token_type_ids"] is not None:
+            out["mm_token_type_ids"] = out["mm_token_type_ids"][:, :context_end_position]
         return out
 
     def forward_pass_without_pipeline_parallel(self, inference_input: Dict[str, Any]) -> torch.Tensor:

@@ -68,7 +68,7 @@ class TestVLMInferenceScript:
             if result.returncode != 0:
                 print(f"STDOUT: {result.stdout}")
                 print(f"STDERR: {result.stderr}")
-                assert False, f"vlm_inference.py failed with return code {result.returncode}"
+                pytest.fail(f"vlm_inference.py failed with return code {result.returncode}")
 
             assert "GENERATED TEXT OUTPUT" in result.stdout, (
                 f"Generation output header not found. Output: {result.stdout}"
