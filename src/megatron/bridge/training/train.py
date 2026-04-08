@@ -1022,6 +1022,7 @@ def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, fl
     start_time = None
     start_num_floating_point_operations = None
     latest_num_floating_point_operations = 0
+    latest_num_floating_point_operations_uncommitted = None
 
     def _get_field(string, type):
         return type(string.split(": ")[1])
@@ -1033,6 +1034,12 @@ def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, fl
             world_size_in_line = _get_field(line_tokens[2], int)
             if line_tokens[3] == "Saved checkpoint":
                 latest_num_floating_point_operations = _get_field(line_tokens[7], float)
+            elif line_tokens[3] == "Saving async checkpoint":
+                latest_num_floating_point_operations_uncommitted = _get_field(line_tokens[7], float)
+            elif line_tokens[3] == "Saved async checkpoint":
+                if latest_num_floating_point_operations_uncommitted is not None:
+                    latest_num_floating_point_operations = latest_num_floating_point_operations_uncommitted
+                    latest_num_floating_point_operations_uncommitted = None
             if world_size_in_line != get_world_size_safe():
                 # Re-start search if we see a different world size.
                 start_time = None
@@ -1364,7 +1371,7 @@ def _should_skip_and_handle_iteration(
         bool: True if the iteration was skipped, False otherwise
     """
     cfg = global_state.cfg
-    if global_state.train_state.step not in cfg.train.iterations_to_skip:
+    if (global_state.train_state.step + 1) not in cfg.train.iterations_to_skip:
         return False
 
     # Perform dummy train step to fast forward train_data_iterator
@@ -1431,6 +1438,11 @@ def _handle_mxfp8_param_buffer_copy(
     2. Without forward_pre_hook, finish_param_sync() won't be called to zero the grad buffer,
        so the main grads will be polluted by the main params.
 
+    Exception: when a full-iteration CUDA graph has been captured, the all-gather
+    and subsequent param_data zero are baked into the graph and replay
+    unconditionally. We must populate param_data so the replayed AG gathers
+    correct weights, even when forward pre-hooks are disabled (first iteration).
+
     Args:
         optimizer: The MegatronOptimizer instance
         model: List of model chunks (MegatronModule instances)
@@ -1440,7 +1452,8 @@ def _handle_mxfp8_param_buffer_copy(
     if reuse_grad_buf_for_mxfp8_param_ag and overlap_param_gather:
         # Check if forward_pre_hook is enabled by checking if hooks are registered.
         forward_pre_hook_enabled = len(model[0].remove_forward_pre_hook_handles) > 0
-        if forward_pre_hook_enabled:
+        full_cg_captured = FullCudaGraphWrapper.cuda_graph.get("training") is not None
+        if forward_pre_hook_enabled or full_cg_captured:
             for optim_instance in optimizer.chained_optimizers:
                 if isinstance(optim_instance, DistributedOptimizer):
                     optim_instance._copy_main_params_to_param_buffer()
