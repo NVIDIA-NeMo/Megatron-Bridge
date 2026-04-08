@@ -180,9 +180,9 @@ neg_entropy=True
 temperature=0.0
 
 # --- Task configs (all available) ---
-ALL_TASKS=("gsm8k_cot" "humaneval" "mbpp" "humaneval_plus" "mbpp_plus" "minerva_math")
-ALL_NSHOTS=(          8          0     3              0          3           4)
-ALL_MAX_NEW_TOKENS=(256        512   512            512        512         512)
+ALL_TASKS=("gsm8k_cot" "humaneval" "mbpp" "humaneval_plus" "mbpp_plus")
+ALL_NSHOTS=(          8          0     3              0          3)
+ALL_MAX_NEW_TOKENS=(256        512   512            512        512)
 
 # Filter tasks if --eval-tasks was provided
 if [ -n "${EVAL_TASKS_STR:-}" ]; then
@@ -314,9 +314,12 @@ ${LIMIT_ARG}"
 if [ "$EXECUTE_DIRECTLY" = true ]; then
     echo "Running all models and tasks sequentially"
     export PYTHONPATH="${MEGATRON_BRIDGE}/src:${MEGATRON_BRIDGE}/examples:${MEGATRON_BRIDGE}:${PYTHONPATH:-}"
+    #export PYTHONPATH="${MEGATRON_BRIDGE}/src:${MEGATRON_BRIDGE}/examples:${MEGATRON_BRIDGE}:${MEGATRON_BRIDGE}/3rdparty/Megatron-LM:${PYTHONPATH:-}"
     export HF_ALLOW_CODE_EVAL=1
     export HF_HOME="${HF_HOME:-/tmp/hf_cache}"
     if [ -f ~/hf_token.txt ]; then export HF_TOKEN=$(cat ~/hf_token.txt); fi
+    # Run the same pip installs / patches used in the Slurm paths
+    eval "${PIP_INSTALLS}"
 
 
     for model_idx in "${!exp_names[@]}"; do
