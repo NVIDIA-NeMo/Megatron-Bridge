@@ -25,6 +25,7 @@ MiMo-V2-Flash from Xiaomi features:
 from typing import Mapping
 
 import torch
+import re
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -42,6 +43,7 @@ from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider import MiMoV2Fl
 # softmax_offset (attention sink bias) is shape [num_heads], sharded along dim 0 by TP
 # (see TE's sharded_state_dict: {'softmax_offset': 0})
 AutoMapping.register_module_type("MiMoV2FlashTEDotProductAttention", "column")
+AutoMapping.register_module_type("MiMoV2FlashMTPTEDotProductAttention", "column")
 
 
 class MiMoV2FlashQKVMapping(QKVMapping):
@@ -77,22 +79,13 @@ class MiMoV2FlashQKVMapping(QKVMapping):
         return self._tp_mapping.hf_to_megatron(merged, megatron_module)
 
 
-_FP8_BLOCK_SIZE = 128
-
-
 def _dequant_fp8_blockwise(weight: torch.Tensor, scale_inv: torch.Tensor) -> torch.Tensor:
-    """Block-wise FP8 dequantization: out = fp8_val * scale_inv per 128x128 block."""
+    """Block-wise FP8 dequantization: out = fp8_val * scale_inv."""
     M, N = weight.shape
-    B = _FP8_BLOCK_SIZE
-    w = weight.float()
-    out = torch.empty_like(w)
     sM, sN = scale_inv.shape
-    for bi in range(sM):
-        for bj in range(sN):
-            r0, r1 = bi * B, min((bi + 1) * B, M)
-            c0, c1 = bj * B, min((bj + 1) * B, N)
-            out[r0:r1, c0:c1] = w[r0:r1, c0:c1] * scale_inv[bi, bj]
-    return out.to(torch.bfloat16)
+    bM, bN = M // sM, N // sN
+    scale_full = scale_inv.repeat_interleave(bM, dim=0).repeat_interleave(bN, dim=1)
+    return weight.float() * scale_full
 
 
 @MegatronModelBridge.register_bridge(
@@ -147,6 +140,16 @@ class MiMoV2FlashBridge(MegatronModelBridge):
 
         # Attention value scale
         provider.attention_value_scale = hf_config.attention_value_scale
+
+        if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
+            mtp_indices = set()
+            for k in hf_pretrained.state.source.get_all_keys():
+                m = re.match(r"model\.mtp\.layers\.(\d+)\.", k)
+                if m:
+                    mtp_indices.add(int(m.group(1)))
+            provider.mtp_num_layers = len(mtp_indices)
+        else:
+            provider.mtp_num_layers = 0
 
         return provider
 
@@ -237,21 +240,34 @@ class MiMoV2FlashBridge(MegatronModelBridge):
             ),
         ])
         mtp_keys = {
-            "enorm.weight" : "enorm.weight",
-            "eh_proj.weight" : "eh_proj.weight",
-            "final_layernorm.weight" : "final_layernorm.weight",
-            "hnorm.weight" : "hnorm.weight",
             "self_attention.linear_qkv.layer_norm_weight": "input_layernorm.weight",
             "self_attention.linear_proj.weight": "self_attn.o_proj.weight",
             "self_attention.core_attention.softmax_offset": "self_attn.attention_sink_bias",
-            "post_attention_layernorm.weight": "pre_mlp_layernorm.weight",
+            "mlp.linear_fc1.layer_norm_weight": "pre_mlp_layernorm.weight",
             "mlp.linear_fc2.weight": "mlp.down_proj.weight",
         }
         
         
         # TODO: Join logic for MTP and layers since the naming is the same
 
-
+        mapping_list.extend([
+                AutoMapping(
+                    megatron_param="mtp.layers.*.eh_proj.weight",
+                    hf_param="model.mtp.layers.*.eh_proj.weight",
+                ),
+                AutoMapping(
+                    megatron_param="mtp.layers.*.enorm.weight",
+                    hf_param="model.mtp.layers.*.enorm.weight",
+                ),
+                AutoMapping(
+                    megatron_param="mtp.layers.*.hnorm.weight",
+                    hf_param="model.mtp.layers.*.hnorm.weight",
+                ),
+                AutoMapping(
+                    megatron_param="mtp.layers.*.final_layernorm.weight",
+                    hf_param="model.mtp.layers.*.final_layernorm.weight",
+                ),
+            ])
         # Support both naming conventions: Megatron-Core may expose MTP layers as
         # either "transformer_layer" or "mtp_model_layer" depending on configuration
         for layer_prefix in ("transformer_layer", "mtp_model_layer"):
@@ -289,13 +305,7 @@ class MiMoV2FlashBridge(MegatronModelBridge):
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Dequantize FP8 weights during import.
-
-        The released MiMo-V2-Flash checkpoint uses FP8 (e4m3) quantization with
-        block-wise scaling (weight_block_size=[128, 128]). Weights are stored as
-        float8_e4m3fn with accompanying *_scale_inv tensors. This hook dequantizes
-        them to bfloat16 before loading into the Megatron model.
-        """
+        """Dequantize FP8 weights during import."""
         if isinstance(hf_param, dict):
             return {k: self._load_and_dequant(v, hf_state_dict) for k, v in hf_param.items()}
         return self._load_and_dequant(hf_param, hf_state_dict)
@@ -307,4 +317,4 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         sinv_key = key + "_scale_inv"
         if w.ndim == 2 and sinv_key in hf_state_dict:
             return _dequant_fp8_blockwise(w, hf_state_dict[sinv_key])
-        return w.float().to(torch.bfloat16)
+        return w
