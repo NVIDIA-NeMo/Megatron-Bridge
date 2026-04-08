@@ -476,6 +476,49 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
+    # ---- Unified debug dump for first 2 iterations (both BSHD and Energon) ----
+    _iter = getattr(state, "_debug_iter_count", 0)
+    if _iter < 2 and tokens is not None:
+        _is_energon = cu_seqlens is not None
+        _mode = "Energon-THD" if _is_energon else "HF-BSHD"
+        _t = tokens.squeeze()
+        _lm = loss_mask.squeeze() if loss_mask is not None else None
+        _lab = labels.squeeze() if labels is not None else None
+        _sup_count = int((_lab != -100).sum().item()) if _lab is not None else 0
+        _lm_sum = int(_lm.sum().item()) if _lm is not None else 0
+        logger.info(
+            f"\n{'='*70}\n"
+            f"[DEBUG {_mode}] iteration {_iter}\n"
+            f"  tokens.shape        = {list(tokens.shape)}\n"
+            f"  tokens[:20]         = {_t[:20].tolist()}\n"
+            f"  tokens[-10:]        = {_t[-10:].tolist()}\n"
+            f"  labels[:20]         = {_lab[:20].tolist() if _lab is not None else None}\n"
+            f"  loss_mask sum/total = {_lm_sum} / {_t.shape[0]}\n"
+            f"  supervised labels   = {_sup_count}\n"
+            f"  cu_seqlens (raw)    = {cu_seqlens}\n"
+            f"  position_ids[:10]   = {position_ids.squeeze()[:10].tolist() if position_ids is not None else None}\n"
+            f"  visual_inputs       = {'present' if visual_inputs is not None else 'None'}\n"
+            f"{'='*70}"
+        )
+        # Label alignment check: labels[i] should equal tokens[i+1] at supervised positions
+        if _lab is not None:
+            _sup_idx = (_lab != -100).nonzero(as_tuple=True)[0]
+            if len(_sup_idx) > 0:
+                _valid = _sup_idx[_sup_idx < len(_t) - 1]
+                _match = int((_lab[_valid] == _t[_valid + 1]).sum().item())
+                logger.info(
+                    f"  label alignment: labels[i]==tokens[i+1] at {_match}/{len(_valid)} supervised positions "
+                    f"(first_sup_pos={_sup_idx[0].item()}, last_sup_pos={_sup_idx[-1].item()})"
+                )
+                if _match < len(_valid):
+                    _mismatch_idx = _valid[_lab[_valid] != _t[_valid + 1]][:5]
+                    for _mi in _mismatch_idx:
+                        _mi = _mi.item()
+                        logger.info(
+                            f"    MISMATCH pos {_mi}: label={_lab[_mi].item()} vs tokens[{_mi+1}]={_t[_mi+1].item()}"
+                        )
+        state._debug_iter_count = _iter + 1
+
     forward_args = {
         "input_ids": tokens,
         "position_ids": position_ids,

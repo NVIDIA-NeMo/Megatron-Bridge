@@ -590,22 +590,50 @@ class Qwen3VLModel(MegatronModule):
                 )
 
         if position_ids is None:
-            # BSHD
-            # Megatron uses 4D bool masks ([B|1,1,S,S], True=masked); HF uses 2D keep masks ([B,S], 1=keep)
-            # For simplicity, we set hf_attention_mask to None.
-            hf_attention_mask = None
-            position_ids, _ = get_rope_index(
-                self.config.spatial_merge_size,
-                self.image_token_id,
-                self.video_token_id,
-                self.vision_start_token_id,
-                input_ids,
-                image_grid_thw=image_grid_thw,
-                video_grid_thw=video_grid_thw,
-                attention_mask=hf_attention_mask,
-            )  #  [3*b*s]
             if packed_seq_params is not None:
-                # convert position_ids to THD format
+                # Packed sequences: compute MRoPE per sub-sequence independently
+                # so that each sub-sequence's positions restart from 0.
+                cu = packed_seq_params.cu_seqlens_q
+                if cu.dim() > 1:
+                    cu = cu.squeeze()
+                seq_lens = (cu[1:] - cu[:-1]).tolist()
+                num_seqs = len(seq_lens)
+                max_subseq_len = int(max(seq_lens))
+                total_len = input_ids.shape[1]
+                flat_ids = input_ids.squeeze(0)
+
+                sub_ids = torch.zeros(
+                    num_seqs, max_subseq_len, dtype=input_ids.dtype, device=input_ids.device
+                )
+                sub_mask = torch.zeros(
+                    num_seqs, max_subseq_len, dtype=torch.int32, device=input_ids.device
+                )
+                for i, sl in enumerate(seq_lens):
+                    start = int(cu[i].item())
+                    sl_int = int(sl)
+                    sub_ids[i, :sl_int] = flat_ids[start : start + sl_int]
+                    sub_mask[i, :sl_int] = 1
+
+                position_ids, _ = get_rope_index(
+                    self.config.spatial_merge_size,
+                    self.image_token_id,
+                    self.video_token_id,
+                    self.vision_start_token_id,
+                    sub_ids,
+                    image_grid_thw=image_grid_thw,
+                    video_grid_thw=video_grid_thw,
+                    attention_mask=sub_mask,
+                )  # [3, num_seqs, max_subseq_len]
+
+                packed_pos = torch.zeros(
+                    3, 1, total_len, dtype=position_ids.dtype, device=position_ids.device
+                )
+                for i, sl in enumerate(seq_lens):
+                    start = int(cu[i].item())
+                    sl_int = int(sl)
+                    packed_pos[:, 0, start : start + sl_int] = position_ids[:, i, :sl_int]
+                position_ids = packed_pos
+
                 position_ids = (
                     preprocess_packed_seqs(
                         position_ids.permute(1, 2, 0),
@@ -618,6 +646,21 @@ class Qwen3VLModel(MegatronModule):
                 )
                 attention_mask = None
                 self.language_model.rotary_pos_emb.is_thd_format = True
+            else:
+                # BSHD
+                # Megatron uses 4D bool masks ([B|1,1,S,S], True=masked); HF uses 2D keep masks ([B,S], 1=keep)
+                # For get_rope_index we pass None to avoid semantic mismatch.
+                hf_attention_mask = None
+                position_ids, _ = get_rope_index(
+                    self.config.spatial_merge_size,
+                    self.image_token_id,
+                    self.video_token_id,
+                    self.vision_start_token_id,
+                    input_ids,
+                    image_grid_thw=image_grid_thw,
+                    video_grid_thw=video_grid_thw,
+                    attention_mask=hf_attention_mask,
+                )  #  [3*b*s]
 
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
