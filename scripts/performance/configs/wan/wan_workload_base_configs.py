@@ -37,26 +37,19 @@ BASE_WAN_14B_CONFIG = WorkloadBaseConfig(
 # Wan 14B pretrain presets
 # =============================================================================
 
-# GB200: 8 GPUs (2 nodes), TP=1, CP=4, DP=2, GBS=64
+# GB200: 16 GPUs (4 nodes), TP=1, CP=4, DP=4, GBS=64
 WAN_14B_PRETRAIN_CONFIG_GB200_BF16_V1 = replace(
     BASE_WAN_14B_CONFIG,
+    num_gpus=16,
     tensor_model_parallel_size=1,
     context_parallel_size=4,
 )
 
-# GB300: 8 GPUs (2 nodes), TP=1, CP=2, DP=4, GBS=64
-WAN_14B_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
-    BASE_WAN_14B_CONFIG,
-    tensor_model_parallel_size=1,
-    context_parallel_size=2,
-)
-
-# H100: 16 GPUs (2 nodes), TP=2, CP=4, DP=2, GBS=128, activation recompute (block/8 layers)
+# H100: 32 GPUs (4 nodes), TP=2, CP=4, DP=4, GBS=64, activation recompute (block/8 layers)
 WAN_14B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     BASE_WAN_14B_CONFIG,
-    num_gpus=16,
+    num_gpus=32,
     tensor_model_parallel_size=2,
     context_parallel_size=4,
-    global_batch_size=128,
     recompute_num_layers=8,
 )

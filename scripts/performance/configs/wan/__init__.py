@@ -22,19 +22,16 @@ except ModuleNotFoundError:
 if HAVE_MEGATRON_BRIDGE:
     from .wan_diffusion_pretrain import (
         wan_14b_pretrain_config_gb200,
-        wan_14b_pretrain_config_gb300,
         wan_14b_pretrain_config_h100,
     )
 
 from .wan_workload_base_configs import (
     WAN_14B_PRETRAIN_CONFIG_GB200_BF16_V1,
-    WAN_14B_PRETRAIN_CONFIG_GB300_BF16_V1,
     WAN_14B_PRETRAIN_CONFIG_H100_BF16_V1,
 )
 
 __all__ = [
     "WAN_14B_PRETRAIN_CONFIG_GB200_BF16_V1",
-    "WAN_14B_PRETRAIN_CONFIG_GB300_BF16_V1",
     "WAN_14B_PRETRAIN_CONFIG_H100_BF16_V1",
 ]
 
@@ -42,7 +39,6 @@ if HAVE_MEGATRON_BRIDGE:
     __all__.extend(
         [
             "wan_14b_pretrain_config_gb200",
-            "wan_14b_pretrain_config_gb300",
             "wan_14b_pretrain_config_h100",
         ]
     )

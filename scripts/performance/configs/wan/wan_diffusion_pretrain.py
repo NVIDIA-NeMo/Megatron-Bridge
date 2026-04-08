@@ -44,23 +44,6 @@ def wan_14b_pretrain_config_gb200(
     return cfg
 
 
-def wan_14b_pretrain_config_gb300(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
-) -> ConfigContainer:
-    """GB300, Wan 14B pretrain: TP=1, CP=2, GBS=64."""
-    base_cfg = get_workload_base_config(
-        model_family_name="wan",
-        model_recipe_name="wan_14b",
-        gpu="gb300",
-        compute_dtype=precision.upper(),
-        task="pretrain",
-        config_variant=config_variant,
-    )
-    cfg = wan_14b_pretrain_config()
-    set_workload_base_configs(cfg, base_cfg)
-    return cfg
-
-
 def wan_14b_pretrain_config_h100(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
