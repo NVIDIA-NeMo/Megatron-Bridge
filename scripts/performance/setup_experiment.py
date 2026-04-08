@@ -63,12 +63,13 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
 
 
-def check_training_finished(log_file_paths: List[str]) -> bool:
+def check_training_finished(log_file_paths: List[str], is_long_convergence_run: bool = True) -> bool:
     """Check if training is finished.
 
-    Returns True if a clean-exit marker is found, or if the last logged iteration
-    matches the total number of iterations (catches jobs that completed all training
-    steps but hung on teardown before printing the exit marker).
+    For long convergence runs, returns True when a clean-exit marker is found in the logs.
+    For normal runs, returns True when the last logged iteration matches the total number
+    of iterations (catches jobs that completed all training steps but hung on teardown
+    before the job reached SUCCEEDED status).
     """
     found_exit_marker = False
     max_iter_seen = 0
@@ -91,8 +92,10 @@ def check_training_finished(log_file_paths: List[str]) -> bool:
                     max_iter_seen = max(max_iter_seen, current)
                     total_iters = total
 
-    all_steps_trained = total_iters is not None and max_iter_seen >= total_iters
-    return found_exit_marker or all_steps_trained
+    if is_long_convergence_run:
+        return found_exit_marker
+
+    return total_iters is not None and max_iter_seen >= total_iters
 
 
 def check_slurm_timeout(log_file_path: str) -> bool:
@@ -499,7 +502,11 @@ def main(
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
-                check_training_finished(log_file_paths) if is_long_convergence_run else (job_status == "SUCCEEDED")
+                check_training_finished(log_file_paths, is_long_convergence_run=True)
+                if is_long_convergence_run
+                else (
+                    job_status == "SUCCEEDED" or check_training_finished(log_file_paths, is_long_convergence_run=False)
+                )
             )
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
