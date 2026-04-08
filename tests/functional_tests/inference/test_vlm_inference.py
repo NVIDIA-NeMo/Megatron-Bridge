@@ -27,14 +27,12 @@ from pathlib import Path
 import pytest
 
 
-VLM_INFERENCE_CKPT = "/home/TestData/megatron_bridge/checkpoints/qwen25-vl-3b"
-
-
 class TestVLMInferenceScript:
     """Megatron VLM inference via vlm_inference.py under coverage."""
 
     @pytest.mark.run_only_on("GPU")
     def test_vlm_inference_megatron_checkpoint(self):
+        ckpt_path = "/home/TestData/megatron_bridge/checkpoints/qwen25-vl-3b"
         cmd = [
             "python",
             "-m",
@@ -49,7 +47,7 @@ class TestVLMInferenceScript:
             "--parallel-mode",
             "examples/inference/vlm/vlm_inference.py",
             "--megatron_model_path",
-            VLM_INFERENCE_CKPT,
+            ckpt_path,
             "--prompt",
             "Say hi in one short phrase.",
             "--max_new_tokens",
