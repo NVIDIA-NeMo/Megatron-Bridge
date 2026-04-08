@@ -80,6 +80,7 @@ def main(
     megatron_load_path: str | None = None,
     trust_remote_code: bool | None = None,
     strict: bool = False,
+    skip_save: bool = False,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -161,9 +162,27 @@ def main(
         console.print(f"[yellow]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/yellow]")
 
     all_match = True
+    hf_state_dict = bridge.hf_pretrained.state
+    hf_all_keys = set(hf_state_dict.source.get_all_keys()) if hasattr(hf_state_dict, "source") else set()
+    skipped_count = 0
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
-            original_param = bridge.hf_pretrained.state[name]
+            # Grouped-export or quantized models may yield keys that don't exist
+            # directly in the HF state dict (e.g. GPT-OSS MXFP4 stores
+            # "gate_up_proj_blocks"/"_scales" but export yields "gate_up_proj").
+            # Skip verification for these — dequantization is lossy and shapes differ.
+            if name not in hf_all_keys:
+                skipped_count += 1
+                table.add_row(
+                    name,
+                    str(tuple(param.shape)),
+                    str(param.dtype).replace("torch.", ""),
+                    str(param.device),
+                    "⏭️ (no HF ref)",
+                )
+                continue
+            original_param = hf_state_dict[name]
+
             compare_param = param
             compare_original = original_param
             # Cast to float32 for params with known precision mismatches.
@@ -171,10 +190,6 @@ def main(
             if any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
-            # Some bridges intentionally transpose on export (e.g. GPT-OSS down_proj).
-            # Align shapes before comparing so the roundtrip check doesn't crash.
-            if compare_param.shape != compare_original.shape:
-                compare_original = compare_original.transpose(-1, -2)
             match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
             all_match = all_match and match
             table.add_row(
@@ -186,19 +201,29 @@ def main(
             )
 
     if is_rank_0:
+        if skipped_count > 0:
+            console.print(
+                f"[yellow]WARNING: {skipped_count} params skipped verification "
+                f"(no direct HF reference key, e.g. quantized/grouped weights)[/yellow]"
+            )
         console.print(table)
-        console.print(f"Saving HF-ckpt in {save_path}...")
-
-    bridge.save_hf_pretrained(megatron_model, save_path, strict=strict)
-
-    # Save in Megatron format if path is provided
-    if megatron_save_path:
-        if is_rank_0:
-            console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
-        bridge.save_megatron_model(megatron_model, megatron_save_path)
 
     if not all_match:
         raise ValueError("Weight mismatch detected")
+
+    if skip_save:
+        if is_rank_0:
+            console.print("[green]--skip-save: skipping HF/Megatron save (verification only)[/green]")
+    else:
+        if is_rank_0:
+            console.print(f"Saving HF-ckpt in {save_path}...")
+        bridge.save_hf_pretrained(megatron_model, save_path, strict=strict)
+
+        # Save in Megatron format if path is provided
+        if megatron_save_path:
+            if is_rank_0:
+                console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
+            bridge.save_megatron_model(megatron_model, megatron_save_path)
 
 
 if __name__ == "__main__":
@@ -231,6 +256,9 @@ if __name__ == "__main__":
     )
     parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
     parser.add_argument("--not-strict", action="store_true", help="Perform loose validation during weight export")
+    parser.add_argument(
+        "--skip-save", action="store_true", help="Skip saving the model after comparison (verification only)"
+    )
     args = parser.parse_args()
     main(
         args.hf_model_id,
@@ -242,6 +270,7 @@ if __name__ == "__main__":
         args.megatron_save_path,
         args.megatron_load_path,
         args.trust_remote_code,
+        skip_save=args.skip_save,
     )
 
     if torch.distributed.is_initialized():
