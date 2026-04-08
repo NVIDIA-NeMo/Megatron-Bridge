@@ -202,9 +202,7 @@ def main(
                 match = True
 
             # --- Case 2: non-FP8 dtype mismatch or known precision param → cast to fp32 ---
-            elif compare_param.dtype != compare_original.dtype or any(
-                p in name for p in IGNORE_PRECISION_PARAMS
-            ):
+            elif compare_param.dtype != compare_original.dtype or any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
@@ -225,8 +223,7 @@ def main(
     if is_rank_0:
         if fp8_skip_count > 0:
             console.print(
-                f"[yellow]WARNING: {fp8_skip_count} FP8 params skipped allclose "
-                f"(dequantisation is lossy):[/yellow]"
+                f"[yellow]WARNING: {fp8_skip_count} FP8 params skipped allclose (dequantisation is lossy):[/yellow]"
             )
             for entry in fp8_skip_samples:
                 console.print(f"  [yellow]{entry}[/yellow]")
