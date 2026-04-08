@@ -447,6 +447,8 @@ def save_megatron_model(
     low_memory_save: bool = False,
     hf_tokenizer_kwargs: Optional[dict] = None,
     fully_parallel_save: bool = True,
+    validate_access_integrity: bool = True,
+    distributed_timeout_minutes: int = 10,
 ) -> None:
     """Save a Megatron model in native Megatron checkpoint format without optimizer state.
 
@@ -544,6 +546,7 @@ def save_megatron_model(
             ckpt_format=ckpt_format,
             dist_ckpt_optim_fully_reshardable=True,
             fully_parallel_save=fully_parallel_save,
+            ckpt_assume_constant_structure=not validate_access_integrity,
         ),
         dist=None,
     )
