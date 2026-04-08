@@ -60,6 +60,7 @@ from modelopt.torch.opt.plugins import (
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
+from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -103,6 +104,11 @@ try:
     HAVE_MEGATRON_FSDP = True
 except ImportError:
     HAVE_MEGATRON_FSDP = False
+
+try:
+    from megatron.core.transformer.fsdp_dtensor_checkpoint import handle_gdn_in_state_dict
+except ImportError:
+    handle_gdn_in_state_dict = None
 
 TRACKER_PREFIX = "latest"
 _CHECKPOINT_VERSION = None
@@ -529,7 +535,7 @@ class CheckpointManager(Protocol):
         """
         ...
 
-    def save(self, ctx: CheckpointSaveContext) -> None:
+    def save(self, ctx: CheckpointSaveContext, callback_manager: Optional[CallbackManager]) -> None:
         """Save a checkpoint.
 
         Args:
@@ -594,7 +600,7 @@ class DefaultCheckpointManager:
         """
         return self._context
 
-    def save(self, ctx: CheckpointSaveContext) -> None:
+    def save(self, ctx: CheckpointSaveContext, callback_manager: Optional[CallbackManager]) -> None:
         """Save a checkpoint using the default implementation.
 
         Delegates to save_checkpoint function.
@@ -611,6 +617,7 @@ class DefaultCheckpointManager:
             checkpointing_context=self._context,
             non_persistent_ckpt=ctx.non_persistent_ckpt,
             train_data_iterator=ctx.train_data_iterator,
+            callback_manager=callback_manager,
         )
 
     def load(self, ctx: CheckpointLoadContext) -> tuple[int, int]:
@@ -729,6 +736,7 @@ def save_checkpoint(
     preprocess_common_state_dict_fn: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
     prebuilt_state_dict: Optional[dict[str, Any]] = None,
     pg_collection: Optional[ProcessGroupCollection] = None,
+    callback_manager: Optional[CallbackManager] = None,
 ) -> None:
     """Save a model checkpoint.
 
@@ -1107,6 +1115,26 @@ def save_checkpoint(
             mlflow_finalize_fn()
             comet_finalize_fn()
 
+    if should_fire(callback_manager, "on_checkpoint_save"):
+
+        def fire_callback():
+            callback_manager.fire(
+                "on_checkpoint_save",
+                CallbackContext(
+                    state=state,
+                    model=model,
+                    user_state=callback_manager.user_state,
+                    optimizer=optimizer,
+                ),
+            )
+
+        if ckpt_cfg.async_save:
+            assert async_save_request is not None
+            async_save_request.add_finalize_fn(fire_callback)
+
+        else:
+            fire_callback()
+
     if ckpt_cfg.async_save:
         schedule_async_save(state, async_save_request)
         print_rank_0(f"  scheduled an async checkpoint save at iteration {train_state.step:7d} to {save_dir}")
@@ -1461,6 +1489,7 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     Handles:
     - FP8 extra state
     - SWiGLU weight splitting
+    - GDN (Gated DeltaNet) fused projection splitting (in_proj / conv1d)
     - Expert parameter reindexing for Expert Parallel
     - Uneven DTensor preprocessing
 
@@ -1492,6 +1521,21 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
             state_dict["optimizer"] = optimizer_state_dict
         else:
             model_state_dict, _ = handle_swiglu_in_state_dict(model, state_dict["model"], None)
+            state_dict["model"] = model_state_dict
+
+    # Handle GDN (Gated DeltaNet) fused projections — split in_proj / conv1d
+    # into per-component sub-tensors for TP-correct checkpoint resharding.
+    # No-op when handle_gdn_in_state_dict is unavailable (older megatron-core)
+    # or when the model contains no GDN layers.
+    if handle_gdn_in_state_dict is not None:
+        if "optimizer" in state_dict:
+            model_state_dict, optimizer_state_dict = handle_gdn_in_state_dict(
+                model, state_dict["model"], state_dict["optimizer"]
+            )
+            state_dict["model"] = model_state_dict
+            state_dict["optimizer"] = optimizer_state_dict
+        else:
+            model_state_dict, _ = handle_gdn_in_state_dict(model, state_dict["model"], None)
             state_dict["model"] = model_state_dict
 
     # Handle expert parameters for Expert Parallel (DeepSeek-v3 style MoE)

@@ -18,9 +18,9 @@ from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 
 from megatron.bridge.recipes.qwen_vl.qwen35_vl import (
-    qwen35_vl_35b_a3b_pretrain_config,
-    qwen35_vl_122b_a10b_pretrain_config,
-    qwen35_vl_397b_a17b_pretrain_config,
+    qwen35_vl_35b_a3b_pretrain_mock_config,
+    qwen35_vl_122b_a10b_pretrain_mock_config,
+    qwen35_vl_397b_a17b_pretrain_mock_config,
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -71,8 +71,12 @@ def set_qwen35_vl_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
     cfg.model.moe_router_fusion = True
     cfg.model.apply_rope_fusion = False
+
+    # Disable CUDA graphs — VLM has variable-length inputs (vision vs language tokens)
+    cfg.model.cuda_graph_impl = "none"
 
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
@@ -88,6 +92,10 @@ def set_qwen35_vl_common_configs(cfg: ConfigContainer) -> None:
     cfg.optimizer.overlap_param_gather = False
     cfg.comm_overlap.overlap_param_gather = False
     cfg.comm_overlap.overlap_grad_reduce = False
+
+    # Unfreeze language and vision models for full pretraining
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
 
 
 # =============================================================================
@@ -108,7 +116,7 @@ def qwen35_vl_35b_a3b_pretrain_config_gb300(
             base_cfg = QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB300_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_35b_a3b_pretrain_config(
+    cfg = qwen35_vl_35b_a3b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -133,7 +141,7 @@ def qwen35_vl_35b_a3b_pretrain_config_gb200(
             base_cfg = QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB200_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_35b_a3b_pretrain_config(
+    cfg = qwen35_vl_35b_a3b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -158,7 +166,7 @@ def qwen35_vl_35b_a3b_pretrain_config_b200(
             base_cfg = QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_B200_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_35b_a3b_pretrain_config(
+    cfg = qwen35_vl_35b_a3b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -181,7 +189,7 @@ def qwen35_vl_35b_a3b_pretrain_config_h100(
         base_cfg = QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_H100_FP8_CS
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_35b_a3b_pretrain_config(
+    cfg = qwen35_vl_35b_a3b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -211,7 +219,7 @@ def qwen35_vl_122b_a10b_pretrain_config_gb300(
             base_cfg = QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB300_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_122b_a10b_pretrain_config(
+    cfg = qwen35_vl_122b_a10b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -236,7 +244,7 @@ def qwen35_vl_122b_a10b_pretrain_config_gb200(
             base_cfg = QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB200_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_122b_a10b_pretrain_config(
+    cfg = qwen35_vl_122b_a10b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -261,7 +269,7 @@ def qwen35_vl_122b_a10b_pretrain_config_b200(
             base_cfg = QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_B200_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_122b_a10b_pretrain_config(
+    cfg = qwen35_vl_122b_a10b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -284,7 +292,7 @@ def qwen35_vl_122b_a10b_pretrain_config_h100(
         base_cfg = QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_H100_FP8_CS
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_122b_a10b_pretrain_config(
+    cfg = qwen35_vl_122b_a10b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=False),
@@ -314,7 +322,7 @@ def qwen35_vl_397b_a17b_pretrain_config_gb300(
             base_cfg = QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB300_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_397b_a17b_pretrain_config(
+    cfg = qwen35_vl_397b_a17b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -339,7 +347,7 @@ def qwen35_vl_397b_a17b_pretrain_config_gb200(
             base_cfg = QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_397b_a17b_pretrain_config(
+    cfg = qwen35_vl_397b_a17b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -364,7 +372,7 @@ def qwen35_vl_397b_a17b_pretrain_config_b200(
             base_cfg = QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B200_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_397b_a17b_pretrain_config(
+    cfg = qwen35_vl_397b_a17b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -387,7 +395,7 @@ def qwen35_vl_397b_a17b_pretrain_config_h100(
         base_cfg = QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_H100_FP8_CS
         precision_config = get_precision_config(precision)
 
-    cfg = qwen35_vl_397b_a17b_pretrain_config(
+    cfg = qwen35_vl_397b_a17b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=False),

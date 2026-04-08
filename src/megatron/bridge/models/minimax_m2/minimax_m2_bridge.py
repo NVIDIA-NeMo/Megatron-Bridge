@@ -156,7 +156,7 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = False
         provider.moe_router_load_balancing_type = "aux_loss"
-        provider.moe_aux_loss_coeff = 1e-3
+        provider.moe_aux_loss_coeff = getattr(hf_config, "router_aux_loss_coef", 1e-3)
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_permute_fusion = True
         provider.moe_router_score_function = "sigmoid"

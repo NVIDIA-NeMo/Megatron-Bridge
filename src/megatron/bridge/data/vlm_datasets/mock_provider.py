@@ -94,18 +94,30 @@ class MockVLMConversationProvider(DatasetProvider):
     def _make_base_examples(self) -> List[Dict[str, Any]]:
         rng = numpy.random.default_rng(seed=self.random_seed)
 
-        if not self.pack_sequences_in_batch:
-            # Single minimal conversation example; dataset will repeat to target length
-            return [self._make_single_example(rng, self.prompt, "dummy assistant response")]
+        # Generate many diverse examples with short random responses so the model
+        # cannot memorize the data in a few iterations (keeps grad_norm non-zero).
+        # Responses are kept short (10-30 words) to maintain similar sequence lengths
+        # as the original single-example mock, since the collate pads to batch-max.
+        _VOCAB = (
+            "the a is was are were have has had do does did will would could should "
+            "may might can need to of in for on with at by from image shows depicts "
+            "contains features displays large small red blue green bright dark light "
+            "object scene background foreground color shape person animal building "
+            "tree sky water ground left right top bottom center middle edge beautiful "
+            "complex simple detailed abstract natural moving standing sitting running "
+            "walking flying and or but so yet nor not very this that these those here "
+            "there where when how what which who whom whose each every all both few "
+            "many much some any no other another such"
+        ).split()
 
-        # When packing is enabled, produce several examples with varied response lengths
-        # so that the packing logic concatenates sequences of different sizes.
-        varied_responses = [
-            "Short answer.",
-            "A somewhat longer response that contains more tokens to create length variation in the batch.",
-            "Medium length reply with a bit of detail.",
-        ]
-        return [self._make_single_example(rng, self.prompt, resp) for resp in varied_responses]
+        num_examples = 1000
+        examples = []
+        for _ in range(num_examples):
+            resp_len = int(rng.integers(10, 30))
+            response = " ".join(rng.choice(_VOCAB, size=resp_len))
+            examples.append(self._make_single_example(rng, self.prompt, response))
+
+        return examples
 
     def build_datasets(self, context: DatasetBuildContext):
         from transformers import AutoProcessor

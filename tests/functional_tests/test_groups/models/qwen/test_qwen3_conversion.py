@@ -253,3 +253,9 @@ class TestQwen3Conversion:
         except Exception as e:
             print(f"Error during Qwen3 {test_name} conversion test: {e}")
             raise
+
+    @pytest.mark.run_only_on("GPU")
+    def test_qwen3_autoconfig_roundtrip(self, qwen3_toy_model_path, tmp_path):
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(qwen3_toy_model_path, tmp_path)
