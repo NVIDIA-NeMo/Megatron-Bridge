@@ -17,6 +17,7 @@
 import glob
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -62,21 +63,39 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
 
 
-def check_training_finished(log_file_paths: List[str]) -> bool:
-    """Check if training is finished."""
-    all_lines = []
+def check_training_finished(log_file_paths: List[str], is_long_convergence_run: bool = True) -> bool:
+    """Check if training is finished.
+
+    For long convergence runs, returns True when a clean-exit marker is found in the logs.
+    For normal runs, returns True when the last logged iteration matches the total number
+    of iterations (catches jobs that completed all training steps but hung on teardown
+    before the job reached SUCCEEDED status).
+    """
+    found_exit_marker = False
+    max_iter_seen = 0
+    total_iters = None
+
     for log_path in log_file_paths:
         with open(log_path, "r", errors="replace") as f:
             for line in f:
-                all_lines.append(
-                    (
-                        "StopIteration" in line
-                        or "after training is done" in line
-                        or "exiting program at iteration" in line
-                        or "AssertionError: no samples left to consume:" in line
-                    )
-                )
-    return any(all_lines)
+                if (
+                    "StopIteration" in line
+                    or "after training is done" in line
+                    or "exiting program at iteration" in line
+                    or "AssertionError: no samples left to consume:" in line
+                ):
+                    found_exit_marker = True
+
+                m = re.search(r"iteration\s+(\d+)/\s*(\d+)", line)
+                if m:
+                    current, total = int(m.group(1)), int(m.group(2))
+                    max_iter_seen = max(max_iter_seen, current)
+                    total_iters = total
+
+    if is_long_convergence_run:
+        return found_exit_marker
+
+    return total_iters is not None and max_iter_seen >= total_iters
 
 
 def check_slurm_timeout(log_file_path: str) -> bool:
@@ -469,8 +488,7 @@ def main(
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
-            if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]:
-                raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
+            terminal_failure = job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]
 
             if detach:
                 is_finished_experiment = True
@@ -481,8 +499,17 @@ def main(
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
-                check_training_finished(log_file_paths) if is_long_convergence_run else (job_status == "SUCCEEDED")
+                check_training_finished(log_file_paths, is_long_convergence_run=True)
+                if is_long_convergence_run
+                else (
+                    job_status == "SUCCEEDED" or check_training_finished(log_file_paths, is_long_convergence_run=False)
+                )
             )
+
+            # Raise on terminal failures only if training didn't actually complete —
+            # a job can time out due to hanging on teardown after all steps finished.
+            if terminal_failure and not is_finished_experiment:
+                raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
                 n_attempts=n_attempts,
