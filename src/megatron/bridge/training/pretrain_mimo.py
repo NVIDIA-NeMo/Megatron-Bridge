@@ -31,6 +31,7 @@ import torch.distributed as dist
 
 from megatron.bridge.training.checkpointing import load_checkpoint
 from megatron.bridge.training.config import ConfigContainer, mimo_runtime_config_update
+from megatron.bridge.training.pretrain import _maybe_destroy_process_group
 from megatron.bridge.training.setup_mimo import setup_mimo
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import _finish_train
@@ -66,6 +67,10 @@ def pretrain_mimo(
     TODO(liding): check if build_data_iterators_fn and global_state are needed (deferred to phase 5 review)
     """
     logger.info("Starting MIMO pretraining")
+
+    # If the caller already initialized distributed, we should not destroy it on exit.
+    # Mirrors standard path's should_destroy_process_group logic in pretrain.py.
+    should_destroy_process_group = not dist.is_initialized()
 
     # Apply runtime config updates (MIMO-equivalent of runtime_config_update).
     mimo_runtime_config_update(cfg)
@@ -177,10 +182,10 @@ def pretrain_mimo(
         module_to_grid_tuple=setup_output.module_to_grid_tuple,
     )
 
+    # Post-training cleanup: finalize async saves, shut down NVRx/FT, flush
+    # loggers, destroy GlobalState (which calls destroy_model_parallel internally).
     _finish_train(setup_output.global_state, setup_output.checkpoint_manager)
 
-    if dist.is_initialized():
-        dist.barrier()
-        dist.destroy_process_group()
+    _maybe_destroy_process_group(should_destroy_process_group)
 
     logger.info("MIMO pretraining completed")

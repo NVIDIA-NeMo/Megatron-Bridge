@@ -170,38 +170,6 @@ def test_pretrain_mimo_calls_setup_and_train(
     mock_finish.assert_called_once()
 
 
-@patch("megatron.bridge.training.pretrain_mimo._finish_train")
-@patch("megatron.bridge.training.pretrain_mimo.train_mimo")
-@patch("megatron.bridge.training.pretrain_mimo.setup_mimo")
-@patch("megatron.bridge.training.pretrain_mimo.dist")
-@patch("megatron.bridge.training.pretrain_mimo.mimo_runtime_config_update")
-@patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None)
-@patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None)
-@patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None)
-def test_pretrain_mimo_destroys_process_group_on_exit(
-    mock_runtime_update, mock_dist, mock_setup_mimo, mock_train_mimo, mock_finish
-):
-    """pretrain_mimo should call dist.destroy_process_group after training."""
-    from megatron.bridge.training.pretrain_mimo import pretrain_mimo
-
-    cfg = _make_cfg()
-
-    mock_dist.get_rank.return_value = 0
-    mock_dist.is_initialized.return_value = True
-    setup_output = _make_setup_output(module_to_grid_map={"language": MagicMock()})
-    mock_setup_mimo.return_value = setup_output
-
-    pretrain_mimo(
-        cfg=cfg,
-        forward_step_func=MagicMock(),
-        build_data_iterators_fn=MagicMock(return_value=(iter([]), None)),
-        global_state=MagicMock(),
-    )
-
-    mock_dist.barrier.assert_called_once()
-    mock_dist.destroy_process_group.assert_called_once()
-
-
 def test_finish_train_calls_cleanup():
     """_finish_train should finalize async saves, shut down NVRx/FT, and flush loggers."""
     from megatron.bridge.training.train import _finish_train
