@@ -260,12 +260,12 @@ def train_mimo(
     # Use rank-local module PG for logging reductions and checkpoint saving to
     # avoid global MPU fallback. In non-colocated MIMO each rank participates in
     # exactly one module, so "first non-None" unambiguously selects that module's PG.
-    active_pgs = [pg for pg in mimo_infra.pg_collections.values() if pg is not None]
-    assert len(active_pgs) == 1, (
+    active_modules = [(name, pg) for name, pg in mimo_infra.pg_collections.items() if pg is not None]
+    assert len(active_modules) == 1, (
         f"Non-colocated MiMo requires exactly one active ProcessGroupCollection per rank, "
-        f"got {len(active_pgs)}. Colocated MiMo is not supported by this code path."
+        f"got {len(active_modules)}. Colocated MiMo is not supported by this code path."
     )
-    local_pg_collection = active_pgs[0]
+    active_module_name, local_pg_collection = active_modules[0]
 
     if checkpoint_manager is None:
         checkpoint_manager = DefaultCheckpointManager(cfg.checkpoint)
@@ -418,6 +418,7 @@ def train_mimo(
             checkpoint_manager=checkpoint_manager,
             train_data_iterator=train_data_iterator,
             pg_collection=local_pg_collection,
+            module_name=active_module_name,
         )
         if should_exit:
             break

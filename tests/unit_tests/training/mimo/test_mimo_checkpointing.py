@@ -656,6 +656,7 @@ def _make_pretrain_cfg(
         load=load_path,
         pretrained_checkpoint=pretrained_path,
         non_persistent_ckpt_type=non_persistent_ckpt_type,
+        save_rng=False,
     )
     cfg.scheduler = SimpleNamespace(
         lr_warmup_init=0.0,

@@ -17,6 +17,7 @@ def _make_cfg():
     cfg.checkpoint.load = None
     cfg.checkpoint.pretrained_checkpoint = None
     cfg.checkpoint.non_persistent_ckpt_type = None
+    cfg.checkpoint.save_rng = False
     return cfg
 
 
@@ -109,6 +110,31 @@ def test_set_mimo_random_seeds_offsets_by_pp_rank(mock_dist, _mock_in_grid):
 
         # seed = 42 + 100 * 1 = 142, tp_rank=1
         mock_seed.assert_called_once_with(142, tp_rank=1, ep_rank=0, etp_rank=0)
+
+
+def test_get_rng_state_namespaces_key_with_module_name():
+    """get_rng_state should namespace ShardedObject key when module_name is set."""
+    from megatron.bridge.training.checkpointing import get_rng_state
+
+    pg = MagicMock()
+    pg.pp.rank.return_value = 0
+    pg.pp.size.return_value = 1
+    pg.tp.rank.return_value = 0
+    pg.tp.size.return_value = 2
+    pg.dp_cp.rank.return_value = 0
+    pg.dp_cp.size.return_value = 1
+    pg.ep = None  # no EP
+
+    # Without module_name: key is "rng_state"
+    result = get_rng_state(False, "torch_dist", pg_collection=pg)
+    assert result.key == "rng_state"
+
+    # With module_name: key is namespaced
+    result = get_rng_state(False, "torch_dist", pg_collection=pg, module_name="language")
+    assert result.key == "rng_state.language"
+
+    result = get_rng_state(False, "torch_dist", pg_collection=pg, module_name="vision")
+    assert result.key == "rng_state.vision"
 
 
 @patch("megatron.bridge.training.pretrain_mimo.train_mimo")

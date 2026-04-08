@@ -79,12 +79,12 @@ def pretrain_mimo(
 
     # Select rank-local PG collection for non-colocated MiMo.
     # Each rank participates in exactly one module, so "first non-None" is unambiguous.
-    active_pgs = [pg for pg in setup_output.mimo_infra.pg_collections.values() if pg is not None]
-    assert len(active_pgs) == 1, (
+    active_modules = [(name, pg) for name, pg in setup_output.mimo_infra.pg_collections.items() if pg is not None]
+    assert len(active_modules) == 1, (
         f"Non-colocated MiMo requires exactly one active ProcessGroupCollection per rank, "
-        f"got {len(active_pgs)}. Colocated MiMo is not supported by this code path."
+        f"got {len(active_modules)}. Colocated MiMo is not supported by this code path."
     )
-    local_pg_collection = active_pgs[0]
+    active_module_name, local_pg_collection = active_modules[0]
 
     # Bridge MiMo's per-module process groups into Megatron's global parallel
     # state.  MiMo intentionally skips global MPU init (see
@@ -120,6 +120,7 @@ def pretrain_mimo(
             opt_param_scheduler=first_scheduler,
             checkpointing_context=setup_output.checkpoint_manager.checkpointing_context,
             pg_collection=local_pg_collection,
+            module_name=active_module_name,
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])

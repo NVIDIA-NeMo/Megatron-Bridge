@@ -390,6 +390,7 @@ def get_rng_state(
     ckpt_format: str = "torch_dist",
     *,
     pg_collection: ProcessGroupCollection,
+    module_name: str | None = None,
 ) -> ShardedObject | dict:
     """Get the random number generator states for all necessary libraries.
 
@@ -405,6 +406,10 @@ def get_rng_state(
         data_parallel_random_init: If True, gathers RNG states across data parallel ranks.
         ckpt_format: The checkpoint format being used.
         pg_collection: Process group collection for accessing parallel ranks/sizes.
+        module_name: Optional module name for MIMO per-module RNG namespacing.
+            When set, the ShardedObject key becomes ``"rng_state.{module_name}"``
+            to avoid duplicate shard keys across modules that share the same
+            (pp_rank, tp_rank) coordinates from module-local process groups.
 
     Returns:
         For torch_dist: A ShardedObject containing the RNG states, sharded by
@@ -433,6 +438,11 @@ def get_rng_state(
         tp_size = pg_collection.tp.size()
         ep_size = get_pg_size(pg_collection.ep)
 
+        # MIMO per-module namespacing: use "rng_state.{module_name}" to avoid
+        # duplicate ShardedObject keys when different modules have the same
+        # (pp_rank, tp_rank) from their module-local process groups.
+        key = f"rng_state.{module_name}" if module_name else "rng_state"
+
         if ep_size > 1:
             # Shard RNG by PP, TP, DP when using expert parallelism.
             # With EP, different EP ranks within the same DP group may have different
@@ -441,7 +451,7 @@ def get_rng_state(
             dp_rank = pg_collection.dp_cp.rank()
             dp_size = pg_collection.dp_cp.size()
             rng_state_list = ShardedObject(
-                "rng_state",
+                key,
                 rng_state_list,
                 (pp_size, tp_size, dp_size),
                 (pp_rank, tp_rank, dp_rank),
@@ -449,7 +459,7 @@ def get_rng_state(
             )
         else:
             rng_state_list = ShardedObject(
-                "rng_state",
+                key,
                 rng_state_list,
                 (pp_size, tp_size),
                 (pp_rank, tp_rank),
@@ -494,6 +504,7 @@ class CheckpointSaveContext:
     train_data_iterator: Any | None = None
     non_persistent_ckpt: bool = False
     pg_collection: ProcessGroupCollection | None = None
+    module_name: str | None = None
 
 
 @dataclass
@@ -620,6 +631,7 @@ class DefaultCheckpointManager:
             train_data_iterator=ctx.train_data_iterator,
             pg_collection=ctx.pg_collection,
             callback_manager=callback_manager,
+            module_name=ctx.module_name,
         )
 
     def load(self, ctx: CheckpointLoadContext) -> tuple[int, int]:
@@ -739,6 +751,7 @@ def save_checkpoint(
     prebuilt_state_dict: Optional[dict[str, Any]] = None,
     pg_collection: Optional[ProcessGroupCollection] = None,
     callback_manager: Optional[CallbackManager] = None,
+    module_name: str | None = None,
 ) -> None:
     """Save a model checkpoint.
 
@@ -764,6 +777,9 @@ def save_checkpoint(
                             where factories are expanded and model deleted before save.
         pg_collection: Optional ProcessGroupCollection. When provided, uses this instead of
                       extracting from model. Required when model is empty (e.g., low-memory save).
+        module_name: Optional MIMO module name for per-module RNG state namespacing.
+                    When set, RNG ShardedObject keys are namespaced to avoid collisions
+                    across modules with identical (pp_rank, tp_rank) coordinates.
     """
 
     train_state = state.train_state
@@ -816,6 +832,7 @@ def save_checkpoint(
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
         ckpt_format=ckpt_cfg.ckpt_format,
         pg_collection=pg_collection,
+        module_name=module_name,
     )
 
     # Collect rerun state across all ranks
@@ -1645,6 +1662,7 @@ def load_checkpoint(
     checkpointing_context: Optional[dict[str, Any]] = None,
     skip_load_to_model_and_opt: bool = False,
     pg_collection: Optional[ProcessGroupCollection] = None,
+    module_name: str | None = None,
 ) -> tuple[int, int]:
     """Load a model checkpoint.
 
@@ -1664,6 +1682,7 @@ def load_checkpoint(
         pg_collection: Optional ProcessGroupCollection. When provided, uses this instead of
                       extracting from model via get_pg_collection(). Required for MiMo where
                       model-level PG extraction may not reflect rank-local topology.
+        module_name: Optional MIMO module name for per-module RNG state namespacing.
 
     Returns:
         A tuple containing:
@@ -1694,6 +1713,7 @@ def load_checkpoint(
         strict,
         checkpointing_context,
         pg_collection=pg_collection,
+        module_name=module_name,
     )
 
 
@@ -1727,6 +1747,7 @@ def _load_checkpoint_from_path(
     skip_load_to_model_and_opt: bool = False,
     ignore_ckpt_step: bool = False,
     pg_collection: Optional[ProcessGroupCollection] = None,
+    module_name: str | None = None,
 ) -> tuple[int, int]:
     """Load a checkpoint from a given path.
 
@@ -1837,7 +1858,10 @@ def _load_checkpoint_from_path(
             and run_config["checkpoint"]["save_rng"]
         ):
             gen_sd_rng_state = get_rng_state(
-                cfg.rng.data_parallel_random_init, ckpt_format, pg_collection=pg_collection
+                cfg.rng.data_parallel_random_init,
+                ckpt_format,
+                pg_collection=pg_collection,
+                module_name=module_name,
             )
         else:
             ignore_rng_state = True
