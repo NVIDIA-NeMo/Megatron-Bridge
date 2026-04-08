@@ -22,7 +22,6 @@
 
 **Related Works:** https://arxiv.org/abs/2110.07515
 
-**Complexity:** Medium
 
 **Files to modify:** `src/megatron/` (loss computation, forward pass per layer)
 
@@ -39,7 +38,6 @@
 
 **Related Works:** https://arxiv.org/pdf/2008.07905
 
-**Complexity:** Low–Medium
 
 **Files to modify:** `src/megatron/` (noise/mask schedule, data pipeline)
 
@@ -56,7 +54,6 @@
 
 **Related Works:** https://arxiv.org/pdf/2505.18495
 
-**Complexity:** High
 
 **Files to modify:** `src/megatron/` (masking logic, embedding interpolation, inference loop)
 
@@ -73,7 +70,6 @@
 
 **Related Works:** https://arxiv.org/pdf/2205.07459
 
-**Complexity:** Very High
 
 **Files to modify:** `src/megatron/` (block generation, attention masking, decoding strategy)
 
@@ -91,7 +87,6 @@
 
 **Related Works:** Derived from experiment #2 results.
 
-**Complexity:** Low (config-only change: mask_schedule_min_ratio=0.3, mask_schedule_warmup_iters=1000)
 
 **Files to modify:** Config only (submit_pretraining_3b.sh)
 
@@ -108,7 +103,6 @@
 
 **Related Works:** MDLM (Sahoo et al. 2024), Score Entropy Discrete Diffusion
 
-**Complexity:** Low (modify loss computation in dgpt_step.py, config-only exponent param)
 
 **Files to modify:** `src/megatron/bridge/diffusion/models/common/dgpt_step.py` (loss weighting)
 
@@ -124,7 +118,6 @@ Copy this template:
 **Date proposed:** YYYY-MM-DD
 **Hypothesis:** ...
 **Related Works:** ...
-**Complexity:** Low/Medium/High
 **Files to modify:** ...
 **Expected metric:** ...
 

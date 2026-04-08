@@ -38,14 +38,27 @@ The agent stops the loop when:
 
 ## Idea Prioritization Criteria
 
-Rank ideas by this scoring (highest score first):
+Use **round-robin scheduling** across difficulty tiers so that hard/ambitious
+ideas get a fair chance instead of always being deprioritized.
 
-| Factor | Weight | Description |
-|--------|--------|-------------|
-| Expected impact | 40% | How much GSM8k improvement is plausible? |
-| Feasibility | 30% | Config-only > small code change > large code change |
-| Risk | 20% | Low risk of breaking training or wasting compute |
-| Novelty | 10% | Less-explored ideas get a bonus |
+### Difficulty tiers
+At the start of each iteration (step 2: RANK), read all 🆕 ideas and classify
+each into one of three tiers based on your assessment of implementation effort:
+
+| Tier | Guideline |
+|------|-----------|
+| **Easy** | Config-only or a small, localized code change (< ~50 lines). No new modules. |
+| **Medium** | Moderate code changes across a few files. May add parameters but no new architectural components. |
+| **Hard** | Significant code changes, new modules, or changes to the inference loop. Requires careful design. |
+
+### Selection algorithm
+1. Maintain a turn order: **Easy → Medium → Hard → Easy → …**
+2. On each iteration, classify all 🆕 ideas into tiers, then pick the
+   highest-impact idea from the current tier.
+3. If the current tier has no 🆕 ideas, skip to the next tier.
+4. Within a tier, rank by expected impact (primary) and novelty (tiebreaker).
+5. Track the current tier position in IDEAS.md under a `## Round-Robin State`
+   section (e.g., `Next tier: Medium`). Update it after each pick.
 
 ## Codebase Boundaries
 
@@ -171,15 +184,22 @@ Evaluation uses `--parallel-tasks` which submits one Slurm job per eval task.
 This means you must **track the eval job IDs** and wait for them to complete, just
 like the training job.
 
-1. Submit eval jobs:
+**IMPORTANT:** Always evaluate at all three denoising step counts: `1,16,32`.
+The `--steps-per-block` flag accepts comma-separated values and creates separate
+experiments with `_sbd{N}` suffixes automatically.
+
+1. Submit eval jobs for all three step counts:
    ```bash
-   bash examples/diffusion/recipes/nemotron_diffusion/eval_megatron.sh \
+   bash examples/diffusion/recipes/nemotron_diffusion/eval/eval_megatron.sh \
      --parallel-tasks \
      --checkpoint <checkpoint_path> \
      --exp-name <exp_name> \
      --eval-tasks gsm8k_cot,mbpp,mbpp_plus \
-     --modes dllm
+     --modes dllm \
+     --steps-per-block 1,16,32
    ```
+   This submits 9 Slurm jobs (3 tasks × 3 step counts). Experiment names will be
+   `<exp_name>_sbd1_dllm`, `<exp_name>_sbd16_dllm`, `<exp_name>_sbd32_dllm`.
    Capture the submitted Slurm job IDs from the output.
 
 2. Poll all eval jobs until completion:
@@ -188,30 +208,37 @@ like the training job.
    ```
    Poll every 5 minutes. Wait until all jobs finish.
 
-3. Collect results using `collect_results.py`:
+3. Collect results for all three step counts using `collect_results.py`:
    ```bash
-   python examples/diffusion/recipes/nemotron_diffusion/collect_results.py \
-     <exp_name>/seed_42 --detailed
+   python examples/diffusion/recipes/nemotron_diffusion/eval/collect_results.py \
+     <exp_name>_sbd1_dllm/seed_42 \
+     <exp_name>_sbd16_dllm/seed_42 \
+     <exp_name>_sbd32_dllm/seed_42 \
+     --detailed
    ```
-   Results are stored at: `/lustre/fsw/portfolios/coreai/users/snorouzi/megatron_eval_results/<exp_name>/`
+   Results are stored at: `/lustre/fsw/portfolios/coreai/users/snorouzi/megatron_eval_results/<exp_name>_sbd{N}_dllm/`
 
-4. Parse the collect_results.py output to extract metrics and update RESULTS.md.
+4. Update **all three tables** in RESULTS.md (one row per table):
+   - "32 denoising steps per block" table — from `<exp_name>_sbd32_dllm`
+   - "16 denoising steps per block" table — from `<exp_name>_sbd16_dllm`
+   - "1 denoising step per block" table — from `<exp_name>_sbd1_dllm`
+   Each table has columns: Rank, Experiment, Checkpoint, MBPP, MBPP+, GSM8k Strict, GSM8k Flex, Avg, Date.
 
 ### Phase: Record & Decide
-1. Save results to `autoresearch/experiments/<exp_name>/results.md`:
-   ```markdown
-   # Results: <exp_name>
-   ## GSM8k (8-shot CoT)
-   - Baseline: X.X%
-   - This experiment: Y.Y%
-   - Delta: +/-Z.Z%
-   ## Notes
-   ...
-   ```
+1. Save results to `autoresearch/experiments/<exp_name>/results.md` using the same format
+   as `experiments/baseline/results.md` — one "## Metrics — N denoising step(s) per block"
+   section per step count (32, 16, 1), each with a markdown table of benchmarks, plus
+   the lustre eval results path. This format is parsed by `plot_results.py`.
 2. Update IDEAS.md: change status to ✅ or ❌ with results summary
-3. Git commit all changes on the experiment branch
-4. If **Avg** (mean of GSM8k Strict, GSM8k Flex, MBPP, MBPP+) exceeds baseline Avg by ~0.5% (i.e., Avg >= ~72.5%): create a PR to main with results summary
-5. If Avg improvement is less than ~0.5%: document learnings, move on
+3. Regenerate the results plot:
+   ```bash
+   python autoresearch/plot_results.py
+   ```
+   This reads all `experiments/*/results.md` files and produces `autoresearch/results_plot.png`.
+4. Git commit all changes on the experiment branch
+5. If **Avg** (mean of GSM8k Strict, GSM8k Flex, MBPP, MBPP+) in the 32-step table exceeds baseline Avg by ~0.5% (i.e., Avg >= ~72.5%): create a PR to main with results summary
+6. If Avg improvement is less than ~0.5%: document learnings, move on
+7. Note improvements at 1-step and 16-step tables too — an idea that helps lower-step regimes is valuable even if 32-step is flat
 
 ## Evaluation Criteria
 

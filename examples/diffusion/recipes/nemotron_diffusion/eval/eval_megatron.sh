@@ -139,11 +139,21 @@ block_lengths=()
 shift_logits=()
 checkpoint_paths=()
 tp_sizes=()
+steps_per_blocks=()
+
+# --- Parse steps-per-block into array ---
+IFS=',' read -ra STEPS_PER_BLOCK_LIST <<< "${STEPS_PER_BLOCK:-32}"
+echo "Steps/block: ${STEPS_PER_BLOCK_LIST[*]}"
 
 if [ -n "${CUSTOM_CHECKPOINT:-}" ]; then
     _name="${CUSTOM_EXP_NAME:-custom_checkpoint}"
     for _mode in "${MODES[@]}"; do
-        exp_names+=("${_name}_${_mode}")
+      for _spb in "${STEPS_PER_BLOCK_LIST[@]}"; do
+        if [ "${_mode}" = "dllm" ] && [ "${#STEPS_PER_BLOCK_LIST[@]}" -gt 1 ]; then
+            exp_names+=("${_name}_sbd${_spb}_${_mode}")
+        else
+            exp_names+=("${_name}_${_mode}")
+        fi
         eval_modes+=("${_mode}")
         if [ "${_mode}" = "dllm" ]; then
             block_lengths+=(32)
@@ -154,11 +164,18 @@ if [ -n "${CUSTOM_CHECKPOINT:-}" ]; then
         fi
         checkpoint_paths+=("${CUSTOM_CHECKPOINT}")
         tp_sizes+=(1)
+        steps_per_blocks+=("${_spb}")
+      done
     done
 else
     for _expt in "${EXPT_LIST[@]}"; do
         for _mode in "${MODES[@]}"; do
-            exp_names+=("ministral_${_expt}_${_mode}")
+          for _spb in "${STEPS_PER_BLOCK_LIST[@]}"; do
+            if [ "${_mode}" = "dllm" ] && [ "${#STEPS_PER_BLOCK_LIST[@]}" -gt 1 ]; then
+                exp_names+=("ministral_${_expt}_sbd${_spb}_${_mode}")
+            else
+                exp_names+=("ministral_${_expt}_${_mode}")
+            fi
             eval_modes+=("${_mode}")
             if [ "${_mode}" = "dllm" ]; then
                 block_lengths+=(32)
@@ -169,6 +186,8 @@ else
             fi
             checkpoint_paths+=("${MEGATRON_EXP_ROOT}/ministral_${_expt}_/iter_0012500")
             tp_sizes+=(1)
+            steps_per_blocks+=("${_spb}")
+          done
         done
     done
 fi
@@ -255,6 +274,7 @@ build_eval_command() {
     local shift_log="${shift_logits[$model_idx]}"
     local ckpt="${checkpoint_paths[$model_idx]}"
     local tp="${tp_sizes[$model_idx]}"
+    local spb="${steps_per_blocks[$model_idx]}"
 
     local task="${tasks[$task_idx]}"
     local nshot="${nshots[$task_idx]}"
@@ -277,7 +297,7 @@ build_eval_command() {
     MODEL_ARGS="${MODEL_ARGS},eval_mode=${eval_mode}"
     MODEL_ARGS="${MODEL_ARGS},max_new_tokens=${max_new_tok}"
     MODEL_ARGS="${MODEL_ARGS},max_sequence_length=4096"
-    MODEL_ARGS="${MODEL_ARGS},steps_per_block=${STEPS_PER_BLOCK:-32}"
+    MODEL_ARGS="${MODEL_ARGS},steps_per_block=${spb}"
     MODEL_ARGS="${MODEL_ARGS},temperature=${cur_temp}"
     MODEL_ARGS="${MODEL_ARGS},block_length=${block_length}"
     MODEL_ARGS="${MODEL_ARGS},shift_logits=${shift_log}"
