@@ -161,16 +161,38 @@ def main(
         console.print(f"[yellow]Expert parallel size: {model_provider.expert_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/yellow]")
 
+    # ── Weight verification ────────────────────────────────────────────────
+    #
+    # IMPORTANT — HF state-dict keys vs. export keys:
+    #
+    #   The keys yielded by `export_hf_weights` are the *logical* HF parameter
+    #   names (e.g. "model.layers.0.mlp.experts.gate_up_proj").  These do NOT
+    #   always exist as literal keys in the safetensors files.  Several models
+    #   store weights in a transformed representation:
+    #
+    #   * GPT-OSS MXFP4  — safetensors contain "gate_up_proj_blocks" and
+    #     "gate_up_proj_scales"; the plain "gate_up_proj" key is synthesised
+    #     by the bridge during import (via maybe_modify_loaded_hf_weight).
+    #
+    #   * Kimi-K2.5-VL INT4  — safetensors contain "weight_packed",
+    #     "weight_scale", and "weight_shape"; the plain "weight" key is
+    #     synthesised by build_conversion_tasks.
+    #
+    #   When verifying, we compare against the *original* HF state dict.  If
+    #   the export key is missing from that dict, the weight was loaded from a
+    #   quantised/packed representation — dequantisation is lossy and the
+    #   resulting tensor shapes may also differ, so we skip verification for
+    #   these params and report a warning.
+    #
+    # ──────────────────────────────────────────────────────────────────────
     all_match = True
     hf_state_dict = bridge.hf_pretrained.state
     hf_all_keys = set(hf_state_dict.source.get_all_keys()) if hasattr(hf_state_dict, "source") else set()
     skipped_count = 0
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
-            # Grouped-export or quantized models may yield keys that don't exist
-            # directly in the HF state dict (e.g. GPT-OSS MXFP4 stores
-            # "gate_up_proj_blocks"/"_scales" but export yields "gate_up_proj").
-            # Skip verification for these — dequantization is lossy and shapes differ.
+            # See note above — skip keys that don't exist directly in the HF
+            # safetensors (quantised/packed representations).
             if name not in hf_all_keys:
                 skipped_count += 1
                 table.add_row(
