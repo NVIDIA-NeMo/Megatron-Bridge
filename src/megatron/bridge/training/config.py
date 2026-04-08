@@ -602,6 +602,15 @@ class CheckpointConfig(MTrainCheckpointConfig):
     worker thread/process for handling async saves. When disabled, uses temporal workers that are
     created and destroyed for each save operation."""
 
+    async_strategy: str = "nvrx"
+    """Async checkpoint strategy to use. Options: ``"nvrx"`` (default) or ``"mcore"``.
+    The ``"nvrx"`` strategy uses nvidia_resiliency_ext for async checkpointing and falls back
+    to ``"mcore"`` if the package is not installed."""
+
+    async_write_results_mp_mode: str = "fork"
+    """Multiprocessing start method for the async write results queue.
+    Options: ``"fork"`` (default), ``"spawn"``, ``"forkserver"``."""
+
     strict_fsdp_dtensor_load: bool = False
     """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
 
