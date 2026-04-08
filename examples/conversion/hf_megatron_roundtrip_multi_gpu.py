@@ -187,7 +187,10 @@ def main(
     # ──────────────────────────────────────────────────────────────────────
     all_match = True
     hf_state_dict = bridge.hf_pretrained.state
-    hf_all_keys = set(hf_state_dict.source.get_all_keys()) if hasattr(hf_state_dict, "source") else set()
+    if hasattr(hf_state_dict, "source"):
+        hf_all_keys = set(hf_state_dict.source.get_all_keys())
+    else:
+        hf_all_keys = set(hf_state_dict.keys())
     skipped_count = 0
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
@@ -292,6 +295,7 @@ if __name__ == "__main__":
         args.megatron_save_path,
         args.megatron_load_path,
         args.trust_remote_code,
+        strict=not args.not_strict,
         skip_save=args.skip_save,
     )
 

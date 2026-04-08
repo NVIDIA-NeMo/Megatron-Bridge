@@ -77,6 +77,13 @@ grad norms) instead of raising an error.
 Always add a sanity check in the verification workflow (e.g., print `std` of a weight tensor —
 quantized models typically have `std ≈ 13` before dequantization vs `std ≈ 0.006` after).
 
+**Important — Virtual/synthesized keys:** When a bridge's `maybe_modify_loaded_hf_weight` or
+`build_conversion_tasks` synthesizes plain weight keys from quantized representations (e.g.
+`gate_up_proj` from `gate_up_proj_blocks`+`_scales`), the synthesized key does NOT exist in the
+actual safetensors files. This means `hf_pretrained.state[synthesized_key]` will KeyError.
+Code that iterates over export keys and looks them up in the HF state dict must check
+`key in hf_all_keys` first. See `llm-patterns.md` for the full table of known patterns.
+
 ## Phase 2: Bridge Support
 
 ### File structure

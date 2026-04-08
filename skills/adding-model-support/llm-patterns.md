@@ -205,6 +205,29 @@ def maybe_modify_converted_hf_weight(self, task, converted_weights_dict, hf_stat
     return converted_weights_dict
 ```
 
+> **PITFALL — HF state-dict keys vs safetensors keys:**
+>
+> Some HF checkpoints store weights in a quantized or packed representation.
+> The safetensors files do NOT contain the "plain" weight key — they contain
+> derived keys (blocks, scales, shape, etc.). The bridge synthesizes the plain
+> key at import time via `maybe_modify_loaded_hf_weight` or
+> `build_conversion_tasks`.
+>
+> | Model | Safetensors Keys | Synthesized Key | Bridge Hook |
+> |---|---|---|---|
+> | GPT-OSS (MXFP4) | `gate_up_proj_blocks`, `gate_up_proj_scales` | `gate_up_proj` | `maybe_modify_loaded_hf_weight` dequantizes MXFP4 |
+> | Kimi-K2.5-VL (INT4) | `weight_packed`, `weight_scale`, `weight_shape` | `weight` | `build_conversion_tasks` injects virtual keys |
+>
+> This means:
+> - `hf_pretrained.state[name]` will **KeyError** if `name` is a synthesized key
+> - `export_hf_weights` yields the synthesized name, not the quantized variants
+> - Dequantization is lossy — round-tripped tensors won't bit-match the original
+> - Shapes may differ (e.g. MXFP4 dequant → 2D flat vs grouped export → 3D)
+>
+> Always inspect actual safetensors keys with `safe_open()` when debugging
+> weight mismatches. Compare against `bridge.hf_pretrained.state.source.get_all_keys()`
+> to identify synthesized/virtual keys.
+
 ## Registration Options
 
 | Parameter | Required | Description |
