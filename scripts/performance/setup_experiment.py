@@ -246,6 +246,7 @@ def main(
     kubeflow_image_pull_secrets: List[str],
     config_variant: str = "v1",
     gres: Optional[str] = None,
+    packager: str = "git",
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -363,6 +364,7 @@ def main(
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
             wandb_key=wandb_key,
+            packager=packager,
         )
 
     plugins = []
@@ -689,4 +691,5 @@ if __name__ == "__main__":
         kubeflow_image_pull_secrets=args.kubeflow_image_pull_secrets,
         config_variant=config_variant,
         gres=args.gres,
+        packager=args.packager,
     )
