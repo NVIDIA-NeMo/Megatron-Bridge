@@ -17,6 +17,7 @@
 import glob
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -63,20 +64,35 @@ logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't s
 
 
 def check_training_finished(log_file_paths: List[str]) -> bool:
-    """Check if training is finished."""
-    all_lines = []
+    """Check if training is finished.
+
+    Returns True if a clean-exit marker is found, or if the last logged iteration
+    matches the total number of iterations (catches jobs that completed all training
+    steps but hung on teardown before printing the exit marker).
+    """
+    found_exit_marker = False
+    max_iter_seen = 0
+    total_iters = None
+
     for log_path in log_file_paths:
         with open(log_path, "r", errors="replace") as f:
             for line in f:
-                all_lines.append(
-                    (
-                        "StopIteration" in line
-                        or "after training is done" in line
-                        or "exiting program at iteration" in line
-                        or "AssertionError: no samples left to consume:" in line
-                    )
-                )
-    return any(all_lines)
+                if (
+                    "StopIteration" in line
+                    or "after training is done" in line
+                    or "exiting program at iteration" in line
+                    or "AssertionError: no samples left to consume:" in line
+                ):
+                    found_exit_marker = True
+
+                m = re.search(r"iteration\s+(\d+)/\s*(\d+)", line)
+                if m:
+                    current, total = int(m.group(1)), int(m.group(2))
+                    max_iter_seen = max(max_iter_seen, current)
+                    total_iters = total
+
+    all_steps_trained = total_iters is not None and max_iter_seen >= total_iters
+    return found_exit_marker or all_steps_trained
 
 
 def check_slurm_timeout(log_file_path: str) -> bool:
