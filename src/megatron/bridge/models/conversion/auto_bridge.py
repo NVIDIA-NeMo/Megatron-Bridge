@@ -1207,6 +1207,7 @@ class AutoBridge(Generic[MegatronModelT]):
                     peft_class = VLMLoRA
                 allowed_keys = {
                     "target_modules",
+                    "exclude_modules",
                     "dim",
                     "alpha",
                     "dropout",
