@@ -616,6 +616,8 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
     batch["audio_inputs"] = audio_inputs
 
     return batch
+
+
 def _expand_image_tokens(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
