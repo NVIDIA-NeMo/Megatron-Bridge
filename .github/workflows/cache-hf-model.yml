@@ -20,10 +20,6 @@ on:
         type: string
         description: HuggingFace repo ID of the model to cache
         required: true
-      trust-remote-code:
-        type: boolean
-        description: "Pass trust_remote_code=True when loading the model (required for models with custom code)."
-        default: false
 
 jobs:
   download:
@@ -43,8 +39,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          TRANSFORMERS_VERSION=$(grep -E 'transformers[[:space:]]*[=><!~]+' ${GITHUB_WORKSPACE}/pyproject.toml | sed -E 's/.*transformers[[:space:]]*([=><!~]+)[[:space:]]*"?([0-9a-zA-Z\.\-\*]+)"?.*/\1\2/')
-          pip install torch "transformers${TRANSFORMERS_VERSION}" "huggingface_hub[cli]"
+          pip install "huggingface_hub[cli]"
 
       - name: Log in to HuggingFace
         env:
@@ -55,10 +50,8 @@ jobs:
       - name: Download model
         env:
           MODEL_ID: ${{ github.event.inputs.hf-model-id }}
-          TRUST_REMOTE_CODE: ${{ github.event.inputs.trust-remote-code }}
         shell: python
         run: |
           import os
-          from transformers import AutoModel
-          trust_remote_code = os.getenv("TRUST_REMOTE_CODE", "false").lower() == "true"
-          _ = AutoModel.from_pretrained(os.getenv("MODEL_ID"), trust_remote_code=trust_remote_code)
+          from huggingface_hub import snapshot_download
+          snapshot_download(repo_id=os.getenv("MODEL_ID"))
