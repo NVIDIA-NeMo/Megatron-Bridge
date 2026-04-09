@@ -790,10 +790,8 @@ def main():
     _log("launching pretrain_mimo")
     pretrain_mimo(
         cfg=cfg,
-        mimo_provider=mimo_provider,
         forward_step_func=mimo_forward_step,
         build_data_iterators_fn=_build_data_iterators,
-        opt_config=mcore_opt_config,
     )
 
     _log("PASSED")
