@@ -101,10 +101,13 @@ class GLM45Bridge(MegatronModelBridge):
 
     def build_conversion_tasks(self, hf_pretrained, megatron_model):
         """Override to store config before mapping_registry is called."""
+        from transformers import PretrainedConfig
+
         # Store config on instance for use in mapping_registry
-        self._hf_config = hf_pretrained.config
-        self._hf_state_source = hf_pretrained.state.source
-        self._hf_keys = list(self._hf_state_source.get_all_keys())
+        self._hf_config = hf_pretrained if isinstance(hf_pretrained, PretrainedConfig) else hf_pretrained.config
+        has_state = hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")
+        self._hf_state_source = hf_pretrained.state.source if has_state else None
+        self._hf_keys = list(self._hf_state_source.get_all_keys()) if self._hf_state_source else None
         return super().build_conversion_tasks(hf_pretrained, megatron_model)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
@@ -330,7 +333,9 @@ class GLM45Bridge(MegatronModelBridge):
         if hf_source is not None:
             return hf_source.has_glob("*mlp.experts.gate_up_proj*") or hf_source.has_glob("*mlp.experts.down_proj*")
 
-        return False
+        # Config-only path (no HF weights to inspect): GLM 4.5 HuggingFace models
+        # always use fused expert weights (gate_up_proj / down_proj), so default True.
+        return True
 
     def _hf_expert_suffix(self, base_name: str) -> str:
         hf_keys = getattr(self, "_hf_keys", None) or []
@@ -341,4 +346,5 @@ class GLM45Bridge(MegatronModelBridge):
         if hf_source is not None and hf_source.has_glob(f"*{base_name}.weight"):
             return ".weight"
 
+        # Config-only path: GLM 4.5 fused expert tensors have no .weight suffix.
         return ""

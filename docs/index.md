@@ -8,6 +8,7 @@
 
 parallelisms.md
 performance-summary.md
+performance-summary-archive.md
 performance-guide.md
 recipe-usage.md
 nemo2-migration-guide.md
@@ -80,6 +81,7 @@ apidocs/index.rst
 :caption: Releases
 :hidden:
 
+releases/release-process.md
 releases/software-versions.md
 releases/changelog.md
 releases/known-issues.md
