@@ -38,13 +38,13 @@ bash -c '{{ pre_cmds }} {{ command }}'
 
 PERF_ENV_VARS = {
     "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",  # Disable caching NCCL communication buffer memory
-    "TRANSFORMERS_OFFLINE": "1",  # Disable online downloads from HuggingFace
+    "TRANSFORMERS_OFFLINE": "1",  # Default for benchmark runs that mostly use NullTokenizer.
     "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
     "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
     "NVTE_NORM_FWD_USE_CUDNN": "1",
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
-    "HF_HUB_OFFLINE": "0",
+    "HF_HUB_OFFLINE": "0",  # Keep HF Hub online by default; --offline flips this to 1.
 }
 
 
@@ -61,12 +61,14 @@ def slurm_executor(
     custom_env_vars: Dict[str, str] = {},
     custom_srun_args: List[str] = [],
     hf_token: str = None,
+    offline: bool = False,
     nemo_home: str = DEFAULT_NEMO_HOME,
     wandb_key: str = None,
     network: str = None,
     custom_bash_cmds: List[List[str]] = None,
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
+    packager: str = "git",
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -86,6 +88,7 @@ def slurm_executor(
     srun_args = custom_srun_args.copy() + [
         "--mpi=pmix",
         "--no-container-mount-home",
+        "--container-writable",  # Required on clusters using Enroot defaults, where ENROOT_ROOTFS_WRITABLE=no.
     ]
 
     if log_dir is not None:
@@ -96,20 +99,26 @@ def slurm_executor(
                 f"Logs will be written to {get_nemorun_home()}, which is probably not desired.  export NEMORUN_HOME in your shell environment or use the --log_dir argument"
             )
 
+    perf_env = PERF_ENV_VARS.copy()
+
     if wandb_key is not None:
-        PERF_ENV_VARS["WANDB_API_KEY"] = wandb_key
+        perf_env["WANDB_API_KEY"] = wandb_key
 
     if gpu.lower() == "gb200":
-        PERF_ENV_VARS["NCCL_NET_GDR_LEVEL"] = "PHB"  # For NCCL 2.25
-        PERF_ENV_VARS["NCCL_NET_GDR_C2C"] = "1"  # For NCCL 2.26
+        perf_env["NCCL_NET_GDR_LEVEL"] = "PHB"  # For NCCL 2.25
+        perf_env["NCCL_NET_GDR_C2C"] = "1"  # For NCCL 2.26
 
     if nemo_home != DEFAULT_NEMO_CACHE_HOME:  # DO NOT change this to 'DEFAULT_NEMO_HOME'/'NEMO_HOME'
-        PERF_ENV_VARS["NEMO_HOME"] = nemo_home
+        perf_env["NEMO_HOME"] = nemo_home
         mounts.extend([f"{nemo_home}:{nemo_home}"])
     if hf_token is not None:
-        PERF_ENV_VARS.update({"HF_TOKEN": hf_token, "TRANSFORMERS_OFFLINE": "0"})
+        # Enable authenticated online access for tokenizer/config paths.
+        perf_env.update({"HF_TOKEN": hf_token, "TRANSFORMERS_OFFLINE": "0"})
+    if offline:
+        # Disable HF Hub network calls. Requires a pre-populated local HF cache.
+        perf_env["HF_HUB_OFFLINE"] = "1"
 
-    PERF_ENV_VARS.update(custom_env_vars)
+    perf_env.update(custom_env_vars)
     mounts.extend(custom_mounts)
 
     # add --segment flag to sbatch if job uses GB200.
@@ -143,12 +152,13 @@ def slurm_executor(
         gres=gres,
         container_image=container_image,
         container_mounts=mounts,
-        env_vars=PERF_ENV_VARS,
+        env_vars=perf_env,
+        container_env=sorted(perf_env.keys()),
         srun_args=srun_args,
         time=time_limit,
         mem="0",
         exclusive=True,
-        packager=run.GitArchivePackager(include_submodules=False),
+        packager=run.GitArchivePackager(include_submodules=False) if packager == "git" else run.Packager(),
         segment=segment,
         network=network,
         launcher=launcher,

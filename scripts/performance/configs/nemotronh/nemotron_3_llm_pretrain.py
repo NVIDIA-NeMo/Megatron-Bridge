@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import logging
+import os
 
+from megatron.core.quantization.utils import load_quantization_recipe
 from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 from utils.utils import get_workload_base_config
@@ -34,14 +36,22 @@ def set_nemotron_3_nano_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def set_nemotron_3_super_common_configs(cfg: ConfigContainer) -> None:
-    """Set common performance configurations for all Nemotron 3 Super configs."""
+def set_nemotron_3_super_common_configs(cfg: ConfigContainer, precision: str) -> None:
+    """Common Nemotron 3 Super pretrain perf settings; restores model recipe fields for ``precision``."""
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.checkpoint.async_save = False
+
+    if precision.lower() == "nvfp4":
+        cfg.mixed_precision.first_last_layers_bf16 = True
+        cfg.mixed_precision.num_layers_at_end_in_bf16 = 14
+        cfg.model.quant_recipe = load_quantization_recipe(os.path.join(os.path.dirname(__file__), "te_quant.cfg"))
+
+    if precision.lower() in ("nvfp4", "fp8_mx"):
+        cfg.model.moe_router_padding_for_quantization = True
 
 
 def nemotron_3_super_pretrain_config_gb300(
@@ -60,7 +70,7 @@ def nemotron_3_super_pretrain_config_gb300(
 
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = precision_config
-    set_nemotron_3_super_common_configs(cfg)
+    set_nemotron_3_super_common_configs(cfg, precision)
     set_workload_base_configs(cfg, base_cfg)
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
@@ -84,7 +94,7 @@ def nemotron_3_super_pretrain_config_gb200(
 
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = precision_config
-    set_nemotron_3_super_common_configs(cfg)
+    set_nemotron_3_super_common_configs(cfg, precision)
     set_workload_base_configs(cfg, base_cfg)
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
@@ -108,7 +118,7 @@ def nemotron_3_super_pretrain_config_b300(
 
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = precision_config
-    set_nemotron_3_super_common_configs(cfg)
+    set_nemotron_3_super_common_configs(cfg, precision)
     set_workload_base_configs(cfg, base_cfg)
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
@@ -132,7 +142,7 @@ def nemotron_3_super_pretrain_config_b200(
 
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = precision_config
-    set_nemotron_3_super_common_configs(cfg)
+    set_nemotron_3_super_common_configs(cfg, precision)
     set_workload_base_configs(cfg, base_cfg)
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend

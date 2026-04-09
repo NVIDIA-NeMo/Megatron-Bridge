@@ -171,6 +171,10 @@ def main(
             if any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
+            # Some bridges intentionally transpose on export (e.g. GPT-OSS down_proj).
+            # Align shapes before comparing so the roundtrip check doesn't crash.
+            if compare_param.shape != compare_original.shape:
+                compare_original = compare_original.transpose(-1, -2)
             match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
             all_match = all_match and match
             table.add_row(

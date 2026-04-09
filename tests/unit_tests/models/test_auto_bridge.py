@@ -434,7 +434,7 @@ class TestAutoBridge:
 
         assert bridge is second_bridge
         assert second_bridge.hf_model_id == hf_model_id
-        mock_auto_cfg.assert_called_once_with(hf_model_id, trust_remote_code=True)
+        mock_auto_cfg.assert_called_once_with(hf_model_id, trust_remote_code=False)
         mock_load_cfg.assert_called_once_with(str(ckpt_dir))
         mock_conform.assert_called_once_with({"vocab_size": 64000}, {"vocab_size": 32000})
 
