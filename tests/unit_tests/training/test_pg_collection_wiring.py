@@ -33,10 +33,11 @@ def test_should_skip_iteration_uses_passed_pg_collection(monkeypatch):
     state = GlobalState()
 
     # Set up a minimal config needed by _should_skip_and_handle_iteration
-    # We skip step 0 so that the function executes the skip path.
+    # iterations_to_skip uses 1-based iteration numbers (matching MLM convention).
+    # {1} means "skip the 1st iteration", which fires when step=0 (step+1==1).
     state.cfg = SimpleNamespace(
         train=SimpleNamespace(
-            iterations_to_skip={0},
+            iterations_to_skip={1},
             micro_batch_size=4,
             exit_signal=signal.SIGTERM,
         )
