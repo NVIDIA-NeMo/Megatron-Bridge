@@ -205,10 +205,25 @@ def main(
             elif compare_param.dtype != compare_original.dtype or any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
+                # Some bridges intentionally transpose on export (e.g. GPT-OSS down_proj).
+                # Only align when shapes are an exact transposition to avoid masking real bugs.
+                if (
+                    compare_param.ndim == 2
+                    and compare_original.ndim == 2
+                    and compare_param.shape == compare_original.shape[::-1]
+                ):
+                    compare_original = compare_original.T
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
             # --- Case 3: regular param → direct allclose ---
             else:
+                # Some bridges intentionally transpose on export (e.g. GPT-OSS down_proj).
+                if (
+                    compare_param.ndim == 2
+                    and compare_original.ndim == 2
+                    and compare_param.shape == compare_original.shape[::-1]
+                ):
+                    compare_original = compare_original.T
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
             all_match = all_match and match
