@@ -205,24 +205,36 @@ def main(
             elif compare_param.dtype != compare_original.dtype or any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
-                # Some bridges intentionally transpose on export (e.g. GPT-OSS down_proj).
-                # Only align when shapes are an exact transposition to avoid masking real bugs.
+                # TODO: Fix bridges so that exported shapes always match the original HF
+                # checkpoint. This transpose workaround exists for GPT-OSS down_proj which
+                # intentionally transposes on export; remove once the bridge handles it.
                 if (
                     compare_param.ndim == 2
                     and compare_original.ndim == 2
                     and compare_param.shape == compare_original.shape[::-1]
                 ):
+                    console.print(
+                        f"[yellow]WARNING: {name} has transposed shape "
+                        f"{tuple(compare_original.shape)} → {tuple(compare_param.shape)}, "
+                        f"auto-transposing for comparison[/yellow]"
+                    )
                     compare_original = compare_original.T
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
             # --- Case 3: regular param → direct allclose ---
             else:
-                # Some bridges intentionally transpose on export (e.g. GPT-OSS down_proj).
+                # TODO: Same transpose workaround as Case 2 above — remove once bridges
+                # export shapes that match the original HF checkpoint.
                 if (
                     compare_param.ndim == 2
                     and compare_original.ndim == 2
                     and compare_param.shape == compare_original.shape[::-1]
                 ):
+                    console.print(
+                        f"[yellow]WARNING: {name} has transposed shape "
+                        f"{tuple(compare_original.shape)} → {tuple(compare_param.shape)}, "
+                        f"auto-transposing for comparison[/yellow]"
+                    )
                     compare_original = compare_original.T
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
