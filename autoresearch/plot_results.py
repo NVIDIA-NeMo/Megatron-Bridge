@@ -86,7 +86,7 @@ def plot_steps_scaling(all_results: Dict, output_path: str):
     ax.set_ylabel("Avg Score (%)", fontsize=11)
     ax.set_title("Quality vs Denoising Steps", fontsize=13, fontweight="bold")
     ax.set_xticks(sorted({s for exp in all_results.values() for s in exp}))
-    ax.set_ylim(0, 100)
+    ax.set_ylim(0, 80)
     ax.grid(alpha=0.3)
     ax.legend(fontsize=9)
     fig.tight_layout()

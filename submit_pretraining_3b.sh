@@ -125,6 +125,7 @@ for ((i=1; i<=N_JOBS; i++)); do
   dataset.path_to_cache=${USER_PATH}/${USER}/megatron_exp/data_cache \
   checkpoint.save=${USER_PATH}/${USER}/megatron_exp/${JOB_NAME} \
   checkpoint.load=${USER_PATH}/${USER}/megatron_exp/${JOB_NAME} \
+  train.exit_signal_handler=true \
   --model-size 3b"
 
     if [ -n "$TRAIN_ITERS" ]; then
