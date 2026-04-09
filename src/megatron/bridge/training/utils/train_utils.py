@@ -348,6 +348,7 @@ def training_log(
     history_wct: list,
     model: list[MegatronModule],
     log_max_attention_logit: Optional[float] = None,
+    loaded_iteration: int = 0,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -833,7 +834,10 @@ def training_log(
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
-            report_memory_flag = False
+            if iteration > (loaded_iteration + 1):
+                # Make sure the memory after the second iteration is reported
+                # to include optimizer state memory.
+                report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 
     return report_memory_flag
