@@ -75,17 +75,22 @@ IGNORE_PRECISION_PARAMS = [
 # FP8 dtypes whose dequantisation is inherently lossy — allclose is meaningless.
 _FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
 
-# Bridges whose export intentionally transposes certain weights.
-_TRANSPOSE_MODEL_TYPES = {"gpt_oss"}
+# TODO: Fix GPT-OSS bridge so exported shapes match HF; remove this workaround.
+# Maps MODEL_TYPE → set of HF param suffixes known to be transposed on export.
+_TRANSPOSED_PARAMS: dict[str, set[str]] = {
+    "gpt_oss": {"mlp.experts.down_proj"},
+}
 
 
 def _needs_transpose(bridge, name: str, exported: torch.Tensor, original: torch.Tensor) -> bool:
     """Return True if *original* should be transposed before comparison.
 
-    Only applies to bridges known to transpose on export (GPT-OSS down_proj).
-    Emits a warning so the workaround is visible in CI logs.
+    Only applies to specific (model_type, layer) pairs known to transpose on
+    export. Emits a warning so the workaround is visible in CI logs.
     """
-    if getattr(bridge, "MODEL_TYPE", None) not in _TRANSPOSE_MODEL_TYPES:
+    model_type = getattr(bridge, "MODEL_TYPE", None)
+    suffixes = _TRANSPOSED_PARAMS.get(model_type, set())
+    if not any(name.endswith(s) for s in suffixes):
         return False
     if exported.ndim != 2 or original.ndim != 2:
         return False
@@ -94,7 +99,7 @@ def _needs_transpose(bridge, name: str, exported: torch.Tensor, original: torch.
     console.print(
         f"[yellow]WARNING: {name} has transposed shape "
         f"{tuple(original.shape)} → {tuple(exported.shape)}, "
-        f"auto-transposing for comparison (model_type={bridge.MODEL_TYPE})[/yellow]"
+        f"auto-transposing for comparison (model_type={model_type})[/yellow]"
     )
     return True
 
