@@ -20,6 +20,10 @@ on:
         type: string
         description: HuggingFace repo ID of the model to cache
         required: true
+      trust-remote-code:
+        type: boolean
+        description: "Pass trust_remote_code=True when loading the model (required for models with custom code)."
+        default: false
 
 jobs:
   download:
@@ -51,8 +55,10 @@ jobs:
       - name: Download model
         env:
           MODEL_ID: ${{ github.event.inputs.hf-model-id }}
+          TRUST_REMOTE_CODE: ${{ github.event.inputs.trust-remote-code }}
         shell: python
         run: |
           import os
           from transformers import AutoModel
-          _ = AutoModel.from_pretrained(os.getenv("MODEL_ID"))
+          trust_remote_code = os.getenv("TRUST_REMOTE_CODE", "false").lower() == "true"
+          _ = AutoModel.from_pretrained(os.getenv("MODEL_ID"), trust_remote_code=trust_remote_code)
