@@ -72,7 +72,6 @@ def llama31_405b_pretrain_config_gb300(
         cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
-    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
     return cfg
 
