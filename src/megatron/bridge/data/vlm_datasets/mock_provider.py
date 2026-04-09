@@ -94,10 +94,8 @@ class MockVLMConversationProvider(DatasetProvider):
     def _make_base_examples(self) -> List[Dict[str, Any]]:
         rng = numpy.random.default_rng(seed=self.random_seed)
 
-        # Generate many diverse examples with short random responses so the model
+        # Generate many diverse examples with random responses so the model
         # cannot memorize the data in a few iterations (keeps grad_norm non-zero).
-        # Responses are kept short (10-30 words) to maintain similar sequence lengths
-        # as the original single-example mock, since the collate pads to batch-max.
         _VOCAB = (
             "the a is was are were have has had do does did will would could should "
             "may might can need to of in for on with at by from image shows depicts "
@@ -111,9 +109,19 @@ class MockVLMConversationProvider(DatasetProvider):
         ).split()
 
         num_examples = 1000
+
+        if self.pack_sequences_in_batch:
+            # When packing is enabled, produce examples with varied response lengths
+            # so that the packing logic concatenates sequences of different sizes.
+            resp_len_range = (10, 100)
+        else:
+            # Without packing, keep responses short (10-30 words) to maintain similar
+            # sequence lengths, since the collate pads to batch-max.
+            resp_len_range = (10, 30)
+
         examples = []
         for _ in range(num_examples):
-            resp_len = int(rng.integers(10, 30))
+            resp_len = int(rng.integers(*resp_len_range))
             response = " ".join(rng.choice(_VOCAB, size=resp_len))
             examples.append(self._make_single_example(rng, self.prompt, response))
 
