@@ -333,11 +333,17 @@ def parse_cli_args():
         "--tokenizer_model", type=str, help="Path to tokenizer model (automatically provided by launcher)"
     )
     tokenizer_args.add_argument("--vocab_size", type=int, default=32000, help="Vocabulary size for NullTokenizer")
-    tokenizer_args.add_argument(
+    hf_mode = tokenizer_args.add_mutually_exclusive_group()
+    hf_mode.add_argument(
         "-hf",
         "--hf_token",
         type=str,
         help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
+    )
+    hf_mode.add_argument(
+        "--offline",
+        action="store_true",
+        help="Enable offline HuggingFace Hub mode by setting HF_HUB_OFFLINE=1.",
     )
 
     # Parallelism
@@ -474,6 +480,15 @@ def parse_cli_args():
         help="Additional SLURM parameters as key=value pairs. "
         "Use semicolons (;) to separate parameters when values contain commas. "
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
+        required=False,
+    )
+    slurm_args.add_argument(
+        "--packager",
+        type=str,
+        choices=["git", "none"],
+        default="git",
+        help="How code is packaged for the job. 'git' snapshots the repo at submission time (default). "
+        "'none' skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.",
         required=False,
     )
 
