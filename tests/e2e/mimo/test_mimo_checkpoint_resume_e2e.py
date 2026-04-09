@@ -31,7 +31,6 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.vision.clip_vit_model import CLIPViTModel
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
-from megatron.core.optimizer.optimizer_config import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
@@ -251,16 +250,21 @@ def _build_config(
     max_dp = max(p.data_parallel_size for p in par_cfg.module_parallelisms.values())
 
     train_cfg = TrainingConfig(
-        micro_batch_size=1,
-        global_batch_size=max_dp,
+        micro_batch_size=max_dp,
+        global_batch_size=max_dp * max_dp,
         train_iters=train_iters,
     )
     train_cfg.num_microbatches = 1
-    train_cfg.grad_reduce_in_fp32 = False
-    train_cfg.overlap_grad_reduce = False
-    train_cfg.use_distributed_optimizer = True
-    train_cfg.check_for_nan_in_grad = False
     train_cfg.log_interval = 1
+
+    from megatron.core.distributed import DistributedDataParallelConfig
+
+    ddp_cfg = DistributedDataParallelConfig(
+        grad_reduce_in_fp32=False,
+        overlap_grad_reduce=False,
+        use_distributed_optimizer=True,
+        check_for_nan_in_grad=False,
+    )
 
     logger_cfg = LoggerConfig()
     logger_cfg.log_interval = 1
@@ -291,6 +295,7 @@ def _build_config(
         logger=logger_cfg,
         tokenizer=TokenizerConfig(),
         checkpoint=ckpt_cfg,
+        ddp=ddp_cfg,
     )
     cfg.data_parallel_size = max_dp
     return cfg
@@ -323,21 +328,12 @@ def _run_phase_save(ckpt_dir: str) -> None:
         mimo_provider.fp8 = None
 
     mock_data = _build_mock_data_provider()
-    bridge_opt = BridgeOptimizerConfig(lr=1e-4, use_distributed_optimizer=True)
-    mcore_opt = MCoreOptimizerConfig(
-        optimizer="adam",
-        lr=1e-4,
-        min_lr=0.0,
-        weight_decay=0.01,
-        clip_grad=1.0,
-        bf16=True,
-        use_distributed_optimizer=True,
-    )
+    opt_config = BridgeOptimizerConfig(lr=1e-4, min_lr=0.0, use_distributed_optimizer=True)
 
     cfg = _build_config(
         mimo_provider,
         mock_data,
-        bridge_opt,
+        opt_config,
         ckpt_dir,
         train_iters=SAVE_STEPS,
         save_interval=SAVE_STEPS,
@@ -347,11 +343,8 @@ def _run_phase_save(ckpt_dir: str) -> None:
 
     pretrain_mimo(
         cfg=cfg,
-        mimo_provider=mimo_provider,
         forward_step_func=mimo_forward_step,
         build_data_iterators_fn=_build_data_iterators,
-        opt_config=mcore_opt,
-        schedulers={},
         global_state=global_state,
     )
 
@@ -376,7 +369,6 @@ def _run_phase_save(ckpt_dir: str) -> None:
 
 def _run_phase_resume(ckpt_dir: str) -> None:
     """Phase 2: Resume from checkpoint, train to TOTAL_STEPS, verify continuity."""
-    rank = dist.get_rank()
     _log(f"Phase RESUME: loading from {ckpt_dir}, training to {TOTAL_STEPS} steps")
 
     marker_path = os.path.join(ckpt_dir, MARKER_FILE)
@@ -399,21 +391,12 @@ def _run_phase_resume(ckpt_dir: str) -> None:
         mimo_provider.fp8 = None
 
     mock_data = _build_mock_data_provider()
-    bridge_opt = BridgeOptimizerConfig(lr=1e-4, use_distributed_optimizer=True)
-    mcore_opt = MCoreOptimizerConfig(
-        optimizer="adam",
-        lr=1e-4,
-        min_lr=0.0,
-        weight_decay=0.01,
-        clip_grad=1.0,
-        bf16=True,
-        use_distributed_optimizer=True,
-    )
+    opt_config = BridgeOptimizerConfig(lr=1e-4, min_lr=0.0, use_distributed_optimizer=True)
 
     cfg = _build_config(
         mimo_provider,
         mock_data,
-        bridge_opt,
+        opt_config,
         ckpt_dir,
         train_iters=TOTAL_STEPS,
         save_interval=TOTAL_STEPS,
@@ -430,11 +413,8 @@ def _run_phase_resume(ckpt_dir: str) -> None:
 
     pretrain_mimo(
         cfg=cfg,
-        mimo_provider=mimo_provider,
         forward_step_func=mimo_forward_step,
         build_data_iterators_fn=_build_data_iterators,
-        opt_config=mcore_opt,
-        schedulers={},
         global_state=global_state,
     )
 

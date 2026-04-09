@@ -117,17 +117,17 @@ class TestPgCollectionForwarding:
 
     @patch("megatron.bridge.training.train.force_param_sync")
     @patch("megatron.bridge.training.train.should_disable_forward_pre_hook", return_value=False)
-    @patch("megatron.bridge.training.train.save_checkpoint")
     def test_save_checkpoint_and_time_forwards_pg_collection(
         self,
-        mock_save_checkpoint,
         mock_should_disable,
         mock_force_param_sync,
     ):
+        from megatron.bridge.training.checkpointing import CheckpointSaveContext
         from megatron.bridge.training.train import save_checkpoint_and_time
 
         state = _make_global_state()
         pg = Mock()
+        checkpoint_manager = MagicMock()
 
         save_checkpoint_and_time(
             state=state,
@@ -135,25 +135,27 @@ class TestPgCollectionForwarding:
             optimizer=Mock(),
             opt_param_scheduler=Mock(),
             num_floating_point_operations_so_far=0,
-            checkpointing_context={},
+            checkpoint_manager=checkpoint_manager,
             pg_collection=pg,
         )
 
-        _, kwargs = mock_save_checkpoint.call_args
-        assert kwargs["pg_collection"] is pg
+        checkpoint_manager.save.assert_called_once()
+        ctx = checkpoint_manager.save.call_args[0][0]
+        assert isinstance(ctx, CheckpointSaveContext)
+        assert ctx.pg_collection is pg
 
     @patch("megatron.bridge.training.train.force_param_sync")
     @patch("megatron.bridge.training.train.should_disable_forward_pre_hook", return_value=False)
-    @patch("megatron.bridge.training.train.save_checkpoint")
     def test_save_checkpoint_and_time_defaults_pg_collection_to_none(
         self,
-        mock_save_checkpoint,
         mock_should_disable,
         mock_force_param_sync,
     ):
+        from megatron.bridge.training.checkpointing import CheckpointSaveContext
         from megatron.bridge.training.train import save_checkpoint_and_time
 
         state = _make_global_state()
+        checkpoint_manager = MagicMock()
 
         save_checkpoint_and_time(
             state=state,
@@ -161,11 +163,12 @@ class TestPgCollectionForwarding:
             optimizer=Mock(),
             opt_param_scheduler=Mock(),
             num_floating_point_operations_so_far=0,
-            checkpointing_context={},
+            checkpoint_manager=checkpoint_manager,
         )
 
-        _, kwargs = mock_save_checkpoint.call_args
-        assert kwargs["pg_collection"] is None
+        ctx = checkpoint_manager.save.call_args[0][0]
+        assert isinstance(ctx, CheckpointSaveContext)
+        assert ctx.pg_collection is None
 
     @patch("megatron.bridge.training.train.save_checkpoint_and_time")
     @patch("megatron.bridge.training.train.barrier_and_log")
@@ -180,6 +183,7 @@ class TestPgCollectionForwarding:
 
         state = _make_global_state(save_interval=5, step=10)
         pg = Mock()
+        checkpoint_manager = MagicMock()
 
         checkpoint_and_decide_exit(
             state=state,
@@ -187,7 +191,7 @@ class TestPgCollectionForwarding:
             optimizer=Mock(),
             opt_param_scheduler=Mock(),
             num_floating_point_operations_so_far=0,
-            checkpointing_context={},
+            checkpoint_manager=checkpoint_manager,
             train_data_iterator=None,
             pg_collection=pg,
         )
@@ -204,35 +208,44 @@ class TestPgCollectionForwarding:
 class TestPretrainMimoSetup:
     """Verify pretrain_mimo properly initializes checkpointing runtime."""
 
-    @patch("megatron.bridge.training.pretrain_mimo.init_checkpointing_context")
-    @patch("megatron.bridge.training.pretrain_mimo.MultiModulePipelineCommunicator")
-    @patch("megatron.bridge.training.pretrain_mimo.get_model_config")
-    @patch("megatron.bridge.training.pretrain_mimo.validate_no_stub_ranks")
-    @patch("megatron.bridge.training.pretrain_mimo.build_pg_collection_for_schedule")
-    @patch("megatron.bridge.training.pretrain_mimo.get_module_to_grid_tuple")
-    @patch("torch.distributed.all_reduce")
-    @patch("torch.distributed.get_rank", return_value=0)
-    @patch("torch.distributed.get_world_size", return_value=2)
-    def test_setup_mimo_initializes_checkpointing_context(
+    @patch("megatron.bridge.training.setup_mimo.DefaultCheckpointManager")
+    @patch("megatron.bridge.training.setup_mimo.MultiModulePipelineCommunicator")
+    @patch("megatron.bridge.training.setup_mimo.get_model_config")
+    @patch("megatron.bridge.training.setup_mimo.validate_no_stub_ranks")
+    @patch("megatron.bridge.training.setup_mimo.build_pg_collection_for_schedule")
+    @patch("megatron.bridge.training.setup_mimo.get_module_to_grid_tuple")
+    @patch("megatron.bridge.training.setup_mimo._update_mimo_model_config_funcs")
+    @patch("megatron.bridge.training.setup_mimo.unwrap_mimo_model")
+    @patch("megatron.bridge.training.setup_mimo.dist")
+    def test_setup_mimo_initializes_checkpoint_manager(
         self,
-        mock_world_size,
-        mock_get_rank,
-        mock_all_reduce,
+        mock_dist,
+        mock_unwrap,
+        mock_update_config_funcs,
         mock_get_grid,
         mock_build_pg,
         mock_validate,
         mock_get_config,
         mock_communicator,
-        mock_init_ctx,
+        mock_default_ckpt_mgr,
     ):
-        from megatron.bridge.training.pretrain_mimo import setup_mimo
+        from megatron.bridge.training.setup_mimo import setup_mimo
 
-        mock_init_ctx.return_value = {"test": "context"}
+        mock_dist.get_rank.return_value = 0
+        mock_dist.get_world_size.return_value = 2
+
+        mock_mgr_instance = MagicMock()
+        mock_mgr_instance.checkpointing_context = {"test": "context"}
+        mock_default_ckpt_mgr.return_value = mock_mgr_instance
 
         model_config = Mock()
         model_config.pipeline_dtype = None
         model_config.bf16 = True
         mock_get_config.return_value = model_config
+
+        unwrapped = MagicMock()
+        unwrapped.mimo_config.module_to_grid_map = {"language": Mock()}
+        mock_unwrap.return_value = unwrapped
 
         global_state = Mock()
         global_state.start_time = time.time()
@@ -249,34 +262,52 @@ class TestPretrainMimoSetup:
         cfg.model.fp16 = False
         cfg.model.bf16 = True
 
-        provider = Mock()
         infra = Mock()
         infra.module_to_grid_map = {"language": Mock()}
         infra.topology = Mock()
+        infra.module_output_ndim = {"language": 3}
         infra.pg_collections = {"language": Mock()}
-        provider.build_infra.return_value = infra
-        provider.provide_distributed_model.return_value = [Mock()]
+        cfg.model.build_infra.return_value = infra
+        cfg.model.provide_distributed_model.return_value = [Mock()]
 
-        result = setup_mimo(cfg, provider, global_state=global_state)
+        with (
+            patch("megatron.bridge.training.setup_mimo._set_mimo_random_seeds"),
+            patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
+            patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
+        ):
+            result = setup_mimo(cfg=cfg, build_optimizer=False, global_state=global_state)
 
-        mock_init_ctx.assert_called_once_with(cfg.checkpoint)
+        mock_default_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
         global_state.initialize_async_checkpoint_worker.assert_called_once()
-        assert result.checkpointing_context == {"test": "context"}
+        assert result.checkpoint_manager is mock_mgr_instance
 
-    def test_rampup_guard_rejects_rampup_batch_size(self):
+    def test_pretrain_mimo_calls_runtime_config_update(self):
+        """pretrain_mimo should call mimo_runtime_config_update before setup."""
         from megatron.bridge.training.pretrain_mimo import pretrain_mimo
 
-        cfg = Mock()
-        cfg.train.rampup_batch_size = [100, 200, 300]
+        cfg = _make_pretrain_cfg()
 
-        with pytest.raises(AssertionError, match="Microbatch rampup is not supported"):
+        setup_output = _make_setup_output_for_load()
+
+        with (
+            patch("megatron.bridge.training.pretrain_mimo.mimo_runtime_config_update") as m_runtime,
+            patch("megatron.bridge.training.pretrain_mimo.setup_mimo", return_value=setup_output),
+            patch("megatron.bridge.training.pretrain_mimo.train_mimo"),
+            patch("megatron.bridge.training.pretrain_mimo._finish_train"),
+            patch("megatron.bridge.training.pretrain_mimo.dist") as m_dist,
+            patch("megatron.bridge.training.pretrain_mimo.checkpoint_exists", return_value=False),
+            patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
+        ):
+            m_dist.get_rank.return_value = 0
             pretrain_mimo(
                 cfg=cfg,
-                mimo_provider=Mock(),
                 forward_step_func=Mock(),
-                build_data_iterators_fn=Mock(),
-                opt_config=Mock(),
+                build_data_iterators_fn=Mock(return_value=(iter([]), None)),
+                global_state=setup_output.global_state,
             )
+            m_runtime.assert_called_once_with(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +320,6 @@ class TestNonColocatedGuard:
 
     @patch("megatron.bridge.training.train_mimo.build_pg_collection_for_schedule", return_value=Mock(spec=[]))
     @patch("megatron.bridge.training.train_mimo.get_module_to_grid_tuple")
-    @patch("megatron.bridge.training.train_mimo.get_model_config")
     @patch("megatron.bridge.training.train_mimo.prepare_forward_step_func")
     @patch("megatron.bridge.training.train_mimo.get_num_microbatches", return_value=1)
     @patch("torch.distributed.get_rank", return_value=0)
@@ -310,12 +340,11 @@ class TestNonColocatedGuard:
                 global_state=state,
                 mimo_infra=infra,
                 multimodule_communicator=Mock(),
-                checkpointing_context={},
+                checkpoint_manager=MagicMock(),
             )
 
     @patch("megatron.bridge.training.train_mimo.build_pg_collection_for_schedule", return_value=Mock(spec=[]))
     @patch("megatron.bridge.training.train_mimo.get_module_to_grid_tuple")
-    @patch("megatron.bridge.training.train_mimo.get_model_config")
     @patch("megatron.bridge.training.train_mimo.prepare_forward_step_func")
     @patch("megatron.bridge.training.train_mimo.get_num_microbatches", return_value=1)
     @patch("torch.distributed.get_rank", return_value=0)
@@ -336,7 +365,7 @@ class TestNonColocatedGuard:
                 global_state=state,
                 mimo_infra=infra,
                 multimodule_communicator=Mock(),
-                checkpointing_context={},
+                checkpoint_manager=MagicMock(),
             )
 
 
@@ -349,11 +378,9 @@ class TestTrainMimoCheckpointIntegration:
     """Verify train_mimo calls checkpoint_and_decide_exit with the right args."""
 
     @patch("megatron.bridge.training.train_mimo.checkpoint_and_decide_exit", return_value=False)
-    @patch("megatron.bridge.training.train_mimo.maybe_finalize_async_save")
     @patch("megatron.bridge.training.train_mimo.train_step_mimo")
     @patch("megatron.bridge.training.train_mimo.build_pg_collection_for_schedule")
     @patch("megatron.bridge.training.train_mimo.get_module_to_grid_tuple")
-    @patch("megatron.bridge.training.train_mimo.get_model_config")
     @patch("megatron.bridge.training.train_mimo.prepare_forward_step_func")
     @patch("megatron.bridge.training.train_mimo.get_num_microbatches", return_value=1)
     @patch("torch.distributed.get_rank", return_value=0)
@@ -364,19 +391,14 @@ class TestTrainMimoCheckpointIntegration:
         mock_rank,
         mock_num_mb,
         mock_prep_fwd,
-        mock_get_config,
         mock_get_grid,
         mock_build_pg,
         mock_train_step,
-        mock_async_finalize,
         mock_ckpt_exit,
     ):
         from megatron.bridge.training.train_mimo import train_mimo
 
         mock_train_step.return_value = ({}, 0, 0.0, 0)
-        mock_config = Mock()
-        mock_config.variable_seq_lengths = True
-        mock_get_config.return_value = mock_config
 
         pg = Mock()
         infra = Mock()
@@ -387,7 +409,7 @@ class TestTrainMimoCheckpointIntegration:
         mock_build_pg.return_value = Mock(spec=[])  # not a list
 
         state = _make_global_state(train_iters=1, step=0)
-        ctx = {"key": "value"}
+        ckpt_mgr = MagicMock()
         train_iter = Mock()
 
         train_mimo(
@@ -400,22 +422,20 @@ class TestTrainMimoCheckpointIntegration:
             global_state=state,
             mimo_infra=infra,
             multimodule_communicator=Mock(),
-            checkpointing_context=ctx,
+            checkpoint_manager=ckpt_mgr,
         )
 
         mock_ckpt_exit.assert_called_once()
         _, kwargs = mock_ckpt_exit.call_args
         assert kwargs["pg_collection"] is pg
-        assert kwargs["checkpointing_context"] is ctx
+        assert kwargs["checkpoint_manager"] is ckpt_mgr
         assert kwargs["train_data_iterator"] is train_iter
         assert kwargs["num_floating_point_operations_so_far"] == 0
 
     @patch("megatron.bridge.training.train_mimo.checkpoint_and_decide_exit", return_value=True)
-    @patch("megatron.bridge.training.train_mimo.maybe_finalize_async_save")
     @patch("megatron.bridge.training.train_mimo.train_step_mimo")
     @patch("megatron.bridge.training.train_mimo.build_pg_collection_for_schedule")
     @patch("megatron.bridge.training.train_mimo.get_module_to_grid_tuple")
-    @patch("megatron.bridge.training.train_mimo.get_model_config")
     @patch("megatron.bridge.training.train_mimo.prepare_forward_step_func")
     @patch("megatron.bridge.training.train_mimo.get_num_microbatches", return_value=1)
     @patch("torch.distributed.get_rank", return_value=0)
@@ -426,19 +446,14 @@ class TestTrainMimoCheckpointIntegration:
         mock_rank,
         mock_num_mb,
         mock_prep_fwd,
-        mock_get_config,
         mock_get_grid,
         mock_build_pg,
         mock_train_step,
-        mock_async_finalize,
         mock_ckpt_exit,
     ):
         from megatron.bridge.training.train_mimo import train_mimo
 
         mock_train_step.return_value = ({}, 0, 0.0, 0)
-        mock_config = Mock()
-        mock_config.variable_seq_lengths = True
-        mock_get_config.return_value = mock_config
 
         infra = Mock()
         infra.pg_collections = {"language": Mock()}
@@ -458,7 +473,7 @@ class TestTrainMimoCheckpointIntegration:
             global_state=state,
             mimo_infra=infra,
             multimodule_communicator=Mock(),
-            checkpointing_context={},
+            checkpoint_manager=MagicMock(),
         )
 
         # Should have exited after 1 iteration, not 100
@@ -466,11 +481,9 @@ class TestTrainMimoCheckpointIntegration:
         assert state.train_state.step == 1
 
     @patch("megatron.bridge.training.train_mimo.checkpoint_and_decide_exit", return_value=False)
-    @patch("megatron.bridge.training.train_mimo.maybe_finalize_async_save")
     @patch("megatron.bridge.training.train_mimo.train_step_mimo")
     @patch("megatron.bridge.training.train_mimo.build_pg_collection_for_schedule")
     @patch("megatron.bridge.training.train_mimo.get_module_to_grid_tuple")
-    @patch("megatron.bridge.training.train_mimo.get_model_config")
     @patch("megatron.bridge.training.train_mimo.prepare_forward_step_func")
     @patch("megatron.bridge.training.train_mimo.get_num_microbatches", return_value=1)
     @patch("torch.distributed.get_rank", return_value=0)
@@ -481,19 +494,14 @@ class TestTrainMimoCheckpointIntegration:
         mock_rank,
         mock_num_mb,
         mock_prep_fwd,
-        mock_get_config,
         mock_get_grid,
         mock_build_pg,
         mock_train_step,
-        mock_async_finalize,
         mock_ckpt_exit,
     ):
         from megatron.bridge.training.train_mimo import train_mimo
 
         mock_train_step.return_value = ({}, 0, 0.0, 0)
-        mock_config = Mock()
-        mock_config.variable_seq_lengths = True
-        mock_get_config.return_value = mock_config
 
         infra = Mock()
         infra.pg_collections = {"language": Mock()}
@@ -502,6 +510,7 @@ class TestTrainMimoCheckpointIntegration:
         mock_build_pg.return_value = Mock(spec=[])
 
         state = _make_global_state(train_iters=2, step=0)
+        ckpt_mgr = MagicMock()
 
         train_mimo(
             forward_step_func=Mock(),
@@ -513,24 +522,25 @@ class TestTrainMimoCheckpointIntegration:
             global_state=state,
             mimo_infra=infra,
             multimodule_communicator=Mock(),
-            checkpointing_context={},
+            checkpoint_manager=ckpt_mgr,
         )
 
-        # 2 non-blocking calls (top of each iteration) + 1 blocking call (shutdown)
-        assert mock_async_finalize.call_count == 3
+        # finalize_async_saves is called on the checkpoint_manager:
+        # 2 non-blocking calls (top of each iteration).
+        # The blocking shutdown call is now in _finish_train (pretrain_mimo.py).
+        assert ckpt_mgr.finalize_async_saves.call_count == 2
 
-        non_blocking_calls = [c for c in mock_async_finalize.call_args_list if c.kwargs.get("blocking") is False]
-        blocking_calls = [c for c in mock_async_finalize.call_args_list if c.kwargs.get("blocking") is True]
+        non_blocking_calls = [
+            c for c in ckpt_mgr.finalize_async_saves.call_args_list if c.kwargs.get("blocking") is False
+        ]
         assert len(non_blocking_calls) == 2
-        assert len(blocking_calls) == 1
-        assert blocking_calls[0].kwargs.get("terminate") is True
+        # The blocking shutdown call (blocking=True, terminate=True) is now in
+        # _finish_train (pretrain_mimo.py), tested separately.
 
     @patch("megatron.bridge.training.train_mimo.checkpoint_and_decide_exit", return_value=False)
-    @patch("megatron.bridge.training.train_mimo.maybe_finalize_async_save")
     @patch("megatron.bridge.training.train_mimo.train_step_mimo")
     @patch("megatron.bridge.training.train_mimo.build_pg_collection_for_schedule")
     @patch("megatron.bridge.training.train_mimo.get_module_to_grid_tuple")
-    @patch("megatron.bridge.training.train_mimo.get_model_config")
     @patch("megatron.bridge.training.train_mimo.prepare_forward_step_func")
     @patch("megatron.bridge.training.train_mimo.get_num_microbatches", return_value=1)
     @patch("torch.distributed.get_rank", return_value=0)
@@ -541,11 +551,9 @@ class TestTrainMimoCheckpointIntegration:
         mock_rank,
         mock_num_mb,
         mock_prep_fwd,
-        mock_get_config,
         mock_get_grid,
         mock_build_pg,
         mock_train_step,
-        mock_async_finalize,
         mock_ckpt_exit,
     ):
         """Verify there is no inline save_checkpoint call — all saves go through
@@ -553,9 +561,6 @@ class TestTrainMimoCheckpointIntegration:
         from megatron.bridge.training.train_mimo import train_mimo
 
         mock_train_step.return_value = ({}, 0, 0.0, 0)
-        mock_config = Mock()
-        mock_config.variable_seq_lengths = True
-        mock_get_config.return_value = mock_config
 
         infra = Mock()
         infra.pg_collections = {"language": Mock()}
@@ -565,25 +570,20 @@ class TestTrainMimoCheckpointIntegration:
 
         state = _make_global_state(save_interval=1, train_iters=3, step=0)
 
-        with patch("megatron.bridge.training.train_mimo.save_checkpoint_and_time") as mock_direct_save:
-            train_mimo(
-                forward_step_func=Mock(),
-                model=Mock(),
-                optimizer=Mock(),
-                schedulers={"language": _make_scheduler_mock()},
-                train_data_iterator=Mock(),
-                valid_data_iterator=None,
-                global_state=state,
-                mimo_infra=infra,
-                multimodule_communicator=Mock(),
-                checkpointing_context={},
-            )
+        train_mimo(
+            forward_step_func=Mock(),
+            model=Mock(),
+            optimizer=Mock(),
+            schedulers={"language": _make_scheduler_mock()},
+            train_data_iterator=Mock(),
+            valid_data_iterator=None,
+            global_state=state,
+            mimo_infra=infra,
+            multimodule_communicator=Mock(),
+            checkpoint_manager=MagicMock(),
+        )
 
-            # save_checkpoint_and_time should NOT be called directly from train_mimo.
-            # All saves should go through checkpoint_and_decide_exit.
-            mock_direct_save.assert_not_called()
-
-        # But checkpoint_and_decide_exit should have been called
+        # checkpoint_and_decide_exit should have been called
         assert mock_ckpt_exit.call_count == 3
 
 
@@ -616,6 +616,9 @@ def _make_setup_output_for_load(
     global_state.timers = timers
     global_state.train_state = train_state
 
+    mock_checkpoint_manager = MagicMock()
+    mock_checkpoint_manager.checkpointing_context = {"test": "context"}
+
     return SimpleNamespace(
         model=MagicMock(),
         mimo_infra=SimpleNamespace(
@@ -624,10 +627,14 @@ def _make_setup_output_for_load(
             topology=Mock(),
         ),
         multimodule_communicator=MagicMock(),
+        multimodule_pg_collection=MagicMock(),
+        module_to_grid_tuple=[(MagicMock(), MagicMock())],
+        optimizer=MagicMock(),
+        schedulers={},
         train_data_iterator=None,
         valid_data_iterator=None,
         global_state=global_state,
-        checkpointing_context={"test": "context"},
+        checkpoint_manager=mock_checkpoint_manager,
     )
 
 
@@ -650,6 +657,7 @@ def _make_pretrain_cfg(
         load=load_path,
         pretrained_checkpoint=pretrained_path,
         non_persistent_ckpt_type=non_persistent_ckpt_type,
+        save_rng=False,
     )
     cfg.scheduler = SimpleNamespace(
         lr_warmup_init=0.0,
@@ -679,7 +687,7 @@ def _run_pretrain_mimo(
     """Run pretrain_mimo with full mocking and return all mock handles.
 
     Returns dict with keys: setup_mimo, load_checkpoint, checkpoint_exists,
-    train_mimo, build_data_iterators_fn, unwrap.
+    train_mimo, build_data_iterators_fn.
     """
     from megatron.bridge.training.pretrain_mimo import pretrain_mimo
 
@@ -687,8 +695,8 @@ def _run_pretrain_mimo(
         cfg = _make_pretrain_cfg()
     if setup_output is None:
         setup_output = _make_setup_output_for_load()
-    if schedulers is None:
-        schedulers = {}
+    if schedulers is not None:
+        setup_output.schedulers = schedulers
     if build_data_iterators_fn is None:
         build_data_iterators_fn = Mock(return_value=(iter([]), None))
 
@@ -697,34 +705,25 @@ def _run_pretrain_mimo(
     with (
         patch("megatron.bridge.training.pretrain_mimo.train_mimo") as m_train,
         patch("megatron.bridge.training.pretrain_mimo.setup_mimo", return_value=setup_output) as m_setup,
-        patch("megatron.bridge.training.pretrain_mimo.unwrap_mimo_model") as m_unwrap,
         patch("megatron.bridge.training.pretrain_mimo.load_checkpoint") as m_load,
         patch(
             "megatron.bridge.training.pretrain_mimo.checkpoint_exists",
             return_value=checkpoint_exists_return,
         ) as m_ckpt_exists,
         patch("megatron.bridge.training.pretrain_mimo.dist") as m_dist,
-        patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
-        patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
-        patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer") as m_get_opt,
+        patch("megatron.bridge.training.pretrain_mimo.mimo_runtime_config_update"),
+        patch("megatron.bridge.training.pretrain_mimo._finish_train"),
+        patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
+        patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
+        patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
     ):
         m_dist.get_rank.return_value = 0
         m_dist.get_world_size.return_value = 2
-        m_unwrap.return_value = MagicMock(
-            mimo_config=SimpleNamespace(module_to_grid_map={"language": Mock()}),
-        )
-        mock_optimizer = MagicMock()
-        mock_optimizer.module_infos = {}
-        mock_optimizer.is_stub_optimizer = False
-        m_get_opt.return_value = mock_optimizer
 
         pretrain_mimo(
             cfg=cfg,
-            mimo_provider=MagicMock(),
             forward_step_func=MagicMock(),
             build_data_iterators_fn=build_data_iterators_fn,
-            opt_config=MagicMock(finalize=MagicMock(), lr=1e-4, min_lr=1e-5),
-            schedulers=schedulers,
             global_state=setup_output.global_state,
         )
 
@@ -733,7 +732,6 @@ def _run_pretrain_mimo(
         mocks["checkpoint_exists"] = m_ckpt_exists
         mocks["train_mimo"] = m_train
         mocks["build_data_iterators_fn"] = build_data_iterators_fn
-        mocks["unwrap"] = m_unwrap
 
     return mocks
 
@@ -801,7 +799,7 @@ class TestPretrainMimoLoadCheckpoint:
             checkpoint_exists_return=True,
         )
         _, kwargs = mocks["load_checkpoint"].call_args
-        assert kwargs["checkpointing_context"] is setup_output.checkpointing_context
+        assert kwargs["checkpointing_context"] is setup_output.checkpoint_manager.checkpointing_context
 
     def test_load_forwards_first_scheduler(self):
         sched_a = _make_scheduler_mock()
@@ -910,7 +908,7 @@ class TestIteratorResumeSemanticsLoad:
     def test_iterator_builder_called_without_train_state_when_not_resuming(self):
         cfg = _make_pretrain_cfg()
         build_fn = Mock(return_value=(iter([]), None))
-        mocks = _run_pretrain_mimo(cfg=cfg, build_data_iterators_fn=build_fn)
+        _run_pretrain_mimo(cfg=cfg, build_data_iterators_fn=build_fn)
         build_fn.assert_called_once()
         args, kwargs = build_fn.call_args
         assert "train_state" not in kwargs
@@ -1104,7 +1102,7 @@ class TestNoCheckpointGracefulFallback:
     def test_iterators_still_built_without_checkpoint(self):
         cfg = _make_pretrain_cfg()
         build_fn = Mock(return_value=(iter([]), None))
-        mocks = _run_pretrain_mimo(cfg=cfg, build_data_iterators_fn=build_fn)
+        _run_pretrain_mimo(cfg=cfg, build_data_iterators_fn=build_fn)
         build_fn.assert_called_once()
 
 

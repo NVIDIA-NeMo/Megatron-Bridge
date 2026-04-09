@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, fields
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -22,6 +22,11 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.core.utils import is_te_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+    from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 
 
 @dataclass(kw_only=True)
@@ -99,7 +104,7 @@ class MixedPrecisionConfig:
 
     def setup(
         self,
-        model_config: GPTModelProvider | T5ModelProvider,
+        model_config: "GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig",
         optimizer_config: Optional[OptimizerConfig] = None,
         ddp_config: Optional[DistributedDataParallelConfig] = None,
     ) -> None:
@@ -400,6 +405,19 @@ def bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
     cfg.fp4 = "e2m1"
     cfg.fp4_recipe = "nvfp4"
     cfg.fp8_param_gather = False
+    cfg.fp8_recipe = None
+    return cfg
+
+
+@register
+def nemotron_3_super_bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
+    """Create a MixedPrecisionConfig for mixed precision training using BF16 with NVFP4
+    Returns:
+        MixedPrecisionConfig: Configuration for BF16 with NVFP4 mixed precision training
+    """
+    cfg = bf16_with_nvfp4_mixed()
+    cfg.first_last_layers_bf16 = True
+    cfg.num_layers_at_end_in_bf16 = 14
     return cfg
 
 

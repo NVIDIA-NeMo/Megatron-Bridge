@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import List, Literal, Optional
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import transformer_engine.pytorch as te
 from megatron.core import parallel_state
@@ -77,6 +78,9 @@ class LoRA(PEFT, ModuleMatcher):
         lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
         lora_dtype (torch.dtype): Parameter data type for LoRA weights. Default None (will use model's dtype).
+        normalize_moe_lora (bool): When True, expert linear layers use dim // moe_router_topk as the LoRA rank
+            while non-expert layers keep the full dim. This normalizes the total adapter capacity for MoE models
+            so it is comparable to a dense model. Defaults to False.
     """
 
     target_modules: List[str] = field(
@@ -90,6 +94,23 @@ class LoRA(PEFT, ModuleMatcher):
     lora_B_init_method: str = "zero"
     a2a_experimental: bool = False
     lora_dtype: torch.dtype = None
+    normalize_moe_lora: bool = False
+
+    def _get_effective_dim(self, module: nn.Module, is_expert: bool) -> int:
+        """Return the LoRA rank to use, reduced for expert layers when normalize_moe_lora is enabled."""
+        if not self.normalize_moe_lora or not is_expert:
+            return self.dim
+        topk = getattr(getattr(module, "config", None), "moe_router_topk", None)
+        if topk is None or topk <= 0:
+            raise ValueError(
+                f"normalize_moe_lora is enabled but moe_router_topk is {topk!r}; "
+                f"it must be set to a positive integer on the model config"
+            )
+        if self.dim % topk != 0:
+            raise ValueError(
+                f"LoRA dim={self.dim} must be divisible by moe_router_topk={topk} when normalize_moe_lora is enabled"
+            )
+        return self.dim // topk
 
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
@@ -139,6 +160,8 @@ class LoRA(PEFT, ModuleMatcher):
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(module, is_expert=is_expert)
 
+            dim = self._get_effective_dim(module, is_expert)
+
             enable_op_fuser = (
                 hasattr(module, "config")
                 and getattr(module.config, "use_transformer_engine_op_fuser", False)
@@ -150,7 +173,7 @@ class LoRA(PEFT, ModuleMatcher):
             adapter = ParallelLinearAdapter(
                 attrs.in_features,
                 attrs.out_features,
-                self.dim,
+                dim,
                 base_linear_name=full_name,
                 activation="identity",
                 norm_type=None,
@@ -235,6 +258,19 @@ class LoRAMerge(PEFT):
     ) -> torch.Tensor:
         """
         Merges the LoRA adapter weights with the base model weights.
+        Handles tensor parallelism by gathering sharded dimensions.
+
+        For ColumnParallelLinear (e.g., linear_qkv, linear_fc1):
+            - base_weight: (out_features/TP, in_features)
+            - linear_in: (dim/TP, in_features) ← Need to gather this
+            - linear_out: (out_features/TP, dim)
+            - Target: (out_features/TP, dim) @ (dim, in_features) = (out_features/TP, in_features)
+
+        For RowParallelLinear (e.g., linear_proj, linear_fc2):
+            - base_weight: (out_features, in_features/TP)
+            - linear_in: (dim, in_features/TP)
+            - linear_out: (out_features/TP, dim) ← Need to gather this
+            - Target: (out_features, dim) @ (dim, in_features/TP) = (out_features, in_features/TP)
 
         Args:
             base_weight (torch.Tensor): The base model weights.
@@ -246,7 +282,42 @@ class LoRAMerge(PEFT):
         Returns:
             torch.Tensor: The merged weights.
         """
-        lora_weight = alpha / dim * (linear_out @ linear_in)
+
+        tp_size = parallel_state.get_tensor_model_parallel_world_size()
+
+        if tp_size == 1:
+            # No tensor parallelism, simple multiplication
+            lora_weight = alpha / dim * (linear_out @ linear_in)
+            return base_weight + lora_weight
+
+        tp_group = parallel_state.get_tensor_model_parallel_group()
+
+        # Case 1: ColumnParallelLinear - linear_in is sharded on dim 0
+        # linear_in: (dim/TP, in_features), linear_out: (out_features/TP, dim)
+        if linear_in.shape[0] * tp_size == dim and linear_out.shape[1] == dim:
+            # Gather linear_in along dimension 0 to get full dim
+            linear_in_list = [torch.empty_like(linear_in) for _ in range(tp_size)]
+            dist.all_gather(linear_in_list, linear_in, group=tp_group)
+            linear_in_full = torch.cat(linear_in_list, dim=0)
+
+            # Multiply: (out_features/TP, dim) @ (dim, in_features)
+            lora_weight = alpha / dim * (linear_out @ linear_in_full)
+
+        # Case 2: RowParallelLinear - linear_out is sharded on dim 0
+        # linear_in: (dim, in_features/TP), linear_out: (out_features/TP, dim)
+        elif linear_out.shape[0] * tp_size == base_weight.shape[0]:
+            # Gather linear_out along dimension 0 to get full out_features
+            linear_out_list = [torch.empty_like(linear_out) for _ in range(tp_size)]
+            dist.all_gather(linear_out_list, linear_out, group=tp_group)
+            linear_out_full = torch.cat(linear_out_list, dim=0)
+
+            # Multiply: (out_features, dim) @ (dim, in_features/TP)
+            lora_weight = alpha / dim * (linear_out_full @ linear_in)
+
+        else:
+            # Fallback: no gathering needed or already full-size
+            lora_weight = alpha / dim * (linear_out @ linear_in)
+
         return base_weight + lora_weight
 
     @torch.no_grad()

@@ -221,8 +221,6 @@ def _build_data_iterators(cfg, mimo_infra):
     return train_iter, valid_iter
 
 
-from megatron.core.optimizer.optimizer_config import OptimizerConfig as MCoreOptimizerConfig
-
 from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -251,10 +249,6 @@ def _build_config(
         train_iters=2,
     )
     train_cfg.num_microbatches = 1
-    train_cfg.grad_reduce_in_fp32 = False
-    train_cfg.overlap_grad_reduce = False
-    train_cfg.use_distributed_optimizer = True
-    train_cfg.check_for_nan_in_grad = False
     train_cfg.log_interval = log_interval
 
     logger_cfg = LoggerConfig()
@@ -265,6 +259,15 @@ def _build_config(
     logger_cfg.wandb_save_dir = wandb_save_dir
     logger_cfg.tensorboard_dir = os.path.join(wandb_save_dir or "/tmp/tb_logs", "tb_logs") if wandb_project else None
 
+    from megatron.core.distributed import DistributedDataParallelConfig
+
+    ddp_cfg = DistributedDataParallelConfig(
+        grad_reduce_in_fp32=False,
+        overlap_grad_reduce=False,
+        use_distributed_optimizer=True,
+        check_for_nan_in_grad=False,
+    )
+
     cfg = ConfigContainer(
         train=train_cfg,
         model=mimo_provider,
@@ -274,6 +277,7 @@ def _build_config(
         logger=logger_cfg,
         tokenizer=TokenizerConfig(),
         checkpoint=CheckpointConfig(),
+        ddp=ddp_cfg,
     )
     cfg.data_parallel_size = 1
     return cfg
@@ -341,22 +345,13 @@ def main():
     _log("building data provider")
     mock_data_provider = _build_mock_data_provider()
 
-    mcore_opt_config = MCoreOptimizerConfig(
-        optimizer="adam",
-        lr=1e-4,
-        min_lr=0.0,
-        weight_decay=0.01,
-        clip_grad=1.0,
-        bf16=True,
-        use_distributed_optimizer=True,
-    )
-    bridge_opt_config = BridgeOptimizerConfig(lr=1e-4)
+    opt_config = BridgeOptimizerConfig(lr=1e-4, min_lr=0.0)
 
     _log("building config")
     cfg = _build_config(
         mimo_provider,
         mock_data_provider,
-        bridge_opt_config,
+        opt_config,
         wandb_project=os.environ.get("WANDB_PROJECT", "Megatron-Bridge-MIMO"),
         wandb_exp_name=os.environ.get("WANDB_EXP_NAME", "mimo-e2e-test"),
         wandb_entity=os.environ.get("WANDB_ENTITY"),
@@ -366,11 +361,8 @@ def main():
     _log("launching pretrain_mimo")
     pretrain_mimo(
         cfg=cfg,
-        mimo_provider=mimo_provider,
         forward_step_func=mimo_forward_step,
         build_data_iterators_fn=_build_data_iterators,
-        opt_config=mcore_opt_config,
-        schedulers={},
     )
 
     _log("PASSED")

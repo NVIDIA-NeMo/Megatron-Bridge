@@ -1,0 +1,164 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+ARG NEMO_FW_FINAL_BASE_IMAGE
+FROM ${NEMO_FW_FINAL_BASE_IMAGE} AS nemo_fw_final
+
+WORKDIR /opt
+
+##############################################################################
+##
+## Install NeMo-FW features
+##
+##############################################################################
+
+# Clone FW repositories
+RUN git clone --depth 1 https://github.com/NVIDIA-NeMo/NeMo.git && \
+    git clone --depth 1 https://github.com/NVIDIA-NeMo/Export-Deploy.git && \
+    git clone --depth 1 https://github.com/NVIDIA-NeMo/Evaluator.git && \
+    git clone --depth 1 https://github.com/NVIDIA-NeMo/Run
+
+ARG NEMO_COMMIT
+ARG NEMO_EXPORT_DEPLOY_COMMIT
+ARG NEMO_EVAL_COMMIT
+ARG NEMO_RUN_COMMIT
+
+# Update FW repository commit
+RUN pushd /opt/NeMo && \
+        git pull && \
+        git fetch origin $NEMO_COMMIT && \
+        git checkout FETCH_HEAD && \
+        echo "Container built with NeMo commit hash: $NEMO_COMMIT" && \
+    popd && \
+    pushd /opt/Export-Deploy && \
+        git pull && \
+        git fetch origin $NEMO_EXPORT_DEPLOY_COMMIT && \
+        git checkout FETCH_HEAD && \
+        echo "Container built with NeMo-Export-Deploy commit hash: $NEMO_EXPORT_DEPLOY_COMMIT" && \
+    popd && \
+    pushd /opt/Evaluator && \
+        git pull && \
+        git fetch origin $NEMO_EVAL_COMMIT && \
+        git checkout FETCH_HEAD && \
+        echo "Container built with NeMo-Eval commit hash: $NEMO_EVAL_COMMIT" && \
+    popd && \
+    pushd /opt/Run && \
+        git pull && \
+        git fetch origin $NEMO_RUN_COMMIT && \
+        git checkout FETCH_HEAD && \
+        echo "Container built with NeMo-Run commit hash: $NEMO_RUN_COMMIT" && \
+    popd
+
+# Sync environment
+COPY docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
+COPY docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
+RUN \
+    cd /opt/NeMo-FW && \
+    uv sync --no-cache-dir --all-groups --inexact && \
+    uv pip list && \
+    chmod +x print_sha.sh && \
+    ./print_sha.sh
+
+##############################################################################
+##
+## Address CVE and pip package management
+##
+##############################################################################
+
+RUN pip install nvidia-cudnn-frontend==1.17.0 \
+    starlette==0.49.1 \
+    "urllib3>=2.6.0" \
+    "aiohttp>=3.13.3" \
+    "jaraco-context>=6.1.0" \
+    "wheel>=0.46.2" \
+    "python-multipart>=0.0.22" \
+    "setuptools>=80.10.2" \
+    "pillow>=12.1.1" \
+    "protobuf==6.33.5" \
+    "xgrammar>=0.1.32" \
+    "tornado==6.5.5" \
+    "black==26.3.1" \
+    "onnx==1.21.0"
+
+# Remove PyTorch's bundled third-party onnx source tree (build artifact, not used at runtime).
+# The actual onnx Python package is managed above via pip/uv; this stale copy triggers CVE scanners.
+RUN rm -rf /opt/pytorch/pytorch/third_party/onnx
+
+# Patch jackson-core CVE inside Ray's bundled fat-jar (cannot upgrade Ray itself)
+RUN JACKSON_VERSION=2.18.6 && \
+    TMPDIR=$(mktemp -d) && \
+    wget -q "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/${JACKSON_VERSION}/jackson-core-${JACKSON_VERSION}.jar" \
+    -O "${TMPDIR}/jackson-core-fixed.jar" && \
+    unzip -q "${TMPDIR}/jackson-core-fixed.jar" -d "${TMPDIR}/jackson_fixed" && \
+    apt-get update && apt-get install -y --no-install-recommends zip && apt-get clean && \
+    for RAY_JAR in \
+    /usr/local/lib/python3.12/dist-packages/ray/jars/ray_dist.jar \
+    /opt/venv/lib/python3.12/site-packages/ray/jars/ray_dist.jar; \
+    do \
+    rm -rf "${TMPDIR}/ray_dist" && \
+    unzip -q "${RAY_JAR}" -d "${TMPDIR}/ray_dist" && \
+    find "${TMPDIR}/ray_dist" -type d -name "jackson" | while read JACKSON_DIR; do \
+        rm -rf "${JACKSON_DIR}/core"; \
+        cp -r "${TMPDIR}/jackson_fixed/com/fasterxml/jackson/core" "${JACKSON_DIR}/core"; \
+    done && \
+    find "${TMPDIR}/ray_dist/META-INF" -name "pom.properties" 2>/dev/null | \
+        xargs grep -l "jackson-core" 2>/dev/null | \
+        xargs -I{} sed -i "s/^version=.*/version=${JACKSON_VERSION}/" {} ; \
+    mv "${RAY_JAR}" "${RAY_JAR}.bak" && \
+    (cd "${TMPDIR}/ray_dist" && zip -qr "${RAY_JAR}" .) && \
+    rm -f "${RAY_JAR}.bak"; \
+    done && \
+    rm -rf "${TMPDIR}"
+
+# Patch wandb-core: bump google.golang.org/grpc from 1.79.2 to 1.79.3 (CVE fix)
+ARG TARGETARCH
+RUN GRPC_VERSION=1.79.3 && \
+    GO_VERSION=1.26.1 && \
+    WANDB_VERSION=$(python3 -c "import wandb; print(wandb.__version__)") && \
+    WANDB_CORE_BIN=/opt/venv/lib/python3.12/site-packages/wandb/bin/wandb-core && \
+    curl -fsSL "https://dl.google.com/go/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" | tar -C /tmp -xz && \
+    export PATH="/tmp/go/bin:$PATH" && \
+    export GOPATH=/tmp/gopath && \
+    git clone --depth 1 --branch "v${WANDB_VERSION}" https://github.com/wandb/wandb.git /tmp/wandb-src && \
+    cd /tmp/wandb-src/core && \
+    go get google.golang.org/grpc@v${GRPC_VERSION} && \
+    go mod tidy && \
+    go mod vendor && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" \
+        -o "${WANDB_CORE_BIN}" ./cmd/wandb-core/ && \
+    rm -rf /tmp/wandb-src /tmp/go /tmp/gopath
+
+##############################################################################
+##
+## Finalize FW container
+##
+##############################################################################
+
+WORKDIR /workspace
+
+ARG NVIDIA_BUILD_ID
+ENV NVIDIA_BUILD_ID=${NVIDIA_BUILD_ID:-<unknown>}
+LABEL com.nvidia.build.id="${NVIDIA_BUILD_ID}"
+ARG NVIDIA_BUILD_REF
+LABEL com.nvidia.build.ref="${NVIDIA_BUILD_REF}"
+ARG RC_DATE=00.00
+ARG TARGETARCH
+COPY docker/common/README.md README.md
+
+# NOTICES.txt file points to where the OSS source code is archived
+RUN echo "This distribution includes open source which is archived at the following URL: https://opensource.nvidia.com/oss/teams/nvidia/nemo/${RC_DATE}:linux-${TARGETARCH}/index.html" > NOTICES.txt && \
+    echo "For further inquiries or assistance, contact us at oss-requests@nvidia.com" >> NOTICES.txt
+
+# Force legacy CPU offload path until llama OOMs with new path are fixed
+ENV NVTE_CPU_OFFLOAD_V1="1"

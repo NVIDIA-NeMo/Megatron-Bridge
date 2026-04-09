@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Mock dataset provider for MIMO testing with synthetic multimodal data.
 
 This module produces synthetic multimodal inputs (random images, audio, etc.)
@@ -22,17 +22,13 @@ from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext
 
 
-def _generate_random_image(
-    width: int, height: int, rng: np.random.Generator
-) -> Image.Image:
+def _generate_random_image(width: int, height: int, rng: np.random.Generator) -> Image.Image:
     """Generate a random RGB image."""
     pixels = rng.integers(low=0, high=256, size=(height, width, 3), dtype=np.uint8)
     return Image.fromarray(pixels, mode="RGB")
 
 
-def _generate_random_audio(
-    duration_sec: float, sample_rate: int, rng: np.random.Generator
-) -> np.ndarray:
+def _generate_random_audio(duration_sec: float, sample_rate: int, rng: np.random.Generator) -> np.ndarray:
     """Generate random audio waveform."""
     num_samples = int(duration_sec * sample_rate)
     # Generate random float32 audio in [-1, 1]
@@ -42,13 +38,13 @@ def _generate_random_audio(
 @dataclass(kw_only=True)
 class MockMimoProvider(MimoDatasetProvider):
     """DatasetProvider for mock MIMO datasets with synthetic multimodal data.
-    
+
     Generates synthetic multimodal inputs (random images, audio, etc.) and uses
     real HuggingFace processors to preprocess them. This tests the full data
     pipeline without requiring real datasets.
-    
+
     Follows the same pattern as vlm_datasets/MockVLMConversationProvider.
-    
+
     Args:
         seq_length: Total sequence length for the model (encoder placeholders + text tokens).
             Must be greater than sum(encoder_seq_lengths.values()) to leave room for text.
@@ -62,7 +58,7 @@ class MockMimoProvider(MimoDatasetProvider):
             {"vision": {"type": "image", "width": 224, "height": 224}}.
         text_prompt: Default text prompt for synthetic examples.
         random_seed: Seed for random generation.
-        
+
     Example:
         >>> provider = MockMimoProvider(
         ...     seq_length=2048,
@@ -75,7 +71,7 @@ class MockMimoProvider(MimoDatasetProvider):
         >>> context = DatasetBuildContext(train_samples=1000, valid_samples=100, test_samples=100)
         >>> train_ds, valid_ds, test_ds = provider.build_datasets(context)
     """
-    
+
     seq_length: int
     processor_paths: Dict[str, str] = field(default_factory=dict)
     tokenizer_path: str = ""
@@ -85,21 +81,21 @@ class MockMimoProvider(MimoDatasetProvider):
     text_prompt: str = "Describe this input."
     random_seed: int = 0
     trust_remote_code: bool = False
-    
+
     # DataloaderConfig fields
     dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
-    
+
     # Cached processors and tokenizer
     _processors: Optional[Dict[str, Any]] = field(default=None, repr=False)
     _tokenizer: Optional[Any] = field(default=None, repr=False)
-    
+
     def _load_processors(self) -> Dict[str, Any]:
         """Load HuggingFace processors for each modality."""
         if self._processors is not None:
             return self._processors
-        
+
         from transformers import AutoProcessor
-        
+
         processors = {}
         for modality_name, processor_path in self.processor_paths.items():
             processors[modality_name] = AutoProcessor.from_pretrained(
@@ -109,23 +105,23 @@ class MockMimoProvider(MimoDatasetProvider):
                     hf_path=processor_path,
                 ),
             )
-        
+
         object.__setattr__(self, "_processors", processors)
         return processors
-    
+
     def _load_tokenizer(self) -> Any:
         """Load HuggingFace tokenizer."""
         if self._tokenizer is not None:
             return self._tokenizer
-        
+
         if not self.tokenizer_path:
             raise ValueError(
                 "tokenizer_path must be set for MockMimoProvider. "
                 "Provide a valid HuggingFace tokenizer path (e.g., 'gpt2', 'meta-llama/Llama-2-7b-hf')."
             )
-        
+
         from transformers import AutoTokenizer
-        
+
         tokenizer = AutoTokenizer.from_pretrained(
             self.tokenizer_path,
             trust_remote_code=is_safe_repo(
@@ -133,54 +129,54 @@ class MockMimoProvider(MimoDatasetProvider):
                 hf_path=self.tokenizer_path,
             ),
         )
-        
+
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-        
+
         object.__setattr__(self, "_tokenizer", tokenizer)
         return tokenizer
-    
+
     def _generate_synthetic_examples(
-        self, 
-        size: int, 
+        self,
+        size: int,
         seed_offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """Generate synthetic multimodal examples.
-        
+
         Args:
             size: Number of examples to generate.
             seed_offset: Offset to add to random seed for different splits.
-            
+
         Returns:
             List of examples with synthetic modality data.
         """
         rng = np.random.default_rng(seed=self.random_seed + seed_offset)
         examples = []
-        
+
         for i in range(size):
             example = {"text": f"{self.text_prompt} Sample {i}."}
-            
+
             for modality_name, config in self.modality_configs.items():
                 modality_type = config.get("type", "image")
-                
+
                 if modality_type == "image":
                     width = config.get("width", 224)
                     height = config.get("height", 224)
                     example[modality_name] = _generate_random_image(width, height, rng)
-                    
+
                 elif modality_type == "audio":
                     duration = config.get("duration_sec", 3.0)
                     sample_rate = config.get("sample_rate", 16000)
                     example[modality_name] = _generate_random_audio(duration, sample_rate, rng)
-                    
+
                 else:
                     # Default to image
                     example[modality_name] = _generate_random_image(224, 224, rng)
-            
+
             examples.append(example)
-        
+
         return examples
-    
+
     def _build_split_dataset(
         self,
         size: int,
@@ -191,13 +187,13 @@ class MockMimoProvider(MimoDatasetProvider):
         """Build dataset for a single split."""
         if size <= 0:
             return None
-        
+
         examples = self._generate_synthetic_examples(size, seed_offset)
-        
+
         # Build modality_columns mapping (modality_name -> column_name)
         # In synthetic data, we use modality_name as column_name
         modality_columns = {name: name for name in self.modality_configs.keys()}
-        
+
         return MimoDataset(
             examples=examples,
             processors=processors,
@@ -208,41 +204,35 @@ class MockMimoProvider(MimoDatasetProvider):
             modality_columns=modality_columns,
             text_column="text",
         )
-    
+
     def build_datasets(
         self, context: DatasetBuildContext
     ) -> Tuple[Optional[MimoDataset], Optional[MimoDataset], Optional[MimoDataset]]:
         """Build train, validation, and test datasets with synthetic data.
-        
+
         Args:
             context: Build context with sample counts.
-            
+
         Returns:
             Tuple of (train_dataset, valid_dataset, test_dataset).
         """
         processors = self._load_processors()
         tokenizer = self._load_tokenizer()
-        
-        train_ds = self._build_split_dataset(
-            context.train_samples, processors, tokenizer, seed_offset=0
-        )
-        valid_ds = self._build_split_dataset(
-            context.valid_samples, processors, tokenizer, seed_offset=1000000
-        )
-        test_ds = self._build_split_dataset(
-            context.test_samples, processors, tokenizer, seed_offset=2000000
-        )
-        
+
+        train_ds = self._build_split_dataset(context.train_samples, processors, tokenizer, seed_offset=0)
+        valid_ds = self._build_split_dataset(context.valid_samples, processors, tokenizer, seed_offset=1000000)
+        test_ds = self._build_split_dataset(context.test_samples, processors, tokenizer, seed_offset=2000000)
+
         return train_ds, valid_ds, test_ds
-    
+
     def get_collate_fn(self) -> Callable:
         """Return collate function for MIMO datasets.
-        
+
         Returns:
             Partial function of mimo_collate_fn with modality names pre-filled.
         """
         from megatron.bridge.data.mimo.collate import mimo_collate_fn
-        
+
         return partial(
             mimo_collate_fn,
             modality_names=list(self.modality_configs.keys()),

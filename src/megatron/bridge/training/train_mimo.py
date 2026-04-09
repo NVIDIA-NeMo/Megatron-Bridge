@@ -18,7 +18,6 @@ Note: Stub ranks are disallowed - validated at setup time.
 from __future__ import annotations
 
 import logging
-from functools import partial
 from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Tuple
 
 import torch
@@ -26,16 +25,12 @@ import torch.distributed as dist
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
-from megatron.core.utils import get_model_config
 
-from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
-from megatron.bridge.training.train import checkpoint_and_decide_exit, save_checkpoint_and_time
+from megatron.bridge.training.checkpointing import CheckpointManager, DefaultCheckpointManager
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
-    finalize_model_grads_multimodule,
     get_module_to_grid_tuple,
-    multimodule_no_sync,
     unwrap_mimo_model,
     zero_grad_buffer_for_multimodule,
 )
@@ -58,6 +53,7 @@ if TYPE_CHECKING:
     from megatron.core.models.mimo.optimizer import MimoOptimizer
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
     from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
+    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
 
     from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra
 
@@ -198,12 +194,14 @@ def train_mimo(
     global_state: GlobalState,
     mimo_infra: "MimoModelInfra",
     multimodule_communicator: "MultiModulePipelineCommunicator",
-    checkpointing_context: Optional[Dict] = None,
+    checkpoint_manager: Optional[CheckpointManager] = None,
+    multimodule_pg_collection: Optional["MultiModuleProcessGroupCollection"] = None,
+    module_to_grid_tuple: Optional[List] = None,
 ) -> None:
     """Main MIMO training loop.
 
     Key differences from standard train():
-    - Creates MultiModuleProcessGroupCollection for the schedule
+    - Uses MultiModuleProcessGroupCollection for the schedule
     - Uses forward_backward_pipelining_without_interleaving with multimodule support
     - Uses zero_grad_buffer_for_multimodule() for gradient clearing
     - Uses MimoOptimizer for coordinated gradient clipping with global norm
@@ -226,9 +224,12 @@ def train_mimo(
         global_state: GlobalState containing timers, config, train_state.
         mimo_infra: MimoModelInfra with grids, topology, pg_collections.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
-        checkpointing_context: Dictionary holding checkpoint-related state
-            (save strategy cache, LocalCheckpointManager). Created by
-            init_checkpointing_context() in pretrain_mimo.
+        checkpoint_manager: CheckpointManager for save operations. Created by
+            setup_mimo(). If None, a DefaultCheckpointManager is created.
+        multimodule_pg_collection: Pre-built PG collection for the pipeline schedule.
+            If None, built from mimo_infra.
+        module_to_grid_tuple: Pre-built (module, grid) pairs for gradient ops.
+            If None, built from model and mimo_infra.
     """
     timers = global_state.timers
     train_state = global_state.train_state
@@ -243,11 +244,11 @@ def train_mimo(
     # Prepare forward step function with GlobalState injection
     wrapped_forward_step_func = prepare_forward_step_func(forward_step_func, global_state)
 
-    # Build module-to-grid mapping for gradient operations
-    module_to_grid_tuple = get_module_to_grid_tuple(model, mimo_infra)
-
-    # Build pg_collection for schedule
-    multimodule_pg_collection = build_pg_collection_for_schedule(mimo_infra)
+    # Use pre-built objects from setup_mimo if provided, otherwise build them.
+    if module_to_grid_tuple is None:
+        module_to_grid_tuple = get_module_to_grid_tuple(model, mimo_infra)
+    if multimodule_pg_collection is None:
+        multimodule_pg_collection = build_pg_collection_for_schedule(mimo_infra)
 
     # Guard against list fallback - MIMO training requires MultiModuleProcessGroupCollection
     if isinstance(multimodule_pg_collection, list):
@@ -259,37 +260,15 @@ def train_mimo(
     # Use rank-local module PG for logging reductions and checkpoint saving to
     # avoid global MPU fallback. In non-colocated MIMO each rank participates in
     # exactly one module, so "first non-None" unambiguously selects that module's PG.
-    active_pgs = [pg for pg in mimo_infra.pg_collections.values() if pg is not None]
-    assert len(active_pgs) == 1, (
+    active_modules = [(name, pg) for name, pg in mimo_infra.pg_collections.items() if pg is not None]
+    assert len(active_modules) == 1, (
         f"Non-colocated MiMo requires exactly one active ProcessGroupCollection per rank, "
-        f"got {len(active_pgs)}. Colocated MiMo is not supported by this code path."
+        f"got {len(active_modules)}. Colocated MiMo is not supported by this code path."
     )
-    local_pg_collection = active_pgs[0]
+    active_module_name, local_pg_collection = active_modules[0]
 
-    if checkpointing_context is None:
-        checkpointing_context = {}
-
-    # Configure gradient hooks on model config
-    model_config = get_model_config(model)
-
-    # Bind custom parameters via partial(), leaving schedule-provided args unbound
-    model_config.no_sync_func = partial(multimodule_no_sync, module_to_grid_tuple=module_to_grid_tuple)
-
-    model_config.finalize_model_grads_func = partial(
-        finalize_model_grads_multimodule,
-        infra=mimo_infra,
-        module_to_grid_tuple=module_to_grid_tuple,
-    )
-
-    # Optional: Set grad_scale_func from MimoOptimizer
-    if optimizer is not None and hasattr(optimizer, "scale_loss"):
-        model_config.grad_scale_func = optimizer.scale_loss
-
-    # Validation: variable_seq_lengths should already be True (set by MimoModelProvider)
-    assert model_config.variable_seq_lengths, (
-        "variable_seq_lengths must be True for MIMO training. "
-        "This should be set by MimoModelProvider.provide_distributed_model()."
-    )
+    if checkpoint_manager is None:
+        checkpoint_manager = DefaultCheckpointManager(cfg.checkpoint)
 
     # Initialize tracking variables
     total_loss_dict = {}
@@ -317,9 +296,8 @@ def train_mimo(
     while train_state.step < train_config.train_iters:
         # Finalize any pending async saves (non-blocking). Placed at the top
         # of the loop so async saves get a full iteration to complete.
-        maybe_finalize_async_save(
-            global_state=global_state,
-            ckpt_cfg=cfg.checkpoint,
+        checkpoint_manager.finalize_async_saves(
+            state=global_state,
             blocking=False,
         )
 
@@ -437,9 +415,10 @@ def train_mimo(
             optimizer=optimizer,
             opt_param_scheduler=first_scheduler,
             num_floating_point_operations_so_far=0,
-            checkpointing_context=checkpointing_context,
+            checkpoint_manager=checkpoint_manager,
             train_data_iterator=train_data_iterator,
             pg_collection=local_pg_collection,
+            module_name=active_module_name,
         )
         if should_exit:
             break
@@ -451,14 +430,6 @@ def train_mimo(
         dist.get_rank(),
         prof,
         nsys_nvtx_context,
-    )
-
-    # Finalize any remaining async saves before exit
-    maybe_finalize_async_save(
-        global_state=global_state,
-        ckpt_cfg=cfg.checkpoint,
-        blocking=True,
-        terminate=True,
     )
 
     timers("interval-time").stop()

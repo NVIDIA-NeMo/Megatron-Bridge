@@ -8,6 +8,7 @@
 
 parallelisms.md
 performance-summary.md
+performance-summary-archive.md
 performance-guide.md
 recipe-usage.md
 nemo2-migration-guide.md
@@ -41,8 +42,11 @@ training/optimizer-scheduler.md
 training/logging.md
 training/profiling.md
 training/checkpointing.md
+training/megatron-fsdp.md
 training/resiliency.md
 training/mixed-precision.md
+training/cuda-graphs.md
+training/hybrid-context-parallel.md
 training/communication-overlap.md
 training/attention-optimizations.md
 training/activation-recomputation.md
@@ -79,6 +83,13 @@ apidocs/index.rst
 releases/software-versions.md
 releases/changelog.md
 releases/known-issues.md
+```
+
+```{toctree}
+:caption: Agent Skills
+:hidden:
+
+skills-index
 ```
 
 ```{toctree}

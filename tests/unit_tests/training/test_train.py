@@ -18,6 +18,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
@@ -36,6 +37,9 @@ from megatron.bridge.training.train import (
     should_disable_forward_pre_hook,
 )
 from megatron.bridge.training.utils.train_utils import maybe_inject_state
+
+
+pytestmark = pytest.mark.unit
 
 
 class TestFSDPRegistration:
@@ -505,15 +509,14 @@ class TestSaveCheckpointAndTime:
 
     @patch("megatron.bridge.training.train.force_param_sync")
     @patch("megatron.bridge.training.train.should_disable_forward_pre_hook", return_value=True)
-    @patch("megatron.bridge.training.train.save_checkpoint")
     def test_param_sync_forced_when_overlap_enabled(
         self,
-        mock_save_checkpoint,
         mock_should_disable,
         mock_force_param_sync,
     ):
         state, _ = self._make_state()
         model = [Mock()]
+        mock_checkpoint_manager = Mock()
 
         save_checkpoint_and_time(
             state=state,
@@ -521,24 +524,23 @@ class TestSaveCheckpointAndTime:
             optimizer=Mock(),
             opt_param_scheduler=Mock(),
             num_floating_point_operations_so_far=123.0,
-            checkpointing_context={},
+            checkpoint_manager=mock_checkpoint_manager,
         )
 
         mock_should_disable.assert_called_once_with(False, True, True)
         mock_force_param_sync.assert_called_once_with(model)
-        mock_save_checkpoint.assert_called_once()
+        mock_checkpoint_manager.save.assert_called_once()
 
     @patch("megatron.bridge.training.train.force_param_sync")
     @patch("megatron.bridge.training.train.should_disable_forward_pre_hook", return_value=False)
-    @patch("megatron.bridge.training.train.save_checkpoint")
     def test_param_sync_skipped_when_not_required(
         self,
-        mock_save_checkpoint,
         mock_should_disable,
         mock_force_param_sync,
     ):
         state, _ = self._make_state()
         model = [Mock()]
+        mock_checkpoint_manager = Mock()
 
         save_checkpoint_and_time(
             state=state,
@@ -546,12 +548,12 @@ class TestSaveCheckpointAndTime:
             optimizer=Mock(),
             opt_param_scheduler=Mock(),
             num_floating_point_operations_so_far=123.0,
-            checkpointing_context={},
+            checkpoint_manager=mock_checkpoint_manager,
         )
 
         mock_should_disable.assert_called_once_with(False, True, True)
         mock_force_param_sync.assert_not_called()
-        mock_save_checkpoint.assert_called_once()
+        mock_checkpoint_manager.save.assert_called_once()
 
 
 class TestCheckpointAndDecideExit:
@@ -598,8 +600,9 @@ class TestCheckpointAndDecideExit:
             "optimizer": Mock(),
             "opt_param_scheduler": Mock(),
             "num_floating_point_operations_so_far": 1000.0,
-            "checkpointing_context": {},
+            "checkpoint_manager": Mock(),
             "train_data_iterator": None,
+            "callback_manager": None,
         }
 
     @patch("megatron.bridge.training.train.save_checkpoint_and_time")

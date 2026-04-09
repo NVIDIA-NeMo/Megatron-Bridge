@@ -29,7 +29,7 @@ description = "Megatron Bridge: Training Recipes for Megatron-based LLM and VLM 
 readme = "README.md"
 dynamic = ["version"]
 license = {file = "LICENSE"}
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.13"
 authors = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
 maintainers = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
 keywords = [
@@ -66,14 +66,20 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.0.0",
+    "transformers>=5.0.0,<=5.3.0",
+    "peft>=0.18.1",
     "datasets>=2.20.0",
     "accelerate",
+    "diffusers>=0.36.0",
+    "peft>=0.18.0",
+    "einops",
+    "imageio",
+    "imageio-ffmpeg",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
     "typing-extensions",
     "rich",
-    "wandb>=0.19.10",
+    "wandb>=0.25.0",
     "six>=1.17.0",
     "regex>=2024.11.6",
     "pyyaml>=6.0.2",
@@ -89,6 +95,7 @@ dependencies = [
     "timm",
     "open-clip-torch>=3.2.0",
     "mlflow>=3.5.0",
+    "comet-ml>=3.50.0",
     "torch>=2.6.0",
 ]
 
@@ -112,11 +119,13 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@5671fd3675906cda1ade26c24a65d3dedd88eb89",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@71bbefbf153418f943640df0f7373625dc93fa46",
     "mlflow>=3.5.0",
+    "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt>=0.42.0a0",
-    "urllib3>=2.6.3"    # To address CVE-2026-21441
+    "urllib3>=2.6.3",    # To address CVE-2026-21441
+    "onnx>=1.21.0; python_version < '3.13'",  # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
 ]
 
 [[tool.uv.index]]
@@ -130,6 +139,9 @@ nvidia-modelopt = { index = "nvidia" }
 [project.optional-dependencies]
 recipes = [
     "nemo-run",
+]
+parquet = [
+    "pyarrow>=14.0.0",
 ]
 tensor-inspect = [
     "nvdlfw-inspect==0.2.1",
@@ -161,7 +173,7 @@ dev = [
     "ruff>=0.9.9",
     "mypy>=1.8.0",
 ]
-build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy<2.0.0", "ninja", "nvidia-mathdx"]
+build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy", "ninja", "nvidia-mathdx"]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"

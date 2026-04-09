@@ -16,7 +16,7 @@ import abc
 import importlib
 from dataclasses import dataclass, field, is_dataclass
 from dataclasses import fields as dataclass_fields
-from typing import Any, Callable, ClassVar, Generic, Protocol, TypeVar
+from typing import Any, Callable, ClassVar, Generic, Protocol, TypeVar, runtime_checkable
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
@@ -25,6 +25,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.module import Float16Module
 
 
+@runtime_checkable
 class Serializable(Protocol):
     """Protocol for serializable configurations."""
 
@@ -232,7 +233,7 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
         use_megatron_fsdp: bool = False,
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
-        data_parallel_random_init: bool = True,
+        data_parallel_random_init: bool = False,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         model_type: ModelType = ModelType.encoder_or_decoder,
     ) -> list[ModelT]:
