@@ -707,7 +707,7 @@ def training_log(
             track_names.append("z_loss")
 
         if getattr(config.model, "is_hybrid_model", False):
-            layers = getattr(config.model, "hybrid_override_pattern", "").count("E")
+            layers = getattr(config.model, "hybrid_layer_pattern", "").count("E")
         else:
             layers = getattr(config.model, "num_layers", None)
 
