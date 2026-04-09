@@ -147,6 +147,7 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_NVFP4_V1 = replace(
     tensor_model_parallel_size=2,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["mamba", "attn", "moe_router", "moe_preprocess"],
+    recompute_modules=None,
 )
 
 
