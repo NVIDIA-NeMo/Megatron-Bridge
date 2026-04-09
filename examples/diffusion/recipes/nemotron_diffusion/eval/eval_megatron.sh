@@ -30,7 +30,7 @@ set -euo pipefail
 JOB_NAME="megatron_dllm_eval"
 ACCOUNT="coreai_dlalgo_llm"
 # ACCOUNT="nvr_lpr_llm"
-# ACCOUNT="coreai_dlalgo_genai"
+# ACCOUNT="coreai_dlalgo_llm"
 
 hostname=$(hostname)
 
@@ -119,7 +119,7 @@ done
 # --- Model config ---
 HF_MODEL_ID="/lustre/fsw/portfolios/nvr/users/snorouzi/models/Ministral-3-3B-Base-2512_converted"
 HF_MODEL_ID="${CUSTOM_HF_MODEL_ID:-${HF_MODEL_ID}}"
-TOKENIZER="${HF_MODEL_ID}"
+TOKENIZER="/lustre/fsw/portfolios/nvr/projects/nvr_lpr_llm/users/yongganf/miscs/models/Nemotron-H-8B-Base-8K"
 MASK_TOKEN_ID=100
 MEGATRON_EXP_ROOT="${USER_PATH}/megatron_exp"
 

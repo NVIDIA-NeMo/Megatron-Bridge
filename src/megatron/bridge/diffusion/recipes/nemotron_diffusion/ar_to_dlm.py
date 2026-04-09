@@ -62,7 +62,7 @@ def nemotron_diffusion3_3b_pretrain_config(**user_kwargs) -> ConfigContainer:
         lr_wsd_decay_iters=2500,
         eval_interval=5000,
         save_interval=5000,
-        tokenizer_model="mistralai/Ministral-3-3B-Base-2512",
+        tokenizer_model="/lustre/fsw/portfolios/nvr/projects/nvr_lpr_llm/users/yongganf/miscs/models/Nemotron-H-8B-Base-8K",
     )
     defaults.update(user_kwargs)
     return _nemotron_diffusion3_common(**defaults)
@@ -82,7 +82,7 @@ def nemotron_diffusion3_8b_pretrain_config(**user_kwargs) -> ConfigContainer:
         lr_wsd_decay_iters=2500,
         eval_interval=5000,
         save_interval=5000,
-        tokenizer_model="mistralai/Ministral-3-8B-Base-2512",
+        tokenizer_model="/lustre/fsw/portfolios/nvr/projects/nvr_lpr_llm/users/yongganf/miscs/models/Nemotron-H-8B-Base-8K",
     )
     defaults.update(user_kwargs)
     return _nemotron_diffusion3_common(**defaults)
@@ -102,7 +102,7 @@ def nemotron_diffusion3_14b_pretrain_config(**user_kwargs) -> ConfigContainer:
         lr_wsd_decay_iters=2500,
         eval_interval=5000,
         save_interval=5000,
-        tokenizer_model="mistralai/Ministral-3-14B-Base-2512",
+        tokenizer_model="/lustre/fsw/portfolios/nvr/projects/nvr_lpr_llm/users/yongganf/miscs/models/Nemotron-H-8B-Base-8K",
     )
     defaults.update(user_kwargs)
     return _nemotron_diffusion3_common(**defaults)
