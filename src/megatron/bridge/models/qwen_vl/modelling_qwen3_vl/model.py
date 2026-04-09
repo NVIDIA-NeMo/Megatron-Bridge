@@ -622,6 +622,22 @@ class Qwen3VLModel(MegatronModule):
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
 
+        # For THD packed path we intentionally keep attention_mask=None for model forward.
+        # MoE aux/global-aux accounting still needs to ignore tail padding tokens, so pass
+        # a dedicated padding_mask (True=padding) to GPTModel/Router.
+        padding_mask_for_moe = None
+        if packed_seq_params is not None and lm_input_ids is not None:
+            padding_mask_for_moe = lm_input_ids.eq(0)
+            if _thd_diag_enabled() and _rank0():
+                pad_cnt = int(padding_mask_for_moe.sum().item())
+                tok_cnt = int(padding_mask_for_moe.numel())
+                logger.info(
+                    "[THD_DIAG][model] padding_mask_for_moe: total_tokens=%d padding_tokens=%d valid_tokens=%d",
+                    tok_cnt,
+                    pad_cnt,
+                    tok_cnt - pad_cnt,
+                )
+
         output = self.language_model(
             input_ids=lm_input_ids,
             position_ids=position_ids,  # None in encoder
@@ -629,6 +645,7 @@ class Qwen3VLModel(MegatronModule):
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
             labels=labels,  # only not None in the last decoder PP stage
             loss_mask=loss_mask,  # Added for THD training compatibility
+            padding_mask=padding_mask_for_moe,  # for MoE routing/aux-loss token accounting
             inference_params=inference_params,  # currently always None
             packed_seq_params=packed_seq_params,  # currently always None
             visual_pos_masks=visual_pos_masks,
