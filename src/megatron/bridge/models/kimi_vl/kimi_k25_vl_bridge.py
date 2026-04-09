@@ -186,8 +186,13 @@ class KimiK25VLBridge(MegatronModelBridge):
         result = {}
         for fqn, tensor in converted_weights_dict.items():
             if self._is_quantized_expert_key(fqn):
-                packed, scale, shape = quantize_to_int4(tensor)
                 base = fqn[:-7] if fqn.endswith(".weight") else fqn
+                # Preserve the original scale dtype from the HF checkpoint
+                orig_scale_key = f"{base}.weight_scale"
+                scale_dtype = (
+                    hf_state_dict[orig_scale_key].dtype if orig_scale_key in hf_state_dict else torch.bfloat16
+                )
+                packed, scale, shape = quantize_to_int4(tensor, scale_dtype=scale_dtype)
                 result[f"{base}.weight_packed"] = packed
                 result[f"{base}.weight_scale"] = scale
                 result[f"{base}.weight_shape"] = shape
