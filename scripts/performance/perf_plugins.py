@@ -481,14 +481,12 @@ class PerfEnvPlugin(Plugin):
         )
 
         # Set the chunk size of P2P communications
-        nccl_pp_comm_chunksize = (
-            2097152
-            if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain"
-            else None
-        )
-        nccl_pp_comm_chunksize = (
-            2097152 if self.model_family_name in ["llama"] and self.train_task in ["sft"] else None
-        )
+        if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain":
+            nccl_pp_comm_chunksize = 2097152
+        elif self.model_family_name in ["llama"] and self.train_task in ["sft"]:
+            nccl_pp_comm_chunksize = 2097152
+        else:
+            nccl_pp_comm_chunksize = None
         self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
 
         # Configure manual garbage collection
