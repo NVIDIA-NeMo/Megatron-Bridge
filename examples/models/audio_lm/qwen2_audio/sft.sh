@@ -24,7 +24,7 @@
 #   NPROC        — number of GPUs per node (default: 8)
 #   HF_MODEL     — HuggingFace model path (default: Qwen/Qwen2-Audio-7B)
 # ==============================================================================
-
+#   WORKSPACE    — root dir for models/results (default: /workspace/Megatron-Bridge/examples/models/audio_lm/qwen2_audio)
 LOG_FILE=./qwen2_audio_7b_asr.log
 exec > >(tee "${LOG_FILE}") 2>&1
 
