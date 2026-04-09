@@ -83,18 +83,24 @@ _TRANSPOSED_PARAMS: dict[str, set[str]] = {
 
 
 def _needs_transpose(bridge, name: str, exported: torch.Tensor, original: torch.Tensor) -> bool:
-    """Return True if *original* should be transposed before comparison.
+    """Return True if *original* needs ``transpose(-1, -2)`` before comparison.
 
     Only applies to specific (model_type, layer) pairs known to transpose on
-    export. Emits a warning so the workaround is visible in CI logs.
+    export (e.g. GPT-OSS ``down_proj``).  Handles both 2-D weights (dense) and
+    3-D weights (expert-parallel: ``[num_experts, rows, cols]``).
+    Emits a warning so the workaround is visible in CI logs.
     """
-    model_type = getattr(bridge, "MODEL_TYPE", None)
+    hf_config = getattr(getattr(bridge, "hf_pretrained", None), "config", None)
+    model_type = getattr(hf_config, "model_type", None) or getattr(bridge, "MODEL_TYPE", None)
     suffixes = _TRANSPOSED_PARAMS.get(model_type, set())
     if not any(name.endswith(s) for s in suffixes):
         return False
-    if exported.ndim != 2 or original.ndim != 2:
+    if exported.ndim != original.ndim or exported.ndim not in (2, 3):
         return False
-    if exported.shape != original.shape[::-1]:
+    # Check that the last two dims are swapped (batch dims, if any, must match).
+    if exported.shape[:-2] != original.shape[:-2]:
+        return False
+    if exported.shape[-2:] != original.shape[-2:][::-1]:
         return False
     console.print(
         f"[yellow]WARNING: {name} has transposed shape "
@@ -235,14 +241,14 @@ def main(
                 compare_original = original_param.float()
                 # TODO: Fix GPT-OSS bridge so exported shapes match HF; remove this workaround.
                 if _needs_transpose(bridge, name, compare_param, compare_original):
-                    compare_original = compare_original.T
+                    compare_original = compare_original.transpose(-1, -2)
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
             # --- Case 3: regular param → direct allclose ---
             else:
                 # TODO: Same GPT-OSS transpose workaround as Case 2 — remove once bridge is fixed.
                 if _needs_transpose(bridge, name, compare_param, compare_original):
-                    compare_original = compare_original.T
+                    compare_original = compare_original.transpose(-1, -2)
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
             all_match = all_match and match
