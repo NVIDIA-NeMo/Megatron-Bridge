@@ -75,6 +75,29 @@ IGNORE_PRECISION_PARAMS = [
 # FP8 dtypes whose dequantisation is inherently lossy — allclose is meaningless.
 _FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
 
+# Bridges whose export intentionally transposes certain weights.
+_TRANSPOSE_MODEL_TYPES = {"gpt_oss"}
+
+
+def _needs_transpose(bridge, name: str, exported: torch.Tensor, original: torch.Tensor) -> bool:
+    """Return True if *original* should be transposed before comparison.
+
+    Only applies to bridges known to transpose on export (GPT-OSS down_proj).
+    Emits a warning so the workaround is visible in CI logs.
+    """
+    if getattr(bridge, "MODEL_TYPE", None) not in _TRANSPOSE_MODEL_TYPES:
+        return False
+    if exported.ndim != 2 or original.ndim != 2:
+        return False
+    if exported.shape != original.shape[::-1]:
+        return False
+    console.print(
+        f"[yellow]WARNING: {name} has transposed shape "
+        f"{tuple(original.shape)} → {tuple(exported.shape)}, "
+        f"auto-transposing for comparison (model_type={bridge.MODEL_TYPE})[/yellow]"
+    )
+    return True
+
 
 @torchrun_main
 def main(
@@ -205,36 +228,15 @@ def main(
             elif compare_param.dtype != compare_original.dtype or any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
-                # TODO: Fix bridges so that exported shapes always match the original HF
-                # checkpoint. This transpose workaround exists for GPT-OSS down_proj which
-                # intentionally transposes on export; remove once the bridge handles it.
-                if (
-                    compare_param.ndim == 2
-                    and compare_original.ndim == 2
-                    and compare_param.shape == compare_original.shape[::-1]
-                ):
-                    console.print(
-                        f"[yellow]WARNING: {name} has transposed shape "
-                        f"{tuple(compare_original.shape)} → {tuple(compare_param.shape)}, "
-                        f"auto-transposing for comparison[/yellow]"
-                    )
+                # TODO: Fix GPT-OSS bridge so exported shapes match HF; remove this workaround.
+                if _needs_transpose(bridge, name, compare_param, compare_original):
                     compare_original = compare_original.T
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
             # --- Case 3: regular param → direct allclose ---
             else:
-                # TODO: Same transpose workaround as Case 2 above — remove once bridges
-                # export shapes that match the original HF checkpoint.
-                if (
-                    compare_param.ndim == 2
-                    and compare_original.ndim == 2
-                    and compare_param.shape == compare_original.shape[::-1]
-                ):
-                    console.print(
-                        f"[yellow]WARNING: {name} has transposed shape "
-                        f"{tuple(compare_original.shape)} → {tuple(compare_param.shape)}, "
-                        f"auto-transposing for comparison[/yellow]"
-                    )
+                # TODO: Same GPT-OSS transpose workaround as Case 2 — remove once bridge is fixed.
+                if _needs_transpose(bridge, name, compare_param, compare_original):
                     compare_original = compare_original.T
                 match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
 
