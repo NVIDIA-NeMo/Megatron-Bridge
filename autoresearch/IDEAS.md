@@ -30,7 +30,7 @@
 ---
 
 ### 2. Mask Scheduling
-**Status:** ❌ Avg 72.29% (+0.31%), below threshold. GSM8k +1.3% but MBPP+ -1.6%.
+**Status:** ✅ Avg 72.29% (+0.85% vs baseline). GSM8k strict +1.74%, GSM8k flex +1.28%, MBPP -1.20%, MBPP+ +1.59%.
 
 **Date proposed:** 2026-04-06
 
@@ -79,7 +79,7 @@
 
 
 ### 5. Cosine Mask Schedule (Gentler Warmup)
-**Status:** ❌ Avg 70.51% (-1.47%), worse than baseline. Mask scheduling direction abandoned.
+**Status:** ❌ Avg 70.44% (-1.00% vs baseline). GSM8k strict -1.97%, GSM8k flex -1.75%, MBPP -0.80%, MBPP+ +0.53%. Gentle masking direction abandoned.
 
 **Date proposed:** 2026-04-07
 
