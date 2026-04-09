@@ -148,6 +148,7 @@ def slurm_executor(
         container_image=container_image,
         container_mounts=mounts,
         env_vars=PERF_ENV_VARS,
+        container_env=sorted(PERF_ENV_VARS.keys()),
         srun_args=srun_args,
         time=time_limit,
         mem="0",
