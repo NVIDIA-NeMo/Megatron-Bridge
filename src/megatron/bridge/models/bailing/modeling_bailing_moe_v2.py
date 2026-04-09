@@ -143,7 +143,6 @@ class MoEV2CausalLMOutputWithPast(ModelOutput):
 
 
 class MoeV2ModelOutputWithPast(MoeModelOutputWithPast):
-
     def __init__(self, mtp_hidden_states=None, **kwargs):
         super().__init__(**kwargs)
         self.mtp_hidden_states = mtp_hidden_states
@@ -352,7 +351,7 @@ class BailingMoeV2Gate(nn.Module):
             .reshape(num_tokens, -1)
         )
 
-        masked_scores = scores.masked_fill(~score_mask.bool(), float('-inf'))
+        masked_scores = scores.masked_fill(~score_mask.bool(), float("-inf"))
         probs, top_indices = torch.topk(masked_scores, k=self.top_k, dim=-1)
 
         return probs, top_indices
@@ -516,7 +515,6 @@ class BailingMoeV2Attention(nn.Module):
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-
         bsz, q_len, _ = hidden_states.size()
 
         qkv = self.query_key_value(hidden_states)
@@ -1532,7 +1530,9 @@ class BailingMoeV2ForCausalLM(BailingMoeV2PreTrainedModel, GenerationMixin):
                         shift_labels_mtp = labels.clone()
                     shift_labels_mtp, _ = roll_tensor(shift_labels_mtp, shifts=-1, dims=-1, fill_value=-100)
                     mtp_logits_ = mtp_logits.view(-1, self.config.vocab_size)
-                    mtp_loss = self.loss_function(mtp_logits_, shift_labels_mtp.to(mtp_logits_.device).view(-1), self.config.vocab_size, **kwargs)
+                    mtp_loss = self.loss_function(
+                        mtp_logits_, shift_labels_mtp.to(mtp_logits_.device).view(-1), self.config.vocab_size, **kwargs
+                    )
                     if loss is not None:
                         loss += self.mtp_loss_scaling_factor * mtp_loss
                     else:
@@ -1559,4 +1559,3 @@ class BailingMoeV2ForCausalLM(BailingMoeV2PreTrainedModel, GenerationMixin):
             attentions=outputs.attentions,
             router_logits=outputs.router_logits,
         )
-
