@@ -20,6 +20,10 @@ on:
         type: string
         description: HuggingFace repo ID of the model to cache
         required: true
+      config-and-tokenizer-only:
+        type: boolean
+        description: "Cache only config and tokenizer (no model weights). Use this for unit tests."
+        default: false
 
 jobs:
   download:
@@ -51,8 +55,14 @@ jobs:
       - name: Download model
         env:
           MODEL_ID: ${{ github.event.inputs.hf-model-id }}
+          CONFIG_AND_TOKENIZER_ONLY: ${{ github.event.inputs.config-and-tokenizer-only }}
         shell: python
         run: |
           import os
-          from transformers import AutoModel
-          _ = AutoModel.from_pretrained(os.getenv("MODEL_ID"))
+          from transformers import AutoConfig, AutoTokenizer, AutoModel
+          model_id = os.getenv("MODEL_ID")
+          if os.getenv("CONFIG_AND_TOKENIZER_ONLY", "false").lower() == "true":
+              _ = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+              _ = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+          else:
+              _ = AutoModel.from_pretrained(model_id)
