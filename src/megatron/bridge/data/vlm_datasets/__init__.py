@@ -66,5 +66,5 @@ __all__ = [
     "qwen2_5_collate_fn",
     "phi4_mm_collate_fn",
     "qwen2_audio_collate_fn",
-    "make_default_audio_dataset",
+    "qwen2_audio_collate_fn",
 ]
