@@ -230,6 +230,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_BF16_V2 = replace(
     QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_BF16_V1,
     num_gpus=256,
     global_batch_size=8192,
+    micro_batch_size=2,
 )
 
 
@@ -237,6 +238,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_CS_V2 = replace(
     QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_CS_V1,
     num_gpus=256,
     global_batch_size=8192,
+    micro_batch_size=2,
 )
 
 
