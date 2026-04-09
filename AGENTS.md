@@ -16,7 +16,7 @@ etc.). Read the relevant `SKILL.md` before starting a task it covers.
 - Modify files inside `3rdparty/Megatron-LM/` — changes go through the upstream repo
 - Run the full test suite — run only the specific tests relevant to your change
 - Add required (non-optional) dependencies — use optional extras; submit dependency changes as a separate PR
-- Commit secrets, tokens, or `.env` files
+- Commit secrets, tokens, `.env` files, or environment-specific paths / account names (e.g. `/home/yuya/…`, usernames, cluster hostnames)
 - Use bare `print()` — use `logging.getLogger(__name__)` or `print_rank_0()`
 
 **ASK FIRST:**
@@ -29,6 +29,7 @@ etc.). Read the relevant `SKILL.md` before starting a task it covers.
 - Add NVIDIA copyright headers to new Python files (except under `tests/`)
 - Sign off commits: `git commit -s -m "message"`
 - Use `uv run python -m pytest` and `uv run python -m torch.distributed.run`, not bare `pytest` / `torchrun`
+- Use the current year (2026) in generated content — do not default to 2025 or any past year
 
 ## Toolchain
 
