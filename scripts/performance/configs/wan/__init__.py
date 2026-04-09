@@ -30,6 +30,7 @@ from .wan_workload_base_configs import (
     WAN_14B_PRETRAIN_CONFIG_H100_BF16_V1,
 )
 
+
 __all__ = [
     "WAN_14B_PRETRAIN_CONFIG_GB200_BF16_V1",
     "WAN_14B_PRETRAIN_CONFIG_H100_BF16_V1",
