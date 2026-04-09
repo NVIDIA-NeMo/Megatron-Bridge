@@ -52,7 +52,7 @@ class WanDatasetConfig(DatasetProvider):
 
     path: Optional[Union[str, list]] = None
     seq_length: int = 1024
-    packing_buffer_size: Optional[int] = None
+    packing_buffer_size: Optional[int] = 200
     micro_batch_size: int = 1
     global_batch_size: int = 4
     num_workers: int = 16
