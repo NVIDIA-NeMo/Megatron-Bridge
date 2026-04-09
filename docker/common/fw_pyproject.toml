@@ -34,6 +34,8 @@ dependencies = [
     "nemo-toolkit[tts]",
     "nemo-run",
     "nvidia-lm-eval",
+    "langchain~=1.0.0",
+    "langchain-core~=1.2.22", # GHSA-qh6h-p6c9-ff54
 ]
 
 [dependency-groups]
@@ -80,7 +82,7 @@ override-dependencies = [
     "wandb>=0.25.0",
     "nvidia-lm-eval==25.11.1",
     "lilcom==1.8.1",
-    "onnx==1.18.0",                             # TRT-LLM hard dependency
+    "onnx==1.21.0",                             # TRT-LLM hard dependency
     "pytest-coverage; sys_platform == 'never'",
     "future; sys_platform == 'never'",
     # Never install the following dependencies
@@ -111,4 +113,6 @@ override-dependencies = [
     "lilcom!=1.8.2",
     "cryptography>=43.0.0,<47",                          # Required by megatron-bridge, override nemo-run's constraint
     "opencv-python; sys_platform == 'never'",            # Use the dependency from the base pytorch container
+    "langchain~=1.0.0",
+    "langchain-core~=1.2.22",                            # GHSA-qh6h-p6c9-ff54
 ]

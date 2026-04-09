@@ -257,7 +257,9 @@ def parse_cli_args():
     parser.add_argument(
         "-d",
         "--dryrun",
-        help="If true, prints sbatch script to terminal without launching experiment.",
+        help="Dry-run mode. In setup_experiment.py: prints the sbatch script without launching. "
+        "In run_script.py / run_recipe.py: builds the full ConfigContainer with all overrides, "
+        "saves it to --save_config_filepath (default: ConfigContainer.yaml), and exits without training.",
         required=False,
         action="store_true",
     )
@@ -474,6 +476,15 @@ def parse_cli_args():
         help="Additional SLURM parameters as key=value pairs. "
         "Use semicolons (;) to separate parameters when values contain commas. "
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
+        required=False,
+    )
+    slurm_args.add_argument(
+        "--packager",
+        type=str,
+        choices=["git", "none"],
+        default="git",
+        help="How code is packaged for the job. 'git' snapshots the repo at submission time (default). "
+        "'none' skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.",
         required=False,
     )
 
@@ -712,6 +723,14 @@ def parse_cli_args():
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
     )
+    performance_args.add_argument(
+        "--moe_flex_dispatcher_backend",
+        type=lambda x: None if x == "None" else x,
+        help="MoE flex dispatcher backend. Options- deepep, hybridep, None. If None, will use alltoall dispatcher.",
+        choices=["deepep", "hybridep", None],
+        required=False,
+        default=-1,
+    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")
@@ -759,6 +778,12 @@ def parse_cli_args():
         default=None,
     )
     logging_args.add_argument("--save_config_filepath", type=str, help="Path to save the task configuration file")
+    logging_args.add_argument(
+        "--dump_env",
+        action="store_true",
+        help="Write environment variables to /nemo_run/env_<SLURM_JOB_ID>.log on rank 0. "
+        "Useful for post-run debugging of NCCL, CUDA, and SLURM settings.",
+    )
 
     # Config variant selection
     config_variant_args = parser.add_argument_group("Config variant arguments")

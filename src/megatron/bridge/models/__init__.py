@@ -64,6 +64,14 @@ from megatron.bridge.models.gpt_oss import (
     GPTOSSBridge,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.kimi import (
+    KimiK2Bridge,
+)
+from megatron.bridge.models.kimi_vl import (
+    KimiK25VLBridge,
+    KimiK25VLModel,
+    KimiK25VLModelProvider,
+)
 from megatron.bridge.models.llama import (
     LlamaBridge,
 )
@@ -171,6 +179,10 @@ __all__ = [
     "GPTModelProvider",
     "GPTOSSBridge",
     "T5ModelProvider",
+    "KimiK2Bridge",
+    "KimiK25VLModel",
+    "KimiK25VLBridge",
+    "KimiK25VLModelProvider",
     "LlamaBridge",
     "LlamaNemotronHeterogeneousProvider",
     "LlamaNemotronBridge",
