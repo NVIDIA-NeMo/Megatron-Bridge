@@ -2612,6 +2612,7 @@ class TestFSDPDTensorFunctionality:
                 patch(
                     "megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor"
                 ) as mock_uneven,
+                patch("megatron.bridge.training.checkpointing.handle_gdn_in_state_dict", None),
             ):
                 raw_state_dict = {"model": {"test_param": torch.tensor([1.0])}}
                 result = preprocess_fsdp_dtensor_state_dict(mock_cfg, raw_state_dict, mock_model)
