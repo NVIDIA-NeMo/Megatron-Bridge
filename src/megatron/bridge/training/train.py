@@ -590,7 +590,8 @@ def train(
             num_floating_point_operations_so_far,
             checkpoint_manager,
             train_data_iterator,
-            callback_manager,
+            pg_collection=pg_collection,
+            callback_manager=callback_manager,
         )
         if should_exit:
             break
@@ -1344,6 +1345,7 @@ def checkpoint_and_decide_exit(
                 checkpoint_manager,
                 train_data_iterator=train_data_iterator,
                 pg_collection=pg_collection,
+                callback_manager=callback_manager,
                 module_name=module_name,
             )
         barrier_and_log("Exiting program due to straggler detection.")
