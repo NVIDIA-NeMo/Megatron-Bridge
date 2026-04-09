@@ -60,6 +60,7 @@ console = Console()
 
 # Parameters where Megatron and HF may use different dtypes.
 # These are compared in float32 to avoid false mismatches.
+# TODO(yuya): Make this ignore list (model_type, param_name)
 IGNORE_PRECISION_PARAMS = [
     "e_score_correction_bias",
     "A_log",
