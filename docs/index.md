@@ -80,6 +80,7 @@ apidocs/index.rst
 :caption: Releases
 :hidden:
 
+releases/release-process.md
 releases/software-versions.md
 releases/changelog.md
 releases/known-issues.md
