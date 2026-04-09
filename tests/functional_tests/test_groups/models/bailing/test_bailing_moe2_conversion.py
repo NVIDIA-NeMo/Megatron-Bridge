@@ -24,6 +24,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
 from megatron.bridge.models.bailing.modeling_bailing_moe_v2 import BailingMoeV2ForCausalLM
 
+
 # Register local config and model classes so that AutoConfig / AutoModelForCausalLM can resolve
 # by model_type without network access (works in offline CI environments).
 AutoConfig.register("bailing_moe_v2", BailingMoeV2Config, exist_ok=True)

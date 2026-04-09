@@ -26,7 +26,6 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 from torch import nn
-
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_attn_mask_utils import (
@@ -47,6 +46,8 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
+
+
 try:
     from transformers.utils.import_utils import is_torch_fx_available
 except ImportError:
@@ -55,10 +56,12 @@ except ImportError:
         return False
 
 
-from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
-from transformers.generation.utils import GenerationMixin
 from dataclasses import dataclass
+
+from transformers.generation.utils import GenerationMixin
 from transformers.utils import ModelOutput
+
+from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
 
 
 if is_flash_attn_2_available():
