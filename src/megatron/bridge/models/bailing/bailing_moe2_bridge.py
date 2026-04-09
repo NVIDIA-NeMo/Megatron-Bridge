@@ -34,9 +34,12 @@ Supported models:
 import logging
 from functools import partial
 
+from transformers import AutoConfig, AutoModelForCausalLM
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
+from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
+from megatron.bridge.models.bailing.modeling_bailing_moe_v2 import BailingMoeV2ForCausalLM
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -46,6 +49,12 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+# Register the Bailing MoE V2 config and model classes with transformers Auto classes.
+# This allows AutoConfig.from_pretrained and AutoModelForCausalLM to resolve "bailing_moe_v2"
+# without requiring hub access (works in offline CI environments).
+AutoConfig.register("bailing_moe_v2", BailingMoeV2Config, exist_ok=True)
+AutoModelForCausalLM.register(BailingMoeV2Config, BailingMoeV2ForCausalLM, exist_ok=True)
 
 
 try:

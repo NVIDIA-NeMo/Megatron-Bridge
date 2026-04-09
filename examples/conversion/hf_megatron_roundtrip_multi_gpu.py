@@ -65,6 +65,7 @@ IGNORE_PRECISION_PARAMS = [
     "A_log",
     "linear_attn.norm.weight",
     "dt_bias",
+    "expert_bias",  # MoE gate expert bias: float32 in Megatron, bfloat16 in HF
 ]
 
 

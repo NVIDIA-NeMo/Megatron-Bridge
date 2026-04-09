@@ -21,6 +21,14 @@ import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
+from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
+from megatron.bridge.models.bailing.modeling_bailing_moe_v2 import BailingMoeV2ForCausalLM
+
+# Register local config and model classes so that AutoConfig / AutoModelForCausalLM can resolve
+# by model_type without network access (works in offline CI environments).
+AutoConfig.register("bailing_moe_v2", BailingMoeV2Config, exist_ok=True)
+AutoModelForCausalLM.register(BailingMoeV2Config, BailingMoeV2ForCausalLM, exist_ok=True)
+
 
 # Toy config: reduced dims for fast testing.
 # Keeps architectural properties: MoE with first_k_dense_replace, shared experts, QKV bias option.
@@ -55,21 +63,6 @@ HF_BAILING_MOE2_TOY_MODEL_CONFIG = {
 }
 
 
-def _register_bailing_classes():
-    """Register BailingMoeV2 custom model classes from the HuggingFace hub."""
-    ref_config = AutoConfig.from_pretrained("inclusionAI/Ling-mini-2.0", trust_remote_code=True)
-    return type(ref_config)
-
-
-try:
-    BailingMoeV2Config = _register_bailing_classes()
-except Exception:
-    pytest.skip(
-        "BailingMoeV2 model class not available (requires trust_remote_code from HuggingFace hub)",
-        allow_module_level=True,
-    )
-
-
 class TestBailingMoeV2Conversion:
     """
     Test Bailing MoE V2 model conversion with different parallelism configurations.
@@ -85,7 +78,7 @@ class TestBailingMoeV2Conversion:
         config = BailingMoeV2Config(**HF_BAILING_MOE2_TOY_MODEL_CONFIG)
         config.torch_dtype = torch.bfloat16
 
-        model = AutoModelForCausalLM.from_config(config, trust_remote_code=True).bfloat16()
+        model = BailingMoeV2ForCausalLM(config).bfloat16()
 
         model.save_pretrained(model_dir, safe_serialization=True)
 
@@ -126,7 +119,7 @@ class TestBailingMoeV2Conversion:
         assert config_data["first_k_dense_replace"] == 1
 
         model = AutoModelForCausalLM.from_pretrained(
-            toy_model_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=False, trust_remote_code=True
+            toy_model_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=False
         )
 
         assert len(model.model.layers) == 2
