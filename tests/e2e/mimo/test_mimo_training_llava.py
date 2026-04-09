@@ -533,6 +533,7 @@ def _build_config(
     wandb_entity: str | None = None,
     wandb_save_dir: str | None = None,
     lr_warmup_iters: int = 0,
+    seed: int = 42,
 ) -> ConfigContainer:
     train_cfg = TrainingConfig(
         micro_batch_size=micro_batch_size,
@@ -574,6 +575,7 @@ def _build_config(
         tokenizer=TokenizerConfig(),
         checkpoint=CheckpointConfig(),
     )
+    cfg.rng.seed = seed
     # data_parallel_size=1 because the sampler does not shard by DP.
     # All data-loading ranks receive identical global micro-batches;
     # per-module DP sub-sharding is handled by slice_batch_for_mimo in the
@@ -656,12 +658,11 @@ def main():
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
 
-    # Seed all RNGs for reproducible weight initialization
+    # Seed all RNGs for reproducible weight initialization.
+    # NOTE: _set_mimo_random_seeds() in setup_mimo re-seeds all RNGs with
+    # cfg.rng.seed before model construction, so cfg.rng.seed (set below)
+    # is what actually determines projection weight initialization.
     seed = 42
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
     # Open per-rank log file
     log_dir = os.environ.get("MIMO_LOG_DIR", "/tmp/mimo_llava_logs")
@@ -769,6 +770,7 @@ def main():
         wandb_entity=args.wandb_entity,
         wandb_save_dir=args.wandb_save_dir,
         lr_warmup_iters=args.lr_warmup_iters,
+        seed=seed,
     )
 
     # Configure checkpointing from CLI args
