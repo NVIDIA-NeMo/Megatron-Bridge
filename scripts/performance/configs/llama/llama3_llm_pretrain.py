@@ -77,7 +77,6 @@ def llama3_70b_pretrain_config_gb300(
         cfg.ddp.suggested_communication_unit_size = 800000000
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
-    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
     return cfg
 
