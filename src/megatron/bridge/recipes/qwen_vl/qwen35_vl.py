@@ -28,7 +28,11 @@ from typing_extensions import Unpack
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
-from megatron.bridge.recipes.qwen_vl.qwen3_vl import Qwen3VLCommonKwargs, _qwen3_vl_common
+from megatron.bridge.recipes.qwen_vl.qwen3_vl import (
+    Qwen3VLCommonKwargs,
+    _make_energon_dataset,
+    _qwen3_vl_common,
+)
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
@@ -382,6 +386,19 @@ def qwen35_vl_35b_a3b_sft_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> Confi
     cfg = _sft_common_vlm()
     _qwen35_vl_apply_common(cfg, hf_path, tp=2, pp=1, max_lr=2e-5, min_lr=2e-6)
     _qwen35_vl_apply_moe(cfg, ep=16)
+    return cfg
+
+
+def qwen35_vl_35b_a3b_sft_energon_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> ConfigContainer:
+    """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE) with Energon dataset.
+
+    Same as qwen35_vl_35b_a3b_sft_config but uses EnergonProvider instead of HF dataset.
+    Set the dataset path via CLI override: dataset.path=/path/to/energon/dataset
+    """
+    cfg = qwen35_vl_35b_a3b_sft_config(hf_path=hf_path)
+    cfg.dataset = _make_energon_dataset(
+        hf_path, cfg.dataset.seq_length, cfg.train.micro_batch_size, cfg.train.global_batch_size
+    )
     return cfg
 
 
