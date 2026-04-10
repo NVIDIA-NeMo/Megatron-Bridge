@@ -23,8 +23,13 @@ import os
 from typing import Optional, Union
 
 import torch
-from transformers import AutoTokenizer, Qwen3VLProcessor
+from transformers import AutoTokenizer
 from typing_extensions import TypedDict, Unpack
+
+try:
+    from transformers import Qwen3VLProcessor
+except Exception:
+    Qwen3VLProcessor = None
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
@@ -270,9 +275,14 @@ def _make_energon_dataset(
 ) -> EnergonProvider:
     """Create an EnergonProvider dataset config for Qwen3-VL recipes."""
     tokenizer = AutoTokenizer.from_pretrained(hf_path)
-    # Use Qwen3VLProcessor to match the HF flow (which uses AutoProcessor).
-    # This processor accepts both images and videos kwargs.
-    image_processor = Qwen3VLProcessor.from_pretrained(hf_path)
+    # Prefer Qwen3VLProcessor on newer transformers; fall back to AutoProcessor
+    # for older container images that do not yet expose that symbol.
+    if Qwen3VLProcessor is not None:
+        image_processor = Qwen3VLProcessor.from_pretrained(hf_path)
+    else:
+        from transformers import AutoProcessor
+
+        image_processor = AutoProcessor.from_pretrained(hf_path)
     task_encoder = QwenVLTaskEncoder(
         tokenizer=tokenizer,
         image_processor=image_processor,

@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
-from modelopt.torch.quantization.utils import is_quantized
 from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
@@ -50,6 +49,14 @@ from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelK
 
 
 logger = logging.getLogger(__name__)
+
+try:
+    from modelopt.torch.quantization.utils import is_quantized
+except Exception:
+    # modelopt/scipy is optional for recipe import and training startup.
+    # Keep quantization-only export path available when dependency exists.
+    def is_quantized(_model: object) -> bool:
+        return False
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")
