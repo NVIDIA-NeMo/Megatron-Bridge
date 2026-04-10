@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 
-from megatron.bridge.models.qwen.qwen_provider import Qwen3ModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr import (
     Qwen3ASRThinkerConfig,
 )
@@ -32,7 +32,7 @@ from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRMo
 
 
 @dataclass
-class Qwen3ASRModelProvider(Qwen3ModelProvider):
+class Qwen3ASRModelProvider(GPTModelProvider):
     """
     Base model provider for Qwen3-ASR Models.
     Inherits language model configuration from Qwen3ModelProvider (dense, Qwen3 architecture).
@@ -52,6 +52,7 @@ class Qwen3ASRModelProvider(Qwen3ModelProvider):
     audio_start_token_id: int = 151647
 
     add_qkv_bias: bool = False
+    add_bias_linear: bool = False
     qk_layernorm: bool = True
     attention_softmax_in_fp32: bool = True
     attention_dropout: float = 0.0
@@ -68,6 +69,7 @@ class Qwen3ASRModelProvider(Qwen3ModelProvider):
     freeze_audio_model: bool = False
     language_max_sequence_length: int = 2048
 
+    normalization: str = "RMSNorm"
     persist_layer_norm: bool = True
     bias_activation_fusion: bool = True
     bias_dropout_fusion: bool = True
@@ -76,6 +78,7 @@ class Qwen3ASRModelProvider(Qwen3ModelProvider):
     async_tensor_model_parallel_allreduce: bool = True
     distribute_saved_activations: bool = False
     cp_comm_type: str = "p2p"
+    gradient_accumulation_fusion: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """Provide a Qwen3-ASR model instance with audio and language components."""
@@ -109,4 +112,4 @@ class Qwen3ASRModelProvider(Qwen3ModelProvider):
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Provide just the language model component without audio."""
-        return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)

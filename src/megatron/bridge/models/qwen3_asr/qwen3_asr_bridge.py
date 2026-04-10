@@ -72,6 +72,7 @@ class Qwen3ASRBridge(MegatronModelBridge):
             bf16=(model_dtype == torch.bfloat16),
             params_dtype=model_dtype,
             add_qkv_bias=False,  # Qwen3 has no QKV bias
+            add_bias_linear=False,  # Qwen3 has no linear biases
             qk_layernorm=True,  # Qwen3 has QK layernorm
             # Token IDs from thinker config
             audio_token_id=getattr(thinker_config, "audio_token_id", 151646),
