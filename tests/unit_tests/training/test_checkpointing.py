@@ -2612,6 +2612,7 @@ class TestFSDPDTensorFunctionality:
                 patch(
                     "megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor"
                 ) as mock_uneven,
+                patch("megatron.bridge.training.checkpointing.handle_gdn_in_state_dict", None),
             ):
                 raw_state_dict = {"model": {"test_param": torch.tensor([1.0])}}
                 result = preprocess_fsdp_dtensor_state_dict(mock_cfg, raw_state_dict, mock_model)
@@ -2994,7 +2995,9 @@ class TestCheckpointManager:
                 checkpointing_context={"context": "data"},
                 non_persistent_ckpt=True,
                 train_data_iterator=ctx.train_data_iterator,
+                pg_collection=None,
                 callback_manager=None,
+                module_name=None,
             )
 
     def test_default_checkpoint_manager_load_delegates(self):
@@ -3294,6 +3297,9 @@ class TestLayerWiseOptimizerCheckpointing:
         # Set save_rng=False so the test doesn't attempt to restore RNG state from the
         # minimal mock state_dict (which has no rng_state key and would hit sys.exit()).
         load_checkpoint_fixtures["mock_cfg"].checkpoint.save_rng = False
+        # Ensure _is_mimo is False so the optimizer load path is not skipped.
+        # Mock() auto-creates attributes, making hasattr(..., "mimo_parallelism_config") True.
+        del load_checkpoint_fixtures["mock_cfg"].model.mimo_parallelism_config
 
         load_checkpoint(
             load_checkpoint_fixtures["mock_state"],
@@ -3301,6 +3307,7 @@ class TestLayerWiseOptimizerCheckpointing:
             mock_layer_wise_optim,
             load_checkpoint_fixtures["mock_scheduler"],
             checkpointing_context=checkpointing_context,
+            pg_collection=mock_pg_collection,
         )
 
         expected_path = f"{local_ckpt_dir}/layer_wise_optimizer_2.pt"
@@ -3394,12 +3401,15 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_load_base.return_value = (mock_state_dict, "/ckpts/iter_0001000", False, CheckpointType.GLOBAL)
 
         load_checkpoint_fixtures["mock_cfg"].checkpoint.load = "/ckpts"
+        # Ensure _is_mimo is False so the optimizer load path is not skipped.
+        del load_checkpoint_fixtures["mock_cfg"].model.mimo_parallelism_config
 
         load_checkpoint(
             load_checkpoint_fixtures["mock_state"],
             load_checkpoint_fixtures["mock_model"],
             mock_layer_wise_optim,
             load_checkpoint_fixtures["mock_scheduler"],
+            pg_collection=mock_pg_collection,
         )
 
         # Standard load_state_dict must be called; per-rank file loader must NOT be called.

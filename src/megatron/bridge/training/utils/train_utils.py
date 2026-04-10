@@ -349,6 +349,7 @@ def training_log(
     model: list[MegatronModule],
     pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
+    loaded_iteration: int = 0,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -706,7 +707,7 @@ def training_log(
             track_names.append("z_loss")
 
         if getattr(config.model, "is_hybrid_model", False):
-            layers = getattr(config.model, "hybrid_override_pattern", "").count("E")
+            layers = getattr(config.model, "hybrid_layer_pattern", "").count("E")
         else:
             layers = getattr(config.model, "num_layers", None)
 
@@ -839,7 +840,10 @@ def training_log(
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
-            report_memory_flag = False
+            if iteration > (loaded_iteration + 1):
+                # Make sure the memory after the second iteration is reported
+                # to include optimizer state memory.
+                report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 
     return report_memory_flag

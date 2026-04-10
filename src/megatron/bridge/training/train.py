@@ -508,6 +508,7 @@ def train(
                 history_wct,
                 model,
                 log_max_attention_logit,
+                loaded_iteration=start_iteration,
             )
 
         if (
@@ -589,7 +590,8 @@ def train(
             num_floating_point_operations_so_far,
             checkpoint_manager,
             train_data_iterator,
-            callback_manager,
+            pg_collection=pg_collection,
+            callback_manager=callback_manager,
         )
         if should_exit:
             break
@@ -1022,6 +1024,7 @@ def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, fl
     start_time = None
     start_num_floating_point_operations = None
     latest_num_floating_point_operations = 0
+    latest_num_floating_point_operations_uncommitted = None
 
     def _get_field(string, type):
         return type(string.split(": ")[1])
@@ -1033,6 +1036,12 @@ def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, fl
             world_size_in_line = _get_field(line_tokens[2], int)
             if line_tokens[3] == "Saved checkpoint":
                 latest_num_floating_point_operations = _get_field(line_tokens[7], float)
+            elif line_tokens[3] == "Saving async checkpoint":
+                latest_num_floating_point_operations_uncommitted = _get_field(line_tokens[7], float)
+            elif line_tokens[3] == "Saved async checkpoint":
+                if latest_num_floating_point_operations_uncommitted is not None:
+                    latest_num_floating_point_operations = latest_num_floating_point_operations_uncommitted
+                    latest_num_floating_point_operations_uncommitted = None
             if world_size_in_line != get_world_size_safe():
                 # Re-start search if we see a different world size.
                 start_time = None
@@ -1335,6 +1344,7 @@ def checkpoint_and_decide_exit(
                 checkpoint_manager,
                 train_data_iterator=train_data_iterator,
                 pg_collection=pg_collection,
+                callback_manager=callback_manager,
                 module_name=module_name,
             )
         barrier_and_log("Exiting program due to straggler detection.")
@@ -1385,7 +1395,7 @@ def _should_skip_and_handle_iteration(
         bool: True if the iteration was skipped, False otherwise
     """
     cfg = global_state.cfg
-    if global_state.train_state.step not in cfg.train.iterations_to_skip:
+    if (global_state.train_state.step + 1) not in cfg.train.iterations_to_skip:
         return False
 
     # Perform dummy train step to fast forward train_data_iterator

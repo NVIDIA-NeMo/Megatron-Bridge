@@ -120,7 +120,7 @@ torchrun --nproc_per_node 2 examples/quantization/export.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --megatron-load-path ./llama3_2_1b_fp8 \
     --export-dir ./llama3_2_1b_fp8_hf \
-    --pp 2 \
+    --tp 2 \
     --dtype bfloat16
 ```
 

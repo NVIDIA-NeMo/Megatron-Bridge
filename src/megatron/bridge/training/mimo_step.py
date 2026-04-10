@@ -41,6 +41,9 @@ def _get_module_dp_info(
 
     import torch.distributed as _dist
 
+    if not _dist.is_initialized():
+        return 0, 1
+
     current_rank = _dist.get_rank()
     for _name, grid in grids.items():
         if grid.rank_offset <= current_rank < (grid.rank_offset + grid.size):

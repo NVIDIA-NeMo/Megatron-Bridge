@@ -528,6 +528,8 @@ class CheckpointLoadContext:
 
     strict: bool = True
     skip_load_to_model_and_opt: bool = False
+    pg_collection: ProcessGroupCollection | None = None
+    module_name: str | None = None
 
 
 @runtime_checkable
@@ -653,6 +655,8 @@ class DefaultCheckpointManager:
             strict=ctx.strict,
             checkpointing_context=self._context,
             skip_load_to_model_and_opt=ctx.skip_load_to_model_and_opt,
+            pg_collection=ctx.pg_collection,
+            module_name=ctx.module_name,
         )
 
     def finalize_async_saves(self, state: GlobalState, blocking: bool = False, terminate: bool = False) -> None:
@@ -969,10 +973,6 @@ def save_checkpoint(
                 checkpointing_context["save_strategy"] = save_strategy
             end_ckpt = time()
             logger.debug(f"rank: {rank}, takes {end_ckpt - start_ckpt} to prepare state dict for ckpt ")
-            # WAR: mcore commit 704c7ee5a (Megatron-LM#3899) changed the default
-            # async_strategy from "mcore" to "nvrx", which causes a hang during
-            # distributed optimizer checkpoint save. Force "mcore" until the
-            # upstream fix lands.
             async_save_request = dist_checkpointing.save(
                 state_dict,
                 checkpoint_name,
@@ -981,7 +981,7 @@ def save_checkpoint(
                 validate_access_integrity=validate_sharding_integrity,
                 preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
                 content_metadata=_clean_metadata_for_serialization(sharded_sd_metadata),
-                async_strategy="mcore",
+                async_strategy=ckpt_cfg.async_strategy,
             )
             # [ModelOpt]: save sharded modelopt_state (skip if model is empty, e.g., low-memory save mode)
             if model:
