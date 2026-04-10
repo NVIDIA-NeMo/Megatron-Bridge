@@ -1037,13 +1037,15 @@ def save_checkpoint(
         train_state_global_filename = get_checkpoint_train_state_filename(save_dir, prefix=TRACKER_PREFIX)
         config_filename = get_checkpoint_run_config_filename(checkpoint_name)
         tracker_filename = get_checkpoint_tracker_filename(save_dir)
+
+        step = train_state.step
         if ckpt_type == CheckpointType.LOCAL:
 
             def train_state_finalize_fn():
-                print_rank_0(f"  successfully saved local checkpoint from iteration {train_state.step:7d}")
+                print_rank_0(f"  successfully saved local checkpoint from iteration {step:7d}")
                 if cfg.logger.log_progress and ckpt_cfg.async_save:
                     append_to_progress_log(
-                        ckpt_cfg.save, f"Saved async local checkpoint\tIteration: {train_state.step}", barrier=False
+                        ckpt_cfg.save, f"Saved async local checkpoint\tIteration: {step}", barrier=False
                     )
 
         else:
@@ -1059,13 +1061,13 @@ def save_checkpoint(
                     msc.torch.save(train_state_dict, train_state_global_filename)
                     # Write Megatron-LM tracker file for compatibility
                     with msc.open(tracker_filename, "w") as f:
-                        f.write(str(train_state.step))
+                        f.write(str(step))
                 else:
                     torch.save(train_state_dict, train_state_local_filename)
                     shutil.copy(train_state_local_filename, train_state_global_filename)
                     # Write Megatron-LM tracker file for compatibility
                     with open(tracker_filename, "w") as f:
-                        f.write(str(train_state.step))
+                        f.write(str(step))
 
                 cfg.to_yaml(config_filename)
 
