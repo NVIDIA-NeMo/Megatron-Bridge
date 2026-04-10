@@ -919,11 +919,8 @@ COLLATE_FNS = {
     "Qwen3VLProcessor": qwen2_5_collate_fn,
     "NemotronNanoVLV2Processor": nemotron_nano_v2_vl_collate_fn,
     "PixtralProcessor": ministral3_collate_fn,  # Ministral3 uses PixtralProcessor
-<<<<<<< sft_pr
     "Qwen2AudioProcessor": qwen2_audio_collate_fn,
-=======
     "Glm4vProcessor": glm4v_collate_fn,
->>>>>>> main
     "KimiK25Processor": kimi_k25_vl_collate_fn,
     "default": default_collate_fn,
 }
