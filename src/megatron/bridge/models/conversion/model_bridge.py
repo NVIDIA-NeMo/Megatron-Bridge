@@ -966,10 +966,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     vp_stage = task.vp_stage if task.vp_stage is not None else 0
                     chunk_key = f"model{vp_stage}"
                     captured_state_dicts[chunk_key][task.param_name] = converted_weights.detach()
-                # if isinstance(task.param_weight, DTensor):
-                #     sliced_converted_weights = converted_weights.reshape(-1)[task.param_weight.megatron_fsdp_slice]
-                #     task.param_weight._local_tensor.reshape(-1).copy_(sliced_converted_weights)
-                #     continue
                 # NOTE:
                 # For fp8_param (blockwise), `task.param_weight` can be a TransformerEngine
                 # Float8BlockwiseQTensor) that is a leaf with requires_grad=True.
