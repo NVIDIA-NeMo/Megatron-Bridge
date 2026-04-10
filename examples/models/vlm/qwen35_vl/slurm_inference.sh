@@ -143,7 +143,7 @@ CMD="uv run --no-sync python examples/conversion/hf_to_megatron_generate_vlm.py 
 
 # Only rank 0 on each node runs uv sync
 SYNC_CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 5; fi"
-FULL_CMD="$SYNC_CMD && $CMD"
+FULL_CMD="cd /opt/Megatron-Bridge && $SYNC_CMD && $CMD"
 
 echo "Executing inference..."
 echo "Command: $CMD"

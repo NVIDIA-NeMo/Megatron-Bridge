@@ -43,8 +43,14 @@ def weights_verification_table(bridge, megatron_model) -> Table:
     table.add_column("Device")
     table.add_column("Matches Original", justify="center")
 
+    # TODO: Remove fix_gpt_oss_export_transpose once GPT-OSS bridge export is fixed.
+    from megatron.bridge.utils.common_utils import fix_gpt_oss_export_transpose, get_hf_model_type
+
+    weight_iter = bridge.export_hf_weights(megatron_model, show_progress=True)
+    if get_hf_model_type(bridge) == "gpt_oss":
+        weight_iter = fix_gpt_oss_export_transpose(weight_iter)
     # Check each weight against the original HF-model
-    for name, param in bridge.export_hf_weights(megatron_model, show_progress=True):
+    for name, param in weight_iter:
         original_param = bridge.hf_pretrained.state[name]
         table.add_row(
             name,
@@ -271,6 +277,18 @@ def get_causal_lm_class_name_via_auto_map(
         return str(auto_map_class).split(".")[-1]
 
     return None
+
+
+def conform_config_to_reference(
+    hf_config_dict: dict[str, object], reference_config: dict[str, object]
+) -> dict[str, object]:
+    """Return a projected hf_config_dict onto the reference key set, imputing missing keys with reference values."""
+    reference_config_keys = set(reference_config.keys())
+    filtered_config_dict = {key: value for (key, value) in hf_config_dict.items() if key in reference_config_keys}
+    for key, value in reference_config.items():
+        if key not in filtered_config_dict:
+            filtered_config_dict[key] = value
+    return filtered_config_dict
 
 
 def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tensor]]:

@@ -37,7 +37,7 @@ if command -v ft_launcher >/dev/null 2>&1; then
       --ft-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
       --ft-rank_out_of_section_timeout=300 \
       --monitor-interval=5 --max-restarts=3 \
-      --ft-restart-policy=min-healthy \
+      --ft-restart-policy=any-failed \
       -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
       tests/functional_tests/test_groups/training/test_inprocess_restart.py
 fi

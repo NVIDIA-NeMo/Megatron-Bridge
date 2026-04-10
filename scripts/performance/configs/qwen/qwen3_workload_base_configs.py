@@ -31,7 +31,6 @@ from utils.utils import WorkloadBaseConfig
 
 BASE_QWEN3_235B_A22B_CONFIG = WorkloadBaseConfig(
     expert_tensor_parallel_size=1,
-    moe_flex_dispatcher_backend="deepep",
 )
 
 
@@ -39,7 +38,6 @@ BASE_QWEN3_30B_A3B_CONFIG = WorkloadBaseConfig(
     expert_model_parallel_size=8,
     expert_tensor_parallel_size=1,
     global_batch_size=512,
-    moe_flex_dispatcher_backend="deepep",
 )
 
 BASE_QWEN3_NEXT_80B_A3B_CONFIG = WorkloadBaseConfig(
@@ -232,6 +230,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_BF16_V2 = replace(
     QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_BF16_V1,
     num_gpus=256,
     global_batch_size=8192,
+    micro_batch_size=2,
 )
 
 
@@ -239,6 +238,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_CS_V2 = replace(
     QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_CS_V1,
     num_gpus=256,
     global_batch_size=8192,
+    micro_batch_size=2,
 )
 
 
@@ -433,28 +433,54 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
 # Qwen3 Next 80B A3B Presets - V1 (only version)
 # =============================================================================
 
-QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = replace(
-    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-    num_gpus=64,
-    micro_batch_size=1,
-)
-
-QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB200_BF16_V1 = replace(
-    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-    num_gpus=64,
-    micro_batch_size=1,
-)
-
-QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
-    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-    num_gpus=64,
-    micro_batch_size=2,
-)
-
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=64,
+    pipeline_model_parallel_size=2,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=32,
+    micro_batch_size=4,
+    moe_flex_dispatcher_backend="hybridep",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+    pp_layout="Et*4|(t*7|)*5t*8|tmL",
+)
+
+QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB300_BF16_V1
+
+QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB200_BF16_V1 = replace(
+    QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB300_BF16_V1,
+    micro_batch_size=2,
+)
+
+QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB200_BF16_V1
+
+QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_FP8_MX_V1 = replace(
+    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
+    num_gpus=64,
+    micro_batch_size=2,
+    moe_flex_dispatcher_backend="deepep",
+)
+
+QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
+    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
+    num_gpus=64,
     micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
+)
+
+QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_FP8_MX_V1 = replace(
+    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
+    num_gpus=64,
+    micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
+)
+
+QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
+    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
+    num_gpus=64,
+    micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
@@ -468,30 +494,6 @@ QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=128,
     expert_model_parallel_size=128,
-    micro_batch_size=1,
-)
-
-QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_FP8_MX_V1 = replace(
-    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-    num_gpus=64,
-    micro_batch_size=2,
-)
-
-QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
-    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-    num_gpus=64,
-    micro_batch_size=1,
-)
-
-QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_FP8_MX_V1 = replace(
-    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-    num_gpus=64,
-    micro_batch_size=1,
-)
-
-QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
-    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-    num_gpus=64,
     micro_batch_size=1,
 )
 
