@@ -1009,7 +1009,7 @@ def save_checkpoint(
         config_filename = get_checkpoint_run_config_filename(checkpoint_name)
         tracker_filename = get_checkpoint_tracker_filename(save_dir)
 
-        step = train_state.stp
+        step = train_state.step
         if ckpt_type == CheckpointType.LOCAL:
 
             def train_state_finalize_fn():
