@@ -20,7 +20,10 @@ This module provides configuration classes for Qwen3-ASR audio speech recognitio
 """
 
 from dataclasses import dataclass, field
+from typing import Callable, Optional
 
+import torch
+import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 
@@ -35,11 +38,11 @@ from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRMo
 class Qwen3ASRModelProvider(GPTModelProvider):
     """
     Base model provider for Qwen3-ASR Models.
-    Inherits language model configuration from Qwen3ModelProvider (dense, Qwen3 architecture).
+    Directly inherits from GPTModelProvider with Qwen3-specific defaults.
 
     Key characteristics:
     - Audio-only (no vision, no video)
-    - Qwen3-based LLM: qk_layernorm=True, no QKV bias
+    - Qwen3-based LLM: SwiGLU (silu + gated), qk_layernorm=True, no QKV bias
     - mrope_section: [24, 20, 20]
     - rotary_base: 5000000.0
     - Simple RoPE: same position IDs across all 3 MRoPE dims
@@ -51,11 +54,23 @@ class Qwen3ASRModelProvider(GPTModelProvider):
     audio_token_id: int = 151646
     audio_start_token_id: int = 151647
 
+    # --- Qwen3 architecture defaults (previously inherited from Qwen3ModelProvider) ---
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
     add_qkv_bias: bool = False
     add_bias_linear: bool = False
     qk_layernorm: bool = True
-    attention_softmax_in_fp32: bool = True
+    kv_channels: Optional[int] = 128
+    hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
+    attention_softmax_in_fp32: bool = True
+    init_method_std: float = 0.02
+    vocab_size: int = 151936
+    share_embeddings_and_output_weights: Optional[bool] = False
+    layernorm_epsilon: float = 1e-6
+    autocast_dtype: torch.dtype = torch.bfloat16
+    params_dtype: torch.dtype = torch.bfloat16
+    bf16: bool = True
 
     position_embedding_type: str = "mrope"
     apply_rotary_pos_emb_in_fp32: bool = False
