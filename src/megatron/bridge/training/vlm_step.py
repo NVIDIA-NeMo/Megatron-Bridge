@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import math
 from functools import partial
 from typing import Any, Iterable
 
@@ -94,6 +95,13 @@ def get_batch_from_iterator(
         else:
             _batch_required_keys[key] = None
 
+    # Preserve collator's 2D padding mask for sequence packing length detection.
+    # skip_getting_attention_mask_from_dataset may discard the attention_mask for model
+    # forward, but packing still needs it to identify real vs padding positions.
+    raw_attn = batch.get("attention_mask")
+    if isinstance(raw_attn, torch.Tensor) and raw_attn.dim() == 2:
+        _batch_required_keys["_padding_mask"] = raw_attn.cuda(non_blocking=True)
+
     return _batch_required_keys
 
 
@@ -105,6 +113,7 @@ def pack_batch_sequences(
     position_ids: torch.Tensor,
     pad_token_id: int = 0,
     pad_to_multiple_of: int = 1,
+    padding_mask: torch.Tensor | None = None,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor | None,
@@ -113,6 +122,7 @@ def pack_batch_sequences(
     torch.Tensor,
     torch.Tensor,
     torch.Tensor,
+    torch.Tensor | None,
 ]:
     """
     Pack sequences in a batch by concatenating them and removing padding.
@@ -123,7 +133,10 @@ def pack_batch_sequences(
         loss_mask: [batch_size, seq_len] or None (non-last PP stages)
         attention_mask: [batch_size, 1, seq_len, seq_len] or None
         position_ids: [batch_size, seq_len]
-        pad_token_id: Token ID used for padding
+        pad_token_id: Token ID used for padding (fallback when padding_mask is unavailable)
+        pad_to_multiple_of: Pad each sequence length to a multiple of this value
+        padding_mask: [batch_size, seq_len] explicit mask from collator (1=real, 0=padding).
+            When provided, this is used instead of pad_token_id for robust length detection.
 
     Returns:
         Tuple of:
@@ -138,23 +151,24 @@ def pack_batch_sequences(
     batch_size, seq_len = tokens.shape
     device = tokens.device
 
-    # Find actual sequence lengths (excluding padding)
-    # Assuming padding is at the end and uses pad_token_id (0)
     seq_lengths = []
     valid_sequences = []
 
     for i in range(batch_size):
-        # Find first padding token or use full length
-        non_pad_mask = tokens[i] != pad_token_id
-        if non_pad_mask.any():
-            # Find the last non-padding token
-            last_valid_idx = non_pad_mask.nonzero(as_tuple=True)[0][-1].item() + 1
+        if padding_mask is not None:
+            length = int(padding_mask[i].sum().item())
         else:
-            # Empty sequence, skip
-            continue
+            non_pad_mask = tokens[i] != pad_token_id
+            if non_pad_mask.all():
+                length = seq_len
+            elif non_pad_mask.any():
+                length = non_pad_mask.nonzero(as_tuple=True)[0][-1].item() + 1
+            else:
+                length = 0
 
-        seq_lengths.append(last_valid_idx)
-        valid_sequences.append(i)
+        if length > 0:
+            seq_lengths.append(length)
+            valid_sequences.append(i)
 
     if len(valid_sequences) == 0:
         # No valid sequences, return empty packed batch
@@ -318,10 +332,21 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
 
     visual_inputs = batch.get("visual_inputs")
     cp_size = pg_collection.cp.size() if pg_collection is not None and pg_collection.cp is not None else 1
+    tp_size = pg_collection.tp.size() if pg_collection is not None and pg_collection.tp is not None else 1
+    has_sp = getattr(cfg.model, "sequence_parallel", False)
 
     if enable_packing:
         # Pack sequences
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
+
+        # Compute pad_to_multiple_of as lcm of CP and SP constraints.
+        # CP zigzag requires divisibility by 2*cp_size; SP reduce_scatter requires
+        # the per-CP-rank length to be divisible by tp_size (i.e. total divisible by
+        # cp_size*tp_size). Reference: megatron/core/models/multimodal/context_parallel.py
+        cp_multiple = 2 * cp_size if cp_size > 1 else 1
+        sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
+        pad_multiple = math.lcm(cp_multiple, sp_multiple)
+
         (
             packed_tokens,
             packed_labels,
@@ -337,7 +362,8 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
             attention_mask=batch.get("attention_mask"),
             position_ids=batch.get("position_ids"),
             pad_token_id=0,
-            pad_to_multiple_of=cp_size * 2 if cp_size > 1 else 1,
+            pad_to_multiple_of=pad_multiple,
+            padding_mask=batch.get("_padding_mask"),
         )
 
         # Update batch dict with packed tensors
@@ -424,6 +450,9 @@ def forward_step(
             "cu_seqlens_argmin": cu_seqlens_argmin,
         }
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
+
+    if loss_mask is not None:
+        loss_mask = loss_mask.contiguous()
 
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss

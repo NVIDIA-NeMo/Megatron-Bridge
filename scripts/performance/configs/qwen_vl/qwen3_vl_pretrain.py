@@ -18,8 +18,8 @@ from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 
 from megatron.bridge.recipes.qwen_vl.qwen3_vl import (
-    qwen3_vl_30b_a3b_pretrain_config,
-    qwen3_vl_235b_a22b_pretrain_config,
+    qwen3_vl_30b_a3b_pretrain_mock_config,
+    qwen3_vl_235b_a22b_pretrain_mock_config,
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -77,7 +77,7 @@ def set_qwen3_vl_common_configs(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_grad_reduce = False
 
 
-def qwen3_vl_235b_a22b_pretrain_config_gb300(
+def qwen3_vl_235b_a22b_pretrain_mock_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB300, baseline config."""
@@ -90,7 +90,7 @@ def qwen3_vl_235b_a22b_pretrain_config_gb300(
             base_cfg = QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen3_vl_235b_a22b_pretrain_config(
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -102,7 +102,7 @@ def qwen3_vl_235b_a22b_pretrain_config_gb300(
     return cfg
 
 
-def qwen3_vl_235b_a22b_pretrain_config_gb200(
+def qwen3_vl_235b_a22b_pretrain_mock_config_gb200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB200, baseline config."""
@@ -115,7 +115,7 @@ def qwen3_vl_235b_a22b_pretrain_config_gb200(
             base_cfg = QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen3_vl_235b_a22b_pretrain_config(
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -127,7 +127,7 @@ def qwen3_vl_235b_a22b_pretrain_config_gb200(
     return cfg
 
 
-def qwen3_vl_235b_a22b_pretrain_config_b200(
+def qwen3_vl_235b_a22b_pretrain_mock_config_b200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """B200, baseline config."""
@@ -140,7 +140,7 @@ def qwen3_vl_235b_a22b_pretrain_config_b200(
             base_cfg = QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_B200_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen3_vl_235b_a22b_pretrain_config(
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -157,7 +157,7 @@ def qwen3_vl_235b_a22b_pretrain_config_b200(
     return cfg
 
 
-def qwen3_vl_235b_a22b_pretrain_config_h100(
+def qwen3_vl_235b_a22b_pretrain_mock_config_h100(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """H100, baseline config."""
@@ -168,7 +168,7 @@ def qwen3_vl_235b_a22b_pretrain_config_h100(
         base_cfg = QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS
         precision_config = get_precision_config(precision)
 
-    cfg = qwen3_vl_235b_a22b_pretrain_config(
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=False),
@@ -180,7 +180,7 @@ def qwen3_vl_235b_a22b_pretrain_config_h100(
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_config_gb300(
+def qwen3_vl_30b_a3b_pretrain_mock_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB300, baseline config."""
@@ -193,7 +193,7 @@ def qwen3_vl_30b_a3b_pretrain_config_gb300(
             base_cfg = QWEN3_VL_30B_A3B_PRETRAIN_CONFIG_GB300_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen3_vl_30b_a3b_pretrain_config(
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -205,7 +205,7 @@ def qwen3_vl_30b_a3b_pretrain_config_gb300(
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_config_gb200(
+def qwen3_vl_30b_a3b_pretrain_mock_config_gb200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB200, baseline config."""
@@ -218,7 +218,7 @@ def qwen3_vl_30b_a3b_pretrain_config_gb200(
             base_cfg = QWEN3_VL_30B_A3B_PRETRAIN_CONFIG_GB200_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen3_vl_30b_a3b_pretrain_config(
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -230,7 +230,7 @@ def qwen3_vl_30b_a3b_pretrain_config_gb200(
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_config_b200(
+def qwen3_vl_30b_a3b_pretrain_mock_config_b200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """B200, baseline config."""
@@ -243,7 +243,7 @@ def qwen3_vl_30b_a3b_pretrain_config_b200(
             base_cfg = QWEN3_VL_30B_A3B_PRETRAIN_CONFIG_B200_FP8_MX
         precision_config = get_precision_config(precision)
 
-    cfg = qwen3_vl_30b_a3b_pretrain_config(
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
@@ -255,7 +255,7 @@ def qwen3_vl_30b_a3b_pretrain_config_b200(
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_config_h100(
+def qwen3_vl_30b_a3b_pretrain_mock_config_h100(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """H100, baseline config."""
@@ -266,7 +266,7 @@ def qwen3_vl_30b_a3b_pretrain_config_h100(
         base_cfg = QWEN3_VL_30B_A3B_PRETRAIN_CONFIG_H100_FP8_CS
         precision_config = get_precision_config(precision)
 
-    cfg = qwen3_vl_30b_a3b_pretrain_config(
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config(
         mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),

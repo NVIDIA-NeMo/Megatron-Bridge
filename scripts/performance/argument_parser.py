@@ -257,7 +257,9 @@ def parse_cli_args():
     parser.add_argument(
         "-d",
         "--dryrun",
-        help="If true, prints sbatch script to terminal without launching experiment.",
+        help="Dry-run mode. In setup_experiment.py: prints the sbatch script without launching. "
+        "In run_script.py / run_recipe.py: builds the full ConfigContainer with all overrides, "
+        "saves it to --save_config_filepath (default: ConfigContainer.yaml), and exits without training.",
         required=False,
         action="store_true",
     )
@@ -333,11 +335,17 @@ def parse_cli_args():
         "--tokenizer_model", type=str, help="Path to tokenizer model (automatically provided by launcher)"
     )
     tokenizer_args.add_argument("--vocab_size", type=int, default=32000, help="Vocabulary size for NullTokenizer")
-    tokenizer_args.add_argument(
+    hf_mode = tokenizer_args.add_mutually_exclusive_group()
+    hf_mode.add_argument(
         "-hf",
         "--hf_token",
         type=str,
         help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
+    )
+    hf_mode.add_argument(
+        "--offline",
+        action="store_true",
+        help="Enable offline HuggingFace Hub mode by setting HF_HUB_OFFLINE=1.",
     )
 
     # Parallelism
@@ -476,6 +484,15 @@ def parse_cli_args():
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
         required=False,
     )
+    slurm_args.add_argument(
+        "--packager",
+        type=str,
+        choices=["git", "none"],
+        default="git",
+        help="How code is packaged for the job. 'git' snapshots the repo at submission time (default). "
+        "'none' skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.",
+        required=False,
+    )
 
     # DGXCloud
     dgxc_args = parser.add_argument_group("DGXCloud arguments")
@@ -526,6 +543,35 @@ def parse_cli_args():
         type=str,
         help="DGXCloud pvc mount path",
         required=False,
+    )
+
+    # Kubeflow
+    kubeflow_args = parser.add_argument_group("Kubeflow arguments")
+    kubeflow_args.add_argument(
+        "--kubeflow_namespace",
+        type=str,
+        help="Kubernetes namespace for Kubeflow TrainJob. When set, uses the Kubeflow executor instead of Slurm.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_workdir_pvc",
+        type=str,
+        help="PVC name for syncing job workdir (launch scripts, packaged code) to the cluster before launch.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_workdir_pvc_path",
+        type=str,
+        help="Mount path for the workdir PVC inside the training pod. Defaults to '/nemo_run'.",
+        default="/nemo_run",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_image_pull_secrets",
+        type=list_of_strings,
+        help="Comma-separated list of Kubernetes image pull secret names.",
+        required=False,
+        default=[],
     )
 
     # For performance
@@ -683,6 +729,14 @@ def parse_cli_args():
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
     )
+    performance_args.add_argument(
+        "--moe_flex_dispatcher_backend",
+        type=lambda x: None if x == "None" else x,
+        help="MoE flex dispatcher backend. Options- deepep, hybridep, None. If None, will use alltoall dispatcher.",
+        choices=["deepep", "hybridep", None],
+        required=False,
+        default=-1,
+    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")
@@ -730,6 +784,12 @@ def parse_cli_args():
         default=None,
     )
     logging_args.add_argument("--save_config_filepath", type=str, help="Path to save the task configuration file")
+    logging_args.add_argument(
+        "--dump_env",
+        action="store_true",
+        help="Write environment variables to /nemo_run/env_<SLURM_JOB_ID>.log on rank 0. "
+        "Useful for post-run debugging of NCCL, CUDA, and SLURM settings.",
+    )
 
     # Config variant selection
     config_variant_args = parser.add_argument_group("Config variant arguments")
