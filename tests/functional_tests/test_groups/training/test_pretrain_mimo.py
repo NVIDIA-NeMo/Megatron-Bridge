@@ -137,16 +137,37 @@ def _build_model_specs():
 # ── Data helpers ─────────────────────────────────────────────────────────────
 
 
+class _CLIPImageProcessor:
+    """Minimal image processor that produces pixel_values in the shape CLIP ViT expects.
+
+    Avoids depending on the openai/clip-vit-base-patch16 HF processor which may
+    not be available in all CI environments.
+    """
+
+    def __call__(self, image, return_tensors="pt"):
+        # CLIP ViT expects [3, img_h, img_w] normalized float tensors.
+        import numpy as np
+
+        arr = np.array(image, dtype=np.float32) / 255.0  # [H, W, 3]
+        arr = arr.transpose(2, 0, 1)  # [3, H, W]
+        t = torch.tensor(arr)
+        if return_tensors == "pt":
+            t = t.unsqueeze(0)  # [1, 3, H, W] — batch dim removed by MimoDataset
+        return {"pixel_values": t}
+
+
 def _build_mock_data_provider() -> MockMimoProvider:
     provider = MockMimoProvider(
         seq_length=_SEQ_LENGTH,
-        processor_paths={"vision": "openai/clip-vit-base-patch16"},
+        processor_paths={},
         tokenizer_path="gpt2",
         special_token_ids={"vision": _SPECIAL_TOKEN_ID},
         encoder_seq_lengths={"vision": _ENCODER_SEQ_LEN},
         modality_configs={"vision": {"type": "image", "width": _IMG_SIZE, "height": _IMG_SIZE}},
     )
     provider.drop_last = True
+    # Inject our minimal CLIP-compatible processor so MimoDataset uses it.
+    object.__setattr__(provider, "_processors", {"vision": _CLIPImageProcessor()})
     return provider
 
 
