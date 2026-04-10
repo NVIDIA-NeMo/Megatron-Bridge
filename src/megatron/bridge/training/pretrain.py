@@ -27,7 +27,6 @@ from megatron.bridge.training.utils.log_utils import barrier_and_log
 from megatron.bridge.utils.common_utils import print_rank_0
 from megatron.bridge.utils.decorators import experimental_fn
 
-
 @experimental_fn
 def pretrain(
     config: ConfigContainer,
@@ -135,7 +134,13 @@ def _pretrain(
     test_data_iterator = setup_output.test_data_iterator
     checkpoint_manager = setup_output.checkpoint_manager
     pg_collection = setup_output.pg_collection
-
+    
+    if ckpt_context is None:
+        ckpt_context = {}
+    
+    if callback_manager is not None:
+        ckpt_context["callback_manager"] = callback_manager
+        
     # TRAINING
     if not config.validation.skip_train:
         if state.train_state.do_train and config.train.train_iters > 0:

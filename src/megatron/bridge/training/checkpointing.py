@@ -86,7 +86,7 @@ from megatron.bridge.utils.common_utils import (
     print_rank_0,
 )
 from megatron.bridge.utils.import_utils import safe_import
-
+from megatron.bridge.training.callbacks import CheckpointCallbackContext
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
 
@@ -806,7 +806,7 @@ def save_checkpoint(
 
     ckpt_format = ckpt_cfg.ckpt_format if ckpt_type == CheckpointType.GLOBAL else "torch"  # torch for local
     print_rank_0(f"saving checkpoint at iteration {train_state.step:7d} to {save_dir} in {ckpt_format} format")
-
+    
     # Collect rng state across data parallel ranks.
     if pg_collection is None:
         pg_collection = get_pg_collection(model)
@@ -825,6 +825,15 @@ def save_checkpoint(
 
     # Checkpoint name.
     checkpoint_name = get_checkpoint_name(save_dir, train_state.step, release=False)
+    
+    def callback_finalize_fn() -> None:
+        _fire_checkpoint_callback(
+            checkpointing_context=checkpointing_context,
+            hook_name="on_checkpoint_save",
+            state=state,
+            checkpoint_name=checkpoint_name,
+            checkpoint_type=ckpt_type,
+        )
 
     # Save dataloader state if the dataloader supports it (currently only Megatron Energon).
     maybe_save_dataloader_state(
@@ -998,75 +1007,76 @@ def save_checkpoint(
     if ckpt_type != CheckpointType.LOCAL:
         if not ckpt_cfg.async_save:
             assert async_save_request is None
-            # Wait so everyone is done (necessary)
+
             if torch.distributed.is_initialized():
                 torch.distributed.barrier()
 
-    # And update the latest train state
-    if get_rank_safe() == 0:
-        train_state_local_filename = get_checkpoint_train_state_filename(checkpoint_name)
-        train_state_global_filename = get_checkpoint_train_state_filename(save_dir, prefix=TRACKER_PREFIX)
-        config_filename = get_checkpoint_run_config_filename(checkpoint_name)
-        tracker_filename = get_checkpoint_tracker_filename(save_dir)
-        if ckpt_type == CheckpointType.LOCAL:
+            if get_rank_safe() == 0:
+                train_state_local_filename = get_checkpoint_train_state_filename(checkpoint_name)
+                train_state_global_filename = get_checkpoint_train_state_filename(save_dir, prefix=TRACKER_PREFIX)
+                config_filename = get_checkpoint_run_config_filename(checkpoint_name)
+                tracker_filename = get_checkpoint_tracker_filename(save_dir)
+                if ckpt_type == CheckpointType.LOCAL:
 
-            def train_state_finalize_fn():
-                print_rank_0(f"  successfully saved local checkpoint from iteration {train_state.step:7d}")
-                if cfg.logger.log_progress and ckpt_cfg.async_save:
-                    append_to_progress_log(
-                        ckpt_cfg.save, f"Saved async local checkpoint\tIteration: {train_state.step}", barrier=False
-                    )
+                    def train_state_finalize_fn():
+                        print_rank_0(f"  successfully saved local checkpoint from iteration {train_state.step:7d}")
+                        if cfg.logger.log_progress and ckpt_cfg.async_save:
+                            append_to_progress_log(
+                                ckpt_cfg.save, f"Saved async local checkpoint\tIteration: {train_state.step}", barrier=False
+                            )
 
-        else:
-            train_state_dict = train_state.state_dict()
-
-            def train_state_finalize_fn() -> None:
-                train_state_dict["floating_point_operations_so_far"] = torch.tensor(
-                    num_floating_point_operations_so_far, dtype=torch.float32
-                )
-                if MultiStorageClientFeature.is_enabled():
-                    msc = MultiStorageClientFeature.import_package()
-                    msc.torch.save(train_state_dict, train_state_local_filename)
-                    msc.torch.save(train_state_dict, train_state_global_filename)
-                    # Write Megatron-LM tracker file for compatibility
-                    with msc.open(tracker_filename, "w") as f:
-                        f.write(str(train_state.step))
                 else:
-                    torch.save(train_state_dict, train_state_local_filename)
-                    shutil.copy(train_state_local_filename, train_state_global_filename)
-                    # Write Megatron-LM tracker file for compatibility
-                    with open(tracker_filename, "w") as f:
-                        f.write(str(train_state.step))
+                    train_state_dict = train_state.state_dict()
 
-                cfg.to_yaml(config_filename)
+                    def train_state_finalize_fn() -> None:
+                        train_state_dict["floating_point_operations_so_far"] = torch.tensor(
+                            num_floating_point_operations_so_far, dtype=torch.float32
+                        )
+                        if MultiStorageClientFeature.is_enabled():
+                            msc = MultiStorageClientFeature.import_package()
+                            msc.torch.save(train_state_dict, train_state_local_filename)
+                            msc.torch.save(train_state_dict, train_state_global_filename)
+                            # Write Megatron-LM tracker file for compatibility
+                            with msc.open(tracker_filename, "w") as f:
+                                f.write(str(train_state.step))
+                        else:
+                            torch.save(train_state_dict, train_state_local_filename)
+                            shutil.copy(train_state_local_filename, train_state_global_filename)
+                            # Write Megatron-LM tracker file for compatibility
+                            with open(tracker_filename, "w") as f:
+                                f.write(str(train_state.step))
 
-                # Save tokenizer files for self-contained checkpoints (if enabled)
-                if ckpt_cfg.save_tokenizer_assets:
-                    tokenizer_instance = getattr(cfg.dataset, "tokenizer", None) if cfg.dataset else None
-                    if tokenizer_instance is not None:
-                        save_tokenizer_assets(tokenizer_instance, cfg.tokenizer, checkpoint_name)
+                        cfg.to_yaml(config_filename)
 
-                tp_rank = (tensor_rank if tensor_rank is not None else pg_collection.tp.rank()) + 1
-                tp_world_size = pg_collection.tp.size()
-                pp_rank = (pipeline_rank if pipeline_rank is not None else pg_collection.pp.rank()) + 1
-                pp_world_size = pg_collection.pp.size()
-                print_rank_0(
-                    f"  successfully saved checkpoint from iteration {train_state_dict['step'].item():7d} "
-                    f"to {ckpt_cfg.save} [ t {tp_rank}/{tp_world_size}, p {pp_rank}/{pp_world_size} ]"
-                )
+                        # Save tokenizer files for self-contained checkpoints (if enabled)
+                        if ckpt_cfg.save_tokenizer_assets:
+                            tokenizer_instance = getattr(cfg.dataset, "tokenizer", None) if cfg.dataset else None
+                            if tokenizer_instance is not None:
+                                save_tokenizer_assets(tokenizer_instance, cfg.tokenizer, checkpoint_name)
 
-                if cfg.logger.log_progress and ckpt_cfg.async_save:
-                    append_to_progress_log(
-                        ckpt_cfg.save,
-                        f"Saved async checkpoint\tIteration: {train_state_dict['step'].item()}",
-                        barrier=False,
-                    )
+                        tp_rank = (tensor_rank if tensor_rank is not None else pg_collection.tp.rank()) + 1
+                        tp_world_size = pg_collection.tp.size()
+                        pp_rank = (pipeline_rank if pipeline_rank is not None else pg_collection.pp.rank()) + 1
+                        pp_world_size = pg_collection.pp.size()
+                        print_rank_0(
+                            f"  successfully saved checkpoint from iteration {train_state_dict['step'].item():7d} "
+                            f"to {ckpt_cfg.save} [ t {tp_rank}/{tp_world_size}, p {pp_rank}/{pp_world_size} ]"
+                        )
+
+                        if cfg.logger.log_progress and ckpt_cfg.async_save:
+                            append_to_progress_log(
+                                ckpt_cfg.save,
+                                f"Saved async checkpoint\tIteration: {train_state_dict['step'].item()}",
+                                barrier=False,
+                            )
 
         if ckpt_cfg.async_save:
             assert async_save_request is not None
             async_save_request.add_finalize_fn(train_state_finalize_fn)
-        else:
-            train_state_finalize_fn()
+        else:  # Checkpoint lifecycle callbacks are currently fired only for synchronous saves
+            if get_rank_safe() == 0:
+                train_state_finalize_fn()
+            callback_finalize_fn() 
 
     # Ensure all ranks see a fully written checkpoint (e.g., run_config.yaml) before W&B scans.
     def _post_save_global_barrier() -> None:
@@ -1193,6 +1203,30 @@ def cleanup_old_non_persistent_checkpoint(
         threading.Thread(target=remove_iter_ckpts, args=(rm_iter_ckpts,)).start()
     else:
         remove_iter_ckpts(rm_iter_ckpts)
+
+
+def _fire_checkpoint_callback(
+    checkpointing_context: dict[str, Any] | None,
+    hook_name: str,
+    state: GlobalState,
+    checkpoint_name: str,
+    checkpoint_type: CheckpointType,
+) -> None:
+    """Fire a checkpoint lifecycle callback if a callback manager is available."""
+    if checkpointing_context is None:
+        return
+
+    callback_manager = checkpointing_context.get("callback_manager")
+    if callback_manager is None:
+        return
+
+    context = CheckpointCallbackContext(
+        state=state,
+        checkpoint_name=checkpoint_name,
+        checkpoint_type=checkpoint_type,
+        user_state=callback_manager.user_state,
+    )
+    callback_manager.fire(hook_name, context)
 
 
 def maybe_save_dataloader_state(
@@ -1673,7 +1707,6 @@ def load_checkpoint(
         load_dir, state, model, optimizer, opt_param_scheduler, strict, checkpointing_context
     )
 
-
 def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
     """Helper function to load state dict with fallback for missing extra states."""
     try:
@@ -1691,7 +1724,6 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
         else:
             # Re-raise if we were already in non-strict mode
             raise
-
 
 def _load_checkpoint_from_path(
     load_dir: str,
@@ -2178,6 +2210,14 @@ def _load_checkpoint_from_path(
     if state.train_state.step > 0:
         is_local_chkpt = ckpt_type == CheckpointType.LOCAL
         fault_tolerance.on_checkpoint_loaded(is_local_chkpt=is_local_chkpt, global_state=state)
+
+    _fire_checkpoint_callback(
+        checkpointing_context=checkpointing_context,
+        hook_name="on_checkpoint_load",
+        state=state,
+        checkpoint_name=checkpoint_name,
+        checkpoint_type=ckpt_type,
+    )
 
     return state.train_state.step, state.train_state.floating_point_operations_so_far
 
