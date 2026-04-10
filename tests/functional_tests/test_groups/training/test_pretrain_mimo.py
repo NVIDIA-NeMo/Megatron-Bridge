@@ -1,0 +1,304 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Functional test for MIMO heterogeneous parallel training.
+
+Exercises pretrain_mimo -> setup_mimo -> train_mimo on 4 GPUs with
+synthetic data. Requires torchrun with --nproc_per_node=4.
+
+Run:
+    torchrun --nproc_per_node=4 -m pytest -v -s -x \
+        tests/functional_tests/test_groups/training/test_mimo_training.py
+"""
+
+from __future__ import annotations
+
+import pytest
+import torch
+import torch.distributed as dist
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
+from megatron.core.models.vision.clip_vit_model import CLIPViTModel
+from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_config import TransformerConfig
+
+from megatron.bridge.data.mimo.mock_provider import MockMimoProvider
+from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
+from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+from megatron.bridge.training.config import (
+    CheckpointConfig,
+    ConfigContainer,
+    LoggerConfig,
+    OptimizerConfig,
+    SchedulerConfig,
+    TrainingConfig,
+)
+from megatron.bridge.training.mimo_step import forward_step as mimo_forward_step
+from megatron.bridge.training.pretrain_mimo import pretrain_mimo
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from tests.functional_tests.utils import initialize_distributed
+
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+_ENCODER_SEQ_LEN = 197  # (224/16)^2 = 196 patches + 1 class token
+_SPECIAL_TOKEN_ID = 32000
+_VOCAB_SIZE = 50304
+_SEQ_LENGTH = 256
+_IMG_SIZE = 224
+_PATCH_DIM = 16
+_TRAIN_ITERS = 5
+
+
+# ── Model helpers ────────────────────────────────────────────────────────────
+
+
+def _make_vision_config() -> TransformerConfig:
+    cfg = TransformerConfig(
+        num_layers=2,
+        hidden_size=64,
+        ffn_hidden_size=256,
+        num_attention_heads=4,
+        pipeline_dtype=torch.bfloat16,
+        bf16=True,
+        variable_seq_lengths=True,
+        moe_token_dispatcher_type="alltoall",
+    )
+    cfg.add_bias_linear = True
+    cfg.add_qkv_bias = True
+    cfg.hidden_dropout = 0.0
+    cfg.attention_dropout = 0.0
+    cfg.gated_linear_unit = False
+    cfg.layernorm_zero_centered_gamma = False
+    cfg.apply_query_key_layer_scaling = False
+    cfg.bias_activation_fusion = False
+    cfg.bias_dropout_fusion = False
+    cfg.attention_softmax_in_fp32 = True
+    cfg.normalization = "LayerNorm"
+    cfg.apply_rope_fusion = False
+    return cfg
+
+
+def _make_language_config() -> TransformerConfig:
+    return TransformerConfig(
+        num_layers=2,
+        hidden_size=64,
+        ffn_hidden_size=256,
+        num_attention_heads=4,
+        pipeline_dtype=torch.bfloat16,
+        bf16=True,
+        variable_seq_lengths=True,
+        moe_token_dispatcher_type="alltoall",
+        cross_entropy_loss_fusion=True,
+    )
+
+
+def _build_model_specs():
+    """Return (language_model_spec, modality_submodules_spec, special_token_ids)."""
+    vision_encoder = ModuleSpec(
+        module=CLIPViTModel,
+        params={
+            "transformer_config": _make_vision_config(),
+            "transformer_layer_spec": get_vit_layer_with_transformer_engine_spec(),
+            "patch_dim": _PATCH_DIM,
+            "img_h": _IMG_SIZE,
+            "img_w": _IMG_SIZE,
+        },
+    )
+    vision_submodule_spec = ModuleSpec(
+        module=VisionModalitySubmodules,
+        params={},
+        submodules={"encoders": {"clip": vision_encoder}},
+    )
+    language_model_spec = ModuleSpec(
+        module=GPTModel,
+        params={
+            "config": _make_language_config(),
+            "transformer_layer_spec": get_gpt_layer_with_transformer_engine_spec(),
+            "vocab_size": _VOCAB_SIZE,
+            "max_sequence_length": _SEQ_LENGTH,
+        },
+    )
+    return language_model_spec, {"vision": vision_submodule_spec}, {"vision": _SPECIAL_TOKEN_ID}
+
+
+# ── Data helpers ─────────────────────────────────────────────────────────────
+
+
+def _build_mock_data_provider() -> MockMimoProvider:
+    provider = MockMimoProvider(
+        seq_length=_SEQ_LENGTH,
+        processor_paths={"vision": "openai/clip-vit-base-patch16"},
+        tokenizer_path="gpt2",
+        special_token_ids={"vision": _SPECIAL_TOKEN_ID},
+        encoder_seq_lengths={"vision": _ENCODER_SEQ_LEN},
+        modality_configs={"vision": {"type": "image", "width": _IMG_SIZE, "height": _IMG_SIZE}},
+    )
+    provider.drop_last = True
+    return provider
+
+
+def _wrap_iter(loader_iter):
+    """Adapt data-loader batches for the MIMO model.
+
+    Remaps modality_inputs["vision"]["pixel_values"] to
+    modality_inputs["vision"]["clip"]["x"] for CLIPViTModel.
+    """
+    for batch in loader_iter:
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                batch[key] = value.cuda(non_blocking=True)
+            elif isinstance(value, dict):
+                for k, v in value.items():
+                    if isinstance(v, torch.Tensor):
+                        value[k] = v.cuda(non_blocking=True)
+                    elif isinstance(v, dict):
+                        for kk, vv in v.items():
+                            if isinstance(vv, torch.Tensor):
+                                value[k][kk] = vv.cuda(non_blocking=True)
+
+        mi = batch.get("modality_inputs")
+        if mi and "vision" in mi:
+            pv = mi["vision"].get("pixel_values")
+            if pv is not None:
+                mi["vision"] = {"clip": {"x": pv.to(torch.bfloat16)}}
+
+        if "loss_mask" not in batch or batch["loss_mask"] is None:
+            batch["loss_mask"] = torch.ones_like(batch["input_ids"], dtype=torch.float)
+
+        batch["attention_mask"] = None
+        yield batch
+
+
+def _build_data_iterators(cfg, mimo_infra):
+    """Build data iterators compatible with pretrain_mimo's build_data_iterators_fn."""
+    from megatron.bridge.data.mimo.loaders import build_mimo_data_loaders
+    from megatron.bridge.training.state import TrainState
+
+    train_state = TrainState()
+    train_samples = cfg.train.train_iters * cfg.train.global_batch_size
+
+    train_loader, _, _ = build_mimo_data_loaders(
+        cfg=cfg,
+        train_state=train_state,
+        mimo_provider=cfg.dataset,
+        train_samples=max(train_samples, 100),
+        valid_samples=0,
+        test_samples=0,
+    )
+
+    train_iter = _wrap_iter(train_loader) if train_loader is not None else None
+    return train_iter, None
+
+
+# ── Config builder ───────────────────────────────────────────────────────────
+
+
+def _build_config(
+    parallelism_config: MimoParallelismConfig,
+    train_iters: int = _TRAIN_ITERS,
+) -> ConfigContainer:
+    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
+
+    mimo_provider = MimoModelProvider(
+        language_model_spec=language_model_spec,
+        modality_submodules_spec=modality_submodules_spec,
+        special_token_ids=special_token_ids,
+        mimo_parallelism_config=parallelism_config,
+        topology={"vision": ["language"], "language": []},
+    )
+    if not hasattr(mimo_provider, "num_moe_experts"):
+        mimo_provider.num_moe_experts = None
+
+    train_cfg = TrainingConfig(
+        micro_batch_size=1,
+        global_batch_size=1,
+        train_iters=train_iters,
+    )
+    train_cfg.num_microbatches = 1
+
+    opt_config = OptimizerConfig(
+        bf16=True,
+        use_distributed_optimizer=True,
+        lr=1e-4,
+        min_lr=0.0,
+    )
+
+    return ConfigContainer(
+        train=train_cfg,
+        model=mimo_provider,
+        optimizer=opt_config,
+        scheduler=SchedulerConfig(start_weight_decay=0.0, end_weight_decay=0.0),
+        dataset=_build_mock_data_provider(),
+        logger=LoggerConfig(),
+        tokenizer=TokenizerConfig(),
+        checkpoint=CheckpointConfig(),
+    )
+
+
+# ── Test class ───────────────────────────────────────────────────────────────
+
+
+class TestMimoTraining:
+    """Functional tests for MIMO heterogeneous parallel training.
+
+    Requires 4 GPUs. Run with:
+        torchrun --nproc_per_node=4 -m pytest -v -s -x \\
+            tests/functional_tests/test_groups/training/test_mimo_training.py
+    """
+
+    @pytest.mark.run_only_on("GPU")
+    def test_mimo_tp2_both(self):
+        """Smoke test: MIMO training with TP=2 for both LLM and vision.
+
+        LLM on ranks 0-1 (TP=2), vision on ranks 2-3 (TP=2).
+        Trains for 5 iterations with synthetic data and verifies completion.
+        """
+        initialize_distributed()
+
+        world_size = dist.get_world_size()
+        if world_size != 4:
+            pytest.skip(f"MIMO TP=2 test requires exactly 4 GPUs, got {world_size}")
+
+        # Monkey-patch: report_theoretical_memory crashes on MIMO models
+        # because cfg.model is MimoModelProvider (no kv_channels).
+        import megatron.bridge.training.utils.train_utils as _tu
+
+        _tu.report_theoretical_memory = lambda *a, **kw: None
+
+        par_cfg = MimoParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                    rank_offset=2,
+                ),
+            },
+        )
+
+        cfg = _build_config(par_cfg)
+
+        pretrain_mimo(
+            cfg=cfg,
+            forward_step_func=mimo_forward_step,
+            build_data_iterators_fn=_build_data_iterators,
+        )
