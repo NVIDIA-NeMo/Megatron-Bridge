@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional
 
+import torch
 import torch.distributed as dist
 
 from megatron.bridge.training.checkpointing import load_checkpoint
@@ -110,8 +111,9 @@ def pretrain_mimo(
 
     # Broadened load-intent gating: includes non-persistent resume intent
     has_persistent = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
-    has_pretrained = cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(
-        cfg.checkpoint.pretrained_checkpoint
+    has_pretrained = (
+        cfg.checkpoint.pretrained_checkpoint is not None
+        and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
     )
     wants_non_persistent = cfg.checkpoint.non_persistent_ckpt_type is not None
     should_load = has_persistent or has_pretrained or wants_non_persistent
@@ -151,9 +153,7 @@ def pretrain_mimo(
         sig = inspect.signature(build_data_iterators_fn)
         if "train_state" in sig.parameters:
             train_data_iterator, valid_data_iterator = build_data_iterators_fn(
-                cfg,
-                setup_output.mimo_infra,
-                train_state=train_state,
+                cfg, setup_output.mimo_infra, train_state=train_state,
             )
         else:
             raise RuntimeError(

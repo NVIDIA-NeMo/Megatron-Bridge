@@ -1177,8 +1177,7 @@ def save_checkpoint_and_time(
         ),
         callback_manager,
     )
-
-    if state.cfg.model.fp8 is not None:
+    if getattr(state.cfg.model, "fp8", None) is not None:
         # Run garbage collection after checkpoint saving to free memory from
         # dequantized bf16 tensors that were temporarily created during fp8
         # model checkpoint saving.

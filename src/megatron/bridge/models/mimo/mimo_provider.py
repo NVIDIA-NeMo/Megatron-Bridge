@@ -455,6 +455,12 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         elif use_bf16:
             model_list = [m.bfloat16() for m in model_list]
 
+        # Ensure frozen parameters are on GPU before DDP wrapping.
+        # DDP only manages requires_grad=True params, so frozen ones must be
+        # moved explicitly (especially when use_cpu_initialization=True).
+        for m in model_list:
+            self._move_frozen_params_to_device(m)
+
         # Per-submodule DDP for heterogeneous parallelism
         if wrap_with_ddp and ddp_config is not None and self.mimo_parallelism_config:
             model_list = [
@@ -519,7 +525,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
 
     def _apply_freezing(self, model: MimoModel) -> None:
         """Apply freezing based on configuration."""
-        if self.freeze_language_model and hasattr(model, "language_model"):
+        if self.freeze_language_model and getattr(model, "language_model", None) is not None:
             for param in model.language_model.parameters():
                 param.requires_grad = False
 
@@ -537,6 +543,22 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                     if hasattr(submodule, "input_projections"):
                         for param in submodule.input_projections.parameters():
                             param.requires_grad = False
+
+    @staticmethod
+    def _move_frozen_params_to_device(model: torch.nn.Module) -> None:
+        """Move frozen parameters to the current CUDA device.
+
+        When ``use_cpu_initialization=True`` the global ``.cuda()`` call is
+        skipped, and DDP only moves parameters with ``requires_grad=True``.
+        This leaves frozen parameters stranded on CPU.  Call this after all
+        hooks (e.g. checkpoint loading) have run but before DDP wrapping.
+        """
+        if not torch.cuda.is_available():
+            return
+        device = torch.cuda.current_device()
+        for param in model.parameters():
+            if not param.requires_grad and param.device.type == "cpu":
+                param.data = param.data.to(device)
 
     def finalize(self) -> None:
         """Finalize MIMO parallelism configuration.
