@@ -128,7 +128,7 @@ def process_openmathinstruct2_gsm8k_example(
 ) -> ProcessExampleOutput:
     """Process OpenMathInstruct-2 example into GSM8K #### N format.
 
-    Same as process_openmathinstruct2_example but converts \boxed{N} endings
+    Same as process_openmathinstruct2_example but converts \\boxed{N} endings
     to GSM8K-compatible #### N format, matching the evaluation format.
     """
     _input = f"Problem: {example['problem']} Solution:"
@@ -136,19 +136,46 @@ def process_openmathinstruct2_gsm8k_example(
     return ProcessExampleOutput(input=_input, output=_output, original_answers=[str(example["expected_answer"])])
 
 
-def process_openmathinstruct2_gsm8k_chat_example(example: dict, _tokenizer=None) -> dict:
-    """Process OpenMathInstruct-2 example into chat (messages) format with GSM8K #### N answers.
+def process_openmathinstruct2_thinking_packed_example(example: dict, _tokenizer=None) -> dict:
+    """Process OpenMathInstruct-2 example into analysis+final channel format.
 
-    Converts \\boxed{{N}} endings to GSM8K-compatible #### N format and wraps the
-    question/answer in HuggingFace messages format for use with GPTSFTChatDataset.
+    Puts the CoT reasoning (generated_solution without the trailing \\boxed{N}) into
+    the 'thinking' field (rendered as <|channel|>analysis by the GPT-OSS chat template)
+    and the final answer as '#### N' in the 'content' field (rendered as <|channel|>final).
+
+    This separates the reasoning chain from the answer delivery, matching the intended
+    GPT-OSS channel structure for math problem solving.
     """
-    solution = _convert_boxed_to_hash(example["generated_solution"], str(example["expected_answer"]))
+    solution = example["generated_solution"]
+    expected_answer = str(example["expected_answer"])
+
+    # Extract the reasoning prefix: everything before the final \boxed{N}
+    marker = r"\boxed{"
+    idx = solution.rfind(marker)
+    if idx != -1:
+        depth = 0
+        end = -1
+        for i in range(idx + len(marker) - 1, len(solution)):
+            if solution[i] == "{":
+                depth += 1
+            elif solution[i] == "}":
+                depth -= 1
+            if depth == 0:
+                end = i
+                break
+        thinking = re.sub(r"\$?\s*$", "", solution[:idx]).rstrip() if end != -1 else solution.rstrip()
+    else:
+        thinking = solution.rstrip()
+
+    # Strip any intermediate \boxed{} from the reasoning (replace with just content)
+    thinking = _strip_intermediate_boxed(thinking)
+
     return {
-        "input": "",  # unused by GPTSFTChatDataset with use_hf_tokenizer_chat_template=True
-        "output": "",  # unused by GPTSFTChatDataset with use_hf_tokenizer_chat_template=True
+        "input": "",
+        "output": "",
         "messages": [
             {"role": "user", "content": example["problem"]},
-            {"role": "assistant", "content": solution},
+            {"role": "assistant", "thinking": thinking, "content": f"#### {expected_answer}"},
         ],
-        "original_answers": [str(example["expected_answer"])],
+        "original_answers": [expected_answer],
     }

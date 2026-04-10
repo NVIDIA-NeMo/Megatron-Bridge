@@ -18,8 +18,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import (
-    default_openmathinstruct2_gsm8k_chat_config,
-    default_openmathinstruct2_gsm8k_config,
+    default_openmathinstruct2_thinking_packed_config,
     default_peft_config,
 )
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -848,76 +847,16 @@ def gpt_oss_20b_peft_mxfp8_config(
     return _enable_gpt_oss_blackwell_mxfp8(cfg)
 
 
-def gpt_oss_20b_sft_openmathinstruct2_gsm8k_config() -> ConfigContainer:
-    """Return a SFT config for GPT-OSS 20B trained on OpenMathInstruct-2 in GSM8K (#### N) format.
+def gpt_oss_20b_sft_openmathinstruct2_thinking_packed_config() -> ConfigContainer:
+    """SFT config for GPT-OSS 20B with thinking channel + packed sequences on OpenMathInstruct-2.
 
-    Based on gpt_oss_20b_sft_config but:
-    - Dataset: nvidia/OpenMathInstruct-2 (train_1M split), with \\boxed{N} converted to #### N
-    - seq_length=4096 to accommodate longer math solutions
-    - Intended for loading a pretrained checkpoint via CLI override:
-      checkpoint.pretrained_checkpoint=<path>
-
-    Returns:
-        ConfigContainer with all settings pre-configured for GPT-OSS 20B OpenMathInstruct-2 SFT.
-    """
-    cfg = gpt_oss_20b_sft_config()
-
-    # Override seq_length for longer math solutions
-    seq_length = 4096
-    cfg.model.seq_length = seq_length
-
-    # Replace dataset with OpenMathInstruct-2 in GSM8K format
-    cfg.dataset = default_openmathinstruct2_gsm8k_config(seq_length=seq_length)
-
-    return cfg
-
-
-def gpt_oss_20b_sft_openmathinstruct2_gsm8k_chat_config() -> ConfigContainer:
-    """Return a SFT config for GPT-OSS 20B trained on OpenMathInstruct-2 with chat template.
-
-    Same as gpt_oss_20b_sft_openmathinstruct2_gsm8k_config but applies the GPT-OSS tokenizer
-    chat template during training, aligning with gsm8k_cot_instruct evaluation format.
+    CoT reasoning goes into the assistant thinking field (rendered as <|channel|>analysis)
+    and the final answer (#### N) into the content field (rendered as <|channel|>final).
+    Uses packed sequences: each 4096-token sequence holds ~10-15 examples, giving ~10-15x
+    more data per step than padded training.
     """
     cfg = gpt_oss_20b_sft_config()
     seq_length = 4096
     cfg.model.seq_length = seq_length
-    cfg.dataset = default_openmathinstruct2_gsm8k_chat_config(seq_length=seq_length)
-    return cfg
-
-
-def gpt_oss_20b_peft_openmathinstruct2_gsm8k_chat_config(
-    peft_scheme: str = "lora",
-) -> ConfigContainer:
-    """Return a PEFT config for GPT-OSS 20B trained on OpenMathInstruct-2 with chat template.
-
-    Same as gpt_oss_20b_peft_openmathinstruct2_gsm8k_config but applies the GPT-OSS tokenizer
-    chat template during training, aligning with gsm8k_cot_instruct evaluation format.
-    """
-    cfg = gpt_oss_20b_peft_config(peft_scheme=peft_scheme)
-    seq_length = 4096
-    cfg.model.seq_length = seq_length
-    cfg.dataset = default_openmathinstruct2_gsm8k_chat_config(seq_length=seq_length)
-    return cfg
-
-
-def gpt_oss_20b_peft_openmathinstruct2_gsm8k_config(
-    peft_scheme: str = "lora",
-) -> ConfigContainer:
-    """Return a PEFT config for GPT-OSS 20B trained on OpenMathInstruct-2 in GSM8K (#### N) format.
-
-    Based on gpt_oss_20b_peft_config but:
-    - Dataset: nvidia/OpenMathInstruct-2 (train_1M split), with \boxed{N} converted to #### N
-    - seq_length=4096 to accommodate longer math solutions
-    - Intended for loading a pretrained checkpoint via CLI override:
-      checkpoint.pretrained_checkpoint=<path>
-    """
-    cfg = gpt_oss_20b_peft_config(peft_scheme=peft_scheme)
-
-    # Override seq_length for longer math solutions
-    seq_length = 4096
-    cfg.model.seq_length = seq_length
-
-    # Replace dataset with OpenMathInstruct-2 in GSM8K format
-    cfg.dataset = default_openmathinstruct2_gsm8k_config(seq_length=seq_length)
-
+    cfg.dataset = default_openmathinstruct2_thinking_packed_config(seq_length=seq_length, packed_sequence=True)
     return cfg

@@ -77,6 +77,7 @@ class FinetuningDatasetBuilder:
         self.dataset_kwargs = dataset_kwargs or {}
         self._pad_cu_seqlens = False if not packed_sequence_specs else packed_sequence_specs.pad_cu_seqlens
         self._pad_seq_to_mult = None if not packed_sequence_specs else packed_sequence_specs.pad_seq_to_mult
+        self._num_tokenizer_workers = -1 if not packed_sequence_specs else packed_sequence_specs.num_tokenizer_workers
 
         self.do_validation = do_validation
         self.do_test = do_test
@@ -107,6 +108,7 @@ class FinetuningDatasetBuilder:
                     output_metadata_path=self.pack_metadata,
                     dataset_kwargs=self.dataset_kwargs,
                     pad_seq_to_mult=self._pad_seq_to_mult,
+                    num_tokenizer_workers=self._num_tokenizer_workers,
                 )
 
             if self.do_validation and not self.validation_path_packed.is_file():
@@ -121,6 +123,7 @@ class FinetuningDatasetBuilder:
                     output_metadata_path=self.pack_metadata,
                     dataset_kwargs=self.dataset_kwargs,
                     pad_seq_to_mult=self._pad_seq_to_mult,
+                    num_tokenizer_workers=self._num_tokenizer_workers,
                 )
 
     def build(self) -> list[Optional[Any]]:

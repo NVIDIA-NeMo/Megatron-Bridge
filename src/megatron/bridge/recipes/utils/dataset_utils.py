@@ -24,7 +24,6 @@ from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMCon
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
-    default_openmathinstruct2_gsm8k_config,
     default_squad_config,
 )
 from megatron.bridge.training.config import (
@@ -123,7 +122,6 @@ DATASET_TYPES = [
 LLM_FINETUNE_PRESETS: dict[str, Callable] = {
     "squad": default_squad_config,
     "openmathinstruct2": default_openmathinstruct2_config,
-    "openmathinstruct2_gsm8k": default_openmathinstruct2_gsm8k_config,
     "gsm8k": default_gsm8k_config,
 }
 

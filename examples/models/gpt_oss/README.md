@@ -153,4 +153,25 @@ TP×PP×EP must equal `--nproc_per_node`. Adjust parallelism to match your SFT r
 
 ## Evaluation
 
-Coming soon.
+### GSM8K (zero-shot chain-of-thought)
+
+Evaluate a SFT checkpoint on GSM8K using the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) via the NeMo evaluation framework:
+
+```bash
+python scripts/evaluation/evaluation_with_nemo_run.py \
+    --megatron_checkpoint ${WORKSPACE}/results/<checkpoint_dir>/<iter> \
+    --evaluation_result_dir ${WORKSPACE}/results/eval_<run_name> \
+    --serving_backend ray \
+    --endpoint_type chat \
+    --eval_task gsm8k_cot_instruct \
+    --nodes 1 --devices 8 \
+    --tensor_parallelism_size 2 \
+    --pipeline_parallelism_size 1 \
+    --expert_model_parallel_size 4 \
+    --batch_size 8 --parallel_requests 8 \
+    --additional_args="--legacy_model_format"
+```
+
+Replace `<checkpoint_dir>/<iter>` with your SFT result path (e.g. `gpt_oss_20b_openmathinstruct2_finetune_tp2_pp2_ep4_spTrue_cp1/iter_0001000`).
+The script deploys an inference server, runs lm-eval against it, and writes results to `<evaluation_result_dir>/megatron_model/results_*.json`.
+Scores are reported as `flexible-extract` (flex) and `strict-match` (strict) accuracy.
