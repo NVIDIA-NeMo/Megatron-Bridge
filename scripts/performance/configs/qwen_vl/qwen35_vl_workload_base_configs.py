@@ -55,6 +55,29 @@ QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB300_FP8_CS = replace(
 QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB300_FP8_MX = QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB300_FP8_CS
 
 
+QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_B300_BF16 = replace(
+    BASE_QWEN35_VL_35B_A3B_CONFIG,
+    num_gpus=8,
+    micro_batch_size=8,
+    moe_flex_dispatcher_backend="hybridep",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
+)
+
+
+QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_B300_FP8_CS = replace(
+    BASE_QWEN35_VL_35B_A3B_CONFIG,
+    num_gpus=8,
+    micro_batch_size=8,
+    moe_flex_dispatcher_backend="hybridep",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
+)
+
+
+QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_B300_FP8_MX = QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_B300_FP8_CS
+
+
 QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB200_BF16 = replace(
     BASE_QWEN35_VL_35B_A3B_CONFIG,
     num_gpus=8,
@@ -162,6 +185,33 @@ QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB300_FP8_CS = replace(
 
 
 QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB300_FP8_MX = QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB300_FP8_CS
+
+
+QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_B300_BF16 = replace(
+    BASE_QWEN35_VL_122B_A10B_CONFIG,
+    num_gpus=32,
+    tensor_model_parallel_size=1,
+    expert_model_parallel_size=32,
+    micro_batch_size=2,
+    moe_flex_dispatcher_backend="hybridep",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
+)
+
+
+QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_B300_FP8_CS = replace(
+    BASE_QWEN35_VL_122B_A10B_CONFIG,
+    num_gpus=32,
+    tensor_model_parallel_size=1,
+    expert_model_parallel_size=32,
+    micro_batch_size=2,
+    moe_flex_dispatcher_backend="hybridep",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
+)
+
+
+QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_B300_FP8_MX = QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_B300_FP8_CS
 
 
 QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB200_BF16 = replace(
@@ -274,6 +324,33 @@ QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB300_FP8_CS = replace(
 QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB300_FP8_MX = QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB300_FP8_CS
 
 
+QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B300_BF16 = replace(
+    BASE_QWEN35_VL_397B_A17B_CONFIG,
+    num_gpus=64,
+    tensor_model_parallel_size=1,
+    expert_model_parallel_size=64,
+    micro_batch_size=1,
+    moe_flex_dispatcher_backend="hybridep",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
+)
+
+
+QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B300_FP8_CS = replace(
+    BASE_QWEN35_VL_397B_A17B_CONFIG,
+    num_gpus=64,
+    tensor_model_parallel_size=1,
+    expert_model_parallel_size=64,
+    micro_batch_size=1,
+    moe_flex_dispatcher_backend="hybridep",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
+)
+
+
+QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B300_FP8_MX = QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B300_FP8_CS
+
+
 QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_BF16 = replace(
     BASE_QWEN35_VL_397B_A17B_CONFIG,
     num_gpus=64,
@@ -349,6 +426,9 @@ __all__ = [
     "QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB300_BF16",
     "QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB300_FP8_CS",
     "QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB300_FP8_MX",
+    "QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_B300_BF16",
+    "QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_B300_FP8_CS",
+    "QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_B300_FP8_MX",
     "QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB200_BF16",
     "QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB200_FP8_CS",
     "QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_GB200_FP8_MX",
@@ -361,6 +441,9 @@ __all__ = [
     "QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB300_BF16",
     "QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB300_FP8_CS",
     "QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB300_FP8_MX",
+    "QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_B300_BF16",
+    "QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_B300_FP8_CS",
+    "QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_B300_FP8_MX",
     "QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB200_BF16",
     "QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB200_FP8_CS",
     "QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_GB200_FP8_MX",
@@ -373,6 +456,9 @@ __all__ = [
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB300_BF16",
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB300_FP8_CS",
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB300_FP8_MX",
+    "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B300_BF16",
+    "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B300_FP8_CS",
+    "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B300_FP8_MX",
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_BF16",
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_FP8_CS",
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_FP8_MX",
