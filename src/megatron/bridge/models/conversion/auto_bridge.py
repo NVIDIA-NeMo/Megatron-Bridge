@@ -1540,14 +1540,10 @@ class AutoBridge(Generic[MegatronModelT]):
         try:
             return getattr(transformers, resolved_arch)
         except AttributeError:
-            raise ValueError(
-                f"\n✗ Architecture class '{resolved_arch}' not found in transformers\n\n"
-                f"This could mean:\n"
-                f"1. The model requires a newer version of transformers\n"
-                f"2. The model uses a custom modeling file not in the standard library\n"
-                f"3. There's a typo in the architecture name\n\n"
-                f"Please verify your transformers installation and the model requirements."
-            )
+            # Model class not in standard transformers — fall back to class-name string.
+            # This handles custom models registered via AutoConfig.register / AutoModelForCausalLM.register
+            # in model bridge modules (e.g. BailingMoeV2ForCausalLM).
+            return resolved_arch
 
     @classmethod
     def _validate_config(cls, config: PretrainedConfig, path: str | None = None) -> None:
