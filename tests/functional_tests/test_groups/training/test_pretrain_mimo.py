@@ -280,6 +280,28 @@ class TestMimoTraining:
             tests/functional_tests/test_groups/training/test_pretrain_mimo.py
     """
 
+    @pytest.fixture(autouse=True)
+    def _reset_microbatch_calculator(self):
+        """Ensure the global microbatch calculator is cleared between tests.
+
+        pretrain_mimo -> setup_mimo initializes the calculator but does not
+        destroy it (cleanup deferred to phase 5 via _finish_train).
+        Without this, subsequent tests in the same torchrun process
+        hit 'already initialized' assertion.
+        """
+        from megatron.core.num_microbatches_calculator import (
+            _GLOBAL_NUM_MICROBATCHES_CALCULATOR,
+            destroy_num_microbatches_calculator,
+        )
+
+        if _GLOBAL_NUM_MICROBATCHES_CALCULATOR is not None:
+            destroy_num_microbatches_calculator()
+
+        yield
+
+        if _GLOBAL_NUM_MICROBATCHES_CALCULATOR is not None:
+            destroy_num_microbatches_calculator()
+
     @pytest.mark.run_only_on("GPU")
     def test_mimo_tp1_both(self):
         """Smoke test: MIMO training with TP=1 for both LLM and vision.
