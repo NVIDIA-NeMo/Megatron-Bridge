@@ -43,14 +43,8 @@ def weights_verification_table(bridge, megatron_model) -> Table:
     table.add_column("Device")
     table.add_column("Matches Original", justify="center")
 
-    # TODO: Remove fix_gpt_oss_export_transpose once GPT-OSS bridge export is fixed.
-    from megatron.bridge.utils.common_utils import fix_gpt_oss_export_transpose, get_hf_model_type
-
-    weight_iter = bridge.export_hf_weights(megatron_model, show_progress=True)
-    if get_hf_model_type(bridge) == "gpt_oss":
-        weight_iter = fix_gpt_oss_export_transpose(weight_iter)
     # Check each weight against the original HF-model
-    for name, param in weight_iter:
+    for name, param in bridge.export_hf_weights(megatron_model, show_progress=True):
         original_param = bridge.hf_pretrained.state[name]
         table.add_row(
             name,
