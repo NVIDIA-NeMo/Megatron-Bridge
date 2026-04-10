@@ -622,6 +622,7 @@ def _initialize_distributed(
                 pipeline_model_parallel_comm_backend=model_config.pipeline_model_parallel_comm_backend,
                 context_parallel_size=model_config.context_parallel_size,
                 hierarchical_context_parallel_sizes=model_config.hierarchical_context_parallel_sizes,
+                hybrid_context_parallel=model_config.hybrid_context_parallel,
                 expert_model_parallel_size=model_config.expert_model_parallel_size,
                 num_distributed_optimizer_instances=num_distributed_optimizer_instances,
                 expert_tensor_parallel_size=model_config.expert_tensor_parallel_size,
