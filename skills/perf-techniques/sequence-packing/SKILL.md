@@ -1,6 +1,6 @@
 ---
 name: sequence-packing
-description: Operational guide for enabling packed sequences and long-context config paths in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification.
+description: Validate and use packed sequences and long-context training in Megatron-Bridge, distinguishing offline packed SFT for LLMs from in-batch packing for VLMs, and applying the right CP constraints. Use when the user asks about packed sequences, sequence packing, long context training, PackedSequenceSpecs, pack_sequences_in_batch, or CP with packing.
 ---
 
 # Sequence Packing Skill
@@ -34,6 +34,9 @@ cfg.model.context_parallel_size = 2
 cfg.model.calculate_per_token_loss = True
 cfg.ddp.average_in_collective = False
 cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+
+# If sequence_parallel is also enabled, pad_seq_to_mult must include TP:
+# cfg.dataset.packed_sequence_specs.pad_seq_to_mult = 2 * CP * TP
 ```
 
 If CUDA graphs are enabled for this packed path:
