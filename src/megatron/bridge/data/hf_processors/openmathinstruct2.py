@@ -93,49 +93,6 @@ def _strip_intermediate_boxed(text: str) -> str:
     return "".join(result)
 
 
-def _convert_boxed_to_hash(solution: str, expected_answer: str) -> str:
-    """Convert \\boxed{N} ending to GSM8K #### N format.
-
-    Uses brace-depth counting to correctly handle nested braces
-    (e.g. \\boxed{\\frac{1}{2}}) and strips any trailing content after
-    the closing brace (e.g. $, \\], punctuation, whitespace).
-    Also strips intermediate \\boxed{} occurrences in the reasoning body,
-    replacing them with their content to avoid leaking the \\boxed{} format
-    into model training data.
-    """
-    marker = r"\boxed{"
-    idx = solution.rfind(marker)
-    if idx != -1:
-        depth = 0
-        end = -1
-        for i in range(idx + len(marker) - 1, len(solution)):
-            if solution[i] == "{":
-                depth += 1
-            elif solution[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i
-                    break
-        if end != -1:
-            prefix = re.sub(r"\$?\s*$", "", solution[:idx])
-            prefix = _strip_intermediate_boxed(prefix)
-            return prefix + "\n#### " + expected_answer
-    return _strip_intermediate_boxed(solution.rstrip()) + "\n#### " + expected_answer
-
-
-def process_openmathinstruct2_gsm8k_example(
-    example: dict[str, Any], _tokenizer: Optional[MegatronTokenizer] = None
-) -> ProcessExampleOutput:
-    """Process OpenMathInstruct-2 example into GSM8K #### N format.
-
-    Same as process_openmathinstruct2_example but converts \\boxed{N} endings
-    to GSM8K-compatible #### N format, matching the evaluation format.
-    """
-    _input = f"Problem: {example['problem']} Solution:"
-    _output = _convert_boxed_to_hash(example["generated_solution"], str(example["expected_answer"]))
-    return ProcessExampleOutput(input=_input, output=_output, original_answers=[str(example["expected_answer"])])
-
-
 def process_openmathinstruct2_thinking_packed_example(example: dict, _tokenizer=None) -> dict:
     """Process OpenMathInstruct-2 example into analysis+final channel format.
 
