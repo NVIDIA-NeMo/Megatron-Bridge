@@ -506,7 +506,7 @@ def _build_data_iterators(cfg, _mimo_infra, *, train_state=None):
 # Config assembly
 # ---------------------------------------------------------------------------
 
-from megatron.core.optimizer.optimizer_config import OptimizerConfig as MCoreOptimizerConfig
+
 
 from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 from megatron.bridge.training.config import (
@@ -733,15 +733,14 @@ def main():
     _log("building data provider")
     data_provider = _build_hf_data_provider(args.dataset_root)
 
-    # 5. Build optimizer configs
-    # MCore OptimizerConfig (with __post_init__) for get_mimo_optimizer
-    _log("building optimizer configs")
+    # 5. Build optimizer config
+    _log("building optimizer config")
     print_rank_0 = lambda msg: _log(msg) if dist.get_rank() == 0 else None
     print_rank_0(
         f"Optimizer config: lr={args.lr}, min_lr={args.min_lr}, weight_decay={args.weight_decay}, "
         f"adam_beta1={args.adam_beta1}, adam_beta2={args.adam_beta2}, clip_grad={args.clip_grad}"
     )
-    mcore_opt_config = MCoreOptimizerConfig(
+    bridge_opt_config = BridgeOptimizerConfig(
         optimizer="adam",
         lr=args.lr,
         min_lr=args.min_lr,
@@ -752,8 +751,6 @@ def main():
         bf16=True,
         use_distributed_optimizer=True,
     )
-    # Bridge OptimizerConfig (deferred post_init) for ConfigContainer
-    bridge_opt_config = BridgeOptimizerConfig(lr=args.lr, min_lr=args.min_lr, use_distributed_optimizer=True)
 
     # 6. Build config container
     _log("building config")
