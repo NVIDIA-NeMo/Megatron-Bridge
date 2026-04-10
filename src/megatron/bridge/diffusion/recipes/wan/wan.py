@@ -78,7 +78,7 @@ def wan_1_3B_pretrain_config() -> ConfigContainer:
     dataset = WanDatasetConfig(
         path=None,
         seq_length=1024,
-        packing_buffer_size=None,
+        packing_buffer_size=200,
         micro_batch_size=micro_batch_size,
         global_batch_size=global_batch_size,
         num_workers=16,
@@ -180,7 +180,7 @@ def wan_14B_pretrain_config() -> ConfigContainer:
     dataset = WanDatasetConfig(
         path=None,
         seq_length=1024,
-        packing_buffer_size=None,
+        packing_buffer_size=200,
         micro_batch_size=micro_batch_size,
         global_batch_size=global_batch_size,
         num_workers=16,
