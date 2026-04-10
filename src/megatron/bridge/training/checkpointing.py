@@ -2092,9 +2092,7 @@ def _load_global_dist_base_checkpoint(
         raise RuntimeError("Detected load from a distributed checkpoint, but sharded state dict is not provided.")
 
     checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
-    load_strategy = get_default_load_sharded_strategy(
-        checkpoint_name, cache_metadata=ckpt_cfg.ckpt_assume_constant_structure
-    )
+    load_strategy = get_default_load_sharded_strategy(checkpoint_name)
     if ckpt_cfg.fully_parallel_load:
         if ckpt_cfg.fully_parallel_load_process_group == "ep_dp":
             parallelization_group = pg_collection.expt_dp
