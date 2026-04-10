@@ -92,4 +92,11 @@ def pretrain_mimo(
         module_to_grid_tuple=setup_output.module_to_grid_tuple,
     )
 
+    # Cleanup global state initialized by setup_mimo.
+    # Phase 5 replaces this with _finish_train() which also handles async
+    # checkpoint finalization and logger shutdown.
+    from megatron.bridge.training.initialize import destroy_global_state
+
+    destroy_global_state()
+
     logger.info("MIMO pretraining completed")
