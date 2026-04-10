@@ -66,7 +66,9 @@ This means golden values are not automatically updated with every run — a deli
 
 ### On the Release Branch (during code-freeze)
 
-When the release branch is created at code-freeze, all golden values are updated **unconditionally**. Whatever the current output is becomes the new reference baseline for the release.
+When the release branch is created at code-freeze, all golden values are updated **unconditionally** — whatever the current output is becomes the new reference baseline for the release.
+
+In **Week 5**, the last bulk update of golden values is performed. After that point, engineers are individually responsible for updating any remaining golden values on the release branch, reviewing discrepancies and ensuring the suite is clean ahead of the release.
 
 -----
 
@@ -74,16 +76,16 @@ When the release branch is created at code-freeze, all golden values are updated
 
 Code-freeze lasts **two weeks** and begins when RC3 is cut. This is the **stabilization phase** — no new features are landed.
 
-### First Half
+### First Half (Weeks 3–5)
 
 - **Release branches are created.**
 - All golden values on the release branch are updated unconditionally (see above).
-- The **last bulk CI run** occurs one week into the code-freeze period.
+- The **last bulk update of golden values** happens in **Week 5**.
 - RCs continue to be cut as needed.
 
-### Second Half
+### Second Half (Weeks 6–7)
 
-- **Engineers are responsible for updating golden values** on the release branch — reviewing any remaining discrepancies and ensuring the suite is in a clean state ahead of release.
+- **Engineers are individually responsible for updating golden values** on the release branch — reviewing any remaining discrepancies and ensuring the suite is in a clean state ahead of release.
 - RCs continue to be cut as needed.
 
 ### Release Day
