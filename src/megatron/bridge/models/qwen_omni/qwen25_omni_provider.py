@@ -99,6 +99,7 @@ class Qwen25OmniModelProvider(GPTModelProvider):
     async_tensor_model_parallel_allreduce: bool = True
     distribute_saved_activations: bool = False
     cp_comm_type: str = "p2p"
+    gradient_accumulation_fusion: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """Provide a Qwen2.5 Omni model instance with vision, audio, and language components."""

@@ -37,7 +37,21 @@ from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from transformers.processing_utils import Unpack
 from transformers.utils import auto_docstring, can_return_tuple
 from transformers.utils.deprecation import deprecate_kwarg
-from transformers.utils.generic import TransformersKwargs, check_model_inputs
+from transformers.utils.generic import TransformersKwargs
+
+
+try:
+    from transformers.utils.generic import check_model_inputs
+except ImportError:
+
+    def check_model_inputs():
+        """No-op fallback for older transformers versions."""
+
+        def decorator(func):
+            return func
+
+        return decorator
+
 
 from .configuration_qwen3_asr import (
     Qwen3ASRAudioEncoderConfig,
