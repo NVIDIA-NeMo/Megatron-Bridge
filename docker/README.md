@@ -132,6 +132,8 @@ docker build \
 | `CUDNN_VERSION` | cuDNN apt version (e.g. `9.18.1.3-1`) |
 | `REINSTALL_NCCL` | Set to `True` to reinstall NCCL from the NVIDIA apt repo |
 | `NCCL_VERSION` | NCCL apt version (e.g. `2.28.9-1+cuda13.0`) |
+| `REINSTALL_CUBLAS` | Set to `True` to reinstall cuBLAS and cuBLASLt from the NVIDIA apt repo |
+| `CUBLAS_VERSION` | cuBLAS apt version (e.g. `13.2.1.1-1`) |
 
 ### `Dockerfile.ci`
 
@@ -158,6 +160,7 @@ docker build \
 | File | Description |
 |---|---|
 | `common/fw_pyproject.toml` | uv project config for the NeMo-FW virtual environment (copied into the fw-final container as `pyproject.toml`) |
+| `common/install_cublas.sh` | Reinstall cuBLAS and cuBLASLt from the public NVIDIA CUDA apt repo |
 | `common/install_nccl.sh` | Reinstall NCCL from the public NVIDIA CUDA apt repo |
 | `common/install_cudnn.sh` | Reinstall cuDNN from the public NVIDIA CUDA apt repo |
 | `common/install_nsys.sh` | Reinstall Nsight Systems from the public NVIDIA CUDA apt repo |

@@ -170,7 +170,7 @@ class AutoBridge(Generic[MegatronModelT]):
         return any(arch.endswith(SUPPORTED_HF_ARCHITECTURES) for arch in architectures)
 
     @classmethod
-    def from_auto_config(cls, megatron_path: str, hf_model_id: str) -> "AutoBridge":
+    def from_auto_config(cls, megatron_path: str, hf_model_id: str, trust_remote_code: bool = False) -> "AutoBridge":
         """
         Create a config-only AutoBridge by synthesizing an HF config from a Megatron checkpoint.
 
@@ -183,6 +183,9 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_path: Directory path where the Megatron checkpoint is stored
             hf_model_id: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
+            trust_remote_code: Whether to trust remote code when loading config.
+                Defaults to False for security. Set to True only for models that
+                require custom modeling code from the repository.
 
         Returns:
             AutoBridge: Bridge instance configured for the architecture
@@ -214,7 +217,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
         # 1. Load config from both sides
         megatron_cfg, _ = load_model_config(str(run_config.parent))
-        hf_cfg = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=True)
+        if trust_remote_code:
+            logger.warning(
+                "Loading a model with trust_remote_code=True allows arbitrary code execution "
+                "from the model repository. Only use this with models you trust."
+            )
+        hf_cfg = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
         # 2. Translate Megatron config -> HF, conforming to reference config
         bridge = cls.from_hf_config(hf_cfg)
         megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
@@ -313,7 +321,14 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         # First load just the config to check architecture support
         # Use thread-safe config loading to prevent race conditions
-        config = safe_load_config_with_retry(path, trust_remote_code=kwargs.get("trust_remote_code", False))
+        config_kwargs = dict(kwargs)
+        trust_remote_code = bool(config_kwargs.pop("trust_remote_code", False))
+        if trust_remote_code:
+            logger.warning(
+                "Loading a model with trust_remote_code=True allows arbitrary code execution "
+                "from the model repository. Only use this with models you trust."
+            )
+        config = safe_load_config_with_retry(path, trust_remote_code=trust_remote_code, **config_kwargs)
 
         cls._validate_config(config, str(path))
 
@@ -807,6 +822,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
             generator = _filter_quant(generator)
 
+        # TODO: Remove once GPT-OSS bridge export no longer transposes per-expert weights.
+        from megatron.bridge.utils.common_utils import fix_gpt_oss_export_transpose, get_hf_model_type
+
+        if get_hf_model_type(self) == "gpt_oss":
+            generator = fix_gpt_oss_export_transpose(generator)
+
         # Check if the state source is SafeTensorsStateSource for streaming save.
         if (
             hasattr(self.hf_pretrained, "state")
@@ -1192,6 +1213,7 @@ class AutoBridge(Generic[MegatronModelT]):
                     peft_class = VLMLoRA
                 allowed_keys = {
                     "target_modules",
+                    "exclude_modules",
                     "dim",
                     "alpha",
                     "dropout",
@@ -1518,14 +1540,10 @@ class AutoBridge(Generic[MegatronModelT]):
         try:
             return getattr(transformers, resolved_arch)
         except AttributeError:
-            raise ValueError(
-                f"\n✗ Architecture class '{resolved_arch}' not found in transformers\n\n"
-                f"This could mean:\n"
-                f"1. The model requires a newer version of transformers\n"
-                f"2. The model uses a custom modeling file not in the standard library\n"
-                f"3. There's a typo in the architecture name\n\n"
-                f"Please verify your transformers installation and the model requirements."
-            )
+            # Model class not in standard transformers — fall back to class-name string.
+            # This handles custom models registered via AutoConfig.register / AutoModelForCausalLM.register
+            # in model bridge modules (e.g. BailingMoeV2ForCausalLM).
+            return resolved_arch
 
     @classmethod
     def _validate_config(cls, config: PretrainedConfig, path: str | None = None) -> None:

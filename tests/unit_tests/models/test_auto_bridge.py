@@ -434,7 +434,7 @@ class TestAutoBridge:
 
         assert bridge is second_bridge
         assert second_bridge.hf_model_id == hf_model_id
-        mock_auto_cfg.assert_called_once_with(hf_model_id, trust_remote_code=True)
+        mock_auto_cfg.assert_called_once_with(hf_model_id, trust_remote_code=False)
         mock_load_cfg.assert_called_once_with(str(ckpt_dir))
         mock_conform.assert_called_once_with({"vocab_size": 64000}, {"vocab_size": 32000})
 
@@ -777,7 +777,12 @@ class TestAutoBridge:
             bridge._causal_lm_architecture
 
     def test_get_causal_lm_architecture_not_in_transformers(self):
-        """Test error when architecture class not found in transformers."""
+        """Test that custom-registered arch names (not in transformers) are returned as strings.
+
+        Custom models registered via AutoConfig.register / AutoModelForCausalLM.register
+        (e.g. BailingMoeV2ForCausalLM) are not present in the standard transformers module
+        but are still valid — the bridge dispatch supports string-based source matching.
+        """
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["CustomForCausalLM"]
@@ -788,14 +793,11 @@ class TestAutoBridge:
 
         # Mock transformers to not have the CustomForCausalLM attribute
         with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
-            # Configure mock to raise AttributeError when accessing CustomForCausalLM
             del mock_transformers.CustomForCausalLM
 
-            with pytest.raises(
-                ValueError,
-                match="Architecture class 'CustomForCausalLM' not found in transformers",
-            ):
-                bridge._causal_lm_architecture
+            # Falls back to string class name for custom-registered models
+            result = bridge._causal_lm_architecture
+            assert result == "CustomForCausalLM"
 
     def test_repr(self):
         """Test string representation of AutoBridge."""
