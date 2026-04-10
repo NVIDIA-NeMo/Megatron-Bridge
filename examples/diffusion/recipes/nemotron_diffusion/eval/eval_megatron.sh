@@ -233,8 +233,19 @@ LIMIT="${LIMIT:-}"  # Set to a number for quick testing, empty string for full e
 # --- Pip installs needed inside container ---
 PIP_INSTALLS="\
   python -m pip uninstall nvidia-lm-eval -y -q 2>/dev/null || true; \
-  python ${EVAL_SCRIPT%/*}/patch_minerva_deps.py; \
-  python -m pip install --upgrade huggingface_hub evaluate -q --no-cache-dir"
+  python -m pip install lm-eval==0.4.10 -q --no-cache-dir; \
+  python -m pip install transformers==5.0.0rc1 --no-deps -q --no-cache-dir; \
+  python -m pip install --upgrade huggingface_hub evaluate -q --no-cache-dir; \
+  python -m pip install tokenizers==0.22.2 -q --no-cache-dir; \
+  python ${EVAL_SCRIPT%/*}/patch_minerva_deps.py"
+
+CONTAINER_PIP_INSTALLS="\
+  python -m pip uninstall nvidia-lm-eval -y -q 2>/dev/null || true; \
+  python -m pip install lm-eval==0.4.10 -q --no-cache-dir; \
+  python -m pip install transformers==5.0.0rc1 --no-deps -q --no-cache-dir; \
+  python -m pip install --upgrade huggingface_hub evaluate -q --no-cache-dir; \
+  python -m pip install tokenizers==0.22.2 -q --no-cache-dir; \
+  python /opt/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/eval/patch_minerva_deps.py"
 
 # --- Helper: get value from scalar-or-array ---
 get_param() {
@@ -377,7 +388,7 @@ elif [ "$PARALLEL_TASKS" = true ]; then
 
             CURRENT_JOB_NAME="${JOB_NAME}_${exp_name}_${task}_ns${nshot}_s${seed}_${job_counter}"
             TASK_CMD=$(build_eval_command "$model_idx" "$task_idx" "$seed")
-            INNER_COMMAND="python /opt/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/eval/patch_minerva_deps.py; export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/examples:/opt/Megatron-Bridge:/opt/megatron-lm:\${PYTHONPATH:-}; export HF_ALLOW_CODE_EVAL=1; export HF_HOME=/lustre/fsw/portfolios/coreai/users/snorouzi/hf_cache; export HF_TOKEN=$(cat ~/hf_token.txt 2>/dev/null || true); ${TASK_CMD}"
+            INNER_COMMAND="${CONTAINER_PIP_INSTALLS}; export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/examples:/opt/Megatron-Bridge:/opt/megatron-lm:\${PYTHONPATH:-}; export HF_ALLOW_CODE_EVAL=1; export HF_HOME=/lustre/fsw/portfolios/coreai/users/snorouzi/hf_cache; export HF_TOKEN=$(cat ~/hf_token.txt 2>/dev/null || true); ${TASK_CMD}"
             INNER_COMMAND_ONELINE=$(echo "${INNER_COMMAND}" | tr -s ' ' | sed 's/ \\ / /g' | tr -d '\n')
 
             SUBMIT_CMD="submit_job --account ${ACCOUNT} \
@@ -412,7 +423,7 @@ elif [ "$PARALLEL_MODELS" = true ]; then
         exp_name="${exp_names[$model_idx]}"
         CURRENT_JOB_NAME="${JOB_NAME}_${exp_name}_${job_counter}"
 
-        INNER_COMMAND="python /opt/Megatron-Bridge/examples/diffusion/recipes/nemotron_diffusion/eval/patch_minerva_deps.py; export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/examples:/opt/Megatron-Bridge:/opt/megatron-lm:\${PYTHONPATH:-}; export HF_ALLOW_CODE_EVAL=1; export HF_HOME=/lustre/fsw/portfolios/coreai/users/snorouzi/hf_cache; export HF_TOKEN=$(cat ~/hf_token.txt 2>/dev/null || true)"
+        INNER_COMMAND="${CONTAINER_PIP_INSTALLS}; export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/examples:/opt/Megatron-Bridge:/opt/megatron-lm:\${PYTHONPATH:-}; export HF_ALLOW_CODE_EVAL=1; export HF_HOME=/lustre/fsw/portfolios/coreai/users/snorouzi/hf_cache; export HF_TOKEN=$(cat ~/hf_token.txt 2>/dev/null || true)"
 
         for task_idx in "${!tasks[@]}"; do
             for seed in "${SEEDS[@]}"; do
