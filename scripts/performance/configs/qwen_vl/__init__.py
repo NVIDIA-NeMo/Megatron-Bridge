@@ -6,19 +6,6 @@ except ModuleNotFoundError:
     HAVE_MEGATRON_BRIDGE = False
 
 if HAVE_MEGATRON_BRIDGE:
-    try:
-        from .qwen3_vl_pretrain import (
-            qwen3_vl_30b_a3b_pretrain_config_b200,
-            qwen3_vl_30b_a3b_pretrain_config_gb200,
-            qwen3_vl_30b_a3b_pretrain_config_gb300,
-            qwen3_vl_30b_a3b_pretrain_config_h100,
-            qwen3_vl_235b_a22b_pretrain_config_b200,
-            qwen3_vl_235b_a22b_pretrain_config_gb200,
-            qwen3_vl_235b_a22b_pretrain_config_gb300,
-            qwen3_vl_235b_a22b_pretrain_config_h100,
-        )
-    except ImportError:
-        pass
     from .qwen35_vl_pretrain import (
         qwen35_vl_35b_a3b_pretrain_config_b200,
         qwen35_vl_35b_a3b_pretrain_config_gb200,
@@ -160,14 +147,6 @@ __all__ = [
 if HAVE_MEGATRON_BRIDGE:
     __all__.extend(
         [
-            "qwen3_vl_30b_a3b_pretrain_config_b200",
-            "qwen3_vl_30b_a3b_pretrain_config_gb200",
-            "qwen3_vl_30b_a3b_pretrain_config_gb300",
-            "qwen3_vl_30b_a3b_pretrain_config_h100",
-            "qwen3_vl_235b_a22b_pretrain_config_b200",
-            "qwen3_vl_235b_a22b_pretrain_config_gb200",
-            "qwen3_vl_235b_a22b_pretrain_config_gb300",
-            "qwen3_vl_235b_a22b_pretrain_config_h100",
             # Qwen3.5-VL
             "qwen35_vl_35b_a3b_pretrain_config_b200",
             "qwen35_vl_35b_a3b_pretrain_config_gb200",
