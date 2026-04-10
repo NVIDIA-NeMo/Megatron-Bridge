@@ -3035,6 +3035,8 @@ class TestCheckpointManager:
                 strict=False,
                 checkpointing_context={"context": "data"},
                 skip_load_to_model_and_opt=True,
+                pg_collection=None,
+                module_name=None,
             )
             assert result == (100, 50000)
 
