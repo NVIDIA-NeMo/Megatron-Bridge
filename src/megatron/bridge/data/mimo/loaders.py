@@ -35,7 +35,7 @@ def build_mimo_data_loaders(
     Args:
         cfg: Configuration container with MimoModelProvider as cfg.model.
         train_state: Current training state.
-        mimo_provider: MIMO dataset provider (e.g., MockMimoProvider)
+        mimo_provider: MIMO dataset provider (e.g., MockMimoDatasetProvider)
             with get_collate_fn() method.
         train_samples: Number of training samples.
         valid_samples: Number of validation samples.
@@ -70,19 +70,19 @@ def build_mimo_data_loaders(
     if cfg.model.mimo_parallelism_config is None:
         raise ValueError("mimo_parallelism_config must be set for MIMO data loading.")
 
+    if cfg.model._grids is None:
+        raise ValueError(
+            "MimoModelProvider._grids is None. Ensure build_model() is called before building data loaders."
+        )
+
     print_rank_0("> building MIMO train, validation, and test datasets ...")
 
-    # Reuse cached infrastructure (build once if needed).
-    infra = cfg.model.get_or_build_infra()
-    grids = infra.module_to_grid_map
-    dp_info = get_mimo_dp_info(grids)
+    # Use cached grids from build_model()
+    grids = cfg.model._grids
 
-    print_rank_0(
-        f"  MIMO DP info: dp_rank={dp_info.dp_rank}, dp_size={dp_info.dp_size}, "
-        f"needs_data={dp_info.needs_data}, loader_module={dp_info.loader_module}"
-    )
+    dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(cfg.model.mimo_parallelism_config, grids)
 
-    if not dp_info.needs_data:
+    if not needs_data:
         return None, None, None
 
     # Build datasets
@@ -109,8 +109,8 @@ def build_mimo_data_loaders(
             return None
         sampler = torch.utils.data.DistributedSampler(
             dataset,
-            num_replicas=dp_info.dp_size,
-            rank=dp_info.dp_rank,
+            num_replicas=dp_size,
+            rank=dp_rank,
             shuffle=shuffle,
         )
         return DataLoader(
@@ -123,8 +123,8 @@ def build_mimo_data_loaders(
             drop_last=mimo_provider.drop_last,
         )
 
-    return (
-        _make_loader(train_ds, shuffle=True),
-        _make_loader(valid_ds, shuffle=False),
-        _make_loader(test_ds, shuffle=False),
-    )
+    train_loader = _make_loader(train_ds, shuffle=True)
+    valid_loader = _make_loader(valid_ds, shuffle=False)
+    test_loader = _make_loader(test_ds, shuffle=False)
+
+    return train_loader, valid_loader, test_loader
