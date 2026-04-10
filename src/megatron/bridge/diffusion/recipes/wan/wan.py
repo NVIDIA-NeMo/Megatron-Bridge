@@ -30,15 +30,21 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
-def wan_1_3B_pretrain_config() -> ConfigContainer:
+def wan_1_3B_pretrain_config(optimizer_type: str = "adam") -> ConfigContainer:
     """
     Return a pre-training configuration for WAN 1.3B model.
 
     Default parallelism: TP=1, PP=1, CP=8. Uses mock/synthetic data when dataset.path
     is not set. To use real data, override via CLI: dataset.path=/path/to/wds
+
+    Args:
+        optimizer_type: 'adam' (default) or 'muon'.
     """
     # Deferred imports to avoid circular import
-    from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+    from megatron.bridge.recipes.utils.optimizer_utils import (
+        distributed_fused_adam_with_cosine_annealing,
+        distributed_muon_with_cosine_annealing,
+    )
     from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
     # Output directories
@@ -64,15 +70,25 @@ def wan_1_3B_pretrain_config() -> ConfigContainer:
     lr = 0.9e-4
     lr_warmup_iters = 2000
 
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=train_iters,
-        max_lr=lr,
-    )
+    if optimizer_type == "adam":
+        opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+            lr_warmup_iters=lr_warmup_iters,
+            lr_decay_iters=train_iters,
+            max_lr=lr,
+        )
+    elif optimizer_type == "muon":
+        opt_config, scheduler = distributed_muon_with_cosine_annealing(
+            lr_warmup_iters=lr_warmup_iters,
+            lr_decay_iters=train_iters,
+            max_lr=lr,
+        )
+    else:
+        raise ValueError(f"Invalid optimizer type: {optimizer_type}")
     opt_config.use_precision_aware_optimizer = False
 
     precision_config = get_mixed_precision_config("bf16_mixed")
-    precision_config.grad_reduce_in_fp32 = False
+    # Muon requires grad reduction in fp32; Adam does not.
+    precision_config.grad_reduce_in_fp32 = optimizer_type != "adam"
 
     # Dataset configuration (path=None => mock/synthetic data)
     dataset = WanDatasetConfig(
@@ -104,7 +120,7 @@ def wan_1_3B_pretrain_config() -> ConfigContainer:
             overlap_grad_reduce=False,
             overlap_param_gather=False,
             average_in_collective=True,
-            use_distributed_optimizer=True,
+            use_distributed_optimizer=optimizer_type == "adam",  # Muon incompatible with dist-opt
             use_megatron_fsdp=False,
         ),
         dataset=dataset,
@@ -120,6 +136,7 @@ def wan_1_3B_pretrain_config() -> ConfigContainer:
             load=checkpoint_dir,
             ckpt_format="torch_dist",
             fully_parallel_save=True,
+            async_save=False,
         ),
         rng=RNGConfig(seed=1234),
         comm_overlap=None,
@@ -129,15 +146,21 @@ def wan_1_3B_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-def wan_14B_pretrain_config() -> ConfigContainer:
+def wan_14B_pretrain_config(optimizer_type: str = "adam") -> ConfigContainer:
     """
     Return a pre-training configuration for WAN 14B model.
 
     Default parallelism: TP=2, PP=1, CP=4, SP=True. Uses mock/synthetic data when
     dataset.path is not set. To use real data, override via CLI: dataset.path=/path/to/wds
+
+    Args:
+        optimizer_type: 'adam' (default) or 'muon'.
     """
     # Deferred imports to avoid circular import
-    from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+    from megatron.bridge.recipes.utils.optimizer_utils import (
+        distributed_fused_adam_with_cosine_annealing,
+        distributed_muon_with_cosine_annealing,
+    )
     from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
     # Output directories
@@ -166,15 +189,25 @@ def wan_14B_pretrain_config() -> ConfigContainer:
     lr = 0.9e-4
     lr_warmup_iters = 2000
 
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=train_iters,
-        max_lr=lr,
-    )
+    if optimizer_type == "adam":
+        opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+            lr_warmup_iters=lr_warmup_iters,
+            lr_decay_iters=train_iters,
+            max_lr=lr,
+        )
+    elif optimizer_type == "muon":
+        opt_config, scheduler = distributed_muon_with_cosine_annealing(
+            lr_warmup_iters=lr_warmup_iters,
+            lr_decay_iters=train_iters,
+            max_lr=lr,
+        )
+    else:
+        raise ValueError(f"Invalid optimizer type: {optimizer_type}")
     opt_config.use_precision_aware_optimizer = False
 
     precision_config = get_mixed_precision_config("bf16_mixed")
-    precision_config.grad_reduce_in_fp32 = False
+    # Muon requires grad reduction in fp32; Adam does not.
+    precision_config.grad_reduce_in_fp32 = optimizer_type != "adam"
 
     # Dataset configuration (path=None => mock/synthetic data)
     dataset = WanDatasetConfig(
@@ -206,7 +239,7 @@ def wan_14B_pretrain_config() -> ConfigContainer:
             overlap_grad_reduce=False,
             overlap_param_gather=False,
             average_in_collective=True,
-            use_distributed_optimizer=True,
+            use_distributed_optimizer=optimizer_type == "adam",  # Muon incompatible with dist-opt
             use_megatron_fsdp=False,
         ),
         dataset=dataset,
@@ -231,14 +264,29 @@ def wan_14B_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-def wan_1_3B_sft_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def wan_1_3B_pretrain_muon_config() -> ConfigContainer:
+    """Return a pre-training configuration for WAN 1.3B model with Muon optimizer."""
+    return wan_1_3B_pretrain_config(optimizer_type="muon")
+
+
+def wan_14B_pretrain_muon_config() -> ConfigContainer:
+    """Return a pre-training configuration for WAN 14B model with Muon optimizer."""
+    return wan_14B_pretrain_config(optimizer_type="muon")
+
+
+def wan_1_3B_sft_config(
+    pretrained_checkpoint: str | None = None, optimizer_type: str = "adam"
+) -> ConfigContainer:
     """
     Return a fine-tuning configuration for WAN 1.3B model.
 
     Uses the same defaults as wan_1_3B_pretrain_config() and overrides checkpoint to load from
     pretrained_checkpoint when provided.
+
+    Args:
+        optimizer_type: 'adam' (default) or 'muon'.
     """
-    cfg = wan_1_3B_pretrain_config()
+    cfg = wan_1_3B_pretrain_config(optimizer_type=optimizer_type)
     base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
     run_output_dir = os.path.join(base_output_dir, "default")
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
@@ -254,14 +302,19 @@ def wan_1_3B_sft_config(pretrained_checkpoint: str | None = None) -> ConfigConta
     return cfg
 
 
-def wan_14B_sft_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def wan_14B_sft_config(
+    pretrained_checkpoint: str | None = None, optimizer_type: str = "adam"
+) -> ConfigContainer:
     """
     Return a fine-tuning configuration for WAN 14B model.
 
     Uses the same defaults as wan_14B_pretrain_config() and overrides checkpoint to load from
     pretrained_checkpoint when provided.
+
+    Args:
+        optimizer_type: 'adam' (default) or 'muon'.
     """
-    cfg = wan_14B_pretrain_config()
+    cfg = wan_14B_pretrain_config(optimizer_type=optimizer_type)
     base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
     run_output_dir = os.path.join(base_output_dir, "default")
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
