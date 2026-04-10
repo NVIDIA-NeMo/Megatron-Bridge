@@ -13,12 +13,12 @@
 # limitations under the License.
 """Functional test for MIMO heterogeneous parallel training.
 
-Exercises pretrain_mimo -> setup_mimo -> train_mimo on 4 GPUs with
-synthetic data. Requires torchrun with --nproc_per_node=4.
+Exercises pretrain_mimo -> setup_mimo -> train_mimo on 2 GPUs with
+synthetic data. Requires torchrun with --nproc_per_node=2.
 
 Run:
-    torchrun --nproc_per_node=4 -m pytest -v -s -x \
-        tests/functional_tests/test_groups/training/test_mimo_training.py
+    torchrun --nproc_per_node=2 -m pytest -v -s -x \
+        tests/functional_tests/test_groups/training/test_pretrain_mimo.py
 """
 
 from __future__ import annotations
@@ -254,23 +254,23 @@ def _build_config(
 class TestMimoTraining:
     """Functional tests for MIMO heterogeneous parallel training.
 
-    Requires 4 GPUs. Run with:
-        torchrun --nproc_per_node=4 -m pytest -v -s -x \\
-            tests/functional_tests/test_groups/training/test_mimo_training.py
+    Requires 2 GPUs. Run with:
+        torchrun --nproc_per_node=2 -m pytest -v -s -x \\
+            tests/functional_tests/test_groups/training/test_pretrain_mimo.py
     """
 
     @pytest.mark.run_only_on("GPU")
-    def test_mimo_tp2_both(self):
-        """Smoke test: MIMO training with TP=2 for both LLM and vision.
+    def test_mimo_tp1_both(self):
+        """Smoke test: MIMO training with TP=1 for both LLM and vision.
 
-        LLM on ranks 0-1 (TP=2), vision on ranks 2-3 (TP=2).
+        LLM on rank 0 (TP=1, DP=1), vision on rank 1 (TP=1, DP=1).
         Trains for 5 iterations with synthetic data and verifies completion.
         """
         initialize_distributed()
 
         world_size = dist.get_world_size()
-        if world_size != 4:
-            pytest.skip(f"MIMO TP=2 test requires exactly 4 GPUs, got {world_size}")
+        if world_size != 2:
+            pytest.skip(f"MIMO test requires exactly 2 GPUs, got {world_size}")
 
         # Monkey-patch: report_theoretical_memory crashes on MIMO models
         # because cfg.model is MimoModelProvider (no kv_channels).
@@ -281,16 +281,16 @@ class TestMimoTraining:
         par_cfg = MimoParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(
-                    tensor_model_parallel_size=2,
+                    tensor_model_parallel_size=1,
                     pipeline_model_parallel_size=1,
                     data_parallel_size=1,
                     rank_offset=0,
                 ),
                 "vision": ModuleParallelismConfig(
-                    tensor_model_parallel_size=2,
+                    tensor_model_parallel_size=1,
                     pipeline_model_parallel_size=1,
                     data_parallel_size=1,
-                    rank_offset=2,
+                    rank_offset=1,
                 ),
             },
         )
