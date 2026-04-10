@@ -181,22 +181,6 @@ class Qwen35VLModelProvider(GPTModelProvider):
             self.vision_config = Qwen3_5VisionConfig()
         super().__post_init__()
 
-    def finalize(self) -> None:
-        self.validate_parallelism()
-        super().finalize()
-
-    def validate_parallelism(self):
-        """Validate that parallelism settings are compatible with this model's architecture.
-
-        Call this after mutating parallelism attributes (e.g. tensor_model_parallel_size)
-        on an already-constructed provider, since finalize() only runs once before provide().
-        """
-        if self.num_query_groups < self.tensor_model_parallel_size:
-            raise ValueError(
-                f"TP size {self.tensor_model_parallel_size} should be less than or equal to "
-                f"num_query_groups {self.num_query_groups}. Please use a smaller TP size."
-            )
-
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 VL dense model instance with vision and language components."""
         from megatron.bridge.models.gpt_provider import mtp_block_spec
@@ -361,22 +345,6 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         if self.vision_config is None:
             self.vision_config = Qwen3_5MoeVisionConfig()
         super().__post_init__()
-
-    def finalize(self) -> None:
-        self.validate_parallelism()
-        super().finalize()
-
-    def validate_parallelism(self):
-        """Validate that parallelism settings are compatible with this model's architecture.
-
-        Call this after mutating parallelism attributes (e.g. tensor_model_parallel_size)
-        on an already-constructed provider, since finalize() only runs once before provide().
-        """
-        if self.num_query_groups < self.tensor_model_parallel_size:
-            raise ValueError(
-                f"TP size {self.tensor_model_parallel_size} should be less than or equal to "
-                f"num_query_groups {self.num_query_groups}. Please use a smaller TP size."
-            )
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 VL model instance with vision and language components.

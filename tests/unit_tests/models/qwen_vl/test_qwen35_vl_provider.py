@@ -146,17 +146,6 @@ class TestQwen35VLModelProvider:
         assert hasattr(provider, "provide") and callable(provider.provide)
         assert hasattr(provider, "provide_language_model") and callable(provider.provide_language_model)
 
-    def test_tp_validation(self):
-        provider = Qwen35VLModelProvider(
-            num_layers=64,
-            hidden_size=5120,
-            num_attention_heads=24,
-            num_query_groups=2,
-            tensor_model_parallel_size=4,
-        )
-        with pytest.raises(ValueError, match="TP size"):
-            provider.finalize()
-
 
 @pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
 class TestQwen35VLMoEModelProvider:
@@ -231,14 +220,3 @@ class TestQwen35VLMoEModelProvider:
             num_attention_heads=32,
         )
         assert isinstance(provider.vision_config, Qwen3_5MoeVisionConfig)
-
-    def test_tp_validation(self):
-        provider = Qwen35VLMoEModelProvider(
-            num_layers=60,
-            hidden_size=4096,
-            num_attention_heads=32,
-            num_query_groups=2,
-            tensor_model_parallel_size=4,
-        )
-        with pytest.raises(ValueError, match="TP size"):
-            provider.finalize()

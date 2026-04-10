@@ -66,6 +66,7 @@ IGNORE_PRECISION_PARAMS = [
     "A_log",
     "linear_attn.norm.weight",
     "dt_bias",
+    "expert_bias",  # MoE gate expert bias: float32 in Megatron, bfloat16 in HF
     # MiniMax-M2: QK norms stored as bf16 in HF, loaded as fp32 by Megatron config.params_dtype
     "q_norm.weight",
     "k_norm.weight",
