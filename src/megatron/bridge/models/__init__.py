@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # Import model providers for easy access
+from megatron.bridge.models.bailing import (
+    BailingMoeV2Bridge,
+)
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -61,6 +64,14 @@ from megatron.bridge.models.gpt_oss import (
     GPTOSSBridge,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.kimi import (
+    KimiK2Bridge,
+)
+from megatron.bridge.models.kimi_vl import (
+    KimiK25VLBridge,
+    KimiK25VLModel,
+    KimiK25VLModelProvider,
+)
 from megatron.bridge.models.llama import (
     LlamaBridge,
 )
@@ -149,6 +160,7 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "BailingMoeV2Bridge",
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
@@ -172,6 +184,10 @@ __all__ = [
     "GPTModelProvider",
     "GPTOSSBridge",
     "T5ModelProvider",
+    "KimiK2Bridge",
+    "KimiK25VLModel",
+    "KimiK25VLBridge",
+    "KimiK25VLModelProvider",
     "LlamaBridge",
     "LlamaNemotronHeterogeneousProvider",
     "LlamaNemotronBridge",

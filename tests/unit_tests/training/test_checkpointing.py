@@ -2612,6 +2612,7 @@ class TestFSDPDTensorFunctionality:
                 patch(
                     "megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor"
                 ) as mock_uneven,
+                patch("megatron.bridge.training.checkpointing.handle_gdn_in_state_dict", None),
             ):
                 raw_state_dict = {"model": {"test_param": torch.tensor([1.0])}}
                 result = preprocess_fsdp_dtensor_state_dict(mock_cfg, raw_state_dict, mock_model)
@@ -2983,7 +2984,7 @@ class TestCheckpointManager:
         ):
             mock_init_ctx.return_value = {"context": "data"}
             manager = DefaultCheckpointManager(config)
-            manager.save(ctx)
+            manager.save(ctx, None)
 
             mock_save.assert_called_once_with(
                 state=mock_state,
@@ -2994,6 +2995,7 @@ class TestCheckpointManager:
                 checkpointing_context={"context": "data"},
                 non_persistent_ckpt=True,
                 train_data_iterator=ctx.train_data_iterator,
+                callback_manager=None,
             )
 
     def test_default_checkpoint_manager_load_delegates(self):

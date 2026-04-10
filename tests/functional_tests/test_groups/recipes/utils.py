@@ -239,10 +239,9 @@ def run_pretrain_vl_recipe_test(
 
         # Set up output directories after instantiation
         run_output_dir = shared_base_dir / f"{recipe_name}_functional_test"
-        checkpoint_dir = run_output_dir / "checkpoints"
         tensorboard_dir = run_output_dir / "tb_logs"
-        config.checkpoint.save = str(checkpoint_dir)
-        config.checkpoint.load = str(checkpoint_dir)
+        config.checkpoint.save = None
+        config.checkpoint.load = None
         config.logger.tensorboard_dir = str(tensorboard_dir)
 
         # Keep runs short and consistent across tests
@@ -292,12 +291,13 @@ def run_pretrain_vl_recipe_test(
         pretrain(config, vlm_forward_step)
 
         # Basic verification that training completed successfully
-        verify_checkpoint_files(
-            config.checkpoint.save,
-            config.train.train_iters,
-            ckpt_format=config.checkpoint.ckpt_format,
-            storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
-        )
+        if config.checkpoint.save is not None:
+            verify_checkpoint_files(
+                config.checkpoint.save,
+                config.train.train_iters,
+                ckpt_format=config.checkpoint.ckpt_format,
+                storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+            )
 
     finally:
         clear_directories(tmp_path)

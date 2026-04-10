@@ -15,6 +15,7 @@
 import argparse
 import json
 import os
+import shutil
 
 import pandas as pd
 
@@ -41,7 +42,10 @@ def main():
     video_files = [f for f in os.listdir(video_dir) if f.endswith(".mp4")]
     print(f"Found {len(video_files)} videos in {video_dir}. Starting conversion...")
 
+    no_caption_dir = os.path.join(video_dir, "videos_without_captions")
+
     count = 0
+    no_caption_count = 0
     for video_name in video_files:
         if video_name in caption_map:
             # Construct the JSON content
@@ -57,9 +61,14 @@ def main():
 
             count += 1
         else:
-            print(f"Warning: No caption found for {video_name}")
+            print(f"Warning: No caption found for {video_name}, moving to {no_caption_dir}")
+            os.makedirs(no_caption_dir, exist_ok=True)
+            shutil.move(os.path.join(video_dir, video_name), os.path.join(no_caption_dir, video_name))
+            no_caption_count += 1
 
     print(f"Finished! Created {count} JSON files in {video_dir}.")
+    if no_caption_count:
+        print(f"Moved {no_caption_count} videos without captions to {no_caption_dir}.")
 
 
 if __name__ == "__main__":
