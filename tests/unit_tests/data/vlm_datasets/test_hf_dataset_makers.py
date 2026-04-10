@@ -98,6 +98,58 @@ def test_make_raven_dataset(monkeypatch):
     assert out[0]["conversation"][0]["content"][0]["type"] == "image"
 
 
+def test_make_llava_pretrain_dataset_hf(monkeypatch, tmp_path):
+    """Fallback to load_dataset when local JSON is absent."""
+    image_root = tmp_path
+    convs = [{"from": "human", "value": "Describe this image.\n<image>"}, {"from": "gpt", "value": "A cat."}]
+    valid = {"image": "00453/004539375.jpg", "conversations": convs}
+    no_image = {"image": "", "conversations": convs}
+    no_convs = {"image": "00453/004539375.jpg", "conversations": []}
+    human_contentless = {
+        "image": "00453/004539375.jpg",
+        "conversations": [{"from": "human", "value": ""}, {"from": "gpt", "value": "A."}],
+    }
+    rows = [valid, no_image, no_convs, human_contentless]
+    _monkeypatch_load_dataset(monkeypatch, rows)
+    out = makers.make_llava_pretrain_dataset(str(image_root))
+    assert isinstance(out, list)
+    # valid and human_contentless both produce output
+    assert len(out) == 2
+
+    # Check the valid conversation
+    valid_conv = out[0]["conversation"]
+    assert valid_conv[0]["role"] == "user"
+    assert valid_conv[0]["content"][0]["type"] == "image"
+    assert "path" in valid_conv[0]["content"][0]
+    # <image> placeholder should be stripped from the prompt
+    assert "<image>" not in valid_conv[0]["content"][1]["text"]
+    assert "Describe this image." in valid_conv[0]["content"][1]["text"]
+    assert valid_conv[1]["role"] == "assistant"
+    assert valid_conv[1]["content"][0]["text"] == "A cat."
+
+
+def test_make_llava_pretrain_dataset_local_json(tmp_path):
+    """Load from a local directory with blip_laion_cc_sbu_558k.json."""
+    convs = [{"from": "human", "value": "Summarize.\n<image>"}, {"from": "gpt", "value": "A dog."}]
+    entries = [
+        {"id": "001", "image": "00001/001.jpg", "conversations": convs},
+        {"id": "002", "image": "", "conversations": convs},  # filtered out
+    ]
+    json_path = tmp_path / "blip_laion_cc_sbu_558k.json"
+    json_path.write_text(json.dumps(entries))
+
+    out = makers.make_llava_pretrain_dataset(
+        image_root_path=str(tmp_path), path_or_dataset=str(tmp_path)
+    )
+    assert isinstance(out, list)
+    assert len(out) == 1
+    valid_conv = out[0]["conversation"]
+    assert valid_conv[0]["content"][0]["type"] == "image"
+    assert "<image>" not in valid_conv[0]["content"][1]["text"]
+    assert "Summarize." in valid_conv[0]["content"][1]["text"]
+    assert valid_conv[1]["content"][0]["text"] == "A dog."
+
+
 def test_make_llava_video_178k_dataset(monkeypatch, tmp_path):
     # Happy path: valid video and conversation
     video_file = "the_vid.mp4"
