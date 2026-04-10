@@ -504,7 +504,8 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        GatedMLPMapping._validate_patterns = lambda *args, **kwargs: None
+        gated = GatedMLPMapping.__new__(GatedMLPMapping)
+        gated._validate_patterns = lambda *args, **kwargs: None
 
         self._gated_mapping = GatedMLPMapping(
             megatron_param=self.megatron_param,
