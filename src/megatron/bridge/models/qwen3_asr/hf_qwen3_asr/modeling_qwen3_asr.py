@@ -39,20 +39,6 @@ from transformers.utils import auto_docstring, can_return_tuple
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.utils.generic import TransformersKwargs
 
-
-try:
-    from transformers.utils.generic import check_model_inputs
-except ImportError:
-
-    def check_model_inputs():
-        """No-op fallback for older transformers versions."""
-
-        def decorator(func):
-            return func
-
-        return decorator
-
-
 from .configuration_qwen3_asr import (
     Qwen3ASRAudioEncoderConfig,
     Qwen3ASRConfig,
@@ -995,7 +981,6 @@ class Qwen3ASRThinkerTextModel(Qwen3ASRPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @check_model_inputs()
     @auto_docstring
     def forward(
         self,
