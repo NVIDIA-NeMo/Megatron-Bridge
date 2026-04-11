@@ -113,14 +113,17 @@ def _set_cuda_graph_overrides(
         else:  # this condition ensures we unset in case of user override to "none" from default
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
-        if cuda_graph_impl == "transformer_engine":
-            valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
-            assert all(scope in valid_te_scopes for scope in cuda_graph_scope), (
-                f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: {valid_te_scopes}"
-            )
-
     if cuda_graph_scope is not None:
         recipe.model.cuda_graph_scope = cuda_graph_scope
+
+    # Validate post-override state so we check the effective recipe value,
+    # not the raw CLI input (which may be None when the recipe default is used).
+    if recipe.model.cuda_graph_impl == "transformer_engine":
+        valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
+        effective_scope = getattr(recipe.model, "cuda_graph_scope", None)
+        assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
+            f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
+        )
 
     return recipe
 

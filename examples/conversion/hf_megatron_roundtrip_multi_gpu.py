@@ -53,7 +53,6 @@ from rich.table import Table
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import fix_gpt_oss_export_transpose, get_hf_model_type
 
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
@@ -67,6 +66,7 @@ IGNORE_PRECISION_PARAMS = [
     "A_log",
     "linear_attn.norm.weight",
     "dt_bias",
+    "expert_bias",  # MoE gate expert bias: float32 in Megatron, bfloat16 in HF
     # MiniMax-M2: QK norms stored as bf16 in HF, loaded as fp32 by Megatron config.params_dtype
     "q_norm.weight",
     "k_norm.weight",
@@ -188,11 +188,7 @@ def main(
     all_match = True
     fp8_skip_count = 0
     fp8_skip_samples: list[str] = []
-    # TODO: Remove fix_gpt_oss_export_transpose once GPT-OSS bridge export is fixed.
-    weight_iter = bridge.export_hf_weights(megatron_model, show_progress=False)
-    if get_hf_model_type(bridge) == "gpt_oss":
-        weight_iter = fix_gpt_oss_export_transpose(weight_iter)
-    for name, param in weight_iter:
+    for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
             original_param = bridge.hf_pretrained.state[name]
             compare_param = param
