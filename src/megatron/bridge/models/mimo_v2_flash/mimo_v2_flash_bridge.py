@@ -22,10 +22,11 @@ MiMo-V2-Flash from Xiaomi features:
 - Dual rope bases: 5M (full attn) and 10K (SWA)
 """
 
-from typing import Mapping
+import re
+from typing import Dict, Mapping, Optional
 
 import torch
-import re
+import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -36,6 +37,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     merge_qkv_weights,
 )
+from megatron.bridge.models.conversion.utils import remove_non_pickleables
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider import MiMoV2FlashModelProvider
 
@@ -55,7 +57,7 @@ class MiMoV2FlashQKVMapping(QKVMapping):
     the config before merging.
     """
 
-    def hf_to_megatron(self, hf_weights, megatron_module):
+    def hf_to_megatron(self, hf_weights: Dict[str, torch.Tensor], megatron_module: nn.Module):
         if self.tp_rank == 0:
             config = self._get_config(megatron_module)
             q, k, v = hf_weights["q"], hf_weights["k"], hf_weights["v"]
@@ -77,6 +79,47 @@ class MiMoV2FlashQKVMapping(QKVMapping):
         else:
             merged = None
         return self._tp_mapping.hf_to_megatron(merged, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        """Gather QKV shards and split into Q, K, V."""
+        # Dequantize if needed
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None, "qkv_config")
+        else:
+            config = self._get_config(megatron_module)
+            config = remove_non_pickleables(config, max_depth=3)
+            config = self.broadcast_obj_from_pp_rank(config, "qkv_config")
+
+        packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        if not packed_dict:
+            return {}
+        packed_qkv = next(iter(packed_dict.values()))
+        num_heads = config.num_attention_heads
+        num_qg = config.num_query_groups
+        heads_per_group = num_heads // num_qg
+        qk_ch = config.kv_channels
+        v_ch = config.v_head_dim
+        group_size = heads_per_group * qk_ch + qk_ch + v_ch
+        qs, ks, vs = [], [], []
+        for i in range(num_qg):
+            offset = i * group_size
+            qs.append(packed_qkv[offset : offset + heads_per_group * qk_ch])
+            offset += heads_per_group * qk_ch
+            ks.append(packed_qkv[offset : offset + qk_ch])
+            offset += qk_ch
+            vs.append(packed_qkv[offset : offset + v_ch])
+
+        return {
+            self.hf_param["q"]: torch.cat(qs, dim=0),
+            self.hf_param["k"]: torch.cat(ks, dim=0),
+            self.hf_param["v"]: torch.cat(vs, dim=0),
+        }
 
 
 def _dequant_fp8_blockwise(weight: torch.Tensor, scale_inv: torch.Tensor) -> torch.Tensor:
@@ -158,18 +201,26 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         """Convert Megatron provider config to HuggingFace config dict."""
         hf_cfg = super(MiMoV2FlashBridge, cls).megatron_to_hf_config(provider)
 
-        # Dual RoPE bases
         if isinstance(provider.rotary_base, tuple):
-            hf_cfg["swa_rope_theta"] = provider.rotary_base[0]
-            hf_cfg["rope_theta"] = provider.rotary_base[1]
+            swa_theta, full_theta = provider.rotary_base
+            hf_cfg["rope_theta"] = full_theta
+            hf_cfg["swa_rope_theta"] = swa_theta
 
+        hf_cfg["auto_map"] = {
+            "AutoConfig": "configuration_mimo_v2_flash.MiMoV2FlashConfig",
+            "AutoModel": "modeling_mimo_v2_flash.MiMoV2FlashModel",
+            "AutoModelForCausalLM": "modeling_mimo_v2_flash.MiMoV2FlashForCausalLM",
+        }
+        hf_cfg["model_type"] = "mimo_v2_flash"
         # Hybrid attention pattern
         hf_cfg["hybrid_layer_pattern"] = provider.hybrid_attention_pattern
 
-        # Sliding window
         window = provider.window_size
+        if isinstance(window, (list, tuple)):
+            window = window[0]
         hf_cfg["sliding_window_size"] = window
         hf_cfg["sliding_window"] = window
+        hf_cfg["attention_chunk_size"] = window
 
         # Asymmetric V head dim
         hf_cfg["v_head_dim"] = provider.v_head_dim
@@ -178,8 +229,14 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         hf_cfg["num_key_value_heads"] = provider.full_attn_num_query_groups
         hf_cfg["swa_num_key_value_heads"] = provider.swa_num_query_groups
 
+        # SWA-specific head config
+        hf_cfg["swa_num_attention_heads"] = provider.num_attention_heads
+        hf_cfg["swa_head_dim"] = provider.kv_channels
+        hf_cfg["swa_v_head_dim"] = provider.v_head_dim
+
         # MoE
         hf_cfg["moe_layer_freq"] = provider.moe_layer_freq
+        hf_cfg["topk_method"] = "noaux_tc"
 
         # Attention sink bias
         hf_cfg["add_swa_attention_sink_bias"] = provider.add_swa_attention_sink_bias
@@ -188,24 +245,20 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         # Attention value scale
         hf_cfg["attention_value_scale"] = provider.attention_value_scale
 
-        # MCore renormalizes top-k probs for sigmoid scoring with topk > 1 (moe_utils.py:797)
         hf_cfg["norm_topk_prob"] = True
-
-        # layernorm_epsilon: HF config uses this name, CONFIG_MAPPING maps rms_norm_eps so it's missed
+        # layernorm_epsilon
         hf_cfg["layernorm_epsilon"] = provider.layernorm_epsilon
 
         return hf_cfg
 
-
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []
-        # TODO: How should I map first dense weight in first layer ?
         param_mappings = {
             # Embeddings
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
-            # Attention 
+            # Attention
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             "decoder.layers.*.self_attention.core_attention.softmax_offset": "model.layers.*.self_attn.attention_sink_bias",
@@ -218,27 +271,29 @@ class MiMoV2FlashBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
             "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
         }
-        mapping_list.extend([
-            # QKV projection — uses custom mapping to handle asymmetric v_head_dim
-            MiMoV2FlashQKVMapping(
-                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                q="model.layers.*.self_attn.q_proj.weight",
-                k="model.layers.*.self_attn.k_proj.weight",
-                v="model.layers.*.self_attn.v_proj.weight",
-            ),
-            # Dense MLP gate+up
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
-                gate="model.layers.*.mlp.gate_proj.weight",
-                up="model.layers.*.mlp.up_proj.weight",
-            ),
-            # MoE experts gate+up
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                gate="model.layers.*.mlp.experts.*.gate_proj.weight",
-                up="model.layers.*.mlp.experts.*.up_proj.weight",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                # QKV projection — uses custom mapping to handle asymmetric v_head_dim
+                MiMoV2FlashQKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="model.layers.*.self_attn.q_proj.weight",
+                    k="model.layers.*.self_attn.k_proj.weight",
+                    v="model.layers.*.self_attn.v_proj.weight",
+                ),
+                # Dense MLP gate+up
+                GatedMLPMapping(
+                    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
+                    gate="model.layers.*.mlp.gate_proj.weight",
+                    up="model.layers.*.mlp.up_proj.weight",
+                ),
+                # MoE experts gate+up
+                GatedMLPMapping(
+                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                    gate="model.layers.*.mlp.experts.*.gate_proj.weight",
+                    up="model.layers.*.mlp.experts.*.up_proj.weight",
+                ),
+            ]
+        )
         mtp_keys = {
             "self_attention.linear_qkv.layer_norm_weight": "input_layernorm.weight",
             "self_attention.linear_proj.weight": "self_attn.o_proj.weight",
@@ -246,11 +301,9 @@ class MiMoV2FlashBridge(MegatronModelBridge):
             "mlp.linear_fc1.layer_norm_weight": "pre_mlp_layernorm.weight",
             "mlp.linear_fc2.weight": "mlp.down_proj.weight",
         }
-        
-        
-        # TODO: Join logic for MTP and layers since the naming is the same
 
-        mapping_list.extend([
+        mapping_list.extend(
+            [
                 AutoMapping(
                     megatron_param="mtp.layers.*.eh_proj.weight",
                     hf_param="model.mtp.layers.*.eh_proj.weight",
@@ -267,9 +320,9 @@ class MiMoV2FlashBridge(MegatronModelBridge):
                     megatron_param="mtp.layers.*.final_layernorm.weight",
                     hf_param="model.mtp.layers.*.final_layernorm.weight",
                 ),
-            ])
-        # Support both naming conventions: Megatron-Core may expose MTP layers as
-        # either "transformer_layer" or "mtp_model_layer" depending on configuration
+            ]
+        )
+        # Support both naming conventions
         for layer_prefix in ("transformer_layer", "mtp_model_layer"):
             for megatron_mtp_key, hf_mtp_key in mtp_keys.items():
                 megatron_param = f"mtp.layers.*.{layer_prefix}.{megatron_mtp_key}"
@@ -296,7 +349,6 @@ class MiMoV2FlashBridge(MegatronModelBridge):
                     ),
                 ]
             )
-
 
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
