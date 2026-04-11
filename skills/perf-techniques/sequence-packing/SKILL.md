@@ -35,8 +35,10 @@ cfg.model.calculate_per_token_loss = True
 cfg.ddp.average_in_collective = False
 cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
-# If sequence_parallel is also enabled, pad_seq_to_mult must include TP:
-# cfg.dataset.packed_sequence_specs.pad_seq_to_mult = 2 * CP * TP
+# If sequence_parallel is also enabled, use lcm(2*CP, CP*TP):
+# import math
+# cfg.dataset.packed_sequence_specs.pad_seq_to_mult = math.lcm(2 * CP, CP * TP)
+# See src/megatron/bridge/training/vlm_step.py for reference logic.
 ```
 
 If CUDA graphs are enabled for this packed path:

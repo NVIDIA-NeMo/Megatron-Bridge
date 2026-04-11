@@ -274,7 +274,7 @@ SFT/LoRA variants also exist (e.g. 8B SFT with packed sequences, 70B SFT on 32 G
 
 ## Recommendation Decision Tree
 
-```
+```text
 User wants to train a model
 │
 ├─ Know the model name?

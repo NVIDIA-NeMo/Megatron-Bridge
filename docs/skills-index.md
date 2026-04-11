@@ -11,6 +11,7 @@ and verification steps.
 
 skills/developer-guide/SKILL
 skills/mlm-bridge-training/SKILL
+skills/recipe-recommender/SKILL
 ```
 
 ```{toctree}
