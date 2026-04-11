@@ -24,6 +24,28 @@ Key architecture-specific handling:
 - Dual pre-norms: separate norms for dense MLP vs routed experts.
 - Router scale/per_expert_scale: loaded as replicated buffers.
 - layer_scalar: per-layer scaling buffer.
+
+Supported models
+----------------
+- ``google/gemma-4-26B-A4B`` (MoE, ``enable_moe_block=True``) — fully supported.
+
+NOT supported
+-------------
+- Dense Gemma 4 models (``enable_moe_block=False``, e.g. a hypothetical text-only e2b).
+  The currently available dense model is ``google/gemma-4-e2b-it``, which is a VLM and
+  is handled by ``gemma4_vl_bridge.py`` instead.
+
+  Dense Gemma 4 models introduce two architectural features that are disabled (but present)
+  in the MoE variant (26B-A4B has hidden_size_per_layer_input=0, use_double_wide_mlp=False):
+  1. ``use_double_wide_mlp``: the last ``num_kv_shared_layers`` layers have 2× FFN hidden size.
+     Supporting this requires per-layer ``ffn_hidden_size`` in MCore.
+  2. **Per-Layer Embeddings (PLE)**: a second low-dimensional embedding pathway injected
+     into every decoder layer after the FFN.  See ``gemma4_vl_bridge.py`` for details on
+     what PLE does and what needs to be implemented in MCore to support it.
+
+  To support dense Gemma 4 CausalLM, this bridge would need the same MoE/dense branching
+  that ``gemma4_vl_bridge.py`` already has, plus full MCore implementations of PLE and
+  variable-width FFN.
 """
 
 import math
@@ -158,6 +180,70 @@ class Gemma4Bridge(MegatronModelBridge):
         provider.make_vocab_size_divisible_by = 128
 
         return provider
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task,
+        converted_weights_dict,
+        hf_state_dict,
+    ):
+        """Un-fuse fused weights and drop synthesized keys on export.
+
+        On import, two non-trivial fusions are applied to the MoE layers:
+
+        1. **Router fusion**: ``mg = hf * (scale * hidden^-0.5 / pffl2)``
+        2. **Shared-expert gate/up fusion**: ``mg = hf * (pffl / pffl2)``
+
+        This method inverts both fusions on export so the resulting HF weights
+        exactly match the original checkpoint.  It also drops the synthesized
+        ``v_proj`` key produced for K=V global-attention layers where ``v_proj``
+        is absent in HF.
+        """
+        if not hf_state_dict:
+            return converted_weights_dict
+
+        result = {}
+        for hf_name, tensor in converted_weights_dict.items():
+            # Drop synthesized v_proj (absent for K=V global-attention layers)
+            if hf_name not in hf_state_dict:
+                continue
+
+            # ── Router weight inverse: hf = mg * pffl2 / (scale * hidden^-0.5)
+            if hf_name.endswith("router.proj.weight"):
+                layer_match = re.search(r"layers\.(\d+)\.", hf_name)
+                if layer_match:
+                    layer_idx = layer_match.group(1)
+                    prefix = hf_name.rsplit("layers.", 1)[0]
+                    scale_key = f"{prefix}layers.{layer_idx}.router.scale"
+                    ln2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
+                    if scale_key in hf_state_dict and ln2_key in hf_state_dict:
+                        router_scale = hf_state_dict[scale_key].float().to(tensor.device)
+                        ln2_weight = hf_state_dict[ln2_key].float().to(tensor.device)
+                        hidden_size = tensor.shape[-1]
+                        scalar_root_size = hidden_size ** -0.5
+                        fusion_factor = router_scale * scalar_root_size / ln2_weight
+                        tensor = (tensor.float() / fusion_factor.unsqueeze(0)).to(tensor.dtype)
+
+            # ── Shared-expert gate/up inverse: hf = mg * (pffl2 / pffl)
+            elif (
+                hf_name.endswith(("mlp.gate_proj.weight", "mlp.up_proj.weight"))
+                and "experts" not in hf_name
+            ):
+                layer_match = re.search(r"layers\.(\d+)\.", hf_name)
+                if layer_match:
+                    layer_idx = layer_match.group(1)
+                    prefix = hf_name.rsplit("layers.", 1)[0]
+                    pffl_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm.weight"
+                    pffl2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
+                    if pffl_key in hf_state_dict and pffl2_key in hf_state_dict:
+                        w_pffl = hf_state_dict[pffl_key].float().to(tensor.device)
+                        w_pffl2 = hf_state_dict[pffl2_key].float().to(tensor.device)
+                        correction = w_pffl / w_pffl2
+                        tensor = (tensor.float() / correction.unsqueeze(0)).to(tensor.dtype)
+
+            result[hf_name] = tensor
+
+        return result
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
@@ -333,9 +419,10 @@ class Gemma4Bridge(MegatronModelBridge):
             # === MoE Router ===
             "decoder.layers.*.mlp.router.weight": "model.layers.*.router.proj.weight",
 
-            # === MoE Router scaling ===
-            # router.scale and per_expert_scale are applied inside HF's router forward;
-            # loaded as replicated buffers for future functional integration.
+            # === MoE Router ===
+            # router.scale is fused into router.weight on import; stored as an inert buffer
+            # (Gemma4TopKRouter.scale) so it round-trips on export without needing the
+            # reference HF checkpoint.  Mapped via ReplicatedMapping below.
         }
 
         mapping_list = []
@@ -383,6 +470,18 @@ class Gemma4Bridge(MegatronModelBridge):
             ReplicatedMapping(
                 megatron_param="decoder.layers.*.mlp.router.per_expert_scale",
                 hf_param="model.layers.*.router.per_expert_scale",
+            ),
+
+            # === Router input scale (fused into router weight on import; stored as buffer) ===
+            ReplicatedMapping(
+                megatron_param="decoder.layers.*.mlp.router.scale",
+                hf_param="model.layers.*.router.scale",
+            ),
+
+            # === Dense/shared-expert pre-norm (fused into gate/up on import; stored as buffer) ===
+            ReplicatedMapping(
+                megatron_param="decoder.layers.*.pffl_weight",
+                hf_param="model.layers.*.pre_feedforward_layernorm.weight",
             ),
 
             # === Post-MoE layernorm (applied to routed expert output before combining) ===

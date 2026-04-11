@@ -695,6 +695,18 @@ class ParallelLinearAdapter(nn.Module):
                         old_rid = v.replica_id
                         v.replica_id = (old_rid[0], rank, old_rid[2])
 
+            # TE FP8 _extra_state is a ShardedObject (no replica_id) that is
+            # identical across all TP ranks in the same EP group — experts are
+            # EP-sharded, not TP-sharded, so every TP rank sees the same experts
+            # and produces the same shard_X_N keys.  Keep it only on TP rank 0
+            # to avoid CheckpointingException: Duplicate ShardedObject keys.
+            tp_rank = parallel_state.get_tensor_model_parallel_rank()
+            if tp_rank > 0:
+                for sd in [linear_in_sd, linear_out_sd]:
+                    extra_state_keys = [k for k in sd if "_extra_state" in k]
+                    for k in extra_state_keys:
+                        del sd[k]
+
         if "linear_fc1" in self.base_linear_name:
             for k, v in linear_out_sd.items():
                 if k in (f"{prefix}linear_out.weight", f"{prefix}linear_out.bias"):

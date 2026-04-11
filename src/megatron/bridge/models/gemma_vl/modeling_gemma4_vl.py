@@ -179,12 +179,9 @@ class Gemma4VLModel(MegatronModule):
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
         # Compute attention mask on FULL sequence (before CP slicing).
-        # NOTE: During inference without mm_token_type_ids, HF Gemma4 VLM uses standard
-        # causal masking even for image tokens (bidirectional attention requires
-        # mm_token_type_ids which is only provided during training). Pass None to use
-        # Megatron's default causal masking.
-        if attention_mask is None:
-            attention_mask = None  # Use Megatron's built-in causal masking
+        # Image tokens within a contiguous image group need bidirectional attention;
+        # _compute_attention_mask builds a causal + bidirectional mask, matching HF behaviour.
+        attention_mask = self._compute_attention_mask(input_ids)
 
         # CP slicing
         inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(

@@ -102,8 +102,8 @@ class Gemma4ModelProvider(GPTModelProvider):
     add_bias_linear: bool = False
     activation_func: Callable = fast_gelu
 
-    # MoE — dense MLP maps to shared experts
-    num_moe_experts: int = 128
+    # MoE — dense MLP maps to shared experts (None for dense/non-MoE models)
+    num_moe_experts: Optional[int] = 128
     moe_router_topk: int = 8
     moe_ffn_hidden_size: int = 704
     moe_shared_expert_intermediate_size: int = 2112  # dense MLP intermediate
@@ -195,6 +195,9 @@ class Gemma4TransformerLayer(TransformerLayer):
     def __init__(self, config, submodules, layer_number=1, **kwargs):
         super().__init__(config=config, submodules=submodules, layer_number=layer_number, **kwargs)
         self.register_buffer("layer_scalar", torch.ones(1, dtype=config.params_dtype))
+        # HF pre_feedforward_layernorm (dense/shared-expert pre-norm) has no MCore
+        # counterpart — stored as an inert buffer so it round-trips through export.
+        self.register_buffer("pffl_weight", torch.ones(config.hidden_size, dtype=config.params_dtype))
 
         # Post-feedforward layernorm: applied to combined dense+MoE output before residual add
         # (HF: post_feedforward_layernorm)
@@ -246,6 +249,12 @@ class Gemma4TopKRouter(TopKRouter):
             "per_expert_scale",
             torch.ones(config.num_moe_experts, dtype=config.params_dtype),
         )
+        # HF router.scale (per-channel input scaling, fused into router weight on import)
+        # — stored as an inert buffer so it round-trips through export.
+        self.register_buffer(
+            "scale",
+            torch.ones(config.hidden_size, dtype=config.params_dtype),
+        )
 
     def routing(self, logits, padding_mask=None):
         """Apply standard routing, then renormalize and scale by per_expert_scale."""
@@ -265,24 +274,31 @@ class Gemma4TopKRouter(TopKRouter):
 
 
 class Gemma4MoELayer(MoELayer):
-    """Gemma 4 MoE layer with post-routed-expert normalization.
+    """Gemma 4 MoE layer with post-routed-expert and post-shared-expert normalization.
 
-    Applies ``post_feedforward_layernorm_2`` to routed expert output before
-    combining with shared expert (dense MLP) output. Standard MCore MoELayer
-    simply sums routed + shared outputs without any intermediate norms.
+    Applies ``post_feedforward_layernorm_2`` (pffl_ln2) to routed expert output and
+    ``post_feedforward_layernorm_1`` (pffl_ln1) to shared expert output before combining.
+    Standard MCore MoELayer simply sums routed + shared outputs without any intermediate norms.
     """
 
     def __init__(self, config, submodules, **kwargs):
         super().__init__(config=config, submodules=submodules, **kwargs)
         NormImpl = TENorm if HAVE_TE else torch.nn.Identity
+        # HF: post_feedforward_layernorm_2 — applied to routed expert output
         self.post_moe_layernorm = NormImpl(
+            config=config,
+            hidden_size=config.hidden_size,
+            eps=config.layernorm_epsilon,
+        )
+        # HF: post_feedforward_layernorm_1 — applied to shared expert (dense MLP) output
+        self.post_shared_expert_layernorm = NormImpl(
             config=config,
             hidden_size=config.hidden_size,
             eps=config.layernorm_epsilon,
         )
 
     def postprocess(self, output, shared_expert_output):
-        """Apply post-MoE norm to routed expert output, then add shared expert."""
+        """Apply post-MoE norms to routed and shared expert outputs, then combine."""
         output = self.token_dispatcher.combine_postprocess(output)
         if self.config.moe_latent_size:
             output, _ = self.fc2_latent_proj(output)
@@ -291,7 +307,11 @@ class Gemma4MoELayer(MoELayer):
         if isinstance(output, tuple):
             output = output[0]
         if shared_expert_output is not None:
-            output = output + shared_expert_output
+            # Norm shared expert output (HF: post_feedforward_layernorm_1)
+            normed_shared = self.post_shared_expert_layernorm(shared_expert_output)
+            if isinstance(normed_shared, tuple):
+                normed_shared = normed_shared[0]
+            output = output + normed_shared
         return output
 
 
@@ -312,14 +332,14 @@ class Gemma4OutputLayer(torch.nn.Module):
 
 
 def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
-    """Build Gemma 4 block spec: MoE layer specs with patched attention.
+    """Build Gemma 4 block spec: MoE or dense layer specs with patched attention.
 
-    Uses ``get_gpt_decoder_block_spec`` to build standard MoE specs (including
-    shared experts), then patches each layer spec:
+    Uses ``get_gpt_decoder_block_spec`` to build standard specs, then patches
+    each layer spec:
     - Attention module → Gemma4SelfAttention (heterogeneous head dims)
     - Core attention → Gemma4TEDotProductAttention (sliding/global window)
     - linear_proj → TERowParallelLinearLayerNorm (post-attention RMSNorm)
-    - shared_experts.linear_fc2 → TERowParallelLinearLayerNorm (post-dense-MLP RMSNorm)
+    - MoE models only: MoE layer → Gemma4MoELayer, router → Gemma4TopKRouter
     """
     block_spec = get_gpt_decoder_block_spec(config, use_transformer_engine=use_transformer_engine, **kwargs)
 
@@ -338,19 +358,14 @@ def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
             if use_transformer_engine:
                 attn_spec.submodules.linear_proj = TERowParallelLinearLayerNorm
 
-        # MoE layer: replace with Gemma4MoELayer (adds post-MoE norm)
+        # MoE layer: only patch when the spec is an MoE layer (not dense MLP)
         mlp_spec = layer_spec.submodules.mlp
-        if hasattr(mlp_spec, "module"):
+        if hasattr(mlp_spec, "module") and isinstance(mlp_spec.module, type) and issubclass(mlp_spec.module, MoELayer):
             mlp_spec.module = Gemma4MoELayer
 
-        # Post-dense-MLP RMSNorm on shared expert (maps to HF post_feedforward_layernorm_1)
-        if hasattr(mlp_spec, "submodules") and mlp_spec.submodules is not None:
-            # Replace router with Gemma4 variant (per_expert_scale + renormalization)
-            mlp_spec.submodules.router = Gemma4TopKRouter
-            shared_spec = getattr(mlp_spec.submodules, "shared_experts", None)
-            if shared_spec is not None and hasattr(shared_spec, "submodules") and shared_spec.submodules is not None:
-                if use_transformer_engine:
-                    shared_spec.submodules.linear_fc2 = TERowParallelLinearLayerNorm
+            if hasattr(mlp_spec, "submodules") and mlp_spec.submodules is not None:
+                # Replace router with Gemma4 variant (per_expert_scale + renormalization)
+                mlp_spec.submodules.router = Gemma4TopKRouter
 
     return block_spec
 
@@ -371,12 +386,115 @@ class Gemma4SelfAttention(SelfAttention):
         config = copy.deepcopy(config)
 
         if not _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
-            # Global layer: override kv_channels and num_query_groups
+            # Global layer: override kv_channels; override num_query_groups only when
+            # num_global_key_value_heads is explicitly set (non-MoE models may omit it
+            # and reuse the same num_query_groups as sliding layers).
             config.kv_channels = config.global_head_dim
-            config.num_query_groups = config.num_global_key_value_heads
+            if getattr(config, "num_global_key_value_heads", None) is not None:
+                config.num_query_groups = config.num_global_key_value_heads
 
         super().__init__(config=config, layer_number=layer_number, **kwargs)
         self._v_norm_eps = config.layernorm_epsilon
+
+    def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
+        """Override to separate sliding and global layers in the checkpoint.
+
+        Sliding layers (head_dim=256) and global layers (head_dim=512) produce
+        linear_qkv, linear_proj, q_layernorm, k_layernorm tensors with different
+        shapes. dist_checkpointing validates two things per key group:
+        1. Uniform global_shape — fails because sliding/global shapes differ.
+        2. Full coverage of the global tensor — fails if only a subset of layers
+           fill the group (e.g. 25 sliding layers can't cover a 30-slot group).
+
+        Fix: append '_sliding'/'_global' suffix to create per-type groups AND
+        remap the prepended layer axis in ShardedTensors so global_shape[0],
+        global_offset[0], and axis_fragmentations[0] reflect per-type layer
+        counts rather than the total layer count.
+
+        Example:
+            'decoder.layers.0.self_attention.'
+          → 'decoder.layers.0.self_attention_sliding.'  (or _global)
+        Loading works automatically because the same class produces the same
+        suffixed keys on load.
+        """
+        import dataclasses as _dataclasses
+
+        from megatron.core.dist_checkpointing.mapping import ShardedObject as _SO
+        from megatron.core.dist_checkpointing.mapping import ShardedTensor as _ST
+
+        is_global = not _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern)
+        suffix = "_global" if is_global else "_sliding"
+        # Insert suffix before the trailing dot (prefix always ends with '.')
+        if prefix.endswith("."):
+            modified_prefix = prefix[:-1] + suffix + "."
+        else:
+            modified_prefix = prefix + suffix
+
+        state_dict = super().sharded_state_dict(
+            prefix=modified_prefix, sharded_offsets=sharded_offsets, metadata=metadata
+        )
+
+        # Compute per-type layer count and this layer's rank within its type.
+        # layer_number is 1-indexed in MCore.
+        pattern = self.config.interleaved_attn_pattern
+        total_layers = self.config.num_layers
+        if is_global:
+            type_total = sum(
+                1 for i in range(1, total_layers + 1)
+                if not _is_local_attn_layer(i, pattern)
+            )
+            type_rank = sum(
+                1 for i in range(1, self.layer_number)
+                if not _is_local_attn_layer(i, pattern)
+            )
+        else:
+            type_total = sum(
+                1 for i in range(1, total_layers + 1)
+                if _is_local_attn_layer(i, pattern)
+            )
+            type_rank = sum(
+                1 for i in range(1, self.layer_number)
+                if _is_local_attn_layer(i, pattern)
+            )
+
+        def _remap(t):
+            if isinstance(t, _ST):
+                # Only remap the prepended layer axis (axis 0 when prepend_axis_num > 0)
+                if t.prepend_axis_num <= 0 or t.global_shape[0] != total_layers:
+                    return t
+                new_global_shape = (type_total,) + t.global_shape[1:]
+                new_global_offset = (type_rank,) + t.global_offset[1:]
+                new_frags = (
+                    (type_total,) + t.axis_fragmentations[1:]
+                    if t.axis_fragmentations is not None
+                    else None
+                )
+                return _dataclasses.replace(
+                    t,
+                    global_shape=new_global_shape,
+                    global_offset=new_global_offset,
+                    axis_fragmentations=new_frags,
+                )
+            if isinstance(t, _SO):
+                # ShardedObject (e.g. TE _extra_state): remap first axis if it matches total layers.
+                # These have no prepend_axis_num — their global_shape IS the layer axis directly.
+                if not t.global_shape or t.global_shape[0] != total_layers:
+                    return t
+                new_global_shape = (type_total,) + t.global_shape[1:]
+                new_global_offset = (type_rank,) + t.global_offset[1:]
+                return _dataclasses.replace(
+                    t,
+                    global_shape=new_global_shape,
+                    global_offset=new_global_offset,
+                )
+            return t
+
+        def _fix(d):
+            if isinstance(d, dict):
+                return {k: _fix(v) for k, v in d.items()}
+            return _remap(d)
+
+        return _fix(state_dict)
 
     def get_query_key_value_tensors(self, hidden_states, key_value_states=None, **kwargs):
         """Override to apply parameter-free RMSNorm to V after QKV split.
