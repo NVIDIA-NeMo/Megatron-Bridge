@@ -32,6 +32,7 @@ from utils.utils import get_library_recipe
 
 from megatron.bridge.utils.common_utils import get_rank_safe
 
+
 # Diffusion model families manage their own dataset configs and require
 # a dedicated forward step function rather than the standard GPT step.
 DIFFUSION_FAMILIES = frozenset({"flux", "wan"})
