@@ -126,22 +126,22 @@ def set_user_overrides(config, args):
         else:
             raise ValueError(f"Unknown dataset type: {args.data}")
 
-    # Tokenizer configuration
-    from megatron.bridge.training.config import TokenizerConfig
+        # Tokenizer configuration
+        from megatron.bridge.training.config import TokenizerConfig
 
-    if args.tokenizer_type == "NullTokenizer":
-        config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
-    elif args.tokenizer_type == "HuggingFaceTokenizer":
-        if not args.tokenizer_model:
-            raise ValueError("--tokenizer-model is required when using HuggingFaceTokenizer")
-        tokenizer_model = args.tokenizer_model
-        config.tokenizer = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=tokenizer_model)
-    elif args.tokenizer_type == "SentencePieceTokenizer":
-        if not args.tokenizer_model:
-            raise ValueError("--tokenizer-model is required for SentencePieceTokenizer")
-        config.tokenizer = TokenizerConfig(
-            tokenizer_type="SentencePieceTokenizer", tokenizer_model=args.tokenizer_model
-        )
+        if args.tokenizer_type == "NullTokenizer":
+            config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
+        elif args.tokenizer_type == "HuggingFaceTokenizer":
+            if not args.tokenizer_model:
+                raise ValueError("--tokenizer-model is required when using HuggingFaceTokenizer")
+            tokenizer_model = args.tokenizer_model
+            config.tokenizer = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=tokenizer_model)
+        elif args.tokenizer_type == "SentencePieceTokenizer":
+            if not args.tokenizer_model:
+                raise ValueError("--tokenizer-model is required for SentencePieceTokenizer")
+            config.tokenizer = TokenizerConfig(
+                tokenizer_type="SentencePieceTokenizer", tokenizer_model=args.tokenizer_model
+            )
 
     # Model configuration
     # Diffusion models use fixed image/latent dimensions; seq_length is not applicable.
