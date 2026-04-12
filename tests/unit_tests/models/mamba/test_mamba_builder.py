@@ -527,3 +527,115 @@ class TestMambaModelBuilderBuildDistributedModels:
         assert args[8] is False  # data_parallel_random_init
         assert args[9] is Float16Module  # mixed_precision_wrapper
         assert args[11] is ModelType.encoder_or_decoder  # model_type
+
+
+# =============================================================================
+# Section 4 — YaRN positional embedding support
+# =============================================================================
+
+
+class TestMambaModelConfigYarnDefaults:
+    """Tests that MambaModelConfig exposes the expected YaRN field defaults."""
+
+    def test_yarn_field_defaults(self):
+        config = _make_mamba_config()
+        assert config.yarn_rotary_scaling_factor == 8.0
+        assert config.yarn_original_max_position_embeddings is None
+        assert config.yarn_beta_fast == 32.0
+        assert config.yarn_beta_slow == 1.0
+        assert config.yarn_mscale == 1.0
+        assert config.yarn_mscale_all_dim == 0.0
+        assert config.yarn_correction_range_round_to_int is True
+
+    def test_yarn_position_embedding_type_accepted(self):
+        config = _make_mamba_config(position_embedding_type="yarn")
+        assert config.position_embedding_type == "yarn"
+
+    def test_yarn_fields_settable(self):
+        config = _make_mamba_config(
+            position_embedding_type="yarn",
+            yarn_rotary_scaling_factor=4.0,
+            yarn_original_max_position_embeddings=1024,
+            yarn_beta_fast=16.0,
+            yarn_beta_slow=0.5,
+            yarn_mscale=0.8,
+            yarn_mscale_all_dim=1.0,
+            yarn_correction_range_round_to_int=False,
+        )
+        assert config.yarn_rotary_scaling_factor == 4.0
+        assert config.yarn_original_max_position_embeddings == 1024
+        assert config.yarn_beta_fast == 16.0
+        assert config.yarn_beta_slow == 0.5
+        assert config.yarn_mscale == 0.8
+        assert config.yarn_mscale_all_dim == 1.0
+        assert config.yarn_correction_range_round_to_int is False
+
+
+class TestMambaModelBuilderBuildModelWithYarn:
+    """Tests for YaRN attribute injection in MambaModelBuilder.build_model()."""
+
+    def setup_method(self):
+        self.config = _make_mamba_config(
+            vocab_size=32000,
+            seq_length=4096,
+            position_embedding_type="yarn",
+            yarn_rotary_scaling_factor=8.0,
+        )
+        self.builder = MambaModelBuilder(self.config)
+        self.pg = Mock()
+        self.pg.pp = Mock()
+
+    @patch("megatron.bridge.models.mamba.mamba_builder.calculate_padded_vocab_size")
+    @patch("megatron.bridge.models.mamba.mamba_builder.is_pp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.mamba.mamba_builder.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.mamba.mamba_builder.MCoreMambaModel")
+    def test_yarn_attrs_injected_onto_transformer(self, mock_model, *_):
+        """All YaRN attrs must be set on the embedded TransformerConfig before MCoreMambaModel is called."""
+        self.builder.build_model(self.pg, pre_process=True, post_process=True)
+        t = self.config.transformer
+        assert t.yarn_rotary_scaling_factor == 8.0
+        assert t.yarn_beta_fast == 32.0
+        assert t.yarn_beta_slow == 1.0
+        assert t.yarn_mscale == 1.0
+        assert t.yarn_mscale_all_dim == 0.0
+        assert t.yarn_correction_range_round_to_int is True
+
+    @patch("megatron.bridge.models.mamba.mamba_builder.calculate_padded_vocab_size")
+    @patch("megatron.bridge.models.mamba.mamba_builder.is_pp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.mamba.mamba_builder.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.mamba.mamba_builder.MCoreMambaModel")
+    def test_yarn_original_max_defaulted_from_seq_length(self, mock_model, *_):
+        """None yarn_original_max_position_embeddings defaults to seq_length / scaling_factor."""
+        assert self.config.yarn_original_max_position_embeddings is None
+        self.builder.build_model(self.pg, pre_process=True, post_process=True)
+        expected = int(self.config.seq_length / self.config.yarn_rotary_scaling_factor)
+        assert self.config.transformer.yarn_original_max_position_embeddings == expected
+
+    @patch("megatron.bridge.models.mamba.mamba_builder.calculate_padded_vocab_size")
+    @patch("megatron.bridge.models.mamba.mamba_builder.is_pp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.mamba.mamba_builder.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.mamba.mamba_builder.MCoreMambaModel")
+    def test_yarn_original_max_explicit_value_preserved(self, mock_model, *_):
+        """An explicit yarn_original_max_position_embeddings is passed through unchanged."""
+        self.config.__dict__["yarn_original_max_position_embeddings"] = 512
+        self.builder.build_model(self.pg, pre_process=True, post_process=True)
+        assert self.config.transformer.yarn_original_max_position_embeddings == 512
+
+    @patch("megatron.bridge.models.mamba.mamba_builder.calculate_padded_vocab_size")
+    @patch("megatron.bridge.models.mamba.mamba_builder.is_pp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.mamba.mamba_builder.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.mamba.mamba_builder.MCoreMambaModel")
+    def test_no_yarn_injection_for_rope(self, mock_model, *_):
+        """YaRN attrs must NOT be injected when position_embedding_type is 'rope'."""
+        config = _make_mamba_config(vocab_size=32000, position_embedding_type="rope")
+        MambaModelBuilder(config).build_model(self.pg, pre_process=True, post_process=True)
+        assert not hasattr(config.transformer, "yarn_rotary_scaling_factor")
+
+    @patch("megatron.bridge.models.mamba.mamba_builder.calculate_padded_vocab_size")
+    @patch("megatron.bridge.models.mamba.mamba_builder.is_pp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.mamba.mamba_builder.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.mamba.mamba_builder.MCoreMambaModel")
+    def test_position_embedding_type_yarn_forwarded_to_mcore(self, mock_model, *_):
+        """position_embedding_type='yarn' must be forwarded to MCoreMambaModel."""
+        self.builder.build_model(self.pg, pre_process=True, post_process=True)
+        assert mock_model.call_args.kwargs["position_embedding_type"] == "yarn"

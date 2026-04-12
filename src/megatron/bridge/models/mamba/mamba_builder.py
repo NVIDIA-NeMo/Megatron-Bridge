@@ -112,10 +112,18 @@ class MambaModelConfig(ModelConfig):
     hybrid_layer_pattern: str | None = None
     seq_length: int = 8192
     # Mamba with no attention has no need for position embeddings, so none is default
-    position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
+    position_embedding_type: Literal["learned_absolute", "rope", "yarn", "none"] = "none"
     rotary_percent: float = 1.0
     rotary_base: int = 10000
     seq_len_interpolation_factor: float | None = None
+    # YaRN parameters — only applied when position_embedding_type == "yarn"
+    yarn_rotary_scaling_factor: float = 8.0
+    yarn_original_max_position_embeddings: int | None = None
+    yarn_beta_fast: float = 32.0
+    yarn_beta_slow: float = 1.0
+    yarn_mscale: float = 1.0
+    yarn_mscale_all_dim: float = 0.0
+    yarn_correction_range_round_to_int: bool = True
     make_vocab_size_divisible_by: int = 128
     mamba_stack_spec: ModuleSpec | Callable[[], ModuleSpec] | Callable[["MambaModelConfig"], ModuleSpec] = (
         get_default_mamba_stack_spec
@@ -224,6 +232,22 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
 
         pre_process = pre_process if pre_process is not None else is_pp_first_stage(pg_collection.pp)
         post_process = post_process if post_process is not None else is_pp_last_stage(pg_collection.pp)
+
+        if self._model_config.position_embedding_type == "yarn":
+            cfg = self._model_config
+            t = cfg.transformer
+            t.yarn_rotary_scaling_factor = cfg.yarn_rotary_scaling_factor
+            t.yarn_original_max_position_embeddings = (
+                cfg.yarn_original_max_position_embeddings
+                if cfg.yarn_original_max_position_embeddings is not None
+                else int(cfg.seq_length / cfg.yarn_rotary_scaling_factor)
+            )
+            t.yarn_beta_fast = cfg.yarn_beta_fast
+            t.yarn_beta_slow = cfg.yarn_beta_slow
+            t.yarn_mscale = cfg.yarn_mscale
+            t.yarn_mscale_all_dim = cfg.yarn_mscale_all_dim
+            t.yarn_correction_range_round_to_int = cfg.yarn_correction_range_round_to_int
+
         return MCoreMambaModel(
             config=self._model_config.transformer,
             mamba_stack_spec=mamba_stack_spec,
