@@ -148,11 +148,19 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     hybrid_layer_pattern: Optional[str] = None
     seq_length: int = 8192
     # Mamba with no attention has no need for position embeddings, so none is default
-    position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
+    position_embedding_type: Literal["learned_absolute", "rope", "yarn", "none"] = "none"
     rotary_percent: float = 1.0
     rotary_base: int = 10000
     seq_len_interpolation_factor: Optional[float] = None
     apply_rope_fusion: bool = True
+    # YaRN parameters — only applied when position_embedding_type == "yarn"
+    yarn_rotary_scaling_factor: float = 8.0
+    yarn_original_max_position_embeddings: Optional[int] = None
+    yarn_beta_fast: float = 32.0
+    yarn_beta_slow: float = 1.0
+    yarn_mscale: float = 1.0
+    yarn_mscale_all_dim: float = 0.0
+    yarn_correction_range_round_to_int: bool = True
     make_vocab_size_divisible_by: int = 128
     gated_linear_unit: bool = False
     normalization: str = "RMSNorm"
@@ -293,6 +301,9 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             "Virtual pipeline model parallelism is temporarily unsupported in SSM/Mamaba "
             "models due to upstream MCore MambaModel API dependency"
         )
+
+        if self.position_embedding_type == "yarn" and self.yarn_original_max_position_embeddings is None:
+            self.yarn_original_max_position_embeddings = int(self.seq_length / self.yarn_rotary_scaling_factor)
 
         assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
         if self.should_pad_vocab:

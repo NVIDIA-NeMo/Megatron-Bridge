@@ -337,3 +337,121 @@ class TestMambaModelProvider:
 
         assert provider.num_layers == 9
         mock_finalize.assert_called_once_with(provider)
+
+
+# =============================================================================
+# YaRN positional embedding support
+# =============================================================================
+
+
+class TestMambaModelProviderYarnDefaults:
+    """Tests that MambaModelProvider exposes the expected YaRN field defaults."""
+
+    def test_yarn_field_defaults(self):
+        provider = MambaModelProvider(num_layers=2, hidden_size=128, num_attention_heads=1)
+        assert provider.yarn_rotary_scaling_factor == 8.0
+        assert provider.yarn_original_max_position_embeddings is None
+        assert provider.yarn_beta_fast == 32.0
+        assert provider.yarn_beta_slow == 1.0
+        assert provider.yarn_mscale == 1.0
+        assert provider.yarn_mscale_all_dim == 0.0
+        assert provider.yarn_correction_range_round_to_int is True
+
+    def test_yarn_position_embedding_type_accepted(self):
+        provider = MambaModelProvider(
+            num_layers=2, hidden_size=128, num_attention_heads=1, position_embedding_type="yarn"
+        )
+        assert provider.position_embedding_type == "yarn"
+
+    def test_yarn_custom_fields(self):
+        provider = MambaModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            position_embedding_type="yarn",
+            yarn_rotary_scaling_factor=4.0,
+            yarn_original_max_position_embeddings=512,
+            yarn_beta_fast=16.0,
+            yarn_beta_slow=0.5,
+            yarn_mscale=0.8,
+            yarn_mscale_all_dim=1.0,
+            yarn_correction_range_round_to_int=False,
+        )
+        assert provider.yarn_rotary_scaling_factor == 4.0
+        assert provider.yarn_original_max_position_embeddings == 512
+        assert provider.yarn_beta_fast == 16.0
+        assert provider.yarn_beta_slow == 0.5
+        assert provider.yarn_mscale == 0.8
+        assert provider.yarn_mscale_all_dim == 1.0
+        assert provider.yarn_correction_range_round_to_int is False
+
+
+class TestMambaModelProviderProvideWithYarn:
+    """Tests for YaRN handling in MambaModelProvider.provide()."""
+
+    def _make_provider(self, **kwargs):
+        defaults = dict(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            make_vocab_size_divisible_by=128,
+            position_embedding_type="yarn",
+            seq_length=4096,
+            yarn_rotary_scaling_factor=8.0,
+        )
+        defaults.update(kwargs)
+        provider = MambaModelProvider(**defaults)
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+        return provider
+
+    def test_yarn_original_max_defaulted_from_seq_length(self):
+        """When yarn_original_max_position_embeddings is None, provide() fills it in."""
+        provider = self._make_provider()
+        assert provider.yarn_original_max_position_embeddings is None
+
+        with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel"):
+                provider.provide(pre_process=True, post_process=True)
+
+        assert provider.yarn_original_max_position_embeddings == int(4096 / 8.0)
+
+    def test_yarn_original_max_explicit_value_preserved(self):
+        """An explicit yarn_original_max_position_embeddings is not overwritten."""
+        provider = self._make_provider(yarn_original_max_position_embeddings=256)
+
+        with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel"):
+                provider.provide(pre_process=True, post_process=True)
+
+        assert provider.yarn_original_max_position_embeddings == 256
+
+    def test_no_yarn_default_injection_for_rope(self):
+        """yarn_original_max_position_embeddings should stay None when using rope."""
+        provider = MambaModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            position_embedding_type="rope",
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
+        with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel"):
+                provider.provide(pre_process=True, post_process=True)
+
+        assert provider.yarn_original_max_position_embeddings is None
+
+    def test_position_embedding_type_yarn_forwarded_to_mcore(self):
+        """position_embedding_type='yarn' must be forwarded to MCoreMambaModel."""
+        provider = self._make_provider()
+
+        with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_mamba:
+                mock_mamba.return_value = Mock()
+                provider.provide(pre_process=True, post_process=True)
+
+        assert mock_mamba.call_args.kwargs["position_embedding_type"] == "yarn"
