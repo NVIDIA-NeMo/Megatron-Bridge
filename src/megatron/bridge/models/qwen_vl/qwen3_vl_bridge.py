@@ -371,6 +371,7 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
                 FusedGatedExpertMapping(
                     megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
                     hf_param="model.language_model.layers.*.mlp.experts.gate_up_proj",
+                    transpose_on_export=True,
                 ),
                 FusedExpertMapping(
                     megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",

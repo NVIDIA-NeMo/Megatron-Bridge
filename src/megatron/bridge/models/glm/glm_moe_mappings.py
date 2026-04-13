@@ -18,7 +18,7 @@ These are thin aliases around the shared FusedExpertMapping / FusedGatedExpertMa
 classes in param_mapping.py.  Kept for backwards compatibility with existing imports.
 """
 
-from typing import Optional, Tuple
+from __future__ import annotations
 
 from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
@@ -39,6 +39,7 @@ class GLMExpertDownProjMapping(FusedExpertMapping):
         self,
         megatron_param: str,
         hf_param: str,
-        permute_dims: Optional[Tuple[int, ...]] = None,
+        permute_dims: tuple[int, ...] | None = None,
+        transpose_on_export: bool = False,
     ):
         super().__init__(megatron_param, hf_param, permute_dims, transpose_on_export=True)

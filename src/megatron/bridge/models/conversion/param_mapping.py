@@ -898,14 +898,26 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Split weight along dim 1 and distribute to TP ranks."""
-        if self.tp_size == 1:
-            return hf_weights
-
         # Some parameters are named with global expert number, e.g. experts.weight15,
         # normalize it to experts.weight0, note we are only use the shape, dtype, device info,
         # not the actual value, so it is safe to do this.
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
+
+        # HF fused expert weights (e.g. down_proj) may be stored in [in, out]
+        # layout while Megatron expects [out, in]. Detect via the unsharded dim:
+        # for RowParallel, dim 0 is never split, so hf_weights.shape[0] must
+        # equal target_param.shape[0].
+        if (
+            hf_weights is not None
+            and hf_weights.ndim == 2
+            and hf_weights.shape[0] != target_param.shape[0]
+            and hf_weights.shape[1] == target_param.shape[0]
+        ):
+            hf_weights = hf_weights.t().contiguous()
+
+        if self.tp_size == 1:
+            return hf_weights
 
         # On rank 0, check for divisibility and split
         if self.tp_rank == 0:
@@ -2295,7 +2307,7 @@ class FusedExpertMapping(AutoMapping):
         self,
         megatron_param: str,
         hf_param: str,
-        permute_dims: Optional[Tuple[int, ...]] = None,
+        permute_dims: tuple[int, ...] | None = None,
         transpose_on_export: bool = False,
     ):
         super().__init__(megatron_param, hf_param, permute_dims)
@@ -2317,6 +2329,10 @@ class FusedExpertMapping(AutoMapping):
         # is already TP-sharded and would fail for TP > 1.
         return super().hf_to_megatron(expert_weight, megatron_module)
 
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(resolved_megatron_param, resolved_hf_param, self.permute_dims, self.transpose_on_export)
+
 
 class FusedGatedExpertMapping(AutoMapping):
     """Mapping for fused gated expert weights (gate+up projection).
@@ -2332,9 +2348,16 @@ class FusedGatedExpertMapping(AutoMapping):
 
     is_grouped_export = True
 
-    def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
+    def __init__(
+        self,
+        megatron_param: str,
+        hf_param: str,
+        permute_dims: tuple[int, ...] | None = None,
+        transpose_on_export: bool = False,
+    ):
         super().__init__(megatron_param, hf_param, permute_dims)
         self.allow_hf_name_mismatch = True
+        self.transpose_on_export = transpose_on_export
         self._gated_mapping = _LooseGatedMLPMapping(
             megatron_param=self.megatron_param,
             gate=f"{self.hf_param}.gate",
@@ -2398,7 +2421,7 @@ class FusedGatedExpertMapping(AutoMapping):
 
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
         resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
-        return type(self)(resolved_megatron_param, resolved_hf_param, self.permute_dims)
+        return type(self)(resolved_megatron_param, resolved_hf_param, self.permute_dims, self.transpose_on_export)
 
 
 def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
