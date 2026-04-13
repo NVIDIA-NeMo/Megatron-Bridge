@@ -121,15 +121,12 @@ class NsysPlugin(Plugin):
         if self.nsys_trace is not None:
             launcher.nsys_trace = self.nsys_trace
 
-        # Override nemo_run defaults to reduce CPU-side collection overhead
-        launcher.nsys_extra_args = [
-            "--force-overwrite=true",
-            "--capture-range=cudaProfilerApi",
-            "--capture-range-end=stop",
-            "--cuda-event-trace=false",
-            "--cpuctxsw=none",
-            "--backtrace=none",
-        ]
+        # Reduce CPU-side collection overhead: disable context-switch tracing,
+        # backtrace collection, and CUDA graph node tracing.
+        existing = launcher.nsys_extra_args or []
+        existing = [a for a in existing if not a.startswith("--cuda-graph-trace")]
+        existing.extend(["--cpuctxsw=none", "--backtrace=none"])
+        launcher.nsys_extra_args = existing
 
         # Combine with user-provided extra args (user args first for precedence)
         if self.nsys_extra_args is not None:
