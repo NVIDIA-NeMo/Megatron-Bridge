@@ -105,8 +105,12 @@ def qwen35_vl_35b_a3b_pretrain_config_gb300(
 ) -> ConfigContainer:
     """GB300, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_35b_a3b", "gb300", qwen35_vl_35b_a3b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_35b_a3b",
+        "gb300",
+        qwen35_vl_35b_a3b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -115,8 +119,12 @@ def qwen35_vl_35b_a3b_pretrain_config_b300(
 ) -> ConfigContainer:
     """B300, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_35b_a3b", "b300", qwen35_vl_35b_a3b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_35b_a3b",
+        "b300",
+        qwen35_vl_35b_a3b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -125,8 +133,12 @@ def qwen35_vl_35b_a3b_pretrain_config_gb200(
 ) -> ConfigContainer:
     """GB200, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_35b_a3b", "gb200", qwen35_vl_35b_a3b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_35b_a3b",
+        "gb200",
+        qwen35_vl_35b_a3b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -135,8 +147,12 @@ def qwen35_vl_35b_a3b_pretrain_config_b200(
 ) -> ConfigContainer:
     """B200, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_35b_a3b", "b200", qwen35_vl_35b_a3b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_35b_a3b",
+        "b200",
+        qwen35_vl_35b_a3b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -145,8 +161,12 @@ def qwen35_vl_35b_a3b_pretrain_config_h100(
 ) -> ConfigContainer:
     """H100, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_35b_a3b", "h100", qwen35_vl_35b_a3b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_35b_a3b",
+        "h100",
+        qwen35_vl_35b_a3b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
         tp_comm_overlap=True,
     )
 
@@ -161,8 +181,12 @@ def qwen35_vl_122b_a10b_pretrain_config_gb300(
 ) -> ConfigContainer:
     """GB300, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_122b_a10b", "gb300", qwen35_vl_122b_a10b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_122b_a10b",
+        "gb300",
+        qwen35_vl_122b_a10b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -171,8 +195,12 @@ def qwen35_vl_122b_a10b_pretrain_config_b300(
 ) -> ConfigContainer:
     """B300, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_122b_a10b", "b300", qwen35_vl_122b_a10b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_122b_a10b",
+        "b300",
+        qwen35_vl_122b_a10b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -181,8 +209,12 @@ def qwen35_vl_122b_a10b_pretrain_config_gb200(
 ) -> ConfigContainer:
     """GB200, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_122b_a10b", "gb200", qwen35_vl_122b_a10b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_122b_a10b",
+        "gb200",
+        qwen35_vl_122b_a10b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -191,8 +223,12 @@ def qwen35_vl_122b_a10b_pretrain_config_b200(
 ) -> ConfigContainer:
     """B200, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_122b_a10b", "b200", qwen35_vl_122b_a10b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_122b_a10b",
+        "b200",
+        qwen35_vl_122b_a10b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -201,8 +237,12 @@ def qwen35_vl_122b_a10b_pretrain_config_h100(
 ) -> ConfigContainer:
     """H100, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_122b_a10b", "h100", qwen35_vl_122b_a10b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_122b_a10b",
+        "h100",
+        qwen35_vl_122b_a10b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
         tp_comm_overlap=False,
     )
 
@@ -217,8 +257,12 @@ def qwen35_vl_397b_a17b_pretrain_config_gb300(
 ) -> ConfigContainer:
     """GB300, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_397b_a17b", "gb300", qwen35_vl_397b_a17b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_397b_a17b",
+        "gb300",
+        qwen35_vl_397b_a17b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -227,8 +271,12 @@ def qwen35_vl_397b_a17b_pretrain_config_b300(
 ) -> ConfigContainer:
     """B300, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_397b_a17b", "b300", qwen35_vl_397b_a17b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_397b_a17b",
+        "b300",
+        qwen35_vl_397b_a17b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -237,8 +285,12 @@ def qwen35_vl_397b_a17b_pretrain_config_gb200(
 ) -> ConfigContainer:
     """GB200, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_397b_a17b", "gb200", qwen35_vl_397b_a17b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_397b_a17b",
+        "gb200",
+        qwen35_vl_397b_a17b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -247,8 +299,12 @@ def qwen35_vl_397b_a17b_pretrain_config_b200(
 ) -> ConfigContainer:
     """B200, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_397b_a17b", "b200", qwen35_vl_397b_a17b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_397b_a17b",
+        "b200",
+        qwen35_vl_397b_a17b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -257,7 +313,11 @@ def qwen35_vl_397b_a17b_pretrain_config_h100(
 ) -> ConfigContainer:
     """H100, baseline config."""
     return _qwen35_vl_pretrain_config(
-        "qwen35_vl_397b_a17b", "h100", qwen35_vl_397b_a17b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen35_vl_397b_a17b",
+        "h100",
+        qwen35_vl_397b_a17b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
         tp_comm_overlap=False,
     )
