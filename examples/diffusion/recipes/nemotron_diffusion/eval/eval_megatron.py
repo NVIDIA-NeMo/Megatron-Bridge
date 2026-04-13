@@ -77,6 +77,7 @@ from megatron.bridge.diffusion.models.nemotron_diffusion.inference_nemotron_diff
     generate_dllm,
     set_tp_group,
 )
+from megatron.bridge.diffusion.models.nemotron_diffusion.inference_ctc import generate_ctc
 
 
 eval_logger = logging.getLogger(__name__)
@@ -454,6 +455,15 @@ class MegatronDLLM(LM):
                 eos_token_id=self.tokenizer.eos_token_id,
             )
             nfe = self.max_new_tokens
+        elif self.eval_mode == "ctc":
+            out, nfe, _timing = generate_ctc(
+                model=self.model,
+                prompt=prompt_ids,
+                gen_length=self.max_new_tokens,
+                block_length=self.block_length,
+                mask_id=self.mask_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
         else:
             num_blocks = self.max_new_tokens // self.block_length
             total_steps = self.steps_per_block * num_blocks
