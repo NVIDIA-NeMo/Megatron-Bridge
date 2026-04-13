@@ -10,7 +10,7 @@ uv run torchrun \
     tests/e2e/mimo/test_mimo_training_llava.py \
     --micro-batch-size 4 \
     --global-batch-size 128 \
-    --train-iters 2000 \
+    --train-iters 1000 \
     --adam-beta1 0.9 \
     --adam-beta2 0.95 \
     --clip-grad 1.0 \
@@ -20,7 +20,7 @@ uv run torchrun \
     --min-lr 2.0e-5 \
     --weight-decay 0.0 \
     --wandb-project "Megatron-Bridge-MIMO" \
-    --wandb-exp-name "mimo-llava-e2e-test" \
+    --wandb-exp-name "mimo-llava-hetero-e2e-test" \
     --wandb-save-dir "/tmp/wandb" \
     --vision-encoder-checkpoint /path/to/clip_checkpoint \
     --language-model-checkpoint /path/to/llm_checkpoint \
