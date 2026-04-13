@@ -12,44 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CTC block mask for diffusion language models with asymmetric block sizes."""
+"""CTC block mask for diffusion language models with asymmetric sequence lengths."""
 
 import torch
 from torch.nn.attention.flex_attention import create_block_mask
 
 
-def compute_ctc_block_mask(xt_block_size, x0_block_size, max_seq_length):
-    """Compute the attention mask for CTC-based dLLM with asymmetric block sizes.
+def compute_ctc_block_mask(xt_block_size, x0_block_size, x0_len):
+    """Compute the attention mask for CTC-based dLLM.
 
-    The sequence is [xt | x0] of length 2*max_seq_length:
-      - xt: CTC output blocks of size xt_block_size (e.g. 128), filled with blank tokens
-      - x0: clean context blocks of size x0_block_size (e.g. 64)
+    The sequence layout is [xt | x0] where:
+      - xt has length xt_len = x0_len * 2 (2x expansion for CTC)
+      - x0 has length x0_len (clean context tokens)
+      - Total sequence = xt_len + x0_len = 3 * x0_len
+
+    Each xt block of xt_block_size (128) positions predicts a target of
+    x0_block_size (64) tokens from the corresponding x0 block via CTC loss.
+
+    Number of blocks:
+      - xt: xt_len / xt_block_size = (2 * x0_len) / 128 = 64 blocks (for x0_len=4096)
+      - x0: x0_len / x0_block_size = 4096 / 64 = 64 blocks
 
     Attention pattern:
-      - Block Diagonal (bidirectional) within each xt block (for CTC prediction)
+      - Block Diagonal (bidirectional) within each xt block
       - Offset Block-Causal: xt block i attends to x0 blocks 0..i-1
       - Fully Causal within x0
 
-    xt block i predicts target tokens[i*x0_block_size : (i+1)*x0_block_size] using CTC,
-    conditioned on tokens[0 : i*x0_block_size] from x0.
-
     Args:
-        xt_block_size: Block size for CTC output blocks (e.g. 128).
-        x0_block_size: Block size for clean context blocks (e.g. 64).
-        max_seq_length: Length of one half (xt or x0) of the sequence.
+        xt_block_size: CTC output block size (e.g. 128).
+        x0_block_size: Clean context block size (e.g. 64).
+        x0_len: Length of the clean context (e.g. 4096).
 
     Returns:
         BlockMask for use with ``flex_attention``.
     """
-    n = max_seq_length
+    xt_len = x0_len * 2  # 2x expansion
+    total_len = xt_len + x0_len
 
     def ctc_block_mask_fn(b, h, q_idx, kv_idx):
-        x0_flag_q = q_idx >= n
-        x0_flag_kv = kv_idx >= n
+        x0_flag_q = q_idx >= xt_len
+        x0_flag_kv = kv_idx >= xt_len
 
-        # Compute block indices using appropriate block sizes
-        block_q = torch.where(x0_flag_q, (q_idx - n) // x0_block_size, q_idx // xt_block_size)
-        block_kv = torch.where(x0_flag_kv, (kv_idx - n) // x0_block_size, kv_idx // xt_block_size)
+        # Block indices: xt uses xt_block_size, x0 uses x0_block_size
+        block_q = torch.where(x0_flag_q, (q_idx - xt_len) // x0_block_size, q_idx // xt_block_size)
+        block_kv = torch.where(x0_flag_kv, (kv_idx - xt_len) // x0_block_size, kv_idx // xt_block_size)
 
         # Bidirectional within each xt block
         block_diagonal = (block_q == block_kv) & (~x0_flag_kv) & (~x0_flag_q)
@@ -62,5 +68,4 @@ def compute_ctc_block_mask(xt_block_size, x0_block_size, max_seq_length):
 
         return block_diagonal | offset_block_causal | fully_causal
 
-    q_len = max_seq_length * 2
-    return create_block_mask(ctc_block_mask_fn, B=None, H=None, Q_LEN=q_len, KV_LEN=q_len)
+    return create_block_mask(ctc_block_mask_fn, B=None, H=None, Q_LEN=total_len, KV_LEN=total_len)

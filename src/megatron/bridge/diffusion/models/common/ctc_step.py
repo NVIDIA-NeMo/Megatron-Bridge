@@ -36,9 +36,14 @@ logger = logging.getLogger(__name__)
 class CTCStep:
     """Forward training step for CTC-based dLLM.
 
-    Layout: [xt | x0] where xt = blank tokens, x0 = clean tokens.
-    xt blocks (size=block_size, e.g. 128) predict target blocks (size=ctc_target_block_size, e.g. 64)
-    from x0 using CTC loss. The AR loss on x0 provides an auxiliary causal LM signal.
+    Layout: [xt | x0] where:
+      - xt = blank tokens, length = 2 * seq_length (2x expansion for CTC)
+      - x0 = clean tokens, length = seq_length
+      - Total = 3 * seq_length
+
+    Each xt block (size=block_size, e.g. 128) predicts a target block
+    (size=ctc_target_block_size, e.g. 64) from x0 using CTC loss.
+    The AR loss on x0 provides an auxiliary causal LM signal.
     """
 
     def __init__(self, seed: int = 1234):
@@ -76,10 +81,13 @@ class CTCStep:
 
         blank_token_id = self.config.mask_token_id  # token 100
 
-        # Build input: [blank_tokens | clean_tokens]
-        input_ids_len = tokens.shape[1]
-        blank_input = torch.full_like(tokens, blank_token_id)
-        ctc_input = torch.cat([blank_input, tokens], dim=1)
+        # Build input: [2x blank_tokens | clean_tokens]
+        # tokens shape: [b, seq_length] e.g. [b, 4096]
+        # xt = 2 * seq_length blank tokens, x0 = seq_length clean tokens
+        seq_length = tokens.shape[1]
+        blank_input = torch.full((tokens.shape[0], seq_length * 2), blank_token_id,
+                                 dtype=tokens.dtype, device=tokens.device)
+        ctc_input = torch.cat([blank_input, tokens], dim=1)  # [b, 3 * seq_length]
 
         if cu_seqlens is not None:
             raise ValueError("Packed sequence support is not implemented for CTCStep")
@@ -91,15 +99,16 @@ class CTCStep:
             output = model(input_ids=ctc_input, position_ids=position_ids, attention_mask=attention_mask)
             logits = output[0] if isinstance(output, tuple) else output
 
-        # Split: first half = CTC logits, second half = AR logits
-        ctc_logits = logits[:, :input_ids_len]
-        causal_logits = logits[:, input_ids_len:]
+        # Split: first 2*seq_length = CTC logits, last seq_length = AR logits
+        xt_len = seq_length * 2
+        ctc_logits = logits[:, :xt_len]
+        causal_logits = logits[:, xt_len:]
 
         # CTC loss per block
         xt_block_size = self.config.block_size  # 128
         target_block_size = getattr(self.config, "ctc_target_block_size", xt_block_size // 2)  # 64
-        b, seq_len, vocab_size = ctc_logits.shape
-        n_blocks = seq_len // xt_block_size
+        b, ctc_seq_len, vocab_size = ctc_logits.shape
+        n_blocks = ctc_seq_len // xt_block_size  # e.g. 8192 / 128 = 64
 
         # Reshape CTC logits into blocks: [b*n_blocks, xt_block_size, vocab]
         ctc_logits_blocks = ctc_logits[:, :n_blocks * xt_block_size].reshape(
@@ -109,6 +118,7 @@ class CTCStep:
         ctc_log_probs = ctc_logits_blocks.transpose(0, 1).log_softmax(dim=2)
 
         # Extract targets: block i target = tokens[i*target_block_size : (i+1)*target_block_size]
+        # n_blocks * target_block_size = 64 * 64 = 4096 = seq_length (all tokens are targets)
         n_target_tokens = n_blocks * target_block_size
         targets = tokens[:, :n_target_tokens].reshape(b, n_blocks, target_block_size)
         targets = targets.reshape(b * n_blocks, target_block_size)

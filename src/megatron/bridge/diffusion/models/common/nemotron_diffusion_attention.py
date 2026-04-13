@@ -143,9 +143,9 @@ class Ministral3RotaryEmbedding(nn.Module):
 class NemotronDiffusionAttention(MegatronModule):
     """NemotronDiffusionAttention for semi-block-diffusion (sbd_block_diff) training.
 
-    The sequence is doubled to ``[xt | x0]`` where xt are noised tokens and x0
-    are clean tokens.  RoPE is applied independently to each half.  Llama-4
-    style query-key layer scaling is applied when configured.
+    The sequence is laid out as ``[xt | x0]``.  For standard sbd_block_diff,
+    both halves have equal length.  For CTC paradigm, xt is 2x the length of x0
+    (total = 3 * x0_len).  RoPE is applied independently to each half.
     """
 
     def __init__(
@@ -209,14 +209,18 @@ class NemotronDiffusionAttention(MegatronModule):
                 hf_text_config.rope_parameters["factor"] = config.yarn_rotary_scaling_factor
 
         # Pre-compute the attention block mask
-        dlm_paradigm = getattr(config, "dlm_paradigm", "sbd_block_diff")
-        if dlm_paradigm == "ctc":
+        self.dlm_paradigm = getattr(config, "dlm_paradigm", "sbd_block_diff")
+        if self.dlm_paradigm == "ctc":
+            self.xt_len = config.seq_length * 2  # 2x expansion
+            self.x0_len = config.seq_length
             self.mask = compute_ctc_block_mask(
                 xt_block_size=getattr(config, "block_size", 128),
                 x0_block_size=getattr(config, "ctc_target_block_size", 64),
-                max_seq_length=config.seq_length,
+                x0_len=config.seq_length,
             )
         else:
+            self.xt_len = None
+            self.x0_len = None
             self.mask = compute_block_mask(
                 block_size=getattr(config, "block_size", 16),
                 max_seq_length=config.seq_length,
@@ -264,23 +268,45 @@ class NemotronDiffusionAttention(MegatronModule):
         if self._inference_mode:
             return self._inference_forward(query, key, value)
 
-        # Position ids for each half of the doubled sequence
-        half_seq_len = query.shape[0] // 2
-        position_ids = torch.arange(half_seq_len, device=query.device).unsqueeze(0)
-        cos, sin = self.rope_embedding_module(query, position_ids)
-
         # [sq, b, np, hn] -> [b, np, sq, hn]
         query = query.transpose(0, 1).transpose(1, 2)
         key = key.transpose(0, 1).transpose(1, 2)
         value = value.transpose(0, 1).transpose(1, 2)
 
-        # Apply RoPE independently to each half (xt and x0)
-        q1, q2 = query.chunk(2, dim=2)
-        k1, k2 = key.chunk(2, dim=2)
-        q1, k1 = apply_rotary_pos_emb(q1, k1, cos, sin)
-        q2, k2 = apply_rotary_pos_emb(q2, k2, cos, sin)
-        query = torch.cat([q1, q2], dim=2)
-        key = torch.cat([k1, k2], dim=2)
+        if self.dlm_paradigm == "ctc":
+            # Asymmetric split: xt_len (2*x0_len) + x0_len
+            xt_len = self.xt_len
+            x0_len = self.x0_len
+
+            q_xt = query[:, :, :xt_len]
+            q_x0 = query[:, :, xt_len:]
+            k_xt = key[:, :, :xt_len]
+            k_x0 = key[:, :, xt_len:]
+
+            # RoPE: xt gets positions 0..xt_len-1, x0 gets positions 0..x0_len-1
+            pos_xt = torch.arange(xt_len, device=query.device).unsqueeze(0)
+            pos_x0 = torch.arange(x0_len, device=query.device).unsqueeze(0)
+
+            cos_xt, sin_xt = self.rope_embedding_module(q_xt, pos_xt)
+            cos_x0, sin_x0 = self.rope_embedding_module(q_x0, pos_x0)
+
+            q_xt, k_xt = apply_rotary_pos_emb(q_xt, k_xt, cos_xt, sin_xt)
+            q_x0, k_x0 = apply_rotary_pos_emb(q_x0, k_x0, cos_x0, sin_x0)
+
+            query = torch.cat([q_xt, q_x0], dim=2)
+            key = torch.cat([k_xt, k_x0], dim=2)
+        else:
+            # Symmetric split: equal halves
+            half_seq_len = query.shape[2] // 2
+            position_ids = torch.arange(half_seq_len, device=query.device).unsqueeze(0)
+            cos, sin = self.rope_embedding_module(query, position_ids)
+
+            q1, q2 = query.chunk(2, dim=2)
+            k1, k2 = key.chunk(2, dim=2)
+            q1, k1 = apply_rotary_pos_emb(q1, k1, cos, sin)
+            q2, k2 = apply_rotary_pos_emb(q2, k2, cos, sin)
+            query = torch.cat([q1, q2], dim=2)
+            key = torch.cat([k1, k2], dim=2)
 
         # Llama-4 attention scaling
         if self.beta is not None:
@@ -317,20 +343,7 @@ class NemotronDiffusionAttention(MegatronModule):
         key: Tensor,
         value: Tensor,
     ) -> Tensor:
-        """SDPA-based forward for inference with KV cache support.
-
-        Args:
-            query, key, value: [seq_len, batch, num_heads, head_dim]  (Megatron layout)
-
-        The method:
-          1. Computes position IDs accounting for cached tokens
-          2. Applies RoPE (same module as training)
-          3. Applies Llama-4 attention scaling
-          4. Concatenates new K/V with cached K/V
-          5. Applies GQA repeat_kv
-          6. Runs SDPA with causal or bidirectional mask
-          7. Optionally stores the new K/V in cache
-        """
+        """SDPA-based forward for inference with KV cache support."""
         sq = query.shape[0]
 
         # Transpose to [b, np, s, hn]
@@ -359,7 +372,7 @@ class NemotronDiffusionAttention(MegatronModule):
             scale = _get_llama_4_attn_scale(q_position_ids.squeeze(0), self.beta, self.max_position_embeddings).to(
                 query.dtype
             )
-            query = query * scale  # broadcast [sq, 1] -> [b, np, sq, hn]
+            query = query * scale
 
         # Concatenate with KV cache
         if self._kv_cache_k is not None:
@@ -384,21 +397,18 @@ class NemotronDiffusionAttention(MegatronModule):
 
         # Build attention mask for SDPA
         if not self._inference_causal:
-            # Bidirectional: no mask needed
             attn_mask = None
             is_causal = False
         elif sq == sk:
-            # Full prefill: use SDPA's built-in causal
             attn_mask = None
             is_causal = True
         else:
-            # Decode with KV cache: build explicit causal mask
             q_pos = torch.arange(offset, offset + sq, device=query.device)
             k_pos = torch.arange(sk, device=query.device)
-            mask = q_pos[:, None] >= k_pos[None, :]  # [sq, sk]
+            mask = q_pos[:, None] >= k_pos[None, :]
             attn_mask = torch.zeros(sq, sk, dtype=query.dtype, device=query.device)
             attn_mask.masked_fill_(~mask, float("-inf"))
-            attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, sq, sk]
+            attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)
             is_causal = False
 
         context = F.scaled_dot_product_attention(
@@ -412,7 +422,7 @@ class NemotronDiffusionAttention(MegatronModule):
         )
 
         # Reshape back to Megatron layout: [sq, b, hp]
-        context = context.transpose(1, 2).transpose(0, 1)  # [sq, b, np, hn]
+        context = context.transpose(1, 2).transpose(0, 1)
         new_shape = context.size()[:-2] + (self.hidden_size_per_partition,)
         context = context.contiguous().view(*new_shape)
         return context
