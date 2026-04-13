@@ -50,7 +50,7 @@ DEEPSEEK_V3_OVERRIDES = {
 
 class TestHFFSDPConversion:
     """
-    Test functional conversion between HuggingFace and Megatron-FSDP using hf_fsdp_roundtrip.py.
+    Test functional conversion between HuggingFace and Megatron-FSDP using examples/conversion/fsdp/hf_fsdp_roundtrip.py.
     """
 
     @pytest.fixture(scope="class")
@@ -124,12 +124,14 @@ class TestHFFSDPConversion:
         test_output_dir.mkdir(exist_ok=True)
 
         cmd = [
+            "uv",
+            "run",
             "python",
             "-m",
             "torch.distributed.run",
             "--nproc_per_node=2",
             "--nnodes=1",
-            "examples/conversion/hf_fsdp_roundtrip.py",
+            "examples/conversion/fsdp/hf_fsdp_roundtrip.py",
             "--hf-model-id",
             deepseek_toy_model_path,
             "--output-dir",
