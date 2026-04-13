@@ -87,6 +87,7 @@ from megatron.bridge.training.utils.train_utils import (
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
+
 # For Optimizer CUDA graph support
 try:
     from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
@@ -94,6 +95,7 @@ try:
     HAS_OPTIMIZER_CUDA_GRAPH = True
 except ImportError:
     HAS_OPTIMIZER_CUDA_GRAPH = False
+
 
 def train(
     forward_step_func: ForwardStepCallable,
