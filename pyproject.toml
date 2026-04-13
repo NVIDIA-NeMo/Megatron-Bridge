@@ -108,8 +108,6 @@ version = { attr = "megatron.bridge.package_info.__version__" }
 no-build-isolation-package = [
     "transformer-engine",
     "transformer-engine-torch",
-    "mamba-ssm",
-    "causal-conv1d",
     "nv-grouped-gemm",
     "flash_mla",
     "flash-linear-attention",
@@ -125,6 +123,11 @@ override-dependencies = [
     "nvidia-modelopt>=0.42.0a0",
     "urllib3>=2.6.3",    # To address CVE-2026-21441
 ]
+
+[tool.uv.extra-build-dependencies]
+causal-conv1d = ["torch"]
+mamba-ssm = ["torch"]
+transformer-engine = ["pybind11", "torch"]
 
 [[tool.uv.index]]
 name = "nvidia"
@@ -154,6 +157,7 @@ docs = [
     "sphinxcontrib-mermaid",
 ]
 test = [
+    "pybind11>=2.12",
     "coverage>=7.8.1",
     "flake8>=7.2.0",
     "pylint>=3.3.7",

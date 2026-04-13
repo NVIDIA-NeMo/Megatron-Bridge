@@ -19,7 +19,6 @@ Uses the PyGithub SDK to interact with the GitHub API.
 """
 
 import os
-import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -88,12 +87,9 @@ def get_oldest_release_and_assets(repo_name: str = "NVIDIA/Megatron-LM", assets_
         assets_dir: Directory to extract assets to
     """
     try:
-        # Initialize GitHub client
+        # Initialize GitHub client (GH_TOKEN optional for public repos; raises rate limits)
         token = os.getenv("GH_TOKEN", None)
-        if token is None:
-            raise ValueError("GH_TOKEN environment variable is not set")
-
-        g = Github(login_or_token=token)
+        g = Github(login_or_token=token) if token else Github()
 
         # Get the repository
         repo = g.get_repo(repo_name)
@@ -178,7 +174,7 @@ def get_oldest_release_and_assets(repo_name: str = "NVIDIA/Megatron-LM", assets_
 
     except Exception as e:
         print(f"Error: {e}")
-        sys.exit(1)
+        raise
 
 
 @click.command()

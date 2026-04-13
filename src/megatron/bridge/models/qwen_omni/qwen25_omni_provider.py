@@ -20,10 +20,14 @@ This module provides configuration classes for Qwen2.5 Omni multimodal models
 Reference: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
 """
 
-from dataclasses import dataclass, field
+import os
+from dataclasses import dataclass, field, replace
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_layer_local_spec,
+    get_gpt_layer_with_transformer_engine_spec,
+)
 from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import (
     Qwen2_5OmniTalkerConfig,
     Qwen2_5OmniThinkerConfig,
@@ -103,18 +107,30 @@ class Qwen25OmniModelProvider(Qwen2ModelProvider):
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """Provide a Qwen2.5 Omni model instance with vision, audio, and language components."""
-        language_transformer_config = self
         thinker_config = self.thinker_config
         talker_config = self.talker_config
         token2wav_config = self.token2wav_config
 
-        # Dense GPT layer spec (no MoE, no QK layernorm for Qwen2)
-        language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
-            num_experts=None,
-            moe_grouped_gemm=False,
-            qk_layernorm=self.qk_layernorm,
-            fp8=False,
-        )
+        # Dense GPT stack: default to Megatron-Core local layers. TE layers can hard-abort the
+        # worker (exit 1, no Python traceback) on some driver/GPU stacks during conversion.
+        # Opt in with MEGATRON_BRIDGE_QWEN25_OMNI_USE_TE=1 for Transformer Engine layers.
+        if os.environ.get("MEGATRON_BRIDGE_QWEN25_OMNI_USE_TE", "").lower() in ("1", "true", "yes"):
+            language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
+                num_experts=None,
+                moe_grouped_gemm=False,
+                qk_layernorm=self.qk_layernorm,
+                fp8=False,
+            )
+            language_transformer_config = self
+        else:
+            language_transformer_layer_spec = get_gpt_layer_local_spec(
+                num_experts=None,
+                moe_grouped_gemm=False,
+                qk_layernorm=self.qk_layernorm,
+                normalization=self.normalization,
+            )
+            # torch_norm.LayerNorm (local spec) asserts not persist_layer_norm; TE norms allow it.
+            language_transformer_config = replace(self, persist_layer_norm=False)
 
         model = Qwen25OmniModel(
             language_transformer_config=language_transformer_config,

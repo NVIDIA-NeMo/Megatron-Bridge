@@ -16,6 +16,8 @@
 from typing import List, Optional
 
 import torch
+import torch.distributed as dist
+import torch.distributed.distributed_c10d as c10d
 import torch.nn as nn
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.common.embeddings.rope_utils import (
@@ -66,14 +68,24 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         assert not self.rotary_interleaved, "only support qwen3vl"
 
         self.seq_len_interpolation_factor = seq_len_interpolation_factor
-        self.inv_freq = 1.0 / (
-            rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=torch.cuda.current_device()) / dim)
+        _rope_dev = (
+            torch.device(torch.cuda.current_device())
+            if torch.cuda.is_available()
+            else torch.device("cpu")
         )
+        self.inv_freq = 1.0 / (rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=_rope_dev) / dim))
         self.is_thd_format = False  # if is thd format, we do not need to split the rotary_pos_emb along CP
 
         # default mrope section is [24, 20, 20], if no mrope section is provided, use default mrope section
         self.mrope_section = [24, 20, 20]
-        assert cp_group is not None, "cp_group is required"
+        # CP=1 layouts may leave `pg_collection.cp` unset; forward only slices RoPE when cp_group.size() > 1.
+        if cp_group is None:
+            if not dist.is_initialized():
+                raise RuntimeError(
+                    "Qwen3VLMultimodalRotaryEmbedding requires a context-parallel process group, or an initialized "
+                    "default process group when cp_group is None."
+                )
+            cp_group = c10d._get_default_group()
         self.cp_group = cp_group
 
     def apply_interleaved_mrope(self, freqs, mrope_section):

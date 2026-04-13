@@ -17,6 +17,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -76,18 +77,7 @@ def _tiny_qwen25_omni_config() -> "Qwen2_5OmniConfig":
         vision_config=vision_config,
         audio_config=audio_config,
     )
-    return Qwen2_5OmniConfig(thinker_config=thinker_config, enable_audio_output=False)
-
-
-def _coverage_args(repo_root: Path) -> list[str]:
-    """Return coverage CLI args that work both in CI containers and local checkouts."""
-    coverage_root = Path(os.environ.get("MEGATRON_BRIDGE_COVERAGE_ROOT", str(repo_root)))
-    return [
-        "--data-file",
-        str(coverage_root / ".coverage"),
-        "--source",
-        f"{coverage_root}/",
-    ]
+    return Qwen2_5OmniConfig(thinker_config=thinker_config.to_dict(), enable_audio_output=False)
 
 
 def _distributed_launch_args() -> tuple[list[str], str]:
@@ -118,6 +108,8 @@ class TestQwen25OmniConversion:
         model = Qwen2_5OmniForConditionalGeneration(config)
         model = model.to(dtype=torch.bfloat16)
         model.save_pretrained(model_dir, safe_serialization=True)
+        # Required by transformers Qwen2_5OmniForConditionalGeneration.from_pretrained (audio-off: empty map).
+        torch.save({}, model_dir / "spk_dict.pt")
 
         with open(model_dir / "vocab.json", "w") as f:
             json.dump({"<|endoftext|>": 0, "a": 1, "b": 2, "c": 3}, f, indent=2)
@@ -180,20 +172,24 @@ class TestQwen25OmniConversion:
         """Run the HF -> Megatron -> HF roundtrip conversion on the toy checkpoint."""
         output_dir = tmp_path / "qwen25_omni_test"
         output_dir.mkdir(exist_ok=True)
+        elastic_log_dir = tmp_path / "torch_elastic_logs"
+        elastic_log_dir.mkdir(parents=True, exist_ok=True)
         repo_root = Path(__file__).parent.parent.parent.parent.parent
         launch_args, tp_size = _distributed_launch_args()
 
+        # Run the script directly (not under `coverage run`): coverage + elastic workers often drops
+        # worker tracebacks (`error_file: <N/A>`), hiding the real failure mode.
+        # Pass --log_dir + redirects so each rank gets error.json and rank stderr logs under tmp_path.
         cmd = [
-            "python",
+            sys.executable,
             "-m",
             "torch.distributed.run",
             *launch_args,
-            "-m",
-            "coverage",
-            "run",
-            *_coverage_args(repo_root),
-            "--parallel-mode",
-            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
+            "--log_dir",
+            str(elastic_log_dir),
+            "-r",
+            "3",
+            str(repo_root / "examples/conversion/hf_megatron_roundtrip_multi_gpu.py"),
             "--hf-model-id",
             qwen25_omni_toy_model_path,
             "--output-dir",
@@ -213,11 +209,25 @@ class TestQwen25OmniConversion:
             capture_output=True,
             text=True,
             cwd=repo_root,
+            env={
+                **os.environ,
+                "PYTHONUNBUFFERED": "1",
+                # Some environments preload NCCL net plugins (e.g., gIB) that require ibverbs.
+                # For single-node functional conversion tests, force socket transport.
+                "NCCL_IB_DISABLE": os.environ.get("NCCL_IB_DISABLE", "1"),
+                "NCCL_NET": os.environ.get("NCCL_NET", "Socket"),
+            },
         )
 
         if result.returncode != 0:
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
+            err_paths = sorted(elastic_log_dir.rglob("error.json"))
+            if err_paths:
+                print("TorchElastic error.json (for worker tracebacks):")
+                for p in err_paths[:8]:
+                    print(f"  --- {p} ---")
+                    print(p.read_text(encoding="utf-8", errors="replace")[:12000])
             assert False, f"Qwen2.5-Omni conversion failed with return code {result.returncode}"
 
         model_name = Path(qwen25_omni_toy_model_path).name

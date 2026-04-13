@@ -85,7 +85,9 @@ def main(
     if os.environ.get("WORLD_SIZE") is None:
         console.print("This script must be launched with torchrun. Please run:")
         console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
-        sys.exit(1)
+        raise RuntimeError(
+            "WORLD_SIZE is unset; launch with torchrun / torch.distributed.run, not plain python."
+        )
 
     model_name = hf_model_id.split("/")[-1]
     if output_dir:

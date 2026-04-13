@@ -547,8 +547,14 @@ class MegatronPeftBridge:
                     )
                 )
 
-        gathered_global_param_objects = [None] * pp_group.size()
-        torch.distributed.all_gather_object(gathered_global_param_objects, global_param_objects, group=pp_group)
+        # NOTE: Some PyTorch versions/environments have been observed to segfault in
+        # all_gather_object even for single-rank process groups. For pp_size==1 we can
+        # trivially avoid collectives entirely.
+        if not torch.distributed.is_initialized() or pp_group.size() == 1:
+            gathered_global_param_objects = [global_param_objects]
+        else:
+            gathered_global_param_objects = [None] * pp_group.size()
+            torch.distributed.all_gather_object(gathered_global_param_objects, global_param_objects, group=pp_group)
 
         # flatten the list, sort it and remove duplicates
         # the order matters here, casually re-order will cause a hang.

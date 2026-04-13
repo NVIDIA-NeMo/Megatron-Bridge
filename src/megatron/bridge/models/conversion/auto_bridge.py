@@ -479,8 +479,12 @@ class AutoBridge(Generic[MegatronModelT]):
             infer_target_modules_from_adapter_weights,
         )
 
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
+        if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
+        
+            if dist.get_backend() == "nccl" and torch.cuda.is_available():
+                dist.barrier(device_ids=[torch.cuda.current_device()])
+            else:
+                dist.barrier()
 
         adapter_state: dict[str, torch.Tensor] = {}
         for name, tensor in self.export_adapter_weights(model, cpu=True, show_progress=show_progress):
@@ -517,8 +521,11 @@ class AutoBridge(Generic[MegatronModelT]):
             weights_path = save_dir / "adapter_model.safetensors"
             save_file(adapter_state, str(weights_path))
 
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
+        if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
+            if dist.get_backend() == "nccl" and torch.cuda.is_available():
+                dist.barrier(device_ids=[torch.cuda.current_device()])
+            else:
+                dist.barrier()
 
     def save_hf_pretrained(
         self,
@@ -662,8 +669,13 @@ class AutoBridge(Generic[MegatronModelT]):
             - Automatically handles model sharding for large models
             - The saved weights can be loaded with HuggingFace's from_pretrained
         """
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
+        if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
+            # NCCL barrier without device_ids can trigger warnings and has been observed to crash in
+            # some environments. Provide an explicit device id when using NCCL.
+            if dist.get_backend() == "nccl" and torch.cuda.is_available():
+                dist.barrier(device_ids=[torch.cuda.current_device()])
+            else:
+                dist.barrier()
         dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         generator = model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance,
@@ -712,8 +724,11 @@ class AutoBridge(Generic[MegatronModelT]):
                 sidecar_path.parent.mkdir(parents=True, exist_ok=True)
                 torch.save(quant_tensors, sidecar_path)
 
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
+        if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
+            if dist.get_backend() == "nccl" and torch.cuda.is_available():
+                dist.barrier(device_ids=[torch.cuda.current_device()])
+            else:
+                dist.barrier()
 
     def save_megatron_model(
         self,

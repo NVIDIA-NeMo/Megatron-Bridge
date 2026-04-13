@@ -622,8 +622,14 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     continue
                 global_param_names.append(global_param_name)
 
-        gathered_global_param_names = [None] * pp_group.size()
-        torch.distributed.all_gather_object(gathered_global_param_names, global_param_names, group=pp_group)
+        # NOTE: Some PyTorch versions/environments have been observed to segfault in
+        # `all_gather_object` even for single-rank process groups. For pp_size==1 we can
+        # trivially avoid collectives entirely.
+        if not torch.distributed.is_initialized() or pp_group.size() == 1:
+            gathered_global_param_names = [global_param_names]
+        else:
+            gathered_global_param_names = [None] * pp_group.size()
+            torch.distributed.all_gather_object(gathered_global_param_names, global_param_names, group=pp_group)
 
         # flatten the list, sort it and remove duplicates
         # the order matters here, casually re-order will cause a hang.
