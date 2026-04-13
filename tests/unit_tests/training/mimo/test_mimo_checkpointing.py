@@ -8,7 +8,9 @@ the right arguments, without actually saving/loading checkpoints.
 
 from __future__ import annotations
 
+import inspect
 import time
+from contextlib import ExitStack
 from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, patch
@@ -971,3 +973,393 @@ class TestLoadCheckpointPgThreading:
                 )
                 _, kwargs = m_inner.call_args
                 assert kwargs["pg_collection"] is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: setup_mimo checkpoint loading path
+# ---------------------------------------------------------------------------
+
+
+class TestSetupMimoCheckpointLoading:
+    """Verify setup_mimo invokes load_checkpoint when checkpoints exist."""
+
+    _SETUP_PATCHES = [
+        "megatron.bridge.training.setup_mimo.get_active_module_pg",
+        "megatron.bridge.training.setup_mimo.create_checkpoint_manager",
+        "megatron.bridge.training.setup_mimo.MultiModulePipelineCommunicator",
+        "megatron.bridge.training.setup_mimo.get_model_config",
+        "megatron.bridge.training.setup_mimo.validate_no_stub_ranks",
+        "megatron.bridge.training.setup_mimo.build_pg_collection_for_schedule",
+        "megatron.bridge.training.setup_mimo.get_module_to_grid_tuple",
+        "megatron.bridge.training.setup_mimo._update_mimo_model_config_funcs",
+        "megatron.bridge.training.setup_mimo.unwrap_mimo_model",
+        "megatron.bridge.training.setup_mimo.dist",
+        "megatron.bridge.training.setup_mimo._set_mimo_random_seeds",
+        "megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR",
+        "megatron.core.num_microbatches_calculator.init_num_microbatches_calculator",
+        "megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP",
+        "megatron.core.parallel_state._DATA_PARALLEL_GROUP",
+        "megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP",
+    ]
+
+    def _run_setup(self, *, load_path=None, checkpoint_exists_return=False):
+        """Run setup_mimo with mocks, return dict of mock handles."""
+        from megatron.bridge.training.setup_mimo import setup_mimo
+
+        cfg = Mock()
+        cfg.checkpoint = SimpleNamespace(
+            load=load_path,
+            pretrained_checkpoint=None,
+            non_persistent_ckpt_type=None,
+        )
+        cfg.model = Mock()
+        cfg.model.fp16 = False
+        cfg.model.bf16 = True
+        cfg.optimizer = Mock()
+        cfg.scheduler = SimpleNamespace(
+            lr_warmup_init=0.0,
+            lr_warmup_steps=0,
+            lr_decay_steps=100,
+            lr_decay_style="linear",
+            start_weight_decay=0.0,
+            end_weight_decay=0.0,
+            wd_incr_steps=0,
+            weight_decay_incr_style="constant",
+            use_checkpoint_opt_param_scheduler=False,
+            override_opt_param_scheduler=False,
+            wsd_decay_steps=None,
+            lr_wsd_decay_style=None,
+        )
+        cfg._calculate_scheduler_steps = Mock()
+
+        infra = Mock()
+        infra.module_to_grid_map = {"language": Mock()}
+        infra.topology = Mock()
+        infra.module_output_ndim = {"language": 3}
+        infra.pg_collections = {"language": Mock()}
+        cfg.model.build_infra.return_value = infra
+        cfg.model.provide_distributed_model.return_value = [Mock()]
+
+        local_pg = MagicMock()
+        mock_optimizer = MagicMock()
+        mock_optimizer.module_infos = {}
+
+        state = Mock()
+        state.cfg = cfg
+        state.start_time = time.time()
+        state.train_state = SimpleNamespace(step=0)
+
+        mocks = {}
+
+        with (
+            ExitStack() as stack,
+        ):
+            for p in self._SETUP_PATCHES:
+                if "._" in p.split(".")[-1]:
+                    stack.enter_context(patch(p, None))
+                else:
+                    stack.enter_context(patch(p))
+
+            m_dist = stack.enter_context(patch("megatron.bridge.training.setup_mimo.dist"))
+            m_dist.get_rank.return_value = 0
+            m_dist.get_world_size.return_value = 2
+
+            stack.enter_context(
+                patch("megatron.bridge.training.setup_mimo.get_active_module_pg", return_value=("language", local_pg))
+            )
+            m_ckpt_exists = stack.enter_context(
+                patch("megatron.bridge.training.setup_mimo.checkpoint_exists", return_value=checkpoint_exists_return)
+            )
+            m_load = stack.enter_context(patch("megatron.bridge.training.setup_mimo.load_checkpoint"))
+            m_create_mgr = stack.enter_context(patch("megatron.bridge.training.setup_mimo.create_checkpoint_manager"))
+            m_create_mgr.return_value = MagicMock(checkpointing_context={"ctx": True})
+
+            stack.enter_context(
+                patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer)
+            )
+
+            model_config = Mock(pipeline_dtype=None, bf16=True)
+            stack.enter_context(
+                patch("megatron.bridge.training.setup_mimo.get_model_config", return_value=model_config)
+            )
+            stack.enter_context(patch("megatron.bridge.training.setup_mimo.unwrap_mimo_model"))
+
+            result = setup_mimo(state=state)
+
+            mocks["load_checkpoint"] = m_load
+            mocks["checkpoint_exists"] = m_ckpt_exists
+            mocks["result"] = result
+
+        return mocks
+
+    def test_load_invoked_when_persistent_checkpoint_exists(self):
+        mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
+        mocks["load_checkpoint"].assert_called_once()
+
+    def test_load_not_invoked_when_no_checkpoint(self):
+        mocks = self._run_setup(load_path=None, checkpoint_exists_return=False)
+        mocks["load_checkpoint"].assert_not_called()
+
+    def test_load_passes_model_as_list(self):
+        mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
+        _, kwargs = mocks["load_checkpoint"].call_args
+        assert isinstance(kwargs["model"], list)
+        assert len(kwargs["model"]) == 1
+
+    def test_load_passes_pg_collection(self):
+        mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
+        _, kwargs = mocks["load_checkpoint"].call_args
+        assert kwargs["pg_collection"] is not None
+
+    def test_load_passes_module_name(self):
+        mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
+        _, kwargs = mocks["load_checkpoint"].call_args
+        assert kwargs["module_name"] == "language"
+
+
+# ---------------------------------------------------------------------------
+# Tests: setup_mimo resume-aware iterator construction
+# ---------------------------------------------------------------------------
+
+
+class TestSetupMimoResumeIterators:
+    """Verify setup_mimo builds iterators with train_state when resuming."""
+
+    def test_train_state_passed_when_resuming(self):
+        """When train_state.step > 0, builder receives train_state kwarg."""
+        from megatron.bridge.training.setup_mimo import setup_mimo
+
+        build_fn = MagicMock(return_value=(iter([]), None))
+
+        def _sig_fn(cfg, mimo_infra, *, train_state=None):
+            pass
+
+        build_fn.__signature__ = inspect.signature(_sig_fn)
+
+        cfg = Mock()
+        cfg.checkpoint = SimpleNamespace(load=None, pretrained_checkpoint=None, non_persistent_ckpt_type=None)
+        cfg.model = Mock(fp16=False, bf16=True)
+        cfg.optimizer = Mock()
+        cfg.scheduler = SimpleNamespace(
+            lr_warmup_init=0.0,
+            lr_warmup_steps=0,
+            lr_decay_steps=100,
+            lr_decay_style="linear",
+            start_weight_decay=0.0,
+            end_weight_decay=0.0,
+            wd_incr_steps=0,
+            weight_decay_incr_style="constant",
+            use_checkpoint_opt_param_scheduler=False,
+            override_opt_param_scheduler=False,
+            wsd_decay_steps=None,
+            lr_wsd_decay_style=None,
+        )
+        cfg._calculate_scheduler_steps = Mock()
+
+        infra = Mock()
+        infra.module_to_grid_map = {"language": Mock()}
+        infra.topology = Mock()
+        infra.module_output_ndim = {"language": 3}
+        infra.pg_collections = {"language": Mock()}
+        cfg.model.build_infra.return_value = infra
+        cfg.model.provide_distributed_model.return_value = [Mock()]
+
+        state = Mock()
+        state.cfg = cfg
+        state.start_time = time.time()
+        # Simulate resumed training — step > 0
+        state.train_state = SimpleNamespace(step=10, consumed_train_samples=100)
+
+        mock_optimizer = MagicMock()
+        mock_optimizer.module_infos = {}
+
+        with (
+            patch("megatron.bridge.training.setup_mimo.dist") as m_dist,
+            patch("megatron.bridge.training.setup_mimo._set_mimo_random_seeds"),
+            patch("megatron.bridge.training.setup_mimo.validate_no_stub_ranks"),
+            patch("megatron.bridge.training.setup_mimo.build_pg_collection_for_schedule"),
+            patch("megatron.bridge.training.setup_mimo.get_module_to_grid_tuple"),
+            patch("megatron.bridge.training.setup_mimo.MultiModulePipelineCommunicator"),
+            patch(
+                "megatron.bridge.training.setup_mimo.get_model_config",
+                return_value=Mock(pipeline_dtype=None, bf16=True),
+            ),
+            patch("megatron.bridge.training.setup_mimo.unwrap_mimo_model"),
+            patch("megatron.bridge.training.setup_mimo._update_mimo_model_config_funcs"),
+            patch("megatron.bridge.training.setup_mimo.get_active_module_pg", return_value=("language", MagicMock())),
+            patch(
+                "megatron.bridge.training.setup_mimo.create_checkpoint_manager",
+                return_value=MagicMock(checkpointing_context={}),
+            ),
+            patch("megatron.bridge.training.setup_mimo.checkpoint_exists", return_value=False),
+            patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer),
+            patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
+            patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
+            patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
+        ):
+            m_dist.get_rank.return_value = 0
+            m_dist.get_world_size.return_value = 2
+
+            setup_mimo(state=state, build_data_iterators_fn=build_fn)
+
+        build_fn.assert_called_once()
+        _, kwargs = build_fn.call_args
+        assert "train_state" in kwargs
+        assert kwargs["train_state"].step == 10
+
+    def test_no_train_state_when_not_resuming(self):
+        """When train_state.step == 0, builder is called without train_state."""
+        from megatron.bridge.training.setup_mimo import setup_mimo
+
+        build_fn = Mock(return_value=(iter([]), None))
+
+        cfg = Mock()
+        cfg.checkpoint = SimpleNamespace(load=None, pretrained_checkpoint=None, non_persistent_ckpt_type=None)
+        cfg.model = Mock(fp16=False, bf16=True)
+        cfg.optimizer = Mock()
+        cfg.scheduler = SimpleNamespace(
+            lr_warmup_init=0.0,
+            lr_warmup_steps=0,
+            lr_decay_steps=100,
+            lr_decay_style="linear",
+            start_weight_decay=0.0,
+            end_weight_decay=0.0,
+            wd_incr_steps=0,
+            weight_decay_incr_style="constant",
+            use_checkpoint_opt_param_scheduler=False,
+            override_opt_param_scheduler=False,
+            wsd_decay_steps=None,
+            lr_wsd_decay_style=None,
+        )
+        cfg._calculate_scheduler_steps = Mock()
+
+        infra = Mock()
+        infra.module_to_grid_map = {"language": Mock()}
+        infra.topology = Mock()
+        infra.module_output_ndim = {"language": 3}
+        infra.pg_collections = {"language": Mock()}
+        cfg.model.build_infra.return_value = infra
+        cfg.model.provide_distributed_model.return_value = [Mock()]
+
+        state = Mock()
+        state.cfg = cfg
+        state.start_time = time.time()
+        state.train_state = SimpleNamespace(step=0)
+
+        mock_optimizer = MagicMock()
+        mock_optimizer.module_infos = {}
+
+        with (
+            patch("megatron.bridge.training.setup_mimo.dist") as m_dist,
+            patch("megatron.bridge.training.setup_mimo._set_mimo_random_seeds"),
+            patch("megatron.bridge.training.setup_mimo.validate_no_stub_ranks"),
+            patch("megatron.bridge.training.setup_mimo.build_pg_collection_for_schedule"),
+            patch("megatron.bridge.training.setup_mimo.get_module_to_grid_tuple"),
+            patch("megatron.bridge.training.setup_mimo.MultiModulePipelineCommunicator"),
+            patch(
+                "megatron.bridge.training.setup_mimo.get_model_config",
+                return_value=Mock(pipeline_dtype=None, bf16=True),
+            ),
+            patch("megatron.bridge.training.setup_mimo.unwrap_mimo_model"),
+            patch("megatron.bridge.training.setup_mimo._update_mimo_model_config_funcs"),
+            patch("megatron.bridge.training.setup_mimo.get_active_module_pg", return_value=("language", MagicMock())),
+            patch(
+                "megatron.bridge.training.setup_mimo.create_checkpoint_manager",
+                return_value=MagicMock(checkpointing_context={}),
+            ),
+            patch("megatron.bridge.training.setup_mimo.checkpoint_exists", return_value=False),
+            patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer),
+            patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
+            patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
+            patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
+        ):
+            m_dist.get_rank.return_value = 0
+            m_dist.get_world_size.return_value = 2
+
+            setup_mimo(state=state, build_data_iterators_fn=build_fn)
+
+        build_fn.assert_called_once()
+        _, kwargs = build_fn.call_args
+        assert "train_state" not in kwargs
+
+    def test_raises_when_builder_lacks_train_state_on_resume(self):
+        """Resuming with a builder that can't accept train_state raises RuntimeError."""
+        from megatron.bridge.training.setup_mimo import setup_mimo
+
+        def legacy_builder(cfg, mimo_infra):
+            return (iter([]), None)
+
+        build_fn = MagicMock(return_value=(iter([]), None))
+        build_fn.__signature__ = inspect.signature(legacy_builder)
+
+        cfg = Mock()
+        cfg.checkpoint = SimpleNamespace(load=None, pretrained_checkpoint=None, non_persistent_ckpt_type=None)
+        cfg.model = Mock(fp16=False, bf16=True)
+        cfg.optimizer = Mock()
+        cfg.scheduler = SimpleNamespace(
+            lr_warmup_init=0.0,
+            lr_warmup_steps=0,
+            lr_decay_steps=100,
+            lr_decay_style="linear",
+            start_weight_decay=0.0,
+            end_weight_decay=0.0,
+            wd_incr_steps=0,
+            weight_decay_incr_style="constant",
+            use_checkpoint_opt_param_scheduler=False,
+            override_opt_param_scheduler=False,
+            wsd_decay_steps=None,
+            lr_wsd_decay_style=None,
+        )
+        cfg._calculate_scheduler_steps = Mock()
+
+        infra = Mock()
+        infra.module_to_grid_map = {"language": Mock()}
+        infra.topology = Mock()
+        infra.module_output_ndim = {"language": 3}
+        infra.pg_collections = {"language": Mock()}
+        cfg.model.build_infra.return_value = infra
+        cfg.model.provide_distributed_model.return_value = [Mock()]
+
+        state = Mock()
+        state.cfg = cfg
+        state.start_time = time.time()
+        state.train_state = SimpleNamespace(step=10)
+
+        mock_optimizer = MagicMock()
+        mock_optimizer.module_infos = {}
+
+        with (
+            patch("megatron.bridge.training.setup_mimo.dist") as m_dist,
+            patch("megatron.bridge.training.setup_mimo._set_mimo_random_seeds"),
+            patch("megatron.bridge.training.setup_mimo.validate_no_stub_ranks"),
+            patch("megatron.bridge.training.setup_mimo.build_pg_collection_for_schedule"),
+            patch("megatron.bridge.training.setup_mimo.get_module_to_grid_tuple"),
+            patch("megatron.bridge.training.setup_mimo.MultiModulePipelineCommunicator"),
+            patch(
+                "megatron.bridge.training.setup_mimo.get_model_config",
+                return_value=Mock(pipeline_dtype=None, bf16=True),
+            ),
+            patch("megatron.bridge.training.setup_mimo.unwrap_mimo_model"),
+            patch("megatron.bridge.training.setup_mimo._update_mimo_model_config_funcs"),
+            patch("megatron.bridge.training.setup_mimo.get_active_module_pg", return_value=("language", MagicMock())),
+            patch(
+                "megatron.bridge.training.setup_mimo.create_checkpoint_manager",
+                return_value=MagicMock(checkpointing_context={}),
+            ),
+            patch("megatron.bridge.training.setup_mimo.checkpoint_exists", return_value=False),
+            patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer),
+            patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
+            patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
+            patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
+        ):
+            m_dist.get_rank.return_value = 0
+            m_dist.get_world_size.return_value = 2
+
+            with pytest.raises(RuntimeError, match="build_data_iterators_fn does not accept"):
+                setup_mimo(state=state, build_data_iterators_fn=build_fn)
