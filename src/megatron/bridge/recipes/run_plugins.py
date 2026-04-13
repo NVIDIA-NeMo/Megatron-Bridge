@@ -297,6 +297,16 @@ class NsysPlugin(Plugin):
         launcher.nsys_profile = True
         launcher.nsys_trace = self.nsys_trace or ["nvtx", "cuda"]
 
+        # Override nemo_run defaults to reduce CPU-side collection overhead
+        launcher.nsys_extra_args = [
+            "--force-overwrite=true",
+            "--capture-range=cudaProfilerApi",
+            "--capture-range-end=stop",
+            "--cuda-event-trace=false",
+            "--cpuctxsw=none",
+            "--backtrace=none",
+        ]
+
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
             launcher.nsys_filename = "profile_%p_%q{SLURM_JOB_ID}_node%q{SLURM_NODEID}_rank%q{SLURM_PROCID}"

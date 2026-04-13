@@ -117,11 +117,14 @@ if [ "${ENABLE_NSYS}" = "1" ]; then
     NSYS_PREFIX=(
         nsys profile
         -s none
+        --cpuctxsw=none
+        --backtrace=none
         -t "${NSYS_TRACE}"
         -o "${NSYS_OUTPUT}"
         --force-overwrite true
         --capture-range=cudaProfilerApi
         --capture-range-end=stop
+        --cuda-event-trace=false
     )
 fi
 
