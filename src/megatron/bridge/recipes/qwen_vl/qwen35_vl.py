@@ -620,3 +620,4 @@ def qwen35_vl_397b_a17b_peft_config(
     _qwen35_vl_apply_common(cfg, hf_path, tp=2, pp=1, max_lr=2e-4, min_lr=3e-5)
     _qwen35_vl_apply_moe(cfg, ep=32)
     return cfg
+
