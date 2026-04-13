@@ -77,28 +77,11 @@ declare -a CONFIGS_8GPU=(
     "pp4_llm_tp2dp2_vision|1|4|1|0|2|1|2|4|2"
     "pp2_dp2_llm_tp2dp2_vision|1|2|2|0|2|1|2|4|2"
     "tp4_llm_tp2dp2_vision|4|1|1|0|2|1|2|4|2"
-    # Asymmetric 2+6 split (MBS=3)
-    "asymmetric_2_6_pp2|1|2|1|0|2|1|3|2|3"
-    "asymmetric_2_6_tp2|2|1|1|0|2|1|3|2|3"
-)
-
-declare -a CONFIGS_4GPU=(
-    "pp2_llm_tp2_vision|1|2|1|0|2|1|1|2|2"
-    "pp2_llm_dp2_vision|1|2|1|0|1|1|2|2|2"
-    "tp2_llm_dp2_vision|2|1|1|0|1|1|2|2|2"
-)
-
-declare -a CONFIGS_2GPU=(
-    "tp1_both|1|1|1|0|1|1|1|1|2"
 )
 
 # Select configs based on GPU count
 if [[ $NUM_GPUS -ge 8 ]]; then
     CONFIGS=("${CONFIGS_8GPU[@]}")
-elif [[ $NUM_GPUS -ge 4 ]]; then
-    CONFIGS=("${CONFIGS_4GPU[@]}")
-else
-    CONFIGS=("${CONFIGS_2GPU[@]}")
 fi
 
 # Track results
