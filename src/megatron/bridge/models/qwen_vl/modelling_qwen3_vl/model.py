@@ -218,7 +218,6 @@ class Qwen3VLModel(MegatronModule):
             assert self.config.calculate_per_token_loss, (
                 "Qwen3-VL model only supports context parallelism with calculate_per_token_loss enabled"
             )
-        self._mrope_debug_count = 0
 
         self._expose_language_model_for_cuda_graph_helper()
 
@@ -649,23 +648,6 @@ class Qwen3VLModel(MegatronModule):
                     sl_int = int(sl)
                     packed_pos[:, 0, start : start + sl_int] = position_ids[:, i, :sl_int]
 
-                # Debug only the first two forwards on rank-0 to verify packed MRoPE reset behavior.
-                if self._mrope_debug_count < 2:
-                    rank = (
-                        torch.distributed.get_rank()
-                        if torch.distributed.is_available() and torch.distributed.is_initialized()
-                        else 0
-                    )
-                    if rank == 0:
-                        boundary_pos0 = [int(cu[i].item()) for i in range(len(seq_lens))]
-                        boundary_posvals = [int(packed_pos[0, 0, p].item()) for p in boundary_pos0]
-                        logger.info(
-                            "[MRoPE-DEBUG] packed branch hit: cu=%s seq_lens=%s boundary_pos0=%s",
-                            cu.tolist(),
-                            [int(x) for x in seq_lens],
-                            boundary_posvals,
-                        )
-                    self._mrope_debug_count += 1
                 position_ids = packed_pos
 
                 position_ids = (
