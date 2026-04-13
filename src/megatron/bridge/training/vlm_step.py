@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 import math
 from functools import partial
 from typing import Any, Iterable
@@ -37,6 +38,21 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
+
+
+def _thd_diag_enabled() -> bool:
+    return os.environ.get("THD_DIAG", "0") not in ("0", "", "false", "False")
+
+
+def _resolve_cfg_token_id(cfg: ConfigContainer, key: str) -> int | None:
+    model_cfg = getattr(cfg, "model", None)
+    token_id = getattr(model_cfg, key, None)
+    if token_id is None:
+        return None
+    try:
+        return int(token_id)
+    except (TypeError, ValueError):
+        return None
 
 
 def get_batch_from_iterator(
@@ -346,8 +362,8 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         energon_max_seqlen = batch.get("max_seqlen")
         energon_cu_argmin = batch.get("cu_seqlens_argmin")
 
-        # Log detailed iteration stats for FLOPs analysis
-        if tokens_or_input is not None:
+        # Log detailed packed-iteration diagnostics when explicitly enabled.
+        if tokens_or_input is not None and _thd_diag_enabled():
             _seq_dim = tokens_or_input.shape[-1]
             if energon_cu_seqlens.dim() == 1:
                 _content_len = energon_cu_seqlens[-1].item()
@@ -357,7 +373,11 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
             else:
                 _content_len = energon_cu_seqlens[0, -1].item()
             _pad_len = _seq_dim - _content_len
-            _n_img_toks = int((tokens_or_input == 151655).sum().item())
+            image_token_id = _resolve_cfg_token_id(cfg, "image_token_id")
+            if image_token_id is not None:
+                _n_img_toks: int | str = int((tokens_or_input == image_token_id).sum().item())
+            else:
+                _n_img_toks = "n/a"
             _vit_shape = (
                 visual_inputs.pixel_values.shape
                 if visual_inputs is not None and visual_inputs.pixel_values is not None
@@ -367,6 +387,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
                 f"[IterStats] decoder_input={list(tokens_or_input.shape)}, "
                 f"content={_content_len}, pad={_pad_len}, "
                 f"image_tokens_in_decoder={_n_img_toks}, "
+                f"image_token_id={image_token_id}, "
                 f"vit_input={_vit_shape}"
             )
 
