@@ -112,6 +112,7 @@ try:
 except ImportError:
     HAS_PAGED_STASHING = False
 
+
 # For Optimizer CUDA graph support
 try:
     from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
