@@ -30,8 +30,6 @@ license = { text = "Apache 2.0" }
 dependencies = [
     "nemo-export-deploy",
     "nemo-evaluator",
-    "nemo-toolkit[audio]",
-    "nemo-toolkit[tts]",
     "nemo-run",
     "nvidia-lm-eval",
     "langchain~=1.0.0",
@@ -44,7 +42,6 @@ test = ["coverage>=7.8.1"]
 [tool.uv.sources]
 "nemo-export-deploy" = { path = "/opt/Export-Deploy", editable = true }
 "nemo-evaluator" = { path = "/opt/Evaluator/packages/nemo-evaluator", editable = true }
-"nemo-toolkit" = { path = "/opt/NeMo", editable = true }
 "nemo-run" = { path = "/opt/Run", editable = true }
 
 [tool.uv]
@@ -54,8 +51,6 @@ override-dependencies = [
     "megatron-core[dev,mlm]; sys_platform == 'never'", # Installed by MBridge
     "nemo-export-deploy @ /opt/Export-Deploy",
     "megatron-bridge; sys_platform == 'never'",        # Installed by MBridge
-    "nemo-toolkit[audio] @ /opt/NeMo[audio]",
-    "nemo-toolkit[tts] @ /opt/NeMo[tts]",
     "nemo-run @ /opt/Run",
     "transformer-engine; sys_platform == 'never'",     # Installed by MBridge
     # Pinning versions to solve conflicts
