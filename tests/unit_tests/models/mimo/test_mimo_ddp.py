@@ -3,68 +3,8 @@
 
 from unittest.mock import MagicMock, patch
 
-from megatron.bridge.models.mimo.mimo_builder import is_current_rank_in_grid
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 from megatron.bridge.models.mimo.mimo_ddp import wrap_mimo_model_distributed
-
-
-class TestIsCurrentRankInGrid:
-    """Test cases for is_current_rank_in_grid helper."""
-
-    @patch("torch.distributed.get_rank")
-    def test_rank_in_grid(self, mock_get_rank):
-        """Rank within grid range should return True."""
-        mock_get_rank.return_value = 2
-
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 0
-        mock_grid.size = 4
-
-        assert is_current_rank_in_grid(mock_grid) is True
-
-    @patch("torch.distributed.get_rank")
-    def test_rank_at_grid_start(self, mock_get_rank):
-        """Rank at grid start should return True."""
-        mock_get_rank.return_value = 4
-
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 4
-        mock_grid.size = 4
-
-        assert is_current_rank_in_grid(mock_grid) is True
-
-    @patch("torch.distributed.get_rank")
-    def test_rank_at_grid_end_exclusive(self, mock_get_rank):
-        """Rank at grid end (exclusive) should return False."""
-        mock_get_rank.return_value = 8
-
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 4
-        mock_grid.size = 4
-
-        assert is_current_rank_in_grid(mock_grid) is False
-
-    @patch("torch.distributed.get_rank")
-    def test_rank_before_grid(self, mock_get_rank):
-        """Rank before grid range should return False."""
-        mock_get_rank.return_value = 2
-
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 4
-        mock_grid.size = 4
-
-        assert is_current_rank_in_grid(mock_grid) is False
-
-    @patch("torch.distributed.get_rank")
-    def test_rank_after_grid(self, mock_get_rank):
-        """Rank after grid range should return False."""
-        mock_get_rank.return_value = 10
-
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 0
-        mock_grid.size = 4
-
-        assert is_current_rank_in_grid(mock_grid) is False
 
 
 class TestWrapMimoModelDistributed:
@@ -124,12 +64,12 @@ class TestWrapMimoModelDistributed:
         ddp_config = MagicMock()
         mimo_parallelism_config = self._create_mimo_parallelism_config(
             {
-                "llm": {"tp": 2, "dp": 2},
+                "language": {"tp": 2, "dp": 2},
             }
         )
 
-        grids = {"llm": self._create_mock_grid(rank_offset=0, size=4)}
-        pg_collections = {"llm": MagicMock()}
+        grids = {"language": self._create_mock_grid(rank_offset=0, size=4)}
+        pg_collections = {"language": MagicMock()}
 
         result = wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
 
@@ -149,12 +89,12 @@ class TestWrapMimoModelDistributed:
         ddp_config = MagicMock()
         mimo_parallelism_config = self._create_mimo_parallelism_config(
             {
-                "llm": {"tp": 2, "dp": 2},
+                "language": {"tp": 2, "dp": 2},
             }
         )
 
-        grids = {"llm": self._create_mock_grid(rank_offset=0, size=4)}
-        pg_collections = {"llm": MagicMock()}
+        grids = {"language": self._create_mock_grid(rank_offset=0, size=4)}
+        pg_collections = {"language": MagicMock()}
 
         result = wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
 
@@ -173,23 +113,55 @@ class TestWrapMimoModelDistributed:
         ddp_config = MagicMock()
         mimo_parallelism_config = self._create_mimo_parallelism_config(
             {
-                "llm": {"tp": 2, "dp": 2},
+                "language": {"tp": 2, "dp": 2},
                 "images": {"tp": 1, "dp": 4},
             }
         )
 
         grids = {
-            "llm": self._create_mock_grid(rank_offset=0, size=4),
+            "language": self._create_mock_grid(rank_offset=0, size=4),
             "images": self._create_mock_grid(rank_offset=0, size=4),
         }
         pg_collections = {
-            "llm": MagicMock(),
+            "language": MagicMock(),
             "images": MagicMock(),
         }
 
         wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
 
         # Should wrap both language model and images submodule
+        assert mock_ddp.call_count == 2
+
+    @patch("megatron.core.distributed.DistributedDataParallel")
+    @patch("torch.distributed.get_rank")
+    def test_skip_modality_submodule_no_grid(self, mock_get_rank, mock_ddp):
+        """Test that modality submodules without grids are skipped."""
+        mock_get_rank.return_value = 0
+        mock_ddp.return_value = MagicMock()
+
+        mimo_model = self._create_mock_mimo_model(has_language_model=True, modality_names=["images", "audio"])
+        ddp_config = MagicMock()
+        mimo_parallelism_config = self._create_mimo_parallelism_config(
+            {
+                "language": {"tp": 2, "dp": 2},
+                "images": {"tp": 1, "dp": 4},
+                # Note: no "audio" in parallelism config
+            }
+        )
+
+        # Only llm and images have grids
+        grids = {
+            "language": self._create_mock_grid(rank_offset=0, size=4),
+            "images": self._create_mock_grid(rank_offset=0, size=4),
+        }
+        pg_collections = {
+            "language": MagicMock(),
+            "images": MagicMock(),
+        }
+
+        wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+
+        # Should wrap llm and images, but not audio (no grid)
         assert mock_ddp.call_count == 2
 
     @patch("megatron.core.distributed.DistributedDataParallel")
@@ -205,17 +177,17 @@ class TestWrapMimoModelDistributed:
         ddp_config = MagicMock()
         mimo_parallelism_config = self._create_mimo_parallelism_config(
             {
-                "llm": {"tp": 2, "dp": 2, "rank_offset": 0},
+                "language": {"tp": 2, "dp": 2, "rank_offset": 0},
                 "images": {"tp": 2, "dp": 2, "rank_offset": 4},
             }
         )
 
         grids = {
-            "llm": self._create_mock_grid(rank_offset=0, size=4),
+            "language": self._create_mock_grid(rank_offset=0, size=4),
             "images": self._create_mock_grid(rank_offset=4, size=4),
         }
         pg_collections = {
-            "llm": None,  # Rank 4 doesn't participate in LLM
+            "language": None,  # Rank 4 doesn't participate in LLM
             "images": MagicMock(),
         }
 
@@ -237,17 +209,17 @@ class TestWrapMimoModelDistributed:
         ddp_config = MagicMock()
         mimo_parallelism_config = self._create_mimo_parallelism_config(
             {
-                "llm": {"tp": 2, "dp": 2},
+                "language": {"tp": 2, "dp": 2},
                 "images": {"tp": 1, "dp": 4},
             }
         )
 
         grids = {
-            "llm": self._create_mock_grid(rank_offset=0, size=4),
+            "language": self._create_mock_grid(rank_offset=0, size=4),
             "images": self._create_mock_grid(rank_offset=0, size=4),
         }
         pg_collections = {
-            "llm": MagicMock(),
+            "language": MagicMock(),
             "images": MagicMock(),
         }
 
@@ -268,12 +240,12 @@ class TestWrapMimoModelDistributed:
         ddp_config = MagicMock()
         mimo_parallelism_config = self._create_mimo_parallelism_config(
             {
-                "llm": {"tp": 2, "dp": 2},
+                "language": {"tp": 2, "dp": 2},
             }
         )
 
-        grids = {"llm": self._create_mock_grid(rank_offset=0, size=4)}
-        pg_collections = {"llm": MagicMock()}
+        grids = {"language": self._create_mock_grid(rank_offset=0, size=4)}
+        pg_collections = {"language": MagicMock()}
 
         result = wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
 
@@ -295,13 +267,13 @@ class TestWrapMimoModelDistributed:
         ddp_config = MagicMock()
         mimo_parallelism_config = self._create_mimo_parallelism_config(
             {
-                "llm": {"tp": 2, "dp": 2},
+                "language": {"tp": 2, "dp": 2},
             }
         )
 
-        grids = {"llm": self._create_mock_grid(rank_offset=0, size=4)}
+        grids = {"language": self._create_mock_grid(rank_offset=0, size=4)}
         llm_pg_collection = MagicMock()
-        pg_collections = {"llm": llm_pg_collection}
+        pg_collections = {"language": llm_pg_collection}
 
         wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
 

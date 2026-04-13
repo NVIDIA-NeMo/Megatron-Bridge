@@ -106,9 +106,7 @@ class GPTOSSBridge(MegatronModelBridge):
     ) -> torch.Tensor:
         """Load weights from HuggingFace state dict with MXFP4 dequantization support.
 
-        down_proj transpose on export is handled in GPTOSSMLPDownProjMapping.megatron_to_hf,
-        which transposes the per-expert weight from Megatron's [in, out] storage to
-        HF's expected [out, in] layout.
+        down_proj is handled in GPTOSSMLPDownProjMapping.
 
         gate_up_proj is handled directly in GPTOSSMLPGateUpProjMapping.hf_to_megatron via
         _align_expert_weight_to_shape, which auto-detects the orientation difference between
@@ -212,11 +210,7 @@ class GPTOSSBridge(MegatronModelBridge):
 
 
 class GPTOSSMLPDownProjMapping(AutoMapping):
-    """MLPDownProj for expert weights in GPT-OSS models.
-
-    megatron_to_hf transposes the per-expert weight from Megatron's [in, out]
-    storage to HF's expected [out, in] layout.
-    """
+    """MLPDownProj for expert weights in GPT-OSS models."""
 
     is_grouped_export = True
 
@@ -235,8 +229,6 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
         if megatron_weights is None:
             return super().megatron_to_hf(megatron_weights, megatron_module)
-        if len(megatron_weights.shape) == 2:
-            megatron_weights = megatron_weights.transpose(0, 1)
         return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
 
 
