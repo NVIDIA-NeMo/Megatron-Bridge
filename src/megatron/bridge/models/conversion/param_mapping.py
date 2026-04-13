@@ -2307,7 +2307,7 @@ class FusedExpertMapping(AutoMapping):
         self,
         megatron_param: str,
         hf_param: str,
-        permute_dims: Optional[Tuple[int, ...]] = None,
+        permute_dims: tuple[int, ...] | None = None,
         transpose_on_export: bool = False,
     ):
         super().__init__(megatron_param, hf_param, permute_dims)
@@ -2352,7 +2352,7 @@ class FusedGatedExpertMapping(AutoMapping):
         self,
         megatron_param: str,
         hf_param: str,
-        permute_dims: Optional[Tuple[int, ...]] = None,
+        permute_dims: tuple[int, ...] | None = None,
         transpose_on_export: bool = False,
     ):
         super().__init__(megatron_param, hf_param, permute_dims)
