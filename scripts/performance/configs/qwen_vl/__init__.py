@@ -48,7 +48,6 @@ from .qwen3_vl_workload_base_configs import (
     QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_H100_BF16,
     QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS,
 )
-
 from .qwen35_vl_workload_base_configs import (
     QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_B200_BF16,
     QWEN35_VL_35B_A3B_PRETRAIN_CONFIG_B200_FP8_CS,
