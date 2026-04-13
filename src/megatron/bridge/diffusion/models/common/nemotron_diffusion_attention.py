@@ -32,6 +32,7 @@ from torch.nn.attention.flex_attention import flex_attention
 from transformers import ROPE_INIT_FUNCTIONS
 
 from megatron.bridge.diffusion.common.dllm import compute_block_mask
+from megatron.bridge.diffusion.common.ctc import compute_ctc_block_mask
 
 
 # ---------------------------------------------------------------------------
@@ -207,11 +208,19 @@ class NemotronDiffusionAttention(MegatronModule):
             ):
                 hf_text_config.rope_parameters["factor"] = config.yarn_rotary_scaling_factor
 
-        # Pre-compute the sbd_block_diff block mask
-        self.mask = compute_block_mask(
-            block_size=getattr(config, "block_size", 16),
-            max_seq_length=config.seq_length,
-        )
+        # Pre-compute the attention block mask
+        dlm_paradigm = getattr(config, "dlm_paradigm", "sbd_block_diff")
+        if dlm_paradigm == "ctc":
+            self.mask = compute_ctc_block_mask(
+                xt_block_size=getattr(config, "block_size", 128),
+                x0_block_size=getattr(config, "ctc_target_block_size", 64),
+                max_seq_length=config.seq_length,
+            )
+        else:
+            self.mask = compute_block_mask(
+                block_size=getattr(config, "block_size", 16),
+                max_seq_length=config.seq_length,
+            )
 
         import torch._dynamo.config as dcfg
 

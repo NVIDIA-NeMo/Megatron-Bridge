@@ -29,6 +29,7 @@ class NemotronDiffusionModelProvider(Ministral3ModelProvider):
     mask_token_id: int = 100
     dlm_paradigm: str = "sbd_block_diff"
     block_size: int = 64
+    ctc_target_block_size: int = 64
     different_seed_per_dp: bool = True
     apply_llama4_style_query_key_layer_scaling: bool = True
     dlm_loss_weight: float = 0.3
