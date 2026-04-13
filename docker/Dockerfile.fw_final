@@ -35,13 +35,7 @@ ARG NEMO_EVAL_COMMIT
 ARG NEMO_RUN_COMMIT
 
 # Update FW repository commit
-RUN pushd /opt/NeMo && \
-        git pull && \
-        git fetch origin $NEMO_COMMIT && \
-        git checkout FETCH_HEAD && \
-        echo "Container built with NeMo commit hash: $NEMO_COMMIT" && \
-    popd && \
-    pushd /opt/Export-Deploy && \
+RUN    pushd /opt/Export-Deploy && \
         git pull && \
         git fetch origin $NEMO_EXPORT_DEPLOY_COMMIT && \
         git checkout FETCH_HEAD && \
