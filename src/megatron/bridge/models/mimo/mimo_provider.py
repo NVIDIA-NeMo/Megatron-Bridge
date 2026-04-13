@@ -546,12 +546,13 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
 
     @staticmethod
     def _move_frozen_params_to_device(model: torch.nn.Module) -> None:
-        """Move frozen parameters to the current CUDA device.
+        """Move frozen parameters and buffers to the current CUDA device.
 
         When ``use_cpu_initialization=True`` the global ``.cuda()`` call is
         skipped, and DDP only moves parameters with ``requires_grad=True``.
-        This leaves frozen parameters stranded on CPU.  Call this after all
-        hooks (e.g. checkpoint loading) have run but before DDP wrapping.
+        This leaves frozen parameters and buffers stranded on CPU.  Call this
+        after all hooks (e.g. checkpoint loading) have run but before DDP
+        wrapping.
         """
         if not torch.cuda.is_available():
             return
@@ -559,6 +560,9 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         for param in model.parameters():
             if not param.requires_grad and param.device.type == "cpu":
                 param.data = param.data.to(device)
+        for buf in model.buffers():
+            if buf.device.type == "cpu":
+                buf.data = buf.data.to(device)
 
     def finalize(self) -> None:
         """Finalize MIMO parallelism configuration.

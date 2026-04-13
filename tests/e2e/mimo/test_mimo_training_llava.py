@@ -7,6 +7,7 @@ import argparse
 import logging
 import os
 import sys
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -23,8 +24,6 @@ from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_trans
 from megatron.core.transformer.mlp import MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
-
-from typing import Optional
 
 
 class CLIPViTNoCLS(CLIPViTModel):
@@ -659,9 +658,13 @@ def parse_args():
         "--lr-warmup-iters", type=int, default=20, help="Number of iterations to linearly warmup learning rate"
     )
     parser.add_argument("--dataset-root", type=str, required=True, help="Root directory of the LLaVA-Pretrain dataset")
-    parser.add_argument("--freeze-vision", type=_str2bool, default=True, help="Freeze the vision encoder (default: True)")
+    parser.add_argument(
+        "--freeze-vision", type=_str2bool, default=True, help="Freeze the vision encoder (default: True)"
+    )
     parser.add_argument("--freeze-llm", type=_str2bool, default=True, help="Freeze the language model (default: True)")
-    parser.add_argument("--freeze-projector", type=_str2bool, default=False, help="Freeze the projector (default: False)")
+    parser.add_argument(
+        "--freeze-projector", type=_str2bool, default=False, help="Freeze the projector (default: False)"
+    )
     return parser.parse_args()
 
 
@@ -699,6 +702,7 @@ def main():
 
     _log(f"distributed initialized (world_size={dist.get_world_size()})")
 
+    succeeded = False
     # No parallel_state.initialize_model_parallel() — MIMO manages its own
     # parallelism via HyperCommGrids and pg_collections. Float16Module is
     # skipped (direct bf16 cast), and cross_entropy_loss_fusion=True ensures
@@ -812,9 +816,13 @@ def main():
     )
 
     _log("PASSED")
+    succeeded = True
 
-    # 8. Cleanup
-    dist.destroy_process_group()
+    # 8. Cleanup — only tear down NCCL on success; on failure torchrun
+    # handles cleanup via SIGTERM (destroy_process_group deadlocks when
+    # other ranks are stuck in collectives).
+    if succeeded:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

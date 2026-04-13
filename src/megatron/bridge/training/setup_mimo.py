@@ -21,23 +21,25 @@ import torch.distributed as dist
 from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.training.checkpointing import DefaultCheckpointManager
+from megatron.bridge.training.checkpointing import CheckpointManager, create_checkpoint_manager, load_checkpoint
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
+    get_active_module_pg,
     get_module_to_grid_tuple,
     is_current_rank_in_grid,
     unwrap_mimo_model,
     validate_no_stub_ranks,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
 
 
 if TYPE_CHECKING:
     from megatron.core.models.mimo import MimoModel
     from megatron.core.models.mimo.optimizer import MimoOptimizer
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
-    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
+    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection, ProcessGroupCollection
 
     from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra
 
@@ -101,8 +103,8 @@ class MimoSetupOutput:
         multimodule_pg_collection: PG collection for schedule.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
         module_to_grid_tuple: List of (module, grid) tuples for gradient handling.
-        optimizer: MimoOptimizer (None when ``build_optimizer=False``).
-        schedulers: Per-module LR schedulers (empty when ``build_optimizer=False``).
+        optimizer: MimoOptimizer.
+        schedulers: Per-module LR schedulers.
         train_data_iterator: Training data iterator.
         valid_data_iterator: Validation data iterator (optional).
         global_state: GlobalState containing timers, config, train_state.
@@ -113,17 +115,19 @@ class MimoSetupOutput:
     multimodule_pg_collection: "MultiModuleProcessGroupCollection"
     multimodule_communicator: "MultiModulePipelineCommunicator"
     module_to_grid_tuple: List
-    optimizer: Optional["MimoOptimizer"]
+    optimizer: "MimoOptimizer"
     schedulers: Dict[str, "OptimizerParamScheduler"]
     train_data_iterator: Iterator
     valid_data_iterator: Optional[Iterator]
     global_state: GlobalState
-    checkpoint_manager: DefaultCheckpointManager
+    checkpoint_manager: CheckpointManager
+    active_module_name: str
+    local_pg_collection: "ProcessGroupCollection"
 
 
 def _update_mimo_model_config_funcs(
     model: "MimoModel",
-    optimizer: Optional["MimoOptimizer"],
+    optimizer: "MimoOptimizer",
     mimo_infra: "MimoModelInfra",
     module_to_grid_tuple: List,
 ) -> None:
@@ -136,7 +140,7 @@ def _update_mimo_model_config_funcs(
     - ``no_sync_func``: per-module ``no_sync`` via ``multimodule_no_sync``
     - ``finalize_model_grads_func``: per-module grad all-reduce via
       ``finalize_model_grads_multimodule``
-    - ``grad_scale_func``: loss scaling from ``MimoOptimizer`` (if present)
+    - ``grad_scale_func``: loss scaling from ``MimoOptimizer``
     """
     from functools import partial
 
@@ -155,7 +159,7 @@ def _update_mimo_model_config_funcs(
         module_to_grid_tuple=module_to_grid_tuple,
     )
 
-    if optimizer is not None and hasattr(optimizer, "scale_loss"):
+    if hasattr(optimizer, "scale_loss"):
         model_config.grad_scale_func = optimizer.scale_loss
 
     assert model_config.variable_seq_lengths, (
@@ -165,10 +169,8 @@ def _update_mimo_model_config_funcs(
 
 
 def setup_mimo(
-    cfg: ConfigContainer,
+    state: GlobalState,
     build_data_iterators_fn: Optional[Callable] = None,
-    build_optimizer: bool = True,
-    global_state: Optional[GlobalState] = None,
 ) -> MimoSetupOutput:
     """MIMO-specific setup helper.
 
@@ -176,43 +178,23 @@ def setup_mimo(
     - Builds distributed model via ``cfg.model`` (a ``MimoModelProvider``)
     - Builds MIMO infrastructure (grids, topology, pg_collections)
     - Creates MultiModulePipelineCommunicator
-    - Creates MimoOptimizer and per-module LR schedulers (when ``build_optimizer=True``)
-    - Builds data iterators (if function provided)
+    - Creates MimoOptimizer and per-module LR schedulers
+    - Loads checkpoint (if one exists)
+    - Builds data iterators (if function provided, after checkpoint load)
     - Validates configuration
 
     Args:
-        cfg: ConfigContainer with training configuration.  ``cfg.model`` must be
-            a ``MimoModelProvider``.  ``cfg.optimizer`` is used to create the
-            optimizer when ``build_optimizer=True``.
+        state: GlobalState with ``state.cfg`` already set.  ``state.cfg.model``
+            must be a ``MimoModelProvider``.  ``state.cfg.optimizer`` is used to
+            create the optimizer.
         build_data_iterators_fn: Optional function to build data iterators.
             Should have signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
-        build_optimizer: Whether to create optimizer and schedulers.  Set to
-            ``False`` for inference or evaluation-only callers.
-        global_state: Optional GlobalState. If not provided, creates a new one.
 
     Returns:
         MimoSetupOutput containing all components for training.
-
-    Reuses from setup.py:
-        - Logging setup (via global_state)
-        - Timer infrastructure (via global_state)
     """
-    # Create GlobalState if not provided
-    if global_state is None:
-        from megatron.core.timers import Timers
-
-        from megatron.bridge.training.state import GlobalState, TrainState
-
-        timers = Timers(
-            log_level=cfg.logger.timing_log_level,
-            log_option=cfg.logger.timing_log_option,
-        )
-        train_state = TrainState()
-        global_state = GlobalState()
-        global_state._timers = timers
-        global_state.train_state = train_state
-
-    global_state.cfg = cfg
+    cfg = state.cfg
+    global_state = state
 
     logger.info(f"Rank {dist.get_rank()}: Setting up MIMO training")
 
@@ -292,62 +274,100 @@ def setup_mimo(
     module_to_grid_tuple = get_module_to_grid_tuple(model, mimo_infra)
 
     # Build optimizer and per-module LR schedulers
-    optimizer = None
+    unwrapped_model = unwrap_mimo_model(model)
+    if mimo_infra.module_to_grid_map:
+        assert unwrapped_model.mimo_config.module_to_grid_map is not None, (
+            "MimoModelConfig.module_to_grid_map must be set at model construction time. "
+            "Ensure MimoModelProvider.provide() passes module_to_grid_map for MIMO parallelism."
+        )
+
+    logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
+    from megatron.core.models.mimo.optimizer import get_mimo_optimizer
+
+    # cfg.optimizer already finalized by mimo_runtime_config_update().
+    optimizer = get_mimo_optimizer(unwrapped_model, cfg.optimizer)
+
+    # Auto-create per-module LR schedulers
+    cfg._calculate_scheduler_steps()
+    from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+
     schedulers: Dict[str, "OptimizerParamScheduler"] = {}
-    if build_optimizer:
-        unwrapped_model = unwrap_mimo_model(model)
-        if mimo_infra.module_to_grid_map:
-            assert unwrapped_model.mimo_config.module_to_grid_map is not None, (
-                "MimoModelConfig.module_to_grid_map must be set at model construction time. "
-                "Ensure MimoModelProvider.provide() passes module_to_grid_map for MIMO parallelism."
+    for name, info in optimizer.module_infos.items():
+        if info.is_active and info.optimizer is not None:
+            schedulers[name] = OptimizerParamScheduler(
+                info.optimizer,
+                init_lr=cfg.scheduler.lr_warmup_init,
+                max_lr=cfg.optimizer.lr,
+                min_lr=cfg.optimizer.min_lr,
+                lr_warmup_steps=cfg.scheduler.lr_warmup_steps,
+                lr_decay_steps=cfg.scheduler.lr_decay_steps,
+                lr_decay_style=cfg.scheduler.lr_decay_style,
+                start_wd=cfg.scheduler.start_weight_decay,
+                end_wd=cfg.scheduler.end_weight_decay,
+                wd_incr_steps=cfg.scheduler.wd_incr_steps,
+                wd_incr_style=cfg.scheduler.weight_decay_incr_style,
+                use_checkpoint_opt_param_scheduler=cfg.scheduler.use_checkpoint_opt_param_scheduler,
+                override_opt_param_scheduler=cfg.scheduler.override_opt_param_scheduler,
+                wsd_decay_steps=cfg.scheduler.wsd_decay_steps,
+                lr_wsd_decay_style=cfg.scheduler.lr_wsd_decay_style,
             )
-
-        logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
-        from megatron.core.models.mimo.optimizer import get_mimo_optimizer
-
-        # cfg.optimizer already finalized by mimo_runtime_config_update().
-        optimizer = get_mimo_optimizer(unwrapped_model, cfg.optimizer)
-
-        # Auto-create per-module LR schedulers
-        cfg._calculate_scheduler_steps()
-        from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
-
-        for name, info in optimizer.module_infos.items():
-            if info.is_active and info.optimizer is not None:
-                schedulers[name] = OptimizerParamScheduler(
-                    info.optimizer,
-                    init_lr=cfg.scheduler.lr_warmup_init,
-                    max_lr=cfg.optimizer.lr,
-                    min_lr=cfg.optimizer.min_lr,
-                    lr_warmup_steps=cfg.scheduler.lr_warmup_steps,
-                    lr_decay_steps=cfg.scheduler.lr_decay_steps,
-                    lr_decay_style=cfg.scheduler.lr_decay_style,
-                    start_wd=cfg.scheduler.start_weight_decay,
-                    end_wd=cfg.scheduler.end_weight_decay,
-                    wd_incr_steps=cfg.scheduler.wd_incr_steps,
-                    wd_incr_style=cfg.scheduler.weight_decay_incr_style,
-                    use_checkpoint_opt_param_scheduler=cfg.scheduler.use_checkpoint_opt_param_scheduler,
-                    override_opt_param_scheduler=cfg.scheduler.override_opt_param_scheduler,
-                    wsd_decay_steps=cfg.scheduler.wsd_decay_steps,
-                    lr_wsd_decay_style=cfg.scheduler.lr_wsd_decay_style,
-                )
-        logger.info(f"Rank {dist.get_rank()}: Auto-created schedulers for modules: {list(schedulers.keys())}")
+    logger.info(f"Rank {dist.get_rank()}: Auto-created schedulers for modules: {list(schedulers.keys())}")
 
     # Configure model config hooks (mirrors standard path's _update_model_config_funcs in setup.py).
-    # Called unconditionally — no_sync_func and finalize_model_grads_func are needed for training
-    # regardless of whether the optimizer is built here. grad_scale_func is only set when
-    # optimizer is not None (handled inside the function).
     _update_mimo_model_config_funcs(model, optimizer, mimo_infra, module_to_grid_tuple)
 
-    # Build data iterators if function provided
-    train_data_iterator = None
-    valid_data_iterator = None
-    if build_data_iterators_fn is not None:
-        logger.info(f"Rank {dist.get_rank()}: Building data iterators")
-        train_data_iterator, valid_data_iterator = build_data_iterators_fn(cfg, mimo_infra)
+    # Select rank-local PG collection for non-colocated MiMo.
+    active_module_name, local_pg_collection = get_active_module_pg(mimo_infra)
 
     # Initialize checkpoint manager (owns checkpointing_context internally).
-    checkpoint_manager = DefaultCheckpointManager(cfg.checkpoint)
+    checkpoint_manager = create_checkpoint_manager(cfg.checkpoint)
+
+    # Bridge MiMo's per-module process groups into Megatron's global parallel
+    # state.  MiMo intentionally skips global MPU init (see
+    # MimoModelProvider.initialize_model_parallel), but checkpoint save/load
+    # paths (sharded_state_dict, ensure_metadata_has_dp_cp_group) rely on the
+    # globals.  For non-colocated MiMo every rank is active in exactly one
+    # module, so we can safely set the globals from that module's collection.
+    from megatron.core import parallel_state as mpu
+
+    mpu._TENSOR_MODEL_PARALLEL_GROUP = local_pg_collection.tp
+    mpu._DATA_PARALLEL_GROUP = local_pg_collection.dp
+    mpu._DATA_PARALLEL_GROUP_WITH_CP = getattr(local_pg_collection, "dp_cp", local_pg_collection.dp)
+    if hasattr(local_pg_collection, "pp"):
+        mpu._PIPELINE_MODEL_PARALLEL_GROUP = local_pg_collection.pp
+
+    # Load checkpoint if one exists (persistent, pretrained, or non-persistent).
+    first_scheduler = next(iter(schedulers.values()), None) if schedulers else None
+
+    has_persistent = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
+    has_pretrained = cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(
+        cfg.checkpoint.pretrained_checkpoint
+    )
+    wants_non_persistent = cfg.checkpoint.non_persistent_ckpt_type is not None
+    should_load = has_persistent or has_pretrained or wants_non_persistent
+
+    if should_load:
+        timers = global_state.timers
+        timers("load-checkpoint", log_level=0).start(barrier=True)
+        load_checkpoint(
+            global_state,
+            model=[model],
+            optimizer=optimizer,
+            opt_param_scheduler=first_scheduler,
+            checkpointing_context=checkpoint_manager.checkpointing_context,
+            pg_collection=local_pg_collection,
+            module_name=active_module_name,
+        )
+        timers("load-checkpoint").stop(barrier=True)
+        timers.log(["load-checkpoint"])
+
+        # Fan out loaded scheduler state to all active module schedulers.
+        # v1: checkpoints contain a single scheduler blob (first_scheduler).
+        if first_scheduler is not None and len(schedulers) > 1:
+            loaded_state = first_scheduler.state_dict()
+            for sched in schedulers.values():
+                if sched is not first_scheduler:
+                    sched.load_state_dict(loaded_state)
 
     # Initialize async checkpoint worker (idempotent if already initialized).
     global_state.initialize_async_checkpoint_worker()
@@ -358,6 +378,38 @@ def setup_mimo(
     start_time_tensor = torch.tensor([global_state.start_time], dtype=torch.double, device="cuda")
     dist.all_reduce(start_time_tensor, op=dist.ReduceOp.MIN)
     global_state.start_time = start_time_tensor.item()
+
+    # Build data iterators after checkpoint load (resume-safe ordering).
+    # When resuming, train_state has restored consumed-sample offsets that
+    # the iterator builder must honor to avoid replaying data from sample 0.
+    train_data_iterator = None
+    valid_data_iterator = None
+    if build_data_iterators_fn is not None:
+        logger.info(f"Rank {dist.get_rank()}: Building data iterators")
+        train_state = global_state.train_state
+        is_resuming = train_state.step > 0
+
+        if is_resuming:
+            import inspect
+
+            sig = inspect.signature(build_data_iterators_fn)
+            accepts_train_state = "train_state" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            if accepts_train_state:
+                train_data_iterator, valid_data_iterator = build_data_iterators_fn(
+                    cfg,
+                    mimo_infra,
+                    train_state=train_state,
+                )
+            else:
+                raise RuntimeError(
+                    "Resuming from checkpoint but build_data_iterators_fn does not accept "
+                    "'train_state' argument. The iterator builder must support a train_state "
+                    "keyword argument to honor restored consumed-sample offsets during resume."
+                )
+        else:
+            train_data_iterator, valid_data_iterator = build_data_iterators_fn(cfg, mimo_infra)
 
     logger.info(f"Rank {dist.get_rank()}: MIMO setup complete")
 
@@ -373,4 +425,6 @@ def setup_mimo(
         valid_data_iterator=valid_data_iterator,
         global_state=global_state,
         checkpoint_manager=checkpoint_manager,
+        active_module_name=active_module_name,
+        local_pg_collection=local_pg_collection,
     )

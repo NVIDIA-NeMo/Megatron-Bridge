@@ -20,26 +20,15 @@ import torch
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.pipeline_parallel.utils import is_pp_last_stage
-from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.process_groups_config import MultiModuleProcessGroupCollection, ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
-
-
-# Multimodule support from PR 3212 (optional - fallback if not available)
-try:
-    from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
-    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
-
-    _MULTIMODULE_AVAILABLE = True
-except ImportError:
-    MultiModulePipelineCommunicator = None  # type: ignore
-    MultiModuleProcessGroupCollection = None  # type: ignore
-    _MULTIMODULE_AVAILABLE = False
 
 from megatron.bridge.data.finetuning import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
@@ -130,6 +119,11 @@ def evaluate(
     is_multimodule = isinstance(pg_collection, MultiModuleProcessGroupCollection) or isinstance(
         p2p_communicator, MultiModulePipelineCommunicator
     )
+
+    if is_multimodule and not isinstance(p2p_communicator, MultiModulePipelineCommunicator):
+        raise ValueError(
+            "Multimodule (MIMO) evaluation requires an explicit MultiModulePipelineCommunicator as p2p_communicator."
+        )
 
     if not state.cfg.dist.use_decentralized_pg:
         adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(

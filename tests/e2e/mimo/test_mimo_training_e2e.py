@@ -327,47 +327,54 @@ def main():
 
     _log(f"distributed initialized (world_size={dist.get_world_size()})")
 
-    _log("building model specs")
-    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
-    mimo_parallelism_config = _build_parallelism_config()
+    succeeded = False
+    try:
+        _log("building model specs")
+        language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
+        mimo_parallelism_config = _build_parallelism_config()
 
-    mimo_provider = MimoModelProvider(
-        language_model_spec=language_model_spec,
-        modality_submodules_spec=modality_submodules_spec,
-        special_token_ids=special_token_ids,
-        mimo_parallelism_config=mimo_parallelism_config,
-        topology={"vision": ["language"], "language": []},
-        use_cpu_initialization=True,
-    )
-    if not hasattr(mimo_provider, "num_moe_experts"):
-        mimo_provider.num_moe_experts = None
+        mimo_provider = MimoModelProvider(
+            language_model_spec=language_model_spec,
+            modality_submodules_spec=modality_submodules_spec,
+            special_token_ids=special_token_ids,
+            mimo_parallelism_config=mimo_parallelism_config,
+            topology={"vision": ["language"], "language": []},
+            use_cpu_initialization=True,
+        )
+        if not hasattr(mimo_provider, "num_moe_experts"):
+            mimo_provider.num_moe_experts = None
 
-    _log("building data provider")
-    mock_data_provider = _build_mock_data_provider()
+        _log("building data provider")
+        mock_data_provider = _build_mock_data_provider()
 
-    opt_config = BridgeOptimizerConfig(lr=1e-4, min_lr=0.0)
+        opt_config = BridgeOptimizerConfig(lr=1e-4, min_lr=0.0)
 
-    _log("building config")
-    cfg = _build_config(
-        mimo_provider,
-        mock_data_provider,
-        opt_config,
-        wandb_project=os.environ.get("WANDB_PROJECT", "Megatron-Bridge-MIMO"),
-        wandb_exp_name=os.environ.get("WANDB_EXP_NAME", "mimo-e2e-test"),
-        wandb_entity=os.environ.get("WANDB_ENTITY"),
-        wandb_save_dir=os.environ.get("WANDB_SAVE_DIR", "/tmp/wandb"),
-    )
+        _log("building config")
+        cfg = _build_config(
+            mimo_provider,
+            mock_data_provider,
+            opt_config,
+            wandb_project=os.environ.get("WANDB_PROJECT", "Megatron-Bridge-MIMO"),
+            wandb_exp_name=os.environ.get("WANDB_EXP_NAME", "mimo-e2e-test"),
+            wandb_entity=os.environ.get("WANDB_ENTITY"),
+            wandb_save_dir=os.environ.get("WANDB_SAVE_DIR", "/tmp/wandb"),
+        )
 
-    _log("launching pretrain_mimo")
-    pretrain_mimo(
-        cfg=cfg,
-        forward_step_func=mimo_forward_step,
-        build_data_iterators_fn=_build_data_iterators,
-    )
+        _log("launching pretrain_mimo")
+        pretrain_mimo(
+            cfg=cfg,
+            forward_step_func=mimo_forward_step,
+            build_data_iterators_fn=_build_data_iterators,
+        )
 
-    _log("PASSED")
-
-    dist.destroy_process_group()
+        _log("PASSED")
+        succeeded = True
+    finally:
+        if succeeded:
+            dist.destroy_process_group()
+        if _rank_log_file is not None:
+            _rank_log_file.close()
+            _rank_log_file = None
 
 
 if __name__ == "__main__":

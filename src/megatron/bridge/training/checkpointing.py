@@ -2113,17 +2113,19 @@ def _load_checkpoint_from_path(
                 and optimizer is not None
                 and not getattr(optimizer, "is_stub_optimizer", False)
             ):
-                # For MiMo with torch_dist, skip optimizer.load_state_dict():
-                # dist_checkpointing only saves common state from rank 0, but
-                # non-colocated MiMo has different common state per rank (each
-                # rank only holds its active module's param_groups).  The sharded
-                # param states are already loaded by dist_checkpointing.load,
-                # and the optimizer was pre-initialized via
-                # sharded_state_dict(is_loading=True).
+                # For MiMo with global torch_dist checkpoints, skip
+                # optimizer.load_state_dict(): dist_checkpointing only saves
+                # common state from rank 0, but non-colocated MiMo has different
+                # common state per rank (each rank only holds its active
+                # module's param_groups).  The sharded param states are already
+                # loaded by dist_checkpointing.load, and the optimizer was
+                # pre-initialized via sharded_state_dict(is_loading=True).
+                # Local checkpoints save per-rank state, so the skip does not
+                # apply — each rank has its own correct optimizer state.
                 # TODO: Make dist_checkpointing.save collect common state from
                 # all ranks in MiMo, or have MiMo replicate all modules' common
                 # state on every rank during save.  That fix belongs in MCore.
-                if not (ckpt_format == "torch_dist" and _is_mimo):
+                if not (ckpt_type == CheckpointType.GLOBAL and _is_mimo):
                     if isinstance(optimizer, LayerWiseDistributedOptimizer) and ckpt_type == CheckpointType.LOCAL:
                         # Local checkpoints save LayerWiseDistributedOptimizer state to a
                         # separate per-rank file at the base local checkpoint directory rather

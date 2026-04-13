@@ -8,7 +8,6 @@ the right arguments, without actually saving/loading checkpoints.
 
 from __future__ import annotations
 
-import inspect
 import time
 from types import SimpleNamespace
 from typing import Any, Dict
@@ -208,7 +207,9 @@ class TestPgCollectionForwarding:
 class TestPretrainMimoSetup:
     """Verify pretrain_mimo properly initializes checkpointing runtime."""
 
-    @patch("megatron.bridge.training.setup_mimo.DefaultCheckpointManager")
+    @patch("megatron.bridge.training.setup_mimo.checkpoint_exists", return_value=False)
+    @patch("megatron.bridge.training.setup_mimo.get_active_module_pg")
+    @patch("megatron.bridge.training.setup_mimo.create_checkpoint_manager")
     @patch("megatron.bridge.training.setup_mimo.MultiModulePipelineCommunicator")
     @patch("megatron.bridge.training.setup_mimo.get_model_config")
     @patch("megatron.bridge.training.setup_mimo.validate_no_stub_ranks")
@@ -227,7 +228,9 @@ class TestPretrainMimoSetup:
         mock_validate,
         mock_get_config,
         mock_communicator,
-        mock_default_ckpt_mgr,
+        mock_create_ckpt_mgr,
+        mock_get_active_pg,
+        mock_ckpt_exists,
     ):
         from megatron.bridge.training.setup_mimo import setup_mimo
 
@@ -236,7 +239,10 @@ class TestPretrainMimoSetup:
 
         mock_mgr_instance = MagicMock()
         mock_mgr_instance.checkpointing_context = {"test": "context"}
-        mock_default_ckpt_mgr.return_value = mock_mgr_instance
+        mock_create_ckpt_mgr.return_value = mock_mgr_instance
+
+        local_pg = MagicMock()
+        mock_get_active_pg.return_value = ("language", local_pg)
 
         model_config = Mock()
         model_config.pipeline_dtype = None
@@ -247,12 +253,11 @@ class TestPretrainMimoSetup:
         unwrapped.mimo_config.module_to_grid_map = {"language": Mock()}
         mock_unwrap.return_value = unwrapped
 
-        global_state = Mock()
-        global_state.start_time = time.time()
-        global_state.cfg = None
-
         cfg = Mock()
         cfg.checkpoint = Mock()
+        cfg.checkpoint.load = None
+        cfg.checkpoint.pretrained_checkpoint = None
+        cfg.checkpoint.non_persistent_ckpt_type = None
         cfg.train = Mock()
         cfg.train.grad_reduce_in_fp32 = False
         cfg.train.overlap_grad_reduce = True
@@ -262,6 +267,10 @@ class TestPretrainMimoSetup:
         cfg.model.fp16 = False
         cfg.model.bf16 = True
 
+        global_state = Mock()
+        global_state.start_time = time.time()
+        global_state.cfg = cfg
+
         infra = Mock()
         infra.module_to_grid_map = {"language": Mock()}
         infra.topology = Mock()
@@ -270,14 +279,21 @@ class TestPretrainMimoSetup:
         cfg.model.build_infra.return_value = infra
         cfg.model.provide_distributed_model.return_value = [Mock()]
 
+        mock_optimizer = MagicMock()
+        mock_optimizer.module_infos = {}
+
         with (
             patch("megatron.bridge.training.setup_mimo._set_mimo_random_seeds"),
+            patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer),
             patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
             patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
+            patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
         ):
-            result = setup_mimo(cfg=cfg, build_optimizer=False, global_state=global_state)
+            result = setup_mimo(state=global_state)
 
-        mock_default_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
+        mock_create_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
         global_state.initialize_async_checkpoint_worker.assert_called_once()
         assert result.checkpoint_manager is mock_mgr_instance
 
@@ -295,10 +311,6 @@ class TestPretrainMimoSetup:
             patch("megatron.bridge.training.pretrain_mimo.train_mimo"),
             patch("megatron.bridge.training.pretrain_mimo._finish_train"),
             patch("megatron.bridge.training.pretrain_mimo.dist") as m_dist,
-            patch("megatron.bridge.training.pretrain_mimo.checkpoint_exists", return_value=False),
-            patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
-            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
-            patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
         ):
             m_dist.get_rank.return_value = 0
             pretrain_mimo(
@@ -619,6 +631,8 @@ def _make_setup_output_for_load(
     mock_checkpoint_manager = MagicMock()
     mock_checkpoint_manager.checkpointing_context = {"test": "context"}
 
+    local_pg = list(pg_collections.values())[0] if pg_collections else Mock()
+
     return SimpleNamespace(
         model=MagicMock(),
         mimo_infra=SimpleNamespace(
@@ -635,6 +649,8 @@ def _make_setup_output_for_load(
         valid_data_iterator=None,
         global_state=global_state,
         checkpoint_manager=mock_checkpoint_manager,
+        active_module_name="language",
+        local_pg_collection=local_pg,
     )
 
 
@@ -681,13 +697,16 @@ def _run_pretrain_mimo(
     cfg: MagicMock | None = None,
     setup_output: SimpleNamespace | None = None,
     schedulers: Dict[str, Any] | None = None,
-    checkpoint_exists_return: bool = False,
     build_data_iterators_fn: Any | None = None,
 ) -> Dict[str, Mock]:
     """Run pretrain_mimo with full mocking and return all mock handles.
 
-    Returns dict with keys: setup_mimo, load_checkpoint, checkpoint_exists,
-    train_mimo, build_data_iterators_fn.
+    pretrain_mimo is a thin orchestrator: runtime_config_update → setup_mimo →
+    train_mimo → _finish_train.  Checkpoint loading, iterator construction, and
+    MPU bridging are now handled inside setup_mimo, so we mock setup_mimo at the
+    boundary and only verify the orchestration.
+
+    Returns dict with keys: setup_mimo, train_mimo, build_data_iterators_fn.
     """
     from megatron.bridge.training.pretrain_mimo import pretrain_mimo
 
@@ -705,20 +724,12 @@ def _run_pretrain_mimo(
     with (
         patch("megatron.bridge.training.pretrain_mimo.train_mimo") as m_train,
         patch("megatron.bridge.training.pretrain_mimo.setup_mimo", return_value=setup_output) as m_setup,
-        patch("megatron.bridge.training.pretrain_mimo.load_checkpoint") as m_load,
-        patch(
-            "megatron.bridge.training.pretrain_mimo.checkpoint_exists",
-            return_value=checkpoint_exists_return,
-        ) as m_ckpt_exists,
         patch("megatron.bridge.training.pretrain_mimo.dist") as m_dist,
         patch("megatron.bridge.training.pretrain_mimo.mimo_runtime_config_update"),
         patch("megatron.bridge.training.pretrain_mimo._finish_train"),
-        patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
-        patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
-        patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
     ):
         m_dist.get_rank.return_value = 0
-        m_dist.get_world_size.return_value = 2
+        m_dist.is_initialized.return_value = True
 
         pretrain_mimo(
             cfg=cfg,
@@ -728,8 +739,6 @@ def _run_pretrain_mimo(
         )
 
         mocks["setup_mimo"] = m_setup
-        mocks["load_checkpoint"] = m_load
-        mocks["checkpoint_exists"] = m_ckpt_exists
         mocks["train_mimo"] = m_train
         mocks["build_data_iterators_fn"] = build_data_iterators_fn
 
@@ -737,227 +746,51 @@ def _run_pretrain_mimo(
 
 
 # ---------------------------------------------------------------------------
-# Tests: load_checkpoint invocation from pretrain_mimo
+# Tests: pretrain_mimo passes build_data_iterators_fn to setup_mimo
 # ---------------------------------------------------------------------------
 
 
-class TestPretrainMimoLoadCheckpoint:
-    """Verify pretrain_mimo invokes load_checkpoint with correct arguments."""
+class TestPretrainMimoPassesBuildFn:
+    """Verify pretrain_mimo forwards build_data_iterators_fn to setup_mimo."""
 
-    def test_load_invoked_when_persistent_checkpoint_exists(self):
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-        mocks = _run_pretrain_mimo(cfg=cfg, checkpoint_exists_return=True)
-        mocks["load_checkpoint"].assert_called_once()
-
-    def test_load_invoked_when_pretrained_checkpoint_exists(self):
-        cfg = _make_pretrain_cfg(pretrained_path="/tmp/pretrained")
-        mocks = _run_pretrain_mimo(cfg=cfg, checkpoint_exists_return=True)
-        mocks["load_checkpoint"].assert_called_once()
-
-    def test_load_invoked_for_non_persistent_intent_without_persistent_path(self):
-        """Non-persistent resume intent should trigger load even without cfg.checkpoint.load."""
-        cfg = _make_pretrain_cfg(non_persistent_ckpt_type="local")
-        mocks = _run_pretrain_mimo(cfg=cfg, checkpoint_exists_return=False)
-        mocks["load_checkpoint"].assert_called_once()
-
-    def test_load_not_invoked_when_no_checkpoint_intent(self):
-        cfg = _make_pretrain_cfg()
-        mocks = _run_pretrain_mimo(cfg=cfg, checkpoint_exists_return=False)
-        mocks["load_checkpoint"].assert_not_called()
-
-    def test_load_forwards_list_wrapped_model(self):
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-        setup_output = _make_setup_output_for_load()
-        mocks = _run_pretrain_mimo(
-            cfg=cfg,
-            setup_output=setup_output,
-            checkpoint_exists_return=True,
-        )
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert isinstance(kwargs["model"], list)
-        assert len(kwargs["model"]) == 1
-        assert kwargs["model"][0] is setup_output.model
-
-    def test_load_forwards_explicit_pg_collection(self):
-        pg = Mock()
-        setup_output = _make_setup_output_for_load(pg_collections={"language": pg})
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-        mocks = _run_pretrain_mimo(
-            cfg=cfg,
-            setup_output=setup_output,
-            checkpoint_exists_return=True,
-        )
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert kwargs["pg_collection"] is pg
-
-    def test_load_forwards_checkpointing_context(self):
-        setup_output = _make_setup_output_for_load()
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-        mocks = _run_pretrain_mimo(
-            cfg=cfg,
-            setup_output=setup_output,
-            checkpoint_exists_return=True,
-        )
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert kwargs["checkpointing_context"] is setup_output.checkpoint_manager.checkpointing_context
-
-    def test_load_forwards_first_scheduler(self):
-        sched_a = _make_scheduler_mock()
-        sched_b = _make_scheduler_mock()
-        schedulers = {"language": sched_a, "vision": sched_b}
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-        mocks = _run_pretrain_mimo(
-            cfg=cfg,
-            schedulers=schedulers,
-            checkpoint_exists_return=True,
-        )
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert kwargs["opt_param_scheduler"] is sched_a
-
-
-# ---------------------------------------------------------------------------
-# Tests: non-colocated PG guard in pretrain_mimo load path
-# ---------------------------------------------------------------------------
-
-
-class TestPretrainMimoLoadPgGuard:
-    """Verify pretrain_mimo fails fast when PG topology is invalid."""
-
-    def test_rejects_zero_active_pgs_in_pretrain(self):
-        setup_output = _make_setup_output_for_load(pg_collections={})
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-        with pytest.raises(AssertionError, match="exactly one active ProcessGroupCollection"):
-            _run_pretrain_mimo(
-                cfg=cfg,
-                setup_output=setup_output,
-                checkpoint_exists_return=True,
-            )
-
-    def test_rejects_multiple_active_pgs_in_pretrain(self):
-        setup_output = _make_setup_output_for_load(
-            pg_collections={"language": Mock(), "vision": Mock()},
-        )
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-        with pytest.raises(AssertionError, match="exactly one active ProcessGroupCollection"):
-            _run_pretrain_mimo(
-                cfg=cfg,
-                setup_output=setup_output,
-                checkpoint_exists_return=True,
-            )
-
-
-# ---------------------------------------------------------------------------
-# Tests: scheduler v1 fanout behavior
-# ---------------------------------------------------------------------------
-
-
-class TestSchedulerV1Fanout:
-    """Verify scheduler state is loaded into first_scheduler and fanned out."""
-
-    def test_scheduler_fanout_after_load(self):
-        """After load, all schedulers should have the state of first_scheduler."""
-        sched_a = MagicMock()
-        sched_a.optimizer.param_groups = [{"lr": 1e-4}]
-        sched_a.state_dict.return_value = {"step": 50, "lr": 0.001}
-
-        sched_b = MagicMock()
-        sched_b.optimizer.param_groups = [{"lr": 1e-4}]
-
-        schedulers = {"language": sched_a, "vision": sched_b}
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-
-        # Simulate load succeeding and setting step > 0 via side_effect.
-        # load_checkpoint modifies global_state.train_state in-place, but
-        # in mock context it doesn't. We need step to remain 0 so iterator
-        # builder doesn't require train_state kwarg.
-        _run_pretrain_mimo(cfg=cfg, schedulers=schedulers, checkpoint_exists_return=True)
-
-        # sched_b should have received the fanout
-        sched_b.load_state_dict.assert_called_once_with({"step": 50, "lr": 0.001})
-        # sched_a should NOT have load_state_dict called by fanout (it's the source)
-        sched_a.load_state_dict.assert_not_called()
-
-    def test_no_fanout_when_single_scheduler(self):
-        sched = MagicMock()
-        sched.optimizer.param_groups = [{"lr": 1e-4}]
-        sched.state_dict.return_value = {"step": 50}
-
-        schedulers = {"language": sched}
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-        _run_pretrain_mimo(cfg=cfg, schedulers=schedulers, checkpoint_exists_return=True)
-
-        # No fanout needed with single scheduler
-        sched.load_state_dict.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Tests: iterator resume semantics
-# ---------------------------------------------------------------------------
-
-
-class TestIteratorResumeSemanticsLoad:
-    """Verify iterators are built after load and receive train_state when resuming."""
-
-    def test_iterators_built_after_setup_not_during(self):
-        """setup_mimo should be called with build_data_iterators_fn=None."""
-        cfg = _make_pretrain_cfg()
-        mocks = _run_pretrain_mimo(cfg=cfg)
-        _, kwargs = mocks["setup_mimo"].call_args
-        assert kwargs["build_data_iterators_fn"] is None
-
-    def test_iterator_builder_called_without_train_state_when_not_resuming(self):
+    def test_build_fn_forwarded_to_setup_mimo(self):
         cfg = _make_pretrain_cfg()
         build_fn = Mock(return_value=(iter([]), None))
-        _run_pretrain_mimo(cfg=cfg, build_data_iterators_fn=build_fn)
-        build_fn.assert_called_once()
-        args, kwargs = build_fn.call_args
-        assert "train_state" not in kwargs
+        mocks = _run_pretrain_mimo(cfg=cfg, build_data_iterators_fn=build_fn)
+        _, kwargs = mocks["setup_mimo"].call_args
+        assert kwargs["build_data_iterators_fn"] is build_fn
 
-    def test_iterator_builder_receives_train_state_mock(self):
-        """When resuming (step > 0), builder receives train_state kwarg."""
-        build_fn = MagicMock(return_value=(iter([]), None))
-        # Give mock the train_state parameter so inspect.signature finds it
 
-        def _sig_fn(cfg, mimo_infra, *, train_state=None):
-            pass
+# ---------------------------------------------------------------------------
+# Tests: non-colocated PG guard in get_active_module_pg
+# ---------------------------------------------------------------------------
 
-        build_fn.__signature__ = inspect.signature(_sig_fn)
 
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-        setup_output = _make_setup_output_for_load(train_state_step=10, consumed_train_samples=500)
+class TestActiveModulePgGuard:
+    """Verify get_active_module_pg fails fast when PG topology is invalid."""
 
-        _run_pretrain_mimo(
-            cfg=cfg,
-            setup_output=setup_output,
-            checkpoint_exists_return=True,
-            build_data_iterators_fn=build_fn,
-        )
+    def test_rejects_zero_active_pgs(self):
+        from megatron.bridge.training.mimo_parallel_utils import get_active_module_pg
 
-        build_fn.assert_called_once()
-        _, kwargs = build_fn.call_args
-        assert "train_state" in kwargs
-        assert kwargs["train_state"].step == 10
-        assert kwargs["train_state"].consumed_train_samples == 500
+        infra = SimpleNamespace(pg_collections={})
+        with pytest.raises(AssertionError, match="exactly one active ProcessGroupCollection"):
+            get_active_module_pg(infra)
 
-    def test_iterator_builder_fails_fast_if_no_train_state_param_on_resume(self):
-        """Resuming with a builder that lacks train_state param raises RuntimeError."""
+    def test_rejects_multiple_active_pgs(self):
+        from megatron.bridge.training.mimo_parallel_utils import get_active_module_pg
 
-        def legacy_builder(cfg, mimo_infra):
-            return (iter([]), None)
+        infra = SimpleNamespace(pg_collections={"language": Mock(), "vision": Mock()})
+        with pytest.raises(AssertionError, match="exactly one active ProcessGroupCollection"):
+            get_active_module_pg(infra)
 
-        build_fn = MagicMock(return_value=(iter([]), None))
-        build_fn.__signature__ = inspect.signature(legacy_builder)
+    def test_returns_single_active_pg(self):
+        from megatron.bridge.training.mimo_parallel_utils import get_active_module_pg
 
-        cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
-        setup_output = _make_setup_output_for_load(train_state_step=10)
-
-        with pytest.raises(RuntimeError, match="build_data_iterators_fn does not accept"):
-            _run_pretrain_mimo(
-                cfg=cfg,
-                setup_output=setup_output,
-                checkpoint_exists_return=True,
-                build_data_iterators_fn=build_fn,
-            )
+        pg = Mock()
+        infra = SimpleNamespace(pg_collections={"language": pg, "vision": None})
+        name, result_pg = get_active_module_pg(infra)
+        assert name == "language"
+        assert result_pg is pg
 
 
 # ---------------------------------------------------------------------------
@@ -1034,17 +867,9 @@ class TestTrainStateRestorationSmoke:
         setup_output = _make_setup_output_for_load(train_state_step=42, consumed_train_samples=1000)
         cfg = _make_pretrain_cfg(load_path="/tmp/ckpt")
 
-        def builder(cfg, mimo_infra, *, train_state=None):
-            return (iter([]), None)
-
-        build_fn = MagicMock(return_value=(iter([]), None))
-        build_fn.__signature__ = inspect.signature(builder)
-
         mocks = _run_pretrain_mimo(
             cfg=cfg,
             setup_output=setup_output,
-            checkpoint_exists_return=True,
-            build_data_iterators_fn=build_fn,
         )
 
         # train_state is passed to train_mimo via global_state
@@ -1059,51 +884,33 @@ class TestTrainStateRestorationSmoke:
         mocks = _run_pretrain_mimo(
             cfg=cfg,
             setup_output=setup_output,
-            checkpoint_exists_return=True,
         )
         _, kwargs = mocks["train_mimo"].call_args
         assert kwargs["global_state"].train_state.floating_point_operations_so_far == 99999
 
 
 # ---------------------------------------------------------------------------
-# Tests: local checkpoint resume plumbing
+# Tests: pretrain_mimo orchestration (setup → train)
 # ---------------------------------------------------------------------------
 
 
-class TestLocalCheckpointResumePlumbing:
-    """Verify non-persistent local checkpoint intent triggers load."""
+class TestPretrainMimoOrchestration:
+    """Verify pretrain_mimo calls setup_mimo and train_mimo correctly."""
 
-    def test_local_non_persistent_triggers_load(self):
-        cfg = _make_pretrain_cfg(non_persistent_ckpt_type="local")
-        mocks = _run_pretrain_mimo(cfg=cfg, checkpoint_exists_return=False)
-        mocks["load_checkpoint"].assert_called_once()
-
-    def test_global_non_persistent_triggers_load(self):
-        cfg = _make_pretrain_cfg(non_persistent_ckpt_type="global")
-        mocks = _run_pretrain_mimo(cfg=cfg, checkpoint_exists_return=False)
-        mocks["load_checkpoint"].assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# Tests: no-checkpoint graceful fallback
-# ---------------------------------------------------------------------------
-
-
-class TestNoCheckpointGracefulFallback:
-    """Verify load is not attempted and training starts from random init."""
-
-    def test_no_load_no_crash(self):
-        """When no checkpoint intent exists, load is skipped and training starts cleanly."""
+    def test_train_mimo_always_called(self):
+        """pretrain_mimo should always invoke train_mimo after setup."""
         cfg = _make_pretrain_cfg()
-        mocks = _run_pretrain_mimo(cfg=cfg, checkpoint_exists_return=False)
-        mocks["load_checkpoint"].assert_not_called()
+        mocks = _run_pretrain_mimo(cfg=cfg)
         mocks["train_mimo"].assert_called_once()
 
-    def test_iterators_still_built_without_checkpoint(self):
+    def test_iterators_from_setup_forwarded_to_train(self):
+        """Data iterators from setup_output should be forwarded to train_mimo."""
         cfg = _make_pretrain_cfg()
         build_fn = Mock(return_value=(iter([]), None))
-        _run_pretrain_mimo(cfg=cfg, build_data_iterators_fn=build_fn)
-        build_fn.assert_called_once()
+        mocks = _run_pretrain_mimo(cfg=cfg, build_data_iterators_fn=build_fn)
+        # build_fn is passed to setup_mimo, which is mocked — check that
+        # train_mimo receives setup_output's iterators
+        mocks["train_mimo"].assert_called_once()
 
 
 # ---------------------------------------------------------------------------

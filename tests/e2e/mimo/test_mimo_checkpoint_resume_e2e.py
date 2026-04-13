@@ -486,12 +486,22 @@ def main():
         force=True,
     )
 
-    if args.phase == "save":
-        _run_phase_save(args.ckpt_dir)
-    else:
-        _run_phase_resume(args.ckpt_dir)
-
-    dist.destroy_process_group()
+    succeeded = False
+    try:
+        if args.phase == "save":
+            _run_phase_save(args.ckpt_dir)
+        else:
+            _run_phase_resume(args.ckpt_dir)
+        succeeded = True
+    finally:
+        # Only tear down NCCL on success.  On failure other ranks may be
+        # stuck in collectives; calling destroy_process_group would deadlock.
+        # Let torchrun handle cleanup via SIGTERM in the error case.
+        if succeeded:
+            dist.destroy_process_group()
+        if _rank_log_file is not None:
+            _rank_log_file.close()
+            _rank_log_file = None
 
 
 if __name__ == "__main__":

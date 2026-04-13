@@ -83,11 +83,12 @@ def build_mimo_data_loaders(
     micro_batch_size = cfg.train.micro_batch_size
     for mod_name, mod_cfg in cfg.model.mimo_parallelism_config.module_parallelisms.items():
         dp = mod_cfg.data_parallel_size
-        assert micro_batch_size % dp == 0, (
-            f"micro_batch_size ({micro_batch_size}) must be divisible by "
-            f"data_parallel_size ({dp}) of module '{mod_name}'. "
-            f"slice_batch_for_mimo requires an evenly divisible micro-batch."
-        )
+        if micro_batch_size % dp != 0:
+            raise ValueError(
+                f"micro_batch_size ({micro_batch_size}) must be divisible by "
+                f"data_parallel_size ({dp}) of module '{mod_name}'. "
+                f"slice_batch_for_mimo requires an evenly divisible micro-batch."
+            )
 
     print_rank_0("> building MIMO train, validation, and test datasets ...")
 

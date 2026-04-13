@@ -245,9 +245,7 @@ def test_setup_mimo_asserts_when_constructor_fields_missing(mock_dist, mock_get_
         patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
         patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
     ):
+        mock_state = MagicMock()
+        mock_state.cfg = cfg
         with pytest.raises(AssertionError, match="module_to_grid_map must be set"):
-            setup_mimo(
-                cfg=cfg,
-                build_optimizer=True,
-                global_state=MagicMock(),
-            )
+            setup_mimo(state=mock_state)
