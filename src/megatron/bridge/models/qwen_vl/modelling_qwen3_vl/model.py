@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 from typing import Optional
 
 import torch
@@ -54,6 +55,16 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3
 
 
 logger = logging.getLogger(__name__)
+
+
+def _thd_diag_enabled() -> bool:
+    return os.environ.get("THD_DIAG", "0") not in ("0", "", "false", "False")
+
+
+def _rank0() -> bool:
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return True
+    return torch.distributed.get_rank() == 0
 
 
 class Qwen3VLModel(MegatronModule):
