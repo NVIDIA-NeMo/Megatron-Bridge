@@ -181,6 +181,8 @@ class QwenVLTaskBatch(Batch):
     ``__restore_key__`` (empty tuple placeholder).
     """
 
+    __key__: str
+    __restore_key__: tuple
     __keys__: List[str]
     __subflavors__: List[Dict]
     # (num_tiles, c, h, w)
@@ -538,6 +540,45 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             num_vit_patches=total_vit_patches,
         )
 
+    @staticmethod
+    def _normalize_visual_block(block: torch.Tensor) -> torch.Tensor:
+        """Normalize visual block shape before batch concat.
+
+        Expected downstream format is either:
+        - [N, C, H, W] (patch tiles), or
+        - [N, D] (flattened patch features).
+        """
+        if not isinstance(block, torch.Tensor):
+            raise TypeError(f"Visual block must be torch.Tensor, got {type(block)}")
+
+        # Common case for processor output: [1, N, D] -> [N, D]
+        if block.dim() == 3 and block.shape[0] == 1:
+            return block.squeeze(0)
+
+        # Single tile CHW -> add batch dimension.
+        if block.dim() == 3 and block.shape[0] in (1, 3):
+            return block.unsqueeze(0)
+
+        # Keep already batched formats as-is.
+        if block.dim() in (2, 4):
+            return block
+
+        return block
+
+    @staticmethod
+    def _concat_visual_blocks(blocks: List[torch.Tensor], name: str) -> Optional[torch.Tensor]:
+        """Concatenate visual blocks along first dimension with shape diagnostics."""
+        if not blocks:
+            return None
+
+        normalized = [QwenVLTaskEncoder._normalize_visual_block(b) for b in blocks]
+        try:
+            return torch.cat(normalized, dim=0)
+        except RuntimeError as exc:
+            shapes = [tuple(t.shape) for t in normalized]
+            logger.error(f"Failed to concat {name} blocks, shapes={shapes}, error={exc}")
+            raise
+
     def _collect_visual_data(self, samples):
         """Gather pixel_values and grid_thw from a list of samples (packed or unpacked)."""
         imgs, image_thw_grids = [], []
@@ -547,17 +588,17 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             if isinstance(s, QwenVLTaskSamplePacked):
                 for img_block in s.imgs:
                     if isinstance(img_block, torch.Tensor):
-                        imgs.append(img_block if img_block.dim() == 4 else img_block.unsqueeze(0))
+                        imgs.append(self._normalize_visual_block(img_block))
                 for thw in s.image_thw_grids:
                     image_thw_grids.append(np.asarray(thw))
                 for vid_block in s.videos:
                     if isinstance(vid_block, torch.Tensor):
-                        videos.append(vid_block if vid_block.dim() == 4 else vid_block.unsqueeze(0))
+                        videos.append(self._normalize_visual_block(vid_block))
                 for thw in s.video_thw_grids:
                     video_thw_grids.append(np.asarray(thw))
             else:
                 if len(s.imgs) > 0:
-                    s_imgs = s.imgs.unsqueeze(0) if isinstance(s.imgs, torch.Tensor) and s.imgs.dim() == 3 else s.imgs
+                    s_imgs = self._normalize_visual_block(s.imgs) if isinstance(s.imgs, torch.Tensor) else s.imgs
                     if isinstance(s_imgs, torch.Tensor):
                         imgs.append(s_imgs)
                 if len(s.image_thw_grids) > 0:
@@ -567,7 +608,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                     else:
                         image_thw_grids.extend(s.image_thw_grids)
                 if len(s.videos) > 0:
-                    s_vids = s.videos.unsqueeze(0) if isinstance(s.videos, torch.Tensor) and s.videos.dim() == 3 else s.videos
+                    s_vids = self._normalize_visual_block(s.videos) if isinstance(s.videos, torch.Tensor) else s.videos
                     if isinstance(s_vids, torch.Tensor):
                         videos.append(s_vids)
                 if len(s.video_thw_grids) > 0:
@@ -656,8 +697,8 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                 __restore_key__=(),
                 __keys__=sample_keys,
                 __subflavors__=[s.__subflavors__ for s in samples],
-                pixel_values=torch.vstack(imgs) if len(imgs) > 0 else None,
-                pixel_values_videos=torch.vstack(videos) if len(videos) > 0 else None,
+                pixel_values=self._concat_visual_blocks(imgs, "image"),
+                pixel_values_videos=self._concat_visual_blocks(videos, "video"),
                 image_grid_thw=torch.from_numpy(np.array(image_thw_grids)) if len(image_thw_grids) > 0 else None,
                 video_grid_thw=torch.from_numpy(np.array(video_thw_grids)) if len(video_thw_grids) > 0 else None,
                 image_input_mask=torch.from_numpy(image_input_masks),
@@ -716,8 +757,8 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             __restore_key__=(),
             __keys__=sample_keys,
             __subflavors__=[s.__subflavors__ for s in samples],
-            pixel_values=torch.vstack(imgs) if len(imgs) > 0 else None,
-            pixel_values_videos=torch.vstack(videos) if len(videos) > 0 else None,
+            pixel_values=self._concat_visual_blocks(imgs, "image"),
+            pixel_values_videos=self._concat_visual_blocks(videos, "video"),
             image_grid_thw=torch.from_numpy(np.array(image_thw_grids)) if len(image_thw_grids) > 0 else None,
             video_grid_thw=torch.from_numpy(np.array(video_thw_grids)) if len(video_thw_grids) > 0 else None,
             image_input_mask=torch.from_numpy(image_input_masks),
