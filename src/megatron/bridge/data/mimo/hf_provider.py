@@ -5,20 +5,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from datasets import load_dataset
 from torch.utils.data import Dataset
 from transformers import AutoProcessor, AutoTokenizer
 
+from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
 from megatron.bridge.data.mimo.collate import mimo_collate_fn
 from megatron.bridge.data.mimo.dataset import MimoDataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
+from megatron.bridge.training.config import DatasetBuildContext
 
 
 @dataclass(kw_only=True)
-class HFMimoDatasetProvider(DatasetProvider):
+class HFMimoDatasetProvider(MimoDatasetProvider):
     """DatasetProvider for MIMO models using HuggingFace datasets.
 
     Loads datasets from HuggingFace Hub and applies per-modality processors
@@ -72,6 +73,9 @@ class HFMimoDatasetProvider(DatasetProvider):
     train_split: str = "train"
     valid_split: str = "validation"
     test_split: str = "test"
+    trust_remote_code: Optional[bool] = None
+    hf_data_files: Optional[Union[str, List[str]]] = None
+    preprocess_fn: Optional[Callable] = None
 
     # Cached processors and tokenizer (loaded once)
     _processors: Optional[Dict[str, Any]] = field(default=None, repr=False)
@@ -123,6 +127,7 @@ class HFMimoDatasetProvider(DatasetProvider):
             dataset = load_dataset(
                 self.hf_dataset_path,
                 name=self.hf_dataset_name,
+                data_files=self.hf_data_files,
                 split=split,
                 trust_remote_code=is_safe_repo(
                     trust_remote_code=self.trust_remote_code,
@@ -159,6 +164,7 @@ class HFMimoDatasetProvider(DatasetProvider):
             modality_columns=self.modality_columns,
             text_column=self.text_column,
             max_samples=target_samples,
+            preprocess_fn=self.preprocess_fn,
         )
 
     def build_datasets(
