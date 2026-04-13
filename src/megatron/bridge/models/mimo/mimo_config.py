@@ -1,10 +1,11 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-
 from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
 from typing import Optional
+
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
 
 @dataclass
@@ -63,7 +64,7 @@ class MimoParallelismConfig:
     Note: Phase 1 only supports heterogeneous deployment where each module
     can have different parallelism configurations and rank offsets.
 
-    The LLM module must be named "llm" in module_parallelisms.
+    The language module must be named MIMO_LANGUAGE_MODULE_KEY ("language") in module_parallelisms.
     """
 
     module_parallelisms: dict[str, ModuleParallelismConfig]
@@ -97,41 +98,65 @@ class MimoParallelismConfig:
             if cur_start < prev_end:
                 raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
 
-        # Check for gaps between modules (likely misconfiguration)
-        # Gaps in the middle are errors; leading gaps (rank_offset > 0) are warnings
-        if ranges:
-            min_rank = ranges[0][0]  # Already sorted by rank_offset
-            max_rank = ranges[-1][1]
+    def _validate_parallelism_constraints(self) -> None:
+        """Validate parallelism constraints for cross-module communication.
 
-            # Collect all covered ranks
-            covered_ranks = set()
-            for parallelism in self.module_parallelisms.values():
-                start = parallelism.rank_offset
-                end = start + parallelism.total_ranks
-                covered_ranks.update(range(start, end))
+        - TP sizes must be powers of 2
+        - DP sizes must be pairwise divisible (one divides the other)
+        """
 
-            # Check for gaps between min and max (error - likely misconfiguration)
-            expected_middle = set(range(min_rank, max_rank))
-            gaps_in_middle = expected_middle - covered_ranks
-            if gaps_in_middle:
+        def is_power_of_two(n: int) -> bool:
+            return n > 0 and (n & (n - 1)) == 0
+
+        # Validate TP is power of 2
+        for name, p in self.module_parallelisms.items():
+            tp = p.tensor_model_parallel_size
+            if not is_power_of_two(tp):
                 raise ValueError(
-                    f"Ranks {sorted(gaps_in_middle)} are not assigned to any module in heterogeneous "
-                    f"deployment. This creates a gap between modules which is not allowed."
+                    f"Module '{name}' has TP={tp}, but TP size must be a power of 2 "
+                    f"(1, 2, 4, 8, ...) for cross-module communication compatibility."
                 )
 
-            # Check for leading gap (ranks 0 to min_rank-1 unused) - warning only
-            if min_rank > 0:
-                warnings.warn(
-                    f"Ranks {list(range(min_rank))} (before first module) are not assigned to any "
-                    f"module in heterogeneous deployment. These ranks will be idle during training.",
-                    stacklevel=3,
-                )
+        # Validate DP sizes are pairwise divisible
+        module_names = list(self.module_parallelisms.keys())
+        for i, name1 in enumerate(module_names):
+            for name2 in module_names[i + 1 :]:
+                dp1 = self.module_parallelisms[name1].data_parallel_size
+                dp2 = self.module_parallelisms[name2].data_parallel_size
+                if dp1 is None or dp2 is None:
+                    continue
+                if dp1 % dp2 != 0 and dp2 % dp1 != 0:
+                    raise ValueError(
+                        f"DP sizes must be divisible between modules. "
+                        f"Module '{name1}' has DP={dp1}, module '{name2}' has DP={dp2}. "
+                        f"One must divide the other for BridgeCommunicator."
+                    )
 
-    def finalize(self, world_size: Optional[int]) -> None:
-        """Finalize parallelism config: compute data_parallel_size and validate."""
-        if "llm" not in self.module_parallelisms:
+        # Validate encoder DP >= LLM DP for embedding alignment
+        # Encoder modules produce embeddings consumed by LLM. If encoder DP < LLM DP,
+        # the same encoder batch would need to align with different LLM batches, which fails.
+        llm_dp = self.module_parallelisms[MIMO_LANGUAGE_MODULE_KEY].data_parallel_size
+        if llm_dp is not None:
+            for name, p in self.module_parallelisms.items():
+                if name == MIMO_LANGUAGE_MODULE_KEY:
+                    continue
+                encoder_dp = p.data_parallel_size
+                if encoder_dp is not None and encoder_dp < llm_dp:
+                    raise ValueError(
+                        f"Encoder module '{name}' has DP={encoder_dp} < LLM DP={llm_dp}. "
+                        f"Encoder DP must be >= LLM DP for embedding alignment across batches."
+                    )
+
+    def finalize(self, world_size: int) -> None:
+        """Finalize parallelism config: compute data_parallel_size and validate.
+
+        Args:
+            world_size: Total number of ranks in the distributed world.
+                MIMO requires a distributed environment, so this must always be provided.
+        """
+        if MIMO_LANGUAGE_MODULE_KEY not in self.module_parallelisms:
             raise ValueError(
-                f"LLM module 'llm' must be in module_parallelisms. "
+                f"Language module '{MIMO_LANGUAGE_MODULE_KEY}' must be in module_parallelisms. "
                 f"Found modules: {list(self.module_parallelisms.keys())}"
             )
 
@@ -140,8 +165,8 @@ class MimoParallelismConfig:
             parallelism.finalize(None)
 
         self._validate_heterogeneous()
+        self._validate_parallelism_constraints()
 
-        if world_size and world_size > 1:
-            expected = self.total_world_size
-            if expected and world_size != expected:
-                raise ValueError(f"MIMO world size mismatch: expected {expected}, got {world_size}.")
+        expected = self.total_world_size
+        if expected and world_size != expected:
+            raise ValueError(f"MIMO world size mismatch: expected {expected}, got {world_size}.")
