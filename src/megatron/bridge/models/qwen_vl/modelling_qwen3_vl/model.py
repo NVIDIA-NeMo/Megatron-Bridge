@@ -23,6 +23,7 @@ from megatron.core.extensions.transformer_engine import (
 )
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -91,10 +92,19 @@ class Qwen3VLModel(MegatronModule):
         if hasattr(language_transformer_layer_spec, "submodules"):
             language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
+        self.vision_transformer_config = vision_transformer_config
         self.pre_process = pre_process
         self.post_process = post_process
         self.add_encoder = add_encoder
         self.add_decoder = add_decoder
+
+        if hasattr(self.config, "dist_train") and self.config.dist_train.use_dist_train:
+            self.use_dist_train = True
+            self.vision_to_llm_dp_ratio = self.config.dist_train.vision_to_llm_dp_ratio
+            self.vision_embeds = None
+            self.deepstack_feature_lists = None
+        else:
+            self.use_dist_train = False
 
         self.encoder_hidden_state = None
         self.vision_model = None
@@ -126,7 +136,7 @@ class Qwen3VLModel(MegatronModule):
         self.vp_stage = None
         self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
-        if self.pre_process:
+        if self.pre_process and self.add_encoder:
             if language_transformer_config.use_hf_vision_model:
                 raise ValueError("use_hf_vision_model is not supported for Qwen3VLModel for now")
             vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
@@ -151,34 +161,34 @@ class Qwen3VLModel(MegatronModule):
                 post_process=True,
                 pg_collection=pg_collection,
             )
-
-        self.language_model = Qwen3VLGPTModel(
-            config=language_transformer_config,
-            transformer_layer_spec=language_transformer_layer_spec,
-            vocab_size=language_transformer_config.vocab_size,
-            max_sequence_length=language_transformer_config.language_max_sequence_length,
-            parallel_output=parallel_output,
-            position_embedding_type="mrope",
-            rotary_percent=language_transformer_config.rotary_percent,
-            pre_process=self.pre_process,
-            post_process=self.post_process,
-            rotary_base=language_transformer_config.rotary_base,
-            fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
-            share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
-            scatter_embedding_sequence_parallel=False,
-            mtp_block_spec=mtp_block_spec,
-            vp_stage=vp_stage,
-            pg_collection=pg_collection,
-        )
-        if pre_process:
-            deepstack_indexes = getattr(vision_transformer_config, "deepstack_visual_indexes", [])
-            assert len(deepstack_indexes) <= len(self.language_model.decoder.layers), (
-                "the deepstack_visual_embeds should on the first pp-stage of language model",
-                f"got {len(deepstack_indexes)} deepstack_visual_indexes, "
-                f" {len(self.language_model.decoder.layers)} language model layers",
+        if self.add_decoder:
+            self.language_model = Qwen3VLGPTModel(
+                config=language_transformer_config,
+                transformer_layer_spec=language_transformer_layer_spec,
+                vocab_size=language_transformer_config.vocab_size,
+                max_sequence_length=language_transformer_config.language_max_sequence_length,
+                parallel_output=parallel_output,
+                position_embedding_type="mrope",
+                rotary_percent=language_transformer_config.rotary_percent,
+                pre_process=self.pre_process,
+                post_process=self.post_process,
+                rotary_base=language_transformer_config.rotary_base,
+                fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
+                share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
+                scatter_embedding_sequence_parallel=False,
+                mtp_block_spec=mtp_block_spec,
+                vp_stage=vp_stage,
+                pg_collection=pg_collection,
             )
+            if pre_process:
+                deepstack_indexes = getattr(vision_transformer_config, "deepstack_visual_indexes", [])
+                assert len(deepstack_indexes) <= len(self.language_model.decoder.layers), (
+                    "the deepstack_visual_embeds should on the first pp-stage of language model",
+                    f"got {len(deepstack_indexes)} deepstack_visual_indexes, "
+                    f" {len(self.language_model.decoder.layers)} language model layers",
+                )
 
-        self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
+            self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
 
         if self.pg_collection.cp.size() > 1:
             assert self.config.calculate_per_token_loss, (
@@ -202,7 +212,45 @@ class Qwen3VLModel(MegatronModule):
         """
         return getattr(self.language_model, "decoder", None)
 
+    def set_input_tensor_dist_train(self, input_tensor) -> None:
+        """Set input tensor for the model for dist train.
+
+        Args:
+            input_tensor (list): Input tensor.
+        """
+        assert isinstance(input_tensor, list), "Input tensor must be a list, but got {type(input_tensor)}"
+        assert len(input_tensor) == 1, "Input tensor must be a list of length 1, but got {len(input_tensor)}"
+        assert isinstance(input_tensor[0], dict), (
+            "Input tensor[0] must be a dictionary, but got {type(input_tensor[0])}"
+        )
+        input_dict = input_tensor[0]
+
+        if "vision_module" in input_dict:
+            vision_module_output_tensor = input_dict["vision_module"]
+            assert vision_module_output_tensor.dim() == 3, (
+                f"vision_module must be 3D [b, s, h], got shape {tuple(vision_module_output_tensor.shape)}"
+            )
+            # bridge communicator send and receive tensors in 3D shape, [batch, seq, hidden].
+            # Qwen3VL model needs vision embeds in 2D [batch*seq, hidden].
+            # So we merge leading dims, e.g. [b, s, h] -> [b*s, h].
+            d0, d1, d2 = vision_module_output_tensor.shape
+            vision_module_output_tensor = vision_module_output_tensor.reshape(d0 * d1, d2)
+            num_chunks = len(self.vision_transformer_config.deepstack_visual_indexes) + 1
+            chunks = torch.chunk(vision_module_output_tensor, chunks=num_chunks, dim=0)
+            self.vision_embeds = chunks[-1]
+            self.deepstack_feature_lists = chunks[:-1]
+        if "language_module" in input_dict:
+            self.language_model.set_input_tensor(input_dict["language_module"])
+
     def set_input_tensor(self, input_tensor) -> None:
+        """Set input tensor for the model.
+
+        Args:
+            input_tensor (list): Input tensor.
+        """
+        if self.use_dist_train:
+            self.set_input_tensor_dist_train(input_tensor)
+            return
         # This is usually handled in schedules.py but some inference code still
         # gives us non-lists or None
         if not isinstance(input_tensor, list):
@@ -334,6 +382,7 @@ class Qwen3VLModel(MegatronModule):
             )
 
             vision_embeds = None
+            vision_module_output = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
                 if cp_size > 1 and self.config.vision_dp_when_cp:
                     if cp_img_num is None:
@@ -354,10 +403,37 @@ class Qwen3VLModel(MegatronModule):
                     )
                     vision_grid_thw = collapse_thw(vision_grid_thw)
                 if vision_data.shape[0] > 0:
-                    vision_embeds, deepstack_feature_lists = self.vision_model(
-                        hidden_states=vision_data,
-                        grid_thw=vision_grid_thw,
-                    )
+                    if self.use_dist_train:
+                        if self.vision_model is not None:
+                            assert cp_size == 1, (
+                                "currently, dist train does not support context parallelism for encoder"
+                            )
+                            num_chunks = self.vision_to_llm_dp_ratio
+                            chunk_idx = self.pg_collection.dp.rank() % num_chunks
+                            vision_data_chunks = torch.chunk(vision_data, chunks=num_chunks, dim=0)
+                            vision_data = vision_data_chunks[chunk_idx]
+                            vision_grid_thw_chunks = torch.chunk(vision_grid_thw, chunks=num_chunks, dim=0)
+                            vision_grid_thw = vision_grid_thw_chunks[chunk_idx]
+                            vision_embeds, deepstack_feature_lists = self.vision_model(
+                                hidden_states=vision_data,
+                                grid_thw=vision_grid_thw,
+                            )
+                            vision_module_output = deepstack_feature_lists
+                            vision_module_output.append(vision_embeds)
+                            vision_module_output_tensor = torch.cat(vision_module_output, dim=0)
+                            # output of vision_model is 2D [batch*seq, hidden].
+                            # bridge communicator requires 3D [batch, seq, hidden]. So we unsqueeze it to 3D.
+                            vision_module_output_tensor = vision_module_output_tensor.unsqueeze(0)
+                            output_vision_module = {"vision_module": vision_module_output_tensor}
+                            return output_vision_module
+                        else:
+                            vision_embeds = self.vision_embeds
+                            deepstack_feature_lists = self.deepstack_feature_lists
+                    else:
+                        vision_embeds, deepstack_feature_lists = self.vision_model(
+                            hidden_states=vision_data,
+                            grid_thw=vision_grid_thw,
+                        )
                 else:
                     vision_embeds = torch.zeros(
                         (0, self.language_model.config.hidden_size),
@@ -365,7 +441,7 @@ class Qwen3VLModel(MegatronModule):
                         dtype=torch.bfloat16,
                     )
                     deepstack_feature_lists = []
-                    for _ in self.vision_model.config.deepstack_visual_indexes:
+                    for _ in self.vision_transformer_config.deepstack_visual_indexes:
                         deepstack_feature_lists.append(
                             torch.zeros(
                                 (0, self.language_model.config.hidden_size),
@@ -533,5 +609,7 @@ class Qwen3VLModel(MegatronModule):
             **kwargs,
         )
         torch.cuda.nvtx.range_pop()
-
+        if self.use_dist_train:
+            if not is_pp_last_stage(self.pg_collection.pp):
+                return {"language_module": output}
         return output
