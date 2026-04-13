@@ -38,6 +38,38 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 logger = logging.getLogger(__name__)
 
 
+def _get_qwen3_vl_padding_multiple(
+    *,
+    batch_size: int,
+    tp_size: int,
+    cp_size: int,
+    use_fp8_padding: bool,
+    use_hybridep: bool,
+    sequence_parallel: bool,
+) -> tuple[int, int]:
+    """Return the sequence padding multiple and local token divisor.
+
+    HybridEP requires the per-rank token count after CP/SP sharding to be
+    divisible by 128, otherwise the runtime JIT kernels can fail to compile.
+    """
+    base_divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+    if use_fp8_padding:
+        base_divisible_by = math.lcm(base_divisible_by, 16)
+
+    local_token_divisor = cp_size
+    if sequence_parallel:
+        local_token_divisor *= tp_size
+
+    divisible_by = base_divisible_by
+    if use_hybridep:
+        required_seq_multiple = (128 * local_token_divisor) // math.gcd(
+            batch_size, 128 * local_token_divisor
+        )
+        divisible_by = math.lcm(base_divisible_by, required_seq_multiple)
+
+    return divisible_by, local_token_divisor
+
+
 def get_batch_from_iterator(
     data_iterator: Iterable,
     use_mtp: bool = False,
@@ -159,6 +191,8 @@ def pack_or_pad_batch_sequences(
     position_ids: torch.Tensor,
     this_pg_collection,
     use_fp8_padding: bool = False,
+    use_hybridep: bool = False,
+    sequence_parallel: bool = False,
     force_to_pad_to_seq_len: bool = False,
     seq_length: int = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, PackedSeqParams]:
@@ -173,8 +207,14 @@ def pack_or_pad_batch_sequences(
 
     tp_size = this_pg_collection.tp.size()
     cp_size = this_pg_collection.cp.size()
-    divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
-    divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
+    divisible_by, local_token_divisor = _get_qwen3_vl_padding_multiple(
+        batch_size=batch_size,
+        tp_size=tp_size,
+        cp_size=cp_size,
+        use_fp8_padding=use_fp8_padding,
+        use_hybridep=use_hybridep,
+        sequence_parallel=sequence_parallel,
+    )
 
     # build bshd sequences with tiny padding to be compatible with qwen3vl model
     target_len = math.ceil(cur_len / divisible_by) * divisible_by
@@ -233,6 +273,10 @@ def forward_step(
 
     config = get_model_config(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
+    use_hybridep = (
+        getattr(config, "moe_token_dispatcher_type", None) == "flex"
+        and getattr(config, "moe_flex_dispatcher_backend", None) == "hybridep"
+    )
 
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
@@ -258,6 +302,8 @@ def forward_step(
         position_ids,
         this_pg_collection,
         use_fp8_padding=True,
+        use_hybridep=use_hybridep,
+        sequence_parallel=getattr(config, "sequence_parallel", False),
         force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1,
         seq_length=config.seq_length,
     )
