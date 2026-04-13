@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# \!/usr/bin/env python3
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +16,7 @@
 """Pre-pack SFT training data for a recipe that uses packed sequences.
 
 Run this before submitting a training job so packing is not performed on
-GPU compute nodes. Packed .npy files are written to the dataset cache
+GPU compute nodes. Packed .parquet files are written to the dataset cache
 directory defined by the recipe.
 
 Usage (inside container with PYTHONPATH=/opt/megatron-lm:/opt/Megatron-Bridge/src):
@@ -29,6 +29,7 @@ Set HF_HOME / NEMO_HOME if your dataset and model caches are not under ~/.cache.
 
 import argparse
 import sys
+from dataclasses import fields
 
 
 def main() -> None:
@@ -42,7 +43,9 @@ def main() -> None:
     args = parser.parse_args()
 
     from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
+    from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
     from megatron.bridge.recipes.gpt_oss import gpt_oss as gpt_oss_recipes
+    from megatron.bridge.training.config import DataloaderConfig
     from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
     recipe_fn = getattr(gpt_oss_recipes, args.recipe, None)
@@ -58,15 +61,33 @@ def main() -> None:
     if cfg.dataset.packed_sequence_specs is None:
         sys.exit(f"Error: recipe '{args.recipe}' does not use packed sequences.")
 
+    # Cap tokenizer workers to avoid /dev/shm OOM from multiprocessing shared memory.
+    # Default is -1 (all CPUs) which exhausts /dev/shm even on CPU nodes.
+    # Use 1 worker to avoid /dev/shm OOM: num_workers==1 runs single-threaded
+    # with no multiprocessing shared memory (see packed_sequence._retrieve_tokenized).
+    cfg.dataset.packed_sequence_specs.num_tokenizer_workers = 1
+
     print(f"Recipe:   {args.recipe}")
     print(f"Seq len:  {cfg.dataset.packed_sequence_specs.packed_sequence_size}")
+    print(f"Workers:  {cfg.dataset.packed_sequence_specs.num_tokenizer_workers} (single-threaded, no /dev/shm)")
     print()
 
     print("Building tokenizer...")
     tokenizer = build_tokenizer(cfg.tokenizer)
 
     print("Packing dataset (skipped if already cached)...")
-    builder = FinetuningDatasetBuilder(cfg.dataset, tokenizer=tokenizer)
+    dataset_config = cfg.dataset
+    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
+
+    BuilderClass = HFDatasetBuilder if isinstance(dataset_config, HFDatasetConfig) else FinetuningDatasetBuilder
+    builder = BuilderClass(
+        tokenizer=tokenizer,
+        **{
+            field.name: getattr(dataset_config, field.name)
+            for field in fields(dataset_config)
+            if field.name not in dataloader_field_names
+        },
+    )
     builder.prepare_packed_data()
 
     print("Done.")
