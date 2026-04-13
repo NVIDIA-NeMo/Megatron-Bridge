@@ -276,10 +276,15 @@ def _make_energon_dataset(
     """Create an EnergonProvider dataset config for Qwen3-VL recipes."""
     tokenizer = AutoTokenizer.from_pretrained(hf_path)
     # Prefer Qwen3VLProcessor on newer transformers; fall back to AutoProcessor
-    # for older container images that do not yet expose that symbol.
+    # for older container images that do not yet expose that symbol or lack
+    # the video_processing sub-module required by from_pretrained.
+    image_processor = None
     if Qwen3VLProcessor is not None:
-        image_processor = Qwen3VLProcessor.from_pretrained(hf_path)
-    else:
+        try:
+            image_processor = Qwen3VLProcessor.from_pretrained(hf_path)
+        except Exception:
+            pass
+    if image_processor is None:
         from transformers import AutoProcessor
 
         image_processor = AutoProcessor.from_pretrained(hf_path)
