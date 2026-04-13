@@ -253,9 +253,10 @@ def pack_batch_sequences(
             )
         offset += padded_len
 
-    logger.debug(
-        f"Packed {len(valid_sequences)} sequences: lengths={seq_lengths}, total_len={total_len}, max_len={max_seqlen}"
-    )
+    if _thd_diag_enabled():
+        logger.debug(
+            f"Packed {len(valid_sequences)} sequences: lengths={seq_lengths}, total_len={total_len}, max_len={max_seqlen}"
+        )
 
     # Attention mask is not used with packed sequences (handled by cu_seqlens)
     packed_attention_mask = None
@@ -443,7 +444,8 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         batch["attention_mask"] = packed_attention_mask
         batch["position_ids"] = packed_position_ids
 
-        logger.debug(f"In-batch packed: cu_seqlens={cu_seqlens.tolist()}, max_seqlen={max_seqlen}")
+        if _thd_diag_enabled():
+            logger.debug(f"In-batch packed: cu_seqlens={cu_seqlens.tolist()}, max_seqlen={max_seqlen}")
     else:
         cu_seqlens = None
         max_seqlen = None
