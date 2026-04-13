@@ -77,7 +77,7 @@ def set_qwen3_vl_common_configs(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_grad_reduce = False
 
 
-def qwen3_vl_235b_a22b_pretrain_mock_config_gb300(
+def qwen3_vl_235b_a22b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB300, baseline config."""
@@ -102,7 +102,7 @@ def qwen3_vl_235b_a22b_pretrain_mock_config_gb300(
     return cfg
 
 
-def qwen3_vl_235b_a22b_pretrain_mock_config_gb200(
+def qwen3_vl_235b_a22b_pretrain_config_gb200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB200, baseline config."""
@@ -127,7 +127,7 @@ def qwen3_vl_235b_a22b_pretrain_mock_config_gb200(
     return cfg
 
 
-def qwen3_vl_235b_a22b_pretrain_mock_config_b200(
+def qwen3_vl_235b_a22b_pretrain_config_b200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """B200, baseline config."""
@@ -157,7 +157,7 @@ def qwen3_vl_235b_a22b_pretrain_mock_config_b200(
     return cfg
 
 
-def qwen3_vl_235b_a22b_pretrain_mock_config_h100(
+def qwen3_vl_235b_a22b_pretrain_config_h100(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """H100, baseline config."""
@@ -180,7 +180,7 @@ def qwen3_vl_235b_a22b_pretrain_mock_config_h100(
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_mock_config_gb300(
+def qwen3_vl_30b_a3b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB300, baseline config."""
@@ -205,7 +205,7 @@ def qwen3_vl_30b_a3b_pretrain_mock_config_gb300(
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_mock_config_gb200(
+def qwen3_vl_30b_a3b_pretrain_config_gb200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB200, baseline config."""
@@ -230,7 +230,7 @@ def qwen3_vl_30b_a3b_pretrain_mock_config_gb200(
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_mock_config_b200(
+def qwen3_vl_30b_a3b_pretrain_config_b200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """B200, baseline config."""
@@ -255,7 +255,7 @@ def qwen3_vl_30b_a3b_pretrain_mock_config_b200(
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_mock_config_h100(
+def qwen3_vl_30b_a3b_pretrain_config_h100(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """H100, baseline config."""
