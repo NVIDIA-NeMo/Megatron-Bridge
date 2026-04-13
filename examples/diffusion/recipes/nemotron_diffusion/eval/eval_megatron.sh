@@ -158,6 +158,9 @@ if [ -n "${CUSTOM_CHECKPOINT:-}" ]; then
         if [ "${_mode}" = "dllm" ]; then
             block_lengths+=(32)
             shift_logits+=(False)
+        elif [ "${_mode}" = "ctc" ]; then
+            block_lengths+=(128)
+            shift_logits+=(False)
         else
             block_lengths+=(1)
             shift_logits+=(True)
