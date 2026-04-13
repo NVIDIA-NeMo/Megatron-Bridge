@@ -124,7 +124,6 @@ if [ "${ENABLE_NSYS}" = "1" ]; then
         --force-overwrite true
         --capture-range=cudaProfilerApi
         --capture-range-end=stop
-        --cuda-event-trace=false
     )
 fi
 
