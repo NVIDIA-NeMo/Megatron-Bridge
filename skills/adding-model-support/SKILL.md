@@ -111,6 +111,14 @@ src/megatron/bridge/models/<model>/
 └── modeling_<model>.py       # HF vision + Megatron language wrapper
 ```
 
+**Model-specific modeling code:** If the model requires custom `nn.Module` implementations
+(e.g. a custom RoPE variant, non-standard transformer config, custom thinker/talker
+architecture), place them in a `modeling_<model>/` directory or a single `modeling_<model>.py`
+file inside the model family folder. Use a directory when there are multiple files (model,
+transformer config, custom ops); use a single file when one module suffices. Never put
+model-specific modeling code in shared directories or as loose files in the bridge family
+directory — keep them namespaced under the `modeling_<model>` prefix.
+
 ### Implementation order
 
 **LLM:**
@@ -204,9 +212,23 @@ class _FullDimQKNormMapping(MegatronParamMapping):
 | `provider_bridge()` | Configure the provider with model-specific flags (call `super()` then setattr) |
 | `maybe_modify_loaded_hf_weight()` | Dequantize, rename, or reshape HF weights before conversion |
 | `maybe_modify_converted_hf_weight()` | Synthesize extra HF keys on export (e.g. `inv_freq`) |
-| `build_conversion_tasks()` | Stash state (e.g. `_hf_config`) before `mapping_registry()` runs |
 | `megatron_to_hf_config()` | Build HF `config.json` for export |
 | `hf_config_to_provider_kwargs()` | Override CONFIG_MAPPING behavior for specific fields |
+
+**Accessing HF config in `mapping_registry()`:** The bridge instance has `self.hf_config`
+available during conversion — it is set automatically by the dispatch system before
+`mapping_registry()` is called. Use it when your mapping registry needs config-dependent
+logic (e.g. dynamic MTP layer count, number of experts):
+
+```python
+def mapping_registry(self) -> MegatronMappingRegistry:
+    hf_config = getattr(self, "hf_config", None)
+    num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) if hf_config else 0
+    ...
+```
+
+Do **not** override `build_conversion_tasks()` to stash `self._hf_config` — that pattern is
+deprecated.
 
 #### Strategy 3: Custom provider subclass (VLMs only)
 
