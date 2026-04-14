@@ -115,6 +115,21 @@ def test_argparse_rejects_hf_token_with_offline(import_performance_module):
         )
 
 
+def test_resolve_domain_forces_qwen3vl_for_qwen_vl(import_performance_module):
+    """Qwen3-VL perf launches should always use the dedicated qwen3vl domain."""
+    argument_parser = import_performance_module("scripts.performance.argument_parser")
+
+    assert argument_parser.resolve_domain("llm", "qwen_vl") == "qwen3vl"
+    assert argument_parser.resolve_domain("vlm", "qwen_vl") == "qwen3vl"
+
+
+def test_resolve_domain_keeps_llm_for_llama(import_performance_module):
+    """Non-VLM model families should keep their requested/default domain."""
+    argument_parser = import_performance_module("scripts.performance.argument_parser")
+
+    assert argument_parser.resolve_domain("llm", "llama") == "llm"
+
+
 def test_slurm_executor_sets_offline_env_and_container_writable(import_performance_module):
     """Offline mode should set HF_HUB_OFFLINE and preserve the offline Transformers default."""
     executors = import_performance_module("scripts.performance.utils.executors")

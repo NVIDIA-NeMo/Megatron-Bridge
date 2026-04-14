@@ -56,6 +56,8 @@ logger = logging.getLogger(__name__)
 def set_qwen3_vl_common_configs(cfg: ConfigContainer) -> None:
     """Set common performance configurations for all Qwen3-VL configs."""
     cfg.model.bias_activation_fusion = True
+    # Qwen3-VL uses a custom mRoPE path that does not support fused RoPE kernels.
+    cfg.model.apply_rope_fusion = False
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None

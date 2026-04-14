@@ -30,6 +30,7 @@ from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLM
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.utils import fusions
 
 
 @dataclass
@@ -107,6 +108,9 @@ class Qwen3VLModelProvider(GPTModelProvider):
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3 VL model instance with vision and language components."""
+        if not fusions.validate_rope_fusion_compatibility(self):
+            self.apply_rope_fusion = False
+
         language_transformer_config = self
         hf_vision_config = self.vision_config
 
@@ -257,6 +261,9 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3 VL MoE model instance with vision and language components."""
+        if not fusions.validate_rope_fusion_compatibility(self):
+            self.apply_rope_fusion = False
+
         language_transformer_config = self
         hf_vision_config = self.vision_config
 

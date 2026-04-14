@@ -18,7 +18,7 @@ import re
 import sys
 
 import torch
-from argument_parser import parse_cli_args
+from argument_parser import parse_cli_args, resolve_domain
 from utils.overrides import set_cli_overrides, set_post_overrides, set_user_overrides
 from utils.utils import get_perf_optimized_recipe
 
@@ -67,6 +67,15 @@ def main():
     # `argparse.parse_known_args()` returns the unknown args as a `list[str]`.
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
+    resolved_domain = resolve_domain(args.domain, args.model_family_name)
+    if resolved_domain != args.domain:
+        logger.info(
+            "Using domain '%s' for model family '%s' instead of requested/default '%s'.",
+            resolved_domain,
+            args.model_family_name,
+            args.domain,
+        )
+        args.domain = resolved_domain
 
     if args.dump_env:
         _dump_env_rank0()

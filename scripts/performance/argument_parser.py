@@ -37,6 +37,10 @@ NUM_GPUS_PER_NODE_MAP = {
     "r100": 1,
 }
 
+REQUIRED_DOMAIN_BY_MODEL_FAMILY = {
+    "qwen_vl": "qwen3vl",
+}
+
 
 def list_of_strings(arg):
     """Split a comma-separated string into a list of substrings."""
@@ -88,6 +92,15 @@ def bool_arg(arg):
         return False
     else:
         raise ValueError(f"Invalid value for boolean argument: {arg}")
+
+
+def resolve_domain(domain: str | None, model_family_name: str) -> str:
+    """Resolve the effective domain for a model family."""
+    resolved_domain = domain or "llm"
+    required_domain = REQUIRED_DOMAIN_BY_MODEL_FAMILY.get(model_family_name)
+    if required_domain is not None:
+        return required_domain
+    return resolved_domain
 
 
 def is_cuda_graph_impl_valid(arg):

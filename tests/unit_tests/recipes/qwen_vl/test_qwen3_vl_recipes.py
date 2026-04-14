@@ -95,6 +95,18 @@ class _FakeAutoBridge:
         return _FakeModelCfg()
 
 
+class _TrackingAutoBridge(_FakeAutoBridge):
+    """Fake AutoBridge that records the requested HF repo."""
+
+    last_hf_path: str | None = None
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str):
+        """Record the HF repo used by the recipe under test."""
+        _TrackingAutoBridge.last_hf_path = hf_path
+        return _TrackingAutoBridge()
+
+
 def _assert_basic_config(cfg):
     """Assert that a config has all required components."""
     from megatron.bridge.training.config import ConfigContainer
@@ -294,6 +306,8 @@ def test_qwen3_vl_235b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
     # Check expert_model_parallel_size for MoE model
     assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.account_for_embedding_in_pipeline_split is True
+    assert cfg.model.account_for_loss_in_pipeline_split is True
 
 
 def test_qwen3_vl_235b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -312,6 +326,37 @@ def test_qwen3_vl_235b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
     # Check PEFT config
     assert cfg.peft is not None
+    assert cfg.model.account_for_embedding_in_pipeline_split is True
+    assert cfg.model.account_for_loss_in_pipeline_split is True
+
+
+@pytest.mark.parametrize(
+    "recipe_func",
+    [
+        _qwen3_vl_module.qwen3_vl_235b_a22b_pretrain_mock_config,
+        _qwen3_vl_module.qwen3_vl_235b_a22b_sft_config,
+        _qwen3_vl_module.qwen3_vl_235b_a22b_peft_config,
+    ],
+)
+def test_qwen3_vl_235b_uses_instruct_repo(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that 235B-A22B recipes point at the published Instruct HF repo."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _TrackingAutoBridge)
+    _TrackingAutoBridge.last_hf_path = None
+
+    cfg = recipe_func()
+
+    assert _TrackingAutoBridge.last_hf_path == "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    assert cfg.dataset.hf_processor_path == "Qwen/Qwen3-VL-235B-A22B-Instruct"
+
+
+def test_qwen3_vl_235b_a22b_pretrain_mock_uses_pipeline_split_accounting(monkeypatch: pytest.MonkeyPatch):
+    """Test that 235B-A22B pretrain enables embedding/loss pipeline accounting."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen3_vl_module.qwen3_vl_235b_a22b_pretrain_mock_config()
+
+    assert cfg.model.account_for_embedding_in_pipeline_split is True
+    assert cfg.model.account_for_loss_in_pipeline_split is True
 
 
 def test_qwen3_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
