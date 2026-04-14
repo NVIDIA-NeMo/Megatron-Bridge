@@ -694,6 +694,11 @@ def preprocess_packed_seqs(
     See https://github.com/NVIDIA/TransformerEngine/issues/1368
     """
     batch_size = input_ids.shape[0]
+    # Boolean mask is required for advanced indexing semantics below:
+    # input_ids[i, attention_mask[i]]
+    # If mask is int (0/1), PyTorch treats it as positional index selection
+    # rather than keep-mask, which can silently corrupt THD remapping.
+    attention_mask = attention_mask.bool()
 
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     if pg_collection is not None:

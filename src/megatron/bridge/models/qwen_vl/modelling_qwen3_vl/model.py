@@ -545,7 +545,7 @@ class Qwen3VLModel(MegatronModule):
                     attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
                 attn_mask_bool = attention_mask.bool()
                 input_ids_thd, _ = preprocess_packed_seqs(
-                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
+                    input_ids, attn_mask_bool, pre_process=True, pg_collection=self.pg_collection
                 )
                 lm_input_ids = input_ids_thd
                 if moe_padding_mask_for_lm is not None:
@@ -622,7 +622,7 @@ class Qwen3VLModel(MegatronModule):
                         tmp_embeddings[vision_mask] = deepstack_visual_embed
                         tmp_embeddings_thd = preprocess_packed_seqs(
                             tmp_embeddings.contiguous(),
-                            attention_mask,
+                            attn_mask_bool,
                             pre_process=True,
                             pg_collection=self.pg_collection,
                         )[0]
@@ -634,7 +634,7 @@ class Qwen3VLModel(MegatronModule):
                 combined_embeddings_thd = (
                     preprocess_packed_seqs(
                         combined_embeddings.transpose(0, 1).contiguous(),
-                        attention_mask,
+                        attn_mask_bool,
                         pre_process=True,
                         pg_collection=self.pg_collection,
                     )[0]
@@ -656,7 +656,7 @@ class Qwen3VLModel(MegatronModule):
                     attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
                 attn_mask_bool = attention_mask.bool()
                 lm_input_ids, _ = preprocess_packed_seqs(
-                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
+                    input_ids, attn_mask_bool, pre_process=True, pg_collection=self.pg_collection
                 )
                 if moe_padding_mask_for_lm is not None:
                     moe_padding_mask_for_lm = preprocess_packed_seqs(
@@ -762,10 +762,11 @@ class Qwen3VLModel(MegatronModule):
 
                 position_ids = packed_pos
 
+                attn_mask_bool = attention_mask.bool()
                 position_ids = (
                     preprocess_packed_seqs(
                         position_ids.permute(1, 2, 0),
-                        attention_mask,
+                        attn_mask_bool,
                         pre_process=True,
                         pg_collection=self.pg_collection,
                     )[0]
