@@ -49,14 +49,13 @@ import torch
 import torch.distributed as dist
 from transformers import AutoTokenizer
 
-# Register NemotronDiffusionBridge so AutoBridge uses NemotronDiffusionAttention
-import megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge  # noqa: F401
-from megatron.bridge import AutoBridge
+from megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge import NemotronDiffusionBridge
 from megatron.bridge.diffusion.models.nemotron_diffusion.inference_nemotron_diffusion import (
     generate_ar,
     generate_dllm,
     set_tp_group,
 )
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 def parse_args():
@@ -141,8 +140,9 @@ def parse_args():
 
 def load_model(args):
     """Load the NemotronDiffusion model from a Megatron checkpoint via AutoBridge."""
-    bridge = AutoBridge.from_hf_pretrained(args.hf_model, torch_dtype=torch.bfloat16)
-    model_provider = bridge.to_megatron_provider(load_weights=False)
+    hf_pretrained = PreTrainedCausalLM.from_pretrained(args.hf_model, torch_dtype=torch.bfloat16)
+    bridge = NemotronDiffusionBridge()
+    model_provider = bridge.provider_bridge(hf_pretrained)
     model_provider.tensor_model_parallel_size = args.tp
     model_provider.pipeline_model_parallel_size = 1
     model_provider.pipeline_dtype = torch.bfloat16
@@ -157,7 +157,6 @@ def load_model(args):
         checkpoint_path=args.megatron_path,
         model_cfg=model_provider,
         skip_temp_dist_context=True,
-        dist_ckpt_strictness="ignore_all",
     )
     model = megatron_models[0] if isinstance(megatron_models, list) else megatron_models
     return model.cuda().eval()
