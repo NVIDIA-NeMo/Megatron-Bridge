@@ -71,22 +71,24 @@ QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX = QWEN3_VL_235B_A22B_PRETRAIN_CO
 QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_GB200_BF16 = replace(
     BASE_QWEN3_VL_235B_A22B_CONFIG,
     num_gpus=64,
+    micro_batch_size=2,
     pipeline_model_parallel_size=8,
     expert_model_parallel_size=8,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
 )
 
 
 QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_CS = replace(
     BASE_QWEN3_VL_235B_A22B_CONFIG,
     num_gpus=64,
+    micro_batch_size=2,
     pipeline_model_parallel_size=8,
     expert_model_parallel_size=8,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
 )
 
 
