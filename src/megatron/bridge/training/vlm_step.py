@@ -239,7 +239,7 @@ def pack_batch_sequences(
         else:
             padded_len = length
         padded_seq_lengths.append(padded_len)
-        # Use padded lengths for cu_seqlens so THD RoPE splits sum correctly under CP.
+        # Use padded lengths for packed kernels under CP/SP alignment constraints.
         cu_seqlens.append(cu_seqlens[-1] + padded_len)
 
     cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32, device=device)
@@ -610,6 +610,15 @@ def forward_step(
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_dict)
         # Pass unpadded boundaries only to Qwen model's MRoPE construction.
         forward_args["rope_cu_seqlens"] = cu_unpadded
+        if _thd_diag_enabled() and _rank0():
+            logger.info(
+                "[THD_DIAG][packed] physical_seq_len=%d cu_unpadded_last=%d cu_padded_last=%d implicit_pad=%d max_seqlen=%d",
+                int(physical_seq_len),
+                int(cu_unpadded[-1].item()),
+                int(cu_padded[-1].item()),
+                int(physical_seq_len - int(cu_unpadded[-1].item())),
+                int(max_seqlen_out.item()) if torch.is_tensor(max_seqlen_out) else int(max_seqlen_out),
+            )
 
     if loss_mask is not None:
         loss_mask = loss_mask.contiguous()
@@ -633,6 +642,28 @@ def forward_step(
                 output_tensor, loss_mask = model_output
             else:
                 output_tensor = model_output
+
+    if _thd_diag_enabled() and _rank0() and loss_mask is not None:
+        loss_mask_flat = loss_mask.view(-1)
+        valid_loss_tokens = int((loss_mask_flat > 0).sum().item())
+        total_loss_tokens = int(loss_mask_flat.numel())
+        if labels is not None:
+            labels_flat = labels.view(-1)
+            ignore_tokens = int((labels_flat == -100).sum().item())
+            logger.info(
+                "[THD_DIAG][loss] total=%d valid=%d masked=%d labels_ignore=%d",
+                total_loss_tokens,
+                valid_loss_tokens,
+                total_loss_tokens - valid_loss_tokens,
+                ignore_tokens,
+            )
+        else:
+            logger.info(
+                "[THD_DIAG][loss] total=%d valid=%d masked=%d labels_ignore=n/a",
+                total_loss_tokens,
+                valid_loss_tokens,
+                total_loss_tokens - valid_loss_tokens,
+            )
 
     loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
 

@@ -689,13 +689,21 @@ class Qwen3VLModel(MegatronModule):
         if packed_seq_params is not None and lm_input_ids is not None:
             padding_mask_for_moe = lm_input_ids.eq(0)
             if _thd_diag_enabled() and _rank0():
+                input_zero_cnt = int(input_ids.eq(0).sum().item()) if input_ids is not None else -1
+                lm_zero_cnt = int(lm_input_ids.eq(0).sum().item())
                 pad_cnt = int(padding_mask_for_moe.sum().item())
                 tok_cnt = int(padding_mask_for_moe.numel())
+                loss_valid = int((loss_mask > 0).sum().item()) if loss_mask is not None else -1
+                loss_total = int(loss_mask.numel()) if loss_mask is not None else -1
                 logger.info(
-                    "[THD_DIAG][model] padding_mask_for_moe: total_tokens=%d padding_tokens=%d valid_tokens=%d",
+                    "[THD_DIAG][model] padding_mask_for_moe: total_tokens=%d padding_tokens=%d valid_tokens=%d input_zero_tokens=%d lm_zero_tokens=%d loss_valid_tokens=%d loss_total_tokens=%d",
                     tok_cnt,
                     pad_cnt,
                     tok_cnt - pad_cnt,
+                    input_zero_cnt,
+                    lm_zero_cnt,
+                    loss_valid,
+                    loss_total,
                 )
 
         output = self.language_model(
@@ -706,8 +714,8 @@ class Qwen3VLModel(MegatronModule):
             labels=labels,  # only not None in the last decoder PP stage
             loss_mask=loss_mask,  # Added for THD training compatibility
             padding_mask=padding_mask_for_moe,  # for MoE routing/aux-loss token accounting
-            inference_params=inference_params,  # currently always None
-            packed_seq_params=packed_seq_params,  # currently always None
+            inference_params=inference_params,  # training path keeps this as None
+            packed_seq_params=packed_seq_params,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
             **(extra_block_kwargs or {}),
