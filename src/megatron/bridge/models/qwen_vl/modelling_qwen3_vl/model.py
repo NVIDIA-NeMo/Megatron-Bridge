@@ -789,6 +789,42 @@ class Qwen3VLModel(MegatronModule):
                         head_vals,
                         tail_vals,
                     )
+                    # Strict check: verify THD-remapped position_ids equals explicit bool-mask gather
+                    # semantics for cp_size==1. This is diagnostics-only.
+                    if int(cp_size) == 1:
+                        tp_size = int(self.pg_collection.tp.size())
+                        align_size = tp_size
+                        packed_pos_bsd = packed_pos.permute(1, 2, 0).contiguous()  # [1, S, 3]
+                        valid_len = int(attn_mask_bool[0].sum().item())
+                        padded_len = valid_len + ((align_size - (valid_len % align_size)) % align_size)
+                        expected_bsd = torch.zeros(
+                            (1, padded_len, packed_pos_bsd.size(-1)),
+                            dtype=packed_pos_bsd.dtype,
+                            device=packed_pos_bsd.device,
+                        )
+                        expected_bsd[0, :valid_len] = packed_pos_bsd[0, attn_mask_bool[0]]
+                        expected_pid = expected_bsd.permute(2, 0, 1).contiguous()
+
+                        same = bool(torch.equal(position_ids, expected_pid))
+                        mismatch = (position_ids != expected_pid).any(dim=0).squeeze(0)
+                        mismatch_cnt = int(mismatch.sum().item())
+                        mismatch_idx = torch.nonzero(mismatch, as_tuple=False).flatten()
+                        head_idx = mismatch_idx[:8].tolist()
+                        tail_idx = mismatch_idx[-8:].tolist() if mismatch_idx.numel() > 8 else []
+                        logger.info(
+                            "[THD_DIAG][mrope] strict_match=%s mismatch_count=%d expected_len=%d actual_len=%d mismatch_head=%s mismatch_tail=%s",
+                            str(same),
+                            mismatch_cnt,
+                            int(expected_pid.size(-1)),
+                            int(position_ids.size(-1)),
+                            head_idx,
+                            tail_idx,
+                        )
+                    else:
+                        logger.info(
+                            "[THD_DIAG][mrope] strict_match_skipped cp_size=%d (currently only checks cp_size==1)",
+                            int(cp_size),
+                        )
                 attention_mask = None
                 self.language_model.rotary_pos_emb.is_thd_format = True
             else:
