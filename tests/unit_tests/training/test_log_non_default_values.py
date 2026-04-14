@@ -315,6 +315,19 @@ class TestLogNonDefaultValues:
         assert "MLATransformerConfig" in log_output
 
     @patch("megatron.bridge.training.config.print_rank_0")
+    def test_logs_logger_peak_tflops_when_set(self, mock_print_rank_0):
+        """Should include peak_theoretical_tflops_per_gpu in logger key values when set."""
+        cfg = self._create_minimal_config_container()
+        cfg.logger.peak_theoretical_tflops_per_gpu = 312.0
+
+        cfg.log_non_default_values()
+
+        log_output = mock_print_rank_0.call_args[0][0]
+
+        assert "[logger]:" in log_output
+        assert "peak_theoretical_tflops_per_gpu: 312.0" in log_output
+
+    @patch("megatron.bridge.training.config.print_rank_0")
     def test_adam_eps_not_logged_when_default(self, mock_print_rank_0):
         """adam_eps should not appear in logs when set to Mcore default (1e-8)."""
         cfg = ConfigContainer(
