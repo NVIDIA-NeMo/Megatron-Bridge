@@ -40,7 +40,9 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     AllGatherVisionEmbeddings,
     PatchMergerSubmodules,
     collapse_thw,
+    get_dist_train_vision_dp_data,
     get_vision_cp_data,
+    pack_dist_train_vision_module_output,
     preprocess_packed_seqs,
     qwen3vl_cp_split,
     reorganize_inputs,
@@ -98,14 +100,6 @@ class Qwen3VLModel(MegatronModule):
         self.add_encoder = add_encoder
         self.add_decoder = add_decoder
 
-        if hasattr(self.config, "dist_train") and getattr(self.config.dist_train, "use_dist_train", False) is True:
-            self.use_dist_train = True
-            self.vision_to_llm_dp_ratio = self.config.dist_train.vision_to_llm_dp_ratio
-            self.vision_embeds = None
-            self.deepstack_feature_lists = None
-        else:
-            self.use_dist_train = False
-
         self.encoder_hidden_state = None
         self.vision_model = None
         self.language_model = None
@@ -135,6 +129,21 @@ class Qwen3VLModel(MegatronModule):
         self.embd_group = pg_collection.embd
         self.vp_stage = None
         self.vp_size = self.config.virtual_pipeline_model_parallel_size
+
+        if hasattr(self.config, "dist_train") and getattr(self.config.dist_train, "use_dist_train", False) is True:
+            self.use_dist_train = True
+            self.vision_to_llm_dp_ratio = self.config.dist_train.vision_to_llm_dp_ratio
+            self.vision_embeds = None
+            self.deepstack_feature_lists = None
+            assert not (self.add_encoder and self.add_decoder) and (self.add_encoder or self.add_decoder), (
+                "add_encoder and add_decoder should not be both True or both False "
+                f"if use_dist_train is True, got {self.add_encoder} and {self.add_decoder}"
+            )
+            assert self.pg_collection.cp.size() == 1, (
+                "currently, dist train does not support context parallelism for encoder."
+            )
+        else:
+            self.use_dist_train = False
 
         if self.pre_process and self.add_encoder:
             if language_transformer_config.use_hf_vision_model:
@@ -212,7 +221,7 @@ class Qwen3VLModel(MegatronModule):
         """
         return getattr(self.language_model, "decoder", None)
 
-    def set_input_tensor_dist_train(self, input_tensor) -> None:
+    def set_dist_train_input_tensors(self, input_tensor) -> None:
         """Set input tensor for the model for dist train.
 
         Args:
@@ -249,7 +258,7 @@ class Qwen3VLModel(MegatronModule):
             input_tensor (list): Input tensor.
         """
         if self.use_dist_train:
-            self.set_input_tensor_dist_train(input_tensor)
+            self.set_dist_train_input_tensors(input_tensor)
             return
         # This is usually handled in schedules.py but some inference code still
         # gives us non-lists or None
@@ -381,8 +390,6 @@ class Qwen3VLModel(MegatronModule):
                 square_merge_size=self.square_merge_size,
             )
 
-            vision_embeds = None
-            vision_module_output = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
                 if cp_size > 1 and self.config.vision_dp_when_cp:
                     if cp_img_num is None:
@@ -405,26 +412,20 @@ class Qwen3VLModel(MegatronModule):
                 if vision_data.shape[0] > 0:
                     if self.use_dist_train:
                         if self.vision_model is not None:
-                            assert cp_size == 1, (
-                                "currently, dist train does not support context parallelism for encoder"
+                            vision_data, vision_grid_thw = get_dist_train_vision_dp_data(
+                                vision_data,
+                                vision_grid_thw,
+                                num_chunks=self.vision_to_llm_dp_ratio,
+                                dp_rank=self.pg_collection.dp.rank(),
                             )
-                            num_chunks = self.vision_to_llm_dp_ratio
-                            chunk_idx = self.pg_collection.dp.rank() % num_chunks
-                            vision_data_chunks = torch.chunk(vision_data, chunks=num_chunks, dim=0)
-                            vision_data = vision_data_chunks[chunk_idx]
-                            vision_grid_thw_chunks = torch.chunk(vision_grid_thw, chunks=num_chunks, dim=0)
-                            vision_grid_thw = vision_grid_thw_chunks[chunk_idx]
                             vision_embeds, deepstack_feature_lists = self.vision_model(
                                 hidden_states=vision_data,
                                 grid_thw=vision_grid_thw,
                             )
-                            vision_module_output = deepstack_feature_lists
-                            vision_module_output.append(vision_embeds)
-                            vision_module_output_tensor = torch.cat(vision_module_output, dim=0)
-                            # output of vision_model is 2D [batch*seq, hidden].
-                            # bridge communicator requires 3D [batch, seq, hidden]. So we unsqueeze it to 3D.
-                            vision_module_output_tensor = vision_module_output_tensor.unsqueeze(0)
-                            output_vision_module = {"vision_module": vision_module_output_tensor}
+                            output_vision_module = pack_dist_train_vision_module_output(
+                                vision_embeds,
+                                deepstack_feature_lists,
+                            )
                             torch.cuda.nvtx.range_pop()
                             return output_vision_module
                         else:
