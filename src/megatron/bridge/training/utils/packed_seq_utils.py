@@ -21,9 +21,8 @@ from megatron.core.packed_seq_params import PackedSeqParams
 def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     """Build packed sequence parameters from a batch dictionary.
 
-    The function squeezes possible batch dimensions and removes any padding
-    marked by -1 values. It returns a `PackedSeqParams` instance suitable for
-    packed sequence attention kernels.
+    The function trims optional sentinel tails via argmin metadata and returns
+    a `PackedSeqParams` instance suitable for packed sequence kernels.
 
     Args:
         batch: A dictionary containing packed-sequence metadata. Expected keys:
@@ -31,8 +30,9 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
             optional `max_seqlen`.
 
     Returns:
-        PackedSeqParams with identical q/kv parameters and `qkv_format` set to
-        "thd".
+        PackedSeqParams for THD (`qkv_format="thd"`). If unpadded boundaries
+        are provided, they are used for q/kv while padded boundaries remain in
+        `*_padded` fields for kernel compatibility.
     """
 
     cu_seqlens_padded = batch["cu_seqlens"].squeeze()
@@ -72,9 +72,8 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
         )
     else:
         # Follow Megatron-LM data_schedule.py convention: set all four
-        # cu_seqlens fields to padded values so every downstream op (RoPE,
-        # TE attention, GDN) sees consistent boundaries without relying on
-        # fallback logic.
+        # cu_seqlens fields to padded values so packed kernels consume a
+        # single consistent boundary set.
         return PackedSeqParams(
             cu_seqlens_q=cu_seqlens_padded,
             cu_seqlens_kv=cu_seqlens_padded,
