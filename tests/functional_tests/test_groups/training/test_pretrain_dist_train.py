@@ -17,7 +17,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
-from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLDistTrainConfig, Qwen3VLModelProvider
+from megatron.bridge.models.qwen_vl.qwen3_vl_provider import DistTrainConfig, Qwen3VLModelProvider
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -85,7 +85,7 @@ class TestPretrainDistTrain:
         model_cfg.variable_seq_lengths = True
         model_cfg.moe_token_dispatcher_type = "flex"
         model_cfg.deallocate_pipeline_outputs = False
-        model_cfg.dist_train = Qwen3VLDistTrainConfig(
+        model_cfg.dist_train = DistTrainConfig(
             use_dist_train=True,
             vision_to_llm_dp_ratio=2,
             vision_world_size=4,

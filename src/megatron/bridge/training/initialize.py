@@ -758,19 +758,18 @@ def _initialize_distributed(
         if dist_config.use_decentralized_pg or dist_config.distributed_backend == "nccl":
             raise RuntimeError("Cannot initialize parallel groups with no CUDA devices available (device_count=0)")
 
-    if hasattr(model_config, "dist_train") and model_config.dist_train.use_dist_train:
-        parallel_state._set_global_memory_buffer()
-        pg_collection = _create_dist_train_pgs(
-            model_config,
-            num_distributed_optimizer_instances,
-            get_embedding_ranks=get_embedding_ranks,
-            get_position_embedding_ranks=get_position_embedding_ranks,
-        )
-        return pg_collection
-    elif dist_config.use_decentralized_pg:
+    if dist_config.use_decentralized_pg:
         # Use HyperCommGrid to create local parallel groups passed through functions
         # instead of relying on mcore's global parallel state (mpu) variables.
         parallel_state._set_global_memory_buffer()
+        if hasattr(model_config, "dist_train") and model_config.dist_train.use_dist_train:
+            pg_collection = _create_dist_train_pgs(
+                model_config,
+                num_distributed_optimizer_instances,
+                get_embedding_ranks=get_embedding_ranks,
+                get_position_embedding_ranks=get_position_embedding_ranks,
+            )
+            return pg_collection
         pg_collection = _create_pg_collection(
             model_config,
             num_distributed_optimizer_instances,

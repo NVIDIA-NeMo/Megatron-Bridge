@@ -33,7 +33,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 
 
 @dataclass
-class Qwen3VLDistTrainConfig:
+class DistTrainConfig:
     """Distributed training (DistTrain) settings for Qwen3-VL providers."""
 
     use_dist_train: bool = False
@@ -121,7 +121,7 @@ class Qwen3VLModelProvider(GPTModelProvider):
     vision_dp_when_cp: bool = False
 
     # It’s an experimental feature and may change in the future.
-    dist_train: Qwen3VLDistTrainConfig = field(default_factory=Qwen3VLDistTrainConfig)
+    dist_train: DistTrainConfig = field(default_factory=DistTrainConfig)
     add_encoder: bool = True
     add_decoder: bool = True
 
@@ -273,7 +273,7 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     vision_dp_when_cp: bool = False
 
     # It’s an experimental feature and may change in the future.
-    dist_train: Qwen3VLDistTrainConfig = field(default_factory=Qwen3VLDistTrainConfig)
+    dist_train: DistTrainConfig = field(default_factory=DistTrainConfig)
     add_encoder: bool = True
     add_decoder: bool = True
 
