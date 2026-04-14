@@ -51,6 +51,10 @@ def _thd_diag_enabled() -> bool:
     return _switch_enabled("THD_DIAG")
 
 
+def _thd_diag_boundary_enabled() -> bool:
+    return _switch_enabled("THD_DIAG_BOUNDARY")
+
+
 def _switch_enabled(name: str) -> bool:
     enabled = os.environ.get(name, "0") not in ("0", "", "false", "False")
     if enabled and _rank0() and name not in _SWITCH_LOGGED:
@@ -630,6 +634,54 @@ def forward_step(
                 int(max_seqlen_out.item()) if torch.is_tensor(max_seqlen_out) else int(max_seqlen_out),
                 int(moe_padding_mask.sum().item()),
             )
+        if _thd_diag_boundary_enabled() and _rank0():
+            cu_padded_cpu = cu_padded.detach().cpu()
+            cu_unpadded_cpu = cu_unpadded.detach().cpu()
+            seg_lens_padded = (cu_padded_cpu[1:] - cu_padded_cpu[:-1]).tolist()
+            seg_lens_unpadded = (cu_unpadded_cpu[1:] - cu_unpadded_cpu[:-1]).tolist()
+            logger.info(
+                "[THD_DIAG][cu] kernel_num_segs=%d rope_num_segs=%d kernel_cu_head=%s rope_cu_head=%s kernel_seg_lens_head=%s rope_seg_lens_head=%s",
+                max(0, int(cu_padded_cpu.numel()) - 1),
+                max(0, int(cu_unpadded_cpu.numel()) - 1),
+                cu_padded_cpu[:8].tolist(),
+                cu_unpadded_cpu[:8].tolist(),
+                seg_lens_padded[:8],
+                seg_lens_unpadded[:8],
+            )
+            # Boundary windows are centered on each segment join index.
+            # This helps detect edge-only mismatch that can be hidden by global stats.
+            if labels is not None and loss_mask is not None and cu_unpadded_cpu.numel() > 2:
+                win_k = 8
+                seq_len = int(tokens.shape[-1])
+                boundary_window = torch.zeros(seq_len, dtype=torch.bool, device=tokens.device)
+                boundary_positions = []
+                for i in range(1, int(cu_unpadded_cpu.numel()) - 1):
+                    join_idx = int(cu_unpadded_cpu[i].item())
+                    boundary_positions.append(join_idx)
+                    left = max(0, join_idx - win_k)
+                    right = min(seq_len, join_idx + win_k)
+                    if right > left:
+                        boundary_window[left:right] = True
+                labels_flat = labels.view(-1)
+                loss_mask_flat = loss_mask.view(-1)
+                moe_mask_flat = moe_padding_mask.view(-1)
+                bw = boundary_window.view(-1)
+                bw_tokens = int(bw.sum().item())
+                bw_valid_loss = int(((loss_mask_flat > 0) & bw).sum().item())
+                bw_valid_labels = int(((labels_flat != -100) & bw).sum().item())
+                bw_moe_padding = int((moe_mask_flat & bw).sum().item())
+                bw_label_loss_mismatch = int((((labels_flat != -100) != (loss_mask_flat > 0)) & bw).sum().item())
+                logger.info(
+                    "[THD_DIAG][boundary] win_k=%d joins=%d join_head=%s window_tokens=%d valid_loss=%d valid_labels=%d moe_padding=%d label_loss_mismatch=%d",
+                    win_k,
+                    len(boundary_positions),
+                    boundary_positions[:8],
+                    bw_tokens,
+                    bw_valid_loss,
+                    bw_valid_labels,
+                    bw_moe_padding,
+                    bw_label_loss_mismatch,
+                )
 
     if loss_mask is not None:
         loss_mask = loss_mask.contiguous()
