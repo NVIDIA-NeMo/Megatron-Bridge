@@ -31,6 +31,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.PAT }}
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Symlink skills/ into agent dirs
         run: |
@@ -53,6 +54,4 @@ jobs:
           fi
           BRANCH="${{ github.head_ref || github.ref_name }}"
           git commit -m "chore(beep boop 🤖): symlink skills/ → .claude/skills, .agents/skills and AGENTS.md → CLAUDE.md"
-          git fetch origin "$BRANCH"
-          git rebase "origin/$BRANCH"
           git push origin HEAD:"$BRANCH"
