@@ -36,8 +36,8 @@ jobs:
             rsync -av --delete skills/ "$dir/skills/"
           done
 
-      - name: Sync AGENTS.md → CLAUDE.md
-        run: '[ -f AGENTS.md ] && cp AGENTS.md CLAUDE.md || true'
+      - name: Symlink AGENTS.md → CLAUDE.md
+        run: '[ -f AGENTS.md ] && ln -sf AGENTS.md CLAUDE.md || true'
 
       - name: Commit and push if changed
         run: |
