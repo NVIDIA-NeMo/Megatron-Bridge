@@ -120,6 +120,7 @@ class Qwen3VLModelProvider(GPTModelProvider):
 
     vision_dp_when_cp: bool = False
 
+    # It’s an experimental feature and may change in the future.
     dist_train: Qwen3VLDistTrainConfig = field(default_factory=Qwen3VLDistTrainConfig)
     add_encoder: bool = True
     add_decoder: bool = True
@@ -271,6 +272,7 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
 
+    # It’s an experimental feature and may change in the future.
     dist_train: Qwen3VLDistTrainConfig = field(default_factory=Qwen3VLDistTrainConfig)
     add_encoder: bool = True
     add_decoder: bool = True

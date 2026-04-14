@@ -218,10 +218,10 @@ class Qwen3VLModel(MegatronModule):
         Args:
             input_tensor (list): Input tensor.
         """
-        assert isinstance(input_tensor, list), "Input tensor must be a list, but got {type(input_tensor)}"
-        assert len(input_tensor) == 1, "Input tensor must be a list of length 1, but got {len(input_tensor)}"
+        assert isinstance(input_tensor, list), f"Input tensor must be a list, but got {type(input_tensor)}"
+        assert len(input_tensor) == 1, f"Input tensor must be a list of length 1, but got {len(input_tensor)}"
         assert isinstance(input_tensor[0], dict), (
-            "Input tensor[0] must be a dictionary, but got {type(input_tensor[0])}"
+            f"Input tensor[0] must be a dictionary, but got {type(input_tensor[0])}"
         )
         input_dict = input_tensor[0]
 
@@ -436,7 +436,7 @@ class Qwen3VLModel(MegatronModule):
                         )
                 else:
                     vision_embeds = torch.zeros(
-                        (0, self.language_model.config.hidden_size),
+                        (0, self.config.hidden_size),
                         device=vision_data.device,
                         dtype=torch.bfloat16,
                     )
