@@ -929,7 +929,13 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         _hf_import_cache: Dict[str, torch.Tensor] = {}
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
-            # None task means no mapping exists for this param (e.g. MTP layers without bridge mappings)
+            # A None task means the Megatron model has a parameter for which no
+            # HF↔Megatron mapping was registered.  This is expected when the HF
+            # config declares optional layers (e.g. num_nextn_predict_layers for
+            # MTP) but the HF checkpoint ships no weights for them; the bridge
+            # intentionally omits mappings so these layers keep their default
+            # (random-init) weights.  Skipping here is safe — it is NOT a
+            # missing-mapping bug.
             if task is None:
                 continue
             # None means megatron module not on current rank, skip if this task is not going to happen

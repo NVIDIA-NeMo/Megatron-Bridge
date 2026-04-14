@@ -44,7 +44,7 @@ from megatron.core.transformer.transformer_layer import (
     get_transformer_layer_offset,
 )
 
-from megatron.bridge.models.ernie_vl.ernie_moe_layer import (
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import (
     ErnieMultiTypeMoE,
     MultiTypeMoeSubmodules,
 )

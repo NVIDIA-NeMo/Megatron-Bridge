@@ -20,6 +20,7 @@ Megatron-Core GPTModel with single-pool MoE (64 experts, top-6 routing,
 shared experts, expert bias for aux-free load balancing).
 """
 
+import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -30,7 +31,30 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.ernie.ernie_45_provider import Ernie45ModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+
+def _ernie45_decoder_block_spec(config: "GPTModelProvider", vp_stage: int | None = None):
+    """Create a decoder block spec that respects ``moe_layer_freq``.
+
+    The default ``GPTModelProvider.transformer_layer_spec`` calls
+    ``get_gpt_layer_with_transformer_engine_spec`` which returns a single
+    MoE layer spec applied uniformly to ALL layers, ignoring
+    ``moe_layer_freq``.
+
+    ERNIE 4.5 has mixed dense/MoE layers (layer 0 is dense, layers 1-N
+    are MoE).  This function uses ``get_gpt_decoder_block_spec`` which
+    calls ``get_gpt_decoder_layer_specs`` — the code path that parses
+    ``config.moe_layer_freq`` and creates per-layer specs (dense for
+    pattern=0, MoE for pattern=1).
+    """
+    from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+
+    return get_gpt_decoder_block_spec(
+        config=config,
+        use_transformer_engine=True,
+        vp_stage=vp_stage,
+    )
 
 
 # HF class name string; avoids requiring the HF modeling module at import time.
@@ -109,7 +133,7 @@ class _SqueezeBiasMapping(_PPSafeReplicatedMapping):
 @MegatronModelBridge.register_bridge(
     source=_ERNIE45_MOE_HF_CLASS_NAME,
     target=GPTModel,
-    provider=Ernie45ModelProvider,
+    provider=GPTModelProvider,
     model_type="ernie4_5_moe",
 )
 class Ernie45Bridge(MegatronModelBridge):
@@ -146,15 +170,30 @@ class Ernie45Bridge(MegatronModelBridge):
         return int(raw)
 
     def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace ERNIE 4.5 MoE config to Ernie45ModelProvider.
+        """Convert HuggingFace ERNIE 4.5 MoE config to GPTModelProvider.
 
         Uses super().provider_bridge() for standard CONFIG_MAPPING fields
         (hidden_size, num_layers, rope_theta, tie_word_embeddings, etc.)
-        and then overrides ERNIE-specific MoE settings that use non-standard
-        HF config field names (moe_num_experts, moe_k, moe_intermediate_size).
+        and then overrides ERNIE-specific settings.
         """
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
+
+        # --- Architecture overrides ---
+        provider.normalization = "RMSNorm"
+        provider.activation_func = F.silu
+        provider.gated_linear_unit = True
+        provider.add_bias_linear = False
+        provider.add_qkv_bias = False
+        provider.hidden_dropout = 0.0
+        provider.position_embedding_type = "rope"
+        provider.rotary_base = 500000.0
+        provider.rotary_interleaved = True
+        provider.moe_router_load_balancing_type = "aux_loss"
+        # Mixed dense/MoE layers (layer 0 dense, rest MoE): use decoder
+        # block spec that parses moe_layer_freq per-layer instead of the
+        # default spec which applies MoE uniformly to all layers.
+        provider.transformer_layer_spec = _ernie45_decoder_block_spec
 
         # --- MoE settings (ERNIE uses non-standard HF config field names) ---
         num_experts = self._get_num_experts(hf_config)
@@ -179,17 +218,19 @@ class Ernie45Bridge(MegatronModelBridge):
         # Router settings
         provider.moe_aux_loss_coeff = getattr(hf_config, "router_aux_loss_coef", 0.001)
 
-        # MoE runtime settings
-        # NOTE: moe_grouped_gemm=False uses SequentialMLP (per-expert forward);
-        # True uses TEGroupedMLP which can produce NaN with certain TE versions.
-        provider.moe_grouped_gemm = False
+        # MoE runtime settings — same as DeepSeek V3 (sigmoid routing + expert bias)
+        provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = False
         provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
         provider.moe_router_dtype = "fp32"
         provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_permute_fusion = False
-        provider.gradient_accumulation_fusion = False
+        provider.moe_permute_fusion = True
+        # gradient_accumulation_fusion: use the auto-detected default from
+        # GPTModelProvider (checks for APEX or TE availability) rather than
+        # overriding it here.  For conversion jobs (no backward pass) the
+        # flag is irrelevant; for training it will be enabled whenever
+        # the required extensions are present.
 
         # Disable MTP (Multi-Token Prediction) for inference -- the ERNIE HF
         # model stores num_nextn_predict_layers in config but does not ship

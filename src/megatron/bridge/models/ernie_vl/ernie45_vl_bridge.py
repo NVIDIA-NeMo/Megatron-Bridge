@@ -84,7 +84,8 @@ Note on Expert Parallelism:
 """
 
 import logging
-from typing import Dict, Tuple
+import re
+from typing import Dict, Optional, Tuple
 
 import torch
 
@@ -98,8 +99,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.models.ernie_vl.modeling_ernie45_vl import Ernie45VLModel
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
 from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
+from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 logger = logging.getLogger(__name__)
@@ -107,6 +109,93 @@ logger = logging.getLogger(__name__)
 # Use string-based registration since the HF model class may not be importable
 # if transformers is an older version or the model isn't registered yet.
 _ERNIE45_VL_MOE_HF_CLASS_NAME = "Ernie4_5_VLMoeForConditionalGeneration"
+
+
+# ---------------------------------------------------------------------------
+# Dual-pool expert EP export support
+# ---------------------------------------------------------------------------
+# In ERNIE VL's dual-pool MoE, vision expert j maps to HF flat expert
+# (j + num_text_experts).  The _Offset*Mapping classes handle the HF→Megatron
+# direction by shifting expert indices during resolve().  For the Megatron→HF
+# export direction with EP > 1, gather_from_ep_ranks must reconstruct the
+# pool-offset HF expert indices.  The mixin below overrides that method so
+# the offset logic stays in this file instead of the base param_mapping.py.
+# ---------------------------------------------------------------------------
+
+
+class _DualPoolExpertMixin:
+    """Mixin that adds pool-offset awareness to ``gather_from_ep_ranks``.
+
+    For dual-pool MoE, the resolved HF param name already carries the offset
+    (e.g. ``experts.67.weight`` for vision expert 3 with 64 text experts).
+    The mixin computes ``pool_offset = hf_index - megatron_local_index`` and
+    uses it when constructing the HF names for every EP rank.
+    """
+
+    def gather_from_ep_ranks(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module,
+        hf_param_name: Optional[str] = None,
+    ) -> Dict[str, torch.Tensor]:
+        if self.ep_size == 1:
+            return {str(hf_param_name): megatron_weights}
+
+        if megatron_module is None:
+            num_experts_per_rank = self.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
+        else:
+            model_config = self._get_config(megatron_module)
+            num_experts = model_config.num_moe_experts
+            num_experts_per_rank = num_experts // self.ep_size
+            num_experts_per_rank = self.broadcast_obj_from_pp_rank(
+                num_experts_per_rank, "num_experts_per_rank"
+            )
+
+        global_expert_number = extract_expert_number_from_param(self.megatron_param)
+        local_expert_number = global_expert_number % num_experts_per_rank
+
+        # Compute pool offset from the resolved HF param name.
+        hf_expert_match = re.search(r"experts\.(\d+)", str(hf_param_name))
+        if hf_expert_match:
+            hf_expert_number = int(hf_expert_match.group(1))
+            pool_offset = hf_expert_number - local_expert_number
+        else:
+            pool_offset = 0
+
+        gathered_expert_param_names = [
+            re.sub(
+                r"experts\.(\d+)",
+                f"experts.{pool_offset + int(local_expert_number) + num_experts_per_rank * i}",
+                str(hf_param_name),
+            )
+            for i in range(self.ep_size)
+        ]
+        assert str(hf_param_name) in gathered_expert_param_names
+
+        gathered_weights = [torch.empty_like(megatron_weights) for _ in range(self.ep_size)]
+        torch.distributed.all_gather(gathered_weights, megatron_weights, group=self.ep_group)
+
+        weights_dict: Dict[str, torch.Tensor] = {}
+        for i, param_name in enumerate(gathered_expert_param_names):
+            if param_name in weights_dict:
+                weights_dict[param_name] = torch.cat(
+                    [weights_dict[param_name], gathered_weights[i].unsqueeze(0)], dim=0
+                )
+            else:
+                weights_dict[param_name] = gathered_weights[i].unsqueeze(0)
+        for param_name in weights_dict:
+            weights_dict[param_name] = weights_dict[param_name].squeeze()
+        return weights_dict
+
+
+class _DualPoolGatedMLPMapping(_DualPoolExpertMixin, GatedMLPMapping):
+    """GatedMLPMapping with pool-offset-aware EP export."""
+    pass
+
+
+class _DualPoolAutoMapping(_DualPoolExpertMixin, AutoMapping):
+    """AutoMapping with pool-offset-aware EP export."""
+    pass
 
 
 class _OffsetGatedMLPMapping(GatedMLPMapping):
@@ -155,7 +244,7 @@ class _OffsetGatedMLPMapping(GatedMLPMapping):
                 resolved_v = resolved_v.replace("*", hf_captures[idx], 1)
                 idx += 1
             resolved_hf_param[k] = resolved_v
-        return GatedMLPMapping(
+        return _DualPoolGatedMLPMapping(
             megatron_param=resolved_megatron_param,
             gate=resolved_hf_param["gate"],
             up=resolved_hf_param["up"],
@@ -198,7 +287,7 @@ class _OffsetAutoMapping(AutoMapping):
         while "*" in resolved_hf_param and idx < len(hf_captures):
             resolved_hf_param = resolved_hf_param.replace("*", hf_captures[idx], 1)
             idx += 1
-        return AutoMapping(
+        return _DualPoolAutoMapping(
             megatron_param=resolved_megatron_param,
             hf_param=resolved_hf_param,
         )
@@ -475,6 +564,11 @@ class Ernie45VLBridge(MegatronModelBridge):
         provider.video_token_id = getattr(hf_config, "video_token_id", 103367)
 
         return provider
+
+    def stream_weights_megatron_to_hf(self, *args, **kwargs):
+        """Override to clear the _ConcatBiasMapping export buffer before each run."""
+        _ConcatBiasMapping.clear_export_buffer()
+        return super().stream_weights_megatron_to_hf(*args, **kwargs)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
