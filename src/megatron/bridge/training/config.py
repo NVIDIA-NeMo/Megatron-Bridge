@@ -1039,13 +1039,6 @@ class LoggerConfig:
     throughput_window_size: int = 100
     """Number of batches to use for a rolling average of throughput."""
 
-    peak_theoretical_tflops_per_gpu: float | None = None
-    """Peak theoretical TFLOP/s for one GPU.
-
-    When set, MFU is reported as:
-    model_tflops_per_gpu / peak_theoretical_tflops_per_gpu.
-    """
-
     log_progress: bool = False
     """If set, log progress (in terms of number of processed tokens and number of floating-point operations)
     to progress.txt file in checkpoint directory.
