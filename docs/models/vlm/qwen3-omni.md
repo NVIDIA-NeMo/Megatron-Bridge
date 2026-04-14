@@ -2,7 +2,7 @@
 
 Qwen3-Omni is a multimodal Qwen family model with text, image, video, and audio inputs. Megatron Bridge support for Qwen3-Omni reuses the existing Qwen3-VL language and vision path, and adds Qwen3-Omni-specific audio handling and checkpoint mappings.
 
-The current implementation is focused on checkpoint conversion and training-oriented multimodal forward paths. It supports single-rank functional validation for text, vision, and audio inputs, and keeps distributed parallel validation as a follow-up step.
+The current implementation focuses on checkpoint conversion, training-oriented multimodal forward paths, and smoke-level validation. It includes a full example workflow (HF -> Megatron -> HF export, single-rank inference) and a multi-node training recipe entrypoint.
 
 ## Current Support
 
@@ -11,18 +11,29 @@ The current implementation is focused on checkpoint conversion and training-orie
 - Text, image, video, and audio multimodal forward paths
 - Qwen3-Omni-specific multimodal RoPE handling for Megatron Bridge runtime
 - Single-GPU smoke validation with a vertically trimmed checkpoint
+- Multi-node training recipe entrypoint (see Qwen3-Omni examples)
+- L0 conversion test coverage for Qwen3-Omni
 
 ## Known Limitations
 
 - Megatron inference with `inference_params` is not implemented yet
 - `packed_seq_params` is not implemented yet
 - Vision runtime does not support sequence parallel yet
-- Distributed parallelism validation beyond single-rank functional coverage is not included in this PR
+- Distributed parallelism validation beyond single-rank functional coverage is not included yet
 - Functional smoke tests require user-provided local multimodal assets
 
 ## Hugging Face Model Cards
 
 - Qwen3-Omni-30B-A3B-Instruct: `https://huggingface.co/Qwen/Qwen3-Omni-30B-A3B-Instruct`
+
+## Examples
+
+Qwen3-Omni examples are maintained here:
+
+- `examples/models/vlm/qwen3_omni/README.md`
+- `examples/models/vlm/qwen3_omni/conversion.sh`
+- `examples/models/vlm/qwen3_omni/inference.sh`
+- `examples/models/vlm/qwen3_omni/local_train_thinker_4node_tp2_ep8_sp.sh`
 
 ## Related Docs
 
