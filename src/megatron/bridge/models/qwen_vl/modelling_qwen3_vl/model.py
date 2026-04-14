@@ -61,6 +61,10 @@ def _thd_diag_enabled() -> bool:
     return os.environ.get("THD_DIAG", "0") not in ("0", "", "false", "False")
 
 
+def _thd_diag_align_enabled() -> bool:
+    return os.environ.get("THD_DIAG_ALIGN", "0") not in ("0", "", "false", "False")
+
+
 def _rank0() -> bool:
     if not torch.distributed.is_available() or not torch.distributed.is_initialized():
         return True
@@ -417,6 +421,18 @@ class Qwen3VLModel(MegatronModule):
         lm_input_ids = input_ids
         moe_padding_mask_for_lm = moe_padding_mask
 
+        def _mask_summary(mask: torch.Tensor, max_items: int = 8) -> tuple[int, str]:
+            flat_idx = torch.nonzero(mask.reshape(-1), as_tuple=False).view(-1)
+            count = int(flat_idx.numel())
+            if count == 0:
+                return count, "[]"
+            head = flat_idx[:max_items].tolist()
+            tail = flat_idx[-max_items:].tolist() if count > max_items else []
+            summary = f"head={head}"
+            if tail:
+                summary += f", tail={tail}"
+            return count, summary
+
         if self.pre_process:
             # can reorganize_inputs at dataset
             vision_data, vision_grid_thw, vision_mask = reorganize_inputs(
@@ -523,18 +539,65 @@ class Qwen3VLModel(MegatronModule):
             if packed_seq_params is not None:
                 if attention_mask is None:
                     attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
+                attn_mask_bool = attention_mask.bool()
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
                 lm_input_ids = input_ids_thd
                 if moe_padding_mask_for_lm is not None:
-                    attn_mask_bool = attention_mask.bool()
                     moe_padding_mask_for_lm = preprocess_packed_seqs(
                         moe_padding_mask_for_lm.to(dtype=torch.int32),
                         attn_mask_bool,
                         pre_process=True,
                         pg_collection=self.pg_collection,
                     )[0].bool()
+                if (
+                    _thd_diag_align_enabled()
+                    and _rank0()
+                    and labels is not None
+                    and loss_mask is not None
+                ):
+                    labels_thd = preprocess_packed_seqs(
+                        labels,
+                        attn_mask_bool,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                    loss_mask_thd = preprocess_packed_seqs(
+                        loss_mask.to(dtype=torch.float32),
+                        attn_mask_bool,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                    labels_valid_pre = labels.ne(-100)
+                    labels_valid_post = labels_thd.ne(-100)
+                    loss_valid_pre = loss_mask > 0
+                    loss_valid_post = loss_mask_thd > 0
+                    label_pre_cnt, label_pre_idx = _mask_summary(labels_valid_pre)
+                    label_post_cnt, label_post_idx = _mask_summary(labels_valid_post)
+                    loss_pre_cnt, loss_pre_idx = _mask_summary(loss_valid_pre)
+                    loss_post_cnt, loss_post_idx = _mask_summary(loss_valid_post)
+                    logger.info(
+                        "[THD_DIAG][align] labels_pre_count=%d labels_post_count=%d labels_same=%s labels_pre_%s labels_post_%s",
+                        label_pre_cnt,
+                        label_post_cnt,
+                        str(bool(torch.equal(labels_valid_pre, labels_valid_post))),
+                        label_pre_idx,
+                        label_post_idx,
+                    )
+                    logger.info(
+                        "[THD_DIAG][align] loss_pre_count=%d loss_post_count=%d loss_same=%s loss_pre_%s loss_post_%s",
+                        loss_pre_cnt,
+                        loss_post_cnt,
+                        str(bool(torch.equal(loss_valid_pre, loss_valid_post))),
+                        loss_pre_idx,
+                        loss_post_idx,
+                    )
+                    logger.info(
+                        "[THD_DIAG][align] pre_label_loss_same=%s post_label_loss_same=%s",
+                        str(bool(torch.equal(labels_valid_pre, loss_valid_pre))),
+                        str(bool(torch.equal(labels_valid_post, loss_valid_post))),
+                    )
                 _, _, vision_mask_thd = reorganize_inputs(
                     input_ids=input_ids_thd,
                     pixel_values=pixel_values,
@@ -587,11 +650,11 @@ class Qwen3VLModel(MegatronModule):
             if packed_seq_params is not None:
                 if attention_mask is None:
                     attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
+                attn_mask_bool = attention_mask.bool()
                 lm_input_ids, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
                 if moe_padding_mask_for_lm is not None:
-                    attn_mask_bool = attention_mask.bool()
                     moe_padding_mask_for_lm = preprocess_packed_seqs(
                         moe_padding_mask_for_lm.to(dtype=torch.int32),
                         attn_mask_bool,
