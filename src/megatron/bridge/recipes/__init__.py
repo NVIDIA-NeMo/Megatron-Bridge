@@ -22,6 +22,10 @@ This module exposes all recipe configurations from all model families.
 # non-diffusion training paths (LLM/VLM) usable when those deps are absent.
 try:
     from megatron.bridge.diffusion.recipes.flux.flux import *
+except ModuleNotFoundError:
+    pass
+
+try:
     from megatron.bridge.diffusion.recipes.wan.wan import *
 except ModuleNotFoundError:
     pass

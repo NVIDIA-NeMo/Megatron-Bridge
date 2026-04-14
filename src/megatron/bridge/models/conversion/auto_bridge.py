@@ -52,9 +52,14 @@ logger = logging.getLogger(__name__)
 
 try:
     from modelopt.torch.quantization.utils import is_quantized
-except Exception:
+except ImportError as exc:
     # modelopt/scipy is optional for recipe import and training startup.
     # Keep quantization-only export path available when dependency exists.
+    logger.warning(
+        "modelopt quantization utils unavailable; quantized-export detection disabled: %s",
+        exc,
+    )
+
     def is_quantized(_model: object) -> bool:
         return False
 

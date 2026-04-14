@@ -19,6 +19,7 @@ This module provides pretrain, SFT, and PEFT configurations for Qwen3-VL models 
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional, Union
 
@@ -28,7 +29,11 @@ from typing_extensions import TypedDict, Unpack
 
 try:
     from transformers import Qwen3VLProcessor
-except Exception:
+except (ImportError, ModuleNotFoundError) as exc:
+    logger.warning(
+        "Qwen3VLProcessor import unavailable; falling back to AutoProcessor: %s",
+        exc,
+    )
     Qwen3VLProcessor = None
 
 from megatron.bridge import AutoBridge
@@ -53,6 +58,8 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+
+logger = logging.getLogger(__name__)
 
 
 class Qwen3VLCommonKwargs(TypedDict, total=False):
@@ -282,8 +289,11 @@ def _make_energon_dataset(
     if Qwen3VLProcessor is not None:
         try:
             image_processor = Qwen3VLProcessor.from_pretrained(hf_path)
-        except Exception:
-            pass
+        except (AttributeError, OSError, RuntimeError, ValueError) as exc:
+            logger.warning(
+                "Qwen3VLProcessor.from_pretrained failed, falling back to AutoProcessor: %s",
+                exc,
+            )
     if image_processor is None:
         from transformers import AutoProcessor
 

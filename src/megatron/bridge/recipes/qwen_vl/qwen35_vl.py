@@ -394,7 +394,8 @@ def qwen35_vl_35b_a3b_sft_energon_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") 
     """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE) with Energon dataset.
 
     Same as qwen35_vl_35b_a3b_sft_config but uses EnergonProvider instead of HF dataset.
-    This recipe enables batch-level packing by default (THD path).
+    Packing is disabled by default. Enable THD batch-level packing via CLI:
+    dataset.batch_level_packing=true
     Set the dataset path via CLI override: dataset.path=/path/to/energon/dataset
     Optional fixed-bin overrides:
       - dataset.cord_bins_root=/path/to/cord_bins
