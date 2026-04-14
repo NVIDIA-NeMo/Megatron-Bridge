@@ -86,7 +86,9 @@ quantized models typically have `std ≈ 13` before dequantization vs `std ≈ 0
 ```
 src/megatron/bridge/models/<model>/
 ├── __init__.py
-└── <model>_bridge.py      # Config + weight mappings (no provider file needed)
+├── <model>_bridge.py      # Config + weight mappings (no provider file needed)
+└── modeling_<model>/      # (optional) Custom nn.Module implementations if needed
+    └── ...
 ```
 
 **VLM** — Reference: Qwen3.5-VL (`src/megatron/bridge/models/qwen_vl/`)
