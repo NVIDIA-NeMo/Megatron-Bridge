@@ -606,18 +606,29 @@ def forward_step(
             "cu_seqlens_argmin": torch.tensor(len(cu_padded)),
             "max_seqlen": max_seqlen_out,
         }
+        # Build an explicit padding mask for MoE routing/aux-loss accounting.
+        # True means padding token that should be excluded from MoE statistics.
+        moe_padding_mask = torch.zeros_like(tokens, dtype=torch.bool)
+        if cu_unpadded.numel() == cu_padded.numel() and cu_padded.numel() > 1:
+            for i in range(int(cu_padded.numel()) - 1):
+                seg_unpadded_end = int(cu_unpadded[i + 1].item())
+                seg_padded_end = int(cu_padded[i + 1].item())
+                if seg_padded_end > seg_unpadded_end:
+                    moe_padding_mask[..., seg_unpadded_end:seg_padded_end] = True
 
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_dict)
         # Pass unpadded boundaries only to Qwen model's MRoPE construction.
         forward_args["rope_cu_seqlens"] = cu_unpadded
+        forward_args["moe_padding_mask"] = moe_padding_mask
         if _thd_diag_enabled() and _rank0():
             logger.info(
-                "[THD_DIAG][packed] physical_seq_len=%d cu_unpadded_last=%d cu_padded_last=%d implicit_pad=%d max_seqlen=%d",
+                "[THD_DIAG][packed] physical_seq_len=%d cu_unpadded_last=%d cu_padded_last=%d implicit_pad=%d max_seqlen=%d moe_padding_tokens=%d",
                 int(physical_seq_len),
                 int(cu_unpadded[-1].item()),
                 int(cu_padded[-1].item()),
                 int(physical_seq_len - int(cu_unpadded[-1].item())),
                 int(max_seqlen_out.item()) if torch.is_tensor(max_seqlen_out) else int(max_seqlen_out),
+                int(moe_padding_mask.sum().item()),
             )
 
     if loss_mask is not None:

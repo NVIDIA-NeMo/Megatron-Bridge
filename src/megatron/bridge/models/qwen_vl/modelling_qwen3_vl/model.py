@@ -365,6 +365,7 @@ class Qwen3VLModel(MegatronModule):
         cp_img_num: list[int] = None,
         images_padded: list[bool] = None,
         rope_cu_seqlens: torch.Tensor = None,
+        moe_padding_mask: torch.Tensor = None,
         inference_context: object | None = None,
         runtime_gather_output: bool | None = None,
         mm_token_type_ids: torch.Tensor = None,
@@ -414,6 +415,7 @@ class Qwen3VLModel(MegatronModule):
         # so it must be a real tensor. For packed sequences we use the THD-format
         # input_ids_thd (updated below); for regular sequences we use input_ids as-is.
         lm_input_ids = input_ids
+        moe_padding_mask_for_lm = moe_padding_mask
 
         if self.pre_process:
             # can reorganize_inputs at dataset
@@ -525,6 +527,13 @@ class Qwen3VLModel(MegatronModule):
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
                 lm_input_ids = input_ids_thd
+                if moe_padding_mask_for_lm is not None:
+                    moe_padding_mask_for_lm = preprocess_packed_seqs(
+                        moe_padding_mask_for_lm.to(dtype=torch.int32),
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0].bool()
                 _, _, vision_mask_thd = reorganize_inputs(
                     input_ids=input_ids_thd,
                     pixel_values=pixel_values,
@@ -580,6 +589,13 @@ class Qwen3VLModel(MegatronModule):
                 lm_input_ids, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
+                if moe_padding_mask_for_lm is not None:
+                    moe_padding_mask_for_lm = preprocess_packed_seqs(
+                        moe_padding_mask_for_lm.to(dtype=torch.int32),
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0].bool()
 
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
@@ -687,7 +703,13 @@ class Qwen3VLModel(MegatronModule):
         # a dedicated padding_mask (True=padding) to GPTModel/Router.
         padding_mask_for_moe = None
         if packed_seq_params is not None and lm_input_ids is not None:
-            padding_mask_for_moe = lm_input_ids.eq(0)
+            if moe_padding_mask_for_lm is not None:
+                padding_mask_for_moe = moe_padding_mask_for_lm.bool()
+                mask_source = "explicit"
+            else:
+                # Fallback for old call sites that do not provide explicit packed padding mask.
+                padding_mask_for_moe = lm_input_ids.eq(0)
+                mask_source = "token_eq_0_fallback"
             if _thd_diag_enabled() and _rank0():
                 input_zero_cnt = int(input_ids.eq(0).sum().item()) if input_ids is not None else -1
                 lm_zero_cnt = int(lm_input_ids.eq(0).sum().item())
@@ -696,7 +718,8 @@ class Qwen3VLModel(MegatronModule):
                 loss_valid = int((loss_mask > 0).sum().item()) if loss_mask is not None else -1
                 loss_total = int(loss_mask.numel()) if loss_mask is not None else -1
                 logger.info(
-                    "[THD_DIAG][model] padding_mask_for_moe: total_tokens=%d padding_tokens=%d valid_tokens=%d input_zero_tokens=%d lm_zero_tokens=%d loss_valid_tokens=%d loss_total_tokens=%d",
+                    "[THD_DIAG][model] padding_mask_for_moe: source=%s total_tokens=%d padding_tokens=%d valid_tokens=%d input_zero_tokens=%d lm_zero_tokens=%d loss_valid_tokens=%d loss_total_tokens=%d",
+                    mask_source,
                     tok_cnt,
                     pad_cnt,
                     tok_cnt - pad_cnt,
