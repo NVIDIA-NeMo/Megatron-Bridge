@@ -96,7 +96,7 @@ src/megatron/bridge/models/<model>/
 ├── __init__.py
 ├── <model>_bridge.py         # Config + weight mappings
 ├── <model>_provider.py       # Only for VLMs that need custom provide()
-└── modelling_<model>/        # If using Megatron vision encoder
+└── modeling_<model>/         # If using Megatron vision encoder
     ├── __init__.py
     └── model.py              # Combines vision + language
 ```
@@ -116,8 +116,9 @@ src/megatron/bridge/models/<model>/
 **LLM:**
 1. **Bridge only** — Register bridge, implement `provider_bridge()` and `mapping_registry()`.
    The bridge calls `super().provider_bridge()` to get a `GPTModelProvider` from `CONFIG_MAPPING`,
-   then sets model-specific attributes on it. **Do not create a provider file** — the base
-   `GPTModelProvider` returned by `super().provider_bridge()` is sufficient for all LLMs.
+   then sets model-specific attributes on it. **Do not create a provider file** — the stock
+   provider returned by `super().provider_bridge()` is usually sufficient for LLMs
+   (e.g., `GPTModelProvider`, or another base provider selected via `PROVIDER_CLASS`).
 
 **VLM:**
 1. **Bridge** — Register bridge, implement config and weight mappings.
@@ -209,8 +210,8 @@ class _FullDimQKNormMapping(MegatronParamMapping):
 
 #### Strategy 3: Custom provider subclass (VLMs only)
 
-Most models do **not** need a provider file — the base `GPTModelProvider` is sufficient for all
-LLMs. Only create a provider subclass when a VLM needs custom `provide()` logic to instantiate
+Most models do **not** need a provider file — the stock provider (e.g., `GPTModelProvider`, or
+another base selected via `PROVIDER_CLASS`) is usually sufficient for LLMs. Only create a provider subclass when a VLM needs custom `provide()` logic to instantiate
 a combined vision+language model:
 
 ```python
