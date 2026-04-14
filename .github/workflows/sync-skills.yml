@@ -52,4 +52,4 @@ jobs:
             exit 0
           fi
           git commit -m "chore(beep boop 🤖): symlink skills/ → .claude/skills, .agents/skills and AGENTS.md → CLAUDE.md"
-          git push origin main
+          git push origin HEAD:${{ github.ref_name }}
