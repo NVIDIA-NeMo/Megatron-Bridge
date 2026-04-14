@@ -327,7 +327,9 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
     )
-    enable_packing = getattr(cfg.dataset, "pack_sequences_in_batch", False)
+    in_batch_pack_enabled = getattr(cfg.dataset, "pack_sequences_in_batch", False)
+    batch_level_pack_enabled = getattr(cfg.dataset, "batch_level_packing", False)
+    enable_packing = in_batch_pack_enabled or batch_level_pack_enabled
     force_bshd = _thd_force_bshd_enabled()
     force_single_segment_cu = _thd_force_single_segment_cu_enabled()
 
@@ -335,7 +337,6 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         logger.warning(
             "[THD_SWITCH] THD_FORCE_BSHD=1 overrides THD_FORCE_SINGLE_SEGMENT_CU=1 (single-segment CU ignored)."
         )
-
     if not enable_packing:
         # When using pipeline parallelism, ensure fixed shapes equal to cfg.model.seq_length
         if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1:

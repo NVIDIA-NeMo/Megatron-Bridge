@@ -34,8 +34,11 @@ class EnergonProvider(DatasetProvider):
     num_workers: int_repr
     dataloader_type: str = "external"
     task_encoder: Optional[Any] = None
-    # Enable batch-level online sequence packing
+    # Legacy in-batch packing switch. Keep for compatibility with existing recipes.
     pack_sequences_in_batch: bool = False
+    # THD dataloader switch for batch-level online packing.
+    # This is independent from pack_sequences_in_batch.
+    batch_level_packing: bool = False
     packing_buffer_size: Optional[int] = None
     shuffle_buffer_size: int = 100
     # Optional bin selector for datasets split into bin directories.
@@ -56,6 +59,7 @@ class EnergonProvider(DatasetProvider):
         if self.task_encoder is not None and hasattr(self.task_encoder, "seq_len"):
             self.task_encoder.seq_len = self.seq_length
             self.task_encoder.seq_length = self.seq_length
+        effective_packing_buffer_size = self.packing_buffer_size if self.batch_level_packing else None
         dataset = EnergonMultiModalDataModule(
             path=resolved_path,
             tokenizer=context.tokenizer if context.tokenizer is not None else self.tokenizer,
@@ -65,7 +69,7 @@ class EnergonProvider(DatasetProvider):
             micro_batch_size=self.micro_batch_size,
             global_batch_size=self.global_batch_size,
             num_workers=self.num_workers,
-            packing_buffer_size=self.packing_buffer_size,
+            packing_buffer_size=effective_packing_buffer_size,
             shuffle_buffer_size=self.shuffle_buffer_size,
             pg_collection=context.pg_collection,
         )

@@ -248,7 +248,9 @@ def forward_step(
 
     # To be compatible with qwen3vl, we move the sequence padding and packing to forward_step function.
     # Qwen3VL model need the original input and do cp and sp split in model.forward.
-    pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
+    in_batch_pack_enabled = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
+    batch_level_pack_enabled = getattr(state.cfg.dataset, "batch_level_packing", False)
+    enable_sequence_packing = in_batch_pack_enabled or batch_level_pack_enabled
 
     tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
         tokens,
@@ -275,7 +277,7 @@ def forward_step(
     forward_args["input_ids"] = original_tokens
     # calculate position_ids in model forward
     forward_args["position_ids"] = None
-    if pack_sequences_in_batch:
+    if enable_sequence_packing:
         if forward_args["labels"] is not None:
             # When using pp, labels could be None
             forward_args["labels"] = forward_args["labels"].reshape(1, -1)
