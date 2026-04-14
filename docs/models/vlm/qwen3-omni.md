@@ -18,8 +18,7 @@ The current implementation focuses on checkpoint conversion, training-oriented m
 
 - Megatron inference with `inference_params` is not implemented yet
 - `packed_seq_params` is not implemented yet
-- Vision runtime does not support sequence parallel yet
-- Distributed parallelism validation beyond single-rank functional coverage is not included yet
+- Automated validation coverage remains single-rank; multi-node training requires user execution
 - Functional smoke tests require user-provided local multimodal assets
 
 ## Hugging Face Model Cards
