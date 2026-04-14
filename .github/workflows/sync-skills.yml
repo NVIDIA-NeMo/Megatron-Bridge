@@ -37,7 +37,7 @@ jobs:
           done
 
       - name: Sync AGENTS.md → CLAUDE.md
-        run: cp AGENTS.md CLAUDE.md
+        run: '[ -f AGENTS.md ] && cp AGENTS.md CLAUDE.md || true'
 
       - name: Commit and push if changed
         run: |
