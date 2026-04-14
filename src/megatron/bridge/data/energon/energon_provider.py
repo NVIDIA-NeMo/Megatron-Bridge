@@ -36,6 +36,7 @@ class EnergonProvider(DatasetProvider):
     # Enable batch-level online sequence packing
     pack_sequences_in_batch: bool = False
     packing_buffer_size: Optional[int] = None
+    shuffle_buffer_size: int = 100
 
     def build_datasets(self, context: DatasetBuildContext):
         assert self.path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
@@ -52,6 +53,7 @@ class EnergonProvider(DatasetProvider):
             global_batch_size=self.global_batch_size,
             num_workers=self.num_workers,
             packing_buffer_size=self.packing_buffer_size,
+            shuffle_buffer_size=self.shuffle_buffer_size,
             pg_collection=context.pg_collection,
         )
         return (
