@@ -20,19 +20,22 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
-from megatron.core.energy_monitor import EnergyMonitor
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.utils.tensorboard.writer import SummaryWriter
 
 
-# TODO: Remove try/except once `get_async_strategy` lands in mcore dev.
-#       The function was added to mcore main but has not yet been merged into dev.
+# TODO: Remove try/except guards once these land in mcore dev.
 try:
     from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
 except ImportError:
     get_async_strategy = None  # type: ignore[assignment]
+
+try:
+    from megatron.core.energy_monitor import EnergyMonitor
+except ImportError:
+    EnergyMonitor = None  # type: ignore[assignment]
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
@@ -144,7 +147,7 @@ class GlobalState:
         self._async_calls_queue: Optional[Any] = None
         self._nvrx_straggler_manager: Optional[NVRxStragglerDetectionManager] = None
         self._nvrx_straggler_created: bool = False
-        self._energy_monitor: Optional[EnergyMonitor] = None
+        self._energy_monitor: Optional[Any] = None
         self._energy_monitor_created: bool = False
 
     @property
@@ -440,13 +443,14 @@ class GlobalState:
         return self._nvrx_straggler_manager
 
     @property
-    def energy_monitor(self) -> Optional[EnergyMonitor]:
+    def energy_monitor(self) -> Optional[Any]:
         """The EnergyMonitor instance for tracking energy consumption."""
         if (
             not self._energy_monitor_created
             and self._energy_monitor is None
             and self.cfg is not None
             and self.cfg.logger.log_energy
+            and EnergyMonitor is not None
         ):
             self._energy_monitor = EnergyMonitor()
             self._energy_monitor_created = True
