@@ -18,6 +18,20 @@ import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
 
+def _trim_cu_seqlens(cu_seqlens: torch.Tensor, cu_seqlens_argmin: torch.Tensor | None) -> torch.Tensor:
+    """Trim padded cu_seqlens tail safely.
+
+    If argmin metadata is available from dataloader, trust it. Otherwise, detect
+    the first zero in the tail region after index 0 (the leading 0 is valid).
+    """
+    if cu_seqlens_argmin is not None:
+        return cu_seqlens[: int(cu_seqlens_argmin.item())]
+
+    padded_tail = torch.nonzero(cu_seqlens[1:] == 0, as_tuple=False)
+    first_tail = int(padded_tail[0].item() + 1) if padded_tail.numel() else cu_seqlens.numel()
+    return cu_seqlens[:first_tail]
+
+
 def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     """Build packed sequence parameters from a batch dictionary.
 
@@ -43,18 +57,12 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     cu_seqlens_argmin = batch.get("cu_seqlens_argmin")
     cu_seqlens_unpadded_argmin = batch.get("cu_seqlens_unpadded_argmin")
 
-    # note: if argmin is not pre-computed in the dataloader, torch.argmin here will incur a
-    # device-to-host synchronization, which can slow down training
-    if cu_seqlens_argmin is not None:
-        cu_seqlens_padded = cu_seqlens_padded[: cu_seqlens_argmin.item()]
-    else:
-        cu_seqlens_padded = cu_seqlens_padded[: torch.argmin(cu_seqlens_padded)]
+    # Note: if argmin metadata is absent, fallback tail detection can still incur
+    # device-to-host synchronization.
+    cu_seqlens_padded = _trim_cu_seqlens(cu_seqlens_padded, cu_seqlens_argmin)
 
     if cu_seqlens_unpadded is not None:
-        if cu_seqlens_unpadded_argmin is not None:
-            cu_seqlens_unpadded = cu_seqlens_unpadded[: cu_seqlens_unpadded_argmin.item()]
-        else:
-            cu_seqlens_unpadded = cu_seqlens_unpadded[: torch.argmin(cu_seqlens_unpadded)]
+        cu_seqlens_unpadded = _trim_cu_seqlens(cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
 
     max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
 
