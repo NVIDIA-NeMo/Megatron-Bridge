@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Dict, Optional
 
-from megatron.bridge.models.mimo.mimo_builder import is_current_rank_in_grid
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
 
 if TYPE_CHECKING:
@@ -45,11 +45,14 @@ def wrap_mimo_model_distributed(
     """
     from megatron.core.distributed import DistributedDataParallel
 
+    # Lazy import to avoid circular dependency (models layer loads before training layer)
+    from megatron.bridge.training.mimo_parallel_utils import is_current_rank_in_grid
+
     # Wrap language model if present and rank participates
     if mimo_model.language_model is not None:
-        llm_grid = grids["llm"]
-        if is_current_rank_in_grid(llm_grid):
-            llm_pg = pg_collections.get("llm")
+        llm_grid = grids.get(MIMO_LANGUAGE_MODULE_KEY)
+        if llm_grid is not None and is_current_rank_in_grid(llm_grid):
+            llm_pg = pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
                 mimo_model.language_model = DistributedDataParallel(
                     config=mimo_model.language_model.config,
@@ -63,7 +66,9 @@ def wrap_mimo_model_distributed(
         for module_name, submodule in mimo_model.modality_submodules.items():
             if submodule is None:
                 continue
-            module_grid = grids[module_name]
+            module_grid = grids.get(module_name)
+            if module_grid is None:
+                continue
             if not is_current_rank_in_grid(module_grid):
                 continue
 

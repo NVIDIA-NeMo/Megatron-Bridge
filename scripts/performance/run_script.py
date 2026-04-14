@@ -96,6 +96,11 @@ def main():
         config_variant=args.config_variant,
     )
 
+    # Set NCCL env vars for nccl_ub enabled via recipe config (not just CLI).
+    if getattr(recipe.ddp, "nccl_ub", False):
+        os.environ.setdefault("NCCL_NVLS_ENABLE", "1")
+        os.environ.setdefault("NCCL_CTA_POLICY", "1")
+
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"
         os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
