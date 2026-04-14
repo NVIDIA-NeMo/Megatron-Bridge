@@ -12,22 +12,8 @@ HF_HOME=${HF_HOME:-${WORKSPACE}/hf_home}
 TMPDIR=${TMPDIR:-${WORKSPACE}/tmp}
 RESULTS_DIR=${RESULTS_DIR:-${WORKSPACE}/results}
 LOG_DIR=${LOG_DIR:-${WORKSPACE}/logs}
-LOCAL_PY_SHIM_DIR=${LOCAL_PY_SHIM_DIR:-${WORKSPACE}/py_shims}
 
-mkdir -p "${WORKSPACE}" "${HF_HOME}" "${TMPDIR}" "${RESULTS_DIR}" "${LOG_DIR}" "${LOCAL_PY_SHIM_DIR}"
-
-cat > "${LOCAL_PY_SHIM_DIR}/sitecustomize.py" <<'PY'
-"""Local training shims for py311 compatibility."""
-
-import typing
-
-if not hasattr(typing, "override"):
-    from typing_extensions import override as _override
-
-    typing.override = _override
-PY
-
-export PYTHONPATH="${LOCAL_PY_SHIM_DIR}:${PYTHONPATH}"
+mkdir -p "${WORKSPACE}" "${HF_HOME}" "${TMPDIR}" "${RESULTS_DIR}" "${LOG_DIR}"
 
 PYTHON_BIN=${PYTHON_BIN:-python}
 
@@ -119,6 +105,37 @@ export VIDEO_MAX_TOKEN_NUM=${VIDEO_MAX_TOKEN_NUM:-}
 export MAX_PIXELS=${MAX_PIXELS:-}
 export VIDEO_MAX_PIXELS=${VIDEO_MAX_PIXELS:-}
 export FPS_MAX_FRAMES=${FPS_MAX_FRAMES:-}
+
+PRESET=${PRESET:-}
+if [[ "${PRESET}" == "4node_tp2_ep8_sp" ]]; then
+    NUM_GPUS=8
+    NNODES=4
+    TENSOR_PARALLEL_SIZE=2
+    PIPELINE_PARALLEL_SIZE=2
+    CONTEXT_PARALLEL_SIZE=1
+    EXPERT_MODEL_PARALLEL_SIZE=8
+    EXPERT_TENSOR_PARALLEL_SIZE=1
+    SEQUENCE_PARALLEL=True
+    SEQ_LENGTH=16384
+    GLOBAL_BATCH_SIZE=16
+    MICRO_BATCH_SIZE=1
+    FREEZE_LANGUAGE_MODEL=False
+    FREEZE_VISION_MODEL=True
+    FREEZE_AUDIO_MODEL=True
+    VIT_GRADIENT_CHECKPOINTING=False
+    MULTIMODAL_ATTN_IMPL=auto
+    ATTENTION_BACKEND=flash
+    RECOMPUTE_GRANULARITY=full
+    RECOMPUTE_METHOD=uniform
+    RECOMPUTE_NUM_LAYERS=12
+    RECOMPUTE_MODULES=core_attn
+    OPTIMIZER_CPU_OFFLOAD=False
+    OPTIMIZER_OFFLOAD_FRACTION=0.0
+    USE_PRECISION_AWARE_OPTIMIZER=False
+    TRAIN_ITERS=${TRAIN_ITERS:-20}
+    LOG_INTERVAL=${LOG_INTERVAL:-5}
+    RUN_NAME=${RUN_NAME:-qwen3_omni_sft32_tp2_pp2_ep8_sp_seq16384}
+fi
 
 if [[ "${MASTER_ADDR}" == *,* ]]; then
     MASTER_ADDR=${MASTER_ADDR%%,*}

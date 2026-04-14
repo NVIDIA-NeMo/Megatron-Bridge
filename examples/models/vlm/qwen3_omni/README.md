@@ -99,7 +99,7 @@ All runs use one real image+audio sample from the local parquet file.
 The training recipe entrypoint is:
 
 ```bash
-bash examples/models/vlm/qwen3_omni/local_train_thinker_4node_tp2_ep8_sp.sh
+bash examples/models/vlm/qwen3_omni/local_train_thinker_full.sh
 ```
 
 Required environment variables:
@@ -113,3 +113,10 @@ Optional overrides:
 
 - `WORKSPACE` (default: `${PWD}/.cache/qwen3_omni_train`)
 - `RESULTS_DIR` / `LOG_DIR` (default: under `WORKSPACE`)
+
+To apply the 4-node TP2/PP2/EP8/SP preset used in our 32-GPU validation:
+
+```bash
+export PRESET=4node_tp2_ep8_sp
+bash examples/models/vlm/qwen3_omni/local_train_thinker_full.sh
+```
