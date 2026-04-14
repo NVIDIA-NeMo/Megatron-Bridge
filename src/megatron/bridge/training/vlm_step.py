@@ -38,10 +38,31 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
+_SWITCH_LOGGED: set[str] = set()
 
 
 def _thd_diag_enabled() -> bool:
-    return os.environ.get("THD_DIAG", "0") not in ("0", "", "false", "False")
+    return _switch_enabled("THD_DIAG")
+
+
+def _switch_enabled(name: str) -> bool:
+    enabled = os.environ.get(name, "0") not in ("0", "", "false", "False")
+    if enabled and name not in _SWITCH_LOGGED:
+        logger.info("[THD_SWITCH] %s=1 enabled", name)
+        _SWITCH_LOGGED.add(name)
+    return enabled
+
+
+def _thd_force_bshd_enabled() -> bool:
+    return _switch_enabled("THD_FORCE_BSHD")
+
+
+def _thd_force_single_segment_cu_enabled() -> bool:
+    return _switch_enabled("THD_FORCE_SINGLE_SEGMENT_CU")
+
+
+def _thd_skip_preprocess_packed_pos_enabled() -> bool:
+    return _switch_enabled("THD_SKIP_PREPROCESS_PACKED_POS")
 
 
 def _resolve_cfg_token_id(cfg: ConfigContainer, key: str) -> int | None:
@@ -297,6 +318,13 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         is_last_pp_stage=is_last,
     )
     enable_packing = getattr(cfg.dataset, "pack_sequences_in_batch", False)
+    force_bshd = _thd_force_bshd_enabled()
+    force_single_segment_cu = _thd_force_single_segment_cu_enabled()
+
+    if force_bshd and force_single_segment_cu:
+        logger.warning(
+            "[THD_SWITCH] THD_FORCE_BSHD=1 overrides THD_FORCE_SINGLE_SEGMENT_CU=1 (single-segment CU ignored)."
+        )
 
     if not enable_packing:
         # When using pipeline parallelism, ensure fixed shapes equal to cfg.model.seq_length
@@ -356,12 +384,25 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     tp_size = pg_collection.tp.size() if pg_collection is not None and pg_collection.tp is not None else 1
     has_sp = getattr(cfg.model, "sequence_parallel", False)
 
+    if force_bshd:
+        # Explicitly disable packed paths and ignore pre-packed cu_seqlens metadata.
+        enable_packing = False
+
     # Energon pre-packed path: cu_seqlens already present from TaskEncoder packing
     energon_cu_seqlens = batch.get("cu_seqlens")
-    if energon_cu_seqlens is not None:
+    if energon_cu_seqlens is not None and not force_bshd:
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
         energon_max_seqlen = batch.get("max_seqlen")
         energon_cu_argmin = batch.get("cu_seqlens_argmin")
+
+        if force_single_segment_cu and tokens_or_input is not None:
+            seq_len = int(tokens_or_input.shape[-1])
+            device = energon_cu_seqlens.device if isinstance(energon_cu_seqlens, torch.Tensor) else tokens_or_input.device
+            energon_cu_seqlens = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
+            energon_max_seqlen = torch.tensor(seq_len, dtype=torch.int32, device=device)
+            energon_cu_argmin = torch.tensor(2, dtype=torch.int64)
+            if _thd_diag_enabled():
+                logger.info("[THD_SWITCH] force single-segment cu_seqlens=[0, %d]", seq_len)
 
         # Log detailed packed-iteration diagnostics when explicitly enabled.
         if tokens_or_input is not None and _thd_diag_enabled():
@@ -530,7 +571,7 @@ def forward_step(
         cu_clean = cu[:n_valid]
         last_boundary = int(cu_clean[-1].item())
 
-        if last_boundary < physical_seq_len:
+        if last_boundary < physical_seq_len and not _thd_skip_preprocess_packed_pos_enabled():
             # Trailing padding exists: extend the last real segment's padded
             # boundary to cover the tail so that all layers (TE attention, GDN,
             # etc.) see the same sequence boundaries.  We intentionally do NOT
@@ -552,6 +593,12 @@ def forward_step(
             }
         else:
             # No trailing padding (content fills the full sequence length).
+            if last_boundary < physical_seq_len and _thd_diag_enabled():
+                logger.info(
+                    "[THD_SWITCH] skip packed-pos preprocess: preserve original cu_seqlens last_boundary=%d physical_seq_len=%d",
+                    last_boundary,
+                    physical_seq_len,
+                )
             packed_seq_dict = {
                 "cu_seqlens": cu_seqlens,
                 "max_seqlen": max_seqlen,
