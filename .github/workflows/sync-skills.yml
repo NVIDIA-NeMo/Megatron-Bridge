@@ -51,5 +51,8 @@ jobs:
             echo "No changes to commit"
             exit 0
           fi
+          BRANCH="${{ github.head_ref || github.ref_name }}"
           git commit -m "chore(beep boop 🤖): symlink skills/ → .claude/skills, .agents/skills and AGENTS.md → CLAUDE.md"
-          git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          git fetch origin "$BRANCH"
+          git rebase "origin/$BRANCH"
+          git push origin HEAD:"$BRANCH"
