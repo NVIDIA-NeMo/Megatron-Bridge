@@ -65,6 +65,10 @@ def _thd_diag_align_enabled() -> bool:
     return os.environ.get("THD_DIAG_ALIGN", "0") not in ("0", "", "false", "False")
 
 
+def _thd_diag_mrope_enabled() -> bool:
+    return os.environ.get("THD_DIAG_MROPE", "0") not in ("0", "", "false", "False")
+
+
 def _rank0() -> bool:
     if not torch.distributed.is_available() or not torch.distributed.is_initialized():
         return True
@@ -730,6 +734,32 @@ class Qwen3VLModel(MegatronModule):
                     sl_int = int(sl)
                     packed_pos[:, 0, start : start + sl_int] = position_ids[:, i, :sl_int]
 
+                if _thd_diag_mrope_enabled() and _rank0():
+                    # Summarize per-subsequence MRoPE position behavior before THD remap.
+                    # This is diagnostics-only and intentionally does not affect semantics.
+                    show_n = 4
+                    head_stats = []
+                    for i, sl in enumerate(seq_lens[:show_n]):
+                        start = int(cu[i].item())
+                        sl_int = int(sl)
+                        if sl_int <= 0:
+                            head_stats.append(f"{i}:len=0")
+                            continue
+                        pos0 = packed_pos[0, 0, start : start + sl_int]
+                        nonmono = int((pos0[1:] < pos0[:-1]).sum().item()) if sl_int > 1 else 0
+                        head_stats.append(
+                            f"{i}:len={sl_int},start={int(pos0[0].item())},end={int(pos0[-1].item())},"
+                            f"min={int(pos0.min().item())},max={int(pos0.max().item())},dec={nonmono}"
+                        )
+                    logger.info(
+                        "[THD_DIAG][mrope] pre_thd cp_size=%d num_seqs=%d total_len=%d seq_lens_head=%s seg_stats_head=%s",
+                        int(cp_size),
+                        int(num_seqs),
+                        int(total_len),
+                        seq_lens[:show_n],
+                        "; ".join(head_stats),
+                    )
+
                 position_ids = packed_pos
 
                 position_ids = (
@@ -742,6 +772,22 @@ class Qwen3VLModel(MegatronModule):
                     .permute(2, 0, 1)
                     .contiguous()
                 )
+                if _thd_diag_mrope_enabled() and _rank0():
+                    pos0_post = position_ids[0, 0]
+                    post_len = int(pos0_post.numel())
+                    head_vals = pos0_post[:12].tolist()
+                    tail_vals = pos0_post[-12:].tolist() if post_len > 12 else []
+                    nonmono_post = int((pos0_post[1:] < pos0_post[:-1]).sum().item()) if post_len > 1 else 0
+                    logger.info(
+                        "[THD_DIAG][mrope] post_thd cp_size=%d len=%d min=%d max=%d dec=%d head=%s tail=%s",
+                        int(cp_size),
+                        post_len,
+                        int(pos0_post.min().item()) if post_len > 0 else -1,
+                        int(pos0_post.max().item()) if post_len > 0 else -1,
+                        nonmono_post,
+                        head_vals,
+                        tail_vals,
+                    )
                 attention_mask = None
                 self.language_model.rotary_pos_emb.is_thd_format = True
             else:
