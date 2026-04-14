@@ -41,13 +41,19 @@ logger = logging.getLogger(__name__)
 _SWITCH_LOGGED: set[str] = set()
 
 
+def _rank0() -> bool:
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return True
+    return torch.distributed.get_rank() == 0
+
+
 def _thd_diag_enabled() -> bool:
     return _switch_enabled("THD_DIAG")
 
 
 def _switch_enabled(name: str) -> bool:
     enabled = os.environ.get(name, "0") not in ("0", "", "false", "False")
-    if enabled and name not in _SWITCH_LOGGED:
+    if enabled and _rank0() and name not in _SWITCH_LOGGED:
         logger.info("[THD_SWITCH] %s=1 enabled", name)
         _SWITCH_LOGGED.add(name)
     return enabled
@@ -321,7 +327,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     force_bshd = _thd_force_bshd_enabled()
     force_single_segment_cu = _thd_force_single_segment_cu_enabled()
 
-    if force_bshd and force_single_segment_cu:
+    if force_bshd and force_single_segment_cu and _rank0():
         logger.warning(
             "[THD_SWITCH] THD_FORCE_BSHD=1 overrides THD_FORCE_SINGLE_SEGMENT_CU=1 (single-segment CU ignored)."
         )
@@ -401,7 +407,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
             energon_cu_seqlens = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
             energon_max_seqlen = torch.tensor(seq_len, dtype=torch.int32, device=device)
             energon_cu_argmin = torch.tensor(2, dtype=torch.int64)
-            if _thd_diag_enabled():
+            if _thd_diag_enabled() and _rank0():
                 logger.info("[THD_SWITCH] force single-segment cu_seqlens=[0, %d]", seq_len)
 
         # Log detailed packed-iteration diagnostics when explicitly enabled.
@@ -571,42 +577,36 @@ def forward_step(
         cu_clean = cu[:n_valid]
         last_boundary = int(cu_clean[-1].item())
 
+        # Keep unpadded boundaries for MRoPE/sub-sequence semantics, while
+        # providing padded boundaries for TE/GDN kernels when needed.
+        cu_unpadded = cu_clean
+
         if last_boundary < physical_seq_len and not _thd_skip_preprocess_packed_pos_enabled():
-            # Trailing padding exists: extend the last real segment's padded
-            # boundary to cover the tail so that all layers (TE attention, GDN,
-            # etc.) see the same sequence boundaries.  We intentionally do NOT
-            # set cu_seqlens_unpadded here so that cu_seqlens_q_padded stays
-            # None — this forces every layer to treat pad tokens identically to
-            # real tokens, avoiding undefined attention output at pad positions
-            # that would otherwise propagate NaN through subsequent layers and
-            # into the backward pass.  loss_mask already zeros pad positions.
+            # Trailing padding exists: extend padded boundary to full physical
+            # sequence length so packed kernels cover all tokens.
             cu_padded = cu_clean.clone()
             cu_padded[-1] = physical_seq_len
-
-            padded_diffs = cu_padded[1:] - cu_padded[:-1]
-            max_seqlen_padded = padded_diffs.max()
-
-            packed_seq_dict = {
-                "cu_seqlens": cu_padded,
-                "cu_seqlens_argmin": torch.tensor(n_valid),
-                "max_seqlen": max_seqlen_padded,
-            }
+            max_seqlen_out = (cu_padded[1:] - cu_padded[:-1]).max()
         else:
-            # No trailing padding (content fills the full sequence length).
-            if last_boundary < physical_seq_len and _thd_diag_enabled():
+            if last_boundary < physical_seq_len and _thd_diag_enabled() and _rank0():
                 logger.info(
                     "[THD_SWITCH] skip packed-pos preprocess: preserve original cu_seqlens last_boundary=%d physical_seq_len=%d",
                     last_boundary,
                     physical_seq_len,
                 )
-            packed_seq_dict = {
-                "cu_seqlens": cu_seqlens,
-                "max_seqlen": max_seqlen,
-            }
-            if cu_seqlens_argmin is not None:
-                packed_seq_dict["cu_seqlens_argmin"] = cu_seqlens_argmin
-            elif cu_seqlens.dim() == 1:
-                packed_seq_dict["cu_seqlens_argmin"] = torch.tensor(len(cu_seqlens))
+            cu_padded = cu_clean
+            if max_seqlen is not None:
+                max_seqlen_out = max_seqlen.squeeze()
+            else:
+                max_seqlen_out = (cu_padded[1:] - cu_padded[:-1]).max()
+
+        packed_seq_dict = {
+            "cu_seqlens": cu_padded,
+            "cu_seqlens_argmin": torch.tensor(len(cu_padded)),
+            "cu_seqlens_unpadded": cu_unpadded,
+            "cu_seqlens_unpadded_argmin": torch.tensor(len(cu_unpadded)),
+            "max_seqlen": max_seqlen_out,
+        }
 
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_dict)
 
