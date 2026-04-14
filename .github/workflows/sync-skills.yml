@@ -15,7 +15,6 @@ name: Sync skills → agent dirs
 
 on:
   workflow_dispatch:
-  pull_request:
   push:
     branches:
       - main
