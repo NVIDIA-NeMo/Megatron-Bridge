@@ -46,12 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 from dataclasses import dataclass
-from typing import Any, Callable, ClassVar, Literal
-
-try:
-    from typing import override
-except ImportError:  # Python < 3.12
-    from typing_extensions import override
+from typing import Any, Callable, ClassVar, Literal, override
 
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec,

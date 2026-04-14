@@ -14,12 +14,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, ClassVar, Literal
-
-try:
-    from typing import override
-except ImportError:  # Python < 3.12
-    from typing_extensions import override
+from typing import Any, Callable, ClassVar, Literal, override
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
