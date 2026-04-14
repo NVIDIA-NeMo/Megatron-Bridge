@@ -364,6 +364,7 @@ class Qwen3VLModel(MegatronModule):
         video_input_mask: torch.Tensor = None,
         cp_img_num: list[int] = None,
         images_padded: list[bool] = None,
+        rope_cu_seqlens: torch.Tensor = None,
         inference_context: object | None = None,
         runtime_gather_output: bool | None = None,
         mm_token_type_ids: torch.Tensor = None,
@@ -608,7 +609,7 @@ class Qwen3VLModel(MegatronModule):
             if packed_seq_params is not None:
                 # Packed sequences: compute MRoPE per sub-sequence independently
                 # so that each sub-sequence's positions restart from 0.
-                cu = packed_seq_params.cu_seqlens_q
+                cu = rope_cu_seqlens if rope_cu_seqlens is not None else packed_seq_params.cu_seqlens_q
                 if cu.dim() > 1:
                     cu = cu.squeeze()
                 seq_lens = (cu[1:] - cu[:-1]).tolist()

@@ -577,8 +577,9 @@ def forward_step(
         cu_clean = cu[:n_valid]
         last_boundary = int(cu_clean[-1].item())
 
-        # Keep unpadded boundaries for MRoPE/sub-sequence semantics, while
-        # providing padded boundaries for TE/GDN kernels when needed.
+        # Keep an unpadded copy for Qwen MRoPE sub-sequence semantics.
+        # Do not feed unpadded cu_seqlens into PackedSeqParams, which can
+        # switch TE kernels and destabilize training.
         cu_unpadded = cu_clean
 
         if last_boundary < physical_seq_len and not _thd_skip_preprocess_packed_pos_enabled():
@@ -603,12 +604,12 @@ def forward_step(
         packed_seq_dict = {
             "cu_seqlens": cu_padded,
             "cu_seqlens_argmin": torch.tensor(len(cu_padded)),
-            "cu_seqlens_unpadded": cu_unpadded,
-            "cu_seqlens_unpadded_argmin": torch.tensor(len(cu_unpadded)),
             "max_seqlen": max_seqlen_out,
         }
 
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_dict)
+        # Pass unpadded boundaries only to Qwen model's MRoPE construction.
+        forward_args["rope_cu_seqlens"] = cu_unpadded
 
     if loss_mask is not None:
         loss_mask = loss_mask.contiguous()
