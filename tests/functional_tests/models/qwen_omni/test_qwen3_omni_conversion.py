@@ -15,6 +15,7 @@
 """Functional tests for Qwen3-Omni HF <-> Megatron roundtrip conversion."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -152,8 +153,13 @@ class TestQwen3OmniConversion:
     @pytest.mark.run_only_on("GPU")
     def test_qwen3_omni_conversion(self, qwen3_omni_toy_model_path, tmp_path):
         """Run the HF -> Megatron -> HF roundtrip conversion on the toy checkpoint."""
+        if torch.cuda.device_count() < 2:
+            pytest.skip("Qwen3-Omni conversion test requires at least 2 GPUs.")
         output_dir = tmp_path / "qwen3_omni_test"
         output_dir.mkdir(exist_ok=True)
+        repo_root = Path(__file__).resolve().parents[4]
+        env = os.environ.copy()
+        env["PYTHONPATH"] = f"{repo_root / 'src'}:{repo_root / '3rdparty' / 'Megatron-LM'}"
 
         cmd = [
             "python",
@@ -164,8 +170,8 @@ class TestQwen3OmniConversion:
             "-m",
             "coverage",
             "run",
-            "--data-file=/opt/Megatron-Bridge/.coverage",
-            "--source=/opt/Megatron-Bridge/",
+            f"--data-file={repo_root / '.coverage'}",
+            f"--source={repo_root}",
             "--parallel-mode",
             "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
@@ -186,7 +192,8 @@ class TestQwen3OmniConversion:
             cmd,
             capture_output=True,
             text=True,
-            cwd=Path(__file__).parent.parent.parent.parent.parent,
+            cwd=repo_root,
+            env=env,
         )
 
         if result.returncode != 0:

@@ -15,7 +15,6 @@ These examples cover:
 
 These examples do **not** cover:
 
-- training
 - distributed parallel validation beyond single-rank smoke
 - talker / code2wav audio-output checkpoints
 - Megatron inference with `inference_params`
@@ -78,3 +77,23 @@ This script runs:
 - HF thinker smoke inference from the exported HF checkpoint
 
 All runs use one real image+audio sample from the local parquet file.
+
+## Training (local)
+
+The training recipe entrypoint is:
+
+```bash
+bash examples/models/vlm/qwen3_omni/local_train_thinker_4node_tp2_ep8_sp.sh
+```
+
+Required environment variables:
+
+```bash
+export HF_MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct
+export TRAIN_JSONL=/path/to/train.jsonl
+```
+
+Optional overrides:
+
+- `WORKSPACE` (default: `${PWD}/.cache/qwen3_omni_train`)
+- `RESULTS_DIR` / `LOG_DIR` (default: under `WORKSPACE`)
