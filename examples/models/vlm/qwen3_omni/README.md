@@ -46,6 +46,22 @@ export SAMPLE_PARQUET=/path/to/multimodal_eval_samples.parquet
 
 The example smoke checkpoint keeps the original hidden dimensions intact and only trims layer counts, which keeps the HF config compatible while making single-GPU validation practical.
 
+## Data Preparation (Omni Bench)
+
+If you have the Omni Bench parquet data locally, you can convert it into JSONL plus extracted media assets:
+
+```bash
+python examples/models/vlm/qwen3_omni/convert_omni_bench_to_jsonl.py \
+  --input-root ./Omni_Bench_fix_simple \
+  --output-root ./omni_bench_fix_simple \
+  --splits train test
+```
+
+This produces:
+- `./omni_bench_fix_simple/train/train.jsonl`
+- `./omni_bench_fix_simple/test/test.jsonl`
+- extracted media under `./omni_bench_fix_simple/{split}/media`
+
 ## Checkpoint Conversion
 
 Run the full local smoke conversion flow:

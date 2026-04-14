@@ -253,13 +253,13 @@ def main() -> None:
     parser.add_argument(
         "--input-root",
         type=Path,
-        default=Path("/nfs/ofs-llab-hdd/users/liuwei/omni/ref/projects/Omni_Bench_fix_simple"),
+        default=Path("./Omni_Bench_fix_simple"),
         help="Directory containing train/test parquet files.",
     )
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("/nfs/ofs-llab-hdd/users/liuwei/omni/qwen3_omni_data/omni_bench_fix_simple"),
+        default=Path("./omni_bench_fix_simple"),
         help="Output directory for JSONL and extracted media.",
     )
     parser.add_argument(
