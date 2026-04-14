@@ -35,7 +35,7 @@ Architecture details:
 
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 
-from megatron.bridge.models.ernie_vl.vision_attention import ErnieVLSelfAttention
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_attention import ErnieVLSelfAttention
 
 
 def get_ernie_vit_layer_spec():

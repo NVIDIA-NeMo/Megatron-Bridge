@@ -34,7 +34,6 @@ from megatron.bridge.models.deepseek import (
 )
 from megatron.bridge.models.ernie import (
     Ernie45Bridge,
-    Ernie45ModelProvider,
 )
 from megatron.bridge.models.ernie_vl import (
     Ernie45VLBridge,
@@ -178,7 +177,6 @@ __all__ = [
     "DeepSeekV3Bridge",
     # ERNIE Text-Only Models
     "Ernie45Bridge",
-    "Ernie45ModelProvider",
     # ERNIE VL Models
     "Ernie45VLBridge",
     "Ernie45VLModel",

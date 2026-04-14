@@ -184,7 +184,6 @@ def main():
         mg_emb = torch.cat((mg_rotary.reshape(total_patches, 1, 1, -1),
                            mg_rotary.reshape(total_patches, 1, 1, -1)), dim=-1)
         mg_cos = mg_emb.cos().flatten()
-        mg_sin = mg_emb.sin().flatten()
 
     cos_sim_rope = F.cosine_similarity(
         hf_rotary.float().flatten().unsqueeze(0),
@@ -307,13 +306,6 @@ def main():
         # This is TELayerNormColumnParallelLinear - it fuses LN + Linear
         mg_qkv_out, _ = mg_linear_qkv(mg_patch_out[:, None])  # [N, 1, 3*hidden]
         mg_qkv_flat = mg_qkv_out.squeeze(1)
-
-    cos_sim_ln = F.cosine_similarity(
-        hf_normed.float().flatten().unsqueeze(0),
-        # We can't easily extract just the LN output from the fused module
-        # so just compare QKV output
-        torch.zeros(1).unsqueeze(0),  # placeholder
-    ).item()
 
     cos_sim_qkv = F.cosine_similarity(
         hf_qkv.float().flatten().unsqueeze(0),

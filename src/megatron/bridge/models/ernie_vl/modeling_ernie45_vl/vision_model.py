@@ -49,7 +49,7 @@ from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlock
 
-from megatron.bridge.models.ernie_vl.vision_transformer_config import ErnieVisionTransformerConfig
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_transformer_config import ErnieVisionTransformerConfig
 
 
 class ErnieVisionPatchEmbed(nn.Module):

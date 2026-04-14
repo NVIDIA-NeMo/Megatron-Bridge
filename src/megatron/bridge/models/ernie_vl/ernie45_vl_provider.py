@@ -41,10 +41,10 @@ except ImportError:
     Ernie4_5_VLMoeVisionConfig = None
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.ernie_vl.ernie_decoder_layer_spec import (
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_decoder_layer_spec import (
     get_ernie45_vl_decoder_block_spec,
 )
-from megatron.bridge.models.ernie_vl.modeling_ernie45_vl import Ernie45VLModel
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
 
 
 @dataclass
