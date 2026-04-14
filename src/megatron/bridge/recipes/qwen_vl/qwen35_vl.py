@@ -405,10 +405,12 @@ def qwen35_vl_35b_a3b_sft_energon_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") 
     cfg.dataset = _make_energon_dataset(
         hf_path, cfg.dataset.seq_length, cfg.train.micro_batch_size, cfg.train.global_batch_size
     )
-    # THD path: use dedicated batch-level packing switch.
-    # Keep legacy pack_sequences_in_batch for in-batch semantics only.
+    # Keep both packing modes disabled by default.
+    # - in-batch packing: dataset.pack_sequences_in_batch
+    # - THD batch-level packing: dataset.batch_level_packing
+    # Enable either mode explicitly via CLI override when needed.
     cfg.dataset.pack_sequences_in_batch = False
-    cfg.dataset.batch_level_packing = True
+    cfg.dataset.batch_level_packing = False
     # Default packing window; can still be overridden via CLI:
     # dataset.packing_buffer_size=<N>
     cfg.dataset.packing_buffer_size = 128
