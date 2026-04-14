@@ -80,7 +80,9 @@ def test_build_mimo_data_loaders_raises_when_grids_missing(monkeypatch):
 def test_build_mimo_data_loaders_happy_path(monkeypatch):
     _patch_mimo_provider_class(monkeypatch)
     fake_grids = {"llm": object()}
-    fake_parallelism_config = object()
+    fake_parallelism_config = SimpleNamespace(
+        module_parallelisms={"llm": SimpleNamespace(data_parallel_size=1)},
+    )
     cfg = SimpleNamespace(
         model=FakeMimoModelProvider(mimo_parallelism_config=fake_parallelism_config, grids=fake_grids),
         train=SimpleNamespace(micro_batch_size=3),
@@ -88,8 +90,8 @@ def test_build_mimo_data_loaders_happy_path(monkeypatch):
     provider = FakeProvider()
 
     monkeypatch.setattr(
-        "megatron.bridge.data.mimo.loaders.get_mimo_dp_info",
-        lambda mimo_cfg, grids: (1, 4, True, "llm"),
+        "megatron.bridge.data.mimo.loaders.get_mimo_sampling_info",
+        lambda mimo_cfg, grids: (1, 4, True),
     )
 
     monkeypatch.setattr(
@@ -163,13 +165,18 @@ def test_build_mimo_data_loaders_happy_path(monkeypatch):
 def test_build_mimo_data_loaders_skips_non_data_ranks(monkeypatch):
     _patch_mimo_provider_class(monkeypatch)
     cfg = SimpleNamespace(
-        model=FakeMimoModelProvider(mimo_parallelism_config=object(), grids={"llm": object()}),
+        model=FakeMimoModelProvider(
+            mimo_parallelism_config=SimpleNamespace(
+                module_parallelisms={"llm": SimpleNamespace(data_parallel_size=1)},
+            ),
+            grids={"llm": object()},
+        ),
         train=SimpleNamespace(micro_batch_size=2),
     )
     provider = FakeProvider()
     monkeypatch.setattr(
-        "megatron.bridge.data.mimo.loaders.get_mimo_dp_info",
-        lambda mimo_cfg, grids: (0, 1, False, "llm"),
+        "megatron.bridge.data.mimo.loaders.get_mimo_sampling_info",
+        lambda mimo_cfg, grids: (0, 1, False),
     )
 
     monkeypatch.setattr(
