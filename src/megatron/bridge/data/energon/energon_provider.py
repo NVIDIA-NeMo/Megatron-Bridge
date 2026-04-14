@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -37,14 +38,26 @@ class EnergonProvider(DatasetProvider):
     pack_sequences_in_batch: bool = False
     packing_buffer_size: Optional[int] = None
     shuffle_buffer_size: int = 100
+    # Optional bin selector for datasets split into bin directories.
+    # Used to pin data selection and align comparisons with Energon BSHD.
+    cord_bins_root: Optional[str] = None
+    cord_bin_prefix: str = "cord_bin_"
+    cord_bin_id: Optional[str] = None
 
     def build_datasets(self, context: DatasetBuildContext):
-        assert self.path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
+        resolved_path = self.path
+        if self.cord_bin_id is not None and self.cord_bin_id != "":
+            assert (
+                self.cord_bins_root
+            ), "EnergonProvider.cord_bins_root must be set when dataset.cord_bin_id is provided."
+            resolved_path = os.path.join(self.cord_bins_root, f"{self.cord_bin_prefix}{self.cord_bin_id}")
+
+        assert resolved_path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
         if self.task_encoder is not None and hasattr(self.task_encoder, "seq_len"):
             self.task_encoder.seq_len = self.seq_length
             self.task_encoder.seq_length = self.seq_length
         dataset = EnergonMultiModalDataModule(
-            path=self.path,
+            path=resolved_path,
             tokenizer=context.tokenizer if context.tokenizer is not None else self.tokenizer,
             image_processor=self.image_processor,
             seq_length=self.seq_length,

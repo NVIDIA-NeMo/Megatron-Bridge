@@ -394,12 +394,39 @@ def qwen35_vl_35b_a3b_sft_energon_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") 
     """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE) with Energon dataset.
 
     Same as qwen35_vl_35b_a3b_sft_config but uses EnergonProvider instead of HF dataset.
+    This recipe enables batch-level packing by default (THD path).
     Set the dataset path via CLI override: dataset.path=/path/to/energon/dataset
+    Optional fixed-bin overrides:
+      - dataset.cord_bins_root=/path/to/cord_bins
+      - dataset.cord_bin_prefix=cord_bin_
+      - dataset.cord_bin_id=0
     """
     cfg = qwen35_vl_35b_a3b_sft_config(hf_path=hf_path)
     cfg.dataset = _make_energon_dataset(
         hf_path, cfg.dataset.seq_length, cfg.train.micro_batch_size, cfg.train.global_batch_size
     )
+    # THD path: enable batch-level sequence packing in Energon.
+    cfg.dataset.pack_sequences_in_batch = True
+    # Default packing window; can still be overridden via CLI:
+    # dataset.packing_buffer_size=<N>
+    cfg.dataset.packing_buffer_size = 128
+    return cfg
+
+
+def qwen35_vl_35b_a3b_sft_energon_nopack_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> ConfigContainer:
+    """Return 35B-A3B Energon SFT config with packing disabled (BSHD baseline path).
+
+    This is useful as a non-THD reference when comparing with the THD recipe.
+    Set the dataset path via CLI override: dataset.path=/path/to/energon/dataset
+    Supports the same optional fixed-bin overrides as the THD Energon recipe.
+    """
+    cfg = qwen35_vl_35b_a3b_sft_config(hf_path=hf_path)
+    cfg.dataset = _make_energon_dataset(
+        hf_path, cfg.dataset.seq_length, cfg.train.micro_batch_size, cfg.train.global_batch_size
+    )
+    # Baseline path: keep Energon data flow but disable packing.
+    cfg.dataset.pack_sequences_in_batch = False
+    cfg.dataset.packing_buffer_size = None
     return cfg
 
 
