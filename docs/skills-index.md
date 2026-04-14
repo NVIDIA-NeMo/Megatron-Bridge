@@ -11,6 +11,7 @@ and verification steps.
 
 skills/developer-guide/SKILL
 skills/mlm-bridge-training/SKILL
+skills/recipe-recommender/SKILL
 ```
 
 ```{toctree}
@@ -32,7 +33,6 @@ skills/perf-techniques/parallelism-strategies/SKILL
 skills/perf-techniques/cuda-graphs/SKILL
 skills/perf-techniques/tp-dp-comm-overlap/SKILL
 skills/perf-techniques/megatron-fsdp/SKILL
-skills/perf-techniques/packed-sequences-long-context/SKILL
 skills/perf-techniques/sequence-packing/SKILL
 skills/perf-techniques/hybrid-context-parallel/SKILL
 skills/perf-techniques/expert-parallel-overlap/SKILL
