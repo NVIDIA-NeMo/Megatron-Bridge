@@ -15,8 +15,8 @@
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl import Ernie45VLModel
 from megatron.bridge.models.ernie_vl.ernie45_vl_bridge import Ernie45VLBridge
 from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
-from megatron.bridge.models.ernie_vl.ernie_moe_layer import ErnieMultiTypeMoE, MultiTypeMoeSubmodules
-from megatron.bridge.models.ernie_vl.ernie_decoder_layer_spec import get_ernie45_vl_decoder_block_spec
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import ErnieMultiTypeMoE, MultiTypeMoeSubmodules
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_decoder_layer_spec import get_ernie45_vl_decoder_block_spec
 
 
 __all__ = [

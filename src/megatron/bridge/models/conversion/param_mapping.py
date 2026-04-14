@@ -173,8 +173,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         Matches both TEGroupedMLP (.experts.linear_fc) and
         SequentialMLP (.experts.local_experts.*.linear_fc) patterns.
-        Also matches dual-pool MoE patterns where an intermediate module name
-        appears between .mlp. and .experts. (e.g. .mlp.text_moe_layer.experts.).
+        Uses ``.experts.`` rather than ``.mlp.experts.`` so models with an
+        intermediate sub-module (e.g. ``.mlp.<pool>.experts.``) are matched too.
         """
         return ".experts.linear_fc" in self.megatron_param or ".experts.local_experts." in self.megatron_param
 
@@ -664,9 +664,6 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
           Rank 0: [0, 1, 2, 3], Rank 1: [4, 5, 6, 7].
           If the local index L = 0 (derived from the param name), this returns:
           {"...experts.0.weight": tensor_from_rank0, "...experts.4.weight": tensor_from_rank1}
-        - Dual-pool MoE with pool offset P (e.g., P=64 for vision pool):
-          Vision expert L=0 has HF index P+0=64. With S=2, E/S=32:
-          {"...experts.64.weight": tensor_from_rank0, "...experts.96.weight": tensor_from_rank1}
 
         Args:
             megatron_weights (Optional[torch.Tensor]): The local expert weight tensor
@@ -697,22 +694,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         local_expert_number = global_expert_number % num_experts_per_rank
 
-        # Compute pool offset from HF param name. For dual-pool MoE (e.g., ERNIE VL),
-        # vision expert 3 maps to HF expert 67 (offset=64). The HF param name already
-        # contains the correct offset-shifted index from _OffsetMapping.resolve().
-        # For standard single-pool MoE, pool_offset is always 0.
-        hf_expert_match = re.search(r"experts\.(\d+)", str(hf_param_name))
-        if hf_expert_match:
-            hf_expert_number = int(hf_expert_match.group(1))
-            pool_offset = hf_expert_number - local_expert_number
-        else:
-            pool_offset = 0
-
         # Compute global expert numbers for all EP ranks
         # use regex to replace the local expert number with the global expert number
         gathered_expert_param_names = [
             re.sub(
-                r"experts\.(\d+)", f"experts.{pool_offset + int(local_expert_number) + num_experts_per_rank * i}", str(hf_param_name)
+                r"experts\.(\d+)", f"experts.{int(local_expert_number) + num_experts_per_rank * i}", str(hf_param_name)
             )
             for i in range(self.ep_size)
         ]

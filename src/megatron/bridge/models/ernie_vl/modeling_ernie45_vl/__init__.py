@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.ernie.ernie_45_bridge import Ernie45Bridge
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
 
-
-__all__ = [
-    "Ernie45Bridge",
-]
+__all__ = ["Ernie45VLModel"]

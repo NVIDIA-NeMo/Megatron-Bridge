@@ -46,13 +46,13 @@ from transformers.models.ernie4_5_vl_moe.modeling_ernie4_5_vl_moe import (
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
-from megatron.bridge.models.ernie_vl.ernie_moe_layer import (
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import (
     set_moe_mm_token_type_ids,
     clear_moe_mm_token_type_ids,
 )
-from megatron.bridge.models.ernie_vl.vision_model import ErnieVLVisionModel
-from megatron.bridge.models.ernie_vl.vision_layer_spec import get_ernie_vit_layer_spec
-from megatron.bridge.models.ernie_vl.vision_transformer_config import get_ernie_vision_config
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_model import ErnieVLVisionModel
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_layer_spec import get_ernie_vit_layer_spec
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_transformer_config import get_ernie_vision_config
 from megatron.core.models.common.embeddings.rotary_pos_embedding import (
     MultimodalRotaryEmbedding,
     get_pos_emb_on_this_cp_rank,
