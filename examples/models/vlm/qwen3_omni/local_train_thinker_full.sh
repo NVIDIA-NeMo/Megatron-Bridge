@@ -7,7 +7,7 @@ ROOT_DIR=$(cd -- "${SCRIPT_DIR}/../../../.." && pwd -P)
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/3rdparty/Megatron-LM${PYTHONPATH:+:${PYTHONPATH}}"
 
-WORKSPACE=${WORKSPACE:-/nfs/ofs-llab-hdd/users/liuwei/omni/qwen3_omni_train}
+WORKSPACE=${WORKSPACE:-${ROOT_DIR}/.cache/qwen3_omni_train}
 HF_HOME=${HF_HOME:-${WORKSPACE}/hf_home}
 TMPDIR=${TMPDIR:-${WORKSPACE}/tmp}
 RESULTS_DIR=${RESULTS_DIR:-${WORKSPACE}/results}
@@ -17,40 +17,44 @@ LOCAL_PY_SHIM_DIR=${LOCAL_PY_SHIM_DIR:-${WORKSPACE}/py_shims}
 mkdir -p "${WORKSPACE}" "${HF_HOME}" "${TMPDIR}" "${RESULTS_DIR}" "${LOG_DIR}" "${LOCAL_PY_SHIM_DIR}"
 
 cat > "${LOCAL_PY_SHIM_DIR}/sitecustomize.py" <<'PY'
-"""Local training shims for py311 compatibility and path hygiene."""
+"""Local training shims for py311 compatibility."""
 
-import sys
 import typing
 
 if not hasattr(typing, "override"):
     from typing_extensions import override as _override
 
     typing.override = _override
-
-_BLOCKED_SUBSTRINGS = [
-    "/home/luban/anaconda3/lib/python3.11/site-packages",
-    "/home/luban/.local/lib/python3.11/site-packages",
-    "__editable__.megatron_core-0.16.0rc0.finder.__path_hook__",
-    "/home/luban/TransformerEngine",
-]
-
-sys.path[:] = [p for p in sys.path if not any(s in p for s in _BLOCKED_SUBSTRINGS)]
 PY
 
 export PYTHONPATH="${LOCAL_PY_SHIM_DIR}:${PYTHONPATH}"
 
-CONDA_ENV_PREFIX=${CONDA_ENV_PREFIX:-/nfs/ml-training-ssd/users/liuwei/condaenv/omni3_megatron}
-PYTHON_BIN=${PYTHON_BIN:-${CONDA_ENV_PREFIX}/bin/python}
-export PATH="${CONDA_ENV_PREFIX}/bin:${PATH}"
+PYTHON_BIN=${PYTHON_BIN:-python}
 
-HF_MODEL_PATH=${HF_MODEL_PATH:-/nfs/volume-1615-2/models/Qwen3-Omni-30B-A3B-Instruct}
+HF_MODEL_PATH=${HF_MODEL_PATH:-}
 THINKER_ONLY_MIRROR_DIR=${THINKER_ONLY_MIRROR_DIR:-${WORKSPACE}/hf_thinker_only}
-LOCAL_DATA_ROOT=${LOCAL_DATA_ROOT:-/nfs/ofs-llab-hdd/users/liuwei/omni/qwen3_omni_data/omni_bench_fix_simple}
-TRAIN_JSONL=${TRAIN_JSONL:-${LOCAL_DATA_ROOT}/train/train.jsonl}
-VALID_JSONL=${VALID_JSONL:-${LOCAL_DATA_ROOT}/test/test.jsonl}
-TEST_JSONL=${TEST_JSONL:-${LOCAL_DATA_ROOT}/test/test.jsonl}
+LOCAL_DATA_ROOT=${LOCAL_DATA_ROOT:-}
+TRAIN_JSONL=${TRAIN_JSONL:-}
+VALID_JSONL=${VALID_JSONL:-}
+TEST_JSONL=${TEST_JSONL:-}
 DATASET_NUM_WORKERS=${DATASET_NUM_WORKERS:-0}
 DATASET_PERSISTENT_WORKERS=${DATASET_PERSISTENT_WORKERS:-False}
+
+if [[ -z "${HF_MODEL_PATH}" ]]; then
+  echo "[error] HF_MODEL_PATH is required (local HF checkpoint or model id)." >&2
+  exit 1
+fi
+
+if [[ -n "${LOCAL_DATA_ROOT}" ]]; then
+  TRAIN_JSONL=${TRAIN_JSONL:-${LOCAL_DATA_ROOT}/train/train.jsonl}
+  VALID_JSONL=${VALID_JSONL:-${LOCAL_DATA_ROOT}/test/test.jsonl}
+  TEST_JSONL=${TEST_JSONL:-${LOCAL_DATA_ROOT}/test/test.jsonl}
+fi
+
+if [[ -z "${TRAIN_JSONL}" ]]; then
+  echo "[error] TRAIN_JSONL is required (set TRAIN_JSONL or LOCAL_DATA_ROOT)." >&2
+  exit 1
+fi
 
 RECIPE=${RECIPE:-qwen3_omni_30b_a3b_sft_preloaded_config}
 STEP_FUNC=${STEP_FUNC:-qwen3_omni_step}
