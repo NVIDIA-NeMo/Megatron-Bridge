@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-name: Sync skills → .claude
+name: Sync skills → agent dirs
 
 on:
   push:
@@ -29,17 +29,20 @@ jobs:
         with:
           token: ${{ secrets.PAT }}
 
-      - name: Sync skills/ → .claude/skills/
-        run: rsync -av --delete skills/ .claude/skills/
+      - name: Sync skills/ into agent dirs
+        run: |
+          for dir in .claude .agents; do
+            rsync -av --delete skills/ "$dir/skills/"
+          done
 
       - name: Commit and push if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .claude/skills/
+          git add .claude/skills/ .agents/skills/
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "chore(beep boop 🤖): sync skills/ → .claude/skills/"
+          git commit -m "chore(beep boop 🤖): sync skills/ → .claude/skills/, .agents/skills/"
           git push origin main
