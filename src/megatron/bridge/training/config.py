@@ -990,7 +990,7 @@ class ConfigContainer(Container):
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
         model_cfg = self.model
-        if hasattr(model_cfg, "dist_train") and model_cfg.dist_train.use_dist_train:
+        if hasattr(model_cfg, "dist_train") and getattr(model_cfg.dist_train, "use_dist_train", False) is True:
             # use language world size to calculate data parallel size for dist train
             world_size = model_cfg.dist_train.language_world_size
         total_model_size = (

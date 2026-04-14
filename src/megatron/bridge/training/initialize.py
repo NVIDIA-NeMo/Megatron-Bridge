@@ -762,7 +762,7 @@ def _initialize_distributed(
         # Use HyperCommGrid to create local parallel groups passed through functions
         # instead of relying on mcore's global parallel state (mpu) variables.
         parallel_state._set_global_memory_buffer()
-        if hasattr(model_config, "dist_train") and model_config.dist_train.use_dist_train:
+        if hasattr(model_config, "dist_train") and getattr(model_config.dist_train, "use_dist_train", False) is True:
             pg_collection = _create_dist_train_pgs(
                 model_config,
                 num_distributed_optimizer_instances,

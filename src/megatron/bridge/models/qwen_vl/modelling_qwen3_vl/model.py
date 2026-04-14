@@ -98,7 +98,7 @@ class Qwen3VLModel(MegatronModule):
         self.add_encoder = add_encoder
         self.add_decoder = add_decoder
 
-        if hasattr(self.config, "dist_train") and self.config.dist_train.use_dist_train:
+        if hasattr(self.config, "dist_train") and getattr(self.config.dist_train, "use_dist_train", False) is True:
             self.use_dist_train = True
             self.vision_to_llm_dp_ratio = self.config.dist_train.vision_to_llm_dp_ratio
             self.vision_embeds = None
@@ -425,6 +425,7 @@ class Qwen3VLModel(MegatronModule):
                             # bridge communicator requires 3D [batch, seq, hidden]. So we unsqueeze it to 3D.
                             vision_module_output_tensor = vision_module_output_tensor.unsqueeze(0)
                             output_vision_module = {"vision_module": vision_module_output_tensor}
+                            torch.cuda.nvtx.range_pop()
                             return output_vision_module
                         else:
                             vision_embeds = self.vision_embeds
