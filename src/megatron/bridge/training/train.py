@@ -37,7 +37,10 @@ from megatron.core.optimizer.qk_clip import clip_qk
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
 from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
-from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.pipeline_parallel.schedules import (
+    forward_backward_pipelining_without_interleaving,
+    get_forward_backward_func,
+)
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -262,6 +265,9 @@ def train(
     num_floating_point_operations_model = flop_utils.num_floating_point_operations(config, batch_size=1)
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     dp_size = pg_collection.dp.size()
+    if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
+        forward_backward_func = forward_backward_pipelining_without_interleaving
+        p2p_communicator = config.model._p2p_communicator
 
     if should_fire(callback_manager, "on_train_start"):
         callback_manager.fire(
@@ -822,7 +828,12 @@ def train_step(
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
-    if is_pp_last_stage(pg_collection.pp):
+    pp_last_stage = None
+    if p2p_communicator is not None:
+        pp_last_stage = p2p_communicator.is_pp_last_stage
+    else:
+        pp_last_stage = is_pp_last_stage(pg_collection.pp)
+    if pp_last_stage:
         # Average loss across microbatches.
         loss_reduced = {}
 
