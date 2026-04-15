@@ -665,13 +665,13 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
         dataset_name="nvidia/Nemotron-Cascade-2-SFT-Data",
         dataset_subset="math",
         process_example_fn=process_hf_chat_messages_example,
-        split="train[:10000]",
+        split="train",
         hf_kwargs={
             "data_files": {"train": "math/math_notool.jsonl"},
         },
         seq_length=cfg.model.seq_length,
         seed=5678,
-        memmap_workers=1,
+        memmap_workers=8,
         dataloader_type="batch",
         do_validation=True,
         do_test=False,
@@ -700,7 +700,7 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
     cfg.model.yarn_correction_range_round_to_int = False
 
     # Smaller batch size to fit long sequences.
-    cfg.train.global_batch_size = 2
+    cfg.train.global_batch_size = 8
 
     # Required for CP > 1 in long-context SFT.
     cfg.model.cross_entropy_loss_fusion = False
@@ -713,6 +713,9 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
     cfg.optimizer.use_distributed_optimizer = False
     cfg.scheduler.lr_warmup_iters = 10
     cfg.scheduler.lr_warmup_init = 1.0e-11
+
+    # Timeout for distributed training to avoid timeout errors in dataset loading.
+    cfg.dist.distributed_timeout_minutes = 30
 
     return cfg
 

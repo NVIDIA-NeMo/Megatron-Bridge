@@ -25,12 +25,13 @@ MODEL_NAME=qwen3_600m
 DATASET_NAME=nemotron_cascade_math
 SEQ_LENGTH=131072
 TRAIN_ITERS=100
-GLOBAL_BATCH_SIZE=2
+GLOBAL_BATCH_SIZE=8
 MICRO_BATCH_SIZE=1
 EVAL_ITERS=10
 EVAL_INTERVAL=30
 LR_WARMUP_ITERS=10
 LOG_INTERVAL=1
+DISTRIBUTED_TIMEOUT_MINUTES=30
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # TP=1, CP=8 — required for 128K context parallelism (8 GPUs minimum)
@@ -43,6 +44,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
     validation.eval_iters=$EVAL_ITERS \
     validation.eval_interval=$EVAL_INTERVAL \
     scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
+    dist.distributed_timeout_minutes=$DISTRIBUTED_TIMEOUT_MINUTES \
     checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_yarn_128k_sft \
     checkpoint.load=${WORKSPACE}/results/${MODEL_NAME}_yarn_128k_sft \
     logger.log_interval=$LOG_INTERVAL \
