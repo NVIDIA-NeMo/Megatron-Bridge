@@ -51,6 +51,9 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.peft_bridge import AdapterWeightConversionTask, MegatronPeftBridge
 from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_theta_from_hf,
+)
 from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
     get_module_and_param_from_name,
