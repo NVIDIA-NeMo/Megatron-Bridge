@@ -1066,6 +1066,62 @@ class MegatronPeftBridge:
 
         return converted_weights_dict
 
+    def _merge_grouped_export_adapter_weights(
+        self,
+        task: "WeightConversionTask",
+        converted_weights_dict: Dict[str, torch.Tensor],
+        adapter_weights: List[AdapterWeight],
+        num_moe_experts: int,
+    ) -> Dict[str, torch.Tensor]:
+        """Merge LoRA weights into a single grouped-expert export shard.
+
+        Grouped expert mappings bypass the standard export path and therefore
+        never reach `_merge_lora_adapter_weights`. Merge the current expert's
+        adapter slice into its per-expert tensor before the grouped export code
+        stacks all experts back together.
+        """
+
+        if not converted_weights_dict or not adapter_weights:
+            return converted_weights_dict
+
+        if len(adapter_weights) != 1 or adapter_weights[0].adapter_key is not None:
+            return converted_weights_dict
+
+        from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+
+        expert_idx = extract_expert_number_from_param(task.global_param_name)
+
+        adapter_weight = adapter_weights[0]
+        linear_in_weight = adapter_weight.linear_in_weight.weight
+        linear_out_weight = adapter_weight.linear_out_weight.weight
+
+        expert_linear_in_gathered = self._gather_expert_adapter_weight(linear_in_weight)
+        expert_linear_out_gathered = self._gather_expert_adapter_weight(linear_out_weight)
+
+        current_linear_in_weight = self._select_expert_adapter_weight(
+            linear_in_weight,
+            expert_linear_in_gathered,
+            expert_idx,
+            num_moe_experts,
+        )
+        current_linear_out_weight = self._select_expert_adapter_weight(
+            linear_out_weight,
+            expert_linear_out_gathered,
+            expert_idx,
+            num_moe_experts,
+        )
+
+        for hf_name, base_weight in list(converted_weights_dict.items()):
+            converted_weights_dict[hf_name] = self._merge_single_adapter_weight(
+                base_weight,
+                adapter_weight.alpha,
+                adapter_weight.dim,
+                current_linear_in_weight,
+                current_linear_out_weight,
+            )
+
+        return converted_weights_dict
+
     def _merge_single_adapter_weight(
         self,
         base_weight: torch.Tensor,
