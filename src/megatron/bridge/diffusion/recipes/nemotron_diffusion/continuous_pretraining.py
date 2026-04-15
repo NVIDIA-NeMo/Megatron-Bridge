@@ -9,6 +9,14 @@ from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 
 
+def _copy_embedding_to_output_layer(models):
+    """Initialize output_layer from embedding weights for untied diffusion_head."""
+    for model in models:
+        if hasattr(model, "output_layer") and hasattr(model, "embedding"):
+            model.output_layer.weight.data.copy_(model.embedding.word_embeddings.weight.data)
+    return models
+
+
 def _nemotron_diffusion_cpt_config(
     hf_path,
     tensor_model_parallel_size,
@@ -36,6 +44,8 @@ def _nemotron_diffusion_cpt_config(
     cfg.model = provider
     cfg.model.perform_initialization = False
     cfg.model.register_pre_wrap_hook(partial(bridge.load_weights_hf_to_megatron, hf_pretrained))
+    cfg.model.share_embeddings_and_output_weights = False  # dLLM needs separate diffusion_head
+    cfg.model.register_pre_wrap_hook(_copy_embedding_to_output_layer)
     cfg.model.seq_length = 4096
 
     # Parallel settings
