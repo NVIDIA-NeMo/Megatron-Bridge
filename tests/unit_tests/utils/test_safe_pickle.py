@@ -70,22 +70,24 @@ class TestSafePickleRoundTrip:
 class TestSafePickleRejectsUnsafe:
     """Verify that disallowed types are rejected."""
 
-    def test_rejects_os_system(self):
+    def test_rejects_eval(self):
         data = pickle.dumps(eval)  # noqa: S301
         with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused"):
             safe_pickle_loads(data)
 
-    def test_rejects_crafted_payload(self):
-        # Craft a payload that would call os.system("echo pwned")
-        payload = b"\x80\x05\x95\x1e\x00\x00\x00\x00\x00\x00\x00\x8c\x02os\x8c\x06system\x93\x8c\x0becho pwned\x85R."
+    def test_rejects_os_system(self):
+        import os
+
+        data = pickle.dumps(os.system)
         with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused"):
-            safe_pickle_loads(payload)
+            safe_pickle_loads(data)
 
     def test_rejects_subprocess(self):
-        # Craft a payload referencing subprocess.Popen
-        payload = b"\x80\x05\x95$\x00\x00\x00\x00\x00\x00\x00\x8c\nsubprocess\x8c\x05Popen\x93\x8c\x0becho pwned\x85R."
+        import subprocess
+
+        data = pickle.dumps(subprocess.Popen)
         with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused"):
-            safe_pickle_loads(payload)
+            safe_pickle_loads(data)
 
     def test_rejects_builtins_type(self):
         # type(None) pickles as builtins.type — should be rejected
