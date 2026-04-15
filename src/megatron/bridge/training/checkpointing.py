@@ -20,6 +20,7 @@ import random
 import shutil
 import sys
 import threading
+from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
 from logging import getLogger
@@ -109,6 +110,18 @@ try:
     from megatron.core.transformer.fsdp_dtensor_checkpoint import handle_gdn_in_state_dict
 except ImportError:
     handle_gdn_in_state_dict = None
+
+try:
+    from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
+    from nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async import FileSystemWriterAsync
+    from nvidia_resiliency_ext.checkpointing.async_ckpt.state_dict_saver import (
+        save_state_dict_async_finalize,
+        save_state_dict_async_plan,
+    )
+    HAVE_NVRX = True
+except (ImportError, ModuleNotFoundError):
+    NVRxAsyncRequest = ABC
+    HAVE_NVRX = False
 
 TRACKER_PREFIX = "latest"
 _CHECKPOINT_VERSION = None
@@ -383,6 +396,17 @@ def is_empty_async_queue(global_state: GlobalState) -> bool:
     if async_queue is None:
         return True
     return async_queue.get_num_unfinalized_calls() == 0
+
+
+def get_save_and_finalize_callbacks(writer, save_state_dict_ret) -> NVRxAsyncRequest:
+    """Creates an async save request for fsdp_dtensor & torch_dcp with a finalize function."""
+    save_fn, preload_fn, save_args = writer.get_save_function_and_args()
+    def finalize_fn():
+        """Finalizes async checkpointing and synchronizes processes."""
+        save_state_dict_async_finalize(*save_state_dict_ret)
+    return NVRxAsyncRequest(
+        save_fn, save_args, [finalize_fn], async_fn_kwargs={}, preload_fn=preload_fn
+    )
 
 
 def get_rng_state(
@@ -871,7 +895,7 @@ def save_checkpoint(
 
     async_save_request = None
     if ckpt_cfg.async_save:
-        if ckpt_type == CheckpointType.GLOBAL and ckpt_cfg.ckpt_format != "torch_dist":
+        if ckpt_type == CheckpointType.GLOBAL and ckpt_cfg.ckpt_format not in ['torch_dist', 'fsdp_dtensor']:
             raise NotImplementedError(
                 f"Async checkpoint save not implemented for {ckpt_cfg.ckpt_format} distributed checkpoint format"
             )
@@ -923,6 +947,17 @@ def save_checkpoint(
             state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0])
 
             # FSDP DTensor checkpoint save path using PyTorch Distributed Checkpointing
+            if ckpt_cfg.async_save and HAVE_NVRX:
+                planner = torch.distributed.checkpoint.DefaultSavePlanner()
+                coordinator_rank = 0
+                fs_storage_writer = FileSystemWriterAsync(
+                    checkpoint_name, thread_count=ckpt_cfg.dist_ckpt_workers, use_msc=ckpt_cfg.enable_msc
+                )
+
+                save_state_dict_ret = save_state_dict_async_plan(
+                    state_dict, fs_storage_writer, None, coordinator_rank, planner=planner, enable_cache=ckpt_cfg.ckpt_assume_constant_structure
+                )
+                async_save_request = get_save_and_finalize_callbacks(fs_storage_writer, save_state_dict_ret)
             fs_storage_writer = torch.distributed.checkpoint.FileSystemWriter(checkpoint_name)
             torch.distributed.checkpoint.save(
                 state_dict=state_dict,
