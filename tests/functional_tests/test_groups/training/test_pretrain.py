@@ -224,6 +224,145 @@ class TestPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
+    def test_pretrain_with_independent_eval_batch_size(self, tmp_path):
+        """
+        Test end to end training with eval batch sizes different from training batch sizes.
+
+        Uses eval_global_batch_size=4 and eval_micro_batch_size=2, while training uses
+        global_batch_size=8 and micro_batch_size=1. This verifies that the eval path
+        correctly uses the independent eval batch configuration.
+        """
+        initialize_distributed()
+        shared_base_dir = broadcast_path(tmp_path)
+
+        tensorboard_dir = os.path.join(shared_base_dir, "tensorboard")
+
+        if torch.distributed.get_rank() == 0:
+            os.makedirs(tensorboard_dir, exist_ok=True)
+
+        torch.distributed.barrier()
+
+        global_batch_size = 8
+        micro_batch_size = 1
+        eval_global_batch_size = 4
+        eval_micro_batch_size = 2
+        seq_length = 512
+        total_iters = 10
+
+        model_cfg = GPTModelProvider(
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            position_embedding_type="rope",
+            add_bias_linear=False,
+            attention_dropout=0.0,
+            hidden_dropout=0.0,
+            bias_activation_fusion=True,
+            masked_softmax_fusion=True,
+            persist_layer_norm=True,
+            bias_dropout_fusion=True,
+            apply_rope_fusion=True,
+            num_query_groups=8,
+            init_method_std=0.02,
+            layernorm_epsilon=1e-05,
+            rotary_percent=1.0,
+            rope_scaling=True,
+            rope_scaling_factor=32.0,
+            share_embeddings_and_output_weights=True,
+            rotary_base=500_000,
+            hidden_size=2048,
+            ffn_hidden_size=8192,
+            num_attention_heads=32,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            sequence_parallel=False,
+            attention_softmax_in_fp32=True,
+            pipeline_dtype=torch.bfloat16,
+            bf16=True,
+            seq_length=seq_length,
+            make_vocab_size_divisible_by=128,
+            vocab_size=None,
+            num_layers=1,
+        )
+
+        cfg = ConfigContainer(
+            model=model_cfg,
+            train=TrainingConfig(
+                train_iters=total_iters,
+                global_batch_size=global_batch_size,
+                micro_batch_size=micro_batch_size,
+                exit_signal_handler=True,
+            ),
+            validation=ValidationConfig(
+                eval_interval=5,
+                eval_iters=2,
+                eval_global_batch_size=eval_global_batch_size,
+                eval_micro_batch_size=eval_micro_batch_size,
+            ),
+            optimizer=OptimizerConfig(
+                optimizer="adam",
+                bf16=True,
+                fp16=False,
+                adam_beta1=0.9,
+                adam_beta2=0.95,
+                adam_eps=1e-8,
+                use_distributed_optimizer=True,
+                clip_grad=1.0,
+                lr=3e-3,
+                weight_decay=0.01,
+                min_lr=1e-6,
+            ),
+            scheduler=SchedulerConfig(
+                start_weight_decay=0.033,
+                end_weight_decay=0.033,
+                weight_decay_incr_style="constant",
+                lr_decay_style="cosine",
+                lr_warmup_iters=2,
+                lr_warmup_init=0.0,
+                lr_decay_iters=total_iters,
+                override_opt_param_scheduler=True,
+            ),
+            ddp=DistributedDataParallelConfig(
+                check_for_nan_in_grad=True,
+                grad_reduce_in_fp32=True,
+                overlap_grad_reduce=True,
+                overlap_param_gather=True,
+                average_in_collective=True,
+                use_distributed_optimizer=True,
+            ),
+            dataset=MockGPTDatasetConfig(
+                random_seed=1234,
+                reset_attention_mask=False,
+                reset_position_ids=False,
+                eod_mask_loss=False,
+                seq_length=seq_length,
+                num_dataset_builder_threads=1,
+                data_sharding=True,
+                dataloader_type="single",
+                num_workers=1,
+            ),
+            logger=LoggerConfig(
+                log_interval=5,
+                tensorboard_dir=tensorboard_dir,
+            ),
+            tokenizer=TokenizerConfig(
+                tokenizer_type="NullTokenizer",
+                vocab_size=10000,
+            ),
+            checkpoint=CheckpointConfig(
+                ckpt_format="torch_dist",
+            ),
+            rng=RNGConfig(seed=1234),
+        )
+
+        # Run training — eval runs at iter 5 and 10 with independent batch sizes
+        try:
+            pretrain(cfg, forward_step)
+        finally:
+            clear_directories(tmp_path)
+
+    @pytest.mark.run_only_on("GPU")
     @pytest.mark.pleasefixme
     def test_pretrain_with_mup(self, tmp_path, caplog):
         """
