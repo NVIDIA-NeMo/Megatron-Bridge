@@ -520,6 +520,9 @@ def train(
         if (
             global_state.train_state.do_valid
             and val_config.eval_interval
+            and (
+                val_config.start_eval_at_iter is None or global_state.train_state.step >= val_config.start_eval_at_iter
+            )
             and global_state.train_state.step % val_config.eval_interval == 0
         ):
             if energy_monitor is not None:
