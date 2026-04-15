@@ -226,12 +226,12 @@ class videohandler:
 
     def __call__(self, key, data):
         """Decode pickled video data into lists of image tensors."""
-        extension = re.sub(r".*[.]", "", key)
-        if extension.lower() not in self.extensions:
+        extension = re.sub(r".*[.]", "", key).lower()
+        if extension not in self.extensions:
             return None
         data = safe_pickle_loads(data)
         key = self.extensions_mapping[extension]
-        if extension.lower() == "jpgs":
+        if extension == "jpgs":
             data = [self.image_handler(key, d) for d in data]
         else:
             data = [[self.image_handler(key, d) for d in video] for video in data]
