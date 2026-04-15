@@ -14,6 +14,7 @@
 
 import dataclasses
 import datetime
+import inspect
 import os
 import time
 import warnings
@@ -788,6 +789,13 @@ def _initialize_distributed(
         if parallel_state.model_parallel_is_initialized():
             print("model parallel is already initialized")
         else:
+            # Guard for main/dev branch submodule compat: hybrid_context_parallel was added in the dev branch.
+            # TODO: remove guard once the addition lands in main and Bridge pins the new main commit.
+            _init_mp_params = set(inspect.signature(parallel_state.initialize_model_parallel).parameters)
+            _optional_kwargs = {}
+            if "hybrid_context_parallel" in _init_mp_params:
+                _optional_kwargs["hybrid_context_parallel"] = model_config.hybrid_context_parallel
+
             parallel_state.initialize_model_parallel(
                 tensor_model_parallel_size=model_config.tensor_model_parallel_size,
                 pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
@@ -795,7 +803,6 @@ def _initialize_distributed(
                 pipeline_model_parallel_comm_backend=model_config.pipeline_model_parallel_comm_backend,
                 context_parallel_size=model_config.context_parallel_size,
                 hierarchical_context_parallel_sizes=model_config.hierarchical_context_parallel_sizes,
-                hybrid_context_parallel=model_config.hybrid_context_parallel,
                 expert_model_parallel_size=model_config.expert_model_parallel_size,
                 num_distributed_optimizer_instances=num_distributed_optimizer_instances,
                 expert_tensor_parallel_size=model_config.expert_tensor_parallel_size,
@@ -808,6 +815,7 @@ def _initialize_distributed(
                 use_sharp=dist_config.use_sharp,
                 high_priority_stream_groups=dist_config.high_priority_stream_groups,
                 sharp_enabled_group=dist_config.sharp_enabled_group,
+                **_optional_kwargs,
             )
             if get_rank_safe() == 0:
                 print(
