@@ -10,6 +10,11 @@ The `skills/` directory contains structured guides for common tasks (adding
 models, running experiments, debugging multi-node jobs, performance tuning,
 etc.). Read the relevant `SKILL.md` before starting a task it covers.
 
+Skills are discovered **recursively** — any directory under `skills/` (at any
+depth) that contains a `SKILL.md` with valid `name` and `description`
+frontmatter is a registered skill. This includes nested directories such as
+`skills/perf-techniques/*/`.
+
 ## Boundaries
 
 **NEVER:**
