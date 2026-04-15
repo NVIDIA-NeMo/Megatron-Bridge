@@ -97,6 +97,6 @@ knowledge_base:
     filePatterns:
       # File Patterns - Specify files for your coding guideline documents in this section. CodeRabbit will scan these files to understand your team's standards and apply them during code reviews. Multiple files supported. File names are case-sensitive. Common files like: (**/.cursorrules, .github/copilot-instructions.md, .github/instructions/*.instructions.md, **/CLAUDE.md, **/GEMINI.md, **/.cursor/rules/*, **/.windsurfrules, **/.clinerules/*, **/.rules/*, **/AGENT.md, **/AGENTS.md) are included by default.
       # Default: []
-      - "**/CODING_GUIDELINES.md"
+      - "**/skills/code-style/SKILL.md"
       - "**/.cursor/rules/*"
       - "**/CONTRIBUTING.md"

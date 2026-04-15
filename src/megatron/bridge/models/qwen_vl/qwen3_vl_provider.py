@@ -33,6 +33,21 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 
 
 @dataclass
+class DistTrainConfig:
+    """Distributed training (DistTrain) settings for Qwen3-VL providers."""
+
+    use_dist_train: bool = False
+    vision_to_llm_dp_ratio: Optional[int] = None
+    vision_world_size: Optional[int] = None
+    language_world_size: Optional[int] = None
+    vision_tensor_model_parallel_size: Optional[int] = None
+    vision_pipeline_model_parallel_size: Optional[int] = None
+    vision_context_parallel_size: Optional[int] = None
+    vision_expert_tensor_parallel_size: Optional[int] = None
+    vision_expert_model_parallel_size: Optional[int] = None
+
+
+@dataclass
 class Qwen3VLModelProvider(GPTModelProvider):
     """
     Base model provider for Qwen 3 VL Models.
@@ -105,6 +120,11 @@ class Qwen3VLModelProvider(GPTModelProvider):
 
     vision_dp_when_cp: bool = False
 
+    # It’s an experimental feature and may change in the future.
+    dist_train: DistTrainConfig = field(default_factory=DistTrainConfig)
+    add_encoder: bool = True
+    add_decoder: bool = True
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3 VL model instance with vision and language components."""
         language_transformer_config = self
@@ -125,6 +145,8 @@ class Qwen3VLModelProvider(GPTModelProvider):
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
+            add_encoder=self.add_encoder,
+            add_decoder=self.add_decoder,
         )
 
         # Apply freeze options if any are enabled for fine-tuning
@@ -250,6 +272,11 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
 
+    # It’s an experimental feature and may change in the future.
+    dist_train: DistTrainConfig = field(default_factory=DistTrainConfig)
+    add_encoder: bool = True
+    add_decoder: bool = True
+
     def finalize(self) -> None:
         if self.tensor_model_parallel_size > 1:
             self.sequence_parallel = True
@@ -275,6 +302,8 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
+            add_encoder=self.add_encoder,
+            add_decoder=self.add_decoder,
         )
 
         # Apply freeze options if any are enabled for fine-tuning

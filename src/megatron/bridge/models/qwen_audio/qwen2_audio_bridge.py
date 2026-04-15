@@ -85,10 +85,14 @@ class Qwen2AudioBridge(MegatronModelBridge):
 
         # Qwen2-specific settings
         provider.normalization = "RMSNorm"
+        provider.position_embedding_type = "rope"
         provider.gated_linear_unit = True
         provider.add_qkv_bias = True
         provider.add_bias_linear = False
         provider.hidden_dropout = 0.0
+
+        # Disable gradient accumulation fusion (requires APEX fused_weight_gradient_mlp_cuda)
+        provider.gradient_accumulation_fusion = False
 
         # Audio-specific settings
         provider.hf_config = hf_config

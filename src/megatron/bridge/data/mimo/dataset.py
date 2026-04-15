@@ -117,7 +117,8 @@ class MimoDataset(Dataset):
         Returns:
             Dict containing:
                 - input_ids: Tokenized text with placeholder tokens
-                - labels: Same as input_ids (for causal LM training)
+                - labels: Shifted input_ids for next-token prediction (-100 for masked positions)
+                - loss_mask: Float mask (0.0 for padding/image placeholder targets, 1.0 otherwise)
                 - attention_mask: Attention mask
                 - position_ids: Position indices
                 - modality_inputs: Dict[str, Any] with preprocessed inputs per modality
@@ -158,9 +159,29 @@ class MimoDataset(Dataset):
         attention_mask = torch.ones_like(input_ids)
         position_ids = torch.arange(len(input_ids))
 
+        # Shift labels by 1 for next-token prediction: label[i] = input_ids[i+1]
+        labels = input_ids.clone()
+        labels[:-1] = input_ids[1:]
+        labels[-1] = -100  # ignore index for the last position
+
+        # Build loss_mask: no loss on padding or encoder placeholder token positions
+        pad_token_id = self.tokenizer.pad_token_id or 0
+        placeholder_ids = set(self.special_token_ids.values())
+
+        # loss_mask[i] = 0 when the target (labels[i]) is padding or a placeholder
+        loss_mask = torch.ones_like(input_ids, dtype=torch.float32)
+        loss_mask[-1] = 0.0  # last position has no valid target
+        for pid in placeholder_ids:
+            loss_mask[labels == pid] = 0.0
+        loss_mask[labels == pad_token_id] = 0.0
+
+        # Also mask labels with -100 so CrossEntropyLoss ignores them
+        labels[loss_mask == 0.0] = -100
+
         return {
             "input_ids": input_ids,
-            "labels": input_ids.clone(),
+            "labels": labels,
+            "loss_mask": loss_mask,
             "attention_mask": attention_mask,
             "position_ids": position_ids,
             "modality_inputs": modality_inputs,

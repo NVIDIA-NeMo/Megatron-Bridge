@@ -280,6 +280,7 @@ class TestFullDimRMSNorm:
         config = Mock()
         config.tensor_model_parallel_size = 1
         config.num_attention_heads = 8
+        config.params_dtype = torch.bfloat16
         norm = FullDimQNorm(hidden_size=64, config=config)
         assert isinstance(norm, _FullDimRMSNorm)
         # local_dim = (8 // 1) * 64 = 512; global_dim = 8 * 64 = 512
@@ -291,6 +292,7 @@ class TestFullDimRMSNorm:
         config = Mock()
         config.tensor_model_parallel_size = 2
         config.num_attention_heads = 8
+        config.params_dtype = torch.bfloat16
         norm = FullDimQNorm(hidden_size=64, config=config)
         assert isinstance(norm, _FullDimRMSNorm)
         # local_dim = (8 // 2) * 64 = 256; global_dim = 8 * 64 = 512
@@ -303,6 +305,7 @@ class TestFullDimRMSNorm:
         config.tensor_model_parallel_size = 1
         config.num_query_groups = 4
         config.num_attention_heads = 8
+        config.params_dtype = torch.bfloat16
         norm = FullDimKNorm(hidden_size=64, config=config)
         assert isinstance(norm, _FullDimRMSNorm)
         # local_dim = (4 // 1) * 64 = 256; global_dim = 4 * 64 = 256
@@ -315,6 +318,7 @@ class TestFullDimRMSNorm:
         config.tensor_model_parallel_size = 1
         config.num_query_groups = None
         config.num_attention_heads = 8
+        config.params_dtype = torch.bfloat16
         norm = FullDimKNorm(hidden_size=64, config=config)
         assert norm.global_dim == 8 * 64
 
