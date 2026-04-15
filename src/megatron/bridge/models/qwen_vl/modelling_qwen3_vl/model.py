@@ -390,6 +390,8 @@ class Qwen3VLModel(MegatronModule):
                 square_merge_size=self.square_merge_size,
             )
 
+            vision_embeds = None
+
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
                 if cp_size > 1 and self.config.vision_dp_when_cp:
                     if cp_img_num is None:
