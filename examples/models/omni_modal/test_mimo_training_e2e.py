@@ -6,7 +6,7 @@ on 8 GPUs with synthetic data using the real data pipeline.
 LLM on ranks 0-3 (TP=4), vision encoder on ranks 4-7 (TP=4).
 
 Run:
-    torchrun --nproc_per_node=8 tests/e2e/mimo/test_mimo_training_e2e.py
+    torchrun --nproc_per_node=8 examples/models/omni_modal/test_mimo_training_e2e.py
 """
 
 from __future__ import annotations
@@ -115,14 +115,14 @@ def _build_model_specs():
     return language_model_spec, modality_submodules_spec, special_token_ids
 
 
-from megatron.bridge.models.mimo.mimo_config import (
-    MimoParallelismConfig,
+from megatron.bridge.models.omni_modal.omni_modal_config import (
     ModuleParallelismConfig,
+    OmniModalParallelismConfig,
 )
 
 
-def _build_parallelism_config() -> MimoParallelismConfig:
-    return MimoParallelismConfig(
+def _build_parallelism_config() -> OmniModalParallelismConfig:
+    return OmniModalParallelismConfig(
         module_parallelisms={
             "language": ModuleParallelismConfig(
                 tensor_model_parallel_size=4,
@@ -221,7 +221,7 @@ def _build_data_iterators(cfg, mimo_infra):
     return train_iter, valid_iter
 
 
-from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -234,7 +234,7 @@ from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
 
 def _build_config(
-    mimo_provider: MimoModelProvider,
+    mimo_provider: OmniModalProvider,
     mock_data_provider: MockMimoProvider,
     opt_config: BridgeOptimizerConfig,
     log_interval: int = 1,
@@ -333,7 +333,7 @@ def main():
         language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
         mimo_parallelism_config = _build_parallelism_config()
 
-        mimo_provider = MimoModelProvider(
+        mimo_provider = OmniModalProvider(
             language_model_spec=language_model_spec,
             modality_submodules_spec=modality_submodules_spec,
             special_token_ids=special_token_ids,

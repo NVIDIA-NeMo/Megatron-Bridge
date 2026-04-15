@@ -372,14 +372,14 @@ def _make_checkpoint_loader_hook(
 # Parallelism config (8 GPUs: TP=4 for both modules)
 # ---------------------------------------------------------------------------
 
-from megatron.bridge.models.mimo.mimo_config import (
-    MimoParallelismConfig,
+from megatron.bridge.models.omni_modal.omni_modal_config import (
     ModuleParallelismConfig,
+    OmniModalParallelismConfig,
 )
 
 
-def _build_parallelism_config() -> MimoParallelismConfig:
-    return MimoParallelismConfig(
+def _build_parallelism_config() -> OmniModalParallelismConfig:
+    return OmniModalParallelismConfig(
         module_parallelisms={
             "language": ModuleParallelismConfig(
                 tensor_model_parallel_size=int(os.environ.get("MIMO_LLM_TP", 4)),
@@ -514,7 +514,7 @@ def _build_data_iterators(cfg, _mimo_infra, *, train_state=None):
 # ---------------------------------------------------------------------------
 
 
-from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -527,7 +527,7 @@ from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
 
 def _build_config(
-    mimo_provider: MimoModelProvider,
+    mimo_provider: OmniModalProvider,
     data_provider: HFMimoDatasetProvider,
     opt_config: BridgeOptimizerConfig,
     micro_batch_size: int = 1,
@@ -721,7 +721,7 @@ def main():
     llm_pp_size = mimo_parallelism_config.module_parallelisms["language"].pipeline_model_parallel_size
     language_model_spec.params["config"].pipeline_model_parallel_size = llm_pp_size
 
-    mimo_provider = MimoModelProvider(
+    mimo_provider = OmniModalProvider(
         language_model_spec=language_model_spec,
         modality_submodules_spec=modality_submodules_spec,
         special_token_ids=special_token_ids,

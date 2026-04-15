@@ -9,11 +9,11 @@ Two-phase test (separate torchrun invocations required):
   Phase 2 (resume): Resume from checkpoint, train to TOTAL_STEPS, verify continuity.
 
 Run via wrapper:
-    bash tests/e2e/mimo/run_mimo_checkpoint_resume.sh
+    bash examples/models/omni_modal/run_mimo_checkpoint_resume.sh
 Or manually:
     CKPT_DIR=$(mktemp -d)
-    torchrun --nproc_per_node=8 tests/e2e/mimo/test_mimo_checkpoint_resume_e2e.py --phase save   --ckpt-dir $CKPT_DIR
-    torchrun --nproc_per_node=8 tests/e2e/mimo/test_mimo_checkpoint_resume_e2e.py --phase resume --ckpt-dir $CKPT_DIR
+    torchrun --nproc_per_node=8 examples/models/omni_modal/test_mimo_checkpoint_resume_e2e.py --phase save   --ckpt-dir $CKPT_DIR
+    torchrun --nproc_per_node=8 examples/models/omni_modal/test_mimo_checkpoint_resume_e2e.py --phase resume --ckpt-dir $CKPT_DIR
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.data.mimo.mock_provider import MockMimoProvider
-from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
-from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+from megatron.bridge.models.omni_modal.omni_modal_config import ModuleParallelismConfig, OmniModalParallelismConfig
+from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -141,14 +141,14 @@ def _build_model_specs():
     return language_model_spec, {"vision": vision_submodule_spec}, {"vision": _SPECIAL_TOKEN_ID}
 
 
-def _build_parallelism_config() -> MimoParallelismConfig:
+def _build_parallelism_config() -> OmniModalParallelismConfig:
     """Build parallelism config from MIMO_* env vars (set by shell wrapper).
 
     Env vars (with defaults for 8-GPU TP=4 both):
         MIMO_LLM_TP, MIMO_LLM_PP, MIMO_LLM_DP, MIMO_LLM_OFFSET
         MIMO_VISION_TP, MIMO_VISION_PP, MIMO_VISION_DP, MIMO_VISION_OFFSET
     """
-    return MimoParallelismConfig(
+    return OmniModalParallelismConfig(
         module_parallelisms={
             "language": ModuleParallelismConfig(
                 tensor_model_parallel_size=int(os.environ.get("MIMO_LLM_TP", "4")),
@@ -237,7 +237,7 @@ def _build_data_iterators(cfg, mimo_infra, *, train_state=None):
 
 
 def _build_config(
-    mimo_provider: MimoModelProvider,
+    mimo_provider: OmniModalProvider,
     mock_data_provider: MockMimoProvider,
     opt_config: BridgeOptimizerConfig,
     ckpt_dir: str,
@@ -314,7 +314,7 @@ def _run_phase_save(ckpt_dir: str) -> None:
     _log(f"Phase SAVE: training for {SAVE_STEPS} steps, saving to {ckpt_dir}")
 
     language_spec, modality_specs, special_tokens = _build_model_specs()
-    mimo_provider = MimoModelProvider(
+    mimo_provider = OmniModalProvider(
         language_model_spec=language_spec,
         modality_submodules_spec=modality_specs,
         special_token_ids=special_tokens,
@@ -377,7 +377,7 @@ def _run_phase_resume(ckpt_dir: str) -> None:
     _log(f"Loaded marker from phase 1: {saved_marker}")
 
     language_spec, modality_specs, special_tokens = _build_model_specs()
-    mimo_provider = MimoModelProvider(
+    mimo_provider = OmniModalProvider(
         language_model_spec=language_spec,
         modality_submodules_spec=modality_specs,
         special_token_ids=special_tokens,

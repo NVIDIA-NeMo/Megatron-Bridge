@@ -35,7 +35,7 @@ def build_mimo_data_loaders(
     Only ranks that need data (first/last PP stage) will get non-None loaders.
 
     Args:
-        cfg: Configuration container with MimoModelProvider as cfg.model.
+        cfg: Configuration container with OmniModalProvider as cfg.model.
         train_state: Current training state.
         mimo_provider: MIMO dataset provider (e.g., MockMimoDatasetProvider)
             with get_collate_fn() method.
@@ -48,7 +48,7 @@ def build_mimo_data_loaders(
         Returns (None, None, None) if this rank doesn't need data.
 
     Raises:
-        ValueError: If cfg.model is not MimoModelProvider or mimo_parallelism_config is None.
+        ValueError: If cfg.model is not OmniModalProvider or mimo_parallelism_config is None.
 
     Example:
         >>> from megatron.bridge.data.mimo import MockMimoProvider, build_mimo_data_loaders
@@ -64,17 +64,17 @@ def build_mimo_data_loaders(
         ...     train_samples=10000, valid_samples=1000, test_samples=1000,
         ... )
     """
-    from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+    from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
 
-    if not isinstance(cfg.model, MimoModelProvider):
-        raise ValueError("cfg.model must be MimoModelProvider for MIMO data loading.")
+    if not isinstance(cfg.model, OmniModalProvider):
+        raise ValueError("cfg.model must be OmniModalProvider for MIMO data loading.")
 
     if cfg.model.mimo_parallelism_config is None:
         raise ValueError("mimo_parallelism_config must be set for MIMO data loading.")
 
     if cfg.model._grids is None:
         raise ValueError(
-            "MimoModelProvider._grids is None. Ensure build_model() is called before building data loaders."
+            "OmniModalProvider._grids is None. Ensure build_model() is called before building data loaders."
         )
 
     # Validate that micro_batch_size is divisible by every module's DP size.

@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
     from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
 
-    from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra
+    from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalInfra
 
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def train_step_mimo(
     global_state: GlobalState,
     multimodule_communicator: "MultiModulePipelineCommunicator",
     multimodule_pg_collection,
-    infra: "MimoModelInfra",
+    infra: "OmniModalInfra",
     module_to_grid_tuple: List,
     num_microbatches: int,
     seq_length: int,
@@ -87,7 +87,7 @@ def train_step_mimo(
         global_state: GlobalState containing timers, config, train_state.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
         multimodule_pg_collection: PG collection for schedule.
-        infra: MimoModelInfra with grids, topology, pg_collections.
+        infra: OmniModalInfra with grids, topology, pg_collections.
         module_to_grid_tuple: List of (module, grid) tuples.
         num_microbatches: Number of microbatches per iteration.
         seq_length: Sequence length.
@@ -192,7 +192,7 @@ def train_mimo(
     train_data_iterator: Iterator,
     valid_data_iterator: Optional[Iterator],
     global_state: GlobalState,
-    mimo_infra: "MimoModelInfra",
+    mimo_infra: "OmniModalInfra",
     multimodule_communicator: "MultiModulePipelineCommunicator",
     checkpoint_manager: Optional[CheckpointManager] = None,
     multimodule_pg_collection: Optional["MultiModuleProcessGroupCollection"] = None,
@@ -222,7 +222,7 @@ def train_mimo(
         train_data_iterator: Training data iterator.
         valid_data_iterator: Validation data iterator (optional).
         global_state: GlobalState containing timers, config, train_state.
-        mimo_infra: MimoModelInfra with grids, topology, pg_collections.
+        mimo_infra: OmniModalInfra with grids, topology, pg_collections.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
         checkpoint_manager: CheckpointManager for save operations. Created by
             setup_mimo(). If None, a DefaultCheckpointManager is created.

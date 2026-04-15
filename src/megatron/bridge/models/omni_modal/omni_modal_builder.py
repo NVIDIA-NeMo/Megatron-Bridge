@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import torch.distributed as dist
 
-from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
+from megatron.bridge.models.omni_modal.omni_modal_config import OmniModalParallelismConfig
 
 
 if TYPE_CHECKING:
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 def build_hypercomm_grids(
-    mimo_parallelism_config: MimoParallelismConfig,
+    mimo_parallelism_config: OmniModalParallelismConfig,
 ) -> Dict[str, "HyperCommGrid"]:
     """Create HyperCommGrid objects per module from MIMO parallelism config.
 
@@ -21,7 +21,7 @@ def build_hypercomm_grids(
     but only ranks in each grid's range will participate in its operations.
 
     Args:
-        mimo_parallelism_config: MimoParallelismConfig specifying parallelism per module.
+        mimo_parallelism_config: OmniModalParallelismConfig specifying parallelism per module.
 
     Returns:
         Dict mapping module names to their HyperCommGrids.

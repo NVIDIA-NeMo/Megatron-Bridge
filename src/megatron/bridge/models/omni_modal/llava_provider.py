@@ -12,12 +12,12 @@ from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.transformer.mlp import MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 
-from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
 @dataclass
-class LlavaMimoProvider(MimoModelProvider):
+class LlavaOmniModalProvider(OmniModalProvider):
     """LLaVA-style Vision-Language Model provider.
 
     Preconfigures specs for:
@@ -27,7 +27,7 @@ class LlavaMimoProvider(MimoModelProvider):
 
     Example:
         >>> from my_encoders import HFCLIPEncoder
-        >>> provider = LlavaMimoProvider(
+        >>> provider = LlavaOmniModalProvider(
         ...     vision_encoder_module=HFCLIPEncoder,
         ...     mimo_parallelism_config=mimo_parallelism_config,
         ... )
@@ -51,7 +51,7 @@ class LlavaMimoProvider(MimoModelProvider):
         if self.vision_encoder_module is None:
             raise ValueError(
                 "vision_encoder_module must be provided. "
-                "Example: LlavaMimoProvider(vision_encoder_module=HFCLIPEncoder, ...)"
+                "Example: LlavaOmniModalProvider(vision_encoder_module=HFCLIPEncoder, ...)"
             )
 
         # Create default language config if not provided

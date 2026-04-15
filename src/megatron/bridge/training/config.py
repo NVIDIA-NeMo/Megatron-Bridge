@@ -48,7 +48,7 @@ from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
-from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -964,7 +964,7 @@ class ConfigContainer(Container):
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
     model: (
-        GPTModelProvider | T5ModelProvider | MambaModelProvider | MimoModelProvider | GPTModelConfig | MambaModelConfig
+        GPTModelProvider | T5ModelProvider | MambaModelProvider | OmniModalProvider | GPTModelConfig | MambaModelConfig
     )
     optimizer: OptimizerConfig
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
@@ -1608,7 +1608,7 @@ def mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
     The standard ``runtime_config_update`` cannot be used directly because it
     accesses ``cfg.model`` attributes (``bf16``, ``tensor_model_parallel_size``,
-    ``cuda_graph_impl``, …) that do not exist on ``MimoModelProvider``.
+    ``cuda_graph_impl``, …) that do not exist on ``OmniModalProvider``.
 
     This function cherry-picks the safe, model-agnostic parts:
 

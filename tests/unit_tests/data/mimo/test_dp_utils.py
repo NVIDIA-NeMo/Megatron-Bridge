@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 
 from megatron.bridge.data.mimo.dp_utils import get_mimo_dp_info, slice_batch_for_mimo
-from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
+from megatron.bridge.models.omni_modal.omni_modal_config import ModuleParallelismConfig, OmniModalParallelismConfig
 
 
 class FakePG:
@@ -38,13 +38,13 @@ class FakeGrid:
         return self._pgs[tuple(dims)]
 
 
-def _make_mimo_cfg() -> MimoParallelismConfig:
+def _make_mimo_cfg() -> OmniModalParallelismConfig:
     """Create test MIMO config for heterogeneous deployment."""
     module_parallelisms = {
         "vision": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0),
         "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=4),
     }
-    return MimoParallelismConfig(
+    return OmniModalParallelismConfig(
         module_parallelisms=module_parallelisms,
     )
 

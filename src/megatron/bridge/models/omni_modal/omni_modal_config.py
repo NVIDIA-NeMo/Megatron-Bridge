@@ -58,7 +58,7 @@ class ModuleParallelismConfig:
 
 
 @dataclass
-class MimoParallelismConfig:
+class OmniModalParallelismConfig:
     """Configuration for multi-module (MIMO) heterogeneous parallelism.
 
     Note: Phase 1 only supports heterogeneous deployment where each module

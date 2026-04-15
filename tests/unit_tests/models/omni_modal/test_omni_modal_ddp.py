@@ -3,12 +3,12 @@
 
 from unittest.mock import MagicMock, patch
 
-from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
-from megatron.bridge.models.mimo.mimo_ddp import wrap_mimo_model_distributed
+from megatron.bridge.models.omni_modal.omni_modal_config import ModuleParallelismConfig, OmniModalParallelismConfig
+from megatron.bridge.models.omni_modal.omni_modal_ddp import wrap_omni_modal_model_distributed
 
 
 class TestWrapMimoModelDistributed:
-    """Test cases for wrap_mimo_model_distributed."""
+    """Test cases for wrap_omni_modal_model_distributed."""
 
     def _create_mock_mimo_model(self, has_language_model=True, modality_names=None):
         """Create a mock MimoModel for testing."""
@@ -40,7 +40,7 @@ class TestWrapMimoModelDistributed:
         return mock_grid
 
     def _create_mimo_parallelism_config(self, modules):
-        """Create a MimoParallelismConfig."""
+        """Create a OmniModalParallelismConfig."""
         module_parallelisms = {
             name: ModuleParallelismConfig(
                 tensor_model_parallel_size=config.get("tp", 1),
@@ -49,7 +49,7 @@ class TestWrapMimoModelDistributed:
             )
             for name, config in modules.items()
         }
-        return MimoParallelismConfig(
+        return OmniModalParallelismConfig(
             module_parallelisms=module_parallelisms,
         )
 
@@ -71,7 +71,9 @@ class TestWrapMimoModelDistributed:
         grids = {"language": self._create_mock_grid(rank_offset=0, size=4)}
         pg_collections = {"language": MagicMock()}
 
-        result = wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        result = wrap_omni_modal_model_distributed(
+            mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
+        )
 
         # Should wrap language model
         mock_ddp.assert_called_once()
@@ -96,7 +98,9 @@ class TestWrapMimoModelDistributed:
         grids = {"language": self._create_mock_grid(rank_offset=0, size=4)}
         pg_collections = {"language": MagicMock()}
 
-        result = wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        result = wrap_omni_modal_model_distributed(
+            mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
+        )
 
         # Should NOT wrap language model
         mock_ddp.assert_not_called()
@@ -127,7 +131,7 @@ class TestWrapMimoModelDistributed:
             "images": MagicMock(),
         }
 
-        wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        wrap_omni_modal_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
 
         # Should wrap both language model and images submodule
         assert mock_ddp.call_count == 2
@@ -159,7 +163,7 @@ class TestWrapMimoModelDistributed:
             "images": MagicMock(),
         }
 
-        wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        wrap_omni_modal_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
 
         # Should wrap llm and images, but not audio (no grid)
         assert mock_ddp.call_count == 2
@@ -191,7 +195,9 @@ class TestWrapMimoModelDistributed:
             "images": MagicMock(),
         }
 
-        result = wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        result = wrap_omni_modal_model_distributed(
+            mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
+        )
 
         # Should wrap only images (rank 4 is in images grid, not llm grid)
         assert mock_ddp.call_count == 1
@@ -223,7 +229,9 @@ class TestWrapMimoModelDistributed:
             "images": MagicMock(),
         }
 
-        result = wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        result = wrap_omni_modal_model_distributed(
+            mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
+        )
 
         # Should wrap only images (no language model)
         assert mock_ddp.call_count == 1
@@ -232,7 +240,7 @@ class TestWrapMimoModelDistributed:
     @patch("megatron.core.distributed.DistributedDataParallel")
     @patch("torch.distributed.get_rank")
     def test_returns_same_model_instance(self, mock_get_rank, mock_ddp):
-        """Test that wrap_mimo_model_distributed returns the same model instance."""
+        """Test that wrap_omni_modal_model_distributed returns the same model instance."""
         mock_get_rank.return_value = 0
         mock_ddp.return_value = MagicMock()
 
@@ -247,7 +255,9 @@ class TestWrapMimoModelDistributed:
         grids = {"language": self._create_mock_grid(rank_offset=0, size=4)}
         pg_collections = {"language": MagicMock()}
 
-        result = wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        result = wrap_omni_modal_model_distributed(
+            mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
+        )
 
         # Should return the same model instance (modified in-place)
         assert result is mimo_model
@@ -275,7 +285,7 @@ class TestWrapMimoModelDistributed:
         llm_pg_collection = MagicMock()
         pg_collections = {"language": llm_pg_collection}
 
-        wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        wrap_omni_modal_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
 
         # Verify DDP call arguments
         mock_ddp.assert_called_once()

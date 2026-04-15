@@ -1,7 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """DDP wrapping utilities for MIMO models.
 
-Called from the training layer after MimoModelProvider.provide().
+Called from the training layer after OmniModalProvider.provide().
 
 Note: This module only supports DDP wrapping. FSDP is not yet implemented.
 """
@@ -19,13 +19,13 @@ if TYPE_CHECKING:
     from megatron.core.models.mimo import MimoModel
     from megatron.core.process_groups_config import ProcessGroupCollection
 
-    from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
+    from megatron.bridge.models.omni_modal.omni_modal_config import OmniModalParallelismConfig
 
 
-def wrap_mimo_model_distributed(
+def wrap_omni_modal_model_distributed(
     mimo_model: "MimoModel",
     ddp_config: "DistributedDataParallelConfig",
-    mimo_parallelism_config: "MimoParallelismConfig",
+    mimo_parallelism_config: "OmniModalParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
     pg_collections: Dict[str, Optional["ProcessGroupCollection"]],
 ) -> "MimoModel":

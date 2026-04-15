@@ -9,18 +9,18 @@ from megatron.core.models.gpt import GPTModel
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 
-from megatron.bridge.models.mimo.llava_provider import LlavaMimoProvider
+from megatron.bridge.models.omni_modal.llava_provider import LlavaOmniModalProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
-class TestLlavaMimoProvider:
-    """Test cases for LlavaMimoProvider."""
+class TestLlavaOmniModalProvider:
+    """Test cases for LlavaOmniModalProvider."""
 
     def test_initialization_with_vision_encoder(self):
-        """Test LlavaMimoProvider initializes correctly with vision encoder."""
+        """Test LlavaOmniModalProvider initializes correctly with vision encoder."""
         mock_vision_encoder = Mock
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
         )
 
@@ -45,13 +45,13 @@ class TestLlavaMimoProvider:
     def test_error_when_vision_encoder_missing(self):
         """Test ValueError raised when vision_encoder_module is None."""
         with pytest.raises(ValueError, match="vision_encoder_module must be provided"):
-            LlavaMimoProvider(vision_encoder_module=None)
+            LlavaOmniModalProvider(vision_encoder_module=None)
 
     def test_default_language_config_generation(self):
         """Test that default Vicuna-7B config is created correctly."""
         mock_vision_encoder = Mock
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
         )
 
@@ -79,7 +79,7 @@ class TestLlavaMimoProvider:
             ffn_hidden_size=5504,
         )
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
             language_config=custom_config,
         )
@@ -102,7 +102,7 @@ class TestLlavaMimoProvider:
         mock_vision_encoder = Mock
         custom_params = {"pretrained": True, "freeze": False, "resolution": 224}
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
             vision_encoder_params=custom_params,
         )
@@ -118,7 +118,7 @@ class TestLlavaMimoProvider:
         """Test custom vocab size and special token IDs."""
         mock_vision_encoder = Mock
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
             vocab_size=50000,
             image_special_token_id=40000,
@@ -136,7 +136,7 @@ class TestLlavaMimoProvider:
         """Test custom vision projector input size."""
         mock_vision_encoder = Mock
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
             vision_projector_input_size=768,  # CLIP ViT-B/16 output size
         )
@@ -150,7 +150,7 @@ class TestLlavaMimoProvider:
         """Test vision submodule spec has correct structure."""
         mock_vision_encoder = Mock
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
         )
 
@@ -182,7 +182,7 @@ class TestLlavaMimoProvider:
         """Test vision projector has correct 2-layer MLP config."""
         mock_vision_encoder = Mock
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
         )
 
@@ -199,14 +199,14 @@ class TestLlavaMimoProvider:
         assert projector_spec.params["submodules"] is not None
 
     def test_inherits_from_mimo_model_provider(self):
-        """Test that LlavaMimoProvider inherits from MimoModelProvider."""
+        """Test that LlavaOmniModalProvider inherits from OmniModalProvider."""
         mock_vision_encoder = Mock
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
         )
 
-        # Check it has MimoModelProvider attributes
+        # Check it has OmniModalProvider attributes
         assert hasattr(provider, "language_model_spec")
         assert hasattr(provider, "modality_submodules_spec")
         assert hasattr(provider, "special_token_ids")
@@ -215,20 +215,20 @@ class TestLlavaMimoProvider:
         assert hasattr(provider, "build_infra")
 
     def test_can_set_parallelism_config(self):
-        """Test that parallelism config can be set on LlavaMimoProvider."""
-        from megatron.bridge.models.mimo.mimo_config import (
-            MimoParallelismConfig,
+        """Test that parallelism config can be set on LlavaOmniModalProvider."""
+        from megatron.bridge.models.omni_modal.omni_modal_config import (
             ModuleParallelismConfig,
+            OmniModalParallelismConfig,
         )
 
         mock_vision_encoder = Mock
-        mimo_config = MimoParallelismConfig(
+        mimo_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(tensor_model_parallel_size=4),
             }
         )
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
             mimo_parallelism_config=mimo_config,
         )
@@ -236,10 +236,10 @@ class TestLlavaMimoProvider:
         assert provider.mimo_parallelism_config == mimo_config
 
     def test_can_set_freezing_options(self):
-        """Test that freezing options can be set on LlavaMimoProvider."""
+        """Test that freezing options can be set on LlavaOmniModalProvider."""
         mock_vision_encoder = Mock
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
             freeze_language_model=True,
             freeze_modality_encoders={"images": True},
@@ -254,7 +254,7 @@ class TestLlavaMimoProvider:
         """Test that default values match documentation."""
         mock_vision_encoder = Mock
 
-        provider = LlavaMimoProvider(
+        provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
         )
 

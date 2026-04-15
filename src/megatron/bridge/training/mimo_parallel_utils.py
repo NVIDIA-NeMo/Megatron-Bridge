@@ -25,7 +25,7 @@ from megatron.core.distributed.finalize_model_grads import finalize_model_grads 
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
-from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra
+from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalInfra
 
 
 if TYPE_CHECKING:
@@ -73,7 +73,7 @@ def is_current_rank_in_grid(grid: "HyperCommGrid") -> bool:
     return grid.rank_offset <= current_rank < (grid.rank_offset + grid.size)
 
 
-def get_active_module_pg(mimo_infra: MimoModelInfra) -> tuple[str, "ProcessGroupCollection"]:
+def get_active_module_pg(mimo_infra: OmniModalInfra) -> tuple[str, "ProcessGroupCollection"]:
     """Return the (module_name, pg_collection) for the single active module on this rank.
 
     Non-colocated MiMo assigns each rank to exactly one module.  This helper
@@ -92,13 +92,13 @@ def get_active_module_pg(mimo_infra: MimoModelInfra) -> tuple[str, "ProcessGroup
 
 def get_module_to_grid_tuple(
     mimo_model: MimoModel,
-    infra: MimoModelInfra,
+    infra: OmniModalInfra,
 ) -> List[Tuple]:
     """Build list of (module, grid) tuples for all modules the current rank participates in.
 
     Args:
         mimo_model: The MimoModel instance.
-        infra: MimoModelInfra containing module_to_grid_map.
+        infra: OmniModalInfra containing module_to_grid_map.
 
     Returns:
         List of (module, grid) tuples for modules this rank participates in.
@@ -126,7 +126,7 @@ def get_module_to_grid_tuple(
     return module_to_grid_tuple
 
 
-def build_pg_collection_for_schedule(infra: MimoModelInfra):
+def build_pg_collection_for_schedule(infra: OmniModalInfra):
     """Build pg_collection compatible with schedule.
 
     Primary: Use MultiModuleProcessGroupCollection if PR 3212 allows
@@ -136,7 +136,7 @@ def build_pg_collection_for_schedule(infra: MimoModelInfra):
     IMPORTANT: Uses infra.pg_collections directly. Do NOT rebuild PGs.
 
     Args:
-        infra: MimoModelInfra with pg_collections for each module.
+        infra: OmniModalInfra with pg_collections for each module.
 
     Returns:
         MultiModuleProcessGroupCollection or list of ProcessGroupCollections.
@@ -194,7 +194,7 @@ def finalize_model_grads_multimodule(
     pg_collection=None,
     force_all_reduce=None,
     *,
-    infra: MimoModelInfra,
+    infra: OmniModalInfra,
     module_to_grid_tuple: List[Tuple],
 ):
     """Finalize gradients for each module using infra.pg_collections.
@@ -210,7 +210,7 @@ def finalize_model_grads_multimodule(
         num_tokens: Token count for gradient scaling.
         pg_collection: Schedule-provided PG (ignored - we use per-module PGs).
         force_all_reduce: Schedule-provided flag (ignored - per-module PGs control sync).
-        infra: MimoModelInfra with per-module pg_collections (keyword-only, bound via partial).
+        infra: OmniModalInfra with per-module pg_collections (keyword-only, bound via partial).
         module_to_grid_tuple: List of (module, grid) tuples (keyword-only, bound via partial).
     """
     for module, grid in module_to_grid_tuple:
@@ -270,7 +270,7 @@ def validate_no_stub_ranks(module_to_grid_map: Dict[str, "HyperCommGrid"], world
 
 
 def validate_data_loader_contract(
-    infra: MimoModelInfra,
+    infra: OmniModalInfra,
     global_batch_size: int,
     micro_batch_size: int,
     num_microbatches: int,
@@ -283,7 +283,7 @@ def validate_data_loader_contract(
     - num_microbatches * micro_batch_size == global_batch_size / DP_size (per module)
 
     Args:
-        infra: MimoModelInfra with module_to_grid_map.
+        infra: OmniModalInfra with module_to_grid_map.
         global_batch_size: Total batch size across all data parallel ranks.
         micro_batch_size: Batch size per microbatch.
         num_microbatches: Number of microbatches per iteration.

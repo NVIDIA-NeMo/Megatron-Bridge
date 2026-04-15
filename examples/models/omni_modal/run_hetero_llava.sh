@@ -7,7 +7,7 @@ NUM_NODES=1
 uv run torchrun \
     --nproc_per_node "$GPUS_PER_NODE" \
     --nnodes "$NUM_NODES" \
-    tests/e2e/mimo/test_mimo_training_llava.py \
+    examples/models/omni_modal/test_mimo_training_llava.py \
     --micro-batch-size 4 \
     --global-batch-size 128 \
     --train-iters 1000 \

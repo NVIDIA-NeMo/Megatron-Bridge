@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
     from megatron.core.process_groups_config import MultiModuleProcessGroupCollection, ProcessGroupCollection
 
-    from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra
+    from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalInfra
 
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 def _set_mimo_random_seeds(
     cfg: ConfigContainer,
-    mimo_infra: "MimoModelInfra",
+    mimo_infra: "OmniModalInfra",
 ) -> None:
     """Initialize random seeds with per-module TP/PP awareness.
 
@@ -99,7 +99,7 @@ class MimoSetupOutput:
 
     Attributes:
         model: MimoModel (distributed, DDP-wrapped).
-        mimo_infra: MimoModelInfra (grids, topology, pg_collections).
+        mimo_infra: OmniModalInfra (grids, topology, pg_collections).
         multimodule_pg_collection: PG collection for schedule.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
         module_to_grid_tuple: List of (module, grid) tuples for gradient handling.
@@ -111,7 +111,7 @@ class MimoSetupOutput:
     """
 
     model: "MimoModel"
-    mimo_infra: "MimoModelInfra"
+    mimo_infra: "OmniModalInfra"
     multimodule_pg_collection: "MultiModuleProcessGroupCollection"
     multimodule_communicator: "MultiModulePipelineCommunicator"
     module_to_grid_tuple: List
@@ -128,7 +128,7 @@ class MimoSetupOutput:
 def _update_mimo_model_config_funcs(
     model: "MimoModel",
     optimizer: "MimoOptimizer",
-    mimo_infra: "MimoModelInfra",
+    mimo_infra: "OmniModalInfra",
     module_to_grid_tuple: List,
 ) -> None:
     """Set model config hooks for MIMO training.
@@ -164,7 +164,7 @@ def _update_mimo_model_config_funcs(
 
     assert model_config.variable_seq_lengths, (
         "variable_seq_lengths must be True for MIMO training. "
-        "This should be set by MimoModelProvider.provide_distributed_model()."
+        "This should be set by OmniModalProvider.provide_distributed_model()."
     )
 
 
@@ -175,7 +175,7 @@ def setup_mimo(
     """MIMO-specific setup helper.
 
     This function sets up all components needed for MIMO training:
-    - Builds distributed model via ``cfg.model`` (a ``MimoModelProvider``)
+    - Builds distributed model via ``cfg.model`` (a ``OmniModalProvider``)
     - Builds MIMO infrastructure (grids, topology, pg_collections)
     - Creates MultiModulePipelineCommunicator
     - Creates MimoOptimizer and per-module LR schedulers
@@ -185,7 +185,7 @@ def setup_mimo(
 
     Args:
         state: GlobalState with ``state.cfg`` already set.  ``state.cfg.model``
-            must be a ``MimoModelProvider``.  ``state.cfg.optimizer`` is used to
+            must be a ``OmniModalProvider``.  ``state.cfg.optimizer`` is used to
             create the optimizer.
         build_data_iterators_fn: Optional function to build data iterators.
             Should have signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
@@ -278,7 +278,7 @@ def setup_mimo(
     if mimo_infra.module_to_grid_map:
         assert unwrapped_model.mimo_config.module_to_grid_map is not None, (
             "MimoModelConfig.module_to_grid_map must be set at model construction time. "
-            "Ensure MimoModelProvider.provide() passes module_to_grid_map for MIMO parallelism."
+            "Ensure OmniModalProvider.provide() passes module_to_grid_map for MIMO parallelism."
         )
 
     logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
@@ -324,7 +324,7 @@ def setup_mimo(
 
     # Bridge MiMo's per-module process groups into Megatron's global parallel
     # state.  MiMo intentionally skips global MPU init (see
-    # MimoModelProvider.initialize_model_parallel), but checkpoint save/load
+    # OmniModalProvider.initialize_model_parallel), but checkpoint save/load
     # paths (sharded_state_dict, ensure_metadata_has_dp_cp_group) rely on the
     # globals.  For non-colocated MiMo every rank is active in exactly one
     # module, so we can safely set the globals from that module's collection.

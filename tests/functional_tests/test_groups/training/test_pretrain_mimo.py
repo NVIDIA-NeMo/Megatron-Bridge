@@ -35,8 +35,8 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.data.mimo.mock_provider import MockMimoProvider
-from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
-from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+from megatron.bridge.models.omni_modal.omni_modal_config import ModuleParallelismConfig, OmniModalParallelismConfig
+from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -228,12 +228,12 @@ def _build_data_iterators(cfg, mimo_infra):
 
 
 def _build_config(
-    parallelism_config: MimoParallelismConfig,
+    parallelism_config: OmniModalParallelismConfig,
     train_iters: int = _TRAIN_ITERS,
 ) -> ConfigContainer:
     language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
 
-    mimo_provider = MimoModelProvider(
+    mimo_provider = OmniModalProvider(
         language_model_spec=language_model_spec,
         modality_submodules_spec=modality_submodules_spec,
         special_token_ids=special_token_ids,
@@ -294,12 +294,12 @@ class TestMimoTraining:
             pytest.skip(f"MIMO test requires exactly 2 GPUs, got {world_size}")
 
         # Monkey-patch: report_theoretical_memory crashes on MIMO models
-        # because cfg.model is MimoModelProvider (no kv_channels).
+        # because cfg.model is OmniModalProvider (no kv_channels).
         import megatron.bridge.training.utils.train_utils as _tu
 
         _tu.report_theoretical_memory = lambda *a, **kw: None
 
-        par_cfg = MimoParallelismConfig(
+        par_cfg = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=1,

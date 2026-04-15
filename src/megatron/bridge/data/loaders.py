@@ -185,9 +185,9 @@ def build_train_valid_test_data_loaders(
     """
     # Check for MIMO path
     from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
-    from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+    from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
 
-    if isinstance(cfg.model, MimoModelProvider):
+    if isinstance(cfg.model, OmniModalProvider):
         if not isinstance(cfg.dataset, MimoDatasetProvider):
             raise ValueError(
                 "MIMO models require cfg.dataset to be a MimoDatasetProvider. "

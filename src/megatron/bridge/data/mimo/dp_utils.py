@@ -13,7 +13,7 @@ from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
-    from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
+    from megatron.bridge.models.omni_modal.omni_modal_config import OmniModalParallelismConfig
 
 
 def _find_rank_module(
@@ -42,7 +42,7 @@ def _needs_data_for_module(grid: "HyperCommGrid", module_name: str) -> bool:
 
 
 def get_mimo_dp_info(
-    mimo_cfg: "MimoParallelismConfig",
+    mimo_cfg: "OmniModalParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
 ) -> Tuple[int, int, bool, str]:
     """Get **module-local** DP rank, size, data-loading flag, and module name.
@@ -75,7 +75,7 @@ def get_mimo_dp_info(
 
 
 def get_mimo_sampling_info(
-    mimo_cfg: "MimoParallelismConfig",
+    mimo_cfg: "OmniModalParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
 ) -> Tuple[int, int, bool]:
     """Get sampler DP rank, size, and data-loading flag for MIMO.

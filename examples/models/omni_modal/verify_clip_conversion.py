@@ -149,6 +149,7 @@ def compare_outputs(
 
 
 def main():
+    """Verify CLIP HF→Megatron conversion."""
     parser = argparse.ArgumentParser(description="Verify CLIP HF→Megatron conversion.")
     parser.add_argument("--checkpoint-dir", required=True, help="Megatron CLIP checkpoint dir")
     parser.add_argument("--hf-model", default=HF_MODEL, help="HF model name or path")

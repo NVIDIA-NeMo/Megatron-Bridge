@@ -3,8 +3,8 @@
 
 from unittest.mock import MagicMock, patch
 
-from megatron.bridge.models.mimo.mimo_builder import build_hypercomm_grids
-from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
+from megatron.bridge.models.omni_modal.omni_modal_builder import build_hypercomm_grids
+from megatron.bridge.models.omni_modal.omni_modal_config import ModuleParallelismConfig, OmniModalParallelismConfig
 
 
 class TestBuildHypercommGrids:
@@ -13,7 +13,7 @@ class TestBuildHypercommGrids:
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_with_single_module(self, mock_grid_class):
         """Test build_hypercomm_grids with single LLM module."""
-        mimo_config = MimoParallelismConfig(
+        mimo_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
@@ -55,7 +55,7 @@ class TestBuildHypercommGrids:
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_with_multiple_modules(self, mock_grid_class):
         """Test build_hypercomm_grids with multiple modules."""
-        mimo_config = MimoParallelismConfig(
+        mimo_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=4,
@@ -93,7 +93,7 @@ class TestBuildHypercommGrids:
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_with_different_parallelism_per_module(self, mock_grid_class):
         """Test grids with different parallelism configs per module."""
-        mimo_config = MimoParallelismConfig(
+        mimo_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=8,
@@ -132,7 +132,7 @@ class TestBuildHypercommGrids:
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_creates_all_dimension_groups(self, mock_grid_class):
         """Test that all dimension process groups are created."""
-        mimo_config = MimoParallelismConfig(
+        mimo_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
@@ -168,7 +168,7 @@ class TestBuildHypercommGrids:
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_uses_nccl_backend(self, mock_grid_class):
         """Test that grids use nccl backend."""
-        mimo_config = MimoParallelismConfig(
+        mimo_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
             }
@@ -187,7 +187,7 @@ class TestBuildHypercommGrids:
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_with_rank_offsets(self, mock_grid_class):
         """Test that rank_offset is correctly passed to grids."""
-        mimo_config = MimoParallelismConfig(
+        mimo_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,

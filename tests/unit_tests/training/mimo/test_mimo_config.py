@@ -1,7 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 import pytest
 
-from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
+from megatron.bridge.models.omni_modal.omni_modal_config import ModuleParallelismConfig, OmniModalParallelismConfig
 
 
 def test_module_parallelism_finalize_computes_dp():
@@ -24,7 +24,7 @@ def test_mimo_heterogeneous_rank_offset_overlap():
         "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=0),
         "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=2),
     }
-    mimo_parallelism_config = MimoParallelismConfig(
+    mimo_parallelism_config = OmniModalParallelismConfig(
         module_parallelisms=module_parallelisms,
     )
     with pytest.raises(ValueError, match="overlap"):
@@ -38,7 +38,7 @@ def test_mimo_heterogeneous_valid_contiguous():
         "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=0),
         "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=4),
     }
-    mimo_parallelism_config = MimoParallelismConfig(
+    mimo_parallelism_config = OmniModalParallelismConfig(
         module_parallelisms=module_parallelisms,
     )
     # No gaps, no overlap, encoder DP >= LLM DP - should pass

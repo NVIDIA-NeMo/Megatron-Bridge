@@ -1,8 +1,8 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-"""MIMO Model Provider for heterogeneous multi-module training.
+"""OmniModal Model Provider for heterogeneous multi-module training.
 
-This module provides MimoModelProvider, which integrates with the standard
-ModelProviderMixin interface to enable MIMO models in the training loop.
+This module provides OmniModalProvider, which integrates with the standard
+ModelProviderMixin interface to enable multi-module models in the training loop.
 
 Key differences from standard providers:
 - Uses HyperCommGrids for heterogeneous per-module parallelism
@@ -27,15 +27,15 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.models.mimo.mimo_builder import (
+from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.omni_modal.omni_modal_builder import (
     build_hypercomm_grids,
     is_pp_first_stage,
     is_pp_last_stage,
     populate_embedding_and_position_groups,
 )
-from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
-from megatron.bridge.models.mimo.mimo_ddp import wrap_mimo_model_distributed
-from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.omni_modal.omni_modal_config import OmniModalParallelismConfig
+from megatron.bridge.models.omni_modal.omni_modal_ddp import wrap_omni_modal_model_distributed
 
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class MimoModelInfra:
+class OmniModalInfra:
     """MIMO infrastructure metadata (separate from model).
 
     This dataclass contains the parallelism infrastructure that MIMO builds,
@@ -65,7 +65,7 @@ class MimoModelInfra:
 
 
 @dataclass
-class MimoModelProvider(ModelProviderMixin[MimoModel]):
+class OmniModalProvider(ModelProviderMixin[MimoModel]):
     """MIMO provider with heterogeneous parallelism support.
 
     Integrates with the standard training loop via provide_distributed_model().
@@ -83,13 +83,13 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     separate module in both `modality_submodules_spec` and `mimo_parallelism_config`:
 
     Example:
-        >>> mimo_parallelism_config = MimoParallelismConfig(
+        >>> mimo_parallelism_config = OmniModalParallelismConfig(
         ...     module_parallelisms={
         ...         "language": ModuleParallelismConfig(tensor_model_parallel_size=8),
         ...         "clip_encoder": ModuleParallelismConfig(tensor_model_parallel_size=2),
         ...     }
         ... )
-        >>> provider = MimoModelProvider(
+        >>> provider = OmniModalProvider(
         ...     language_model_spec=gpt_spec,
         ...     modality_submodules_spec={"clip_encoder": clip_spec},
         ...     mimo_parallelism_config=mimo_parallelism_config,
@@ -102,12 +102,12 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     """
 
     # Model specs (user provides, like llava_vlm.py example).
-    # Optional so subclasses (e.g. LlavaMimoProvider) can build it in __post_init__.
+    # Optional so subclasses (e.g. LlavaOmniModalProvider) can build it in __post_init__.
     language_model_spec: Optional[ModuleSpec] = None
     modality_submodules_spec: Dict[str, ModuleSpec] = field(default_factory=dict)
     special_token_ids: Dict[str, int] = field(default_factory=dict)
 
-    mimo_parallelism_config: Optional[MimoParallelismConfig] = None
+    mimo_parallelism_config: Optional[OmniModalParallelismConfig] = None
 
     # Module data-flow DAG for MultiModulePipelineCommunicator.
     # If None, auto-derived as: all modality_submodules → MIMO_LANGUAGE_MODULE_KEY (terminal).
@@ -133,7 +133,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     use_cpu_initialization: bool = False
     init_model_with_meta_device: bool = False
 
-    def build_infra(self) -> MimoModelInfra:
+    def build_infra(self) -> OmniModalInfra:
         """Build MIMO parallelism infrastructure.
 
         This method builds HyperCommGrids, ProcessGroupCollections, and topology
@@ -144,7 +144,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         validate the parallelism configuration.
 
         Returns:
-            MimoModelInfra containing grids, topology, pg_collections,
+            OmniModalInfra containing grids, topology, pg_collections,
             and the list of modules this rank participates in.
         """
         if self.mimo_parallelism_config is not None:
@@ -173,7 +173,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         else:
             output_ndim = {name: 3 if name == MIMO_LANGUAGE_MODULE_KEY else 2 for name in grids}
 
-        return MimoModelInfra(
+        return OmniModalInfra(
             module_to_grid_map=grids,
             topology=topology,
             pg_collections=pg_collections,
@@ -464,7 +464,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         # Per-submodule DDP for heterogeneous parallelism
         if wrap_with_ddp and ddp_config is not None and self.mimo_parallelism_config:
             model_list = [
-                wrap_mimo_model_distributed(
+                wrap_omni_modal_model_distributed(
                     mimo_model=m,
                     ddp_config=ddp_config,
                     mimo_parallelism_config=self.mimo_parallelism_config,
@@ -574,7 +574,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         Raises:
             ValueError: If any rank doesn't participate in at least one module.
                 This indicates the parallelism configuration doesn't cover all
-                ranks in the world (validated by MimoParallelismConfig.finalize()).
+                ranks in the world (validated by OmniModalParallelismConfig.finalize()).
         """
         if self.mimo_parallelism_config is not None:
             if not dist.is_initialized():

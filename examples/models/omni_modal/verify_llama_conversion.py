@@ -189,6 +189,7 @@ def compare_outputs(
 
 
 def main():
+    """Verify Llama/Vicuna HF→Megatron conversion."""
     parser = argparse.ArgumentParser(description="Verify Llama/Vicuna HF→Megatron conversion.")
     parser.add_argument("--checkpoint-dir", required=True, help="Megatron LLM checkpoint dir")
     parser.add_argument("--hf-model", default=HF_MODEL, help="HF model name or path")

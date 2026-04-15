@@ -8,7 +8,7 @@ import pytest
 from megatron.bridge.data.mimo.loaders import build_mimo_data_loaders
 
 
-class FakeMimoModelProvider:
+class FakeOmniModalProvider:
     def __init__(self, mimo_parallelism_config, grids=None):
         self.mimo_parallelism_config = mimo_parallelism_config
         self._grids = grids
@@ -33,8 +33,8 @@ class FakeProvider:
 
 def _patch_mimo_provider_class(monkeypatch):
     monkeypatch.setattr(
-        "megatron.bridge.models.mimo.mimo_provider.MimoModelProvider",
-        FakeMimoModelProvider,
+        "megatron.bridge.models.omni_modal.omni_modal_provider.OmniModalProvider",
+        FakeOmniModalProvider,
     )
 
 
@@ -43,7 +43,7 @@ def test_build_mimo_data_loaders_raises_when_model_not_mimo(monkeypatch):
     cfg = SimpleNamespace(model=object(), train=SimpleNamespace(micro_batch_size=2))
     provider = FakeProvider()
 
-    with pytest.raises(ValueError, match="cfg.model must be MimoModelProvider"):
+    with pytest.raises(ValueError, match="cfg.model must be OmniModalProvider"):
         build_mimo_data_loaders(
             cfg, train_state=None, mimo_provider=provider, train_samples=4, valid_samples=2, test_samples=2
         )
@@ -52,7 +52,7 @@ def test_build_mimo_data_loaders_raises_when_model_not_mimo(monkeypatch):
 def test_build_mimo_data_loaders_raises_when_parallelism_missing(monkeypatch):
     _patch_mimo_provider_class(monkeypatch)
     cfg = SimpleNamespace(
-        model=FakeMimoModelProvider(mimo_parallelism_config=None, grids={"llm": object()}),
+        model=FakeOmniModalProvider(mimo_parallelism_config=None, grids={"llm": object()}),
         train=SimpleNamespace(micro_batch_size=2),
     )
     provider = FakeProvider()
@@ -66,7 +66,7 @@ def test_build_mimo_data_loaders_raises_when_parallelism_missing(monkeypatch):
 def test_build_mimo_data_loaders_raises_when_grids_missing(monkeypatch):
     _patch_mimo_provider_class(monkeypatch)
     cfg = SimpleNamespace(
-        model=FakeMimoModelProvider(mimo_parallelism_config=object(), grids=None),
+        model=FakeOmniModalProvider(mimo_parallelism_config=object(), grids=None),
         train=SimpleNamespace(micro_batch_size=2),
     )
     provider = FakeProvider()
@@ -84,7 +84,7 @@ def test_build_mimo_data_loaders_happy_path(monkeypatch):
         module_parallelisms={"llm": SimpleNamespace(data_parallel_size=1)},
     )
     cfg = SimpleNamespace(
-        model=FakeMimoModelProvider(mimo_parallelism_config=fake_parallelism_config, grids=fake_grids),
+        model=FakeOmniModalProvider(mimo_parallelism_config=fake_parallelism_config, grids=fake_grids),
         train=SimpleNamespace(micro_batch_size=3),
     )
     provider = FakeProvider()
@@ -165,7 +165,7 @@ def test_build_mimo_data_loaders_happy_path(monkeypatch):
 def test_build_mimo_data_loaders_skips_non_data_ranks(monkeypatch):
     _patch_mimo_provider_class(monkeypatch)
     cfg = SimpleNamespace(
-        model=FakeMimoModelProvider(
+        model=FakeOmniModalProvider(
             mimo_parallelism_config=SimpleNamespace(
                 module_parallelisms={"llm": SimpleNamespace(data_parallel_size=1)},
             ),
