@@ -146,6 +146,18 @@ def main():
             show_progress=not args.no_progress,
             strict=not args.not_strict,
         )
+
+        # Ensure rope_scaling is present for backward compatibility with older transformers.
+        # Transformers 5.x writes rope_parameters but older versions need rope_scaling.
+        config_path = Path(args.hf_path) / "config.json"
+        if config_path.exists():
+            with open(config_path) as f:
+                config = json.load(f)
+            if "rope_parameters" in config and "rope_scaling" not in config:
+                config["rope_scaling"] = config["rope_parameters"]
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+
         print(f"Done. HF model saved to {args.hf_path}")
 
     return 0
