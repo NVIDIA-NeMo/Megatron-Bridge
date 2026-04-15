@@ -175,7 +175,7 @@ def setup_mimo(
     """MIMO-specific setup helper.
 
     This function sets up all components needed for MIMO training:
-    - Builds distributed model via ``cfg.model`` (a ``OmniModalProvider``)
+    - Builds distributed model via ``cfg.model`` (an ``OmniModalProvider``)
     - Builds MIMO infrastructure (grids, topology, pg_collections)
     - Creates MultiModulePipelineCommunicator
     - Creates MimoOptimizer and per-module LR schedulers
@@ -185,7 +185,7 @@ def setup_mimo(
 
     Args:
         state: GlobalState with ``state.cfg`` already set.  ``state.cfg.model``
-            must be a ``OmniModalProvider``.  ``state.cfg.optimizer`` is used to
+            must be an ``OmniModalProvider``.  ``state.cfg.optimizer`` is used to
             create the optimizer.
         build_data_iterators_fn: Optional function to build data iterators.
             Should have signature: (cfg, mimo_infra) -> (train_iter, valid_iter)

@@ -32,7 +32,7 @@ def _make_scheduler_mock() -> MagicMock:
 
 
 def _make_mimo_infra(*, num_active_pgs: int = 1) -> Mock:
-    """Create a mock MimoModelInfra with the given number of active PG collections."""
+    """Create a mock OmniModalInfra with the given number of active PG collections."""
     infra = Mock()
     pgs: Dict[str, Any] = {}
     for i in range(num_active_pgs):

@@ -55,7 +55,7 @@ def pretrain_mimo(
 
     Args:
         cfg: ConfigContainer with training configuration.  ``cfg.model`` must be
-            a ``MimoModelProvider``.  ``cfg.optimizer`` (a ``BridgeOptimizerConfig``)
+            an ``OmniModalProvider``.  ``cfg.optimizer`` (a ``BridgeOptimizerConfig``)
             is used to create the ``MimoOptimizer`` and per-module LR schedulers.
         forward_step_func: Forward step function for training.
         build_data_iterators_fn: Function to build data iterators.

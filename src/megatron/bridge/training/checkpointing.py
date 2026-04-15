@@ -1830,7 +1830,7 @@ def _load_checkpoint_from_path(
                 print_rank_0("run_config.yaml not found, extracting config from legacy Megatron-LM checkpoint")
                 run_config = _extract_megatron_lm_args_from_state_dict(state_dict)
 
-        # MiMo manages per-module parallelism via MimoParallelismConfig,
+        # MiMo manages per-module parallelism via OmniModalParallelismConfig,
         # so there is no single global (TP, PP) to compare.  Skip the
         # compatibility check entirely for MiMo configs.
         _is_mimo = "mimo_parallelism_config" in run_config.get("model", {}) or hasattr(
