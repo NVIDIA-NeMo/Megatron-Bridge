@@ -2744,9 +2744,10 @@ class TestLoadCheckpointFromPathDirectIterDir:
     @patch("megatron.core.dist_checkpointing.strategies.torch.FileSystemReader")
     def test_fsdp_dtensor_skips_tracker_resolution(self, mock_reader, mock_unwrap, mock_get_pg, mock_is_iter_dir):
         """When load_dir is an iteration directory, FileSystemReader should receive it directly."""
+        from megatron.core.msc_utils import MultiStorageClientFeature
+
         from megatron.bridge.training.checkpointing import _load_checkpoint_from_path
 
-        from megatron.core.msc_utils import MultiStorageClientFeature
         MultiStorageClientFeature.disable()
 
         mock_is_iter_dir.return_value = True
@@ -2812,7 +2813,9 @@ class TestLoadCheckpointFromPathDirectIterDir:
     @patch("megatron.bridge.training.checkpointing.get_pg_collection")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("multistorageclient.torch.MultiStorageFileSystemReader")
-    def test_fsdp_dtensor_skips_tracker_resolution_with_msc(self, mock_reader, mock_unwrap, mock_get_pg, mock_is_iter_dir):
+    def test_fsdp_dtensor_skips_tracker_resolution_with_msc(
+        self, mock_reader, mock_unwrap, mock_get_pg, mock_is_iter_dir
+    ):
         """When load_dir is an iteration directory, FileSystemReader should receive it directly."""
         from megatron.bridge.training.checkpointing import _load_checkpoint_from_path
 
