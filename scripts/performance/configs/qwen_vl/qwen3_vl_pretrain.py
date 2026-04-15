@@ -121,8 +121,6 @@ def qwen3_vl_235b_a22b_pretrain_config_gb200(
         mock=mock,
         config_variant=config_variant,
     )
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
     cfg.model.num_layers_in_first_pipeline_stage = 10
     cfg.model.num_layers_in_last_pipeline_stage = 12
     return cfg
@@ -187,7 +185,7 @@ def qwen3_vl_30b_a3b_pretrain_config_gb200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB200, baseline config."""
-    cfg = _qwen3_vl_pretrain_config(
+    return _qwen3_vl_pretrain_config(
         "qwen3_vl_30b_a3b",
         "gb200",
         qwen3_vl_30b_a3b_pretrain_mock_config,
@@ -195,9 +193,6 @@ def qwen3_vl_30b_a3b_pretrain_config_gb200(
         mock=mock,
         config_variant=config_variant,
     )
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
-    return cfg
 
 
 def qwen3_vl_30b_a3b_pretrain_config_b200(

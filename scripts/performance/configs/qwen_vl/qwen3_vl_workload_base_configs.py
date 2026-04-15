@@ -172,7 +172,7 @@ QWEN3_VL_30B_A3B_PRETRAIN_CONFIG_GB200_BF16 = replace(
     micro_batch_size=4,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
 )
 
 
@@ -182,7 +182,7 @@ QWEN3_VL_30B_A3B_PRETRAIN_CONFIG_GB200_FP8_CS = replace(
     micro_batch_size=4,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
 )
 
 
