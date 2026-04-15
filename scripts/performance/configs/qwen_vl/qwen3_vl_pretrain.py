@@ -100,8 +100,12 @@ def qwen3_vl_235b_a22b_pretrain_config_gb300(
 ) -> ConfigContainer:
     """GB300, baseline config."""
     return _qwen3_vl_pretrain_config(
-        "qwen3_vl_235b_a22b", "gb300", qwen3_vl_235b_a22b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen3_vl_235b_a22b",
+        "gb300",
+        qwen3_vl_235b_a22b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -110,8 +114,12 @@ def qwen3_vl_235b_a22b_pretrain_config_gb200(
 ) -> ConfigContainer:
     """GB200, baseline config."""
     cfg = _qwen3_vl_pretrain_config(
-        "qwen3_vl_235b_a22b", "gb200", qwen3_vl_235b_a22b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen3_vl_235b_a22b",
+        "gb200",
+        qwen3_vl_235b_a22b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
@@ -125,8 +133,12 @@ def qwen3_vl_235b_a22b_pretrain_config_b200(
 ) -> ConfigContainer:
     """B200, baseline config."""
     cfg = _qwen3_vl_pretrain_config(
-        "qwen3_vl_235b_a22b", "b200", qwen3_vl_235b_a22b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen3_vl_235b_a22b",
+        "b200",
+        qwen3_vl_235b_a22b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
     if precision == "fp8_mx":  # keeping this enabled causes NaN grad norm
@@ -142,8 +154,12 @@ def qwen3_vl_235b_a22b_pretrain_config_h100(
 ) -> ConfigContainer:
     """H100, baseline config."""
     return _qwen3_vl_pretrain_config(
-        "qwen3_vl_235b_a22b", "h100", qwen3_vl_235b_a22b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen3_vl_235b_a22b",
+        "h100",
+        qwen3_vl_235b_a22b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
         tp_comm_overlap=False,
     )
 
@@ -158,8 +174,12 @@ def qwen3_vl_30b_a3b_pretrain_config_gb300(
 ) -> ConfigContainer:
     """GB300, baseline config."""
     return _qwen3_vl_pretrain_config(
-        "qwen3_vl_30b_a3b", "gb300", qwen3_vl_30b_a3b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen3_vl_30b_a3b",
+        "gb300",
+        qwen3_vl_30b_a3b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -168,8 +188,12 @@ def qwen3_vl_30b_a3b_pretrain_config_gb200(
 ) -> ConfigContainer:
     """GB200, baseline config."""
     cfg = _qwen3_vl_pretrain_config(
-        "qwen3_vl_30b_a3b", "gb200", qwen3_vl_30b_a3b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen3_vl_30b_a3b",
+        "gb200",
+        qwen3_vl_30b_a3b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
@@ -181,8 +205,12 @@ def qwen3_vl_30b_a3b_pretrain_config_b200(
 ) -> ConfigContainer:
     """B200, baseline config."""
     return _qwen3_vl_pretrain_config(
-        "qwen3_vl_30b_a3b", "b200", qwen3_vl_30b_a3b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen3_vl_30b_a3b",
+        "b200",
+        qwen3_vl_30b_a3b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
     )
 
 
@@ -191,7 +219,11 @@ def qwen3_vl_30b_a3b_pretrain_config_h100(
 ) -> ConfigContainer:
     """H100, baseline config."""
     return _qwen3_vl_pretrain_config(
-        "qwen3_vl_30b_a3b", "h100", qwen3_vl_30b_a3b_pretrain_mock_config,
-        precision=precision, mock=mock, config_variant=config_variant,
+        "qwen3_vl_30b_a3b",
+        "h100",
+        qwen3_vl_30b_a3b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
         tp_comm_overlap=True,
     )
