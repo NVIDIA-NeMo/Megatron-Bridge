@@ -118,8 +118,10 @@ try:
         save_state_dict_async_finalize,
         save_state_dict_async_plan,
     )
+
     HAVE_NVRX = True
 except (ImportError, ModuleNotFoundError):
+
     NVRxAsyncRequest = ABC
     HAVE_NVRX = False
 
@@ -401,9 +403,11 @@ def is_empty_async_queue(global_state: GlobalState) -> bool:
 def get_save_and_finalize_callbacks(writer, save_state_dict_ret) -> NVRxAsyncRequest:
     """Creates an async save request for fsdp_dtensor & torch_dcp with a finalize function."""
     save_fn, preload_fn, save_args = writer.get_save_function_and_args()
+
     def finalize_fn():
         """Finalizes async checkpointing and synchronizes processes."""
         save_state_dict_async_finalize(*save_state_dict_ret)
+
     return NVRxAsyncRequest(save_fn, save_args, [finalize_fn], async_fn_kwargs={}, preload_fn=preload_fn)
 
 
