@@ -24,6 +24,6 @@ on:
 
 jobs:
   sync:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_sync_skills.yml@main
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_sync_skills.yml@v0.91.0
     secrets:
       PAT: ${{ secrets.PAT }}
