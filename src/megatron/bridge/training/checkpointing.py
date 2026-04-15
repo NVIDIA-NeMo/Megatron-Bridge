@@ -404,9 +404,7 @@ def get_save_and_finalize_callbacks(writer, save_state_dict_ret) -> NVRxAsyncReq
     def finalize_fn():
         """Finalizes async checkpointing and synchronizes processes."""
         save_state_dict_async_finalize(*save_state_dict_ret)
-    return NVRxAsyncRequest(
-        save_fn, save_args, [finalize_fn], async_fn_kwargs={}, preload_fn=preload_fn
-    )
+    return NVRxAsyncRequest(save_fn, save_args, [finalize_fn], async_fn_kwargs={}, preload_fn=preload_fn)
 
 
 def get_rng_state(
@@ -895,7 +893,7 @@ def save_checkpoint(
 
     async_save_request = None
     if ckpt_cfg.async_save:
-        if ckpt_type == CheckpointType.GLOBAL and ckpt_cfg.ckpt_format not in ['torch_dist', 'fsdp_dtensor']:
+        if ckpt_type == CheckpointType.GLOBAL and ckpt_cfg.ckpt_format not in ["torch_dist", "fsdp_dtensor"]:
             raise NotImplementedError(
                 f"Async checkpoint save not implemented for {ckpt_cfg.ckpt_format} distributed checkpoint format"
             )
@@ -955,7 +953,12 @@ def save_checkpoint(
                 )
 
                 save_state_dict_ret = save_state_dict_async_plan(
-                    state_dict, fs_storage_writer, None, coordinator_rank, planner=planner, enable_cache=ckpt_cfg.ckpt_assume_constant_structure
+                    state_dict,
+                    fs_storage_writer,
+                    None,
+                    coordinator_rank,
+                    planner=planner,
+                    enable_cache=ckpt_cfg.ckpt_assume_constant_structure,
                 )
                 async_save_request = get_save_and_finalize_callbacks(fs_storage_writer, save_state_dict_ret)
             fs_storage_writer = torch.distributed.checkpoint.FileSystemWriter(checkpoint_name)
