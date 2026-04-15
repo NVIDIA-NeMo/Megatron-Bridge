@@ -616,6 +616,10 @@ def calc_convergence_and_performance(
     with open(expected_golden_values_path, "r") as f:
         expected_golden_values = json.load(f)
 
+    # Normalize: new format stores baseline data under a "baseline" key.
+    if "baseline" in expected_golden_values:
+        expected_golden_values = expected_golden_values["baseline"]
+
     steps = []
     golden_train_loss = {}
     golden_iter_time = {}
