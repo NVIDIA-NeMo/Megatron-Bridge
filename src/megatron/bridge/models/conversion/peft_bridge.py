@@ -1085,7 +1085,13 @@ class MegatronPeftBridge:
             return converted_weights_dict
 
         if len(adapter_weights) != 1 or adapter_weights[0].adapter_key is not None:
-            return converted_weights_dict
+            adapter_keys = [adapter_weight.adapter_key for adapter_weight in adapter_weights]
+            raise ValueError(
+                "Unsupported adapter configuration for grouped export weight merging "
+                f"for parameter '{task.global_param_name}': expected exactly one "
+                "non-canonical adapter with adapter_key=None, but got "
+                f"{len(adapter_weights)} adapter(s) with adapter keys {adapter_keys}."
+            )
 
         from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 

@@ -1307,6 +1307,33 @@ def test_merge_grouped_export_adapter_weights_raises_for_canonical_adapters():
         )
 
 
+def test_merge_grouped_export_adapter_weights_raises_for_canonical_adapters():
+    bridge = DummyBridge()
+
+    task = WeightConversionTask(
+        param_name="decoder.layers.0.mlp.experts.linear_fc1.to_wrap.weight0",
+        global_param_name="decoder.layers.0.mlp.experts.linear_fc1.to_wrap.weight0",
+        mapping=Mock(),
+    )
+    converted = {"hf.experts.gate_up_proj": torch.zeros(2, 2)}
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.experts.linear_fc1",
+        adapter_key="adapter_gate",
+        alpha=1,
+        dim=1,
+        linear_in_weight=MegatronWeightTuple("in", torch.eye(2), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", torch.eye(2), vp_stage=0),
+    )
+
+    with pytest.raises(ValueError, match="Unsupported adapter configuration for grouped export weight merging"):
+        bridge._merge_grouped_export_adapter_weights(
+            task,
+            converted,
+            [adapter_weight],
+            num_moe_experts=1,
+        )
+
+
 def test_stream_weights_megatron_to_hf_merges_shared_expert_fc1_adapters(monkeypatch):
     bridge = DummyBridge()
 
