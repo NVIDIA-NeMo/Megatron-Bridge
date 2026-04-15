@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import logging
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional, Union
 
 import torch
@@ -23,32 +24,64 @@ from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as def
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.post_training.modelopt.mamba.model_specs import get_mamba_stack_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, parse_hybrid_pattern
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.utils import fusions
 from megatron.bridge.utils.common_utils import get_rank_safe
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
+try:
+    from megatron.core.ssm.mamba_hybrid_layer_allocation import (
+        get_hybrid_total_layer_count as _mcore_get_hybrid_total_layer_count,
+    )
+except ImportError:
+    # TODO(yuya): remove fallback once MCore pin includes get_hybrid_total_layer_count
+    _mcore_get_hybrid_total_layer_count = None
+
+# MCore renamed `hybrid_override_pattern` → `hybrid_layer_pattern` in the dev branch.
+# Support both main and dev branch submodule by detecting which parameter is present at import time.
+# TODO: remove fallback once the dev rename lands in main and Bridge pins the new main commit.
+_MCORE_MAMBA_INIT_PARAMS = set(inspect.signature(MCoreMambaModel.__init__).parameters)
+_HYBRID_LAYER_PATTERN_KWARG = (
+    "hybrid_layer_pattern" if "hybrid_layer_pattern" in _MCORE_MAMBA_INIT_PARAMS else "hybrid_override_pattern"
+)
+
+
 logger = logging.getLogger(__name__)
 
+_HYBRID_MAIN_PATTERN_SYMBOLS = frozenset({"M", "*", "-", "E", "|"})
 
-def transformer_engine_mamba_stack_spec() -> ModuleSpec:
-    """Return the default Mamba stack spec with Transformer Engine layers.
 
-    This is a named function (not a lambda) to allow proper serialization
-    and reconstruction from checkpoints. Named functions can be imported
-    via their module path, unlike lambdas.
+def _fallback_get_hybrid_total_layer_count(pattern: str) -> int:
+    """Count main-decoder layers for older MCore branches.
 
-    Returns:
-        Default Mamba stack specification from megatron.core
+    Older MCore revisions predate ``get_hybrid_total_layer_count`` and do not
+    understand pipe-delimited fVPP layouts. Bridge still needs to derive
+    ``num_layers`` correctly for both legacy and newer hybrid patterns.
     """
-    return default_mamba_stack_spec
+
+    main_pattern = pattern.split("/")[0]
+    invalid_chars = sorted({char for char in main_pattern if char not in _HYBRID_MAIN_PATTERN_SYMBOLS})
+    if invalid_chars:
+        raise ValueError(
+            f"In main pattern, '{invalid_chars[0]}' is not a valid layer symbol. "
+            f"Valid symbols are: {_HYBRID_MAIN_PATTERN_SYMBOLS}"
+        )
+    return len(main_pattern.replace("|", ""))
 
 
-def quantization_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
+def _get_hybrid_total_layer_count(pattern: str) -> int:
+    if _mcore_get_hybrid_total_layer_count is not None:
+        return _mcore_get_hybrid_total_layer_count(pattern)
+    return _fallback_get_hybrid_total_layer_count(pattern)
+
+
+def modelopt_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     """Mamba stack specification for quantization with ModelOpt.
 
     Uses Norm instead of TENorm and ColumnParallelLinear/RowParallelLinear
@@ -66,6 +99,19 @@ def quantization_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     )
 
 
+def transformer_engine_mamba_stack_spec() -> ModuleSpec:
+    """Return the default Mamba stack spec with Transformer Engine layers.
+
+    This is a named function (not a lambda) to allow proper serialization
+    and reconstruction from checkpoints. Named functions can be imported
+    via their module path, unlike lambdas.
+
+    Returns:
+        Default Mamba stack specification from megatron.core
+    """
+    return default_mamba_stack_spec
+
+
 def get_default_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     """Determine the most appropriate Mamba stack specification based on configuration.
 
@@ -75,10 +121,7 @@ def get_default_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     Returns:
         ModuleSpec: Appropriate module specification based on config
     """
-    if config.restore_modelopt_state:
-        return quantization_mamba_stack_spec(config)
-    else:
-        return transformer_engine_mamba_stack_spec()
+    return transformer_engine_mamba_stack_spec()
 
 
 @dataclass
@@ -96,12 +139,13 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     params_dtype: torch.dtype = torch.bfloat16
     fp16: bool = False
     bf16: bool = True
-    num_layers: int = 2
+    num_layers: int = None
     mamba_num_groups: int = 8
     num_attention_heads: int = 1
     hybrid_attention_ratio: float = 0.0
     hybrid_mlp_ratio: float = 0.0
     hybrid_override_pattern: Optional[str] = None
+    hybrid_layer_pattern: Optional[str] = None
     seq_length: int = 8192
     # Mamba with no attention has no need for position embeddings, so none is default
     position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
@@ -120,6 +164,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     deallocate_pipeline_outputs: bool = True
     bias_dropout_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
+    gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
     mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec], Callable[["MambaModelProvider"], ModuleSpec]] = (
         get_default_mamba_stack_spec
     )
@@ -127,11 +172,101 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     should_pad_vocab: bool = False
     hf_model_id: Optional[str] = None
     _pg_collection: Optional[ProcessGroupCollection] = None
+
+    # MTP
+    mtp_num_layers: int = 0
+    mtp_hybrid_override_pattern: Optional[str] = None
+    keep_mtp_spec_in_bf16: bool = False
+
     """Optional HuggingFace model identifier associated with this provider."""
 
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
-    # When resuming modelopt_state, we also change the mamba_stack_spec to use quantization-ready layers.
     restore_modelopt_state: bool = False
+
+    def finalize(self) -> None:
+        """Finalize the Mamba model provider.
+        Calculates the number of layers from the hybrid_layer_pattern.
+        Executes the deferred MCore post-init logic.
+        """
+        # Check if hybrid_override_pattern is specified and throw deprecation warning
+        used_hybrid_override_pattern = False
+        if self.hybrid_override_pattern is not None:
+            assert self.hybrid_layer_pattern is None, (
+                "hybrid_override_pattern and hybrid_layer_pattern cannot both be specified. "
+                "hybrid_override_pattern is deprecated; use hybrid_layer_pattern instead."
+            )
+            if get_rank_safe() == 0:
+                warnings.warn(
+                    "hybrid_override_pattern is deprecated. Use hybrid_layer_pattern instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            self.hybrid_layer_pattern = self.hybrid_override_pattern
+            self.hybrid_override_pattern = None
+            used_hybrid_override_pattern = True
+
+        # --- MTP pattern construction ---
+        # Combine hybrid_layer_pattern (main decoder) with mtp_hybrid_override_pattern
+        # into a single unified pattern that MCoreMambaModel can parse.
+        # Format: "MAIN_PATTERN/MTP_BLOCK/MTP_BLOCK/..."
+        # This must happen before num_layers derivation so the count reflects
+        # only the main decoder layers (get_hybrid_total_layer_count strips MTP).
+        if self.hybrid_layer_pattern is not None and self.mtp_hybrid_override_pattern:
+            sep = Symbols.MTP_SEPARATOR
+            main_pattern = self.hybrid_layer_pattern.split(sep)[0]
+            # When mtp_use_repeated_layer=True, the shared MTP layer always exists
+            # in the model and mtp_num_layers controls forward pass repetitions.
+            # Include the pattern at least once so the MTP block (and its weights)
+            # are created even when mtp_num_layers=0.
+            if self.mtp_use_repeated_layer:
+                num_pattern_copies = max(1, self.mtp_num_layers)
+            else:
+                num_pattern_copies = self.mtp_num_layers
+            self.hybrid_layer_pattern = (
+                main_pattern + sep + sep.join([self.mtp_hybrid_override_pattern] * num_pattern_copies)
+            )
+
+            # Validate mtp_num_layers against the constructed pattern
+            if sep in self.hybrid_layer_pattern:
+                parsed = parse_hybrid_pattern(self.hybrid_layer_pattern)
+                if parsed.mtp_pattern and parsed.mtp_num_depths > 0:
+                    inferred_mtp_num_layers = parsed.mtp_num_depths
+                    if self.mtp_num_layers is None:
+                        self.mtp_num_layers = inferred_mtp_num_layers
+                    elif self.mtp_use_repeated_layer:
+                        # With repeated layers, pattern count reflects architecture
+                        # (always 1 shared layer) while mtp_num_layers controls
+                        # forward pass repetitions. They are intentionally decoupled.
+                        pass
+                    elif self.mtp_num_layers != inferred_mtp_num_layers:
+                        logger.warning(
+                            f"mtp_num_layers ({self.mtp_num_layers}) conflicts with "
+                            f"MTP depth count ({inferred_mtp_num_layers}) in pattern "
+                            f"'{self.hybrid_layer_pattern}'. "
+                            f"Using the inferred value ({inferred_mtp_num_layers})."
+                        )
+                        self.mtp_num_layers = inferred_mtp_num_layers
+
+        # Check if hybrid_layer_pattern is specified and derive num_layers from pattern
+        if self.hybrid_layer_pattern is not None:
+            # Derive num_layers from pattern
+            num_layers_in_pattern = _get_hybrid_total_layer_count(self.hybrid_layer_pattern)
+            if self.num_layers is not None:
+                if used_hybrid_override_pattern:
+                    assert self.num_layers == num_layers_in_pattern, (
+                        f"num_layers ({self.num_layers}) does not match the number of layers "
+                        f"derived from hybrid_override_pattern ({num_layers_in_pattern}). "
+                        f"Please correct num_layers or the pattern."
+                    )
+                else:
+                    assert self.num_layers == num_layers_in_pattern, (
+                        f"num_layers ({self.num_layers}) does not match the number of layers "
+                        f"derived from hybrid_layer_pattern ({num_layers_in_pattern}). "
+                        f"Please correct num_layers or the pattern."
+                    )
+            self.num_layers = num_layers_in_pattern
+
+        super().finalize()
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:
         """Configure and instantiate a Megatron Core Mamba model based on this configuration.
@@ -172,9 +307,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             mamba_stack_spec=mamba_stack_spec,
             vocab_size=padded_vocab_size,
             max_sequence_length=self.seq_length,
-            hybrid_attention_ratio=self.hybrid_attention_ratio,
-            hybrid_mlp_ratio=self.hybrid_mlp_ratio,
-            hybrid_override_pattern=self.hybrid_override_pattern,
+            **{_HYBRID_LAYER_PATTERN_KWARG: self.hybrid_layer_pattern},
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
             parallel_output=self.parallel_output,
             share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
@@ -186,293 +319,3 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             post_process=post_process or is_pp_last_stage(self._pg_collection.pp),
             pg_collection=self._pg_collection,
         )
-
-
-@dataclass
-class MambaModelProvider130M(MambaModelProvider):
-    """Configuration for a 130M parameter Mamba model.
-
-    Deprecated:
-        This class is deprecated and will be removed in a future release.
-    """
-
-    hybrid_override_pattern: str = "M" * 24
-    num_layers: int = 24
-    seq_length: int = 2048
-    hidden_size: int = 768
-    mamba_num_groups: int = 1
-    ffn_hidden_size: int = 768
-    make_vocab_size_divisible_by: int = 16
-
-    def finalize(self) -> None:
-        super().finalize()
-        _warn_class_deprecated("MambaModelProvider130M")
-
-
-@dataclass
-class MambaModelProvider370M(MambaModelProvider):
-    """Configuration for a 370M parameter Mamba model.
-
-    Deprecated:
-        This class is deprecated and will be removed in a future release.
-    """
-
-    hybrid_override_pattern: str = "M" * 48
-    num_layers: int = 48
-    seq_length: int = 2048
-    hidden_size: int = 1024
-    mamba_num_groups: int = 1
-    ffn_hidden_size: int = 1024
-    make_vocab_size_divisible_by: int = 16
-
-    def finalize(self) -> None:
-        super().finalize()
-        _warn_class_deprecated("MambaModelProvider370M")
-
-
-@dataclass
-class MambaModelProvider780M(MambaModelProvider):
-    """Configuration for a 780M parameter Mamba model.
-
-    Deprecated:
-        This class is deprecated and will be removed in a future release.
-    """
-
-    hybrid_override_pattern: str = "M" * 48
-    num_layers: int = 48
-    seq_length: int = 2048
-    hidden_size: int = 1536
-    mamba_num_groups: int = 1
-    ffn_hidden_size: int = 1536
-    make_vocab_size_divisible_by: int = 16
-
-    def finalize(self) -> None:
-        super().finalize()
-        _warn_class_deprecated("MambaModelProvider780M")
-
-
-@dataclass
-class MambaModelProvider1P3B(MambaModelProvider):
-    """Configuration for a 1.3B parameter Mamba model.
-
-    Deprecated:
-        This class is deprecated and will be removed in a future release.
-    """
-
-    hybrid_override_pattern: str = "M" * 48
-    num_layers: int = 48
-    seq_length: int = 2048
-    hidden_size: int = 2048
-    mamba_num_groups: int = 1
-    ffn_hidden_size: int = 2048
-    make_vocab_size_divisible_by: int = 16
-
-    def finalize(self) -> None:
-        super().finalize()
-        _warn_class_deprecated("MambaModelProvider1P3B")
-
-
-@dataclass
-class MambaModelProvider2P7B(MambaModelProvider):
-    """Configuration for a 2.7B parameter Mamba model.
-
-    Deprecated:
-        This class is deprecated and will be removed in a future release.
-    """
-
-    hybrid_override_pattern: str = "M" * 64
-    num_layers: int = 64
-    seq_length: int = 2048
-    hidden_size: int = 2560
-    mamba_num_groups: int = 1
-    ffn_hidden_size: int = 2560
-    make_vocab_size_divisible_by: int = 16
-
-    def finalize(self) -> None:
-        super().finalize()
-        _warn_class_deprecated("MambaModelProvider2P7B")
-
-
-@dataclass
-class NVIDIAMambaModelProvider8B(MambaModelProvider):
-    """Configuration for a 8B parameter Mamba model used in NVIDIA research.
-
-    Deprecated:
-        This class is deprecated and will be removed in a future release.
-    """
-
-    hybrid_override_pattern: str = "M" * 56
-    num_attention_heads: int = 32
-    num_layers: int = 56
-    seq_length: int = 4096
-    hidden_size: int = 4096
-    mamba_num_groups: int = 8
-    ffn_hidden_size: int = 4096
-    make_vocab_size_divisible_by: int = 128
-
-    def finalize(self) -> None:
-        super().finalize()
-        _warn_class_deprecated("NVIDIAMambaModelProvider8B")
-
-
-@dataclass
-class NVIDIAMambaHybridModelProvider8B(MambaModelProvider):
-    """Configuration for a 8B parameter hybrid Mamba model used in NVIDIA research.
-
-    Deprecated:
-        This class is deprecated and will be removed in a future release.
-    """
-
-    hybrid_override_pattern: str = "M-M-M--M-M*-M-M-M-M--M*-M-M-M-M-M*--M-M-M-M-M*-M--M-M-M-"
-    num_layers: int = 56
-    seq_length: int = 4096
-    hidden_size: int = 4096
-    mamba_num_groups: int = 8
-    ffn_hidden_size: int = 16384
-    num_attention_heads: int = 32
-    num_query_groups: int = 8
-    make_vocab_size_divisible_by: int = 128
-
-    def finalize(self) -> None:
-        super().finalize()
-        _warn_class_deprecated("NVIDIAMambaHybridModelProvider8B")
-
-
-# -----------------------------------------------------------------------------
-# Deprecated aliases (to be removed in a future release)
-# -----------------------------------------------------------------------------
-
-
-def _warn_deprecated(old_cls: str, new_cls: str) -> None:
-    if get_rank_safe() == 0:
-        warnings.warn(
-            f"{old_cls} is deprecated and will be removed in a future release. Use {new_cls} instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-
-def _warn_class_deprecated(cls_name: str) -> None:
-    """Log a deprecation warning for a class.
-
-    Args:
-        cls_name: The name of the deprecated class.
-    """
-    if get_rank_safe() == 0:
-        warnings.warn(
-            f"{cls_name} is deprecated and will be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=4,
-        )
-
-
-@dataclass
-class MambaProvider(MambaModelProvider):
-    """Deprecated alias for ``MambaModelProvider``.
-
-    Deprecated:
-        This alias remains for backward compatibility and will be removed in a
-        future release. Import and use ``MambaModelProvider`` instead.
-    """
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("MambaProvider", "MambaModelProvider")
-        super().__post_init__()
-
-
-@dataclass
-class MambaProvider130M(MambaModelProvider130M):
-    """Deprecated alias for ``MambaModelProvider130M``.
-
-    Deprecated:
-        This alias remains for backward compatibility and will be removed in a
-        future release. Import and use ``MambaModelProvider130M`` instead.
-    """
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("MambaProvider130M", "MambaModelProvider130M")
-        super().__post_init__()
-
-
-@dataclass
-class MambaProvider370M(MambaModelProvider370M):
-    """Deprecated alias for ``MambaModelProvider370M``.
-
-    Deprecated:
-        This alias remains for backward compatibility and will be removed in a
-        future release. Import and use ``MambaModelProvider370M`` instead.
-    """
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("MambaProvider370M", "MambaModelProvider370M")
-        super().__post_init__()
-
-
-@dataclass
-class MambaProvider780M(MambaModelProvider780M):
-    """Deprecated alias for ``MambaModelProvider780M``.
-
-    Deprecated:
-        This alias remains for backward compatibility and will be removed in a
-        future release. Import and use ``MambaModelProvider780M`` instead.
-    """
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("MambaProvider780M", "MambaModelProvider780M")
-        super().__post_init__()
-
-
-@dataclass
-class MambaProvider1_3B(MambaModelProvider1P3B):
-    """Deprecated alias for ``MambaModelProvider1P3B``.
-
-    Deprecated:
-        This alias remains for backward compatibility and will be removed in a
-        future release. Import and use ``MambaModelProvider1P3B`` instead.
-    """
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("MambaProvider1_3B", "MambaModelProvider1P3B")
-        super().__post_init__()
-
-
-@dataclass
-class MambaProvider2_7B(MambaModelProvider2P7B):
-    """Deprecated alias for ``MambaModelProvider2P7B``.
-
-    Deprecated:
-        This alias remains for backward compatibility and will be removed in a
-        future release. Import and use ``MambaModelProvider2P7B`` instead.
-    """
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("MambaProvider2_7B", "MambaModelProvider2P7B")
-        super().__post_init__()
-
-
-@dataclass
-class NVIDIAMambaProvider8B(NVIDIAMambaModelProvider8B):
-    """Deprecated alias for ``NVIDIAMambaModelProvider8B``.
-
-    Deprecated:
-        This alias remains for backward compatibility and will be removed in a
-        future release. Import and use ``NVIDIAMambaModelProvider8B`` instead.
-    """
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("NVIDIAMambaProvider8B", "NVIDIAMambaModelProvider8B")
-        super().__post_init__()
-
-
-@dataclass
-class NVIDIAMambaHybridProvider8B(NVIDIAMambaHybridModelProvider8B):
-    """Deprecated alias for ``NVIDIAMambaHybridModelProvider8B``.
-
-    Deprecated:
-        This alias remains for backward compatibility and will be removed in a
-        future release. Import and use ``NVIDIAMambaHybridModelProvider8B`` instead.
-    """
-
-    def __post_init__(self) -> None:
-        _warn_deprecated("NVIDIAMambaHybridProvider8B", "NVIDIAMambaHybridModelProvider8B")
-        super().__post_init__()

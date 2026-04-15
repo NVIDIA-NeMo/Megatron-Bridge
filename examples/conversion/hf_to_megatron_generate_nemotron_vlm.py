@@ -114,7 +114,10 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     def loss_func(x, **kwargs):
         return x
 
-    return model(**forward_args), loss_func
+    output = model(**forward_args)
+    if isinstance(output, tuple):
+        output = output[0]
+    return output, loss_func
 
 
 def load_image(image_path: str) -> Image.Image:
@@ -150,7 +153,8 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str, syst
             image_paths = image_path.split(",")
             content = []
             for i, path in enumerate(image_paths):
-                content.append({"type": "text", "text": f"{'\n' if i > 0 else ''}Image-{i + 1}: "})
+                prefix = "\n" if i > 0 else ""
+                content.append({"type": "text", "text": f"{prefix}Image-{i + 1}: "})
                 content.append({"type": "image", "image": path})
             content.append({"type": "text", "text": "\n" + prompt})
         else:
@@ -306,6 +310,7 @@ def main(args) -> None:
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.initialize_model_parallel(seed=0)
+        model_provider.finalize()
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     model = [m.cuda() for m in model]

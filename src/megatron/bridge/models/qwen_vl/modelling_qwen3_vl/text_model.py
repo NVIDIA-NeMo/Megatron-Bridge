@@ -21,17 +21,16 @@ Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 from typing import Literal, Optional
 
 import torch
+from megatron.core import tensor_parallel
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import (
-    Qwen3VLMoETextRotaryEmbedding,
-    Qwen3VLTextRotaryEmbedding,
-)
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLTransformerBlock
 from megatron.bridge.models.transformer_config import TransformerConfig
 
@@ -59,6 +58,7 @@ class Qwen3VLGPTModel(GPTModel):
         seq_len_interpolation_factor: Optional[float] = None,
         mtp_block_spec: Optional[ModuleSpec] = None,
         vp_stage: Optional[int] = None,
+        pg_collection: ProcessGroupCollection = None,
     ) -> None:
         super().__init__(
             config=config,
@@ -79,17 +79,18 @@ class Qwen3VLGPTModel(GPTModel):
             seq_len_interpolation_factor=seq_len_interpolation_factor,
             mtp_block_spec=mtp_block_spec,
             vp_stage=vp_stage,
+            pg_collection=pg_collection,
         )
 
-        is_moe = (
-            hasattr(config, "num_moe_experts") and config.num_moe_experts is not None and config.num_moe_experts > 0
+        # rebuild rope
+        self.rotary_pos_emb = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=self.config.kv_channels,
+            rotary_percent=rotary_percent,
+            rotary_interleaved=self.config.rotary_interleaved,
+            seq_len_interpolation_factor=seq_len_interpolation_factor,
+            rotary_base=rotary_base,
+            cp_group=self.pg_collection.cp,
         )
-
-        if is_moe:
-            self.rotary_pos_emb = Qwen3VLMoETextRotaryEmbedding(config.hf_text_config)
-        else:
-            self.rotary_pos_emb = Qwen3VLTextRotaryEmbedding(config.hf_text_config)
-
         self.mrope_section = self.config.mrope_section
         assert self.mrope_section is not None, (
             "mrope require mrope_section setting, but we got None from TransformerConfig"
@@ -102,6 +103,7 @@ class Qwen3VLGPTModel(GPTModel):
             pre_process=self.pre_process,
             post_process=self.post_process,
             vp_stage=vp_stage,
+            pg_collection=pg_collection,
         )
 
     def forward(
@@ -173,7 +175,24 @@ class Qwen3VLGPTModel(GPTModel):
             **(extra_block_kwargs or {}),
         )
 
-        return self._postprocess(
+        # MTP calls self.embedding directly (bypassing the manual SP scatter that
+        # model.py does for the combined VL embeddings). Temporarily wrap the embedding
+        # to apply the SP scatter so its output shape matches hidden_states.
+        # We write to self.__dict__ directly to bypass nn.Module.__setattr__'s type
+        # check, which rejects non-Module values for registered child modules.
+        _shadow_embedding = False
+        if self.mtp_process and self.config.sequence_parallel:
+            _original_embedding = self.embedding
+
+            def _sp_scatter_embedding(input_ids, position_ids):
+                out = _original_embedding(input_ids=input_ids, position_ids=position_ids)
+                return tensor_parallel.scatter_to_sequence_parallel_region(out)
+
+            _sp_scatter_embedding.word_embeddings = _original_embedding.word_embeddings
+            self.__dict__["embedding"] = _sp_scatter_embedding
+            _shadow_embedding = True
+
+        result = self._postprocess(
             hidden_states=hidden_states,
             input_ids=input_ids,
             position_ids=position_ids,
@@ -192,3 +211,8 @@ class Qwen3VLGPTModel(GPTModel):
             extra_block_kwargs=extra_block_kwargs,
             inference_context=inference_context,
         )
+
+        if _shadow_embedding:
+            del self.__dict__["embedding"]
+
+        return result

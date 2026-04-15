@@ -13,9 +13,7 @@
 # limitations under the License.
 
 import dataclasses
-import json
 import logging
-import pickle
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -24,84 +22,21 @@ from typing import Dict, List
 import numpy as np
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
-from megatron.energon.flavors.base_dataset import Sample
-from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
-from PIL import Image
+from transformers import BatchEncoding
 
+from megatron.bridge.data.energon.task_encoder_utils import (
+    IGNORE_INDEX,
+    ChatMLSample,
+    ChatMLWebdataset,  # noqa: F401  -- re-exported for backward compat
+    _images_to_pil,
+    _tensor_to_pil,  # noqa: F401  -- re-exported for backward compat
+    _videos_to_pil,
+    cook_chatml_sample,
+    find_pattern_indices,
+    get_ltor_masks_and_position_ids,
+    videohandler,  # noqa: F401  -- re-exported for backward compat
+)
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
-
-
-# Local replacements for former nemo dependencies
-# Constants for internal multimodal token placeholders and label ignore
-IGNORE_INDEX = -100
-
-
-def get_ltor_masks_and_position_ids(
-    data: torch.Tensor,
-    eod_token: int,
-    eod_mask_loss: bool,
-    reset_attention_mask: bool,
-    reset_position_ids: bool,
-    compute_attention_mask: bool = True,
-):
-    """Build masks and position ids for a left-to-right model.
-
-    Returns:
-        attention_mask: [att_mask_batch, 1, s, s] boolean mask (True means masked)
-        loss_mask: [b, s] float mask (1.0 to keep loss, 0.0 to drop)
-        position_ids: [b, s] positions
-    """
-    micro_batch_size, seq_length = data.size()
-
-    att_mask_batch = micro_batch_size if reset_attention_mask else 1
-    attention_mask = None
-    if compute_attention_mask:
-        attention_mask = torch.tril(torch.ones((att_mask_batch, seq_length, seq_length), device=data.device)).view(
-            att_mask_batch, 1, seq_length, seq_length
-        )
-
-    loss_mask = torch.ones(data.size(), dtype=torch.float, device=data.device)
-    if eod_mask_loss:
-        loss_mask[data == eod_token] = 0.0
-
-    position_ids = torch.arange(seq_length, dtype=torch.long, device=data.device)
-    position_ids = position_ids.unsqueeze(0).repeat(micro_batch_size, 1)
-    if reset_position_ids:
-        position_ids = position_ids.clone()
-
-    if reset_position_ids or reset_attention_mask:
-        for b in range(micro_batch_size):
-            eod_index = position_ids[b, data[b] == eod_token]
-            if reset_position_ids:
-                eod_index = eod_index.clone()
-            prev_index = 0
-            for j in range(eod_index.size(0)):
-                i = eod_index[j]
-                if reset_attention_mask and attention_mask is not None:
-                    attention_mask[b, 0, (i + 1) :, : (i + 1)] = 0
-                if reset_position_ids:
-                    position_ids[b, (i + 1) :] -= i + 1 - prev_index
-                    prev_index = i + 1
-
-    if compute_attention_mask and attention_mask is not None:
-        attention_mask = attention_mask < 0.5
-
-    return attention_mask, loss_mask, position_ids
-
-
-def find_pattern_indices(sequence: np.ndarray, pattern, start: int = 0):
-    """Find the [start, end) indices of the first occurrence of pattern in sequence from start."""
-    if not isinstance(sequence, np.ndarray):
-        sequence = np.array(sequence)
-    pattern = np.array(pattern, dtype=sequence.dtype)
-    n, m = sequence.shape[0], pattern.shape[0]
-    if m == 0 or start >= n:
-        return -1, -1
-    end_limit = n - m + 1
-    for i in range(start, max(end_limit, start)):
-        if np.array_equal(sequence[i : i + m], pattern):
-            return i, i + m
-    return -1, -1
 
 
 def process_vision(
@@ -114,14 +49,14 @@ def process_vision(
             kwargs["min_pixels"] = min_pixels
         if max_pixels is not None:
             kwargs["max_pixels"] = max_pixels
-        image_inputs = processor(images=images, videos=None, return_tensors="pt", **kwargs)
+        image_inputs = processor(images=images, text="", videos=None, return_tensors="pt", **kwargs)
         image_grid_thw = image_inputs.get("image_grid_thw", None)
     else:
         image_inputs = {}
         image_grid_thw = None
 
     if videos is not None:
-        videos_inputs = processor(images=None, videos=videos, return_tensors="pt")
+        videos_inputs = processor(images=None, text="", videos=videos, return_tensors="pt")
         video_grid_thw = videos_inputs.get("video_grid_thw", None)
     else:
         videos_inputs = {}
@@ -150,17 +85,6 @@ def _resolve_hf_mm_token_ids(hf_tokenizer):
     image_id = _get("<image>", 151655)
     video_id = _get("<video>", 151656)
     return image_id, video_id
-
-
-@dataclass
-class ChatMLSample(Sample):
-    """Intermediate Sample Format"""
-
-    # __key__: str
-    # __subflavors__: Dict
-    imgs: List[Image.Image]
-    videos: List[torch.Tensor | list[Image.Image]]
-    conversation: str  # JSON string of GPT-format conversations
 
 
 @dataclass
@@ -231,50 +155,8 @@ def convert_to_qwenvl_content(user_input: str, image_pattern: str = "<image>", v
     return contents
 
 
-def cook_chatml_sample(sample: dict) -> ChatMLSample:
-    """
-    Convert crude sampel to ChatMLSample.
-
-    Args:
-        sample: Crude sample in pickle serialized format
-
-    Returns:
-        sample in ChatMLSample format
-    """
-    imgs = sample.get("jpgs", None)
-    if imgs:
-        imgs = pickle.loads(imgs)
-        if isinstance(imgs, list) and len(imgs) > 0:
-            imgs = [Image.fromarray(d) for d in imgs]
-        else:
-            imgs = None
-    videos = sample.get("videos", None)
-    if videos:
-        videos = pickle.loads(videos)
-        if isinstance(videos, list) and len(videos) > 0:
-            videos = [[d for d in video] for video in videos]
-        else:
-            videos = None
-    if "<image>" in sample["json"] and imgs is None:
-        logging.warning("<image> in conversation text but no image data")
-    if "<video>" in sample["json"] and videos is None:
-        logging.warning("<video> in conversation text but no video data")
-
-    chat_sample = ChatMLSample(
-        **basic_sample_keys(sample),
-        imgs=imgs,
-        videos=videos,
-        conversation=sample["json"],
-    )
-    return chat_sample
-
-
 class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenVLTaskBatch, dict]):
     """A simple task encoder for captioning."""
-
-    cookers = [
-        Cooker(cook_chatml_sample),
-    ]
 
     def __init__(
         self,
@@ -313,12 +195,17 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         Returns:
             sample with necessary fields
         """
-        # NOTE: flatten all images
-        #     Input of process_vision:
+        # NOTE: Convert WDS tensor images to PIL to match HF flow format.
+        #     WDS imagehandler decodes JPEG to float tensors in [0,1], but the processor
+        #     expects PIL images (uint8 [0,255]) for correct rescaling and normalization.
+        imgs_for_processing = _images_to_pil(sample.imgs) if sample.imgs is not None and len(sample.imgs) > 0 else None
+        videos_for_processing = (
+            _videos_to_pil(sample.videos) if sample.videos is not None and len(sample.videos) > 0 else None
+        )
         processed_vision = process_vision(
             self.image_processor,
-            sample.imgs,
-            sample.videos,
+            imgs_for_processing,
+            videos_for_processing,
             min_pixels=self.min_pixels,
             max_pixels=self.max_pixels,
         )
@@ -327,65 +214,23 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         flattened_imgs = processed_vision["image_inputs"]
         flattened_videos = processed_vision["video_inputs"]
 
-        conversation = (
-            json.loads(sample.conversation) if isinstance(sample.conversation, (str, bytes)) else sample.conversation
-        )
+        # Normalize conversation to [{"role": ..., "content": ...}, ...]
+        conversation = cook_chatml_sample(sample.conversation)
 
-        _from_system_ = "from" in conversation[0]
-        role_key = "from" if "from" in conversation[0] else "role"
-        content_key = "value" if "from" in conversation[0] else "content"
-
-        # NOTE: assume the conversation format is: [System]? (User Assistant)+
-        converted_conversation = []
-        if len(conversation) % 2 != 0:
-            converted_conversation.append({"role": "system", "content": conversation[0][content_key]})
-            conversation = conversation[1:]
-
-        if _from_system_:  # ['conversations':[{'from':'human', 'value':[]}, {'from':'gpt', 'value':[]}]
-            EXPECTED_ROLE = ["human", "gpt"]
-            for turn_idx, turn in enumerate(conversation):
-                role = turn[role_key]
-                if role != EXPECTED_ROLE[turn_idx % len(EXPECTED_ROLE)]:
-                    logging.warning(
-                        f"Expect conversation organized in order: [sys] human gpt human gpt...,"
-                        f"but got role '{role}' in turn {turn_idx}"
-                    )
-                content = turn[content_key]
-
-                if role == "human":
-                    role = "user"
-                    content = convert_to_qwenvl_content(content)
-                    # Reorder media first to align with PreloadedVLMConversationProvider
-                    media_content = [c for c in content if c.get("type") in ("image", "video")]
-                    text_content = [c for c in content if c.get("type") == "text"]
-                    content = media_content + text_content
-                elif role == "gpt":
-                    role = "assistant"
-
-                converted_conversation.append({"role": role, "content": content})
-        else:  # ['messages':[{'role':'user', 'content':[]}, {'role':'assistant', 'content':[]}]
-            EXPECTED_ROLE = ["user", "assistant"]
-            for turn_idx, turn in enumerate(conversation):
-                role = turn[role_key]
-                if role != EXPECTED_ROLE[turn_idx % len(EXPECTED_ROLE)]:
-                    logging.warning(
-                        f"Expect conversation organized in order: [sys] user assistant user assistant...,"
-                        f" but got role '{role}' in turn {turn_idx}"
-                    )
-                content = turn[content_key]
-
-                if role == "user":
-                    content = convert_to_qwenvl_content(content)
-                    # Reorder media first to align with PreloadedVLMConversationProvider
-                    media_content = [c for c in content if c.get("type") in ("image", "video")]
-                    text_content = [c for c in content if c.get("type") == "text"]
-                    content = media_content + text_content
-
-                converted_conversation.append({"role": role, "content": content})
-        conversation = converted_conversation
+        # Apply Qwen-specific content formatting for user turns:
+        # convert_to_qwenvl_content splits text around <image>/<video> placeholders,
+        # then media items are reordered first for PreloadedVLMConversationProvider.
+        for turn in conversation:
+            if turn["role"] == "user":
+                content = convert_to_qwenvl_content(turn["content"])
+                media_content = [c for c in content if c.get("type") in ("image", "video")]
+                text_content = [c for c in content if c.get("type") == "text"]
+                turn["content"] = media_content + text_content
 
         # NOTE: we need to mask all system/user input tokens and assistant generation prefix tokens
-        input_ids = self.hf_tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="np")[0]
+        # In transformers >= 5.0, apply_chat_template returns BatchEncoding when tokenize=True
+        chat_output = self.hf_tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="np")
+        input_ids = chat_output["input_ids"][0] if isinstance(chat_output, BatchEncoding) else chat_output[0]
         pad_token_id = self.hf_tokenizer.pad_token_id
         target = [pad_token_id for _ in range(len(input_ids))]
         search_start_index = 0

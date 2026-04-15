@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -19,6 +20,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training.config import TokenizerConfig
 from megatron.bridge.training.model_load_save import (
@@ -235,6 +237,84 @@ class TestLoadMegatronModel:
         mock_instantiate.assert_called_once_with(mock_run_cfg_dict["model"])
         mock_cpu_context.assert_called_once()
         mock_model_cfg.provide_distributed_model.assert_called_once()
+        mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
+        assert mock_model_cfg.params_dtype == torch.bfloat16
+
+        result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
+        assert result == [mock_model]
+        mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
+
+    @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
+    @patch("megatron.bridge.training.model_load_save.dist")
+    @patch("megatron.bridge.training.model_load_save.ProcessGroupCollection")
+    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    def test_load_mbridge_saved_model_config(
+        self,
+        mock_from_dict,
+        mock_pg_collection,
+        mock_dist,
+        mock_cpu_context,
+        mock_run_config_fname,
+        mock_run_config,
+        mock_load_weights,
+        mock_temp_dist,
+    ):
+        """Test loading a model when config yaml contains a serialized ModelConfig instance."""
+        # Setup mocks
+        mock_dist.is_available.return_value = False
+        mock_dist.is_initialized.return_value = False
+
+        mock_run_cfg_dict = {
+            "model": {"tensor_model_parallel_size": 1, "_builder_": "import.path.to.SomeModelBuilder"}
+        }
+        mock_run_config.return_value = mock_run_cfg_dict
+
+        mock_model = Mock()
+
+        # Create a mock that passes isinstance(mock_model_cfg, ModelConfig) check
+        mock_model_cfg = Mock(spec=GPTModelConfig)
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = True
+        mock_model_cfg.fp16 = False
+        mock_model_cfg.use_cpu_initialization = False
+        mock_model_cfg.finalize = Mock()
+
+        # Setup the builder chain: get_builder_cls() returns a class, calling it returns a builder
+        mock_builder = Mock()
+        mock_builder.build_distributed_models.return_value = [mock_model]
+        mock_builder_cls = Mock(return_value=mock_builder)
+        mock_model_cfg.get_builder_cls = Mock(return_value=mock_builder_cls)
+
+        mock_from_dict.return_value = mock_model_cfg
+
+        mock_mpu_pgs = Mock()
+        mock_pg_collection.use_mpu_process_groups.return_value = mock_mpu_pgs
+
+        expected_result = {"layer.weight": torch.randn(2, 2)}
+        mock_load_weights.return_value = expected_result
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
+
+        assert isinstance(result, dict)
+        assert result == expected_result
+        mock_run_config_fname.assert_called_once_with(ckpt_path)
+        mock_run_config.assert_called_once()
+        mock_from_dict.assert_called_once_with(mock_run_cfg_dict["model"])
+        mock_cpu_context.assert_called_once()
+        mock_model_cfg.finalize.assert_called_once()
+        mock_model_cfg.get_builder_cls.assert_called_once()
+        mock_builder_cls.assert_called_once_with(mock_model_cfg)
+        mock_builder.build_distributed_models.assert_called_once_with(
+            mock_mpu_pgs,
+            wrap_with_ddp=False,
+        )
         mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
         assert mock_model_cfg.params_dtype == torch.bfloat16
 
@@ -524,7 +604,6 @@ class TestLoadMegatronModel:
         cfg.context_parallel_size = 2
         cfg.expert_model_parallel_size = 2
         cfg.expert_tensor_parallel_size = 2
-        cfg.moe_extended_tp = True
         cfg.sequence_parallel = True
         cfg.virtual_pipeline_model_parallel_size = 2
         cfg.hierarchical_context_parallel_sizes = [2, 2]
@@ -544,7 +623,6 @@ class TestLoadMegatronModel:
         assert cfg.context_parallel_size == 1
         assert cfg.expert_model_parallel_size == 1
         assert cfg.expert_tensor_parallel_size == 1
-        assert cfg.moe_extended_tp is False
         assert cfg.sequence_parallel is False
         assert cfg.virtual_pipeline_model_parallel_size is None
         assert cfg.hierarchical_context_parallel_sizes is None
@@ -560,7 +638,6 @@ class TestLoadMegatronModel:
         cfg.context_parallel_size = 1
         cfg.expert_model_parallel_size = 1
         cfg.expert_tensor_parallel_size = 1
-        cfg.moe_extended_tp = False
         cfg.sequence_parallel = False
         cfg.virtual_pipeline_model_parallel_size = None
         cfg.hierarchical_context_parallel_sizes = None
@@ -584,7 +661,17 @@ class TestLoadMegatronModel:
 
 
 class TestSaveMegatronModel:
-    """Test save_megatron_model function."""
+    """Test save_megatron_model function.
+
+    Note: These tests use low_memory_save=False because the low_memory_save=True path
+    requires parallel state to be initialized (get_rng_state calls mpu.get_pipeline_model_parallel_rank()).
+    Testing the low_memory_save=True path would require either:
+    1. Full distributed initialization, or
+    2. Extensive mocking of checkpointing internals (get_rng_state, generate_state_dict, etc.)
+
+    The low_memory_save=False path tests the core save_checkpoint integration without
+    those dependencies, which is sufficient for unit testing the function's API and behavior.
+    """
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
@@ -619,7 +706,7 @@ class TestSaveMegatronModel:
 
         # Test
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist")
+            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", low_memory_save=False)
 
         # Assertions
         mock_get_model_config.assert_called_once_with(mock_model)
@@ -630,6 +717,7 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            callback_manager=None,
         )
 
     @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
@@ -681,7 +769,11 @@ class TestSaveMegatronModel:
         # Test with tokenizer path
         with tempfile.TemporaryDirectory() as temp_dir:
             save_megatron_model(
-                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+                [mock_model],
+                temp_dir,
+                ckpt_format="torch_dist",
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=False,
             )
 
         # Assertions
@@ -703,6 +795,7 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            callback_manager=None,
         )
 
         # Verify tokenizer was built and saved
@@ -749,7 +842,9 @@ class TestSaveMegatronModel:
 
         # Test without tokenizer path (should be None)
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None)
+            save_megatron_model(
+                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None, low_memory_save=False
+            )
 
         # Assertions
         mock_get_model_config.assert_called_once_with(mock_model)
@@ -767,6 +862,7 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            callback_manager=None,
         )
 
 
@@ -781,6 +877,7 @@ class TestDtypeFromStr:
             ("16", torch.float16),
             ("16-mixed", torch.float16),
             ("bfloat16", torch.bfloat16),
+            ("bf16", torch.bfloat16),
             ("bf16-mixed", torch.bfloat16),
             ("float32", torch.float32),
             ("unknown", torch.float32),
@@ -940,3 +1037,31 @@ class TestLoadTokenizer:
                 AttributeError, match="Attempting to set a non-existent attribute 'tensor_model_parallel_size'"
             ):
                 load_tokenizer(ckpt_path, tensor_model_parallel_size=1)
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    def test_load_tokenizer_hf(self, mock_read_cfg, mock_instantiate, mock_build_tokenizer, mock_tokenizer):
+        """Test loading HF tokenizers."""
+        # Setup mocks
+        mock_run_cfg_dict = {
+            "model": {"tensor_model_parallel_size": 1, "make_vocab_size_divisible_by": 128},
+            "tokenizer": {},
+        }
+        mock_read_cfg.return_value = mock_run_cfg_dict
+
+        mock_tokenizer_cfg = Mock(spec=TokenizerConfig)
+        mock_tokenizer_cfg.tokenizer_type = "HuggingFaceTokenizer"
+        mock_tokenizer_cfg.tokenizer_model = Path()
+        mock_instantiate.return_value = mock_tokenizer_cfg
+
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        # test if tokenizer_path is absolute
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            _ = load_tokenizer(ckpt_path)
+
+            tokenizer_path = os.path.join(ckpt_path, "tokenizer")
+            assert mock_tokenizer_cfg.tokenizer_model == Path(tokenizer_path)

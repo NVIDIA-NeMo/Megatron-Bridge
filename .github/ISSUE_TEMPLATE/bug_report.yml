@@ -1,0 +1,86 @@
+name: Bug report
+description: Report incorrect behavior, regressions, or broken workflows in Megatron Bridge.
+title: "[bug] "
+labels:
+  - bug
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please keep the report focused and include the smallest repro you can share.
+
+        **If you already have a proposed fix, please open a PR alongside this issue.** We can discuss the solution there and help get it merged.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is broken?
+      placeholder: Describe the incorrect behavior, regression, or failure mode.
+    validations:
+      required: true
+  - type: textarea
+    id: minimal-repro
+    attributes:
+      label: Minimal repro
+      description: Provide the smallest steps, command, or code snippet that reproduces the problem.
+      placeholder: |
+        1. Run ...
+        2. Use config ...
+        3. Observe ...
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+      placeholder: Describe the expected output or behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Choose the closest primary area.
+      options:
+        - area:model
+        - area:recipe
+        - area:training
+        - area:data
+        - area:ckpt
+        - area:peft
+        - area:perf
+        - area:build
+        - area:misc
+        - unsure
+    validations:
+      required: true
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Regression?
+      description: Did this work in an earlier version, branch, or commit?
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the commit or branch, container, GPU or CPU setup, and any relevant package versions.
+      placeholder: |
+        Branch / commit:
+        Container or environment:
+        GPU / machine:
+        Python / CUDA / PyTorch:
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste the relevant traceback, assertion, or CI log snippet if available.
+      render: shell

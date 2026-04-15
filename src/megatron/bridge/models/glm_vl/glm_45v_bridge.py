@@ -23,6 +23,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
+from megatron.bridge.models.glm.glm_moe_mappings import (
+    GLMExpertDownProjMapping,
+    GLMExpertGateUpProjMapping,
+)
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
@@ -42,11 +47,12 @@ class GLM45VBridge(MegatronModelBridge):
         moe_layer_freq = [0] * text_config.first_k_dense_replace + [1] * (
             text_config.num_hidden_layers - text_config.first_k_dense_replace
         )
+
         provider = GLM45VModelProvider(
             add_qkv_bias=text_config.attention_bias,
             kv_channels=text_config.head_dim,
             hidden_size=text_config.hidden_size,
-            rotary_base=text_config.rope_theta,
+            rotary_base=rope_theta_from_hf(text_config),
             rotary_percent=text_config.partial_rotary_factor,
             init_method_std=text_config.initializer_range,
             ffn_hidden_size=text_config.intermediate_size,
@@ -82,6 +88,13 @@ class GLM45VBridge(MegatronModelBridge):
         )
         return provider
 
+    def build_conversion_tasks(self, hf_pretrained, megatron_model):
+        """Override to store config before mapping_registry is called."""
+        self._hf_config = hf_pretrained.config
+        self._hf_state_source = hf_pretrained.state.source
+        self._hf_keys = list(self._hf_state_source.get_all_keys())
+        return super().build_conversion_tasks(hf_pretrained, megatron_model)
+
     @classmethod
     def get_hf_tokenizer_kwargs(cls) -> dict:
         """Return HuggingFace tokenizer kwargs specific to GLM 4.5V models.
@@ -97,6 +110,9 @@ class GLM45VBridge(MegatronModelBridge):
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
         mapping_list = []
+        use_fused_experts = self._uses_fused_experts()
+        gate_up_suffix = self._hf_expert_suffix("mlp.experts.gate_up_proj")
+        down_suffix = self._hf_expert_suffix("mlp.experts.down_proj")
 
         param_mappings = {
             # Embed
@@ -123,7 +139,6 @@ class GLM45VBridge(MegatronModelBridge):
             "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.language_model.layers.*.post_attention_layernorm.weight",
             "language_model.decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.language_model.layers.*.mlp.shared_experts.down_proj.weight",
             "language_model.decoder.layers.*.mlp.shared_experts.router.weight": "model.language_model.layers.*.mlp.shared_experts.gate.weight",
-            "language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.language_model.layers.*.mlp.experts.*.down_proj.weight",
             "language_model.decoder.layers.*.mlp.router.weight": "model.language_model.layers.*.mlp.gate.weight",
             "language_model.decoder.layers.*.mlp.router.expert_bias": "model.language_model.layers.*.mlp.gate.e_score_correction_bias",
         }
@@ -165,11 +180,58 @@ class GLM45VBridge(MegatronModelBridge):
                     gate="model.language_model.layers.*.mlp.shared_experts.gate_proj.weight",
                     up="model.language_model.layers.*.mlp.shared_experts.up_proj.weight",
                 ),
-                GatedMLPMapping(
-                    megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    gate="model.language_model.layers.*.mlp.experts.*.gate_proj.weight",
-                    up="model.language_model.layers.*.mlp.experts.*.up_proj.weight",
-                ),
             ]
         )
+        if use_fused_experts:
+            mapping_list.extend(
+                [
+                    GLMExpertGateUpProjMapping(
+                        megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                        hf_param=f"model.language_model.layers.*.mlp.experts.gate_up_proj{gate_up_suffix}",
+                    ),
+                    GLMExpertDownProjMapping(
+                        megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                        hf_param=f"model.language_model.layers.*.mlp.experts.down_proj{down_suffix}",
+                    ),
+                ]
+            )
+        else:
+            mapping_list.extend(
+                [
+                    GatedMLPMapping(
+                        megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                        gate="model.language_model.layers.*.mlp.experts.*.gate_proj.weight",
+                        up="model.language_model.layers.*.mlp.experts.*.up_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                        hf_param="model.language_model.layers.*.mlp.experts.*.down_proj.weight",
+                    ),
+                ]
+            )
         return MegatronMappingRegistry(*mapping_list)
+
+    def _uses_fused_experts(self) -> bool:
+        hf_keys = getattr(self, "_hf_keys", None)
+        if hf_keys:
+            if any("mlp.experts.gate_up_proj" in key for key in hf_keys) or any(
+                "mlp.experts.down_proj" in key for key in hf_keys
+            ):
+                return True
+
+        hf_source = getattr(self, "_hf_state_source", None)
+        if hf_source is not None:
+            return hf_source.has_glob("*mlp.experts.gate_up_proj*") or hf_source.has_glob("*mlp.experts.down_proj*")
+
+        return False
+
+    def _hf_expert_suffix(self, base_name: str) -> str:
+        hf_keys = getattr(self, "_hf_keys", None) or []
+        if any(f"{base_name}.weight" in key for key in hf_keys):
+            return ".weight"
+
+        hf_source = getattr(self, "_hf_state_source", None)
+        if hf_source is not None and hf_source.has_glob(f"*{base_name}.weight"):
+            return ".weight"
+
+        return ""

@@ -1,232 +1,151 @@
 # Communication Overlap
 
-Megatron Bridge supports overlapping communication with computation in distributed training to improve performance and throughput. This optimization technique reduces the impact of inter-GPU communication overhead by executing communication operations concurrently with computational operations whenever possible.
+Communication overlap reduces exposed communication cost in distributed training
+by hiding collectives or point-to-point transfers under useful compute.
 
-Communication overlap is managed through the {py:class}`bridge.training.comm_overlap.CommOverlapConfig` class and can be applied to different types of parallelism: tensor parallelism (TP), pipeline parallelism (PP), data parallelism (DP), and context parallelism (CP).
+This page is the stable guide for what communication overlap is, when it tends
+to help, and which boundaries are durable across Megatron Bridge. For exact
+knobs, code anchors, and verification commands, see:
 
-## Data-parallel Communication Overlap
+- `skills/perf-techniques/tp-dp-comm-overlap/SKILL.md`
+- `skills/perf-techniques/expert-parallel-overlap/SKILL.md`
 
-Megatron Bridge supports the overlap of data-parallel (DP) communications with computations in LLM training. The framework features a Distributed Optimizer that distributes optimizer states and high-precision master parameters across GPUs. This introduces two types of data-parallel communications: reduce-scatter of gradients and all-gather of updated parameters.
+## What It Is
 
-The DP communication is chunked by the granularity of a Transformer layer and overlaps each communication chunk with computation. This overlap method exposes only one DP communication chunk ensuring efficient large-scale LLM training. When training with pipeline parallelism, the granularity of DP communication becomes the Transformer layers per virtual pipeline stage.
+In Bridge, communication overlap is a family of related techniques rather than a
+single switch:
 
-### Configuration
+| Mode | What gets hidden | Main gate |
+|---|---|---|
+| DP | gradient reduce-scatter and parameter all-gather | distributed-optimizer overlap path |
+| TP | tensor-parallel collectives under layer compute | `CommOverlapConfig.tp_comm_overlap` plus sequence parallelism |
+| PP | pipeline send/recv work under schedule execution | pipeline schedule and virtual pipeline layout |
+| CP | context-parallel communication inside CP execution paths | CP implementation choice |
+| EP | MoE token dispatch/combine communication under expert compute | `overlap_moe_expert_parallel_comm` |
 
-DP communication overlap settings can be inspected in Megatron Core via the `DistributedDataParallelConfig` class. DP gradient reduce-scatter and parameter all-gather overlaps are enabled when setting `overlap_grad_reduce=True` and `overlap_param_gather=True`, respectively. The precision of gradient reduce-scatter is controlled by `grad_reduce_in_fp32`. When `grad_reduce_in_fp32=False`, gradients are reduced in bf16, leading to improved performance in large-scale training compared to the default fp32 precision. When training in fp8 computing precision, setting `fp8_param_gather=True` conducts the parameter all-gather in fp8, reducing the all-gather overhead by half.
+These paths share the same goal, but they do not share the same enablement
+rules, evidence level, or failure modes.
 
-Data parallel communication overlap settings are controlled through the distributed data parallel and communication overlap configurations.
+## What Problem It Solves
 
-```{note}
-Data-parallel overlap relies on attributes such as `grad_reduce_in_fp32` and `fp8_param_gather`. When a mixed-precision recipe (for example `bf16_mixed`, `fp16_mixed`, `bf16_with_fp8_delayed_scaling_mixed`, etc.) is provided, those attributes are sourced from the recipe stored in the `MixedPrecisionConfig`. Set the desired values inside the mixed-precision configuration rather than overriding them directly on the optimizer or DDP configs. This ensures the communication overlap settings and the selected precision recipe remain consistent.
-```
+Distributed training often becomes communication-bound before it becomes
+compute-bound. Once TP, DP, PP, CP, or EP traffic is visible on the critical
+path, adding more GPUs may raise communication time faster than it raises useful
+compute.
 
-For example:
+Communication overlap addresses that by moving communication earlier or later in
+the step so the same transfer can happen while some other part of the model is
+already doing useful work. It does not change the training objective. It tries
+to reduce idle time.
 
-```python
-from megatron.bridge.training.config import ConfigContainer, OptimizerConfig
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.mixed_precision import get_mixed_precision_config
+## Impacted Training Dimensions
 
-# Configure communication overlap
-comm_overlap_config = CommOverlapConfig(
-    tp_comm_overlap=False,  # Tensor parallel overlap
-    overlap_grad_reduce=True,  # Gradient reduce-scatter overlap
-    overlap_param_gather=True,  # Parameter all-gather overlap
-    overlap_param_gather_with_optimizer_step=False,  # Advanced optimization
-    bucket_size=128 * 1024 * 1024,  # 128MB bucket size
-)
+| Dimension | Effect | Confidence | Why |
+|---|---|---|---|
+| `speed` | ~0-15% faster step time, mode-dependent | medium | The whole point is to hide communication time, but gain depends strongly on which overlap mode is active and whether communication is actually exposed. EP overlap measured flat to ~13% slower on small-EP Qwen3-30B-A3B, so gains are not guaranteed. |
+| `memory` | neutral (some modes add ~1-2 GB for buffers) | low | Overlap itself is usually not a primary memory technique, although some implementations (e.g., TP userbuffers) add buffer or scheduling constraints. |
+| `scale` | positive at higher parallelism degrees | medium | Overlap becomes more valuable as communication dominates larger distributed runs. |
+| `convergence` | no change expected | medium | The intent is to preserve the same training math, though schedule changes can alter floating-point accumulation order. |
+| `stability` | adds operational constraints | medium | More overlap usually means tighter requirements around schedule shape, precision, runtime versions, and feature combinations. |
 
-# Configure distributed optimizer
-optimizer_config = OptimizerConfig(
-    optimizer="adam",
-    lr=3e-4,
-    use_distributed_optimizer=True,  # Required for DP overlap
-    # ... other optimizer parameters
-)
+## When to Use It
 
-# Mixed precision configuration controls overlap-related attributes
-mixed_precision_config = get_mixed_precision_config("bf16_mixed")
-mixed_precision_config.grad_reduce_in_fp32 = False  # Use bf16 for gradient reduction
-mixed_precision_config.fp8_param_gather = False
+Enable communication overlap when all of the following are mostly true:
 
-config = ConfigContainer(
-    comm_overlap=comm_overlap_config,
-    optimizer=optimizer_config,
-    mixed_precision=mixed_precision_config,
-    # ... other config parameters
-)
-```
+- the distributed configuration already works correctly without overlap
+- communication is a meaningful part of step time
+- you are tuning throughput or utilization, not doing first bring-up
+- you can benchmark the specific overlap mode you plan to use
 
-Key data parallel overlap options:
+As a rule of thumb:
 
-- `overlap_grad_reduce`: Overlaps gradient reduce-scatter with computation (default: True)
-- `overlap_param_gather`: Overlaps parameter all-gather with computation (default: True)  
-- `overlap_param_gather_with_optimizer_step`: Advanced optimization for pipeline parallelism
-- `bucket_size`: Controls the granularity of communication chunking (default: 128MB)
-- `grad_reduce_in_fp32`: Controls gradient reduction precision (False for bf16, True for fp32)
-- `fp8_param_gather`: Enables fp8 parameter all-gather for reduced communication overhead
+| Mode | Good first use case | Recommendation |
+|---|---|---|
+| DP | distributed optimizer on multi-GPU or multi-node training | Usually worth considering early once optimizer sharding is already chosen. |
+| TP | `TP >= 2` with sequence parallelism and TE-enabled path | Benchmark when TP collectives are visible in the profile. |
+| PP | interleaved pipeline schedules where p2p overhead is visible | Treat as schedule tuning, not a blanket PP default. |
+| CP | large-context runs already using CP | Follow the CP-specific guidance rather than treating it as a separate generic knob. |
+| EP | large-scale MoE with many micro-batches and inter-node A2A cost | Most promising at larger EP and with higher-latency dispatcher backends. |
 
-## Tensor-parallel Communication Overlap
+Measured repo evidence today is strongest for MoE EP overlap. On
+Qwen3-30B-A3B with EP=4 and `alltoall` on 2 H100 nodes, EP overlap is
+numerically safe at GBS=8 but provides no speedup, and it is about 13% slower
+at GBS=64. On Qwen3-Next-80B-A3B with EP=8 and `alltoall` on 8 nodes, the
+overlap variants are stable while the non-overlap baseline NaNs, but
+`delay_wgrad_compute` is still about 4.8% slower than overlap-only. That makes
+EP overlap correctness-backed in this repo, but not yet broadly speedup-backed.
 
-Tensor parallelism, used with sequence-parallel activation sharding (`sequence_parallel=True`), introduces activation (gradient) all-gather and reduce-scatter operations. Megatron Bridge provides various options to overlap the tensor-parallel (TP) communications with computation.
+## When Not to Use It
 
-![Tensor-parallel Communication Overlap](images/tp_comm_overlap.png)
-*Figure: Tensor-parallel communication overlap showing bulk and pipelined overlap strategies.*
+Avoid communication overlap when any of these are true:
 
-The TP communication without direct computation dependency are overlapped with the computation in bulk (the linear layer and TP communication pairs in the yellow boxes). The bulk TP communication is enabled by default. The other TP communications with direct computation dependency are overlapped in pipelined fashion (the linear layer and TP communication pairs in the red boxes).
+- you are still debugging a new distributed setup
+- the profile is compute-bound rather than communication-bound
+- the required companion feature is missing, such as sequence parallelism for TP
+- another feature already imposes conflicting runtime constraints
+- you have not benchmarked the exact model and parallelism shape
 
-In the pipelined overlap, the activation (gradient) tensor all-gather is replaced with multiple steps of input P2P ring exchanges, and reduce-scatter is replaced with multiple steps of GEMM output P2P ring exchanges followed by a reduction of the received outputs.
+For MoE EP overlap specifically, avoid treating it as a default when:
 
-### Configuration
+- `EP <= 4` with `alltoall` on `<= 2` nodes
+- the run has very few pipeline micro-batches
+- `moe_shared_expert_overlap` must stay enabled
+- full recompute or recompute scheduling incompatible with EP overlap is required
 
-```python
-from megatron.bridge.training.comm_overlap import (
-    CommOverlapConfig, 
-    TransformerLayerTPOverlapCfg,
-    userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
-)
+## Feature Interactions
 
-# Configure tensor parallel overlap
-comm_overlap_config = CommOverlapConfig(
-    tp_comm_overlap=True,  # Enable TP communication overlap
-    tp_comm_overlap_cfg=userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,  # Predefined config
-    tp_comm_bootstrap_backend="nccl",  # Communication backend
-)
-```
+The most important interactions are:
 
-Requirements for TP communication overlap:
-- `tensor_model_parallel_size >= 2`
-- `sequence_parallel=True`
-- Appropriate hardware configuration
+- DP overlap is tied to distributed-optimizer behavior rather than a fully independent tuning path.
+- TP overlap depends on sequence parallelism and the supported TE overlap path.
+- PP and EP overlap interact with virtual pipeline layout when `PP > 1`.
+- CP overlap should be reasoned about together with the chosen CP communication type.
+- EP overlap with DeepEP or HybridEP requires explicitly switching the dispatcher to `flex`.
+- EP overlap and `moe_shared_expert_overlap` are mutually exclusive.
+- CUDA graphs plus `delay_wgrad_compute` adds extra TE-version and graph-scope restrictions.
+- Launch-time environment tuning can conflict across overlap paths, especially TP or CP overlap versus DeepEP or HybridEP tuning.
 
-### Advanced Configuration
+## Bridge Configuration
 
-For most use cases, setting `tp_comm_overlap=True` with `tp_comm_overlap_cfg=None` (the default) will automatically configure appropriate overlap settings. For advanced users requiring custom optimization, Megatron Bridge includes predefined configurations optimized for specific hardware and model combinations. These configurations are available in the `comm_overlap` module but require expert knowledge to use effectively.
+Communication overlap is configured through `CommOverlapConfig` plus
+mode-specific model settings. There is no single universal toggle — DP, TP,
+PP, CP, and EP each have different prerequisites and should be enabled based
+on the actual bottleneck.
 
-## Pipeline-parallel Communication Overlap
+For config examples and minimal runnable commands, see:
 
-Pipeline parallelism introduces P2P activation (gradient) sends and receives between pipeline-parallel (PP) GPUs. The PP communication frequency increases when increasing the virtual-pipeline-parallel size because the number of Transformer layers executed per micro-batch decreases.
+- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
+- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
 
-![Pipeline-parallel Communication Overlap](images/pp_comm_overlap.png)
-*Figure: Pipeline-parallel communication overlap in 1F1B pipelining phase.*
+## Expected Metric Changes
 
-Megatron Bridge supports the overlap of PP communications with non-dependent computations in the 1F1B stage (the body of pipelining, where 1 forward and 1 backward micro-batch executions are interleaved). The PP communications in pipeline fill and flush stages are still exposed.
+| Metric | Expected Change | Conditions | Evidence |
+|---|---|---|---|
+| `step_time` | down | DP overlap with distributed optimizer on communication-heavy runs | expected |
+| `step_time` | down | TP overlap with `TP >= 2`, sequence parallelism, and supported TE path | expected |
+| `pipeline_idle_time` | down | interleaved PP where p2p cost is visible | expected |
+| `step_time` | flat | Qwen3-30B-A3B, EP=4, `alltoall`, 2 nodes, GBS=8 | measured: 822ms baseline vs 827ms overlap |
+| `step_time` | up | same model/config, GBS=64 | measured: 4889ms baseline vs 5538ms overlap |
+| `step_time` | up | Qwen3-Next-80B-A3B, EP=8, `alltoall`, 8 nodes, `delay_wgrad_compute=True` vs overlap-only | measured: 4912ms vs 4686ms |
 
-### Configuration
+Do not assume one overlap win transfers automatically to another mode. The
+correct question is always "which communication path is exposed in this run?"
 
-```python
-comm_overlap_config = CommOverlapConfig(
-    tp_comm_overlap=False,
-    overlap_p2p_comm=True,  # Enable PP communication overlap
-    batch_p2p_comm=False,   # Use separate send/receive kernels
-)
-```
+## Common Failure Modes
 
-PP communication overlap settings:
-- `overlap_p2p_comm`: Enables overlap of P2P communications (default: auto-configured)
-- `batch_p2p_comm`: Uses batched vs separate kernels (default: auto-configured based on virtual PP)
+- TP overlap silently disables itself when sequence parallelism is off or `TP < 2`.
+- PP overlap expectations are wrong when the schedule is non-interleaved or VPP is missing.
+- EP overlap asserts when `PP > 1` but `virtual_pipeline_model_parallel_size` is unset.
+- EP overlap asserts when full recompute, recompute method, or shared-expert overlap stays enabled.
+- Setting `moe_flex_dispatcher_backend` alone does not activate DeepEP or HybridEP; the dispatcher must actually switch to `flex`.
+- Small-EP `alltoall` MoE runs can get slower because scheduling overhead is larger than the communication being hidden.
 
-The overlap is automatically enabled when:
-- `pipeline_model_parallel_size > 1`
-- `virtual_pipeline_model_parallel_size > 1` (for optimal performance)
+## Related Docs
 
-## Context-parallel Communication Overlap
-
-Context parallelism partitions activations (gradients) on all layers in the sequence domain. This introduces all-gather and reduce-scatter of activations (gradients) in self-attention forward- and back-propagations.
-
-Megatron Bridge hides the context-parallel (CP) communications under the self-attention computation. Like the TP communication overlaps, the CP communications are chunked then pipeline-overlapped with the self-attention computation, where the all-gather and the reduce-scatter of activations (gradients) are replaced with P2P ring exchanges of data.
-
-### Automatic Configuration
-
-The CP communication overlap is automatically enabled when context parallelism is used (`context_parallel_size > 1`). No additional configuration is required as the overlap is built into the context parallelism implementation.
-
-## MoE Expert Parallel Communication Overlap
-
-For Mixture of Experts (MoE) models, Megatron Bridge supports overlapping expert parallel all-to-all communications with computation.
-
-### Configuration
-
-```python
-comm_overlap_config = CommOverlapConfig(
-    tp_comm_overlap=False,
-    overlap_moe_expert_parallel_comm=True,  # Enable MoE EP overlap
-    delay_wgrad_compute=True,  # Advanced MoE optimization
-)
-```
-
-Requirements for MoE expert parallel overlap:
-- `expert_model_parallel_size > 1`
-- `num_moe_experts > 1`
-- `moe_token_dispatcher_type` in ["alltoall", "flex"]
-- BF16 or FP16 precision
-- PyTorch >= 2.6.0
-- Specific recomputation settings
-
-## Complete Configuration Example
-
-Here's a comprehensive example combining multiple communication overlap strategies:
-
-```python
-from megatron.bridge.training.config import ConfigContainer, OptimizerConfig
-from megatron.bridge.training.comm_overlap import (
-    CommOverlapConfig,
-    userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
-)
-from megatron.bridge.models import GPTModelProvider
-
-# Model configuration with parallelism
-model_config = GPTModelProvider(
-    # Parallelism settings
-    tensor_model_parallel_size=4,
-    pipeline_model_parallel_size=2,
-    virtual_pipeline_model_parallel_size=2,
-    context_parallel_size=2,
-    sequence_parallel=True,
-    
-    # Model parameters
-    hidden_size=8192,
-    num_layers=32,
-    # ... other model parameters
-)
-
-# Communication overlap configuration
-comm_overlap_config = CommOverlapConfig(
-    # Tensor parallel overlap
-    tp_comm_overlap=True,
-    tp_comm_overlap_cfg=userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
-    
-    # Pipeline parallel overlap
-    overlap_p2p_comm=True,
-    batch_p2p_comm=False,
-    
-    # Data parallel overlap
-    overlap_grad_reduce=True,
-    overlap_param_gather=True,
-    bucket_size=128 * 1024 * 1024,
-)
-
-# Optimizer with distributed settings
-optimizer_config = OptimizerConfig(
-    optimizer="adam",
-    lr=3e-4,
-    use_distributed_optimizer=True,
-)
-
-# Complete configuration
-config = ConfigContainer(
-    model=model_config,
-    comm_overlap=comm_overlap_config,
-    optimizer=optimizer_config,
-)
-```
-
-
-## API Reference
-
-For detailed API documentation, see:
-- {py:class}`bridge.training.comm_overlap.CommOverlapConfig` - Main configuration class
-- {py:class}`bridge.training.comm_overlap.TransformerLayerTPOverlapCfg` - Tensor parallel overlap configuration
-- {py:class}`bridge.training.comm_overlap.BulkOverlapCfg` - Bulk overlap configuration
-- {py:class}`bridge.training.comm_overlap.PipelineOverlapCfg` - Pipeline overlap configuration
-- {py:class}`bridge.training.comm_overlap.RingExchangeOverlapCfg` - Ring exchange overlap configuration
-megatron-core/developer-guide/latest/api-guide/tensor_parallel.html) - Underlying implementation details
+- [docs/performance-guide.md](../performance-guide.md)
+- [docs/training/cuda-graphs.md](cuda-graphs.md)
+- [docs/training/hybrid-context-parallel.md](hybrid-context-parallel.md)
+- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
+- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
+- [skills/perf-techniques/moe-comm-overlap/SKILL.md](../skills/perf-techniques/moe-comm-overlap/SKILL.md)
+- [skills/perf-techniques/moe-comm-overlap/card.yaml](../skills/perf-techniques/moe-comm-overlap/card.yaml)

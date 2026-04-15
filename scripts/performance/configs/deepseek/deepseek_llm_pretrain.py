@@ -18,7 +18,12 @@ from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 from utils.utils import get_workload_base_config
 
-from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
+from megatron.bridge.recipes.deepseek.deepseek_v3 import (
+    deepseek_v3_pretrain_config as pretrain_config,
+)
+from megatron.bridge.recipes.deepseek.deepseek_v3 import (
+    set_deepseek_v3_pipeline_model_parallel_layout,
+)
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -54,28 +59,23 @@ def deepseek_v3_pretrain_config_gb300(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
-        layout=None,
-    )
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
-
-    # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
-    # we are debugging this and might change this in the future.
-    cfg.dataset.num_workers = 0
-    cfg.dataset.pin_memory = False
-
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
@@ -94,28 +94,58 @@ def deepseek_v3_pretrain_config_gb200(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
-        layout=None,
-    )
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
-    # we are debugging this and might change this in the future.
-    cfg.dataset.num_workers = 0
-    cfg.dataset.pin_memory = False
+    return cfg
 
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
+
+def deepseek_v3_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v2"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     return cfg
 
@@ -134,14 +164,16 @@ def deepseek_v3_pretrain_config_b300(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
-        layout=None,
-    )
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    # Recompute layout based on updated PP/VP sizes
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -164,14 +196,16 @@ def deepseek_v3_pretrain_config_b200(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
-        layout=None,
-    )
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    # Recompute layout based on updated PP/VP sizes
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -194,14 +228,19 @@ def deepseek_v3_pretrain_config_h100(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
-        layout="Et|(tt|)*30mL",
-    )
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 

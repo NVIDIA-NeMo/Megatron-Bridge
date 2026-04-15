@@ -2,12 +2,103 @@
 
 Megatron Bridge is Python-first: configure models, data, and training via typed Python APIs. All configuration lives in a structured `ConfigContainer` (see [Configuration overview](training/config-container-overview.md)). Any field can be overridden from the command line using Hydra/OmegaConf syntax in the example training scripts.
 
+## Automated config translation script
+
+`scripts/translate_mlm_to_bridge.py` translates bidirectionally between Megatron-LM `pretrain_gpt.py` CLI arguments and Megatron Bridge `run_recipe.py` Hydra overrides. It is useful for running loss-correlation experiments between the two frameworks and for migrating existing MLM configs.
+
+### MLM → Bridge (default direction)
+
+```bash
+# From a YAML config file (MODEL_ARGS section)
+python scripts/translate_mlm_to_bridge.py --yaml model_configs/DeepSeek-V3.yaml
+
+# From inline CLI args
+python scripts/translate_mlm_to_bridge.py \
+    --args "--num-layers 32 --hidden-size 4096 --num-attention-heads 32 --bf16 --swiglu"
+
+# Emit a standalone Bridge recipe Python file (output goes to stdout; use -o to write to a file)
+python scripts/translate_mlm_to_bridge.py \
+    --yaml DeepSeek-V3.yaml --emit recipe --recipe-name deepseek_v3
+
+# Write output to a file instead of stdout
+python scripts/translate_mlm_to_bridge.py \
+    --yaml DeepSeek-V3.yaml -o bridge_overrides.txt
+```
+
+### Bridge → MLM (reverse direction)
+
+```bash
+# From a Bridge recipe name (defaults exported as MLM args)
+python scripts/translate_mlm_to_bridge.py --reverse \
+    --recipe llama32_1b_pretrain_config
+
+# From a recipe plus inline overrides
+python scripts/translate_mlm_to_bridge.py --reverse \
+    --recipe llama32_1b_pretrain_config \
+    --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
+
+# From Bridge overrides only (no recipe)
+python scripts/translate_mlm_to_bridge.py --reverse \
+    --args "model.num_layers=32 model.activation_func=silu model.gated_linear_unit=true"
+
+# From a Bridge YAML/OmegaConf config file (e.g. exported ConfigContainer)
+python scripts/translate_mlm_to_bridge.py --reverse \
+    --yaml bridge_config.yaml
+```
+
+### Key mappings
+
+| MLM flag | Bridge override | Notes |
+|---|---|---|
+| `--num-layers N` | `model.num_layers=N` | |
+| `--hidden-size N` | `model.hidden_size=N` | |
+| `--ffn-hidden-size N` | `model.ffn_hidden_size=N` | |
+| `--num-attention-heads N` | `model.num_attention_heads=N` | |
+| `--num-query-groups N` | `model.num_query_groups=N` | |
+| `--seq-length N` | `model.seq_length=N dataset.sequence_length=N` | Dual mapping |
+| `--swiglu` | `model.gated_linear_unit=true model.activation_func=silu` | Expanded to two keys |
+| `--squared-relu` | `model.activation_func=squared_relu` | |
+| `--data-path PATH [W PATH...]` | `dataset.data_path=PATH` | Space-separated paths (and optional weights) |
+| `--bf16` | `mixed_precision=bf16_mixed` | |
+| `--fp16` | `mixed_precision=16-mixed` | |
+| `--disable-bias-linear` | `model.add_bias_linear=false` | Inverted flag |
+| `--untie-embeddings-and-output-weights` | `model.share_embeddings_and_output_weights=false` | Inverted flag |
+| `--sequence-parallel` | `model.sequence_parallel=true` | |
+| `--tensor-model-parallel-size N` | `model.tensor_model_parallel_size=N` | |
+| `--pipeline-model-parallel-size N` | `model.pipeline_model_parallel_size=N` | |
+| `--context-parallel-size N` | `model.context_parallel_size=N` | |
+| `--micro-batch-size N` | `train.micro_batch_size=N` | |
+| `--global-batch-size N` | `train.global_batch_size=N` | |
+| `--train-iters N` | `train.train_iters=N` | |
+| `--lr LR` | `optimizer.lr=LR` | |
+| `--min-lr LR` | `optimizer.min_lr=LR` | |
+| `--weight-decay WD` | `optimizer.weight_decay=WD` | |
+| `--clip-grad CG` | `optimizer.clip_grad=CG` | |
+| `--lr-decay-style S` | `scheduler.lr_decay_style=S` | |
+| `--lr-warmup-iters N` | `scheduler.lr_warmup_iters=N` | |
+| `--seed S` | `rng.seed=S` | |
+| `--save PATH` | `checkpoint.save=PATH` | |
+| `--load PATH` | `checkpoint.load=PATH` | |
+| `--save-interval N` | `checkpoint.save_interval=N` | |
+| `--tokenizer-type T` | `tokenizer.tokenizer_type=T` | |
+| `--tokenizer-model M` | `tokenizer.tokenizer_model=M` | |
+| `--normalization N` | `model.normalization=N` | |
+| `--position-embedding-type T` | `model.position_embedding_type=T` | |
+| `--rotary-base N` | `model.rotary_base=N` | |
+| `--num-experts N` | `model.num_moe_experts=N` | |
+| `--moe-router-topk K` | `model.moe_router_topk=K` | |
+| `--mock-data` | `dataset.mock=true` | Use synthetic data (no files needed) |
+
+Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`) are silently skipped with a comment. `--mock-data` translates to `dataset.mock=true`. Unknown flags are listed in a separate section so you can handle them manually.
+
+> **Activation function CLI overrides**: `model.activation_func` can now be set via Hydra CLI string override (e.g. `model.activation_func=silu`, `model.activation_func=gelu`). The string is resolved to the callable in `TransformerConfig.finalize()`. This makes `--swiglu` → `model.gated_linear_unit=true model.activation_func=silu` round-trippable from the CLI.
+
 ## Quick start
 
 Run your example training entrypoint and override config keys directly:
 
 ```bash
-python examples/recipes/llama/pretrain_llama3_8b.py \
+python examples/models/llama/pretrain_llama3_8b.py \
   train.micro_batch_size=2 \
   train.global_batch_size=128 \
   model.num_layers=32 model.hidden_size=4096 model.num_attention_heads=32 \
@@ -281,7 +372,7 @@ Additional distributed/optimizer overlap settings:
 | --- | --- | --- |
 | `--error-injection-rate` | `rerun_state_machine.error_injection_rate` | Frequency of injected validation perturbations. |
 | `--error-injection-type` | `rerun_state_machine.error_injection_type` | Kind of injection (correct/transient/persistent). |
-| `--rerun-mode` | `rerun_state_machine.rerun_mode` | Disabled/validate_results/report_stats. |
+| `--rerun-mode` | `rerun_state_machine.rerun_mode` | Disabled/validate_results/report_determinism_stats. |
 
 ### Data / Tokenizer args
 

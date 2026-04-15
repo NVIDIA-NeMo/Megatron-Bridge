@@ -543,13 +543,19 @@ class TestDoRAMegatronIntegration:
             )
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
         from megatron.bridge.training.initialize import _set_random_seed
+
+        # Create pg_collection from initialized mpu
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         _set_random_seed(
             seed_=1234,
             data_parallel_random_init=False,
             te_rng_tracker=True,
             inference_rng_tracker=False,
+            pg_collection=pg_collection,
         )
 
         yield

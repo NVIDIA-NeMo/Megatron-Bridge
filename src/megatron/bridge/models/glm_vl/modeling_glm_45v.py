@@ -23,7 +23,7 @@ Reference: https://huggingface.co/zai-org/GLM-4.5V
 """
 
 import types
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import transformers
@@ -35,6 +35,10 @@ from transformers.models.glm4v.modeling_glm4v import Glm4vModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+
+
+if TYPE_CHECKING:
+    from megatron.core.packed_seq_params import PackedSeqParams
 
 
 def is_transformers_min_version(version):
@@ -137,6 +141,7 @@ class GLM45VModel(MegatronModule):
         self.get_image_features = types.MethodType(Glm4vModel.get_image_features, self)
         self.get_video_features = types.MethodType(Glm4vModel.get_video_features, self)
         self.get_rope_index = types.MethodType(Glm4vModel.get_rope_index, self)
+        self.get_vision_position_ids = types.MethodType(Glm4vModel.get_vision_position_ids, self)
         self.get_placeholder_mask = types.MethodType(Glm4vModel.get_placeholder_mask, self)
 
         # Some config requires from HF vision tower
@@ -156,8 +161,10 @@ class GLM45VModel(MegatronModule):
         pixel_values_videos: Optional[torch.FloatTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
+        mm_token_type_ids: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
+        packed_seq_params: Optional["PackedSeqParams"] = None,
         *,
         loss_mask: Optional[Tensor] = None,
     ) -> Tensor:
@@ -192,7 +199,7 @@ class GLM45VModel(MegatronModule):
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
             if pixel_values is not None:
-                image_embeds = self.get_image_features(pixel_values, image_grid_thw)
+                image_embeds = self.get_image_features(pixel_values, image_grid_thw).pooler_output
                 image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
                 image_mask, _ = self.get_placeholder_mask(
                     input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
@@ -200,7 +207,7 @@ class GLM45VModel(MegatronModule):
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
             if pixel_values_videos is not None:
-                video_embeds = self.get_video_features(pixel_values_videos, video_grid_thw)
+                video_embeds = self.get_video_features(pixel_values_videos, video_grid_thw).pooler_output
                 video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
                 _, video_mask = self.get_placeholder_mask(
                     input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
@@ -216,11 +223,21 @@ class GLM45VModel(MegatronModule):
         # Compute MRoPE position_ids on ALL pipeline stages
         # Each stage has input_ids and visual grid info from the data iterator
         # This avoids any broadcasting overhead
-        hf_attention_mask = None
+        #
+        # vlm_step.get_batch pads input_ids to multiples of 128 but mm_token_type_ids
+        # (from visual_inputs) is not padded.  Align them and build an attention mask
+        # so get_rope_index fills only real-token positions.
+        seq_len = input_ids.shape[1]
+        if mm_token_type_ids is not None and mm_token_type_ids.shape[1] < seq_len:
+            pad_len = seq_len - mm_token_type_ids.shape[1]
+            mm_token_type_ids = torch.nn.functional.pad(mm_token_type_ids, (0, pad_len), value=0)
+        # Build attention mask: 1 for real tokens, 0 for padding inserted by vlm_step
+        hf_attention_mask = (input_ids != 0).long()
         position_ids, rope_deltas = self.get_rope_index(
             input_ids,
-            image_grid_thw,
-            video_grid_thw,
+            mm_token_type_ids=mm_token_type_ids,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
             attention_mask=hf_attention_mask,
         )
 
@@ -233,6 +250,7 @@ class GLM45VModel(MegatronModule):
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
         return outputs
 

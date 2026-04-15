@@ -67,27 +67,65 @@ class MockVLMConversationProvider(DatasetProvider):
     # HF AutoProcessor instance will be set during build
     _processor: Optional[Any] = None
 
-    def _make_base_examples(self) -> List[Dict[str, Any]]:
-        # Single minimal conversation example; dataset will repeat to target length
+    # Enable batch-level online sequence packing
+    pack_sequences_in_batch: bool = False
+
+    def _make_single_example(
+        self, rng: numpy.random.Generator, prompt_text: str, response_text: str
+    ) -> Dict[str, Any]:
+        """Create a single mock conversation example with the given prompt and response text."""
         num_images = max(0, int(getattr(self, "num_images", 1)))
         w, h = self.image_size
-        rng = numpy.random.default_rng(seed=self.random_seed)
         images = None
         if num_images > 0:
-            # Embed in-memory PIL images directly in the conversation so that
-            # qwen_vl_utils.process_vision_info can discover them.
             images = [
                 Image.fromarray(rng.integers(low=0, high=256, size=(h, w, 3), dtype=numpy.uint8), mode="RGB")
                 for _ in range(num_images)
             ]
 
         content = [{"type": "image", "image": img} for img in images] if images is not None else []
-        content.append({"type": "text", "text": self.prompt})
+        content.append({"type": "text", "text": prompt_text})
         messages = [
             {"role": "user", "content": content},
-            {"role": "assistant", "content": [{"type": "text", "text": "dummy assistant response"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": response_text}]},
         ]
-        return [{"conversation": messages}]
+        return {"conversation": messages}
+
+    def _make_base_examples(self) -> List[Dict[str, Any]]:
+        rng = numpy.random.default_rng(seed=self.random_seed)
+
+        # Generate many diverse examples with random responses so the model
+        # cannot memorize the data in a few iterations (keeps grad_norm non-zero).
+        _VOCAB = (
+            "the a is was are were have has had do does did will would could should "
+            "may might can need to of in for on with at by from image shows depicts "
+            "contains features displays large small red blue green bright dark light "
+            "object scene background foreground color shape person animal building "
+            "tree sky water ground left right top bottom center middle edge beautiful "
+            "complex simple detailed abstract natural moving standing sitting running "
+            "walking flying and or but so yet nor not very this that these those here "
+            "there where when how what which who whom whose each every all both few "
+            "many much some any no other another such"
+        ).split()
+
+        num_examples = 1000
+
+        if self.pack_sequences_in_batch:
+            # When packing is enabled, produce examples with varied response lengths
+            # so that the packing logic concatenates sequences of different sizes.
+            resp_len_range = (10, 100)
+        else:
+            # Without packing, keep responses short (10-30 words) to maintain similar
+            # sequence lengths, since the collate pads to batch-max.
+            resp_len_range = (10, 30)
+
+        examples = []
+        for _ in range(num_examples):
+            resp_len = int(rng.integers(*resp_len_range))
+            response = " ".join(rng.choice(_VOCAB, size=resp_len))
+            examples.append(self._make_single_example(rng, self.prompt, response))
+
+        return examples
 
     def build_datasets(self, context: DatasetBuildContext):
         from transformers import AutoProcessor

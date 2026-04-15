@@ -12,28 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import math
 from typing import Dict, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import GenerationConfig, GptOssConfig, GptOssForCausalLM
+from transformers import GptOssForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
+    _align_expert_weight_to_shape,
 )
-from megatron.bridge.models.gpt_oss.gpt_oss_provider import GPTOSSProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
+from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
-@MegatronModelBridge.register_bridge(source=GptOssForCausalLM, target=GPTModel)
+try:
+    from megatron.core.fusions.fused_bias_geglu import quick_gelu
+except ImportError:
+    # Fallback if fused_bias_geglu is not available
+    quick_gelu = torch.nn.functional.gelu
+
+
+@MegatronModelBridge.register_bridge(source=GptOssForCausalLM, target=GPTModel, model_type="gpt_oss")
 class GPTOSSBridge(MegatronModelBridge):
     """
     Megatron Hub Bridge for GPT-OSS models.
@@ -46,112 +53,80 @@ class GPTOSSBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def __init__(self):
-        super().__init__()
-        # gpt-oss HF weights has one weight for all the experts, but megatron has one for each expert
-        # We need to cache the weights during import to load and dequantize the expert weights only once.
-        # and we need to merge the weights of multiple experts during export.
-        self.hf_weights_cache = {}
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
+        """Convert HuggingFace config to GPTModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
 
-    def provider_bridge(
-        self, hf_pretrained: PreTrainedCausalLM | GptOssConfig | _ConfigOnlyPretrainedShim
-    ) -> GPTOSSProvider:
-        if isinstance(hf_pretrained, (PreTrainedCausalLM, _ConfigOnlyPretrainedShim)):
-            hf_config = hf_pretrained.config
-        else:
-            hf_config = hf_pretrained
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_bias_linear = True
+        provider.add_qkv_bias = False
+        provider.share_embeddings_and_output_weights = False
+        provider.position_embedding_type = "yarn"
 
-        # Extract generation config
-        generation_config = getattr(hf_pretrained, "generation_config", None)
-        if generation_config is None:
-            try:
-                generation_config = GenerationConfig.from_pretrained(str(hf_pretrained.name_or_path))
-            except Exception:
-                generation_config = None
+        provider.moe_router_pre_softmax = False
+        provider.moe_grouped_gemm = True
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_permute_fusion = True
+        provider.moe_router_load_balancing_type = "none"
 
-        provider = GPTOSSProvider(
-            num_layers=hf_config.num_hidden_layers,
-            num_moe_experts=hf_config.num_local_experts,
-            # for unit tests only:
-            hidden_size=hf_config.hidden_size,
-            moe_ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            vocab_size=hf_config.vocab_size,
-        )
+        provider.bias_activation_fusion = True
+        provider.bias_dropout_fusion = False
+
+        provider.hidden_dropout = 0.0
+        provider.fp16 = False
+        provider.bf16 = True
+        provider.params_dtype = torch.bfloat16
+
+        # GPT-OSS specific activation
+        provider.activation_func = quick_gelu
+        provider.activation_func_clamp_value = 7.0
+        provider.glu_linear_offset = 1.0
+
+        provider.softmax_type = "learnable"
+        provider.window_size = (hf_pretrained.config.sliding_window - 1, 0)
+        provider.window_attn_skip_freq = 2
+
+        # GPT-OSS uses intermediate_size for MoE FFN hidden size
+        provider.moe_ffn_hidden_size = hf_pretrained.config.intermediate_size
+
+        # YARN position embedding settings (now dataclass fields on GPTModelProvider)
+        provider.yarn_rotary_scaling_factor = 32.0
+        provider.yarn_original_max_position_embeddings = 4096
+        provider.yarn_beta_fast = 32.0
+        provider.yarn_beta_slow = 1.0
+        provider.yarn_correction_range_round_to_int = False
+        provider.yarn_mscale = None
+        provider.yarn_mscale_all_dim = None
+
         return provider
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Load weights from HuggingFace state dict and dequantize if necessary."""
+        """Load weights from HuggingFace state dict with MXFP4 dequantization support.
+
+        down_proj is handled in GPTOSSMLPDownProjMapping.
+
+        gate_up_proj is handled directly in GPTOSSMLPGateUpProjMapping.hf_to_megatron via
+        _align_expert_weight_to_shape, which auto-detects the orientation difference between
+        BF16 checkpoints ([num_experts, hidden, 2*intermediate]) and MXFP4-dequantized checkpoints
+        ([num_experts, 2*intermediate, hidden]).
+        """
         if isinstance(hf_param, str):
-            if hf_param in self.hf_weights_cache:
-                return self.hf_weights_cache[hf_param]
             if hf_param in hf_state_dict:
                 hf_weights = hf_state_dict[hf_param]
-                if ".mlp.experts." in hf_param and len(hf_weights.shape) == 3:
-                    hf_weights = hf_weights.transpose(-1, -2)
-                self.hf_weights_cache[hf_param] = hf_weights
-            else:
-                blocks_key = hf_param + "_blocks"
-                scales_key = hf_param + "_scales"
-                if blocks_key in hf_state_dict and scales_key in hf_state_dict:
-                    hf_weights = _dequantize_mxfp4(hf_state_dict[blocks_key], hf_state_dict[scales_key])
-                    self.hf_weights_cache[hf_param] = hf_weights
-                else:
-                    raise KeyError(
-                        f"Cannot locate weights for '{hf_param}'. Missing both de-quantized tensor and "
-                        f"quantized representation (blocks='{blocks_key}', scales='{scales_key}')."
-                    )
-        else:
-            hf_weights = {k: hf_state_dict[v] for k, v in hf_param.items()}
-        return hf_weights
-
-    def maybe_modify_converted_hf_weight(
-        self,
-        task: WeightConversionTask,
-        converted_weights_dict: Dict[str, torch.Tensor],
-        hf_state_dict: Mapping[str, torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
-        num_experts = self.hf_config.num_local_experts
-        ep_size = parallel_state.get_expert_model_parallel_world_size()
-        experts_per_rank = num_experts // ep_size
-
-        try:
-            local_expert_number = extract_expert_number_from_param(task.param_name) % experts_per_rank
-        except ValueError:
-            # not an expert weight
-            return converted_weights_dict
-
-        assert len(converted_weights_dict) == 1, (
-            f"There should be only one key in the converted_weights_dict, got keys: {converted_weights_dict.keys()}"
-        )
-        for key, value in converted_weights_dict.items():
-            if key not in self.hf_weights_cache:
-                self.hf_weights_cache[key] = {}
-
-            # we end up with ep_size many weights to add to the cache
-            # unpack the weights and re-index
-            if ep_size == 1:
-                self.hf_weights_cache[key][local_expert_number] = value
-            else:
-                assert value.shape[0] == ep_size
-                for i, exp_val in enumerate(value):
-                    global_expert_number = local_expert_number + (i * experts_per_rank)
-                    self.hf_weights_cache[key][global_expert_number] = exp_val
-            if len(self.hf_weights_cache[key]) == num_experts:
-                logging.debug(f"All experts are loaded for {key}")
-                # all experts are loaded
-                merged_hf_weights = torch.cat(
-                    [self.hf_weights_cache[key][i].unsqueeze(0) for i in range(num_experts)], dim=0
-                )
-                del self.hf_weights_cache[key]
-                return {key: merged_hf_weights}
-            else:
-                # not all experts are loaded yet, return empty dict
-                logging.debug(f"{len(self.hf_weights_cache[key])}/{num_experts} experts are loaded for {key}")
-                return {}
+                return hf_weights
+            blocks_key = hf_param + "_blocks"
+            scales_key = hf_param + "_scales"
+            if blocks_key in hf_state_dict and scales_key in hf_state_dict:
+                hf_weights = _dequantize_mxfp4(hf_state_dict[blocks_key], hf_state_dict[scales_key])
+                return hf_weights
+            raise KeyError(
+                f"Cannot locate weights for '{hf_param}'. Missing both de-quantized tensor and "
+                f"quantized representation (blocks='{blocks_key}', scales='{scales_key}')."
+            )
+        return {k: hf_state_dict[v] for k, v in hf_param.items()}
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -211,6 +186,23 @@ class GPTOSSBridge(MegatronModelBridge):
                     hf_param="model.layers.*.mlp.experts.gate_up_proj_bias",
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc1.bias*",
                 ),
+                # SequentialMLP (moe_grouped_gemm=False): expert weights stored per local_expert
+                GPTOSSMLPDownProjMapping(
+                    hf_param="model.layers.*.mlp.experts.down_proj",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
+                ),
+                GPTOSSMLPDownProjMapping(
+                    hf_param="model.layers.*.mlp.experts.down_proj_bias",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.bias",
+                ),
+                GPTOSSMLPGateUpProjMapping(
+                    hf_param="model.layers.*.mlp.experts.gate_up_proj",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                ),
+                GPTOSSMLPGateUpProjMapping(
+                    hf_param="model.layers.*.mlp.experts.gate_up_proj_bias",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.bias",
+                ),
             ]
         )
 
@@ -218,41 +210,43 @@ class GPTOSSBridge(MegatronModelBridge):
 
 
 class GPTOSSMLPDownProjMapping(AutoMapping):
-    """
-    MLPDownProj for expert weights GPT-OSS models.
-    """
+    """MLPDownProj for expert weights in GPT-OSS models."""
+
+    is_grouped_export = True
 
     def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
         super().__init__(megatron_param, hf_param, permute_dims)
         self.allow_hf_name_mismatch = True
+
+    @property
+    def group_key(self) -> str:
+        return self.hf_param
 
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         return super().hf_to_megatron(hf_weights[global_expert_number], megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        # only bf16 export is supported currently
         if megatron_weights is None:
             return super().megatron_to_hf(megatron_weights, megatron_module)
-
-        # GPT-OSS stores fc2 weight transposed vs Megatron when using BF16.
-        if len(megatron_weights.shape) == 2:
-            megatron_weights = megatron_weights.transpose(0, 1)
         return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
-
-    def _validate_patterns(self, *args, **kwargs):
-        # allow number of wildcards to mismatch in this mapping
-        pass
 
 
 class GPTOSSMLPGateUpProjMapping(AutoMapping):
+    """MLPGateUpProj for expert weights in GPT-OSS models.
+
+    GPT-OSS uses alternating row interleaving for gate/up projections.
     """
-    MLPGateUpProj for expert weights GPT-OSS models.
-    """
+
+    is_grouped_export = True
 
     def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
         super().__init__(megatron_param, hf_param, permute_dims)
         self.allow_hf_name_mismatch = True
+
+    @property
+    def group_key(self) -> str:
+        return self.hf_param
 
     @staticmethod
     def _interleave(gate_up_proj):
@@ -267,21 +261,19 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
 
     def hf_to_megatron(self, hf_weights: Union[torch.Tensor, Dict], megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
-        return super().hf_to_megatron(self._interleave(hf_weights[global_expert_number]), megatron_module)
+        expert_weight = hf_weights[global_expert_number] if hf_weights.ndim >= 2 else hf_weights
+        normalized_param = self._normalize_expert_param_name(self.megatron_param)
+        _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
+        expert_weight = _align_expert_weight_to_shape(expert_weight, target_param.shape, "gate_up_proj")
+        return super().hf_to_megatron(self._interleave(expert_weight), megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        # only bf16 export is supported currently
         if megatron_weights is None:
             return super().megatron_to_hf(megatron_weights, megatron_module)
-
         megatron_weights = self._uninterleave(megatron_weights)
         if len(megatron_weights.shape) == 2:
             megatron_weights = megatron_weights.transpose(0, 1)
         return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
-
-    def _validate_patterns(self, *args, **kwargs):
-        # allow number of wildcards to mismatch in this mapping
-        pass
 
 
 def _dequantize_mxfp4(
