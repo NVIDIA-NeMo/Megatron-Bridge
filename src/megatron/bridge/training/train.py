@@ -48,9 +48,17 @@ from megatron.core.pipeline_parallel.utils import (
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
+from megatron.core.transformer.cuda_graphs import (
+    TECudaGraphHelper,
+    VisionTECudaGraphHelper,
+    get_vision_cuda_graph_seq_length,
+)
 from megatron.core.transformer.enums import CudaGraphScope
-from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
+from megatron.core.utils import (
+    check_param_hashes_across_dp_replicas,
+    get_attr_wrapped_model,
+    get_model_config,
+)
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
@@ -244,7 +252,27 @@ def train(
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
         )
-
+    # Capture Vision Encoder CUDA Graphs (separate from language model).
+    # Check if vision encoder has CUDA graph enabled
+    vision_cuda_graph_helper = None
+    vision_config = getattr(config.model, "vision_cuda_graph_impl", None)
+    if vision_config == "transformer_engine":
+        # Try to get vision config from the model
+        for model_chunk in model:
+            unwrapped = get_attr_wrapped_model(model_chunk, "vision_model", allow_none=True, return_model_obj=True)
+            if unwrapped is not None and hasattr(unwrapped, "vision_model") and unwrapped.vision_model is not None:
+                vision_model_config = unwrapped.vision_model.config
+                if vision_model_config.cuda_graph_impl == "transformer_engine":
+                    vision_seq_length = get_vision_cuda_graph_seq_length(vision_model_config)
+                    vision_cuda_graph_helper = VisionTECudaGraphHelper(
+                        model=model,
+                        vision_config=vision_model_config,
+                        vision_seq_length=vision_seq_length,
+                        micro_batch_size=config.train.micro_batch_size,
+                        num_microbatches=get_num_microbatches(),  # pg_collection=pg_collection,
+                    )
+                    print_rank_0(f"Vision encoder CUDA graph enabled with seq_length={vision_seq_length}")
+                break
     # Track train step elapsed time for throughput logging
     history_wct = None
     if config.logger.log_throughput_to_tensorboard:
@@ -358,6 +386,14 @@ def train(
             if model_config.cuda_graph_warmup_steps > 0 and should_toggle_forward_pre_hook:
                 enable_forward_pre_hook(model)
                 cuda_graph_helper.cuda_graph_set_manual_hooks()
+        # Capture Vision Encoder CUDA Graphs after warmup (separate from language model).
+        if (
+            vision_cuda_graph_helper is not None
+            and not vision_cuda_graph_helper.graphs_created()
+            and global_state.train_state.step - start_iteration == model_config.cuda_graph_warmup_steps
+        ):
+            vision_cuda_graph_helper.create_cudagraphs()
+            vision_cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
@@ -457,7 +493,13 @@ def train(
                     ):
                         assert cuda_graph_helper.graphs_created(), "CUDA Graphs should have been created."
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
-
+                    # Also set manual hooks for vision encoder CUDA graphs if enabled
+                    if (
+                        vision_cuda_graph_helper is not None
+                        and model_config.cuda_graph_warmup_steps == 0
+                        and vision_cuda_graph_helper.graphs_created()
+                    ):
+                        vision_cuda_graph_helper.cuda_graph_set_manual_hooks()
         global_state.train_state.step += 1
 
         # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
