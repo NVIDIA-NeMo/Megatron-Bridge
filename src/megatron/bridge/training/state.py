@@ -405,13 +405,22 @@ class GlobalState:
             and self.cfg.checkpoint.save is not None
             and self.cfg.checkpoint.async_save
         ):
-            if get_async_strategy is None:
-                raise RuntimeError(
-                    "get_async_strategy is required for async checkpointing but is not available "
-                    "in the current mcore version. Please use mcore main or a newer mcore dev branch."
+            if get_async_strategy is not None:
+                # mcore main path: get_async_strategy selects nvrx vs mcore backend
+                async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
+                async_calls_queue_cls = async_modules["AsyncCallsQueue"]
+                get_write_results_queue_fn = async_modules["get_write_results_queue"]
+            else:
+                # mcore dev path: nvrx modules merged into core, no strategy selector
+                from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
+                from megatron.core.dist_checkpointing.strategies.filesystem_async import (
+                    get_write_results_queue,
                 )
-            async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
-            async_calls_queue_cls = async_modules["AsyncCallsQueue"]
+
+                async_strategy = None
+                async_calls_queue_cls = AsyncCallsQueue
+                get_write_results_queue_fn = get_write_results_queue
+
             self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
 
             if self.cfg.checkpoint.use_persistent_ckpt_worker:
@@ -422,7 +431,7 @@ class GlobalState:
                 if async_strategy == "mcore":
                     warmup_kwargs["mp_mode"] = "spawn"
                 self._async_calls_queue.warmup_persistent_caller(get_rank_safe(), **warmup_kwargs)
-                async_modules["get_write_results_queue"](self.cfg.checkpoint.async_write_results_mp_mode)
+                get_write_results_queue_fn(self.cfg.checkpoint.async_write_results_mp_mode)
 
     @property
     def async_calls_queue(self) -> Optional[Any]:
