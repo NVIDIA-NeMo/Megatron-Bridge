@@ -961,11 +961,12 @@ def save_checkpoint(
                     enable_cache=ckpt_cfg.ckpt_assume_constant_structure,
                 )
                 async_save_request = get_save_and_finalize_callbacks(fs_storage_writer, save_state_dict_ret)
-            fs_storage_writer = torch.distributed.checkpoint.FileSystemWriter(checkpoint_name)
-            torch.distributed.checkpoint.save(
-                state_dict=state_dict,
-                storage_writer=fs_storage_writer,
-            )
+            else:
+                fs_storage_writer = torch.distributed.checkpoint.FileSystemWriter(checkpoint_name)
+                torch.distributed.checkpoint.save(
+                    state_dict=state_dict,
+                    storage_writer=fs_storage_writer,
+                )
         else:
             # torch_dist and other formats using MCore distributed checkpointing
             if checkpointing_context is not None and "save_strategy" in checkpointing_context:
