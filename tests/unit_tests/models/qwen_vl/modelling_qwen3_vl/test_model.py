@@ -21,6 +21,7 @@ Or for single GPU: uv run pytest tests/unit_tests/models/qwen_vl/modelling_qwen3
 
 import datetime
 import os
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -566,3 +567,63 @@ class TestQwen3VLModel:
 
         assert isinstance(out, torch.Tensor)
         assert out.dim() >= 2
+
+    @pytest.mark.timeout(50)
+    def test_cuda_graph_helper_not_exposed_when_llm_cuda_graph_disabled(self, hf_config):
+        """CUDA graph helper fields stay on language_model when cuda_graph_impl is none."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        language_transformer_config = replace(
+            self.get_language_transformer_config(hf_config),
+            cuda_graph_impl="none",
+        )
+        assert getattr(language_transformer_config, "cuda_graph_impl", None) == "none"
+
+        model = Qwen3VLModel(
+            vision_transformer_config=self.get_vision_transformer_config(hf_config),
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=self.get_language_model_layer_spec(),
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+
+        assert "decoder" not in model.__dict__
+        assert not hasattr(model, "rotary_pos_emb")
+        assert getattr(model.language_model.config, "cuda_graph_impl", None) == "none"
+
+    @pytest.mark.timeout(50)
+    def test_cuda_graph_helper_exposed_when_llm_cuda_graph_enabled(self, hf_config):
+        """Root VLM mirrors LM decoder / RoPE for CUDA graph helper when cuda_graph_impl is enabled."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        language_transformer_config = replace(
+            self.get_language_transformer_config(hf_config),
+            cuda_graph_impl="transformer_engine",
+            variable_seq_lengths=False,
+            use_te_rng_tracker=True,
+        )
+
+        model = Qwen3VLModel(
+            vision_transformer_config=self.get_vision_transformer_config(hf_config),
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=self.get_language_model_layer_spec(),
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+
+        assert getattr(language_transformer_config, "cuda_graph_impl", None) == "transformer_engine"
+        assert model.language_model.config.variable_seq_lengths is False
+        assert hasattr(model, "decoder")
+        assert model.decoder is model.language_model.decoder
+        assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
+        assert model.position_embedding_type == model.language_model.position_embedding_type
