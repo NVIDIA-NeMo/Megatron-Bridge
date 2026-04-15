@@ -13,21 +13,45 @@ from __future__ import annotations
 
 import logging
 from functools import partial
-from typing import TYPE_CHECKING, Dict, Iterable, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 import torch
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
+from megatron.bridge.data.mimo.dp_utils import slice_batch_for_mimo
 from megatron.bridge.training.mimo_parallel_utils import unwrap_mimo_model
 from megatron.bridge.training.state import GlobalState
 
 
-if TYPE_CHECKING:
-    pass
-
-
 logger = logging.getLogger(__name__)
+
+
+def _get_module_dp_info(
+    mimo_model: MimoModel,
+) -> Tuple[int, int]:
+    """Get module-local DP rank and size for the current rank.
+
+    Used to slice the global micro-batch via :func:`slice_batch_for_mimo`.
+    Returns (0, 1) when grids are not configured (colocated mode).
+    """
+    grids = getattr(mimo_model.mimo_config, "module_to_grid_map", None)
+    if not grids:
+        return 0, 1
+
+    import torch.distributed as _dist
+
+    if not _dist.is_initialized():
+        return 0, 1
+
+    current_rank = _dist.get_rank()
+    for _name, grid in grids.items():
+        if grid.rank_offset <= current_rank < (grid.rank_offset + grid.size):
+            dp_rank = grid.get_pg(["dp"]).rank()
+            dp_size = grid.get_pg(["dp"]).size()
+            return dp_rank, dp_size
+
+    return 0, 1
 
 
 def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor) -> Tuple:
@@ -136,9 +160,8 @@ def forward_step(
     needs_data = True
     if mimo_model.role is not None:
         if mimo_model.role.has_language_module:
-            module_name = MIMO_LANGUAGE_MODULE_KEY
-            is_first_stage = mimo_model.role.is_first_stage(module_name)
-            is_last_stage = mimo_model.role.is_last_stage(module_name)
+            is_first_stage = mimo_model.role.is_first_stage(MIMO_LANGUAGE_MODULE_KEY)
+            is_last_stage = mimo_model.role.is_last_stage(MIMO_LANGUAGE_MODULE_KEY)
             needs_data = is_first_stage or is_last_stage
         elif mimo_model.role.has_modality_modules:
             modality_modules = mimo_model.role.modality_module_names
@@ -151,6 +174,12 @@ def forward_step(
                 "get_batch returned None at a stage that requires data. "
                 "This indicates a data-loading or parallelism misconfiguration."
             )
+        # Slice the global micro-batch for this module's DP shard.
+        # All data-loading ranks receive identical batches (sampler dp_size=1).
+        # slice_batch_for_mimo contiguously sub-shards to match the
+        # BridgeCommunicator's fan-in/fan-out batch-dimension routing.
+        dp_rank, dp_size = _get_module_dp_info(mimo_model)
+        data_batch = slice_batch_for_mimo(data_batch, dp_rank, dp_size)
     else:
         # Non-data stages consume hidden states from pipeline input tensors.
         data_batch = {
