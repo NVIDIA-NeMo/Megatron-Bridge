@@ -98,6 +98,9 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     """
     Megatron Bridge for MiniMax-M2 MoE Causal LM.
 
+    Also supports MiniMax-M2.5 and MiniMax-M2.7, which share the same
+    ``model_type`` (``minimax_m2``) and ``MiniMaxM2ForCausalLM`` architecture.
+
     MiniMax-M2 is a sparse MoE model (256 experts, top-8 routing with sigmoid
     scoring and expert bias correction). Use the native transformers >= 5.0
     implementation (no ``trust_remote_code`` required).

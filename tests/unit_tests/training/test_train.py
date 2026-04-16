@@ -602,6 +602,7 @@ class TestCheckpointAndDecideExit:
             "num_floating_point_operations_so_far": 1000.0,
             "checkpoint_manager": Mock(),
             "train_data_iterator": None,
+            "callback_manager": None,
         }
 
     @patch("megatron.bridge.training.train.save_checkpoint_and_time")
@@ -1172,9 +1173,9 @@ class TestIterationSkipping:
     @patch("megatron.bridge.training.train._dummy_train_step")
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=4)
     def test_should_skip_iteration_when_step_in_skip_list(self, mock_get_microbatches, mock_dummy_step):
-        """Test that iteration is skipped when step is in iterations_to_skip list."""
-        # Setup
-        global_state = self._create_mock_global_state(step=5, iterations_to_skip=[3, 5, 10])
+        """Test that iteration is skipped when step+1 matches iterations_to_skip (1-based)."""
+        # step=4 → iteration 5 (1-based), skip list contains 5
+        global_state = self._create_mock_global_state(step=4, iterations_to_skip=[3, 5, 10])
         train_data_iterator = Mock()
 
         # Call function
@@ -1186,15 +1187,15 @@ class TestIterationSkipping:
         mock_dummy_step.assert_called_once_with(global_state, train_data_iterator, fake_pg)
 
         # Verify state updates
-        assert global_state.train_state.step == 6  # incremented
+        assert global_state.train_state.step == 5  # incremented
         expected_batch_size = 2 * 4 * 4  # dp_world_size * micro_batch_size * num_microbatches
         assert global_state.train_state.consumed_train_samples == expected_batch_size
         assert global_state.train_state.skipped_train_samples == expected_batch_size
 
     @patch("megatron.bridge.training.train._dummy_train_step")
     def test_should_not_skip_iteration_when_step_not_in_skip_list(self, mock_dummy_step):
-        """Test that iteration is not skipped when step is not in iterations_to_skip list."""
-        # Setup
+        """Test that iteration is not skipped when step+1 is not in iterations_to_skip."""
+        # step=7 → iteration 8, not in [3, 5, 10]
         global_state = self._create_mock_global_state(step=7, iterations_to_skip=[3, 5, 10])
         train_data_iterator = Mock()
 
@@ -1230,8 +1231,8 @@ class TestIterationSkipping:
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=2)
     def test_batch_size_calculation_with_different_parallelism(self, mock_get_microbatches, mock_dummy_step):
         """Test batch size calculation with different parallelism settings."""
-        # Setup
-        global_state = self._create_mock_global_state(step=10, iterations_to_skip=[10], micro_batch_size=8)
+        # step=9 → iteration 10 (1-based), skip list contains 10
+        global_state = self._create_mock_global_state(step=9, iterations_to_skip=[10], micro_batch_size=8)
         train_data_iterator = Mock()
 
         # Call function

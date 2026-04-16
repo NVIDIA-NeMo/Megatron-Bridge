@@ -141,6 +141,7 @@ class GLM45VModel(MegatronModule):
         self.get_image_features = types.MethodType(Glm4vModel.get_image_features, self)
         self.get_video_features = types.MethodType(Glm4vModel.get_video_features, self)
         self.get_rope_index = types.MethodType(Glm4vModel.get_rope_index, self)
+        self.get_vision_position_ids = types.MethodType(Glm4vModel.get_vision_position_ids, self)
         self.get_placeholder_mask = types.MethodType(Glm4vModel.get_placeholder_mask, self)
 
         # Some config requires from HF vision tower
@@ -160,6 +161,7 @@ class GLM45VModel(MegatronModule):
         pixel_values_videos: Optional[torch.FloatTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
+        mm_token_type_ids: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
         packed_seq_params: Optional["PackedSeqParams"] = None,
@@ -221,11 +223,21 @@ class GLM45VModel(MegatronModule):
         # Compute MRoPE position_ids on ALL pipeline stages
         # Each stage has input_ids and visual grid info from the data iterator
         # This avoids any broadcasting overhead
-        hf_attention_mask = None
+        #
+        # vlm_step.get_batch pads input_ids to multiples of 128 but mm_token_type_ids
+        # (from visual_inputs) is not padded.  Align them and build an attention mask
+        # so get_rope_index fills only real-token positions.
+        seq_len = input_ids.shape[1]
+        if mm_token_type_ids is not None and mm_token_type_ids.shape[1] < seq_len:
+            pad_len = seq_len - mm_token_type_ids.shape[1]
+            mm_token_type_ids = torch.nn.functional.pad(mm_token_type_ids, (0, pad_len), value=0)
+        # Build attention mask: 1 for real tokens, 0 for padding inserted by vlm_step
+        hf_attention_mask = (input_ids != 0).long()
         position_ids, rope_deltas = self.get_rope_index(
             input_ids,
-            image_grid_thw,
-            video_grid_thw,
+            mm_token_type_ids=mm_token_type_ids,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
             attention_mask=hf_attention_mask,
         )
 

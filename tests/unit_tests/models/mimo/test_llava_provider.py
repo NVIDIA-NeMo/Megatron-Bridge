@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for LLaVA MIMO Provider."""
 
 from unittest.mock import Mock
@@ -224,7 +224,7 @@ class TestLlavaMimoProvider:
         mock_vision_encoder = Mock
         mimo_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=4),
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=4),
             }
         )
 
