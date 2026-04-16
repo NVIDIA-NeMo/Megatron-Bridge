@@ -98,9 +98,10 @@ def main():
     )
 
     # Set NCCL env vars for nccl_ub enabled via recipe config (not just CLI).
+    # Use direct assignment to override cluster defaults (e.g. NCCL_NVLS_ENABLE=0).
     if getattr(recipe.ddp, "nccl_ub", False):
-        os.environ.setdefault("NCCL_NVLS_ENABLE", "1")
-        os.environ.setdefault("NCCL_CTA_POLICY", "1")
+        os.environ["NCCL_NVLS_ENABLE"] = "1"
+        os.environ["NCCL_CTA_POLICY"] = "1"
 
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"
