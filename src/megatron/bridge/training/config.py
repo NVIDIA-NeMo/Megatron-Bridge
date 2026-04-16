@@ -72,6 +72,12 @@ class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
+    param_name_patterns_for_fp32_local_accumulation: Tuple[str, ...] = ()
+    """fnmatch patterns selecting parameters whose gradients should be locally
+    accumulated in FP32. The special pattern ``'all'`` matches every parameter.
+    Synced from MCore c586f6d56 (#4028); field will be inherited from the base
+    class after the next mcore bump."""
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
@@ -567,6 +573,7 @@ class TrainingConfig(MTrainTrainingConfig):
             assert self.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
 
             # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
+            assert self.global_batch_size is not None, "global_batch_size must be set when using train_samples"
             self.train_iters = self.train_samples // self.global_batch_size
             print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
 
@@ -595,6 +602,15 @@ class CheckpointConfig(MTrainCheckpointConfig):
     """Use a persistent background worker for async checkpoint saves. When enabled, creates a dedicated
     worker thread/process for handling async saves. When disabled, uses temporal workers that are
     created and destroyed for each save operation."""
+
+    async_strategy: str = "nvrx"
+    """Async checkpoint strategy to use. Options: ``"nvrx"`` (default) or ``"mcore"``.
+    The ``"nvrx"`` strategy uses nvidia_resiliency_ext for async checkpointing and falls back
+    to ``"mcore"`` if the package is not installed."""
+
+    async_write_results_mp_mode: str = "fork"
+    """Multiprocessing start method for the async write results queue.
+    Options: ``"fork"`` (default), ``"spawn"``, ``"forkserver"``."""
 
     strict_fsdp_dtensor_load: bool = False
     """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
@@ -975,6 +991,9 @@ class ConfigContainer(Container):
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
         model_cfg = self.model
+        if hasattr(model_cfg, "dist_train") and getattr(model_cfg.dist_train, "use_dist_train", False) is True:
+            # use language world size to calculate data parallel size for dist train
+            world_size = model_cfg.dist_train.language_world_size
         total_model_size = (
             model_cfg.tensor_model_parallel_size
             * model_cfg.pipeline_model_parallel_size
@@ -1074,6 +1093,26 @@ class ConfigContainer(Container):
             # Set data_parallel_size on comm_overlap config if present
             if self.comm_overlap is not None:
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
+
+        # Resolve eval batch size defaults from training config
+        if self.validation.eval_global_batch_size is None:
+            assert self.train.global_batch_size is not None, (
+                "train.global_batch_size must be set when eval_global_batch_size is not explicitly configured"
+            )
+            self.validation.eval_global_batch_size = self.train.global_batch_size
+        if self.validation.eval_micro_batch_size is None:
+            assert self.train.micro_batch_size is not None, (
+                "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
+            )
+            self.validation.eval_micro_batch_size = self.train.micro_batch_size
+
+        # Eval batch size divisibility check
+        eval_dp_product = self.validation.eval_micro_batch_size * self.data_parallel_size
+        assert self.validation.eval_global_batch_size % eval_dp_product == 0, (
+            f"eval_global_batch_size ({self.validation.eval_global_batch_size}) must be divisible by "
+            f"eval_micro_batch_size * data_parallel_size ({self.validation.eval_micro_batch_size} * "
+            f"{self.data_parallel_size} = {eval_dp_product})"
+        )
 
         # Deterministic mode validations and settings
         self._validate_and_apply_deterministic_mode()
@@ -1562,6 +1601,48 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
 
     # Validate configuration after all modifications
     cfg.validate()
+
+
+def mimo_runtime_config_update(cfg: ConfigContainer) -> None:
+    """MIMO-equivalent of ``runtime_config_update``.
+
+    The standard ``runtime_config_update`` cannot be used directly because it
+    accesses ``cfg.model`` attributes (``bf16``, ``tensor_model_parallel_size``,
+    ``cuda_graph_impl``, …) that do not exist on ``MimoModelProvider``.
+
+    This function cherry-picks the safe, model-agnostic parts:
+
+    Keeps (safe for MIMO):
+    - ``data_parallel_size = 1`` (MIMO-specific hard-code)
+    - Sub-config finalization (optimizer, ddp, logger, train, scheduler, checkpoint)
+    - Distributed optimizer sync validation
+    - Deterministic mode validation
+
+    Skips (would crash or is N/A):
+    - Mixed precision resolution (per-module, not container-level)
+    - Communication overlap setup (not supported for MIMO)
+    - Model-level validations (FSDP, CUDA graphs, TE RNG tracker sync, etc.)
+
+    See ``playground/runtime_config_update_analysis.md`` for the full analysis.
+    """
+    # MIMO: data_parallel_size is always 1 from the training loop's perspective.
+    cfg.data_parallel_size = 1
+
+    # Finalize sub-configs that don't depend on model construction order.
+    # NOTE: cfg.model.finalize() is NOT called here — it validates parallelism
+    # config and is called inside setup_mimo() right before build_infra().
+    if hasattr(cfg.optimizer, "finalize"):
+        cfg.optimizer.finalize()
+    if hasattr(cfg.ddp, "finalize"):
+        cfg.ddp.finalize()
+    cfg.logger.finalize()
+    cfg.train.finalize()
+    cfg.scheduler.finalize()
+    cfg.checkpoint.finalize()
+
+    # Safe validations
+    _validate_and_sync_distributed_optimizer_settings(cfg)
+    cfg._validate_and_apply_deterministic_mode()
 
 
 def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -> None:

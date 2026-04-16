@@ -64,7 +64,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         vision_config = hf_config.vision_config
 
         provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-        provider_kwargs.pop("_mla_rope_params", None)
+        mla_rope_params = provider_kwargs.pop("_mla_rope_params", None)
         valid_fields = KimiK25VLModelProvider.__dataclass_fields__
         provider = KimiK25VLModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
 
@@ -77,6 +77,11 @@ class KimiK25VLBridge(MegatronModelBridge):
         provider.qk_layernorm = True
         provider.multi_latent_attention = True
         provider.position_embedding_type = "rope"
+
+        # Apply MLA rope params, otherwise rope scaling factor will be wrong.
+        if mla_rope_params:
+            for key, value in mla_rope_params.items():
+                setattr(provider, key, value)
 
         # MoE settings
         provider.moe_grouped_gemm = True
@@ -181,8 +186,13 @@ class KimiK25VLBridge(MegatronModelBridge):
         result = {}
         for fqn, tensor in converted_weights_dict.items():
             if self._is_quantized_expert_key(fqn):
-                packed, scale, shape = quantize_to_int4(tensor)
                 base = fqn[:-7] if fqn.endswith(".weight") else fqn
+                # Preserve the original scale dtype from the HF checkpoint
+                orig_scale_key = f"{base}.weight_scale"
+                scale_dtype = (
+                    hf_state_dict[orig_scale_key].dtype if orig_scale_key in hf_state_dict else torch.bfloat16
+                )
+                packed, scale, shape = quantize_to_int4(tensor, scale_dtype=scale_dtype)
                 result[f"{base}.weight_packed"] = packed
                 result[f"{base}.weight_scale"] = scale
                 result[f"{base}.weight_shape"] = shape

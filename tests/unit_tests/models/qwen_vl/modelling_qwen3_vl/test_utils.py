@@ -34,7 +34,9 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     Qwen3VLVisionRotaryEmbedding,
     collapse_thw,
     expand_thw,
+    get_dist_train_vision_dp_data,
     get_vision_cp_data,
+    pack_dist_train_vision_module_output,
     preprocess_packed_seqs,
     qwen3vl_cp_split,
     reorganize_inputs,
@@ -296,6 +298,47 @@ class TestQwen3VLUtils:
         )
         assert data1.shape[0] == 4
         assert grid1.shape == (1, 3)
+
+    def test_get_dist_train_vision_dp_data(self):
+        """Shard vision batch on dim 0; slices match torch.chunk; dp_rank wraps modulo num_chunks."""
+        vision_data = torch.arange(6 * 4, dtype=torch.float).view(6, 4)
+        vision_grid_thw = torch.arange(6 * 3, dtype=torch.long).view(6, 3)
+        num_chunks = 2
+        chunks_d = torch.chunk(vision_data, num_chunks, dim=0)
+        chunks_g = torch.chunk(vision_grid_thw, num_chunks, dim=0)
+
+        d0, g0 = get_dist_train_vision_dp_data(vision_data, vision_grid_thw, num_chunks=num_chunks, dp_rank=0)
+        d1, g1 = get_dist_train_vision_dp_data(vision_data, vision_grid_thw, num_chunks=num_chunks, dp_rank=1)
+        assert torch.equal(d0, chunks_d[0])
+        assert torch.equal(g0, chunks_g[0])
+        assert torch.equal(d1, chunks_d[1])
+        assert torch.equal(g1, chunks_g[1])
+        assert torch.equal(torch.cat([d0, d1], dim=0), vision_data)
+        assert torch.equal(torch.cat([g0, g1], dim=0), vision_grid_thw)
+
+        d_wrap, g_wrap = get_dist_train_vision_dp_data(vision_data, vision_grid_thw, num_chunks=num_chunks, dp_rank=2)
+        assert torch.equal(d_wrap, d0)
+        assert torch.equal(g_wrap, g0)
+
+    def test_pack_dist_train_vision_module_output(self):
+        """Concat deepstack tensors and vision_embeds on dim 0; return 3D tensor under vision_module."""
+        hidden = 8
+        ds0 = torch.ones(2, hidden)
+        ds1 = torch.full((3, hidden), 2.0)
+        vision_embeds = torch.full((1, hidden), 3.0)
+        out = pack_dist_train_vision_module_output(vision_embeds, [ds0, ds1])
+        assert list(out.keys()) == ["vision_module"]
+        tensor = out["vision_module"]
+        assert tensor.shape == (1, 6, hidden)
+        expected = torch.cat([vision_embeds, ds0, ds1], dim=0).unsqueeze(0)
+        assert torch.equal(tensor, expected)
+
+    def test_pack_dist_train_vision_module_output_no_deepstack(self):
+        """With empty deepstack list, output is vision_embeds only, unsqueezed to 3D."""
+        vision_embeds = torch.randn(4, 16)
+        out = pack_dist_train_vision_module_output(vision_embeds, [])
+        assert out["vision_module"].shape == (1, 4, 16)
+        assert torch.equal(out["vision_module"], vision_embeds.unsqueeze(0))
 
     @pytest.mark.skipif(
         not torch.cuda.is_available() or int(os.environ.get("WORLD_SIZE", "1")) < 2,

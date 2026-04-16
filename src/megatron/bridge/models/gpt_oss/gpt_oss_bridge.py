@@ -106,9 +106,7 @@ class GPTOSSBridge(MegatronModelBridge):
     ) -> torch.Tensor:
         """Load weights from HuggingFace state dict with MXFP4 dequantization support.
 
-        down_proj expert weights are stored transposed vs Megatron (HF: [in, out], Megatron: [out, in]).
-        We transpose them once here so that GPTOSSMLPDownProjMapping.hf_to_megatron can treat the
-        per-expert slice as-is, and megatron_to_hf symmetrically transposes back on export.
+        down_proj is handled in GPTOSSMLPDownProjMapping.
 
         gate_up_proj is handled directly in GPTOSSMLPGateUpProjMapping.hf_to_megatron via
         _align_expert_weight_to_shape, which auto-detects the orientation difference between
@@ -118,15 +116,11 @@ class GPTOSSBridge(MegatronModelBridge):
         if isinstance(hf_param, str):
             if hf_param in hf_state_dict:
                 hf_weights = hf_state_dict[hf_param]
-                if ".mlp.experts.down_proj" in hf_param and hf_weights.ndim == 3:
-                    hf_weights = hf_weights.transpose(-1, -2)
                 return hf_weights
             blocks_key = hf_param + "_blocks"
             scales_key = hf_param + "_scales"
             if blocks_key in hf_state_dict and scales_key in hf_state_dict:
                 hf_weights = _dequantize_mxfp4(hf_state_dict[blocks_key], hf_state_dict[scales_key])
-                if ".mlp.experts.down_proj" in hf_param and hf_weights.ndim == 3:
-                    hf_weights = hf_weights.transpose(-1, -2)
                 return hf_weights
             raise KeyError(
                 f"Cannot locate weights for '{hf_param}'. Missing both de-quantized tensor and "
@@ -216,10 +210,7 @@ class GPTOSSBridge(MegatronModelBridge):
 
 
 class GPTOSSMLPDownProjMapping(AutoMapping):
-    """MLPDownProj for expert weights in GPT-OSS models.
-
-    GPT-OSS stores fc2 weight transposed vs Megatron when using BF16.
-    """
+    """MLPDownProj for expert weights in GPT-OSS models."""
 
     is_grouped_export = True
 
@@ -238,8 +229,6 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
         if megatron_weights is None:
             return super().megatron_to_hf(megatron_weights, megatron_module)
-        if len(megatron_weights.shape) == 2:
-            megatron_weights = megatron_weights.transpose(0, 1)
         return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
 
 

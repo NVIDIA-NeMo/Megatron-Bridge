@@ -257,7 +257,7 @@ def qwen3_vl_235b_a22b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonK
     See `_qwen3_vl_common` for the full list of parameters.
     """
     recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-235B-A22B",
+        "hf_path": "Qwen/Qwen3-VL-235B-A22B-Instruct",
         "tensor_model_parallel_size": 4,
         "pipeline_model_parallel_size": 16,
         "expert_model_parallel_size": 8,
@@ -627,7 +627,7 @@ def qwen3_vl_235b_a22b_sft_config() -> ConfigContainer:
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3-VL-235B-A22B"
+    hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -1061,7 +1061,7 @@ def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCo
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3-VL-235B-A22B"
+    hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
