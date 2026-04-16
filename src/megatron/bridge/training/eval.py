@@ -111,8 +111,13 @@ def evaluate(
     total_loss_dict = {}
 
     # make validation batch size independent from training batch size
-    eval_batch_size = state.cfg.validation.eval_global_batch_size
-    eval_micro_batch_size = state.cfg.validation.eval_micro_batch_size
+    # TODO: remove guard once MCore dev merges eval batch size fields from main
+    eval_batch_size = (
+        getattr(state.cfg.validation, "eval_global_batch_size", None) or state.cfg.train.global_batch_size
+    )
+    eval_micro_batch_size = (
+        getattr(state.cfg.validation, "eval_micro_batch_size", None) or state.cfg.train.micro_batch_size
+    )
     eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * state.cfg.data_parallel_size)
 
     # Determine if this is a multimodule evaluation (MIMO)

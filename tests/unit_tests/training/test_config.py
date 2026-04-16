@@ -47,6 +47,10 @@ from megatron.bridge.training.config import (
 )
 
 
+# TODO: remove guard once MCore dev merges eval batch size fields from main
+_HAS_EVAL_BATCH_SIZE = hasattr(ValidationConfig, "eval_global_batch_size")
+
+
 def mock_get_world_size_safe(world_size_to_return: int):
     """
     Factory for a mock version of `get_world_size_safe`.
@@ -536,7 +540,9 @@ class TestConfigContainerValidation:
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=world_size,
             model_config=gpt_model_cfg,
-            validation_config=ValidationConfig(eval_global_batch_size=10, eval_micro_batch_size=1),
+            validation_config=ValidationConfig(
+                **({"eval_global_batch_size": 10, "eval_micro_batch_size": 1} if _HAS_EVAL_BATCH_SIZE else {})
+            ),
         )
 
         try:
@@ -1486,6 +1492,7 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
 
+@pytest.mark.skipif(not _HAS_EVAL_BATCH_SIZE, reason="ValidationConfig missing eval batch size fields")
 class TestEvalBatchSizeConfig:
     """Tests for eval batch size default resolution and validation in ConfigContainer.validate()."""
 

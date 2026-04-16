@@ -1095,24 +1095,26 @@ class ConfigContainer(Container):
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
 
         # Resolve eval batch size defaults from training config
-        if self.validation.eval_global_batch_size is None:
-            assert self.train.global_batch_size is not None, (
-                "train.global_batch_size must be set when eval_global_batch_size is not explicitly configured"
-            )
-            self.validation.eval_global_batch_size = self.train.global_batch_size
-        if self.validation.eval_micro_batch_size is None:
-            assert self.train.micro_batch_size is not None, (
-                "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
-            )
-            self.validation.eval_micro_batch_size = self.train.micro_batch_size
+        # TODO: remove guard once MCore dev merges eval batch size fields from main
+        if hasattr(self.validation, "eval_global_batch_size"):
+            if self.validation.eval_global_batch_size is None:
+                assert self.train.global_batch_size is not None, (
+                    "train.global_batch_size must be set when eval_global_batch_size is not explicitly configured"
+                )
+                self.validation.eval_global_batch_size = self.train.global_batch_size
+            if self.validation.eval_micro_batch_size is None:
+                assert self.train.micro_batch_size is not None, (
+                    "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
+                )
+                self.validation.eval_micro_batch_size = self.train.micro_batch_size
 
-        # Eval batch size divisibility check
-        eval_dp_product = self.validation.eval_micro_batch_size * self.data_parallel_size
-        assert self.validation.eval_global_batch_size % eval_dp_product == 0, (
-            f"eval_global_batch_size ({self.validation.eval_global_batch_size}) must be divisible by "
-            f"eval_micro_batch_size * data_parallel_size ({self.validation.eval_micro_batch_size} * "
-            f"{self.data_parallel_size} = {eval_dp_product})"
-        )
+            # Eval batch size divisibility check
+            eval_dp_product = self.validation.eval_micro_batch_size * self.data_parallel_size
+            assert self.validation.eval_global_batch_size % eval_dp_product == 0, (
+                f"eval_global_batch_size ({self.validation.eval_global_batch_size}) must be divisible by "
+                f"eval_micro_batch_size * data_parallel_size ({self.validation.eval_micro_batch_size} * "
+                f"{self.data_parallel_size} = {eval_dp_product})"
+            )
 
         # Deterministic mode validations and settings
         self._validate_and_apply_deterministic_mode()

@@ -559,12 +559,12 @@ def train(
                 loaded_iteration=start_iteration,
             )
 
+        # TODO: remove guard once MCore dev merges start_eval_at_iter from main
+        start_eval_at_iter = getattr(val_config, "start_eval_at_iter", None)
         if (
             global_state.train_state.do_valid
             and val_config.eval_interval
-            and (
-                val_config.start_eval_at_iter is None or global_state.train_state.step >= val_config.start_eval_at_iter
-            )
+            and (start_eval_at_iter is None or global_state.train_state.step >= start_eval_at_iter)
             and global_state.train_state.step % val_config.eval_interval == 0
         ):
             if energy_monitor is not None:

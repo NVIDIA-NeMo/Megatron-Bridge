@@ -44,6 +44,10 @@ from tests.functional_tests.utils import (
 )
 
 
+# TODO: remove guard once MCore dev merges eval batch size fields from main
+_HAS_EVAL_BATCH_SIZE = hasattr(ValidationConfig, "eval_global_batch_size")
+
+
 class Llama32ModelProvider1B(GPTModelProvider):
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
@@ -224,6 +228,7 @@ class TestPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.skipif(not _HAS_EVAL_BATCH_SIZE, reason="ValidationConfig missing eval batch size fields")
     def test_pretrain_with_independent_eval_batch_size(self, tmp_path):
         """
         Test end to end training with eval batch sizes different from training batch sizes.
