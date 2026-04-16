@@ -515,10 +515,12 @@ class TestQwen3BridgeMTPMapping:
     Qwen3Bridge had no megatron_to_hf mappings for any mtp.* keys.
     """
 
-    # All Megatron-side MTP parameter names that must be mapped.
+    # All Megatron-side MTP parameter patterns exactly as stored in the registry.
     # Derived from the WARNING lines in issue #3348 plus the full MTP
     # parameter set seen in Qwen3NextBridge (which already had MTP support).
-    EXPECTED_MTP_MEGATRON_PARAMS = [
+    # Note: QKVMapping uses a wildcard pattern (mtp.layers.*) while all
+    # AutoMapping / GatedMLPMapping entries use a concrete index (mtp.layers.0).
+    EXPECTED_MTP_MEGATRON_PARAMS: tuple = (
         "mtp.layers.0.eh_proj.weight",
         "mtp.layers.0.enorm.weight",
         "mtp.layers.0.hnorm.weight",
@@ -527,21 +529,19 @@ class TestQwen3BridgeMTPMapping:
         "mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight",
         "mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight",
         "mtp.layers.0.transformer_layer.self_attention.linear_proj.weight",
-        "mtp.layers.0.transformer_layer.self_attention.linear_qkv.weight",
+        # QKVMapping stores a wildcard pattern, not a concrete layer index
+        "mtp.layers.*.transformer_layer.self_attention.linear_qkv.weight",
         "mtp.layers.0.transformer_layer.mlp.linear_fc1.layer_norm_weight",
         "mtp.layers.0.transformer_layer.mlp.linear_fc1.weight",
         "mtp.layers.0.transformer_layer.mlp.linear_fc2.weight",
-    ]
+    )
 
     def _get_all_megatron_params(self, mapping_registry):
-        """Return the set of Megatron parameter patterns registered in the registry."""
-        params = set()
-        for mapping in mapping_registry._param_mappings:
-            params.add(mapping.megatron_param)
-        return params
+        """Return the set of Megatron parameter patterns as stored in the registry."""
+        return {mapping.megatron_param for mapping in mapping_registry._param_mappings}
 
     def test_mtp_params_are_registered(self):
-        """All MTP Megatron parameter names must appear in the mapping registry."""
+        """All MTP Megatron parameter patterns must appear in the mapping registry."""
         bridge = Qwen3Bridge()
         registry = bridge.mapping_registry()
         registered = self._get_all_megatron_params(registry)
