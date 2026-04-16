@@ -188,6 +188,8 @@ class PerfEnvPlugin(Plugin):
             in order to not block DP level communication overlap.
         enable_vboost (bool): Whether to steer more power towards tensor cores via
             `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
+        lock_gpu_freq (int | None): Lock GPU graphics clock to the specified frequency in MHz via
+            `sudo nvidia-smi -lgc <freq>`. Runs once per node before training. None to disable.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
         tp_size (int): Tensor parallelism size. Default is 1.
@@ -200,6 +202,7 @@ class PerfEnvPlugin(Plugin):
 
     enable_layernorm_sm_margin: bool = True
     enable_vboost: bool = False
+    lock_gpu_freq: int | None = None
     enable_manual_gc: bool = True
     manual_gc_interval: int = 100
     tp_size: int | None = None
@@ -433,6 +436,48 @@ class PerfEnvPlugin(Plugin):
                 else vboost_cmd
             )
 
+    def _set_lock_gpu_freq(
+        self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", lock_gpu_freq: int | None
+    ):
+        """Lock GPU graphics clocks to a fixed frequency before training.
+
+        Used for silicon simulation correlation studies where a fixed GPU
+        clock frequency is required to match simulation assumptions.
+        """
+
+        def get_lock_gpu_freq_srun_cmd(job_dir, freq_mhz):
+            import shlex
+
+            lock_freq_cmd = "\n".join(
+                [
+                    "",
+                    "# Command 0: lock GPU graphics clock",
+                    " ".join(
+                        [
+                            "srun",
+                            "--ntasks-per-node=1",
+                            "--output",
+                            os.path.join(job_dir, "lock_gpu_freq.out"),
+                            "--error",
+                            os.path.join(job_dir, "lock_gpu_freq.err"),
+                            "bash -c",
+                            shlex.quote(f"sudo nvidia-smi -lgc {freq_mhz}"),
+                        ]
+                    ),
+                    "",
+                ]
+            )
+
+            return lock_freq_cmd
+
+        if lock_gpu_freq is not None and isinstance(executor, SlurmExecutor):
+            lock_freq_cmd = get_lock_gpu_freq_srun_cmd(executor.tunnel.job_dir, lock_gpu_freq)
+            executor.setup_lines = (
+                executor.setup_lines + lock_freq_cmd
+                if (executor.setup_lines and len(executor.setup_lines) > 0)
+                else lock_freq_cmd
+            )
+
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
         workload_base_config = get_workload_base_config(
@@ -496,6 +541,9 @@ class PerfEnvPlugin(Plugin):
 
         # Improve perf by steering power to tensor cores, may not work on all systems
         self._set_vboost(task, executor, self.enable_vboost)
+
+        # Lock GPU graphics clock frequency for stable performance measurements
+        self._set_lock_gpu_freq(task, executor, self.lock_gpu_freq)
 
         # Set model-specific environment variables
         self._set_model_specific_environment_variables(
