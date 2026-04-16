@@ -8,13 +8,13 @@ source ../../secrets.sh
 
 GPU=${GPU:-"h100"}
 if [ "$GPU" = "h100" ]; then
-    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-26.02.rc6.sqsh"
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-26.02.sqsh"
     ACCOUNT="coreai_dlalgo_nemorl"
     PARTITION="batch"
     NUM_GPUS=512
     GPUS_PER_NODE=8
 elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
-    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-26.02.rc6.sqsh"
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-26.02.sqsh"
     ACCOUNT="coreai_dlalgo_llm"
     PARTITION="batch"
     NUM_GPUS=128
@@ -72,31 +72,14 @@ else
     exit 1
 fi
 
-# if { [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; } && [ "$BACKEND" = "fused" ]; then
-#     # use cudnn 9.18.0.76 for deterministic fused attention support
-#     CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-cudnn9.18.0.76.sqsh"
-#     export CUDNN_HOME=/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/cudnn_lib/9.18.0.76/cudnn/
-#     export LD_LIBRARY_PATH='$CUDNN_HOME/lib64:$LD_LIBRARY_PATH'
-# fi
-
-
 if [ "$DETERMINISTIC" = true ]; then
     # Deterministic mode environment variables (all required)
     export NCCL_ALGO="Ring"
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
+    export additional_args="${additional_args} model.deterministic_mode=true model.cross_entropy_loss_fusion=false comm_overlap.tp_comm_overlap=false"
 
-    # DEBUG: Enable loss debug logging to track NaN source (always on in deterministic mode)
-    export MEGATRON_DEBUG_LOSS=1
-
-    # DEBUG: Enable layer-by-layer NaN tracking (optional, can generate lots of output)
-    # Set TRACK_NAN=true to enable
-    if [ "${TRACK_NAN:-false}" = true ]; then
-        export MEGATRON_TRACK_NAN=1
-        export EXP_NAME="deterministic-${BACKEND}-${GPU}-track-nan"
-    else
-        export EXP_NAME="deterministic-${BACKEND}-${GPU}"
-    fi
+    export EXP_NAME="deterministic-${BACKEND}-${GPU}"
 
 else
     export EXP_NAME="non-deterministic-${BACKEND}-${GPU}"
@@ -112,11 +95,13 @@ python scripts/performance/setup_experiment.py \
     -gn $GPUS_PER_NODE \
     --container_image $CONTAINER \
     --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
+    -ce "TRITON_PTXAS_PATH=/usr/local/cuda-13.0/bin/ptxas,TORCHDYNAMO_DISABLE=1,PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
-    -wdj "llama31-405b-nemo-25.11-${EXP_NAME}" \
+    -wdj "llama31-405b-nemo-26.02-${EXP_NAME}" \
     --task pretrain \
+    -t 04:00:00 \
     -ms 50 \
     --pretrained_checkpoint /lustre/fsw/coreai_dlalgo_llm/zhiyul/hf_cache/nemo/llama31-405b-nemo-ckpt \
     logger.tensorboard_dir=/nemo_run/tensorboard \
