@@ -14,39 +14,42 @@
 
 import io
 import pickle
+from types import MappingProxyType
 
 
 class _RestrictedUnpickler(pickle.Unpickler):
     """Unpickler that only allows safe built-in types to prevent arbitrary code execution."""
 
-    _SAFE_MODULES = {
-        "builtins": {
-            "list",
-            "dict",
-            "tuple",
-            "set",
-            "frozenset",
-            "bytes",
-            "bytearray",
-            "str",
-            "int",
-            "float",
-            "bool",
-            "complex",
-            "slice",
-            "range",
-            "type",
-            "NoneType",
-        },
-        "collections": {"OrderedDict"},
-    }
+    _SAFE_MODULES = MappingProxyType(
+        {
+            "builtins": frozenset(
+                {
+                    "list",
+                    "dict",
+                    "tuple",
+                    "set",
+                    "frozenset",
+                    "bytes",
+                    "bytearray",
+                    "str",
+                    "int",
+                    "float",
+                    "bool",
+                    "complex",
+                    "slice",
+                    "range",
+                    "NoneType",
+                }
+            ),
+            "collections": frozenset({"OrderedDict"}),
+        }
+    )
 
     def find_class(self, module: str, name: str) -> type:
         if module in self._SAFE_MODULES and name in self._SAFE_MODULES[module]:
             return super().find_class(module, name)
         raise pickle.UnpicklingError(
-            f"Restricted unpickler refused to load '{module}.{name}'. "
-            "Only safe built-in types are allowed."
+            f"Restricted unpickler refused to load '{module}.{name}'. Only safe built-in types are allowed."
         )
 
 
