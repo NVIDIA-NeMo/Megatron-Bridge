@@ -20,37 +20,35 @@
 # The full model requires multi-node — minimum 8 nodes (64 GPUs) with
 # EP >= 32.  TP does NOT reduce expert memory — increase EP instead.
 #
-# Runs HF -> Megatron -> HF round-trip conversion and verifies weight fidelity.
-# Saves the exported HF checkpoint to OUTPUT_DIR.
-#
 # Requirements: transformers >= 5.2.0
 #
 # Usage:
-#   1. Set CONTAINER_IMAGE, CONTAINER_MOUNTS, and token exports (or use defaults)
+#   1. Fill in CONTAINER_IMAGE, CONTAINER_MOUNTS, and token exports
 #   2. Adjust PARALLELISM_CONFIGS if needed
 #   3. Submit: sbatch examples/models/glm5/slurm_conversion.sh
 # ==============================================================================
 
 #SBATCH --job-name=glm5-roundtrip
 #SBATCH --nodes=8
-#SBATCH --ntasks-per-node=1
+#SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=1:00:00
-#SBATCH --account=${SLURM_ACCOUNT:-your_account}
+#SBATCH --account=<your-account>
 #SBATCH --partition=batch
 #SBATCH --output=logs/glm5_roundtrip_%j.log
 #SBATCH --exclusive
 
 # ── Container ────────────────────────────────────────────────────────────
-CONTAINER_IMAGE="${CONTAINER_IMAGE:?Set CONTAINER_IMAGE to your .sqsh container path}"
-CONTAINER_MOUNTS="/lustre:/lustre"
+CONTAINER_IMAGE=""
+# CONTAINER_IMAGE="/path/to/container.sqsh"
+CONTAINER_MOUNTS=""
+# CONTAINER_MOUNTS="/path/to/shared/storage:/mnt/storage,/path/to/project:/opt/Megatron-Bridge"
 WORKDIR="/opt/Megatron-Bridge"
-BRIDGE_PATH="${BRIDGE_PATH:?Set BRIDGE_PATH to your Megatron-Bridge checkout on shared storage}"
 
 # ── Tokens / Caches ──────────────────────────────────────────────────────
-export HF_TOKEN="${HF_TOKEN:?Set HF_TOKEN for gated model access}"
-export HF_HOME="${HF_HOME:?Set HF_HOME to your HuggingFace cache directory}"
-export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv_cache}"
+# export HF_TOKEN="hf_your_token_here"
+# export HF_HOME="/path/to/shared/HF_HOME"
+# export UV_CACHE_DIR="/path/to/shared/uv_cache"
 
 # ── Parallelism configs: "TP,PP,EP" per entry ────────────────────────────
 # TP*PP*EP must equal total GPUs (NODES * GPUS_PER_NODE = 64).
@@ -58,16 +56,12 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv_cache}"
 PARALLELISM_CONFIGS=("2,1,32")
 
 # ── Model ─────────────────────────────────────────────────────────────────
-# Use the direct local snapshot path to avoid 64 processes calling
-# snapshot_download simultaneously (causes Lustre race conditions).
-HF_MODEL_PATH="${HF_HOME}/hub/models--zai-org--GLM-5/snapshots/$(ls ${HF_HOME}/hub/models--zai-org--GLM-5/snapshots/ | head -1)"
-OUTPUT_DIR="${OUTPUT_DIR:-/tmp/glm5_converted}"
+MODEL_NAME=GLM-5
+HF_MODEL_ID=zai-org/$MODEL_NAME
 
 # ── Environment ───────────────────────────────────────────────────────────
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
-export NCCL_DEBUG=WARN
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # ==============================================================================
 # Job Execution
@@ -81,6 +75,16 @@ echo "======================================"
 
 mkdir -p logs
 
+if [ -z "$CONTAINER_IMAGE" ]; then
+    echo "ERROR: CONTAINER_IMAGE must be set."
+    exit 1
+fi
+
+SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
+if [ -n "$CONTAINER_MOUNTS" ]; then
+    SRUN_CMD="$SRUN_CMD --container-mounts=$CONTAINER_MOUNTS"
+fi
+
 CONFIG_INDEX=0
 for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r TP PP EP <<< "$CONFIG"
@@ -91,39 +95,15 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP"
     echo "======================================"
 
-    srun --mpi=pmix \
-      --container-image="$CONTAINER_IMAGE" \
-      --container-mounts="${BRIDGE_PATH}:${WORKDIR},${CONTAINER_MOUNTS}" \
-      --no-container-mount-home \
-      bash -c "
-        export HF_TOKEN='$HF_TOKEN'
-        export HF_HOME='$HF_HOME'
-        export UV_CACHE_DIR='$UV_CACHE_DIR'
-        export NCCL_DEBUG=WARN
-        export TORCH_NCCL_AVOID_RECORD_STREAMS=1
-        export NCCL_NVLS_ENABLE=0
-        export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-        export HF_HUB_OFFLINE=1
-        export NCCL_TIMEOUT=1800000
-        MASTER_ADDR=\$(python3 -c \"
-import re, os
-s = os.environ.get('SLURM_NODELIST', '')
-m = re.match(r'([\w-]+)\[(\d+)', s)
-print(m.group(1) + m.group(2) if m else s.split(',')[0])
-\")
-        cd $WORKDIR
-        export PYTHONPATH=$WORKDIR/.venv/lib/python3.12/site-packages:\${PYTHONPATH:-}
-        uv run --no-sync python -m torch.distributed.run \
-          --nproc_per_node=8 \
-          --nnodes=$SLURM_JOB_NUM_NODES \
-          --node_rank=\$SLURM_PROCID \
-          --master_addr=\$MASTER_ADDR \
-          --master_port=29500 \
-          examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-          --hf-model-id $HF_MODEL_PATH \
-          --output-dir $OUTPUT_DIR \
-          --tp $TP --pp $PP --ep $EP
-      "
+    # Sync dependencies once per node, then run the roundtrip
+    CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 10; fi && "
+    CMD="${CMD}uv run --no-sync python examples/conversion/hf_megatron_roundtrip_multi_gpu.py"
+    CMD="$CMD --hf-model-id $HF_MODEL_ID"
+    CMD="$CMD --tp $TP --pp $PP --ep $EP"
+
+    echo "Executing: $CMD"
+
+    $SRUN_CMD bash -c "cd $WORKDIR && $CMD"
     RUN_EXIT=$?
     if [ $RUN_EXIT -ne 0 ]; then
         echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP failed (exit $RUN_EXIT)"
