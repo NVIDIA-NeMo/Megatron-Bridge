@@ -21,6 +21,7 @@ from argument_parser import parse_cli_args
 from utils.overrides import set_cli_overrides, set_post_overrides, set_user_overrides
 from utils.utils import get_perf_optimized_recipe
 
+from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -95,11 +96,18 @@ def main():
         config_variant=args.config_variant,
     )
 
+    # Set NCCL env vars for nccl_ub enabled via recipe config (not just CLI).
+    if getattr(recipe.ddp, "nccl_ub", False):
+        os.environ.setdefault("NCCL_NVLS_ENABLE", "1")
+        os.environ.setdefault("NCCL_CTA_POLICY", "1")
+
     # Select forward step function based on the model family name.
     if args.domain == "vlm":
         forward_step_func = vlm_forward_step
     elif args.domain == "qwen3vl":
         forward_step_func = qwen3_vl_forward_step
+    elif args.domain == "diffusion":
+        forward_step_func = WanForwardStep(mode=args.task)
     else:
         forward_step_func = forward_step
 
