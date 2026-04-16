@@ -505,3 +505,50 @@ class TestQwen3BridgeParameterMapping:
         # Qwen3 doesn't have QKV bias, unlike Qwen2
         # This is reflected in the QKVMapping not including bias terms
         assert mapping_registry is not None
+
+
+class TestQwen3BridgeMTPMapping:
+    """Tests for MTP (Multi-Token Prediction) weight mappings in Qwen3Bridge.
+
+    Covers the regression reported in GitHub issue #3348 where
+    AutoBridge.export_ckpt() silently dropped all MTP parameters because
+    Qwen3Bridge had no megatron_to_hf mappings for any mtp.* keys.
+    """
+
+    # All Megatron-side MTP parameter names that must be mapped.
+    # Derived from the WARNING lines in issue #3348 plus the full MTP
+    # parameter set seen in Qwen3NextBridge (which already had MTP support).
+    EXPECTED_MTP_MEGATRON_PARAMS = [
+        "mtp.layers.0.eh_proj.weight",
+        "mtp.layers.0.enorm.weight",
+        "mtp.layers.0.hnorm.weight",
+        "mtp.layers.0.final_layernorm.weight",
+        "mtp.layers.0.transformer_layer.self_attention.linear_qkv.layer_norm_weight",
+        "mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight",
+        "mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight",
+        "mtp.layers.0.transformer_layer.self_attention.linear_proj.weight",
+        "mtp.layers.0.transformer_layer.self_attention.linear_qkv.weight",
+        "mtp.layers.0.transformer_layer.mlp.linear_fc1.layer_norm_weight",
+        "mtp.layers.0.transformer_layer.mlp.linear_fc1.weight",
+        "mtp.layers.0.transformer_layer.mlp.linear_fc2.weight",
+    ]
+
+    def _get_all_megatron_params(self, mapping_registry):
+        """Return the set of Megatron parameter patterns registered in the registry."""
+        params = set()
+        for mapping in mapping_registry._param_mappings:
+            params.add(mapping.megatron_param)
+        return params
+
+    def test_mtp_params_are_registered(self):
+        """All MTP Megatron parameter names must appear in the mapping registry."""
+        bridge = Qwen3Bridge()
+        registry = bridge.mapping_registry()
+        registered = self._get_all_megatron_params(registry)
+
+        missing = [p for p in self.EXPECTED_MTP_MEGATRON_PARAMS if p not in registered]
+        assert not missing, (
+            f"Qwen3Bridge.mapping_registry() is missing MTP mappings for: {missing}\n"
+            "These parameters are silently dropped during AutoBridge.export_ckpt() "
+            "when mtp_num_layers >= 1 (see issue #3348)."
+        )
