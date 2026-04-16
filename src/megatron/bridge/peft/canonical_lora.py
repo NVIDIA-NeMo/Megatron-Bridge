@@ -273,19 +273,19 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             canonical_target = target
             canonical_component = target
 
-            if "linear_q" in target:
+            if target.endswith("linear_q"):
                 canonical_target = target.replace("linear_q", "linear_qkv")
                 canonical_component = "linear_q"
-            elif "linear_k" in target:
+            elif target.endswith("linear_k"):
                 canonical_target = target.replace("linear_k", "linear_qkv")
                 canonical_component = "linear_k"
-            elif "linear_v" in target:
+            elif target.endswith("linear_v"):
                 canonical_target = target.replace("linear_v", "linear_qkv")
                 canonical_component = "linear_v"
-            elif "linear_fc1_up" in target:
+            elif target.endswith("linear_fc1_up"):
                 canonical_target = target.replace("linear_fc1_up", "linear_fc1")
                 canonical_component = "linear_fc1_up"
-            elif "linear_fc1_gate" in target:
+            elif target.endswith("linear_fc1_gate"):
                 canonical_target = target.replace("linear_fc1_gate", "linear_fc1")
                 canonical_component = "linear_fc1_gate"
 
