@@ -13,166 +13,170 @@
 # limitations under the License.
 
 import json
-import os
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoConfig, AutoTokenizer
-from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from transformers import AutoTokenizer, Qwen3MoeConfig, Qwen3MoeForCausalLM
 
 
-DEEPSEEK_V3_OVERRIDES = {
-    "first_k_dense_replace": 1,
+HF_QWEN3_MOE_TOY_MODEL_CONFIG = {
+    "architectures": ["Qwen3MoeForCausalLM"],
+    "attention_bias": False,
+    "attention_dropout": 0.0,
+    "bos_token_id": 151643,
+    "decoder_sparse_step": 1,
+    "eos_token_id": 151645,
+    "head_dim": 128,
     "hidden_act": "silu",
     "hidden_size": 2048,
     "initializer_range": 0.02,
     "intermediate_size": 6144,
-    "kv_lora_rank": 512,
-    "max_position_embeddings": 163840,
+    "max_position_embeddings": 262144,
+    "max_window_layers": 48,
+    "mlp_only_layers": [],
+    "model_type": "qwen3_moe",
     "moe_intermediate_size": 768,
-    "n_group": 4,
-    "n_routed_experts": 4,
-    "n_shared_experts": 1,
+    "norm_topk_prob": True,
     "num_attention_heads": 32,
+    "num_experts": 4,
     "num_experts_per_tok": 4,
     "num_hidden_layers": 2,
     "num_key_value_heads": 4,
-    "num_nextn_predict_layers": 0,
-    "q_lora_rank": 512,
-    "topk_group": 4,
-    "vocab_size": 129280,
+    "output_router_logits": False,
+    "rms_norm_eps": 1e-06,
+    "rope_scaling": None,
+    "rope_theta": 10000000,
+    "router_aux_loss_coef": 0.001,
+    "sliding_window": None,
+    "tie_word_embeddings": False,
+    "torch_dtype": "bfloat16",
+    "transformers_version": "4.51.0",
+    "use_cache": True,
+    "use_sliding_window": False,
+    "vocab_size": 151936,
 }
 
 
 class TestHFFSDPConversion:
     """
-    Test functional conversion between HuggingFace and Megatron-FSDP using examples/conversion/fsdp/hf_fsdp_roundtrip.py.
+    Test round-trip conversion between HuggingFace and Megatron-FSDP.
     """
 
     @pytest.fixture(scope="class")
-    def deepseek_toy_model_path(self, tmp_path_factory):
-        temp_dir = tmp_path_factory.mktemp("deepseek_toy_model")
-        model_dir = temp_dir / "deepseek_toy"
+    def qwen3_moe_toy_model_path(self, tmp_path_factory):
+        """
+        Create and save a HuggingFace Qwen3 MoE toy model to a temporary directory.
 
-        # Create a minimal config and model using Auto classes to avoid direct imports
-        config = AutoConfig.from_pretrained("deepseek-ai/DeepSeek-V3", trust_remote_code=True)
+        Returns:
+            str: Path to the saved HuggingFace model directory
+        """
+        temp_dir = tmp_path_factory.mktemp("qwen3_moe_fsdp_toy")
+        model_dir = temp_dir / "qwen3_moe_fsdp_toy"
 
-        for key, value in DEEPSEEK_V3_OVERRIDES.items():
-            setattr(config, key, value)
-        del config.quantization_config
+        config = Qwen3MoeConfig(**HF_QWEN3_MOE_TOY_MODEL_CONFIG)
+        config.torch_dtype = torch.bfloat16
 
-        # Fallback to a generic small model; for conversion flows we only need keys/config
-        # Some environments may not have DeepSeek classes; we just ensure a valid HF directory
-        model_class_ref = config.auto_map["AutoModelForCausalLM"]
-        model_class = get_class_from_dynamic_module(
-            class_reference=model_class_ref,
-            pretrained_model_name_or_path="deepseek-ai/DeepSeek-V3",
-            cache_dir=None,
-            force_download=False,
-            resume_download=True,
-            proxies=None,
-            use_auth_token=None,
-            revision=None,
-            local_files_only=False,
-            repo_id="deepseek-ai/DeepSeek-V3",
-        )
-        model = model_class(config)
-        model = model.bfloat16() if hasattr(model, "bfloat16") else model
+        model = Qwen3MoeForCausalLM(config).bfloat16()
 
-        for k, v in model.named_parameters():
-            if "e_score_correction_bias" in k:
-                v.data = v.data.to(torch.float32)
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
+        tokenizer.save_pretrained(model_dir)
 
-        # Save a tokenizer (use a lightweight compatible tokenizer)
-        try:
-            tokenizer = AutoTokenizer.from_pretrained("gpt2")
-            tokenizer.save_pretrained(model_dir)
-        except Exception:
-            pass
-
-        # Save model and config
         model.save_pretrained(model_dir, safe_serialization=True)
-        modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
-        shutil.copy(modeling_filepath, model_dir)
 
-        # Ensure config.json exists with expected keys
         config_path = model_dir / "config.json"
         with open(config_path, "w") as f:
-            json.dump(model.config.to_dict(), f, indent=2)
+            json.dump(HF_QWEN3_MOE_TOY_MODEL_CONFIG.copy(), f, indent=2)
 
         return str(model_dir)
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
-        "tp,ep,test_name",
+        "tp,ep,nproc,test_name",
         [
-            (1, 1, "FSDP_no_parallel"),
-            (1, 2, "FSDP_EP"),
+            (1, 1, 1, "FSDP_base"),
+            (2, 1, 2, "FSDP_TP"),
+            (1, 2, 2, "FSDP_EP"),
         ],
     )
-    def test_hf_fsdp_roundtrip(self, deepseek_toy_model_path, tmp_path, tp, ep, test_name):
+    def test_hf_fsdp_roundtrip(self, qwen3_moe_toy_model_path, tmp_path, tp, ep, nproc, test_name):
         """
-        Test HF to Megatron-FSDP roundtrip conversion with different parallelism configurations.
-        """
+        Test HF-to-Megatron-FSDP round-trip conversion with different parallelism configurations.
 
-        # Create temporary output directory
+        Args:
+            qwen3_moe_toy_model_path: Path to the toy Qwen3 MoE model (from fixture)
+            tmp_path: Pytest temporary path fixture
+            tp: Tensor parallelism size
+            ep: Expert parallelism size
+            nproc: Number of processes for torchrun
+            test_name: Name of the test for identification
+        """
         test_output_dir = tmp_path / test_name
         test_output_dir.mkdir(exist_ok=True)
 
         cmd = [
-            "uv",
-            "run",
             "python",
             "-m",
             "torch.distributed.run",
-            "--nproc_per_node=2",
+            f"--nproc_per_node={nproc}",
             "--nnodes=1",
             "examples/conversion/fsdp/hf_fsdp_roundtrip.py",
             "--hf-model-id",
-            deepseek_toy_model_path,
+            qwen3_moe_toy_model_path,
             "--output-dir",
             str(test_output_dir),
             "--tp",
             str(tp),
             "--ep",
             str(ep),
-            "--trust-remote-code",
         ]
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
+                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
             )
 
-            # Check that the conversion completed successfully
             if result.returncode != 0:
                 print(f"STDOUT: {result.stdout}")
                 print(f"STDERR: {result.stderr}")
-                assert False, f"FSDP Roundtrip failed with return code {result.returncode}"
+                assert False, f"{test_name} FSDP roundtrip failed with return code {result.returncode}"
 
-            # Verify that the converted model was saved
-            model_name = Path(deepseek_toy_model_path).name
+            # Verify the converted model directory exists
+            model_name = Path(qwen3_moe_toy_model_path).name
             converted_model_dir = test_output_dir / model_name
             assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
 
-            # Check that essential model files exist
+            # Check config.json
             config_file = converted_model_dir / "config.json"
             assert config_file.exists(), f"config.json not found in converted model at {config_file}"
 
-            # Check for model weights file
-            weights_file_safetensors = converted_model_dir / "model.safetensors"
-            weights_file_pytorch = converted_model_dir / "pytorch_model.bin"
-            assert weights_file_safetensors.exists() or weights_file_pytorch.exists(), (
-                f"Model weights file not found in converted model at {converted_model_dir}"
-            )
+            # Check for model weights (single file or sharded)
+            weights_found = (converted_model_dir / "model.safetensors").exists() or (
+                converted_model_dir / "pytorch_model.bin"
+            ).exists()
+            if not weights_found:
+                sharded = list(converted_model_dir.glob("model-*-of-*.safetensors")) + list(
+                    converted_model_dir.glob("pytorch_model-*-of-*.bin")
+                )
+                weights_found = len(sharded) > 0
+            assert weights_found, f"Model weights not found in converted model at {converted_model_dir}"
 
-            print(f"SUCCESS: {test_name} FSDP roundtrip test completed successfully")
+            # Verify MoE config parameters are preserved
+            with open(config_file) as f:
+                saved_config = json.load(f)
+
+            assert saved_config["model_type"] == "qwen3_moe"
+            assert saved_config["hidden_size"] == 2048
+            assert saved_config["num_attention_heads"] == 32
+            num_experts_key = "num_local_experts" if "num_local_experts" in saved_config else "num_experts"
+            assert saved_config[num_experts_key] == 4
+            assert saved_config["num_experts_per_tok"] == 4
+            assert saved_config["moe_intermediate_size"] == 768
+
+            print(f"SUCCESS: {test_name} Megatron-FSDP roundtrip completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")
 
         except Exception as e:
-            print(f"Error during {test_name} FSDP roundtrip test: {e}")
+            print(f"Error during {test_name} Megatron-FSDP roundtrip test: {e}")
             raise
