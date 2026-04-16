@@ -312,7 +312,7 @@ def forward_step(
         use_fp8_padding=True,
         use_hybridep=use_hybridep,
         sequence_parallel=getattr(config, "sequence_parallel", False),
-        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1,
+        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
         seq_length=config.seq_length,
     )
     forward_args = {

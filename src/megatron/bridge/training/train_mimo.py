@@ -26,7 +26,7 @@ from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
 
-from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
+from megatron.bridge.training.checkpointing import CheckpointManager, DefaultCheckpointManager
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
@@ -41,6 +41,7 @@ from megatron.bridge.training.profiling import (
     should_profile_rank,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.train import checkpoint_and_decide_exit
 from megatron.bridge.training.utils.train_utils import (
     prepare_forward_step_func,
     training_log,
@@ -193,6 +194,7 @@ def train_mimo(
     global_state: GlobalState,
     mimo_infra: "MimoModelInfra",
     multimodule_communicator: "MultiModulePipelineCommunicator",
+    checkpoint_manager: Optional[CheckpointManager] = None,
     multimodule_pg_collection: Optional["MultiModuleProcessGroupCollection"] = None,
     module_to_grid_tuple: Optional[List] = None,
 ) -> None:
@@ -208,7 +210,7 @@ def train_mimo(
     - GlobalState for timers, config, train_state
     - training_log() for metrics reporting
     - handle_profiling_step() and handle_profiling_stop() for profiler lifecycle
-    - save_checkpoint() with MimoOptimizer for checkpointing
+    - save_checkpoint_and_time() / checkpoint_and_decide_exit() for checkpointing
     - evaluate_and_print_results() for validation with multimodule support
     - maybe_finalize_async_save() for async checkpoint finalization
 
@@ -222,6 +224,8 @@ def train_mimo(
         global_state: GlobalState containing timers, config, train_state.
         mimo_infra: MimoModelInfra with grids, topology, pg_collections.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
+        checkpoint_manager: CheckpointManager for save operations. Created by
+            setup_mimo(). If None, a DefaultCheckpointManager is created.
         multimodule_pg_collection: Pre-built PG collection for the pipeline schedule.
             If None, built from mimo_infra.
         module_to_grid_tuple: Pre-built (module, grid) pairs for gradient ops.
@@ -253,17 +257,18 @@ def train_mimo(
             "The list-based fallback is not supported. Ensure Megatron-LM PR 3212 is available."
         )
 
-    # Use rank-local module PG for logging reductions to avoid global MPU fallback.
-    # NOTE: In non-colocated MIMO each rank participates in exactly one module, so
-    # "first non-None" unambiguously selects that module's PG. For colocated MIMO
-    # (where a rank participates in multiple modules), this selection must be
-    # replaced with per-module logging or an explicit module-aware reduction strategy.
-    local_pg_collection = next((pg for pg in mimo_infra.pg_collections.values() if pg is not None), None)
-    if local_pg_collection is None:
-        raise RuntimeError(
-            "No local ProcessGroupCollection found for this rank. "
-            "Ensure rank participation is correctly configured in MIMO infrastructure."
-        )
+    # Use rank-local module PG for logging reductions and checkpoint saving to
+    # avoid global MPU fallback. In non-colocated MIMO each rank participates in
+    # exactly one module, so "first non-None" unambiguously selects that module's PG.
+    active_modules = [(name, pg) for name, pg in mimo_infra.pg_collections.items() if pg is not None]
+    assert len(active_modules) == 1, (
+        f"Non-colocated MiMo requires exactly one active ProcessGroupCollection per rank, "
+        f"got {len(active_modules)}. Colocated MiMo is not supported by this code path."
+    )
+    active_module_name, local_pg_collection = active_modules[0]
+
+    if checkpoint_manager is None:
+        checkpoint_manager = DefaultCheckpointManager(cfg.checkpoint)
 
     # Initialize tracking variables
     total_loss_dict = {}
@@ -289,6 +294,13 @@ def train_mimo(
     timers("interval-time", log_level=0).start(barrier=True)
 
     while train_state.step < train_config.train_iters:
+        # Finalize any pending async saves (non-blocking). Placed at the top
+        # of the loop so async saves get a full iteration to complete.
+        checkpoint_manager.finalize_async_saves(
+            state=global_state,
+            blocking=False,
+        )
+
         # Handle profiling
         nsys_ctx = handle_profiling_step(
             prof_config,
@@ -395,24 +407,21 @@ def train_mimo(
             )
             timers("evaluate").stop()
 
-        # Checkpointing at specified intervals
-        if cfg.checkpoint.save_interval is not None and train_state.step % cfg.checkpoint.save_interval == 0:
-            timers("save-checkpoint", log_level=0).start(barrier=True)
-            save_checkpoint(
-                state=global_state,
-                model=[model],
-                optimizer=optimizer,
-                opt_param_scheduler=first_scheduler,
-                num_floating_point_operations_so_far=0,  # TODO: Add proper FLOPs tracking
-            )
-            timers("save-checkpoint").stop()
-
-        # Finalize any pending async saves (non-blocking during training)
-        maybe_finalize_async_save(
-            global_state=global_state,
-            ckpt_cfg=cfg.checkpoint,
-            blocking=False,
+        # Checkpointing (interval, signal, duration, exit-interval) and exit decision.
+        # TODO: MiMo FLOPs estimation is non-trivial (heterogeneous modules); pass 0 for now.
+        should_exit = checkpoint_and_decide_exit(
+            state=global_state,
+            model=[model],
+            optimizer=optimizer,
+            opt_param_scheduler=first_scheduler,
+            num_floating_point_operations_so_far=0,
+            checkpoint_manager=checkpoint_manager,
+            train_data_iterator=train_data_iterator,
+            pg_collection=local_pg_collection,
+            module_name=active_module_name,
         )
+        if should_exit:
+            break
 
     # Stop profiling
     handle_profiling_stop(
@@ -421,14 +430,6 @@ def train_mimo(
         dist.get_rank(),
         prof,
         nsys_nvtx_context,
-    )
-
-    # Finalize any remaining async saves before exit
-    maybe_finalize_async_save(
-        global_state=global_state,
-        ckpt_cfg=cfg.checkpoint,
-        blocking=True,
-        terminate=True,
     )
 
     timers("interval-time").stop()
