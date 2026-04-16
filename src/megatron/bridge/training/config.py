@@ -1178,7 +1178,7 @@ class ConfigContainer(Container):
 
         # Enforce async_save format restriction
         if self.checkpoint.async_save:
-            assert self.checkpoint.ckpt_format in ["torch_dist", "fsdp_dtensor"] (
+            assert self.checkpoint.ckpt_format in ["torch_dist", "fsdp_dtensor"], (
                 "async_save is only supported with ckpt_format='torch_dist','fsdp_dtensor'"
             )
 
