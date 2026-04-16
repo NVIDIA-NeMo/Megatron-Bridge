@@ -149,6 +149,14 @@ class NestedModel(nn.Module):
 class TestCanonicalLoRA:
     """Test suite for CanonicalLoRA PEFT implementation."""
 
+    def test_canonical_lora_raises_when_target_missing(self):
+        """Ensure CanonicalLoRA alerts when configured modules are not present in the model."""
+        model = SimpleModel()
+        lora = CanonicalLoRA(target_modules=["linear_q_typo"])
+
+        with pytest.raises(ValueError, match="linear_q_typo"):
+            lora(model, training=True)
+
     def test_canonical_lora_initialization(self):
         """Test CanonicalLoRA class initialization with default and custom parameters."""
         # Test default initialization
