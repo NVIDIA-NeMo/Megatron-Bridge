@@ -49,6 +49,8 @@ def register_allowed_target_prefix(prefix: str) -> None:
     This allows extending the default allowlist for use cases that require
     instantiating classes from other packages.
     """
+    if not isinstance(prefix, str) or not prefix.strip():
+        raise ValueError(f"Prefix must be a non-empty string, got {prefix!r}")
     _ALLOWED_TARGET_PREFIXES.add(prefix)
 
 
