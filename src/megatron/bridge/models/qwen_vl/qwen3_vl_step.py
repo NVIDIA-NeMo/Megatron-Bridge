@@ -46,8 +46,8 @@ def _get_qwen3_vl_padding_multiple(
     use_fp8_padding: bool,
     use_hybridep: bool,
     sequence_parallel: bool,
-) -> tuple[int, int]:
-    """Return the sequence padding multiple and local token divisor.
+) -> int:
+    """Return the sequence padding multiple for Qwen3-VL batch padding.
 
     HybridEP requires the per-rank token count after CP/SP sharding to be
     divisible by 128, otherwise the runtime JIT kernels can fail to compile.
@@ -56,18 +56,17 @@ def _get_qwen3_vl_padding_multiple(
     if use_fp8_padding:
         base_divisible_by = math.lcm(base_divisible_by, 16)
 
-    local_token_divisor = cp_size
-    if sequence_parallel:
-        local_token_divisor *= tp_size
-
     divisible_by = base_divisible_by
     if use_hybridep:
+        local_token_divisor = cp_size
+        if sequence_parallel:
+            local_token_divisor *= tp_size
         required_seq_multiple = (128 * local_token_divisor) // math.gcd(
             batch_size, 128 * local_token_divisor
         )
         divisible_by = math.lcm(base_divisible_by, required_seq_multiple)
 
-    return divisible_by, local_token_divisor
+    return divisible_by
 
 
 def get_batch_from_iterator(
@@ -190,6 +189,7 @@ def pack_or_pad_batch_sequences(
     attention_mask: torch.Tensor,
     position_ids: torch.Tensor,
     this_pg_collection,
+    *,
     use_fp8_padding: bool = False,
     use_hybridep: bool = False,
     sequence_parallel: bool = False,
@@ -207,7 +207,7 @@ def pack_or_pad_batch_sequences(
 
     tp_size = this_pg_collection.tp.size()
     cp_size = this_pg_collection.cp.size()
-    divisible_by, local_token_divisor = _get_qwen3_vl_padding_multiple(
+    divisible_by = _get_qwen3_vl_padding_multiple(
         batch_size=batch_size,
         tp_size=tp_size,
         cp_size=cp_size,
@@ -219,7 +219,15 @@ def pack_or_pad_batch_sequences(
     # build bshd sequences with tiny padding to be compatible with qwen3vl model
     target_len = math.ceil(cur_len / divisible_by) * divisible_by
     if force_to_pad_to_seq_len:
+        if seq_length is None:
+            raise ValueError("seq_length must be set when force_to_pad_to_seq_len=True.")
+        if seq_length % divisible_by != 0:
+            raise ValueError(
+                f"seq_length={seq_length} must be divisible by {divisible_by} "
+                "for the current TP/CP/SP/HybridEP padding requirements."
+            )
         target_len = seq_length
+
     tokens = pad_or_truncate_2d_to_len(tokens, target_len=target_len, max_cap=target_len, pad_value=0)
     labels = pad_or_truncate_2d_to_len(labels, target_len=target_len, max_cap=target_len, pad_value=-100)
     loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len=target_len, max_cap=target_len, pad_value=0)
