@@ -62,12 +62,14 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
 
     if hasattr(recipe.model, "use_transformer_engine_op_fuser") and recipe.model.use_transformer_engine_op_fuser:
         recipe.model.use_transformer_engine_op_fuser = False
-    recipe.model.apply_rope_fusion = True
-    recipe.model.cross_entropy_fusion_impl = "te"
+    if hasattr(recipe.model, "apply_rope_fusion"):
+        recipe.model.apply_rope_fusion = True
+    if hasattr(recipe.model, "cross_entropy_fusion_impl"):
+        recipe.model.cross_entropy_fusion_impl = "te"
 
     # TODO: This needs to be adjusted when overlapping HybridEP with computation or
     # the number of SMs for HybridEP is reduced.
-    if recipe.model.moe_flex_dispatcher_backend == "hybridep":
+    if hasattr(recipe.model, "moe_flex_dispatcher_backend") and recipe.model.moe_flex_dispatcher_backend == "hybridep":
         recipe.model.moe_hybridep_num_sms = 32
 
     return recipe
@@ -227,7 +229,7 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
 
     if settings.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)
-    else:
+    elif hasattr(cfg.model, "moe_token_dispatcher_type"):
         cfg.model.moe_token_dispatcher_type = "alltoall"
 
     return cfg
@@ -439,7 +441,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
 
     if args.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
-    else:
+    elif hasattr(recipe.model, "moe_token_dispatcher_type"):
         recipe.model.moe_token_dispatcher_type = "alltoall"
 
     return recipe
