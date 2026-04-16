@@ -388,9 +388,9 @@ class TestGlobalState:
             patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
             patch(
                 "builtins.__import__",
-                side_effect=lambda name, *args, **kwargs: mock_wandb
-                if name == "wandb"
-                else __import__(name, *args, **kwargs),
+                side_effect=lambda name, *args, **kwargs: (
+                    mock_wandb if name == "wandb" else __import__(name, *args, **kwargs)
+                ),
             ),
         ):
             logger = state.wandb_logger
@@ -512,14 +512,19 @@ class TestGlobalState:
         mock_config.checkpoint.save = "/tmp/checkpoints"
         mock_config.checkpoint.async_save = True
         mock_config.checkpoint.use_persistent_ckpt_worker = True
+        mock_config.checkpoint.async_strategy = "mcore"
+        mock_config.checkpoint.async_ckpt_cpu_priority = 10
+        mock_config.checkpoint.async_ckpt_io_priority = 3
         state._cfg = mock_config
 
         mock_async_queue = MagicMock()
+        mock_async_queue_cls = MagicMock(return_value=mock_async_queue)
+        mock_modules = {"AsyncCallsQueue": mock_async_queue_cls, "get_write_results_queue": MagicMock()}
 
-        with patch("megatron.bridge.training.state.AsyncCallsQueue", return_value=mock_async_queue) as mock_acq:
+        with patch("megatron.bridge.training.state.get_async_strategy", return_value=("mcore", mock_modules)):
             state.initialize_async_checkpoint_worker()
 
-            mock_acq.assert_called_once_with(persistent=True)
+            mock_async_queue_cls.assert_called_once_with(persistent=True)
             assert state._async_calls_queue == mock_async_queue
 
     def test_initialize_async_checkpoint_worker_disabled(self):
@@ -530,10 +535,10 @@ class TestGlobalState:
         mock_config.checkpoint.async_save = False
         state._cfg = mock_config
 
-        with patch("megatron.bridge.training.state.AsyncCallsQueue") as mock_acq:
+        with patch("megatron.bridge.training.state.get_async_strategy") as mock_gas:
             state.initialize_async_checkpoint_worker()
 
-            mock_acq.assert_not_called()
+            mock_gas.assert_not_called()
             assert state._async_calls_queue is None
 
     def test_async_calls_queue_property(self):

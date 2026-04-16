@@ -161,4 +161,4 @@ RUN echo "This distribution includes open source which is archived at the follow
     echo "For further inquiries or assistance, contact us at oss-requests@nvidia.com" >> NOTICES.txt
 
 # Force legacy CPU offload path until llama OOMs with new path are fixed
-ENV NVTE_CPU_OFFLOAD_V1="1"
+# ENV NVTE_CPU_OFFLOAD_V1="1"

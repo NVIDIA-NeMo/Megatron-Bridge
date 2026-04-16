@@ -335,7 +335,9 @@ def _fuse_moe_expert_weights(model_dir: Path, num_experts: int) -> None:
     if not keys_to_remove:
         return
 
-    new_state_dict = {k: v for k, v in state_dict.items() if k not in keys_to_remove}
+    # Clone kept tensors so they are no longer backed by the mmap of weights_path,
+    # which will be overwritten by save_file below.
+    new_state_dict = {k: v.clone() for k, v in state_dict.items() if k not in keys_to_remove}
 
     for prefix, experts in layers.items():
         gate_up = torch.stack(

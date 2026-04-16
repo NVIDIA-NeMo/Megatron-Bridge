@@ -30,7 +30,7 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
-def wan_1_3B_pretrain_config() -> ConfigContainer:
+def wan_1_3b_pretrain_config() -> ConfigContainer:
     """
     Return a pre-training configuration for WAN 1.3B model.
 
@@ -78,7 +78,7 @@ def wan_1_3B_pretrain_config() -> ConfigContainer:
     dataset = WanDatasetConfig(
         path=None,
         seq_length=1024,
-        packing_buffer_size=None,
+        packing_buffer_size=200,
         micro_batch_size=micro_batch_size,
         global_batch_size=global_batch_size,
         num_workers=16,
@@ -129,7 +129,7 @@ def wan_1_3B_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-def wan_14B_pretrain_config() -> ConfigContainer:
+def wan_14b_pretrain_config() -> ConfigContainer:
     """
     Return a pre-training configuration for WAN 14B model.
 
@@ -180,7 +180,7 @@ def wan_14B_pretrain_config() -> ConfigContainer:
     dataset = WanDatasetConfig(
         path=None,
         seq_length=1024,
-        packing_buffer_size=None,
+        packing_buffer_size=200,
         micro_batch_size=micro_batch_size,
         global_batch_size=global_batch_size,
         num_workers=16,
@@ -231,14 +231,14 @@ def wan_14B_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-def wan_1_3B_sft_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def wan_1_3b_sft_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
     """
     Return a fine-tuning configuration for WAN 1.3B model.
 
-    Uses the same defaults as wan_1_3B_pretrain_config() and overrides checkpoint to load from
+    Uses the same defaults as wan_1_3b_pretrain_config() and overrides checkpoint to load from
     pretrained_checkpoint when provided.
     """
-    cfg = wan_1_3B_pretrain_config()
+    cfg = wan_1_3b_pretrain_config()
     base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
     run_output_dir = os.path.join(base_output_dir, "default")
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
@@ -254,14 +254,14 @@ def wan_1_3B_sft_config(pretrained_checkpoint: str | None = None) -> ConfigConta
     return cfg
 
 
-def wan_14B_sft_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def wan_14b_sft_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
     """
     Return a fine-tuning configuration for WAN 14B model.
 
-    Uses the same defaults as wan_14B_pretrain_config() and overrides checkpoint to load from
+    Uses the same defaults as wan_14b_pretrain_config() and overrides checkpoint to load from
     pretrained_checkpoint when provided.
     """
-    cfg = wan_14B_pretrain_config()
+    cfg = wan_14b_pretrain_config()
     base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
     run_output_dir = os.path.join(base_output_dir, "default")
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
