@@ -13,3 +13,7 @@
 # limitations under the License.
 
 from megatron.bridge.diffusion.recipes.wan import *  # noqa: F401, F403
+from megatron.bridge.recipes.wan.wan_perf import (  # noqa: F401
+    wan_14b_pretrain_16gpu_gb200_bf16_config,
+    wan_14b_pretrain_32gpu_h100_bf16_config,
+)

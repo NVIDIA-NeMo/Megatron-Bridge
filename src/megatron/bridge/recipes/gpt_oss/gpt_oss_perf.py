@@ -215,55 +215,75 @@ def gpt_oss_120b_pretrain_v2_64gpu_h100_bf16_config() -> ConfigContainer:
 
 
 # =============================================================================
-# GPT-OSS 120B — FP8-MX aliases (V1/V2): same config as BF16 counterparts
+# GPT-OSS 120B — FP8-MX variants (V1/V2): same parallelism as BF16, MXFP8 precision
 # =============================================================================
 
 
 def gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× GB300, FP8-MX (alias of BF16)."""
-    return gpt_oss_120b_pretrain_64gpu_gb300_bf16_config()
+    """GPT-OSS 120B pretrain: 64× GB300, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_64gpu_gb300_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
 
 
 def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× GB200, FP8-MX (alias of BF16)."""
-    return gpt_oss_120b_pretrain_64gpu_gb200_bf16_config()
+    """GPT-OSS 120B pretrain: 64× GB200, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_64gpu_gb200_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
 
 
 def gpt_oss_120b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× B300, FP8-MX (alias of BF16)."""
-    return gpt_oss_120b_pretrain_64gpu_b300_bf16_config()
+    """GPT-OSS 120B pretrain: 64× B300, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_64gpu_b300_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
 
 
 def gpt_oss_120b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× B200, FP8-MX (alias of BF16)."""
-    return gpt_oss_120b_pretrain_64gpu_b200_bf16_config()
+    """GPT-OSS 120B pretrain: 64× B200, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_64gpu_b200_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
 
 
 def gpt_oss_120b_pretrain_64gpu_h100_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× H100, FP8-MX (alias of BF16)."""
-    return gpt_oss_120b_pretrain_64gpu_h100_bf16_config()
+    """GPT-OSS 120B pretrain: 64× H100, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_64gpu_h100_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
 
 
 def gpt_oss_120b_pretrain_v2_64gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain V2: 64× GB300, FP8-MX (alias of BF16)."""
-    return gpt_oss_120b_pretrain_v2_64gpu_gb300_bf16_config()
+    """GPT-OSS 120B pretrain V2: 64× GB300, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_v2_64gpu_gb300_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
 
 
 def gpt_oss_120b_pretrain_v2_64gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain V2: 64× GB200, FP8-MX (alias of BF16)."""
-    return gpt_oss_120b_pretrain_v2_64gpu_gb200_bf16_config()
+    """GPT-OSS 120B pretrain V2: 64× GB200, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_v2_64gpu_gb200_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
 
 
 def gpt_oss_120b_pretrain_v2_64gpu_b300_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain V2: 64× B300, FP8-MX (alias of BF16)."""
-    return gpt_oss_120b_pretrain_v2_64gpu_b300_bf16_config()
+    """GPT-OSS 120B pretrain V2: 64× B300, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_v2_64gpu_b300_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
 
 
 def gpt_oss_120b_pretrain_v2_64gpu_b200_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain V2: 64× B200, FP8-MX (alias of BF16)."""
-    return gpt_oss_120b_pretrain_v2_64gpu_b200_bf16_config()
+    """GPT-OSS 120B pretrain V2: 64× B200, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_v2_64gpu_b200_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
 
 
 def gpt_oss_120b_pretrain_v2_64gpu_h100_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain V2: 64× H100, FP8-MX (alias of BF16)."""
-    return gpt_oss_120b_pretrain_v2_64gpu_h100_bf16_config()
+    """GPT-OSS 120B pretrain V2: 64× H100, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_v2_64gpu_h100_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg

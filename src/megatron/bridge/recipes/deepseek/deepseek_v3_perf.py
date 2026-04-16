@@ -223,7 +223,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["mlp"]
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
@@ -256,7 +256,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["mlp"]
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
@@ -720,7 +720,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["mlp"]
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
@@ -753,7 +753,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["mlp"]
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
@@ -1048,9 +1048,10 @@ def deepseek_v3_pretrain_256gpu_b300_nvfp4_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB200, NVFP4 (same layout as BF16)."""
+    """DeepSeek V3 pretrain: 256× GB200, NVFP4 (same layout as BF16, mlp recompute)."""
     cfg = deepseek_v3_pretrain_256gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.model.recompute_modules = ["mlp"]
     return cfg
 
 
@@ -1072,22 +1073,29 @@ def deepseek_v3_pretrain_v2_256gpu_b200_nvfp4_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_v2_256gpu_b300_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain V2: 256× B300, NVFP4 (same layout as BF16)."""
+    """DeepSeek V3 pretrain V2: 256× B300, NVFP4 (PP=16 matching base V2 layout)."""
     cfg = deepseek_v3_pretrain_v2_256gpu_b300_bf16_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.model.pipeline_model_parallel_size = 16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
     return cfg
 
 
 def deepseek_v3_pretrain_v2_256gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain V2: 256× GB200, NVFP4 (same layout as BF16)."""
+    """DeepSeek V3 pretrain V2: 256× GB200, NVFP4 (same layout as BF16, mlp recompute)."""
     cfg = deepseek_v3_pretrain_v2_256gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.model.recompute_modules = ["mlp"]
     return cfg
 
 
 def deepseek_v3_pretrain_v2_1024gpu_h100_fp8sc_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain V2: 1024× H100, FP8-SC (alias of FP8-CS)."""
-    return deepseek_v3_pretrain_v2_1024gpu_h100_fp8cs_config()
+    """DeepSeek V3 pretrain V2: 1024× H100, FP8-SC (VP=2, no custom PP layout)."""
+    cfg = deepseek_v3_pretrain_v2_1024gpu_h100_fp8cs_config()
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_layout = None
+    return cfg
 
 
 # =============================================================================
