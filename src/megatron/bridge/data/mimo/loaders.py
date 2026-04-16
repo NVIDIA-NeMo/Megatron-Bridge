@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional, Tuple
 import torch
 from torch.utils.data import DataLoader
 
-from megatron.bridge.data.mimo.dp_utils import get_mimo_dp_info
+from megatron.bridge.data.mimo.dp_utils import get_mimo_sampling_info
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -26,11 +26,13 @@ def build_mimo_data_loaders(
     valid_samples: int,
     test_samples: int,
 ) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
-    """Build MIMO data loaders with per-module DP settings.
+    """Build MIMO data loaders with globally consistent sampling.
 
-    Creates data loaders with DP-aware sampling based on the MIMO parallelism
-    configuration. Only ranks that need data (first/last PP stage) will get
-    non-None loaders.
+    All data-loading ranks receive identical global micro-batches (the sampler
+    uses dp_size=1).  Per-module DP sub-sharding is deferred to
+    ``slice_batch_for_mimo`` in the forward step, ensuring consistency with
+    the BridgeCommunicator's fan-in/fan-out routing for asymmetric DP configs.
+    Only ranks that need data (first/last PP stage) will get non-None loaders.
 
     Args:
         cfg: Configuration container with MimoModelProvider as cfg.model.
@@ -75,12 +77,25 @@ def build_mimo_data_loaders(
             "MimoModelProvider._grids is None. Ensure build_model() is called before building data loaders."
         )
 
+    # Validate that micro_batch_size is divisible by every module's DP size.
+    # slice_batch_for_mimo divides the micro-batch contiguously by the module's
+    # DP size in forward_step; a non-divisible MBS would leave a remainder.
+    micro_batch_size = cfg.train.micro_batch_size
+    for mod_name, mod_cfg in cfg.model.mimo_parallelism_config.module_parallelisms.items():
+        dp = mod_cfg.data_parallel_size
+        if micro_batch_size % dp != 0:
+            raise ValueError(
+                f"micro_batch_size ({micro_batch_size}) must be divisible by "
+                f"data_parallel_size ({dp}) of module '{mod_name}'. "
+                f"slice_batch_for_mimo requires an evenly divisible micro-batch."
+            )
+
     print_rank_0("> building MIMO train, validation, and test datasets ...")
 
     # Use cached grids from build_model()
     grids = cfg.model._grids
 
-    dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(cfg.model.mimo_parallelism_config, grids)
+    sampler_dp_rank, sampler_dp_size, needs_data = get_mimo_sampling_info(cfg.model.mimo_parallelism_config, grids)
 
     if not needs_data:
         return None, None, None
@@ -100,7 +115,9 @@ def build_mimo_data_loaders(
         f"test={len(test_ds) if test_ds else 0}"
     )
 
-    # Build data loaders with DP-aware sampling
+    # Build data loaders with globally consistent sampling.
+    # sampler_dp_size=1 so all data-loading ranks see the same batches.
+    # Per-module DP sub-sharding is done later by slice_batch_for_mimo.
     collate_fn = mimo_provider.get_collate_fn()
     micro_batch_size = cfg.train.micro_batch_size
 
@@ -109,8 +126,8 @@ def build_mimo_data_loaders(
             return None
         sampler = torch.utils.data.DistributedSampler(
             dataset,
-            num_replicas=dp_size,
-            rank=dp_rank,
+            num_replicas=sampler_dp_size,
+            rank=sampler_dp_rank,
             shuffle=shuffle,
         )
         return DataLoader(

@@ -1,9 +1,11 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Tests for MIMO DP utilities."""
 
+import pytest
+import torch
 import torch.distributed as dist
 
-from megatron.bridge.data.mimo.dp_utils import get_mimo_dp_info
+from megatron.bridge.data.mimo.dp_utils import get_mimo_dp_info, slice_batch_for_mimo
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 
 
@@ -127,3 +129,85 @@ def test_get_mimo_dp_info_non_participating_rank(monkeypatch):
 
     assert needs_data is False
     assert loader_module == "language"  # Default to LLM
+
+
+# ---------------------------------------------------------------------------
+# Tests: slice_batch_for_mimo
+# ---------------------------------------------------------------------------
+
+
+class TestSliceBatchForMimo:
+    """Test per-module DP batch slicing."""
+
+    def test_dp_size_1_returns_original(self):
+        batch = {"tokens": torch.randn(4, 2048)}
+        result = slice_batch_for_mimo(batch, dp_rank=0, dp_size=1)
+        assert result is batch  # no copy, same object
+
+    def test_slices_tensors_along_batch_dim(self):
+        tokens = torch.arange(12).reshape(4, 3)  # [4, 3]
+        batch = {"tokens": tokens}
+
+        s0 = slice_batch_for_mimo(batch, dp_rank=0, dp_size=2)
+        s1 = slice_batch_for_mimo(batch, dp_rank=1, dp_size=2)
+
+        assert s0["tokens"].shape == (2, 3)
+        assert s1["tokens"].shape == (2, 3)
+        torch.testing.assert_close(s0["tokens"], tokens[0:2])
+        torch.testing.assert_close(s1["tokens"], tokens[2:4])
+
+    def test_slices_4_way(self):
+        pixels = torch.randn(8, 3, 224, 224)  # 8 images
+        batch = {"pixel_values": pixels}
+
+        for rank in range(4):
+            sliced = slice_batch_for_mimo(batch, dp_rank=rank, dp_size=4)
+            assert sliced["pixel_values"].shape == (2, 3, 224, 224)
+            torch.testing.assert_close(sliced["pixel_values"], pixels[rank * 2 : rank * 2 + 2])
+
+    def test_recurses_into_nested_dicts(self):
+        batch = {
+            "tokens": torch.randn(4, 2048),
+            "modality_inputs": {
+                "vision": {
+                    "pixel_values": torch.randn(4, 3, 224, 224),
+                }
+            },
+        }
+        sliced = slice_batch_for_mimo(batch, dp_rank=1, dp_size=2)
+
+        assert sliced["tokens"].shape[0] == 2
+        assert sliced["modality_inputs"]["vision"]["pixel_values"].shape[0] == 2
+
+    def test_preserves_non_tensor_values(self):
+        batch = {
+            "tokens": torch.randn(4, 10),
+            "metadata": "some_string",
+            "flags": 42,
+        }
+        sliced = slice_batch_for_mimo(batch, dp_rank=0, dp_size=2)
+
+        assert sliced["metadata"] == "some_string"
+        assert sliced["flags"] == 42
+        assert sliced["tokens"].shape[0] == 2
+
+    def test_slices_lists(self):
+        batch = {
+            "tokens": torch.randn(4, 10),
+            "filenames": ["a.jpg", "b.jpg", "c.jpg", "d.jpg"],
+        }
+        sliced = slice_batch_for_mimo(batch, dp_rank=1, dp_size=2)
+
+        assert sliced["filenames"] == ["c.jpg", "d.jpg"]
+
+    def test_raises_on_indivisible_batch(self):
+        batch = {"tokens": torch.randn(5, 10)}  # 5 not divisible by 2
+        with pytest.raises(ValueError, match="not divisible"):
+            slice_batch_for_mimo(batch, dp_rank=0, dp_size=2)
+
+    def test_none_batch_passthrough(self):
+        """None batch should not crash (forward_step passes None for non-data ranks)."""
+        # slice_batch_for_mimo expects a dict; None is handled by caller.
+        # This test documents that dp_size=1 early-return handles the common case.
+        result = slice_batch_for_mimo({}, dp_rank=0, dp_size=1)
+        assert result == {}
