@@ -552,7 +552,7 @@ class TestCanonicalLoRA:
     def test_canonical_lora_training_vs_inference_mode(self):
         """Test CanonicalLoRA behavior in training vs inference mode."""
         model = SimpleModel()
-        lora = CanonicalLoRA()
+        lora = CanonicalLoRA(target_modules=["linear_proj", "linear_fc2"])
 
         # Test training mode
         training_model = lora(model, training=True)

@@ -99,6 +99,16 @@ class PEFT(ABC):
         if isinstance(self, ModuleMatcher):
             self._reset_target_match_state()
 
+            def _validate_only(
+                module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None
+            ) -> nn.Module:
+                self.match(module, name, prefix)
+                return module
+
+            self._walk_model(model, _validate_only)
+            self._validate_target_matches()
+            self._reset_target_match_state()
+
         self.freeze_model(model, training=training)
 
         self._walk_model(model, self.transform)
@@ -115,9 +125,6 @@ class PEFT(ABC):
                 model_chunk.train(mode=training)
         else:
             model.train(mode=training)
-
-        if isinstance(self, ModuleMatcher):
-            self._validate_target_matches()
 
         return model
 
