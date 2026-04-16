@@ -37,6 +37,13 @@ skills/perf-techniques/sequence-packing/SKILL
 skills/perf-techniques/hybrid-context-parallel/SKILL
 skills/perf-techniques/expert-parallel-overlap/SKILL
 skills/perf-techniques/moe-comm-overlap/SKILL
+skills/perf-techniques/activation-recompute/SKILL
+skills/perf-techniques/memory-tuning/SKILL
+skills/perf-techniques/moe-dispatcher-selection/SKILL
+skills/perf-techniques/moe-hardware-configs/SKILL
+skills/perf-techniques/moe-long-context/SKILL
+skills/perf-techniques/moe-optimization-workflow/SKILL
+skills/perf-techniques/moe-vlm-training/SKILL
 ```
 
 ```{toctree}
