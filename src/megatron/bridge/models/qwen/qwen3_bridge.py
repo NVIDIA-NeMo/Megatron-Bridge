@@ -55,9 +55,16 @@ class Qwen3Bridge(MegatronModelBridge):
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
-        # First create simple 1:1 parameter mappings using a dictionary for readability
+        """Return the MegatronMappingRegistry for Qwen3 parameter conversion.
 
+        Covers all Megatron-Core parameter names for both the standard decoder
+        layers and the MTP (Multi-Token Prediction) transformer layers that are
+        present when ``mtp_num_layers >= 1``.
+
+        Simple 1:1 renames are expressed as :class:`AutoMapping` entries.
+        The fused QKV matrix is handled by :class:`QKVMapping` and the gated
+        MLP gate+up projection by :class:`GatedMLPMapping`.
+        """
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
