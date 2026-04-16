@@ -19,22 +19,5 @@ export CUDA_VISIBLE_DEVICES="0,1"
 
 uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/models/minimax_m2
-
-# Functional tests execute bridge code in torch.distributed subprocesses, which bypasses the
-# outer coverage process. Run an in-process import of the bridge module so that coverage xml
-# always has at least one measured file even if COVERAGE_PROCESS_START files are absent.
-uv run python -c "
-import coverage
-cov = coverage.Coverage(
-    data_file='/opt/Megatron-Bridge/.coverage',
-    data_suffix=True,
-    config_file='/opt/Megatron-Bridge/pyproject.toml',
-)
-cov.start()
-from megatron.bridge.models.minimax_m2 import MiniMaxM2Bridge  # noqa: F401
-cov.stop()
-cov.save()
-" 2>/dev/null || true
-
+  tests/functional_tests/test_groups/models/glm_moe_dsa
 coverage combine -q
