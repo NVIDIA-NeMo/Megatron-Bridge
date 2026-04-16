@@ -25,7 +25,7 @@ from PIL import Image  # noqa: F401  # may be used downstream by processors
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs, Qwen2_5_VLVisualInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs, Qwen2_5_VLVisualInputs, Qwen2AudioInputs
 
 
 # Local message used when optional qwen_vl_utils dependency is missing
@@ -536,6 +536,14 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     # to avoid a ValueError from apply_chat_template.
     can_pad = tokenizer is not None and tokenizer.pad_token is not None
 
+    # Force right-padding for training collation.  Some tokenizers (e.g. Gemma3)
+    # default to left-padding which breaks downstream sequence packing: the packer
+    # copies tokens[seq_idx, :length] from position 0, so left-padded content gets
+    # replaced by padding tokens and image/special tokens are lost.
+    saved_padding_side = getattr(tokenizer, "padding_side", None)
+    if tokenizer is not None:
+        tokenizer.padding_side = "right"
+
     batch = processor.apply_chat_template(
         [example["conversation"] for example in examples],
         tokenize=True,
@@ -544,6 +552,10 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         return_tensors="pt",
         return_dict=True,
     )
+
+    # Restore original padding side so generation paths are unaffected.
+    if tokenizer is not None and saved_padding_side is not None:
+        tokenizer.padding_side = saved_padding_side
 
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
@@ -575,6 +587,107 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if "image_grid_thw" in batch:
         del batch["image_grid_thw"]
     batch["visual_inputs"] = visual_inputs
+    return batch
+
+
+def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+    """Collate function for Qwen2-Audio model.
+
+    Uses HF-compatible label construction:
+    - Backward search for assistant text spans (matching HF Trainer convention)
+    - No skipped_tokens masking on labels (model learns to predict EOS/im_end)
+    - Loss mask derived directly from active label positions
+    """
+    texts = []
+    audio_inputs = []
+    for example in examples:
+        text = processor.apply_chat_template(example["conversation"], tokenize=False)
+        texts.append(text)
+        audio = example.get("audio")
+        if audio is not None:
+            if isinstance(audio, tuple):
+                audio_inputs.append(audio[0])  # (array, sr) -> array
+            elif isinstance(audio, dict):
+                audio_inputs.append(audio["array"])
+            else:
+                audio_inputs.append(audio)
+
+    # Megatron's packing and padding utilities assume right-padding
+    # (tokens[:length] extracts real content). Override the tokenizer's
+    # default padding_side which may be "left" (e.g. Qwen2Audio).
+    tokenizer = getattr(processor, "tokenizer", processor)
+    orig_padding_side = getattr(tokenizer, "padding_side", "right")
+    tokenizer.padding_side = "right"
+
+    batch = processor(
+        text=texts,
+        audio=audio_inputs if audio_inputs else None,
+        return_tensors="pt",
+        padding=True,
+    )
+
+    tokenizer.padding_side = orig_padding_side
+    input_ids = batch["input_ids"]
+    batch_size, seq_len = input_ids.shape
+    pad_token_id = tokenizer.pad_token_id
+
+    # --- HF-compatible label construction ---
+    # Step 1: Build unshifted labels (same convention as HF Trainer)
+    hf_labels = input_ids.clone()
+
+    for i, example in enumerate(examples):
+        ids = input_ids[i].tolist()
+        assistant_texts = _gather_assistant_text_segments(example)
+
+        # Find assistant span using backward search (like HF's Qwen2AudioCollator)
+        found = -1
+        for asst_text in assistant_texts:
+            asst_token_ids = tokenizer(asst_text, add_special_tokens=False)["input_ids"]
+            span_len = len(asst_token_ids)
+            if span_len == 0:
+                continue
+            for start in range(len(ids) - span_len, -1, -1):
+                if ids[start : start + span_len] == asst_token_ids:
+                    found = start
+                    break
+            if found >= 0:
+                break
+
+        if found >= 0:
+            # Mask everything before the assistant span (prompt + special tokens)
+            hf_labels[i, :found] = IGNORE_INDEX
+        else:
+            warnings.warn(f"Could not find assistant span for example {i}, masking all labels", stacklevel=2)
+            hf_labels[i, :] = IGNORE_INDEX
+
+        # Mask padding tokens
+        if pad_token_id is not None:
+            hf_labels[i][input_ids[i] == pad_token_id] = IGNORE_INDEX
+
+    # Step 2: Shift labels for Megatron (labels[j] = hf_labels[j+1])
+    labels = hf_labels[:, 1:]
+    labels = torch.cat([labels, IGNORE_INDEX * torch.ones_like(labels[:, :1])], dim=1)
+    batch["labels"] = labels
+
+    # Step 3: Derive loss_mask from active label positions
+    batch["loss_mask"] = (labels != IGNORE_INDEX).float()
+
+    # Ensure position_ids exist
+    if "position_ids" not in batch:
+        batch["position_ids"] = (
+            torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1).clone().contiguous()
+        )
+
+    # Wrap audio tensors in Qwen2AudioInputs and attach as audio_inputs
+    audio_inputs = Qwen2AudioInputs(
+        input_features=batch.get("input_features"),
+        feature_attention_mask=batch.get("feature_attention_mask"),
+    )
+    for key in ("input_features", "feature_attention_mask"):
+        if key in batch:
+            del batch[key]
+    batch["audio_inputs"] = audio_inputs
+
     return batch
 
 
@@ -818,6 +931,7 @@ COLLATE_FNS = {
     "Qwen3VLProcessor": qwen2_5_collate_fn,
     "NemotronNanoVLV2Processor": nemotron_nano_v2_vl_collate_fn,
     "PixtralProcessor": ministral3_collate_fn,  # Ministral3 uses PixtralProcessor
+    "Qwen2AudioProcessor": qwen2_audio_collate_fn,
     "Glm4vProcessor": glm4v_collate_fn,
     "KimiK25Processor": kimi_k25_vl_collate_fn,
     "default": default_collate_fn,

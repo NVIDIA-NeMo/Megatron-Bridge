@@ -146,7 +146,7 @@ WAN uses different flow-matching hyperparameters for pretraining vs fine-tuning.
 
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe wan_1_3B_pretrain_config \
+  --recipe wan_1_3b_pretrain_config \
   --step_func wan_step
 ```
 
@@ -154,7 +154,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe wan_1_3B_pretrain_config \
+  --recipe wan_1_3b_pretrain_config \
   --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan
 ```
@@ -163,7 +163,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 
 ```bash
 uv run torchrun --nproc_per_node=$NUM_GPUS scripts/training/run_recipe.py \
-  --recipe wan_1_3B_pretrain_config \
+  --recipe wan_1_3b_pretrain_config \
   --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan \
   train.global_batch_size=8 \

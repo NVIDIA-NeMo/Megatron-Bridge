@@ -22,6 +22,7 @@ def mimo_collate_fn(
         batch: List of examples from MimoDataset, each containing:
             - input_ids: Token IDs with placeholder tokens
             - labels: Labels for causal LM training
+            - loss_mask: Per-token loss mask
             - attention_mask: Attention mask
             - position_ids: Position indices
             - modality_inputs: Dict[str, Dict[str, Any]] with preprocessed inputs
@@ -31,6 +32,7 @@ def mimo_collate_fn(
         Dict containing:
             - input_ids: (batch, seq) stacked token IDs
             - labels: (batch, seq) stacked labels
+            - loss_mask: (batch, seq) stacked per-token loss mask
             - attention_mask: (batch, seq) attention mask
             - position_ids: (batch, seq) position indices
             - modality_inputs: Dict[str, Dict[str, Tensor]] with batched modality tensors
@@ -59,6 +61,7 @@ def mimo_collate_fn(
     labels = torch.stack([item["labels"] for item in batch])
     attention_mask = torch.stack([item["attention_mask"] for item in batch])
     position_ids = torch.stack([item["position_ids"] for item in batch])
+    loss_mask = torch.stack([item["loss_mask"] for item in batch])
 
     # Collate modality inputs
     modality_inputs: Dict[str, Dict[str, Any]] = {}
@@ -110,6 +113,7 @@ def mimo_collate_fn(
     return {
         "input_ids": input_ids,
         "labels": labels,
+        "loss_mask": loss_mask,
         "attention_mask": attention_mask,
         "position_ids": position_ids,
         "modality_inputs": modality_inputs,

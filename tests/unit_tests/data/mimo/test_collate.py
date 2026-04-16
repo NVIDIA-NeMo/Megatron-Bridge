@@ -17,6 +17,7 @@ def make_sample(
     return {
         "input_ids": torch.randint(0, 1000, (seq_length,)),
         "labels": torch.randint(0, 1000, (seq_length,)),
+        "loss_mask": torch.ones(seq_length, dtype=torch.float32),
         "attention_mask": torch.ones(seq_length),
         "position_ids": torch.arange(seq_length),
         "modality_inputs": modalities,
@@ -34,6 +35,7 @@ class TestMimoCollateFn:
 
         assert "input_ids" in result
         assert "labels" in result
+        assert "loss_mask" in result
         assert "attention_mask" in result
         assert "position_ids" in result
         assert "modality_inputs" in result
@@ -48,6 +50,7 @@ class TestMimoCollateFn:
 
         assert result["input_ids"].shape == (batch_size, seq_length)
         assert result["labels"].shape == (batch_size, seq_length)
+        assert result["loss_mask"].shape == (batch_size, seq_length)
         assert result["attention_mask"].shape == (batch_size, seq_length)
         assert result["position_ids"].shape == (batch_size, seq_length)
 
