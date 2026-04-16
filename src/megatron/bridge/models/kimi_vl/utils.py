@@ -89,16 +89,17 @@ def dequantize_int4(
 def quantize_to_int4(
     weight: torch.Tensor,
     group_size: int = 32,
+    scale_dtype: torch.dtype = torch.bfloat16,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Quantize bfloat16/float16 weights to INT4 packed format.
 
     Returns:
         weight_packed: INT4 values packed into int32 (8 values per int32)
-        weight_scale: Per-group scale factors (float16)
-        weight_shape: Original tensor shape (int64)
+        weight_scale: Per-group scale factors in ``scale_dtype``
+        weight_shape: Original tensor shape (int32)
     """
     out_features, in_features = weight.shape
-    weight_shape = torch.tensor([out_features, in_features], dtype=torch.int64)
+    weight_shape = torch.tensor([out_features, in_features], dtype=torch.int32)
 
     # Convert to float32 for computation
     w = weight.float()
@@ -133,6 +134,6 @@ def quantize_to_int4(
         packed |= (w_q_grouped[:, :, i] & 0xF) << (i * 4)
 
     weight_packed = packed
-    weight_scale = scale.to(torch.float16)
+    weight_scale = scale.to(scale_dtype)
 
     return weight_packed, weight_scale, weight_shape

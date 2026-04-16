@@ -60,12 +60,22 @@ console = Console()
 
 # Parameters where Megatron and HF may use different dtypes.
 # These are compared in float32 to avoid false mismatches.
+# TODO(yuya): Make this ignore list (model_type, param_name)
 IGNORE_PRECISION_PARAMS = [
     "e_score_correction_bias",
     "A_log",
     "linear_attn.norm.weight",
     "dt_bias",
+    "expert_bias",  # MoE gate expert bias: float32 in Megatron, bfloat16 in HF
+    # MiniMax-M2: QK norms stored as bf16 in HF, loaded as fp32 by Megatron config.params_dtype
+    "q_norm.weight",
+    "k_norm.weight",
+    # MiniMax-M2: router gate stored as fp32 in HF, loaded as bf16 via autocast_dtype
+    "block_sparse_moe.gate.weight",
 ]
+
+# FP8 dtypes whose dequantisation is inherently lossy — allclose is meaningless.
+_FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
 
 
 @torchrun_main
@@ -80,6 +90,7 @@ def main(
     megatron_load_path: str | None = None,
     trust_remote_code: bool | None = None,
     strict: bool = False,
+    skip_save: bool = False,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -160,18 +171,48 @@ def main(
         console.print(f"[yellow]Expert parallel size: {model_provider.expert_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/yellow]")
 
+    # Weight comparison handles three situations:
+    #
+    # 1. FP8 params (float8_e4m3fn / float8_e5m2)  →  SKIP allclose.
+    #    Block-wise dequantisation on import is inherently lossy; the
+    #    original fp8 bit-pattern cannot be reconstructed, so comparing
+    #    values is meaningless.  (e.g. MiniMax-M2 expert & attention weights)
+    #
+    # 2. Non-FP8 dtype mismatch or IGNORE_PRECISION_PARAMS  →  CAST to
+    #    float32, then allclose.  Covers norms stored as bf16 in HF but
+    #    fp32 in Megatron (or vice-versa for gates), and params known to
+    #    have precision differences.
+    #
+    # 3. Regular params (same dtype, not in ignore list)  →  direct allclose.
+
     all_match = True
+    fp8_skip_count = 0
+    fp8_skip_samples: list[str] = []
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
             original_param = bridge.hf_pretrained.state[name]
             compare_param = param
             compare_original = original_param
-            # Cast to float32 for params with known precision mismatches.
-            # Any new known mismatch should be recorded in IGNORE_PRECISION_PARAMS above.
-            if any(p in name for p in IGNORE_PRECISION_PARAMS):
+
+            # --- Case 1: FP8 → skip (lossy dequantisation) ---
+            if original_param.dtype in _FP8_DTYPES or compare_param.dtype in _FP8_DTYPES:
+                fp8_skip_count += 1
+                if len(fp8_skip_samples) < 20:
+                    fp8_skip_samples.append(
+                        f"{name}: exported {compare_param.dtype} vs original {original_param.dtype}"
+                    )
+                match = True
+
+            # --- Case 2: non-FP8 dtype mismatch or known precision param → cast to fp32 ---
+            elif compare_param.dtype != compare_original.dtype or any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
-            match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
+                match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
+
+            # --- Case 3: regular param → direct allclose ---
+            else:
+                match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
+
             all_match = all_match and match
             table.add_row(
                 name,
@@ -182,19 +223,32 @@ def main(
             )
 
     if is_rank_0:
+        if fp8_skip_count > 0:
+            console.print(
+                f"[yellow]WARNING: {fp8_skip_count} FP8 params skipped allclose (dequantisation is lossy):[/yellow]"
+            )
+            for entry in fp8_skip_samples:
+                console.print(f"  [yellow]{entry}[/yellow]")
+            if fp8_skip_count > len(fp8_skip_samples):
+                console.print(f"  [yellow]... and {fp8_skip_count - len(fp8_skip_samples)} more[/yellow]")
         console.print(table)
-        console.print(f"Saving HF-ckpt in {save_path}...")
-
-    bridge.save_hf_pretrained(megatron_model, save_path, strict=strict)
-
-    # Save in Megatron format if path is provided
-    if megatron_save_path:
-        if is_rank_0:
-            console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
-        bridge.save_megatron_model(megatron_model, megatron_save_path)
 
     if not all_match:
         raise ValueError("Weight mismatch detected")
+
+    if skip_save:
+        if is_rank_0:
+            console.print("[green]--skip-save: skipping HF/Megatron save (verification only)[/green]")
+    else:
+        if is_rank_0:
+            console.print(f"Saving HF-ckpt in {save_path}...")
+        bridge.save_hf_pretrained(megatron_model, save_path, strict=strict)
+
+        # Save in Megatron format if path is provided
+        if megatron_save_path:
+            if is_rank_0:
+                console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
+            bridge.save_megatron_model(megatron_model, megatron_save_path)
 
 
 if __name__ == "__main__":
@@ -227,6 +281,9 @@ if __name__ == "__main__":
     )
     parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
     parser.add_argument("--not-strict", action="store_true", help="Perform loose validation during weight export")
+    parser.add_argument(
+        "--skip-save", action="store_true", help="Skip saving the model after comparison (verification only)"
+    )
     args = parser.parse_args()
     main(
         args.hf_model_id,
@@ -238,6 +295,7 @@ if __name__ == "__main__":
         args.megatron_save_path,
         args.megatron_load_path,
         args.trust_remote_code,
+        skip_save=args.skip_save,
     )
 
     if torch.distributed.is_initialized():

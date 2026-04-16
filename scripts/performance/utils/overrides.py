@@ -62,12 +62,14 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
 
     if hasattr(recipe.model, "use_transformer_engine_op_fuser") and recipe.model.use_transformer_engine_op_fuser:
         recipe.model.use_transformer_engine_op_fuser = False
-    recipe.model.apply_rope_fusion = True
-    recipe.model.cross_entropy_fusion_impl = "te"
+    if hasattr(recipe.model, "apply_rope_fusion"):
+        recipe.model.apply_rope_fusion = True
+    if hasattr(recipe.model, "cross_entropy_fusion_impl"):
+        recipe.model.cross_entropy_fusion_impl = "te"
 
     # TODO: This needs to be adjusted when overlapping HybridEP with computation or
     # the number of SMs for HybridEP is reduced.
-    if recipe.model.moe_flex_dispatcher_backend == "hybridep":
+    if hasattr(recipe.model, "moe_flex_dispatcher_backend") and recipe.model.moe_flex_dispatcher_backend == "hybridep":
         recipe.model.moe_hybridep_num_sms = 32
 
     return recipe
@@ -113,14 +115,17 @@ def _set_cuda_graph_overrides(
         else:  # this condition ensures we unset in case of user override to "none" from default
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
-        if cuda_graph_impl == "transformer_engine":
-            valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
-            assert all(scope in valid_te_scopes for scope in cuda_graph_scope), (
-                f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: {valid_te_scopes}"
-            )
-
     if cuda_graph_scope is not None:
         recipe.model.cuda_graph_scope = cuda_graph_scope
+
+    # Validate post-override state so we check the effective recipe value,
+    # not the raw CLI input (which may be None when the recipe default is used).
+    if recipe.model.cuda_graph_impl == "transformer_engine":
+        valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
+        effective_scope = getattr(recipe.model, "cuda_graph_scope", None)
+        assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
+            f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
+        )
 
     return recipe
 
@@ -132,7 +137,7 @@ def _set_recompute_overrides(
     recompute_modules: Optional[List[str]] = None,
 ) -> ConfigContainer:
     """Set the recompute and CPU offloading overrides."""
-    if cpu_offloading_num_layers is not None:
+    if cpu_offloading_num_layers is not None and cpu_offloading_num_layers > 0:
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
@@ -220,11 +225,15 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cpu_offloading_num_layers=settings.cpu_offloading_num_layers,
         recompute_num_layers=settings.recompute_num_layers,
     )
+    if settings.te_precision_config_file is not None:
+        from megatron.core.quantization.utils import load_quantization_recipe
+
+        cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
 
     if settings.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)
-    else:
+    elif hasattr(cfg.model, "moe_token_dispatcher_type"):
         cfg.model.moe_token_dispatcher_type = "alltoall"
 
     return cfg
@@ -436,7 +445,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
 
     if args.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
-    else:
+    elif hasattr(recipe.model, "moe_token_dispatcher_type"):
         recipe.model.moe_token_dispatcher_type = "alltoall"
 
     return recipe

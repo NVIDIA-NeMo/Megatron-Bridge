@@ -16,9 +16,10 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 import numpy as np
 from PIL import Image
 
+from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
 from megatron.bridge.data.mimo.dataset import MimoDataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
+from megatron.bridge.training.config import DatasetBuildContext
 
 
 def _generate_random_image(width: int, height: int, rng: np.random.Generator) -> Image.Image:
@@ -35,7 +36,7 @@ def _generate_random_audio(duration_sec: float, sample_rate: int, rng: np.random
 
 
 @dataclass(kw_only=True)
-class MockMimoProvider(DatasetProvider):
+class MockMimoProvider(MimoDatasetProvider):
     """DatasetProvider for mock MIMO datasets with synthetic multimodal data.
 
     Generates synthetic multimodal inputs (random images, audio, etc.) and uses
@@ -112,6 +113,12 @@ class MockMimoProvider(DatasetProvider):
         """Load HuggingFace tokenizer."""
         if self._tokenizer is not None:
             return self._tokenizer
+
+        if not self.tokenizer_path:
+            raise ValueError(
+                "tokenizer_path must be set for MockMimoProvider. "
+                "Provide a valid HuggingFace tokenizer path (e.g., 'gpt2', 'meta-llama/Llama-2-7b-hf')."
+            )
 
         from transformers import AutoTokenizer
 

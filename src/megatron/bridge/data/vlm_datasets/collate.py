@@ -25,7 +25,7 @@ from PIL import Image  # noqa: F401  # may be used downstream by processors
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs, Qwen2_5_VLVisualInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs, Qwen2_5_VLVisualInputs, Qwen2AudioInputs
 
 
 # Local message used when optional qwen_vl_utils dependency is missing
@@ -315,10 +315,13 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
             return_tensors="pt",
         )
     else:
+        # Ensure a pad_token is set so padding can produce uniform-length tensors.
+        if processor.tokenizer.pad_token is None:
+            processor.tokenizer.pad_token = processor.tokenizer.eos_token
         batch = processor.apply_chat_template(
             [example["conversation"] for example in examples],
             tokenize=True,
-            padding=processor.tokenizer.pad_token is not None,
+            padding=True,
             truncation=True,
             return_tensors="pt",
             return_dict=True,
@@ -358,7 +361,7 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
 
     key = "pixel_values_videos" if is_video else "pixel_values"
     pv = batch[key].to(torch.bfloat16)
-    del batch[key]
+    batch[key] = pv
     batch["visual_inputs"] = GenericVisualInputs(pixel_values=pv)
     # roll label by 1 and fill last token with IGNORE_INDEX
     labels = batch["input_ids"].clone()[:, 1:]
@@ -468,11 +471,15 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     return batch
 
 
-def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
-    """Default collate function for VLM models."""
-    if not HAVE_QWEN_VL_UTILS:
-        raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
+def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+    """Collate function for GLM-4.5V model.
 
+    GLM-4.5V requires ``mm_token_type_ids`` to distinguish image (1) and video (2)
+    tokens from text (0) when computing 3D MRoPE positions.  The processor returns
+    this field by default (``return_mm_token_type_ids=True`` in Glm4vProcessor
+    defaults).  We wrap all visual tensors — including ``mm_token_type_ids`` — in
+    :class:`GenericVisualInputs` so they flow through ``vlm_step.py`` to the model.
+    """
     skipped_tokens = extract_skipped_token_ids(processor)
 
     batch = processor.apply_chat_template(
@@ -483,6 +490,72 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         return_tensors="pt",
         return_dict=True,
     )
+
+    if "position_ids" not in batch:
+        batch_size, seq_len = batch["input_ids"].shape
+        batch["position_ids"] = (
+            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
+        )
+
+    labels = batch["input_ids"].clone()[:, 1:]
+    labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
+    labels[torch.isin(labels, skipped_tokens)] = -100
+    batch["labels"] = labels
+
+    loss_masks = [
+        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
+        for example, input_ids in zip(examples, batch["input_ids"])
+    ]
+    loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=batch["input_ids"].device)
+    loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
+    batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
+    batch["loss_mask"] = loss_mask_t
+
+    # Wrap visual tensors in GenericVisualInputs (includes mm_token_type_ids for GLM)
+    visual_kwargs = {}
+    for vk in ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "mm_token_type_ids"):
+        if vk in batch:
+            visual_kwargs[vk] = batch.pop(vk)
+    batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
+
+    return batch
+
+
+def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+    """Default collate function for VLM models."""
+    if not HAVE_QWEN_VL_UTILS:
+        raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
+
+    skipped_tokens = extract_skipped_token_ids(processor)
+
+    # Ensure a pad_token is set so padding can produce uniform-length tensors.
+    tokenizer = getattr(processor, "tokenizer", None)
+    if tokenizer is not None and tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    # If pad_token is still unset after the eos_token fallback, disable padding
+    # to avoid a ValueError from apply_chat_template.
+    can_pad = tokenizer is not None and tokenizer.pad_token is not None
+
+    # Force right-padding for training collation.  Some tokenizers (e.g. Gemma3)
+    # default to left-padding which breaks downstream sequence packing: the packer
+    # copies tokens[seq_idx, :length] from position 0, so left-padded content gets
+    # replaced by padding tokens and image/special tokens are lost.
+    saved_padding_side = getattr(tokenizer, "padding_side", None)
+    if tokenizer is not None:
+        tokenizer.padding_side = "right"
+
+    batch = processor.apply_chat_template(
+        [example["conversation"] for example in examples],
+        tokenize=True,
+        padding=can_pad,
+        truncation=True,
+        return_tensors="pt",
+        return_dict=True,
+    )
+
+    # Restore original padding side so generation paths are unaffected.
+    if tokenizer is not None and saved_padding_side is not None:
+        tokenizer.padding_side = saved_padding_side
 
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
@@ -514,6 +587,107 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if "image_grid_thw" in batch:
         del batch["image_grid_thw"]
     batch["visual_inputs"] = visual_inputs
+    return batch
+
+
+def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+    """Collate function for Qwen2-Audio model.
+
+    Uses HF-compatible label construction:
+    - Backward search for assistant text spans (matching HF Trainer convention)
+    - No skipped_tokens masking on labels (model learns to predict EOS/im_end)
+    - Loss mask derived directly from active label positions
+    """
+    texts = []
+    audio_inputs = []
+    for example in examples:
+        text = processor.apply_chat_template(example["conversation"], tokenize=False)
+        texts.append(text)
+        audio = example.get("audio")
+        if audio is not None:
+            if isinstance(audio, tuple):
+                audio_inputs.append(audio[0])  # (array, sr) -> array
+            elif isinstance(audio, dict):
+                audio_inputs.append(audio["array"])
+            else:
+                audio_inputs.append(audio)
+
+    # Megatron's packing and padding utilities assume right-padding
+    # (tokens[:length] extracts real content). Override the tokenizer's
+    # default padding_side which may be "left" (e.g. Qwen2Audio).
+    tokenizer = getattr(processor, "tokenizer", processor)
+    orig_padding_side = getattr(tokenizer, "padding_side", "right")
+    tokenizer.padding_side = "right"
+
+    batch = processor(
+        text=texts,
+        audio=audio_inputs if audio_inputs else None,
+        return_tensors="pt",
+        padding=True,
+    )
+
+    tokenizer.padding_side = orig_padding_side
+    input_ids = batch["input_ids"]
+    batch_size, seq_len = input_ids.shape
+    pad_token_id = tokenizer.pad_token_id
+
+    # --- HF-compatible label construction ---
+    # Step 1: Build unshifted labels (same convention as HF Trainer)
+    hf_labels = input_ids.clone()
+
+    for i, example in enumerate(examples):
+        ids = input_ids[i].tolist()
+        assistant_texts = _gather_assistant_text_segments(example)
+
+        # Find assistant span using backward search (like HF's Qwen2AudioCollator)
+        found = -1
+        for asst_text in assistant_texts:
+            asst_token_ids = tokenizer(asst_text, add_special_tokens=False)["input_ids"]
+            span_len = len(asst_token_ids)
+            if span_len == 0:
+                continue
+            for start in range(len(ids) - span_len, -1, -1):
+                if ids[start : start + span_len] == asst_token_ids:
+                    found = start
+                    break
+            if found >= 0:
+                break
+
+        if found >= 0:
+            # Mask everything before the assistant span (prompt + special tokens)
+            hf_labels[i, :found] = IGNORE_INDEX
+        else:
+            warnings.warn(f"Could not find assistant span for example {i}, masking all labels", stacklevel=2)
+            hf_labels[i, :] = IGNORE_INDEX
+
+        # Mask padding tokens
+        if pad_token_id is not None:
+            hf_labels[i][input_ids[i] == pad_token_id] = IGNORE_INDEX
+
+    # Step 2: Shift labels for Megatron (labels[j] = hf_labels[j+1])
+    labels = hf_labels[:, 1:]
+    labels = torch.cat([labels, IGNORE_INDEX * torch.ones_like(labels[:, :1])], dim=1)
+    batch["labels"] = labels
+
+    # Step 3: Derive loss_mask from active label positions
+    batch["loss_mask"] = (labels != IGNORE_INDEX).float()
+
+    # Ensure position_ids exist
+    if "position_ids" not in batch:
+        batch["position_ids"] = (
+            torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1).clone().contiguous()
+        )
+
+    # Wrap audio tensors in Qwen2AudioInputs and attach as audio_inputs
+    audio_inputs = Qwen2AudioInputs(
+        input_features=batch.get("input_features"),
+        feature_attention_mask=batch.get("feature_attention_mask"),
+    )
+    for key in ("input_features", "feature_attention_mask"):
+        if key in batch:
+            del batch[key]
+    batch["audio_inputs"] = audio_inputs
+
     return batch
 
 
@@ -757,6 +931,8 @@ COLLATE_FNS = {
     "Qwen3VLProcessor": qwen2_5_collate_fn,
     "NemotronNanoVLV2Processor": nemotron_nano_v2_vl_collate_fn,
     "PixtralProcessor": ministral3_collate_fn,  # Ministral3 uses PixtralProcessor
+    "Qwen2AudioProcessor": qwen2_audio_collate_fn,
+    "Glm4vProcessor": glm4v_collate_fn,
     "KimiK25Processor": kimi_k25_vl_collate_fn,
     "default": default_collate_fn,
 }

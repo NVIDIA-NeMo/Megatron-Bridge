@@ -12,23 +12,257 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Qwen3-VL finetuning recipes with parameterless API.
+"""Qwen3-VL recipes with parameterless API.
 
-This module provides SFT and PEFT configurations for Qwen3-VL MoE models (8B, 30B-A3B, 235B-A22B).
+This module provides pretrain, SFT, and PEFT configurations for Qwen3-VL models (8B, 30B-A3B, 235B-A22B).
 """
+
+from __future__ import annotations
+
+import os
+from typing import Optional, Union
 
 import torch
 from transformers import AutoTokenizer, Qwen3VLProcessor
+from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
+from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
+from megatron.bridge.training.config import (
+    CheckpointConfig,
+    ConfigContainer,
+    DatasetProvider,
+    DistributedDataParallelConfig,
+    LoggerConfig,
+    RNGConfig,
+    TokenizerConfig,
+    TrainingConfig,
+)
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+
+
+class Qwen3VLCommonKwargs(TypedDict, total=False):
+    """Typed options accepted by Qwen3-VL pretrain recipe helper."""
+
+    hf_path: str
+    # Parallelism
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    expert_model_parallel_size: int
+    context_parallel_size: int
+    sequence_parallel: bool
+    # Training
+    seq_length: int
+    train_iters: int
+    global_batch_size: int
+    micro_batch_size: int
+    lr: float
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+    # VLM freeze
+    freeze_language_model: bool
+    freeze_vision_model: bool
+    freeze_vision_projection: bool
+    # Precision / overlap / dispatcher
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    comm_overlap_config: Optional[CommOverlapConfig]
+    moe_flex_dispatcher_backend: Optional[str]
+    # Mock dataset toggle
+    mock: bool
+
+
+def _qwen3_vl_common(
+    hf_path: str = "Qwen/Qwen3-VL-8B-Instruct",
+    *,
+    tensor_model_parallel_size: int = 4,
+    pipeline_model_parallel_size: int = 1,
+    expert_model_parallel_size: int = 1,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
+    seq_length: int = 4096,
+    train_iters: int = 300000,
+    global_batch_size: int = 32,
+    micro_batch_size: int = 2,
+    lr: float = 3e-4,
+    min_lr: float = 3e-5,
+    lr_warmup_iters: int = 500,
+    lr_decay_iters: Optional[int] = None,
+    freeze_language_model: bool = True,
+    freeze_vision_model: bool = True,
+    freeze_vision_projection: bool = False,
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
+    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    moe_flex_dispatcher_backend: Optional[str] = None,
+    mock: bool = True,
+) -> ConfigContainer:
+    """Create a pre-training configuration for Qwen3-VL models.
+
+    Uses MockVLMConversationProvider by default (mock=True).
+    """
+    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, "default")
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = torch.bfloat16 if pipeline_model_parallel_size > 1 else None
+    model_cfg.virtual_pipeline_model_parallel_size = None
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
+    model_cfg.freeze_language_model = freeze_language_model
+    model_cfg.freeze_vision_model = freeze_vision_model
+    model_cfg.freeze_vision_projection = freeze_vision_projection
+    model_cfg.seq_length = seq_length
+
+    if expert_model_parallel_size > 1:
+        model_cfg.expert_model_parallel_size = expert_model_parallel_size
+
+    if moe_flex_dispatcher_backend is not None:
+        model_cfg.moe_flex_dispatcher_backend = moe_flex_dispatcher_backend
+        apply_flex_dispatcher_backend(model_cfg, moe_flex_dispatcher_backend)
+
+    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=lr_warmup_iters,
+        lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
+        max_lr=lr,
+        min_lr=min_lr,
+    )
+
+    dataset_cfg: DatasetProvider
+    if mock:
+        dataset_cfg = MockVLMConversationProvider(
+            seq_length=seq_length,
+            hf_processor_path=hf_path,
+            prompt="Describe this image.",
+            num_workers=1,
+            dataloader_type="single",
+            data_sharding=True,
+            pin_memory=True,
+            persistent_workers=False,
+            create_attention_mask=True,
+            pad_to_max_length=True,
+        )
+    else:
+        raise ValueError("Non-mock dataset not yet supported. Pass mock=True or omit for default.")
+
+    cfg = ConfigContainer(
+        model=model_cfg,
+        train=TrainingConfig(
+            train_iters=train_iters,
+            eval_interval=500,
+            eval_iters=32,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+            manual_gc=True,
+            manual_gc_interval=100,
+            manual_gc_eval=100,
+        ),
+        optimizer=opt_config,
+        scheduler=scheduler,
+        ddp=DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=True,
+            overlap_grad_reduce=False,
+            overlap_param_gather=False,
+            average_in_collective=True,
+            data_parallel_sharding_strategy="optim_grads_params",
+            use_distributed_optimizer=True,
+        ),
+        dataset=dataset_cfg,
+        logger=LoggerConfig(
+            log_interval=10,
+            tensorboard_dir=tensorboard_dir,
+            log_timers_to_tensorboard=True,
+        ),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
+        checkpoint=CheckpointConfig(
+            save_interval=500,
+            save=checkpoint_dir,
+            load=checkpoint_dir,
+            ckpt_format="torch_dist",
+            fully_parallel_save=True,
+        ),
+        rng=RNGConfig(seed=1234),
+        comm_overlap=comm_overlap_config,
+        mixed_precision=precision_config,
+    )
+
+    return cfg
+
+
+# =============================================================================
+# Qwen3-VL Pretrain Configurations (mock dataset)
+# =============================================================================
+
+
+def qwen3_vl_8b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3-VL 8B Instruct.
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3-VL-8B-Instruct",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 1,
+        "expert_model_parallel_size": 1,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
+
+def qwen3_vl_30b_a3b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3-VL 30B-A3B (MoE).
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 2,
+        "expert_model_parallel_size": 4,
+        "sequence_parallel": True,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
+
+def qwen3_vl_235b_a22b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3-VL 235B-A22B (MoE).
+
+    See `_qwen3_vl_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 16,
+        "expert_model_parallel_size": 8,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
 
 
 def _make_energon_dataset(
@@ -339,7 +573,7 @@ def qwen3_vl_235b_a22b_sft_config() -> ConfigContainer:
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3-VL-235B-A22B"
+    hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -773,7 +1007,7 @@ def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCo
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3-VL-235B-A22B"
+    hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 

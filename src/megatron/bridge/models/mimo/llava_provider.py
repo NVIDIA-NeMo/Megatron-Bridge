@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """LLaVA-style Vision-Language Model provider."""
 
 from dataclasses import dataclass, field
@@ -45,9 +45,6 @@ class LlavaMimoProvider(MimoModelProvider):
 
     # Optional custom configs
     language_config: Optional[TransformerConfig] = None
-
-    # Make parent's required field optional (we build it in __post_init__)
-    language_model_spec: Optional[ModuleSpec] = None
 
     def __post_init__(self):
         """Build specs after initialization."""
