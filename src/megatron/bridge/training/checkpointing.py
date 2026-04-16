@@ -15,6 +15,7 @@
 """Input/output checkpointing."""
 
 import contextlib
+import inspect
 import os
 import random
 import shutil
@@ -973,6 +974,11 @@ def save_checkpoint(
                 checkpointing_context["save_strategy"] = save_strategy
             end_ckpt = time()
             logger.debug(f"rank: {rank}, takes {end_ckpt - start_ckpt} to prepare state dict for ckpt ")
+            # Guard for main/dev branch submodule compat: async_strategy was removed in mcore dev.
+            _save_params = set(inspect.signature(dist_checkpointing.save).parameters)
+            _save_optional_kwargs: dict[str, Any] = {}
+            if "async_strategy" in _save_params:
+                _save_optional_kwargs["async_strategy"] = ckpt_cfg.async_strategy
             async_save_request = dist_checkpointing.save(
                 state_dict,
                 checkpoint_name,
@@ -981,7 +987,7 @@ def save_checkpoint(
                 validate_access_integrity=validate_sharding_integrity,
                 preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
                 content_metadata=_clean_metadata_for_serialization(sharded_sd_metadata),
-                async_strategy=ckpt_cfg.async_strategy,
+                **_save_optional_kwargs,
             )
             # [ModelOpt]: save sharded modelopt_state (skip if model is empty, e.g., low-memory save mode)
             if model:
