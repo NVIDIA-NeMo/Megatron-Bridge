@@ -475,11 +475,16 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
     return cfg
@@ -507,11 +512,16 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
     return cfg
@@ -1460,11 +1470,16 @@ def qwen3_235b_a22b_pretrain_v2_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8192
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
     return cfg
@@ -1492,11 +1507,16 @@ def qwen3_235b_a22b_pretrain_v2_256gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8192
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
     return cfg

@@ -70,10 +70,11 @@ def kimi_k2_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     cfg.model.cuda_graph_scope = []
     _benchmark_common(cfg)
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True  # Must be after _benchmark_common
+    cfg.rng.te_rng_tracker = True
     return cfg
 
 
@@ -105,10 +106,11 @@ def kimi_k2_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     cfg.model.cuda_graph_scope = []
     _benchmark_common(cfg)
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True  # Must be after _benchmark_common
+    cfg.rng.te_rng_tracker = True
     return cfg
 
 
@@ -142,10 +144,11 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     cfg.model.cuda_graph_scope = []
     _benchmark_common(cfg)
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True  # Must be after _benchmark_common
+    cfg.rng.te_rng_tracker = True
     return cfg
 
 
@@ -177,10 +180,11 @@ def kimi_k2_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(4, 4)
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     cfg.model.cuda_graph_scope = []
     _benchmark_common(cfg)
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True  # Must be after _benchmark_common
+    cfg.rng.te_rng_tracker = True
     return cfg
 
 
@@ -220,6 +224,7 @@ def kimi_k2_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     _benchmark_common(cfg)
     return cfg
@@ -256,6 +261,7 @@ def kimi_k2_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     _benchmark_common(cfg)
     return cfg
@@ -294,6 +300,7 @@ def kimi_k2_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     _benchmark_common(cfg)
     return cfg
@@ -327,8 +334,10 @@ def kimi_k2_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(16, 1)
+    cfg.model.moe_shared_expert_overlap = False
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     _benchmark_common(cfg)
     return cfg
@@ -357,8 +366,10 @@ def kimi_k2_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(16, 1)
+    cfg.model.moe_shared_expert_overlap = False
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     _benchmark_common(cfg)
     return cfg
@@ -389,8 +400,10 @@ def kimi_k2_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(16, 1)
+    cfg.model.moe_shared_expert_overlap = False
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     _benchmark_common(cfg)
     return cfg
@@ -424,6 +437,7 @@ def kimi_k2_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
     cfg.model.pipeline_model_parallel_layout = "Et|(tt|)*30L"
+    cfg.model.moe_shared_expert_overlap = False
 
     cfg.comm_overlap.overlap_grad_reduce = False
 
@@ -435,11 +449,6 @@ def kimi_k2_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     """Kimi K2 pretrain: 1024× H100, FP8 current-scaling."""
     cfg = kimi_k2_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    cfg.mixed_precision.fp8_recipe = "blockwise"
-    cfg.mixed_precision.fp8_param = False
-    cfg.mixed_precision.fp8_param_gather = False
-    cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
-    cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
     cfg.model.moe_router_fusion = True
@@ -459,6 +468,7 @@ def kimi_k2_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
     cfg.model.pipeline_model_parallel_layout = "Et|(tt|)*30L"
+    cfg.model.moe_shared_expert_overlap = False
 
     cfg.comm_overlap.overlap_grad_reduce = False
 

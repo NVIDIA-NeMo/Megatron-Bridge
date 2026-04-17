@@ -21,6 +21,7 @@ Each function is self-contained: call library recipe, override fields, call
 from megatron.bridge.recipes.common import _benchmark_common
 from megatron.bridge.recipes.gpt_oss.gpt_oss import gpt_oss_120b_pretrain_config
 from megatron.bridge.recipes.llama.llama3_perf import _perf_precision
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -71,6 +72,8 @@ def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["layernorm", "moe_act"]
     cfg.model.recompute_granularity = "selective"
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
     return cfg

@@ -62,6 +62,7 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -94,6 +95,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = []
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
@@ -126,6 +128,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = []
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
@@ -158,6 +161,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = []
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
@@ -196,6 +200,7 @@ def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -229,6 +234,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -262,6 +268,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -297,6 +304,7 @@ def deepseek_v3_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -327,6 +335,7 @@ def deepseek_v3_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -357,6 +366,7 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -392,6 +402,7 @@ def deepseek_v3_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -422,6 +433,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -452,6 +464,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -562,6 +575,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -593,6 +607,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb300_fp8cs_config() -> ConfigContainer:
 
     cfg.model.cuda_graph_scope = []
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
@@ -624,6 +639,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     cfg.model.cuda_graph_scope = []
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
@@ -655,6 +671,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb300_nvfp4_config() -> ConfigContainer:
 
     cfg.model.cuda_graph_scope = []
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
@@ -693,6 +710,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -726,6 +744,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -759,6 +778,7 @@ def deepseek_v3_pretrain_v2_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -794,6 +814,7 @@ def deepseek_v3_pretrain_v2_256gpu_b300_bf16_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -824,6 +845,7 @@ def deepseek_v3_pretrain_v2_256gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -854,6 +876,7 @@ def deepseek_v3_pretrain_v2_256gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -889,6 +912,7 @@ def deepseek_v3_pretrain_v2_256gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -919,6 +943,7 @@ def deepseek_v3_pretrain_v2_256gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -949,6 +974,7 @@ def deepseek_v3_pretrain_v2_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
