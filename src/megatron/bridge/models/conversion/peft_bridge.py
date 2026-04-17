@@ -124,6 +124,45 @@ class MegatronPeftBridge:
         """Return True if the parameter only belongs to a PEFT adapter."""
         return ".adapter." in param_name
 
+    def has_any_peft_adapters(
+        self, megatron_model: Union[MegatronModel, List[MegatronModel]]
+    ) -> bool:
+        """Return True iff any PP rank has at least one PEFT adapter parameter.
+
+        This is a cheap O(local_params) name-based check followed by a single
+        pickled ``all_gather_object`` over the PP group (skipped at PP=1).
+        Callers use it to short-circuit the more expensive
+        :meth:`build_adapter_conversion_tasks` walk when no adapters are
+        attached, which is the common case for full-finetune / non-PEFT
+        refit paths.
+
+        The result is cached on ``self`` so subsequent calls are O(1).
+        """
+        if hasattr(self, "_cached_has_peft_adapters"):
+            return self._cached_has_peft_adapters
+
+        if not isinstance(megatron_model, list):
+            megatron_model = [megatron_model]
+
+        has_local = False
+        for model in megatron_model:
+            for local_param_name, _ in model.named_parameters():
+                if self._is_adapter_param_name(local_param_name):
+                    has_local = True
+                    break
+            if has_local:
+                break
+
+        pp_group = parallel_state.get_pipeline_model_parallel_group()
+        pp_size = pp_group.size()
+        if pp_size > 1:
+            gathered: List[Optional[bool]] = [None] * pp_size
+            torch.distributed.all_gather_object(gathered, has_local, group=pp_group)
+            has_local = any(bool(x) for x in gathered)
+
+        self._cached_has_peft_adapters = has_local
+        return has_local
+
     def _get_adapter_wrap_module(
         self,
         local_base_prefix: str,

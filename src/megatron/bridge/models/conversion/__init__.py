@@ -24,6 +24,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
+    prepopulate_pp_tensor_spec_cache,
 )
 from megatron.bridge.models.conversion.utils import weights_verification_table
 
@@ -39,5 +40,6 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "prepopulate_pp_tensor_spec_cache",
     "weights_verification_table",
 ]

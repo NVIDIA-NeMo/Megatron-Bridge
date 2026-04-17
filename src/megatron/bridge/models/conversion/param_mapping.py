@@ -713,6 +713,86 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         return tensor
 
 
+def prepopulate_pp_tensor_spec_cache(tasks: List[Any]) -> None:
+    """Pre-populate ``_tensor_spec_output_cache`` for every task's mapping in one PP collective.
+
+    The first call to :meth:`MegatronParamMapping.broadcast_from_pp_rank` with a
+    fresh ``cache_key`` lazily issues a pickled ``all_gather_object`` on the PP
+    group so non-owning ranks can learn the tensor's shape / dtype / partition
+    metadata. For models with thousands of parameters or experts this amounts
+    to O(N) sequential pickled PP collectives on the *first* refit; subsequent
+    refits hit the per-mapping cache and skip the collective entirely.
+
+    Calling this helper once after :meth:`build_conversion_tasks` (and before
+    the first :meth:`stream_weights_megatron_to_hf` call) collapses that O(N)
+    to a single ``all_gather_object`` by gathering every task's tensor spec in
+    one shot and installing the result on each mapping's cache.
+
+    Safe to call multiple times: re-running just refreshes the caches with the
+    latest local metadata. No-op when PP size is 1 (fast-path return, matching
+    :meth:`broadcast_from_pp_rank`).
+
+    Args:
+        tasks: Sequence of task-like objects (typically
+            :class:`WeightConversionTask`) each exposing a ``.mapping``
+            (:class:`MegatronParamMapping`) and a ``.param_weight``
+            (``Optional[torch.Tensor]`` — the local tensor if this PP rank owns
+            the parameter, otherwise ``None``). All PP ranks must pass the
+            same number of tasks in the same order; this matches the invariant
+            already enforced by :meth:`build_conversion_tasks`.
+
+    Raises:
+        ValueError: If ranks disagree on the number of tasks (indicates the
+            per-rank task lists drifted, which would also break the existing
+            per-task ``broadcast_from_pp_rank`` path).
+    """
+    if not mpu.is_initialized():
+        return
+
+    pp_group = mpu.get_pipeline_model_parallel_group()
+    pp_size = get_pg_size(pp_group)
+    if pp_size == 1:
+        return
+
+    # Build the local (cache_key, local_spec) list aligned with tasks. Skip
+    # tasks whose mapping has no .hf_param-derived cache_key (defensive; in
+    # practice every MegatronParamMapping sets it in __init__).
+    local_specs: List[Tuple[str, Optional[Tuple[Any, ...]]]] = []
+    for task in tasks:
+        mapping = task.mapping
+        cache_key = str(mapping.hf_param)
+        tensor = task.param_weight
+        if tensor is None:
+            spec: Optional[Tuple[Any, ...]] = None
+        else:
+            spec = (
+                tensor.shape,
+                tensor.dtype,
+                getattr(tensor, "tensor_model_parallel", None),
+                getattr(tensor, "partition_dim", None),
+            )
+        local_specs.append((cache_key, spec))
+
+    gathered: List[Optional[List[Tuple[str, Optional[Tuple[Any, ...]]]]]] = [None] * pp_size
+    torch.distributed.all_gather_object(gathered, local_specs, group=pp_group)
+
+    num_tasks = len(tasks)
+    for rank, rank_list in enumerate(gathered):
+        if rank_list is None or len(rank_list) != num_tasks:
+            raise ValueError(
+                "prepopulate_pp_tensor_spec_cache: all PP ranks must contribute "
+                f"a task list of length {num_tasks}; rank {rank} contributed "
+                f"{'None' if rank_list is None else len(rank_list)}."
+            )
+
+    for i, task in enumerate(tasks):
+        cache_key = local_specs[i][0]
+        # Reconstruct tensor_spec_output in PP-rank order; broadcast_from_pp_rank
+        # expects this exact layout to identify the single owning rank.
+        tensor_spec_output = [gathered[r][i][1] for r in range(pp_size)]  # type: ignore[index]
+        task.mapping._tensor_spec_output_cache[cache_key] = tensor_spec_output
+
+
 class DirectMapping(MegatronParamMapping[torch.Tensor]):
     """Direct 1:1 weight mapping with no transformation or tensor parallelism."""
 

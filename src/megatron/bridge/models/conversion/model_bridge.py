@@ -941,6 +941,13 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if conversion_tasks is None:
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
 
+        # Skip adapter merge when no PEFT adapters are attached. The default
+        # (True) would otherwise trigger a full-model parameter walk + pickled
+        # PP all_gather_object inside build_adapter_conversion_tasks on the
+        # first refit, which is pure waste for non-PEFT refit paths.
+        if merge_adapter_weights and not self.has_any_peft_adapters(megatron_model):
+            merge_adapter_weights = False
+
         # Collect adapter conversion tasks when merge is requested
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
         if merge_adapter_weights:
@@ -987,7 +994,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     # Yield the embedding weight
                     yield HFWeightTuple(hf_name, final_tensor)
 
-                    # Also yield as lm_head.weight if it's expected
+                    # Also yield as lm_head.weight if it's expected. Clone to
+                    # break storage aliasing so safetensors save_hf_weights
+                    # can serialize both keys.
                     if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
                         expected_keys = hf_pretrained.state.source.get_all_keys()
                         if "lm_head.weight" in expected_keys:
