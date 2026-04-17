@@ -95,7 +95,7 @@ python scripts/performance/setup_experiment.py \
     -gn $GPUS_PER_NODE \
     --container_image $CONTAINER \
     --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
-    -ce "TRITON_PTXAS_PATH=/usr/local/cuda-13.0/bin/ptxas,TORCHDYNAMO_DISABLE=1,PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" \
+    -ce "TRITON_PTXAS_PATH=/usr/local/cuda-13.0/bin/ptxas,PYTORCH_ALLOC_CONF=expandable_segments:True" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
