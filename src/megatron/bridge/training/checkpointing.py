@@ -2087,7 +2087,7 @@ def _load_checkpoint_from_path(
         update_num_microbatches(consumed_samples=state.train_state.consumed_train_samples, verbose=True)
 
     # Load model weights
-    if not skip_load_to_model_and_opt and ckpt_type != CheckpointType.FSDP_DTENSOR:
+    if not skip_load_to_model_and_opt:
         # Handle PEFT resume for strict loading
         load_strict = strict
         is_peft_resume = (
