@@ -73,10 +73,10 @@ class TrainState(Stateful):
             their corresponding tensor representations.
         """
         return {
-            "step": torch.tensor(self.step, dtype=torch.uint64),
-            "consumed_train_samples": torch.tensor(self.consumed_train_samples, dtype=torch.uint64),
-            "skipped_train_samples": torch.tensor(self.skipped_train_samples, dtype=torch.uint64),
-            "consumed_valid_samples": torch.tensor(self.consumed_valid_samples, dtype=torch.uint64),
+            "step": torch.tensor(self.step, dtype=torch.int64),
+            "consumed_train_samples": torch.tensor(self.consumed_train_samples, dtype=torch.int64),
+            "skipped_train_samples": torch.tensor(self.skipped_train_samples, dtype=torch.int64),
+            "consumed_valid_samples": torch.tensor(self.consumed_valid_samples, dtype=torch.int64),
             "floating_point_operations_so_far": torch.tensor(
                 self.floating_point_operations_so_far, dtype=torch.float64
             ),
