@@ -68,7 +68,7 @@ jobs:
     outputs:
       is_external_contributor: ${{ github.event.pull_request.user.type == 'User' }}
       is_maintainer: ${{ steps.check-membership.outputs.is_maintainer }}
-      selected_runner: ${{ steps.check-membership.outputs.is_maintainer == 'true' && 'nvidia-ci-aws-gpu-x2' || 'nvidia-ci-aws-gpu-x2-ephemeral' }}
+      selected_runner: ${{ steps.check-membership.outputs.is_maintainer == 'true' && 'nemo-ci-aws-gpu-x2' || 'nemo-ci-aws-gpu-x2-ephemeral' }}
     permissions:
       issues: write
       pull-requests: write
