@@ -53,6 +53,7 @@ def _qwen35_vl_perf_common(cfg: ConfigContainer) -> None:
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
     cfg.model.moe_router_fusion = True
 
     cfg.model.seq_length = 4096
@@ -65,6 +66,17 @@ def _qwen35_vl_perf_common(cfg: ConfigContainer) -> None:
 
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
+
+
+def _qwen35_vl_perf_post(cfg: ConfigContainer) -> None:
+    """VLM post-overrides that must run after ``_benchmark_common``.
+
+    Qwen3.5-VL disables RoPE fusion and CUDA graphs for VLM variable-length
+    inputs; these override the perf defaults that ``_benchmark_common`` sets.
+    """
+    cfg.model.apply_rope_fusion = False
+    cfg.model.cuda_graph_impl = "none"
+    cfg.optimizer.overlap_param_gather = False
 
 
 # =============================================================================
@@ -94,9 +106,14 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -141,9 +158,14 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -188,9 +210,14 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -233,9 +260,14 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -274,14 +306,21 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -301,11 +340,18 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -336,9 +382,14 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -383,9 +434,14 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -430,9 +486,14 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -471,11 +532,18 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b200_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -514,11 +582,18 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -556,9 +631,14 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -603,9 +683,14 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -650,9 +735,14 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -691,11 +781,18 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
@@ -734,11 +831,18 @@ def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
+    _qwen35_vl_perf_post(cfg)
     return cfg
 
 
