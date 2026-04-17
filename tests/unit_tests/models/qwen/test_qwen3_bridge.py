@@ -538,7 +538,7 @@ class TestQwen3BridgeMTPMapping:
 
     def _get_all_megatron_params(self, mapping_registry):
         """Return the set of Megatron parameter patterns as stored in the registry."""
-        return {mapping.megatron_param for mapping in mapping_registry._param_mappings}
+        return {mapping.megatron_param for mapping in mapping_registry.get_all_mappings()}
 
     def test_mtp_params_are_registered(self):
         """All MTP Megatron parameter patterns must appear in the mapping registry."""
