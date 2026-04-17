@@ -215,7 +215,8 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V2 = replace(
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B200_NVFP4_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2,
-    recompute_modules=["mla_up_proj", "mlp", "layernorm", "moe_act"],
+    cuda_graph_impl="none",
+    recompute_modules=["mla_up_proj", "layernorm", "moe_act"],
 )
 
 
