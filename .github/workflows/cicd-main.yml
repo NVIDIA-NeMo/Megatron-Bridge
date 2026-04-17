@@ -538,7 +538,7 @@ jobs:
           }
           for tier in L0 L1 L2; do
             entries=""
-            for f in tests/functional_tests/launch_scripts/h100/${tier}_*.sh; do
+            for f in tests/functional_tests/launch_scripts/h100/active/${tier}_*.sh; do
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
@@ -547,7 +547,7 @@ jobs:
             echo "matrix_${tier,,}=${matrix}" | tee -a "$GITHUB_OUTPUT"
           done
           entries=""
-          for f in tests/functional_tests/launch_scripts/h100-flaky/L*.sh; do
+          for f in tests/functional_tests/launch_scripts/h100/flaky/L*.sh; do
             [ -f "$f" ] || continue
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
@@ -712,7 +712,7 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          script_dir: h100-flaky
+          script_dir: h100/flaky
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
@@ -754,7 +754,7 @@ jobs:
           }
           for tier in L0 L1 L2; do
             entries=""
-            for f in tests/functional_tests/launch_scripts/gb200/${tier}_*.sh; do
+            for f in tests/functional_tests/launch_scripts/gb200/active/${tier}_*.sh; do
               [ -f "$f" ] || continue
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
@@ -763,7 +763,7 @@ jobs:
             echo "matrix_gb200_${tier,,}={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
           done
           entries=""
-          for f in tests/functional_tests/launch_scripts/gb200-flaky/L*.sh; do
+          for f in tests/functional_tests/launch_scripts/gb200/flaky/L*.sh; do
             [ -f "$f" ] || continue
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
@@ -803,7 +803,7 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          script_dir: gb200
+          script_dir: gb200/active
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
@@ -849,7 +849,7 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          script_dir: gb200
+          script_dir: gb200/active
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
@@ -895,7 +895,7 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          script_dir: gb200
+          script_dir: gb200/active
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
@@ -931,7 +931,7 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          script_dir: gb200-flaky
+          script_dir: gb200/flaky
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
