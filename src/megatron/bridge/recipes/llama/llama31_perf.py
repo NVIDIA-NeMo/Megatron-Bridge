@@ -799,3 +799,17 @@ def llama31_405b_pretrain_v2_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
+
+# =============================================================================
+# Llama3.1 405B pretrain — GPU-count aliases (same config, different scale)
+# =============================================================================
+
+llama31_405b_pretrain_512gpu_h100_bf16_config = llama31_405b_pretrain_1024gpu_h100_bf16_config
+llama31_405b_pretrain_512gpu_h100_fp8cs_config = llama31_405b_pretrain_1024gpu_h100_fp8cs_config
+llama31_405b_pretrain_256gpu_b200_bf16_config = llama31_405b_pretrain_128gpu_b200_bf16_config
+llama31_405b_pretrain_256gpu_b200_fp8cs_config = llama31_405b_pretrain_128gpu_b200_fp8cs_config
+llama31_405b_pretrain_256gpu_gb200_bf16_config = llama31_405b_pretrain_128gpu_gb200_bf16_config
+llama31_405b_pretrain_256gpu_gb200_fp8cs_config = llama31_405b_pretrain_128gpu_gb200_fp8cs_config
+llama31_405b_pretrain_256gpu_gb300_bf16_config = llama31_405b_pretrain_128gpu_gb300_bf16_config
+llama31_405b_pretrain_256gpu_gb300_fp8cs_config = llama31_405b_pretrain_128gpu_gb300_fp8cs_config

@@ -1147,3 +1147,11 @@ def deepseek_v3_pretrain_v2_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 def deepseek_v3_pretrain_v2_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain V2: 256× VR200, NVFP4 (alias of GB200)."""
     return deepseek_v3_pretrain_v2_256gpu_gb200_nvfp4_config()
+
+
+# =============================================================================
+# DeepSeek V3 pretrain — 64 GPU aliases (same config as 1024 GPU H100)
+# =============================================================================
+
+deepseek_v3_pretrain_64gpu_h100_bf16_config = deepseek_v3_pretrain_1024gpu_h100_bf16_config
+deepseek_v3_pretrain_64gpu_h100_fp8cs_config = deepseek_v3_pretrain_1024gpu_h100_fp8cs_config

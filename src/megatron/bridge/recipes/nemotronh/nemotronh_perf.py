@@ -551,3 +551,28 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
+
+# =============================================================================
+# NemotronH 56B pretrain — 256 GPU aliases + BF16 variants
+# =============================================================================
+
+
+def nemotronh_56b_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
+    """NemotronH 56B pretrain: 256× B200, BF16 (same layout as FP8-CS)."""
+    cfg = nemotronh_56b_pretrain_64gpu_b200_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    return cfg
+
+
+nemotronh_56b_pretrain_256gpu_b200_fp8cs_config = nemotronh_56b_pretrain_64gpu_b200_fp8cs_config
+
+
+def nemotronh_56b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
+    """NemotronH 56B pretrain: 256× GB300, BF16 (same layout as FP8-CS)."""
+    cfg = nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    return cfg
+
+
+nemotronh_56b_pretrain_256gpu_gb300_fp8cs_config = nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config

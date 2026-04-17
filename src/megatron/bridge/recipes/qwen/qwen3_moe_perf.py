@@ -1581,3 +1581,28 @@ def qwen3_235b_a22b_pretrain_v2_256gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg = qwen3_235b_a22b_pretrain_v2_256gpu_b200_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     return cfg
+
+
+# =============================================================================
+# Qwen3 30B-A3B pretrain — GPU-count aliases (same config, different scale)
+# =============================================================================
+
+qwen3_30b_a3b_pretrain_64gpu_h100_bf16_config = qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config
+qwen3_30b_a3b_pretrain_64gpu_h100_fp8cs_config = qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config
+qwen3_30b_a3b_pretrain_64gpu_b200_bf16_config = qwen3_30b_a3b_pretrain_8gpu_b200_bf16_config
+qwen3_30b_a3b_pretrain_64gpu_b200_fp8cs_config = qwen3_30b_a3b_pretrain_8gpu_b200_fp8cs_config
+qwen3_30b_a3b_pretrain_32gpu_gb200_bf16_config = qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config
+qwen3_30b_a3b_pretrain_32gpu_gb200_fp8cs_config = qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config
+qwen3_30b_a3b_pretrain_32gpu_gb300_bf16_config = qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config
+qwen3_30b_a3b_pretrain_32gpu_gb300_fp8cs_config = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config
+
+# =============================================================================
+# Qwen3 235B-A22B pretrain — 256 GPU aliases (same config as 64 GPU)
+# =============================================================================
+
+qwen3_235b_a22b_pretrain_256gpu_b200_bf16_config = qwen3_235b_a22b_pretrain_64gpu_b200_bf16_config
+qwen3_235b_a22b_pretrain_256gpu_b200_fp8cs_config = qwen3_235b_a22b_pretrain_64gpu_b200_fp8cs_config
+qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config = qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config
+qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config = qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config
+qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config = qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config
+qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config = qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config

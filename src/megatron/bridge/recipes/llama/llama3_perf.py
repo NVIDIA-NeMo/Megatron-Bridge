@@ -2217,3 +2217,28 @@ def llama3_70b_sft_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg = llama3_70b_sft_32gpu_gb300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     return cfg
+
+
+# =============================================================================
+# Llama3 8B pretrain — GPU-count aliases (same config, different scale)
+# =============================================================================
+
+llama3_8b_pretrain_64gpu_h100_bf16_config = llama3_8b_pretrain_8gpu_h100_bf16_config
+llama3_8b_pretrain_64gpu_h100_fp8cs_config = llama3_8b_pretrain_8gpu_h100_fp8cs_config
+llama3_8b_pretrain_64gpu_b200_bf16_config = llama3_8b_pretrain_8gpu_b200_bf16_config
+llama3_8b_pretrain_64gpu_b200_fp8cs_config = llama3_8b_pretrain_8gpu_b200_fp8cs_config
+llama3_8b_pretrain_32gpu_gb200_bf16_config = llama3_8b_pretrain_8gpu_gb200_bf16_config
+llama3_8b_pretrain_32gpu_gb200_fp8cs_config = llama3_8b_pretrain_8gpu_gb200_fp8cs_config
+llama3_8b_pretrain_32gpu_gb300_bf16_config = llama3_8b_pretrain_8gpu_gb300_bf16_config
+llama3_8b_pretrain_32gpu_gb300_fp8cs_config = llama3_8b_pretrain_8gpu_gb300_fp8cs_config
+llama3_8b_pretrain_32gpu_gb300_fp8mx_config = llama3_8b_pretrain_8gpu_gb300_fp8mx_config
+llama3_8b_pretrain_32gpu_gb300_nvfp4_config = llama3_8b_pretrain_8gpu_gb300_nvfp4_config
+
+# =============================================================================
+# Llama3 70B pretrain — 32 GPU aliases (same config as 64 GPU)
+# =============================================================================
+
+llama3_70b_pretrain_32gpu_gb200_bf16_config = llama3_70b_pretrain_64gpu_gb200_bf16_config
+llama3_70b_pretrain_32gpu_gb200_fp8cs_config = llama3_70b_pretrain_64gpu_gb200_fp8cs_config
+llama3_70b_pretrain_32gpu_gb300_bf16_config = llama3_70b_pretrain_64gpu_gb300_bf16_config
+llama3_70b_pretrain_32gpu_gb300_fp8cs_config = llama3_70b_pretrain_64gpu_gb300_fp8cs_config

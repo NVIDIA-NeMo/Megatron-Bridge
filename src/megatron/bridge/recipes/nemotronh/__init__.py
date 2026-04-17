@@ -78,6 +78,11 @@ from megatron.bridge.recipes.nemotronh.nemotronh_perf import (
     # NemotronH 56B
     nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config,
     nemotronh_56b_pretrain_64gpu_h100_fp8cs_config,
+    # NemotronH 56B 256-GPU aliases + BF16 variants
+    nemotronh_56b_pretrain_256gpu_b200_bf16_config,
+    nemotronh_56b_pretrain_256gpu_b200_fp8cs_config,
+    nemotronh_56b_pretrain_256gpu_gb300_bf16_config,
+    nemotronh_56b_pretrain_256gpu_gb300_fp8cs_config,
 )
 
 
@@ -131,4 +136,9 @@ __all__ = [
     "nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config",
     "nemotron_3_nano_pretrain_16gpu_h100_bf16_config",
     "nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config",
+    # NemotronH 56B 256-GPU aliases + BF16 variants
+    "nemotronh_56b_pretrain_256gpu_b200_bf16_config",
+    "nemotronh_56b_pretrain_256gpu_b200_fp8cs_config",
+    "nemotronh_56b_pretrain_256gpu_gb300_bf16_config",
+    "nemotronh_56b_pretrain_256gpu_gb300_fp8cs_config",
 ]
