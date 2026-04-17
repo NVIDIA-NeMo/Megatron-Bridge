@@ -1,6 +1,6 @@
 ---
 name: developer-guide
-description: Developer environment setup, CI/CD workflows, and CI failure debugging for Megatron Bridge. Covers container-based development, uv package management, pre-commit hooks, running tests, CI failure investigation, and common pitfalls. Use when onboarding, setting up a dev environment, troubleshooting build issues, investigating CI failures, or dealing with lockfile issues (corrupted, regenerating, or updating uv.lock).
+description: Developer environment setup, CI/CD workflows, and CI failure debugging for Megatron Bridge. Covers container-based development, uv package management, pre-commit hooks, running unit tests, CI failure investigation, and common pitfalls. Use when onboarding, setting up a dev environment, troubleshooting build issues, investigating CI failures, or dealing with lockfile issues (corrupted, regenerating, or updating uv.lock). For functional test layout, tiers, and flaky handling, see the test-system skill.
 ---
 
 # Developer Guide
