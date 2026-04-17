@@ -53,9 +53,9 @@ inputs:
     description: "Test data path"
     required: true
   script_dir:
-    description: "Subdirectory within launch_scripts/ for functional tests (active or flaky)"
+    description: "Subdirectory within launch_scripts/ for functional tests (h100, h100-flaky, gb200, gb200-flaky)"
     required: false
-    default: "active"
+    default: "h100"
   runner:
     description: "Runner to use for test"
     required: true

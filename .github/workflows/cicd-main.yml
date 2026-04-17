@@ -80,11 +80,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pre-flight]
     outputs:
-      needs_more_tests: ${{ steps.configure.outputs.needs_more_tests }}
-      full_test_suite:  ${{ steps.configure.outputs.full_test_suite }}
-      expect_l0:        ${{ steps.configure.outputs.expect_l0 }}
-      expect_l1:        ${{ steps.configure.outputs.expect_l1 }}
-      expect_l2:        ${{ steps.configure.outputs.expect_l2 }}
+      needs_more_tests:  ${{ steps.configure.outputs.needs_more_tests }}
+      full_test_suite:   ${{ steps.configure.outputs.full_test_suite }}
+      expect_l0:         ${{ steps.configure.outputs.expect_l0 }}
+      expect_l1:         ${{ steps.configure.outputs.expect_l1 }}
+      expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
+      expect_gb200_l0:   ${{ steps.configure.outputs.expect_gb200_l0 }}
+      expect_gb200_l1:   ${{ steps.configure.outputs.expect_gb200_l1 }}
+      expect_gb200_l2:   ${{ steps.configure.outputs.expect_gb200_l2 }}
     steps:
       - name: Get PR info
         id: get-pr-info
@@ -95,12 +98,13 @@ jobs:
         id: configure
         shell: bash -x -e -u -o pipefail {0}
         env:
-          GH_TOKEN:      ${{ github.token }}
-          DOCS_ONLY:     ${{ needs.pre-flight.outputs.docs_only }}
-          IS_DEPLOYMENT: ${{ needs.pre-flight.outputs.is_deployment_workflow }}
-          EVENT_NAME:    ${{ github.event_name }}
-          REF:           ${{ github.ref }}
-          TEST_SUITE:    ${{ github.event.inputs.test_suite }}
+          GH_TOKEN:             ${{ github.token }}
+          DOCS_ONLY:            ${{ needs.pre-flight.outputs.docs_only }}
+          IS_DEPLOYMENT:        ${{ needs.pre-flight.outputs.is_deployment_workflow }}
+          EVENT_NAME:           ${{ github.event_name }}
+          REF:                  ${{ github.ref }}
+          TEST_SUITE:           ${{ github.event.inputs.test_suite }}
+          GB200_RUNNER_PREFIX:  ${{ vars.GB200_RUNNER_PREFIX }}
         run: |
           PR_NUMBER=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
 
@@ -139,11 +143,22 @@ jobs:
             EXPECT_L2=true
           fi
 
-          echo "needs_more_tests=$NEEDS_MORE_TESTS" | tee -a "$GITHUB_OUTPUT"
-          echo "full_test_suite=$FULL_TEST_SUITE"   | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l0=$EXPECT_L0"               | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l1=$EXPECT_L1"               | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l2=$EXPECT_L2"               | tee -a "$GITHUB_OUTPUT"
+          # EXPECT_GB200_L{n}: same conditions as H100 tiers, gated on GB200_RUNNER_PREFIX being set
+          EXPECT_GB200_L0=false
+          [[ "$EXPECT_L0" == "true" && -n "$GB200_RUNNER_PREFIX" ]] && EXPECT_GB200_L0=true
+          EXPECT_GB200_L1=false
+          [[ "$EXPECT_L1" == "true" && -n "$GB200_RUNNER_PREFIX" ]] && EXPECT_GB200_L1=true
+          EXPECT_GB200_L2=false
+          [[ "$EXPECT_L2" == "true" && -n "$GB200_RUNNER_PREFIX" ]] && EXPECT_GB200_L2=true
+
+          echo "needs_more_tests=$NEEDS_MORE_TESTS"   | tee -a "$GITHUB_OUTPUT"
+          echo "full_test_suite=$FULL_TEST_SUITE"     | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l0=$EXPECT_L0"                 | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l1=$EXPECT_L1"                 | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l2=$EXPECT_L2"                 | tee -a "$GITHUB_OUTPUT"
+          echo "expect_gb200_l0=$EXPECT_GB200_L0"     | tee -a "$GITHUB_OUTPUT"
+          echo "expect_gb200_l1=$EXPECT_GB200_L1"     | tee -a "$GITHUB_OUTPUT"
+          echo "expect_gb200_l2=$EXPECT_GB200_L2"     | tee -a "$GITHUB_OUTPUT"
 
           # Active row markers for step summary decision tree
           _L0=$(    [[ "$EXPECT_L0" == "true" ]] && echo "**→**" || echo "" )
@@ -538,7 +553,7 @@ jobs:
           }
           for tier in L0 L1 L2; do
             entries=""
-            for f in tests/functional_tests/launch_scripts/active/${tier}_*.sh; do
+            for f in tests/functional_tests/launch_scripts/h100/${tier}_*.sh; do
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
@@ -547,7 +562,7 @@ jobs:
             echo "matrix_${tier,,}=${matrix}" | tee -a "$GITHUB_OUTPUT"
           done
           entries=""
-          for f in tests/functional_tests/launch_scripts/flaky/L*.sh; do
+          for f in tests/functional_tests/launch_scripts/h100-flaky/L*.sh; do
             [ -f "$f" ] || continue
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
@@ -712,7 +727,7 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          script_dir: flaky
+          script_dir: h100-flaky
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
@@ -725,6 +740,232 @@ jobs:
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
+  generate-gb200-test-matrix:
+    needs: [pre-flight, cicd-container-build]
+    runs-on: ubuntu-latest
+    outputs:
+      matrix_gb200_l0:    ${{ steps.scan.outputs.matrix_gb200_l0 }}
+      matrix_gb200_l1:    ${{ steps.scan.outputs.matrix_gb200_l1 }}
+      matrix_gb200_l2:    ${{ steps.scan.outputs.matrix_gb200_l2 }}
+      matrix_gb200_flaky: ${{ steps.scan.outputs.matrix_gb200_flaky }}
+    if: |
+      vars.GB200_RUNNER_PREFIX != ''
+      && (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+    steps:
+      - uses: actions/checkout@v6
+      - id: scan
+        shell: bash
+        run: |
+          get_timeout() {
+            local f="$1"
+            local t
+            t=$(grep -m1 '^# CI_TIMEOUT=' "$f" | cut -d= -f2)
+            echo "${t:-30}"
+          }
+          for tier in L0 L1 L2; do
+            entries=""
+            for f in tests/functional_tests/launch_scripts/gb200/${tier}_*.sh; do
+              [ -f "$f" ] || continue
+              name=$(basename "$f" .sh)
+              timeout=$(get_timeout "$f")
+              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
+            done
+            echo "matrix_gb200_${tier,,}={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
+          done
+          entries=""
+          for f in tests/functional_tests/launch_scripts/gb200-flaky/L*.sh; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f" .sh)
+            timeout=$(get_timeout "$f")
+            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
+          done
+          echo "matrix_gb200_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
+
+  # GB200-L0: mirrors H100-L0 trigger conditions, runs on GB200 hardware
+  cicd-functional-tests-gb200-l0:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l0) }}
+    needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+    if: |
+      vars.GB200_RUNNER_PREFIX != ''
+      && (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
+    name: gb200_${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script_dir: gb200
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+
+  # GB200-L1: mirrors H100-L1 trigger conditions, runs on GB200 hardware
+  cicd-functional-tests-gb200-l1:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l1) }}
+    needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+    if: |
+      vars.GB200_RUNNER_PREFIX != ''
+      && (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.configure.outputs.needs_more_tests == 'true' || needs.configure.outputs.full_test_suite == 'true')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
+    name: gb200_${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script_dir: gb200
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+
+  # GB200-L2: mirrors H100-L2 trigger conditions, runs on GB200 hardware
+  cicd-functional-tests-gb200-l2:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l2) }}
+    needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+    if: |
+      vars.GB200_RUNNER_PREFIX != ''
+      && (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.configure.outputs.full_test_suite == 'true')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
+    name: gb200_${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script_dir: gb200
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+
+  cicd-functional-tests-gb200-flaky:
+    if: |
+      vars.GB200_RUNNER_PREFIX != ''
+      && github.event_name == 'workflow_dispatch'
+      && github.event.inputs.test_suite == 'all'
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_flaky) }}
+    needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+    name: gb200_${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script_dir: gb200-flaky
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+
   Nemo_CICD_Test:
     needs:
       - pre-flight
@@ -734,6 +975,9 @@ jobs:
       - cicd-functional-tests-l0
       - cicd-functional-tests-l1
       - cicd-functional-tests-l2
+      - cicd-functional-tests-gb200-l0
+      - cicd-functional-tests-gb200-l1
+      - cicd-functional-tests-gb200-l2
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     permissions: write-all
@@ -745,10 +989,13 @@ jobs:
         id: result
         shell: bash -e -u -o pipefail {0}
         env:
-          GH_TOKEN: ${{ github.token }}
-          EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
-          EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
-          EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
+          GH_TOKEN:         ${{ github.token }}
+          EXPECT_L0:        ${{ needs.configure.outputs.expect_l0 }}
+          EXPECT_L1:        ${{ needs.configure.outputs.expect_l1 }}
+          EXPECT_L2:        ${{ needs.configure.outputs.expect_l2 }}
+          EXPECT_GB200_L0:  ${{ needs.configure.outputs.expect_gb200_l0 }}
+          EXPECT_GB200_L1:  ${{ needs.configure.outputs.expect_gb200_l1 }}
+          EXPECT_GB200_L2:  ${{ needs.configure.outputs.expect_gb200_l2 }}
         run: |
           FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
 
@@ -770,6 +1017,9 @@ jobs:
           check_tier_skips "L0" "$EXPECT_L0"
           check_tier_skips "L1" "$EXPECT_L1"
           check_tier_skips "L2" "$EXPECT_L2"
+          check_tier_skips "gb200_L0" "$EXPECT_GB200_L0"
+          check_tier_skips "gb200_L1" "$EXPECT_GB200_L1"
+          check_tier_skips "gb200_L2" "$EXPECT_GB200_L2"
 
           if [ "${FAILED_JOBS:-0}" -gt 0 ]; then
             echo "❌ Found $FAILED_JOBS failed job(s):"
