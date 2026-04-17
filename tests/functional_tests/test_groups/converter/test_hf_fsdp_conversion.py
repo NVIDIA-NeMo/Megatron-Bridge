@@ -21,6 +21,12 @@ import torch
 from transformers import AutoTokenizer, Qwen3MoeConfig, Qwen3MoeForCausalLM
 
 
+@pytest.fixture(scope="session", autouse=True)
+def ensure_test_data(tmp_path_factory):
+    """Override conftest fixture: FSDP roundtrip tests don't require pre-downloaded test data."""
+    yield tmp_path_factory.mktemp("test_data")
+
+
 HF_QWEN3_MOE_TOY_MODEL_CONFIG = {
     "architectures": ["Qwen3MoeForCausalLM"],
     "attention_bias": False,
