@@ -62,6 +62,9 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  container-registry-gb200: us-east4-docker.pkg.dev/nv-projdgxchipp-20260113193621/megatron-bridge
+
 jobs:
   pre-flight:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
@@ -433,6 +436,134 @@ jobs:
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
 
+  cicd-container-build-arm64:
+    needs: [pre-flight, cicd-wait-in-queue]
+    runs-on: nemo-ci-gcp-gpu-x2
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+    steps:
+      - name: Get PR info
+        id: get-pr-info
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        uses: nv-gha-runners/get-pr-info@main
+
+      - name: Get merge commit sha
+        shell: bash -x -e -u -o pipefail {0}
+        id: sha
+        env:
+          IS_PR: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
+        run: |
+          if [[ "$IS_PR" == "true" ]]; then
+            SHA=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
+          else
+            SHA=${GITHUB_SHA}
+          fi
+          echo "main=${SHA}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          ref: ${{ steps.sha.outputs.main }}
+
+      - name: Update MCore submodule (if triggered from MCore)
+        if: ${{ github.event.inputs.mcore_ref != '' }}
+        run: |
+          cd 3rdparty/Megatron-LM
+          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
+          git checkout ${{ github.event.inputs.mcore_ref }}
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+          cd ../..
+          echo "MCORE_COMMIT_SHA=${EXPECTED_COMMIT}" | tee -a "$GITHUB_ENV"
+
+      - name: Set environment for MCore testing
+        if: ${{ github.event.inputs.mcore_ref != '' }}
+        run: |
+          echo "MCORE_TRIGGERED_TESTING=true" | tee -a "$GITHUB_ENV"
+
+      - name: Install GH CLI
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            apt-get update && apt-get install -y gh && break
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+
+      - name: Get last merged PR
+        id: cache_from
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LAST_PRS=$(gh api graphql -f query='
+            query {
+              repository(owner: "NVIDIA-NeMo", name: "Megatron-Bridge") {
+                pullRequests(states: MERGED, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
+                  nodes {
+                    number
+                  }
+                }
+              }
+            }' | jq -r '.data.repository.pullRequests.nodes[].number' | while read -r number; do
+              echo "type=registry,ref=${{ env.container-registry-gb200 }}/megatron-bridge:$number-arm64-buildcache,mode=max"
+            done)
+
+          echo "LAST_PRS<<EOF" | tee -a $GITHUB_OUTPUT
+          echo "$LAST_PRS" | tee -a $GITHUB_OUTPUT
+          echo "EOF" | tee -a $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute cache keys
+        id: cache_keys
+        shell: bash
+        run: |
+          PR_NUMBER="${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}"
+          BRANCH_SANITIZED=$(echo "${{ github.ref_name }}" | tr '/' '-' | tr -cd '[:alnum:]._-')
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            KEY="main"
+          elif [[ -n "$PR_NUMBER" ]]; then
+            KEY="$PR_NUMBER"
+          else
+            KEY="$BRANCH_SANITIZED"
+          fi
+          echo "key=$KEY" | tee -a "$GITHUB_OUTPUT"
+          echo "cache-to=type=registry,ref=${{ env.container-registry-gb200 }}/megatron-bridge:${KEY}-arm64-buildcache,mode=max" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Build and push ARM64
+        uses: docker/build-push-action@v5
+        with:
+          file: ./docker/Dockerfile.ci
+          push: true
+          context: .
+          platforms: linux/arm64
+          build-args: |
+            FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
+            MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
+            MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
+          cache-from: |
+            type=registry,ref=${{ env.container-registry-gb200 }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-arm64-buildcache,mode=max
+            type=registry,ref=${{ env.container-registry-gb200 }}/megatron-bridge:main-arm64-buildcache,mode=max
+            ${{ steps.cache_from.outputs.LAST_PRS }}
+          cache-to: ${{ steps.cache_keys.outputs.cache-to }}
+          no-cache: false
+          tags: |
+            ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}-arm64
+          secrets: |
+            GH_TOKEN=${{ secrets.PAT }}
+
   cicd-unit-tests-core:
     if: |
       (
@@ -726,7 +857,7 @@ jobs:
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   generate-gb200-test-matrix:
-    needs: [pre-flight, cicd-container-build]
+    needs: [pre-flight, cicd-container-build-arm64]
     runs-on: ubuntu-latest
     outputs:
       matrix_gb200_l0:    ${{ steps.scan.outputs.matrix_gb200_l0 }}
@@ -812,7 +943,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: nemo-ci-gcp-gpu-x2
 
@@ -858,7 +989,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: nemo-ci-gcp-gpu-x2
 
@@ -904,7 +1035,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: nemo-ci-gcp-gpu-x2
 
@@ -940,7 +1071,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: nemo-ci-gcp-gpu-x2
 
