@@ -778,7 +778,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l0) }}
     needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+    runs-on: nemo-ci-gcp-gpu-x2
     if: |
       (
         success()
@@ -814,7 +814,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+          runner: nemo-ci-gcp-gpu-x2
 
   # GB200-L1: mirrors H100-L1 trigger conditions, runs on GB200 hardware
   cicd-functional-tests-gb200-l1:
@@ -823,7 +823,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l1) }}
     needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+    runs-on: nemo-ci-gcp-gpu-x2
     if: |
       (
         success()
@@ -860,7 +860,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+          runner: nemo-ci-gcp-gpu-x2
 
   # GB200-L2: mirrors H100-L2 trigger conditions, runs on GB200 hardware
   cicd-functional-tests-gb200-l2:
@@ -869,7 +869,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l2) }}
     needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+    runs-on: nemo-ci-gcp-gpu-x2
     if: |
       (
         success()
@@ -906,7 +906,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+          runner: nemo-ci-gcp-gpu-x2
 
   cicd-functional-tests-gb200-flaky:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
@@ -915,7 +915,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_flaky) }}
     needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+    runs-on: nemo-ci-gcp-gpu-x2
     name: gb200_${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
@@ -942,7 +942,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
+          runner: nemo-ci-gcp-gpu-x2
 
   Nemo_CICD_Test:
     needs:
