@@ -86,11 +86,11 @@ class TestTrainState:
         }
         assert set(state_dict.keys()) == expected_keys
 
-        # Check tensor types
-        assert state_dict["step"].dtype == torch.int32
-        assert state_dict["consumed_train_samples"].dtype == torch.int32
-        assert state_dict["skipped_train_samples"].dtype == torch.int32
-        assert state_dict["consumed_valid_samples"].dtype == torch.int32
+        # Check tensor types (uint64 to avoid overflow on long training runs)
+        assert state_dict["step"].dtype == torch.uint64
+        assert state_dict["consumed_train_samples"].dtype == torch.uint64
+        assert state_dict["skipped_train_samples"].dtype == torch.uint64
+        assert state_dict["consumed_valid_samples"].dtype == torch.uint64
         assert state_dict["floating_point_operations_so_far"].dtype == torch.float64
         assert state_dict["do_train"].dtype == torch.bool
         assert state_dict["do_valid"].dtype == torch.bool

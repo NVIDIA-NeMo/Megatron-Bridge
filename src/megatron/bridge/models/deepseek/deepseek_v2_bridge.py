@@ -112,16 +112,7 @@ class DeepSeekV2Bridge(MegatronModelBridge):
 
         return hf_cfg
 
-    def build_conversion_tasks(self, hf_pretrained, megatron_model):
-        """Override to store config before mapping_registry is called."""
-        # Store config on instance for use in mapping_registry
-        from transformers import PretrainedConfig
-
-        self._hf_config = hf_pretrained if isinstance(hf_pretrained, PretrainedConfig) else hf_pretrained.config
-        return super().build_conversion_tasks(hf_pretrained, megatron_model)
-
     def mapping_registry(self) -> MegatronMappingRegistry:
-        # Get hf_config if available (set by build_conversion_tasks)
-        hf_config = getattr(self, "_hf_config", None)
+        hf_config = self.hf_config
         mapping_list = get_common_mapping_list(hf_config=hf_config)
         return MegatronMappingRegistry(*mapping_list)
