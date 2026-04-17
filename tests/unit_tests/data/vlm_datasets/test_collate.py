@@ -20,6 +20,7 @@ import megatron.bridge.data.vlm_datasets.collate as collate
 class _DummyProcessor:
     class _Tok:
         pad_token_id = 0
+        pad_token = "<pad>"
         added_tokens_decoder = {}
 
     def __init__(self):
@@ -76,6 +77,52 @@ def test_qwen2_5_collate_fn_handles_no_images(monkeypatch):
     batch = collate.qwen2_5_collate_fn(examples, proc)
     assert "input_ids" in batch and "labels" in batch and "loss_mask" in batch
     assert "visual_inputs" in batch
+
+
+def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
+    """qwen2_audio_collate_fn should store Qwen2AudioInputs under 'audio_inputs', not 'visual_inputs'."""
+
+    class _AudioProcessor:
+        class _Tok:
+            pad_token_id = 0
+            padding_side = "right"
+            added_tokens_decoder = {}
+
+            def __call__(self, text, add_special_tokens=False):
+                return {"input_ids": [1, 2]}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+            return "dummy"
+
+        def __call__(self, text=None, audio=None, return_tensors="pt", padding=True, **kwargs):
+            n = len(text)
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]] * n),
+                "input_features": torch.randn(n, 80, 16),
+                "feature_attention_mask": torch.ones(n, 16),
+            }
+
+    # Stub _gather_assistant_text_segments to return a findable text
+    monkeypatch.setattr(collate, "_gather_assistant_text_segments", lambda ex: ["dummy"])
+
+    proc = _AudioProcessor()
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+    ]
+    batch = collate.qwen2_audio_collate_fn(examples, proc)
+
+    # Must use 'audio_inputs', not 'visual_inputs'
+    assert "audio_inputs" in batch, f"Expected 'audio_inputs' key, got keys: {list(batch.keys())}"
+    assert "visual_inputs" not in batch
+    ai = batch["audio_inputs"]
+    assert hasattr(ai, "input_features")
+    assert hasattr(ai, "feature_attention_mask")
+    # Raw keys should be cleaned up
+    assert "input_features" not in batch
+    assert "feature_attention_mask" not in batch
 
 
 def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):

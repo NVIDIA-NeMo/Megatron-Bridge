@@ -704,6 +704,7 @@ def save_megatron_model(
             num_floating_point_operations_so_far=0,
             prebuilt_state_dict=state_dict,
             pg_collection=pg_collection,
+            callback_manager=None,
         )
     else:
         # Save the checkpoint
@@ -713,6 +714,7 @@ def save_megatron_model(
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            callback_manager=None,
         )
 
     # Save tokenizer files separately if tokenizer config is provided

@@ -20,24 +20,24 @@ for audio understanding tasks.
 
 Example:
   # Audio-Language generation with audio from URL:
-  uv run python examples/conversion/hf_to_megatron_generate_alm.py \
+  uv run python examples/conversion/hf_to_megatron_generate_audio_lm.py \
     --hf_model_path="Qwen/Qwen2-Audio-7B-Instruct" \
     --audio_url="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen2-Audio/audio/glass-breaking-151256.mp3" \
     --prompt="What's that sound?"
 
   # Audio-Language generation with local audio file:
-  uv run python examples/conversion/hf_to_megatron_generate_alm.py \
+  uv run python examples/conversion/hf_to_megatron_generate_audio_lm.py \
     --hf_model_path="Qwen/Qwen2-Audio-7B-Instruct" \
     --audio_path="/path/to/audio.wav" \
     --prompt="Describe what you hear in this audio."
 
   # Text-only generation (no audio):
-  uv run python examples/conversion/hf_to_megatron_generate_alm.py \
+  uv run python examples/conversion/hf_to_megatron_generate_audio_lm.py \
     --hf_model_path="Qwen/Qwen2-Audio-7B-Instruct" \
     --prompt="Hello, how are you?"
 
   # Load from Megatron checkpoint:
-  uv run python examples/conversion/hf_to_megatron_generate_alm.py \
+  uv run python examples/conversion/hf_to_megatron_generate_audio_lm.py \
     --hf_model_path="Qwen/Qwen2-Audio-7B-Instruct" \
     --megatron_model_path="/path/to/megatron/checkpoint" \
     --audio_url="https://example.com/audio.mp3" \

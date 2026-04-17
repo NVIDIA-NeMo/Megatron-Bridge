@@ -114,6 +114,7 @@ class TestCallback:
         mock_context = Mock(spec=CallbackContext)
 
         # None of these should raise
+        callback.on_data_init_start(mock_context)
         callback.on_train_start(mock_context)
         callback.on_train_step_start(mock_context)
         callback.on_train_step_end(mock_context)
@@ -126,6 +127,7 @@ class TestCallback:
         callback.on_test_step_start(mock_context)
         callback.on_test_step_end(mock_context)
         callback.on_test_end(mock_context)
+        callback.on_checkpoint_save(mock_context)
 
     def test_subclass_can_override_methods(self):
         """Subclasses can override specific methods."""
@@ -515,6 +517,7 @@ class TestValidEvents:
     def test_valid_events_contains_expected_events(self):
         """VALID_EVENTS contains all expected event names."""
         expected = {
+            "on_data_init_start",
             "on_train_start",
             "on_train_step_start",
             "on_train_step_end",
@@ -527,6 +530,7 @@ class TestValidEvents:
             "on_test_step_start",
             "on_test_step_end",
             "on_test_end",
+            "on_checkpoint_save",
         }
         assert VALID_EVENTS == expected
 

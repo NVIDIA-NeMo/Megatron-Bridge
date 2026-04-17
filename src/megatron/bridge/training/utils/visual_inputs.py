@@ -34,6 +34,7 @@ class GenericVisualInputs:
     image_grid_thw: Optional[torch.Tensor] = None
     video_grid_thw: Optional[torch.Tensor] = None
     image_sizes: Optional[torch.Tensor] = None
+    mm_token_type_ids: Optional[torch.Tensor] = None
 
     def as_model_kwargs(self) -> dict[str, torch.Tensor]:
         """Return a mapping of non-None fields suitable for model forward kwargs."""
@@ -90,3 +91,28 @@ class Qwen2_5_VLVisualInputs:
             kwargs["image_grid_thw"] = image_grid_thw.view(-1, image_grid_thw.size(-1))
 
         return kwargs
+
+
+@dataclass
+class Qwen2AudioInputs:
+    """Container for Qwen2-Audio modality tensors.
+
+    Fields mirror the processor outputs for Qwen2-Audio. The model expects
+    ``input_features`` (mel spectrograms) and ``feature_attention_mask``.
+    """
+
+    input_features: Optional[torch.Tensor] = None
+    feature_attention_mask: Optional[torch.Tensor] = None
+
+    def as_model_kwargs(self) -> dict[str, torch.Tensor]:
+        """Return a mapping of non-None fields suitable for model forward kwargs."""
+        result: dict[str, torch.Tensor] = {}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if value is not None:
+                result[f.name] = value
+        return result
+
+    def normalized_for_model(self) -> dict[str, torch.Tensor]:
+        """Return non-None fields (no shape normalization needed for audio)."""
+        return self.as_model_kwargs()

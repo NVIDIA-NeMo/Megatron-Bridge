@@ -114,7 +114,10 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     def loss_func(x, **kwargs):
         return x
 
-    return model(**forward_args), loss_func
+    output = model(**forward_args)
+    if isinstance(output, tuple):
+        output = output[0]
+    return output, loss_func
 
 
 def load_image(image_path: str) -> Image.Image:

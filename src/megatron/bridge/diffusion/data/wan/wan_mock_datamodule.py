@@ -129,11 +129,13 @@ class WanMockDataModuleConfig(DatasetProvider):  # noqa: D101
     context_embeddings_dim: int = 4096
 
     def __post_init__(self):
+        import itertools
+
         mock_ds = _MockDataset(length=1024)
         kwargs = {}
         if self.num_workers > 0:
             kwargs["prefetch_factor"] = 8
-        self._train_dl = DataLoader(
+        dl = DataLoader(
             mock_ds,
             batch_size=self.micro_batch_size,
             num_workers=self.num_workers,
@@ -152,7 +154,7 @@ class WanMockDataModuleConfig(DatasetProvider):  # noqa: D101
             pin_memory=True,
             **kwargs,
         )
-        self._train_dl = iter(self._train_dl)
+        self._train_dl = itertools.cycle(dl)
         self.sequence_length = self.seq_length
 
     def build_datasets(self, _context: DatasetBuildContext):
