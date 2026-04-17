@@ -31,7 +31,7 @@ Unless explicitly stated, any megatron model path in the commands below should N
 ### Import HF → Megatron
 To import the HF model to your desired `$MEGATRON_MODEL_PATH`, run the following command.
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
 --hf-model $HF_MODEL_PATH \
 --megatron-path $MEGATRON_MODEL_PATH \
 --trust-remote-code
@@ -40,7 +40,7 @@ python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 You can export a trained model with the following command.
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
 --hf-model $HF_MODEL_PATH \
 --megatron-path <trained megatron model path> \
 --hf-path <output hf model path> \
@@ -53,7 +53,7 @@ Note: it is normal to see a warning that `vision_model.radio_model.input_conditi
 ### Run In-Framework Inference on Converted Checkpoint
 You can run a quick sanity check on the converted checkpoint with the following command.
 ```bash
-python examples/conversion/hf_to_megatron_generate_vlm.py \
+uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 --hf_model_path $HF_MODEL_PATH \
 --megatron_model_path $MEGATRON_MODEL_PATH \
 --image_path <example image path> \
@@ -85,7 +85,7 @@ Example usage for full parameter finetuning using the
 [Raven dataset](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron/viewer/raven):
 
 ```bash
-torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+uv run torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint <megatron model path> \
 dataset.maker_name=make_raven_dataset \
@@ -110,7 +110,7 @@ settings out of the box in the example script:
    distribution is substantially different from pretrained.)
 
 ```bash
-torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+uv run torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
@@ -126,7 +126,7 @@ model.freeze_vision_projection=False
 2. Apply LoRA to all linear layers in attention and MLP modules of the vision model, vision projection, and the language model.
 
 ```bash
-torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+uv run torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
@@ -146,7 +146,7 @@ A LoRA checkpoint only contains the learnable adapter weights. In order to conve
 format for downstream evaluation, it is necessary to merge the LoRA adapters back to the base model. 
 
 ```bash
-python examples/peft/merge_lora.py \
+uv run python examples/peft/merge_lora.py \
 --hf-model-path $HF_MODEL_PATH \
 --lora-checkpoint <trained LoRA checkpoint>/iter_N \
 --output <LoRA checkpoint merged>
@@ -186,7 +186,7 @@ Note on video training example:
 
 Full video training example command:
 ```bash
-torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+uv run torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --config-file "examples/models/vlm/nemotron_vl/conf/nemotron_nano_v2_vl_video.yaml" \

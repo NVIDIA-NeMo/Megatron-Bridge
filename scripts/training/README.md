@@ -102,7 +102,7 @@ pip install nemo-run
 Before launching on Slurm, test your configuration locally:
 
 ```bash
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --local \
     --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
@@ -119,7 +119,7 @@ Once tested, scale to Slurm by removing `--local` and adding Slurm parameters:
 
 ```bash
 # From the cluster (LocalTunnel)
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
@@ -128,7 +128,7 @@ python launch_with_nemo_run.py \
     --account my_account
 
 # From your local machine (SSHTunnel)
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
@@ -146,7 +146,7 @@ python launch_with_nemo_run.py \
 When using containers, scripts are automatically packaged using `PatternPackager`:
 
 ```bash
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe qwen3_8b_pretrain_config \
     --nodes 4 \
@@ -162,7 +162,7 @@ python launch_with_nemo_run.py \
 > the container.
 
 ```bash
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
@@ -180,7 +180,7 @@ run from the container workspace.
 For git-based packaging:
 
 ```bash
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe llama3_8b_pretrain_config \
     --nodes 2 \
@@ -195,7 +195,7 @@ python launch_with_nemo_run.py \
 Use the fault-tolerant launcher for better resiliency:
 
 ```bash
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --launcher ft \

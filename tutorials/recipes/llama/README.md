@@ -7,7 +7,7 @@ This guide shows you how to pretrain and finetune Llama models using Megatron Br
 The fastest way to get started with Megatron Bridge pretraining:
 
 ```bash
-torchrun --nproc_per_node=1 00_quickstart_pretrain.py
+uv run torchrun --nproc_per_node=1 00_quickstart_pretrain.py
 ```
 
 This runs Llama 3.2 1B pretraining on a single GPU with mock data.
@@ -17,7 +17,7 @@ For finetuning, you first need a checkpoint in Megatron format. Convert from Hug
 > **Note:** You must be authenticated with Hugging Face to download the model. Run `hf auth login --token $HF_TOKEN` if needed.
 
 ```bash
-python ../../conversion/convert_checkpoints.py import \
+uv run python ../../conversion/convert_checkpoints.py import \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama32_1b
 ```
@@ -25,7 +25,7 @@ python ../../conversion/convert_checkpoints.py import \
 Then run finetuning:
 
 ```bash
-torchrun --nproc_per_node=1 01_quickstart_finetune.py \
+uv run torchrun --nproc_per_node=1 01_quickstart_finetune.py \
     --pretrained-checkpoint ./checkpoints/llama32_1b
 ```
 
@@ -56,7 +56,7 @@ The recipes include optional support for YAML configuration and dot-notation ove
 To use the provided YAML system:
 
 ```bash
-torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
+uv run torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
     --config-file conf/llama32_1b_pretrain.yaml
 ```
 
@@ -93,7 +93,7 @@ Command-Line Overrides:
 You can override values using dot notation (`section.field=value`):
 
 ```bash
-torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
+uv run torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
     --config-file conf/llama32_1b_pretrain.yaml \
     train.train_iters=5000 \
     train.global_batch_size=512 \
@@ -110,7 +110,7 @@ Priority order (highest to lowest):
 For more complex finetuning configurations:
 
 ```bash
-torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
+uv run torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
     --config-file conf/llama32_1b_finetune.yaml
 ```
 
@@ -145,7 +145,7 @@ optimizer:                        # OptimizerConfig
 Full Finetuning (No LoRA)
 
 ```bash
-torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
+uv run torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
     --peft none \
     train.train_iters=1000
 ```
@@ -183,7 +183,7 @@ pip install nemo-run
 From the Slurm cluster login node:
 
 ```bash
-python 04_launch_slurm_with_nemo_run.py \
+uv run python 04_launch_slurm_with_nemo_run.py \
     --script 00_quickstart_pretrain.py \
     --nodes 2 \
     --devices 8 \
@@ -194,7 +194,7 @@ python 04_launch_slurm_with_nemo_run.py \
 From your local machine (SSHTunnel):
 
 ```bash
-python 04_launch_slurm_with_nemo_run.py \
+uv run python 04_launch_slurm_with_nemo_run.py \
     --script 00_quickstart_pretrain.py \
     --nodes 2 \
     --devices 8 \
@@ -209,7 +209,7 @@ python 04_launch_slurm_with_nemo_run.py \
 With custom config:
 
 ```bash
-python 04_launch_slurm_with_nemo_run.py \
+uv run python 04_launch_slurm_with_nemo_run.py \
     --script 03_finetune_with_yaml.py \
     --nodes 1 \
     --devices 8 \

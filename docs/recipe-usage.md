@@ -114,7 +114,7 @@ After the above snippet, `cfg` will be updated with all CLI-provided overrides.
 A script containing the above code could be called like so:
 
 ```sh
-torchrun <torchrun arguments> pretrain_cli_overrides.py model.tensor_model_parallel_size=4 train.train_iters=100000 ...
+uv run torchrun <torchrun arguments> pretrain_cli_overrides.py model.tensor_model_parallel_size=4 train.train_iters=100000 ...
 ```
 
 ## Launch methods
@@ -127,7 +127,7 @@ Megatron Bridge training scripts can be launched with the `torchrun` command tha
 Simply specify the number of GPUs to use with `--nproc-per-node` and the number of nodes with `--nnodes`. For example, on a single node:
 
 ```sh
-torchrun --nnodes 1 --nproc-per-node 8 /path/to/train/script.py <args to pretrain script>
+uv run torchrun --nnodes 1 --nproc-per-node 8 /path/to/train/script.py <args to pretrain script>
 ```
 
 For multi-node training, it is recommended to use a cluster orchestration system like SLURM.
@@ -140,7 +140,7 @@ For example, with Slurm, wrap the `torchrun` command inside of `srun`:
 srun --nodes 2 --gpus-per-node 8 \
     --container-image <image tag> --container-mounts <mounts> \
     bash -c "
-        torchrun --nnodes $SLURM_NNODES --nproc-per-node $SLURM_GPUS_PER_NODE /path/to/train/script.py <args to pretrain script>
+        uv run torchrun --nnodes $SLURM_NNODES --nproc-per-node $SLURM_GPUS_PER_NODE /path/to/train/script.py <args to pretrain script>
     "
 ```
 

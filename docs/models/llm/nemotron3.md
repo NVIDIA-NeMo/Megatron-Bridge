@@ -21,7 +21,7 @@ We use the following environment variables throughout this page
 ### Import HF → Megatron
 To import the HF model to your desired `$MEGATRON_MODEL_PATH`, run the following command.
 ```bash
-python examples/conversion/convert_checkpoints.py import  \
+uv run python examples/conversion/convert_checkpoints.py import  \
 --hf-model $HF_MODEL_ID  \
 --megatron-path /path/to/output/megatron/ckpt \
 --trust-remote-code
@@ -29,7 +29,7 @@ python examples/conversion/convert_checkpoints.py import  \
 
 ### Export Megatron → HF
 ```bash
-python examples/conversion/convert_checkpoints.py export  \
+uv run python examples/conversion/convert_checkpoints.py export  \
 --hf-model $HF_MODEL_ID  \
 --megatron-path /path/to/trained/megatron/ckpt \
 --hf-path /path/to/output/hf/ckpt
@@ -40,7 +40,7 @@ python examples/conversion/convert_checkpoints.py export  \
 BLEND_PATH=/path/to/dataset/blend
 TOKENIZER_MODEL=/path/to/tiktok/tokenizer/model
 
-torchrun --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_nano.py \
+uv run torchrun --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_nano.py \
 --per-split-data-args-path=${BLEND_PATH} \
 --tokenizer-model=${TOKENIZER_MODEL} \
 train.global_batch_size=3072 \
@@ -58,7 +58,7 @@ Notes:
 
 ### Full Parameter Fine-Tuning
 ```bash
-torchrun --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
+uv run torchrun --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
 train.global_batch_size=128 \
 train.train_iters=100 \
 scheduler.lr_warmup_iters=10 \
@@ -74,7 +74,7 @@ Notes:
 ### LoRA Fine-Tuning
 To enable LoRA fine-tuning, pass `--peft lora` to script
 ```bash
-torchrun --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
+uv run torchrun --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
 --peft lora \
 train.global_batch_size=128 \
 train.train_iters=100 \
@@ -90,7 +90,7 @@ Notes:
 A LoRA checkpoint only contains the learnable adapter weights. In order to convert the LoRA checkpoint to Hugging Face format for downstream evaluation, it is necessary to merge the LoRA adapters back to the base model.
 
 ```bash
-python examples/peft/merge_lora.py \
+uv run python examples/peft/merge_lora.py \
 --hf-model-path $HF_MODEL_ID \
 --lora-checkpoint /path/to/lora/ckpt/iter_xxxxxxx 
 --output /path/to/merged/ckpt

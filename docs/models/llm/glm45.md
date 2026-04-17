@@ -84,19 +84,19 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import HF → Megatron
 ```bash
 # Import GLM 4.5 Air model
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
 --hf-model zai-org/GLM-4.5-Air \
 --megatron-path /models/glm45-air-106b
 
 # Import GLM 4.5 355B model
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
 --hf-model zai-org/GLM-4.5 \
 --megatron-path /models/glm45-355b
 ```
 
 ### Export Megatron → HF
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
 --hf-model zai-org/GLM-4.5-Air \
 --megatron-path /results/glm45_air/checkpoints/iter_00001000 \
 --hf-path ./glm45-air-hf-export
@@ -104,7 +104,7 @@ python examples/conversion/convert_checkpoints.py export \
 
 ### Run Inference on Converted Checkpoint
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
 --hf_model_path zai-org/GLM-4.5-Air \
 --megatron_model_path /models/glm45-air-106b \
 --prompt "Explain quantum computing in simple terms." \
@@ -214,7 +214,7 @@ config = glm45_355b_peft_config(
 
 ```bash
 # GLM 4.5 Air - LoRA finetuning on single node (8 GPUs)
-torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run torchrun --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/glm45-air-106b \
 --recipe glm45_air_106b_peft_config \
 --peft_scheme lora \
@@ -223,7 +223,7 @@ train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/glm45_air_lora
 
 # GLM 4.5 355B - Full finetuning (256 GPUs)
-torchrun --nnodes=32 --nproc-per-node=8 run/run_recipe.py \
+uv run torchrun --nnodes=32 --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/glm45-355b \
 --recipe glm45_355b_sft_config \
 train.global_batch_size=256 \

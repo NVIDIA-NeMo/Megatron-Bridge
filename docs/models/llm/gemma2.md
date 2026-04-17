@@ -63,17 +63,17 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 To import the HF model to your desired Megatron path:
 ```bash
 # Gemma 2 2B
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
 --hf-model google/gemma-2-2b \
 --megatron-path /models/gemma-2-2b
 
 # Gemma 2 9B
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
 --hf-model google/gemma-2-9b \
 --megatron-path /models/gemma-2-9b
 
 # Gemma 2 27B
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
 --hf-model google/gemma-2-27b \
 --megatron-path /models/gemma-2-27b
 ```
@@ -81,7 +81,7 @@ python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 ```bash
 # Gemma 2 9B example
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
 --hf-model google/gemma-2-9b \
 --megatron-path /results/gemma2_9b/checkpoints/iter_00001000 \
 --hf-path ./gemma2-9b-hf-export
@@ -90,7 +90,7 @@ python examples/conversion/convert_checkpoints.py export \
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
 --hf_model_path google/gemma-2-9b \
 --megatron_model_path /models/gemma-2-9b \
 --prompt "What is artificial intelligence?" \
@@ -166,7 +166,7 @@ config = gemma2_27b_pretrain_config(
 
 #### Gemma 2 2B
 ```bash
-torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run torchrun --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-2b \
 --recipe gemma2_2b_sft_config \
 train.global_batch_size=64 \
@@ -188,7 +188,7 @@ config = gemma2_2b_sft_config(
 
 #### Gemma 2 9B
 ```bash
-torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run torchrun --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-9b \
 --recipe gemma2_9b_sft_config \
 train.global_batch_size=64 \
@@ -198,7 +198,7 @@ checkpoint.save=$SAVE_DIR/gemma2_9b_finetune
 
 #### Gemma 2 27B
 ```bash
-torchrun --nproc-per-node=16 run/run_recipe.py \
+uv run torchrun --nproc-per-node=16 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-27b \
 --recipe gemma2_27b_sft_config \
 train.global_batch_size=64 \
@@ -210,7 +210,7 @@ checkpoint.save=$SAVE_DIR/gemma2_27b_finetune
 
 #### Gemma 2 2B
 ```bash
-torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run torchrun --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-2b \
 --recipe gemma2_2b_peft_config \
 --peft_scheme lora \
