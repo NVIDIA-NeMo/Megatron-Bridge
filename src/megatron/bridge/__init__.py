@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Megatron Bridge - A component of the Megatron ecosystem."""
+
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.package_info import (
     __contact_emails__,
     __contact_names__,
@@ -33,12 +35,3 @@ __all__ = [
     "__download_url__",
     "AutoBridge",
 ]
-
-
-def __getattr__(name: str):
-    """Lazily import heavy top-level symbols."""
-    if name == "AutoBridge":
-        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-
-        return AutoBridge
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

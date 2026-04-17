@@ -11,7 +11,7 @@ These examples cover:
 - reduced single-GPU smoke checkpoint creation
 - Hugging Face -> Megatron checkpoint import
 - Megatron -> Hugging Face checkpoint export
-- single-rank multimodal thinker smoke inference with one real local image+audio sample
+- local inference with reduced HF, imported Megatron, and exported HF checkpoints
 
 These examples do **not** cover:
 
@@ -41,7 +41,7 @@ These examples assume the following local assets are available:
 
 ```bash
 export SOURCE_HF_MODEL=/path/to/Qwen3-Omni-30B-A3B-Instruct
-export SAMPLE_PARQUET=/path/to/multimodal_eval_samples.parquet
+export VIDEO_PATH=/path/to/example.mp4
 ```
 
 The example smoke checkpoint keeps the original hidden dimensions intact and only trims layer counts, which keeps the HF config compatible while making single-GPU validation practical.
@@ -79,20 +79,42 @@ This script will:
 
 ## Inference
 
-Run local single-rank multimodal thinker smoke inference:
+Run local inference across the reduced HF checkpoint, imported Megatron checkpoint, and exported HF checkpoint:
 
 ```bash
-export SAMPLE_PARQUET=/path/to/multimodal_eval_samples.parquet
+export VIDEO_PATH=/path/to/example.mp4
 bash examples/models/vlm/qwen3_omni/inference.sh
 ```
 
-This script runs:
+If you want to use the audio track from the video during understanding:
 
-- HF thinker smoke inference from the reduced local checkpoint
-- Megatron thinker smoke inference from the imported Megatron checkpoint
-- HF thinker smoke inference from the exported HF checkpoint
+```bash
+export VIDEO_PATH=/path/to/example.mp4
+export USE_AUDIO_IN_VIDEO=1
+bash examples/models/vlm/qwen3_omni/inference.sh
+```
 
-All runs use one real image+audio sample from the local parquet file.
+You can also use a remote video URL instead of a local file:
+
+```bash
+export VIDEO_URL=https://example.com/example.mp4
+bash examples/models/vlm/qwen3_omni/inference.sh
+```
+
+This script reuses [examples/conversion/hf_to_megatron_generate_omni_lm.py](../../../conversion/hf_to_megatron_generate_omni_lm.py) and runs:
+
+- inference with the reduced local HF smoke checkpoint
+- inference with the imported Megatron checkpoint
+- inference with the exported HF checkpoint
+
+Useful overrides:
+
+- `PROMPT` (default: `What is happening in this video?`)
+- `MAX_NEW_TOKENS` (default: `50`)
+- `NPROC_PER_NODE` / `TP` / `PP` / `EP` / `ETP` (default: `1`)
+- `DRY_RUN=1` to print commands without executing them
+
+The omni inference helper depends on `qwen-omni-utils[decord]` for video/audio preprocessing.
 
 ## Training (local)
 

@@ -35,9 +35,6 @@ def _load_run_recipe_module():
     recipes_module = types.ModuleType("megatron.bridge.recipes")
     recipes_module.qwen3_omni_30b_a3b_sft_config = lambda **_: recipe_config
 
-    qwen3_omni_recipe_module = types.ModuleType("megatron.bridge.recipes.qwen_omni.qwen3_omni")
-    qwen3_omni_recipe_module.qwen3_omni_30b_a3b_sft_config = lambda **_: recipe_config
-
     qwen3_omni_step = types.ModuleType("megatron.bridge.models.qwen_omni.qwen3_omni_step")
     qwen3_omni_step.forward_step = object()
 
@@ -67,7 +64,6 @@ def _load_run_recipe_module():
 
     stub_modules = {
         "megatron.bridge.recipes": recipes_module,
-        "megatron.bridge.recipes.qwen_omni.qwen3_omni": qwen3_omni_recipe_module,
         "megatron.bridge.models.qwen_omni.qwen3_omni_step": qwen3_omni_step,
         "megatron.bridge.models.qwen_vl.qwen3_vl_step": qwen3_vl_step,
         "megatron.bridge.training.gpt_step": gpt_step,
@@ -99,7 +95,6 @@ def _load_run_recipe_module():
         "finetune": finetune_module.finetune,
         "pretrain": pretrain_module.pretrain,
         "recipe_config": recipe_config,
-        "recipe_module": qwen3_omni_recipe_module,
     }
     return module, test_handles
 
@@ -110,7 +105,7 @@ class TestRunRecipeQwen3Omni:
     def test_load_forward_step_returns_qwen3_omni_handler(self):
         """The run_recipe registry should expose qwen3_omni_step."""
 
-        module, handles = _load_run_recipe_module()
+        module, _ = _load_run_recipe_module()
 
         assert module.load_forward_step("qwen3_omni_step") is not None
 
@@ -126,7 +121,7 @@ class TestRunRecipeQwen3Omni:
         finally:
             sys.argv = original_argv
 
-        assert "qwen3_omni_step" in module.STEP_FUNCTION_SPECS
+        assert "qwen3_omni_step" in module.STEP_FUNCTIONS
         assert args.step_func == "gpt_step"
 
     def test_main_routes_qwen3_omni_step_to_finetune(self):
@@ -145,9 +140,6 @@ class TestRunRecipeQwen3Omni:
             "qwen3_omni_step",
         ]
         try:
-            module.resolve_recipe_module = lambda _recipe_name: handles["recipe_module"]
-            module.load_train_mode = lambda _mode: handles["finetune"]
-            module.load_forward_step = lambda _step_name: handles["omni_forward_step"]
             module.main()
         finally:
             sys.argv = original_argv

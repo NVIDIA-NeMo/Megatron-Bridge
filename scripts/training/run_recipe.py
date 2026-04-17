@@ -21,35 +21,27 @@ This script works with any model family that uses GPT-style training
 CLI overrides.
 
 Usage:
-    Pretrain (single-GPU):
-        uv run python run_recipe.py \
+    Pretrain:
+        torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config
 
-    Pretrain (multi-GPU):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config
-
-    SFT (full finetuning):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_sft_config
-
-    PEFT (LoRA/DoRA):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_peft_config
+    Finetune:
+        torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe llama32_1b_finetune_config
 
     With CLI overrides:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
+        torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config \
             train.train_iters=5000 \
             optimizer.lr=0.0003
 
     With VLM step function:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
+        torchrun --nproc_per_node=8 run_recipe.py \
             --recipe qwen25_vl_finetune_config \
             --step_func vlm_step
 
     With packed sequences and custom sequence length:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
+        torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config \
             --packed_sequence \
             --seq_length 2048
@@ -63,39 +55,40 @@ Recipe Arguments:
 
 import argparse
 import inspect
-from importlib import import_module
-from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Callable
 
+import megatron.bridge.recipes as recipes
+from megatron.bridge.models.qwen_omni.qwen3_omni_step import forward_step as qwen3_omni_forward_step
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
+from megatron.bridge.training.llava_step import forward_step as llava_forward_step
+from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
-
-if TYPE_CHECKING:
-    from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 
 
-STEP_FUNCTION_SPECS: dict[str, tuple[str, str]] = {
-    "gpt_step": ("megatron.bridge.training.gpt_step", "forward_step"),
-    "vlm_step": ("megatron.bridge.training.vlm_step", "forward_step"),
-    "qwen3_omni_step": ("megatron.bridge.models.qwen_omni.qwen3_omni_step", "forward_step"),
-    "qwen3_vl_step": ("megatron.bridge.models.qwen_vl.qwen3_vl_step", "forward_step"),
-    "llava_step": ("megatron.bridge.training.llava_step", "forward_step"),
+STEP_FUNCTIONS: dict[str, Callable] = {
+    "gpt_step": gpt_forward_step,
+    "vlm_step": vlm_forward_step,
+    "qwen3_omni_step": qwen3_omni_forward_step,
+    "qwen3_vl_step": qwen3_vl_forward_step,
+    "llava_step": llava_forward_step,
 }
 
-TRAIN_MODE_SPECS: dict[str, tuple[str, str]] = {
-    "pretrain": ("megatron.bridge.training.pretrain", "pretrain"),
-    "finetune": ("megatron.bridge.training.finetune", "finetune"),
+TRAIN_MODES = {
+    "pretrain": pretrain,
+    "finetune": finetune,
 }
 
 # Error message constants
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
     "Unable to infer training mode from recipe name. "
-    "Please include 'pretrain', 'sft', 'peft', or 'finetune' in the recipe name or pass --mode explicitly."
+    "Please include 'pretrain' or 'finetune' (or 'sft'/'peft') in the recipe name, "
+    "or pass --mode explicitly."
 )
-
-RECIPE_MODULE_HINTS: list[tuple[str, str]] = [
-    ("qwen3_omni_", "megatron.bridge.recipes.qwen_omni.qwen3_omni"),
-]
 
 
 def parse_args() -> tuple[argparse.Namespace, list[str]]:
@@ -108,25 +101,21 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "--mode",
         type=str,
         default=None,
-        choices=sorted(TRAIN_MODE_SPECS.keys()),
+        choices=sorted(TRAIN_MODES.keys()),
         help="Training mode (optional). If omitted, inferred from recipe name.",
     )
     parser.add_argument(
         "--recipe",
         type=str,
         required=True,
-        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_sft_config, gemma3_1b_peft_config)",
+        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_finetune_config)",
     )
     parser.add_argument(
         "--step_func",
         type=str,
         default="gpt_step",
-        choices=sorted(STEP_FUNCTION_SPECS.keys()),
-        help=(
-            "Step function: gpt_step (text-only), vlm_step (vision-language), "
-            "qwen3_omni_step (Qwen3-Omni thinker), qwen3_vl_step (Qwen3-VL), "
-            "or llava_step (LLaVA models)"
-        ),
+        choices=sorted(STEP_FUNCTIONS.keys()),
+        help="Step function: gpt_step (text-only), vlm_step (vision-language), or llava_step (LLaVA models)",
     )
     parser.add_argument(
         "--peft_scheme",
@@ -163,7 +152,7 @@ def load_recipe(
     packed_sequence: bool = False,
     seq_length: int | None = None,
     hf_path: str | None = None,
-) -> "ConfigContainer":
+) -> ConfigContainer:
     """
     Load recipe by name from megatron.bridge.recipes.
 
@@ -180,16 +169,14 @@ def load_recipe(
     Raises:
         AttributeError: If recipe not found
     """
-    recipes_module = resolve_recipe_module(recipe_name)
-
-    if not hasattr(recipes_module, recipe_name):
+    if not hasattr(recipes, recipe_name):
         raise AttributeError(
-            f"Recipe '{recipe_name}' not found in {recipes_module.__name__}.\n"
+            f"Recipe '{recipe_name}' not found in megatron.bridge.recipes.\n"
             f"Make sure the recipe name is correct and the recipe is exported in its family __init__.py.\n"
             f"Example recipe names: llama32_1b_pretrain_config, gemma3_1b_pretrain_config, qwen3_8b_pretrain_config"
         )
 
-    config_builder = getattr(recipes_module, recipe_name)
+    config_builder = getattr(recipes, recipe_name)
 
     # Inspect the recipe's signature to determine which arguments it accepts
     try:
@@ -226,29 +213,12 @@ def load_recipe(
         return config_builder()
 
 
-def resolve_recipe_module(recipe_name: str) -> ModuleType:
-    """Resolve the narrowest recipe module for the requested recipe name."""
-    for prefix, module_name in RECIPE_MODULE_HINTS:
-        if recipe_name.startswith(prefix):
-            return import_module(module_name)
-    return import_module("megatron.bridge.recipes")
-
-
 def load_forward_step(step_type: str) -> Callable:
     """Load forward_step function based on the requested step type."""
     step_key = step_type.lower()
-    if step_key not in STEP_FUNCTION_SPECS:
-        raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTION_SPECS)))
-    module_name, attr_name = STEP_FUNCTION_SPECS[step_key]
-    return getattr(import_module(module_name), attr_name)
-
-
-def load_train_mode(mode: str) -> Callable[[Any, Callable], None]:
-    """Load the train entrypoint lazily for the requested mode."""
-    if mode not in TRAIN_MODE_SPECS:
-        raise ValueError(f"Unknown train mode: {mode}. Choose from: {', '.join(TRAIN_MODE_SPECS)}")
-    module_name, attr_name = TRAIN_MODE_SPECS[mode]
-    return getattr(import_module(module_name), attr_name)
+    if step_key not in STEP_FUNCTIONS:
+        raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))
+    return STEP_FUNCTIONS[step_key]
 
 
 def infer_train_mode(recipe_name: str) -> str:
@@ -265,7 +235,7 @@ def main() -> None:
     """Run GPT training (pretrain or finetune)."""
     args, cli_overrides = parse_args()
 
-    config = load_recipe(
+    config: ConfigContainer = load_recipe(
         args.recipe,
         args.peft_scheme,
         args.packed_sequence,
@@ -281,7 +251,7 @@ def main() -> None:
     mode = args.mode or infer_train_mode(args.recipe)
 
     forward_step = load_forward_step(args.step_func)
-    train_func = load_train_mode(mode)
+    train_func = TRAIN_MODES[mode]
     train_func(config=config, forward_step_func=forward_step)
 
 
