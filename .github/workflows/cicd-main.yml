@@ -80,14 +80,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pre-flight]
     outputs:
-      needs_more_tests:  ${{ steps.configure.outputs.needs_more_tests }}
-      full_test_suite:   ${{ steps.configure.outputs.full_test_suite }}
-      expect_l0:         ${{ steps.configure.outputs.expect_l0 }}
-      expect_l1:         ${{ steps.configure.outputs.expect_l1 }}
-      expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
-      expect_gb200_l0:   ${{ steps.configure.outputs.expect_gb200_l0 }}
-      expect_gb200_l1:   ${{ steps.configure.outputs.expect_gb200_l1 }}
-      expect_gb200_l2:   ${{ steps.configure.outputs.expect_gb200_l2 }}
+      needs_more_tests: ${{ steps.configure.outputs.needs_more_tests }}
+      full_test_suite:  ${{ steps.configure.outputs.full_test_suite }}
+      expect_l0:        ${{ steps.configure.outputs.expect_l0 }}
+      expect_l1:        ${{ steps.configure.outputs.expect_l1 }}
+      expect_l2:        ${{ steps.configure.outputs.expect_l2 }}
     steps:
       - name: Get PR info
         id: get-pr-info
@@ -98,13 +95,12 @@ jobs:
         id: configure
         shell: bash -x -e -u -o pipefail {0}
         env:
-          GH_TOKEN:             ${{ github.token }}
-          DOCS_ONLY:            ${{ needs.pre-flight.outputs.docs_only }}
-          IS_DEPLOYMENT:        ${{ needs.pre-flight.outputs.is_deployment_workflow }}
-          EVENT_NAME:           ${{ github.event_name }}
-          REF:                  ${{ github.ref }}
-          TEST_SUITE:           ${{ github.event.inputs.test_suite }}
-          GB200_RUNNER_PREFIX:  ${{ vars.GB200_RUNNER_PREFIX }}
+          GH_TOKEN:      ${{ github.token }}
+          DOCS_ONLY:     ${{ needs.pre-flight.outputs.docs_only }}
+          IS_DEPLOYMENT: ${{ needs.pre-flight.outputs.is_deployment_workflow }}
+          EVENT_NAME:    ${{ github.event_name }}
+          REF:           ${{ github.ref }}
+          TEST_SUITE:    ${{ github.event.inputs.test_suite }}
         run: |
           PR_NUMBER=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
 
@@ -143,22 +139,11 @@ jobs:
             EXPECT_L2=true
           fi
 
-          # EXPECT_GB200_L{n}: same conditions as H100 tiers, gated on GB200_RUNNER_PREFIX being set
-          EXPECT_GB200_L0=false
-          [[ "$EXPECT_L0" == "true" && -n "$GB200_RUNNER_PREFIX" ]] && EXPECT_GB200_L0=true
-          EXPECT_GB200_L1=false
-          [[ "$EXPECT_L1" == "true" && -n "$GB200_RUNNER_PREFIX" ]] && EXPECT_GB200_L1=true
-          EXPECT_GB200_L2=false
-          [[ "$EXPECT_L2" == "true" && -n "$GB200_RUNNER_PREFIX" ]] && EXPECT_GB200_L2=true
-
-          echo "needs_more_tests=$NEEDS_MORE_TESTS"   | tee -a "$GITHUB_OUTPUT"
-          echo "full_test_suite=$FULL_TEST_SUITE"     | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l0=$EXPECT_L0"                 | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l1=$EXPECT_L1"                 | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l2=$EXPECT_L2"                 | tee -a "$GITHUB_OUTPUT"
-          echo "expect_gb200_l0=$EXPECT_GB200_L0"     | tee -a "$GITHUB_OUTPUT"
-          echo "expect_gb200_l1=$EXPECT_GB200_L1"     | tee -a "$GITHUB_OUTPUT"
-          echo "expect_gb200_l2=$EXPECT_GB200_L2"     | tee -a "$GITHUB_OUTPUT"
+          echo "needs_more_tests=$NEEDS_MORE_TESTS" | tee -a "$GITHUB_OUTPUT"
+          echo "full_test_suite=$FULL_TEST_SUITE"   | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l0=$EXPECT_L0"               | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l1=$EXPECT_L1"               | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l2=$EXPECT_L2"               | tee -a "$GITHUB_OUTPUT"
 
           # Active row markers for step summary decision tree
           _L0=$(    [[ "$EXPECT_L0" == "true" ]] && echo "**→**" || echo "" )
@@ -749,8 +734,7 @@ jobs:
       matrix_gb200_l2:    ${{ steps.scan.outputs.matrix_gb200_l2 }}
       matrix_gb200_flaky: ${{ steps.scan.outputs.matrix_gb200_flaky }}
     if: |
-      vars.GB200_RUNNER_PREFIX != ''
-      && (
+      (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
@@ -796,8 +780,7 @@ jobs:
     needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
     if: |
-      vars.GB200_RUNNER_PREFIX != ''
-      && (
+      (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
@@ -842,8 +825,7 @@ jobs:
     needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
     if: |
-      vars.GB200_RUNNER_PREFIX != ''
-      && (
+      (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
@@ -889,8 +871,7 @@ jobs:
     needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
     if: |
-      vars.GB200_RUNNER_PREFIX != ''
-      && (
+      (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
@@ -928,10 +909,7 @@ jobs:
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gb200-x2
 
   cicd-functional-tests-gb200-flaky:
-    if: |
-      vars.GB200_RUNNER_PREFIX != ''
-      && github.event_name == 'workflow_dispatch'
-      && github.event.inputs.test_suite == 'all'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
     strategy:
       fail-fast: false
       max-parallel: 16
@@ -989,13 +967,10 @@ jobs:
         id: result
         shell: bash -e -u -o pipefail {0}
         env:
-          GH_TOKEN:         ${{ github.token }}
-          EXPECT_L0:        ${{ needs.configure.outputs.expect_l0 }}
-          EXPECT_L1:        ${{ needs.configure.outputs.expect_l1 }}
-          EXPECT_L2:        ${{ needs.configure.outputs.expect_l2 }}
-          EXPECT_GB200_L0:  ${{ needs.configure.outputs.expect_gb200_l0 }}
-          EXPECT_GB200_L1:  ${{ needs.configure.outputs.expect_gb200_l1 }}
-          EXPECT_GB200_L2:  ${{ needs.configure.outputs.expect_gb200_l2 }}
+          GH_TOKEN:  ${{ github.token }}
+          EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
+          EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
+          EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
         run: |
           FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
 
@@ -1017,9 +992,9 @@ jobs:
           check_tier_skips "L0" "$EXPECT_L0"
           check_tier_skips "L1" "$EXPECT_L1"
           check_tier_skips "L2" "$EXPECT_L2"
-          check_tier_skips "gb200_L0" "$EXPECT_GB200_L0"
-          check_tier_skips "gb200_L1" "$EXPECT_GB200_L1"
-          check_tier_skips "gb200_L2" "$EXPECT_GB200_L2"
+          check_tier_skips "gb200_L0" "$EXPECT_L0"
+          check_tier_skips "gb200_L1" "$EXPECT_L1"
+          check_tier_skips "gb200_L2" "$EXPECT_L2"
 
           if [ "${FAILED_JOBS:-0}" -gt 0 ]; then
             echo "❌ Found $FAILED_JOBS failed job(s):"
