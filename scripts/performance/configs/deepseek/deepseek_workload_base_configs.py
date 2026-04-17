@@ -199,16 +199,24 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2 = replace(
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=2,
     expert_model_parallel_size=32,
-    recompute_modules=["mla_up_proj", "mlp"],
     moe_a2a_overlap=True,
     pp_layout="Et*4|(tttt|)*14tmL",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2
-DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2
-DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS_V2
-DEEPSEEK_V3_PRETRAIN_CONFIG_B200_NVFP4_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS_V2 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2,
+    recompute_modules=["mla_up_proj", "mlp", "layernorm", "moe_act"],
+)
+DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V2 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS_V2,
+    recompute_modules=["mla_up_proj", "mlp"],
+)
+DEEPSEEK_V3_PRETRAIN_CONFIG_B200_NVFP4_V2 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2,
+    recompute_modules=["mla_up_proj", "mlp", "layernorm", "moe_act"],
+)
 
 
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V2 = replace(
