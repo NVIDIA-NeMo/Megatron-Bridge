@@ -374,7 +374,7 @@ def qwen3_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_a2a_overlap = False
 
@@ -406,7 +406,7 @@ def qwen3_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_a2a_overlap = False
 

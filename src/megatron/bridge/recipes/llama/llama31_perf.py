@@ -71,6 +71,8 @@ def llama31_405b_pretrain_128gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -106,6 +108,8 @@ def llama31_405b_pretrain_128gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.cpu_offloading_num_layers = 10
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg
@@ -185,6 +189,8 @@ def llama31_405b_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -221,6 +227,8 @@ def llama31_405b_pretrain_128gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.cpu_offloading_num_layers = 92
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg
@@ -404,6 +412,8 @@ def llama31_405b_pretrain_128gpu_b200_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -426,6 +436,8 @@ def llama31_405b_pretrain_128gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg
@@ -508,6 +520,8 @@ def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -530,6 +544,8 @@ def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg

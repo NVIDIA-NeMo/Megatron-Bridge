@@ -114,6 +114,8 @@ def llama3_70b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -148,6 +150,8 @@ def llama3_70b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.cpu_offloading_num_layers = 20
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg
@@ -236,6 +240,8 @@ def llama3_70b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -270,6 +276,8 @@ def llama3_70b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.cpu_offloading_num_layers = 40
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg
@@ -730,6 +738,8 @@ def llama3_8b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -754,6 +764,8 @@ def llama3_8b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg
@@ -780,6 +792,8 @@ def llama3_8b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -804,6 +818,8 @@ def llama3_8b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg
@@ -835,6 +851,8 @@ def llama3_8b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -859,6 +877,8 @@ def llama3_8b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg
@@ -1041,6 +1061,8 @@ def llama3_8b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -1065,6 +1087,8 @@ def llama3_8b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg
@@ -1138,6 +1162,8 @@ def llama3_8b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
     _benchmark_common(cfg)
     return cfg
 
@@ -1162,6 +1188,8 @@ def llama3_8b_pretrain_8gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.recompute_num_layers = 5
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
     return cfg
