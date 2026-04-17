@@ -195,27 +195,29 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_NVFP4_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V1,
     global_batch_size=4096,
+)
+DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V2 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS_V2,
     moe_flex_dispatcher_backend="deepep",
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=2,
     expert_model_parallel_size=32,
     moe_a2a_overlap=True,
     pp_layout="Et*4|(tttt|)*14tmL",
-)
-DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2
-DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS_V2 = replace(
-    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2,
-    cuda_graph_impl="none",
-    recompute_modules=["mla_up_proj", "layernorm", "moe_act"],
-)
-DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V2 = replace(
-    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS_V2,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
     recompute_modules=["mla_up_proj", "mlp"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B200_NVFP4_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2,
+    moe_flex_dispatcher_backend="deepep",
+    pipeline_model_parallel_size=8,
+    virtual_pipeline_model_parallel_size=2,
+    expert_model_parallel_size=32,
+    moe_a2a_overlap=True,
+    pp_layout="Et*4|(tttt|)*14tmL",
     cuda_graph_impl="none",
     recompute_modules=["mla_up_proj", "layernorm", "moe_act"],
 )
