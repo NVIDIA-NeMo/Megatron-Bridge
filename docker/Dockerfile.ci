@@ -44,7 +44,7 @@ ARG UV_CACHE_PRUNE_ARGS
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
-    export MAMBA_FORCE_BUILD=TRUE && \
+    export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: skipping --locked flag"; \
         uv sync --only-group build && \
