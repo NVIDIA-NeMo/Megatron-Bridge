@@ -33,7 +33,7 @@ uv run python scripts/translate_mlm_to_bridge.py --reverse \
     --recipe llama32_1b_pretrain_config
 
 # From a recipe plus inline overrides
-uv run uv run python scripts/translate_mlm_to_bridge.py --reverse \
+uv run python scripts/translate_mlm_to_bridge.py --reverse \
     --recipe llama32_1b_pretrain_config \
     --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
 
