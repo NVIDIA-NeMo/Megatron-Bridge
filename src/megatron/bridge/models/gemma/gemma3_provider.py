@@ -68,6 +68,7 @@ class Gemma3ModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
 
     # attention
+    qk_layernorm: bool = True
     window_size: tuple = 512  # local
     interleaved_attn_pattern: tuple = (5, 1)  # (local, global)
     attention_dropout: float = 0.0
