@@ -57,7 +57,7 @@ class LoRALinear(AdapterWrapper):
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
         if not self._adapter_enabled:
             return linear_output, bias
-        adapter_output = self.adapter(layernorm_output.contiguous())
+        adapter_output = self.adapter_forward(self.adapter, layernorm_output.contiguous(), *args, **kwargs)
         adapter_output = adapter_output.reshape(linear_output.shape)
         return linear_output + adapter_output, bias
 

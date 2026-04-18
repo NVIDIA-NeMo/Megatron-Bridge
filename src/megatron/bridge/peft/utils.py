@@ -12,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import math
 import re
 from dataclasses import dataclass
 from importlib.metadata import version
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import packaging
 import torch
 import torch.nn as nn
 from megatron.core import ModelParallelConfig, parallel_state
-from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor, ShardedTensorFactory
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 from megatron.core.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
@@ -32,6 +33,9 @@ from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
 from megatron.core.transformer.moe.router import TopKRouter
 
 from megatron.bridge.utils.import_utils import safe_import_from
+
+
+logger = logging.getLogger(__name__)
 
 
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(
@@ -202,7 +206,13 @@ def is_expert_linear(fqn: str) -> bool:
         >>> is_expert_linear("model.layers.0.mlp.linear_fc1")
         False
     """
-    return re.match(r".*mlp\..*experts.*\.linear_fc[1-2]$", fqn) is not None and not ".shared_experts." in fqn
+    return re.match(r".*mlp\..*experts.*\.linear_fc[1-2]$", fqn) is not None and ".shared_experts." not in fqn
+
+
+def is_grouped_expert_linear(fqn: str) -> bool:
+    """Return whether the current base module is a grouped expert linear module."""
+
+    return is_expert_linear(fqn) and ".local_experts." not in fqn
 
 
 def wildcard_match(pattern: str, key: Optional[str]) -> Optional[bool]:
@@ -431,7 +441,6 @@ class ParallelLinearAdapter(nn.Module):
         disable_tensor_parallel_comm: bool = False,
         disable_sequence_parallel_comm: bool = True,
         base_linear_is_parallel: bool = True,
-        **kwargs,
     ) -> None:
         """Initialize the ParallelLinearAdapter.
 
@@ -453,7 +462,6 @@ class ParallelLinearAdapter(nn.Module):
             disable_tensor_parallel_comm: Disable tensor parallel communication.
             disable_sequence_parallel_comm: Disable sequence parallel communication.
             dropout_recompute: Use recomputation for dropout.
-            **kwargs: Additional keyword arguments.
         """
         super().__init__()
         self.base_linear_name = base_linear_name
@@ -464,6 +472,7 @@ class ParallelLinearAdapter(nn.Module):
         self.dropout_position = dropout_position
         self.use_a2a = a2a_experimental
         self.is_expert = is_expert
+        self.base_linear_is_parallel = base_linear_is_parallel
 
         # megatron_gpt_peft_models will provide this arg, but deprecated ones do not.
         # in case this arg is not provided, use the dummy default config.
@@ -475,8 +484,7 @@ class ParallelLinearAdapter(nn.Module):
 
         # Ensure adapter parameters are initialized when creating adapter layers.
         # In some flows (e.g., after import), perform_initialization may be False to skip heavy init.
-        if hasattr(model_parallel_config, "perform_initialization"):
-            model_parallel_config.perform_initialization = True
+        model_parallel_config.perform_initialization = True
 
         if input_is_parallel:
             self.linear_in = RowParallelLinear(
@@ -594,7 +602,7 @@ class ParallelLinearAdapter(nn.Module):
             raise NotImplementedError("out_init_method should be zero, normal, kaiming or xavier")
         return init_fn
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         """Forward pass of the parallel linear adapter.
 
         Performs the adaptation computation with proper handling of parallel communication
@@ -606,6 +614,8 @@ class ParallelLinearAdapter(nn.Module):
         Returns:
             Adapted output tensor with scaling applied.
         """
+        del args, kwargs
+
         if self.dropout_position == "pre":
             x = self.dropout(x)
 
@@ -728,6 +738,417 @@ class ParallelLinearAdapter(nn.Module):
                             ["z", "x", "B", "C", "dt"],
                             0,  # split along dimension 0
                         )
+
+        sharded_state_dict.update(linear_in_sd)
+        sharded_state_dict.update(linear_out_sd)
+        return sharded_state_dict
+
+
+def _divide_exact(value: int, divisor: int, name: str) -> int:
+    """Divide ``value`` by ``divisor`` and raise when the result would be fractional."""
+
+    if value % divisor != 0:
+        raise ValueError(f"{name}={value} must be divisible by expert TP size={divisor}")
+    return value // divisor
+
+
+def _apply_grouped_expert_swiglu_sharded_factory(
+    original_sh_ten: ShardedTensor,
+    sharded_offsets: Tuple,
+    singleton_local_shards: bool = False,
+) -> ShardedTensorFactory:
+    """Split grouped-expert SwiGLU tensors along the fused hidden axis for checkpointing."""
+
+    if original_sh_ten.axis_fragmentations is None:
+        raise ValueError("Grouped-expert SwiGLU sharding requires regular-grid sharded tensor metadata.")
+
+    swiglu_shard_axis = 1
+    prepend_axis_num = len(sharded_offsets)
+    original_shape = original_sh_ten.local_shape
+    local_axis_size = original_shape[swiglu_shard_axis]
+    global_axis = swiglu_shard_axis + prepend_axis_num
+    assert original_sh_ten.global_offset[global_axis] % local_axis_size == 0
+    rank_offset = original_sh_ten.global_offset[global_axis] // local_axis_size
+    axis_frag = original_sh_ten.axis_fragmentations[global_axis]
+
+    preserved_rank_offsets = []
+    for axis, local_axis_shape in enumerate(original_shape):
+        if axis == swiglu_shard_axis:
+            continue
+        global_axis_idx = axis + prepend_axis_num
+        axis_fragm = original_sh_ten.axis_fragmentations[global_axis_idx]
+        if axis_fragm <= 1:
+            continue
+        global_offset = original_sh_ten.global_offset[global_axis_idx]
+        assert global_offset % local_axis_shape == 0
+        preserved_rank_offsets.append((global_axis_idx, global_offset // local_axis_shape, axis_fragm))
+
+    @torch.no_grad()
+    def sh_ten_build_fn(key: str, tensor: torch.Tensor, replica_id, flattened_range):
+        del flattened_range
+
+        if singleton_local_shards:
+            offset_w = (global_axis, rank_offset, axis_frag)
+            offset_v = (global_axis, rank_offset, axis_frag)
+            w_key = f"{key}_w"
+            v_key = f"{key}_v"
+        else:
+            offset_w = (global_axis, rank_offset, axis_frag * 2)
+            offset_v = (global_axis, rank_offset + axis_frag, axis_frag * 2)
+            w_key = key
+            v_key = key
+
+        tensor_w, tensor_v = torch.chunk(tensor, 2, dim=swiglu_shard_axis)
+        rank_offsets = (*sharded_offsets, *preserved_rank_offsets)
+        return [
+            ShardedTensor.from_rank_offsets(
+                w_key,
+                tensor_w,
+                *rank_offsets,
+                offset_w,
+                replica_id=replica_id,
+                prepend_axis_num=prepend_axis_num,
+            ),
+            ShardedTensor.from_rank_offsets(
+                v_key,
+                tensor_v,
+                *rank_offsets,
+                offset_v,
+                replica_id=replica_id,
+                prepend_axis_num=prepend_axis_num,
+            ),
+        ]
+
+    def sh_ten_merge_fn(sub_state_dict):
+        if not singleton_local_shards and len(sub_state_dict) > 1:
+            # Dist checkpoint load reconstructs one local fused shard per expert-TP
+            # rank, so the incoming tensors look like [gate_0|up_0, gate_1|up_1, ...].
+            # Restore the fused [gate_0, gate_1, ..., up_0, up_1, ...] layout before
+            # concatenating back along the SwiGLU axis.
+            gate_parts = []
+            up_parts = []
+            for tensor in sub_state_dict:
+                gate_part, up_part = torch.chunk(tensor, 2, dim=swiglu_shard_axis)
+                gate_parts.append(gate_part)
+                up_parts.append(up_part)
+            sub_state_dict = [*gate_parts, *up_parts]
+        try:
+            return torch.cat(sub_state_dict, dim=swiglu_shard_axis)
+        except (RuntimeError, torch.cuda.OutOfMemoryError) as exc:
+            logger.warning(
+                "CUDA OutOfMemoryError encountered during grouped-expert SwiGLU merge. "
+                "Switching to CPU merge. (Error: %s)",
+                exc,
+            )
+            merged_sub_state_dict = torch.cat([tensor.cpu() for tensor in sub_state_dict], dim=swiglu_shard_axis)
+            torch.cuda.empty_cache()
+            return merged_sub_state_dict
+
+    return ShardedTensorFactory(
+        original_sh_ten.key,
+        original_sh_ten.data,
+        sh_ten_build_fn,
+        sh_ten_merge_fn,
+        original_sh_ten.replica_id,
+        flattened_range=original_sh_ten.flattened_range,
+    )
+
+
+def _append_rank_offset(
+    rank_offsets: List[Tuple[int, int, int]],
+    axis: int,
+    rank: int,
+    axis_fragments: int,
+) -> None:
+    """Append a sharding offset, combining fragmentations when the axis is already sharded."""
+
+    if axis_fragments <= 1:
+        return
+
+    for index, (existing_axis, existing_rank, existing_fragments) in enumerate(rank_offsets):
+        if existing_axis != axis:
+            continue
+        rank_offsets[index] = (
+            axis,
+            existing_rank * axis_fragments + rank,
+            existing_fragments * axis_fragments,
+        )
+        return
+
+    rank_offsets.append((axis, rank, axis_fragments))
+
+
+def _make_grouped_expert_sharded_tensor(
+    tensor: torch.Tensor,
+    key: str,
+    *,
+    tp_axis: Optional[int],
+    sharded_offsets: Tuple,
+) -> ShardedTensor:
+    """Build a sharded tensor for packed grouped-expert weights.
+
+    Grouped-expert LoRA weights shard two independent local axes: the packed
+    expert axis across EP and the adapter matrix axis across expert TP.
+    """
+
+    prepend_axis_num = len(sharded_offsets)
+    rank_offsets = list(sharded_offsets)
+
+    ep_size = parallel_state.get_expert_model_parallel_world_size() or 1
+    _append_rank_offset(
+        rank_offsets,
+        prepend_axis_num,
+        parallel_state.get_expert_model_parallel_rank() or 0,
+        ep_size,
+    )
+
+    if tp_axis is not None:
+        etp_size = parallel_state.get_expert_tensor_parallel_world_size() or 1
+        _append_rank_offset(
+            rank_offsets,
+            prepend_axis_num + tp_axis,
+            parallel_state.get_expert_tensor_parallel_rank() or 0,
+            etp_size,
+        )
+
+    return ShardedTensor.from_rank_offsets(
+        key,
+        tensor,
+        *rank_offsets,
+        replica_id=(0, 0, parallel_state.get_expert_data_parallel_rank() or 0),
+        prepend_axis_num=prepend_axis_num,
+    )
+
+
+class GroupedExpertLinearAdapter(nn.Module):
+    """LoRA adapter with one low-rank pair per local grouped MoE expert."""
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        dim: int,
+        *,
+        num_local_experts: int,
+        base_linear_name: str,
+        activation: str = "swish",
+        column_init_method: str = "xavier",
+        row_init_method: str = "zero",
+        input_is_parallel: bool = False,
+        dropout: float = 0.0,
+        model_parallel_config: Optional[ModelParallelConfig] = None,
+        alpha: Optional[float] = None,
+        dropout_position: str = "pre",
+        base_linear_is_parallel: bool = True,
+        params_device: Optional[torch.device] = None,
+        params_dtype: Optional[torch.dtype] = None,
+    ) -> None:
+        """Initialize grouped-expert LoRA weights for one adapter per local expert."""
+
+        super().__init__()
+
+        self.base_linear_name = base_linear_name
+        self.activation = ParallelLinearAdapter._get_activation_fn(self, activation)
+        self.dim = dim
+        self.alpha = alpha if alpha is not None else self.dim
+        self.input_is_parallel = input_is_parallel
+        self.dropout_position = dropout_position
+        self.base_linear_is_parallel = base_linear_is_parallel
+        self.is_expert = True
+        self.num_local_experts = num_local_experts
+
+        if model_parallel_config is None:
+            model_parallel_config = ModelParallelConfig()
+        self.config = model_parallel_config
+
+        model_parallel_config.perform_initialization = True
+
+        expert_tp_size = (
+            parallel_state.get_expert_tensor_parallel_world_size() or model_parallel_config.expert_tensor_parallel_size
+        )
+        linear_in_tp_axis = 2 if input_is_parallel else 1
+        linear_out_tp_axis = 1
+
+        if input_is_parallel:
+            linear_in_shape = (
+                num_local_experts,
+                dim,
+                _divide_exact(in_features, expert_tp_size, "in_features"),
+            )
+        else:
+            linear_in_shape = (
+                num_local_experts,
+                _divide_exact(dim, expert_tp_size, "dim"),
+                in_features,
+            )
+        linear_out_shape = (
+            num_local_experts,
+            _divide_exact(out_features, expert_tp_size, "out_features"),
+            dim,
+        )
+
+        if params_device is None:
+            params_device = (
+                torch.device("cpu")
+                if model_parallel_config.use_cpu_initialization
+                or not torch.cuda.is_available()
+                or not parallel_state.is_initialized()
+                else torch.device("cuda", torch.cuda.current_device())
+            )
+        dtype = params_dtype or model_parallel_config.params_dtype
+
+        linear_in_weight = torch.empty(linear_in_shape, device=params_device, dtype=dtype)
+        linear_out_weight = torch.empty(linear_out_shape, device=params_device, dtype=dtype)
+        ParallelLinearAdapter._get_init_fn(self, column_init_method)(linear_in_weight)
+        ParallelLinearAdapter._get_init_fn(self, row_init_method)(linear_out_weight)
+
+        expert_parallel = (
+            parallel_state.get_expert_model_parallel_world_size() or model_parallel_config.expert_model_parallel_size
+        ) > 1
+        self._linear_in_tp_axis = linear_in_tp_axis
+        self._linear_out_tp_axis = linear_out_tp_axis
+        self.linear_in = nn.Module()
+        self.linear_in.weight = nn.Parameter(linear_in_weight)
+        self.linear_out = nn.Module()
+        self.linear_out.weight = nn.Parameter(linear_out_weight)
+        for weight, tp_axis in (
+            (self.linear_in.weight, linear_in_tp_axis),
+            (self.linear_out.weight, linear_out_tp_axis),
+        ):
+            setattr(weight, "allreduce", not expert_parallel)
+            if tp_axis is not None:
+                setattr(weight, "partition_dim", tp_axis)
+                setattr(weight, "partition_stride", 1)
+
+        if dropout > 0.0:
+            self.dropout = nn.Dropout(dropout)
+        else:
+            self.dropout = nn.Identity()
+
+    def _extract_expert_splits(self, args: Tuple, kwargs: Dict) -> List[int]:
+        """Extract grouped-expert token splits from wrapped-module call arguments."""
+
+        expert_splits = kwargs.get("m_splits")
+        if expert_splits is None:
+            expert_splits = kwargs.get("tokens_per_expert")
+        if expert_splits is None and args:
+            expert_splits = args[0]
+        if isinstance(expert_splits, torch.Tensor):
+            expert_splits = expert_splits.tolist()
+        if expert_splits is None:
+            raise ValueError(f"Per-expert LoRA on {self.base_linear_name} requires grouped expert token splits.")
+        if len(expert_splits) != self.num_local_experts:
+            raise ValueError(
+                f"Expected {self.num_local_experts} expert splits for {self.base_linear_name}, "
+                f"got {len(expert_splits)}"
+            )
+        splits = [int(split) for split in expert_splits]
+        if any(split < 0 for split in splits):
+            raise ValueError(f"Expert splits for {self.base_linear_name} must be non-negative, got {splits}")
+        return splits
+
+    def _gather_along_last_dim(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Gather a tensor across expert TP ranks by concatenating its last dimension."""
+
+        expert_tp_size = (
+            parallel_state.get_expert_tensor_parallel_world_size() or self.config.expert_tensor_parallel_size
+        )
+        if expert_tp_size == 1:
+            return tensor
+        expert_tp_group = parallel_state.get_expert_tensor_parallel_group(check_initialized=False)
+        if expert_tp_group is None:
+            raise ValueError(
+                f"{self.base_linear_name} requires initialized expert tensor parallel state "
+                f"when expert_tensor_parallel_size={expert_tp_size}."
+            )
+        gathered = [torch.empty_like(tensor) for _ in range(expert_tp_size)]
+        torch.distributed.all_gather(
+            gathered,
+            tensor,
+            group=expert_tp_group,
+        )
+        return torch.cat(gathered, dim=-1)
+
+    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        """Apply the local expert-specific LoRA update to grouped expert inputs."""
+
+        expert_splits = self._extract_expert_splits(args, kwargs)
+        if sum(expert_splits) != x.shape[0]:
+            raise ValueError(
+                f"Expert splits for {self.base_linear_name} sum to {sum(expert_splits)}, "
+                f"but received {x.shape[0]} tokens"
+            )
+        if self.dropout_position == "pre":
+            x = self.dropout(x)
+
+        expert_tp_size = (
+            parallel_state.get_expert_tensor_parallel_world_size() or self.config.expert_tensor_parallel_size
+        )
+        outputs = []
+        start = 0
+        for expert_idx, split_size in enumerate(expert_splits):
+            expert_input = x.narrow(0, start, split_size)
+            start += split_size
+
+            pad_len = 0
+            if expert_input.numel() > 0:
+                expert_input, pad_len = pad_seq_to_mult(expert_input, expert_tp_size)
+                if self.config.cpu_offloading and self.config.cpu_offloading_activations:
+                    expert_input.activation_offloading = True
+
+            hidden = nn.functional.linear(expert_input, self.linear_in.weight[expert_idx])
+            if not self.input_is_parallel:
+                hidden = self._gather_along_last_dim(hidden)
+            hidden = self.activation(hidden)
+
+            if self.config.cpu_offloading and self.config.cpu_offloading_activations:
+                hidden.activation_offloading = True
+            expert_output = nn.functional.linear(hidden, self.linear_out.weight[expert_idx])
+            if self.input_is_parallel:
+                expert_output = self._gather_along_last_dim(expert_output)
+
+            if self.dropout_position == "post":
+                expert_output = self.dropout(expert_output)
+            if pad_len > 0:
+                expert_output = unpad_seq_to_mult(expert_output, pad_len)
+            outputs.append(expert_output)
+
+        return torch.cat(outputs, dim=0) * (self.alpha / self.dim)
+
+    def sharded_state_dict(
+        self,
+        prefix: str = "",
+        sharded_offsets: Tuple = (),
+        metadata: Optional[Dict] = None,
+    ) -> ShardedStateDict:
+        """Create sharded state dictionary for grouped-expert adapter weights."""
+
+        sharded_state_dict = {}
+        linear_in_sd = {
+            f"{prefix}linear_in.weight": _make_grouped_expert_sharded_tensor(
+                self.linear_in.weight,
+                f"{prefix}linear_in.weight",
+                tp_axis=self._linear_in_tp_axis,
+                sharded_offsets=sharded_offsets,
+            )
+        }
+        linear_out_sd = {
+            f"{prefix}linear_out.weight": _make_grouped_expert_sharded_tensor(
+                self.linear_out.weight,
+                f"{prefix}linear_out.weight",
+                tp_axis=self._linear_out_tp_axis,
+                sharded_offsets=sharded_offsets,
+            )
+        }
+
+        if "linear_fc1" in self.base_linear_name:
+            singleton_local_shards = (metadata or {}).get("singleton_local_shards", False)
+            linear_out_key = f"{prefix}linear_out.weight"
+            linear_out_sd[linear_out_key] = _apply_grouped_expert_swiglu_sharded_factory(
+                linear_out_sd[linear_out_key],
+                sharded_offsets,
+                singleton_local_shards,
+            )
 
         sharded_state_dict.update(linear_in_sd)
         sharded_state_dict.update(linear_out_sd)
