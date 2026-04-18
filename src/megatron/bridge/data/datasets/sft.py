@@ -829,6 +829,14 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
     def _load_dataset(self):
         try:
+            # SECURITY: allow_pickle=True is required here because packed datasets store object
+            # arrays (dicts with variable-length lists). This enables arbitrary code execution via
+            # pickle deserialization -- only load datasets from trusted sources. Consider migrating
+            # to a safer serialization format (e.g. safetensors, Arrow/Parquet) in the future.
+            logger.warning(
+                "Loading packed dataset with allow_pickle=True from '%s'. Only load datasets from trusted sources.",
+                self.file_path,
+            )
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
                 self.indexed_dataset = msc.numpy.load(self.file_path, allow_pickle=True)

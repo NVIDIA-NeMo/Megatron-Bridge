@@ -349,6 +349,12 @@ def calculate_avg_seqlen(
     Raises:
         ValueError: If no rows remain after applying drop_remainder, or if no sequences are found.
     """
+    # SECURITY: allow_pickle=True is required here because packed datasets store object
+    # arrays (dicts with variable-length lists). Only load datasets from trusted sources.
+    logger.warning(
+        "Loading packed dataset with allow_pickle=True from '%s'. Only load datasets from trusted sources.",
+        dataset_file,
+    )
     data = np.load(dataset_file, allow_pickle=True)
 
     total_len_accum = 0
