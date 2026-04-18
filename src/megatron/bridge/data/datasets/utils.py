@@ -33,6 +33,7 @@ from megatron.core.tokenizers import MegatronTokenizer
 from torch.utils.data import Dataset
 
 from megatron.bridge.utils.common_utils import get_rank_safe
+from megatron.bridge.utils.safe_pickle import safe_pickle_load
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -385,10 +386,10 @@ class _TextMemMapDataset(Dataset):
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
                 with msc.open(idx_fn + ".info", "rb") as fp:
-                    idx_info_dict = pickle.load(fp)
+                    idx_info_dict = safe_pickle_load(fp)
             else:
                 with open(idx_fn + ".info", "rb") as fp:
-                    idx_info_dict = pickle.load(fp)
+                    idx_info_dict = safe_pickle_load(fp)
 
             # test for mismatch in expected newline_int
             if "newline_int" in idx_info_dict:
