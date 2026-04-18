@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import gc
+import inspect
 import os
 import sys
 import time
@@ -245,14 +246,16 @@ def train(
     # Capture CUDA Graphs.
     cuda_graph_helper = None
     if model_config.cuda_graph_impl == "transformer_engine":
-        cuda_graph_helper = TECudaGraphHelper(
+        _te_cg_kwargs: dict[str, Any] = dict(
             model=model,
             config=model_config,
             seq_length=config.model.seq_length,
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
-            pg_collection=pg_collection,
         )
+        if "pg_collection" in inspect.signature(TECudaGraphHelper.__init__).parameters:
+            _te_cg_kwargs["pg_collection"] = pg_collection
+        cuda_graph_helper = TECudaGraphHelper(**_te_cg_kwargs)
     # Capture Vision Encoder CUDA Graphs (separate from language model).
     # Check if vision encoder has CUDA graph enabled
     vision_cuda_graph_helper = None
@@ -265,14 +268,16 @@ def train(
                 vision_model_config = unwrapped.vision_model.config
                 if vision_model_config.cuda_graph_impl == "transformer_engine":
                     vision_seq_length = get_vision_cuda_graph_seq_length(vision_model_config)
-                    vision_cuda_graph_helper = VisionTECudaGraphHelper(
+                    _vision_cg_kwargs: dict[str, Any] = dict(
                         model=model,
                         vision_config=vision_model_config,
                         vision_seq_length=vision_seq_length,
                         micro_batch_size=config.train.micro_batch_size,
                         num_microbatches=get_num_microbatches(),
-                        pg_collection=pg_collection,
                     )
+                    if "pg_collection" in inspect.signature(VisionTECudaGraphHelper.__init__).parameters:
+                        _vision_cg_kwargs["pg_collection"] = pg_collection
+                    vision_cuda_graph_helper = VisionTECudaGraphHelper(**_vision_cg_kwargs)
                     print_rank_0(f"Vision encoder CUDA graph enabled with seq_length={vision_seq_length}")
                 break
     # Track train step elapsed time for throughput logging
