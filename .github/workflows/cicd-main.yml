@@ -63,99 +63,11 @@ permissions:
   contents: read
 
 jobs:
-  is-not-external-contributor:
-    runs-on: ubuntu-latest
-    outputs:
-      is_external_contributor: ${{ github.event.pull_request.user.type == 'User' }}
-      is_maintainer: ${{ steps.check-membership.outputs.is_maintainer }}
-      selected_runner: ${{ steps.check-membership.outputs.is_maintainer == 'true' && 'nemo-ci-aws-gpu-x2' || 'nemo-ci-aws-gpu-x2-ephemeral' }}
-    permissions:
-      issues: write
-      pull-requests: write
-    env:
-      GITHUB_TOKEN: ${{ secrets.PAT }}
-      REPO: ${{ github.repository }}
-      DISABLE_EXTERNAL_CONTRIBUTOR: ${{ vars.DISABLE_EXTERNAL_CONTRIBUTOR }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          token: ${{ env.GITHUB_TOKEN }}
-
-      - name: Get PR info
-        id: get-pr-info
-        if: startsWith(github.ref, 'refs/heads/pull-request/') && github.event_name == 'push'
-        uses: nv-gha-runners/get-pr-info@main
-
-      - name: Check NVIDIA SSO membership
-        id: check-sso
-        uses: ./.github/actions/check-nvidia-sso-membership
-        with:
-          username: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').user.login }}
-          github_token: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
-          sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
-
-      - name: Set maintainer status
-        id: check-membership
-        env:
-          IS_MAIN_BRANCH: ${{ github.ref == 'refs/heads/main' }}
-          IS_MERGE_GROUP: ${{ github.event_name == 'merge_group' }}
-          SCHEDULED_JOB: ${{ github.event_name == 'schedule' }}
-          IS_WORKFLOW_DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
-        run: |
-          if [ "${SCHEDULED_JOB}" == "true" ] || [ "${IS_MAIN_BRANCH}" == "true" ] || [ "${IS_MERGE_GROUP}" == "true" ] || [ "${IS_WORKFLOW_DISPATCH}" == "true" ]; then
-            echo "is_maintainer=true" | tee -a $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          IS_MEMBER="${{ steps.check-sso.outputs.is_member }}"
-
-          if [ "${{ env.DISABLE_EXTERNAL_CONTRIBUTOR }}" == "true" ] && [ "${{ steps.check-sso.outputs.is_member }}" != "true" ]; then
-            PR_AUTHOR=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').user.login }}
-
-            echo "Checking if $PR_AUTHOR is a repo collaborator..."
-            API_URL="https://api.github.com/repos/$REPO/collaborators/$PR_AUTHOR"
-            REPO_MEMBERSHIP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -L \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              $API_URL)
-
-            echo "Checking if $PR_AUTHOR is an org collaborator to NVIDIA-NeMo..."
-            API_URL="https://api.github.com/orgs/NVIDIA-NeMo/members/$PR_AUTHOR"
-            ORG_NVIDIA_NEMO_MEMBERSHIP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -L \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              $API_URL)
-
-            echo "Checking if $PR_AUTHOR is an org collaborator to NVIDIA..."
-            API_URL="https://api.github.com/orgs/NVIDIA/members/$PR_AUTHOR"
-            ORG_NVIDIA_MEMBERSHIP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -L \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              $API_URL)
-
-            if [ "$REPO_MEMBERSHIP_RESPONSE" -eq 204 ] || [ "$ORG_NVIDIA_NEMO_MEMBERSHIP_RESPONSE" -eq 204 ] || [ "$ORG_NVIDIA_MEMBERSHIP_RESPONSE" -eq 204 ]; then
-              IS_MEMBER="true"
-            else
-              exit 1
-            fi
-          fi
-
-          if [ "$IS_MEMBER" == "true" ]; then
-            echo "is_maintainer=true" | tee -a $GITHUB_OUTPUT
-          else
-            echo "is_maintainer=false" | tee -a $GITHUB_OUTPUT
-          fi
-
   pre-flight:
-    needs: [is-not-external-contributor]
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
     with:
-      default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
-      non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      default_runner_prefix: nemo-ci-aws-gpu-x2
+      non_nvidia_runner_prefix: nemo-ci-aws-gpu-x2-ephemeral
       default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
       non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
       default_registry: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}
@@ -344,8 +256,8 @@ jobs:
           echo "Running CI tests"
 
   cicd-container-build:
-    needs: [is-not-external-contributor, pre-flight, cicd-wait-in-queue]
-    runs-on: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+    needs: [pre-flight, cicd-wait-in-queue]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     if: |
       (
@@ -524,8 +436,8 @@ jobs:
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
-    needs: [is-not-external-contributor, pre-flight, cicd-wait-in-queue, cicd-container-build]
-    runs-on: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+    needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Core
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
@@ -550,7 +462,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   cicd-unit-tests-diffusion:
     if: |
@@ -562,8 +474,8 @@ jobs:
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
-    needs: [is-not-external-contributor, pre-flight, cicd-wait-in-queue, cicd-container-build]
-    runs-on: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+    needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Diffusion
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
@@ -588,7 +500,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   generate-test-matrix:
     needs: [pre-flight, cicd-container-build]
@@ -642,8 +554,8 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l0) }}
-    needs: [is-not-external-contributor, pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+    needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     if: |
       (
         success()
@@ -678,7 +590,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   # L1: runs on main push, schedule, and PRs with "needs-more-tests" label
   cicd-functional-tests-l1:
@@ -686,8 +598,8 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l1) }}
-    needs: [is-not-external-contributor, pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+    needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     if: |
       (
         success()
@@ -723,7 +635,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   # L2: runs on schedule (nightly/weekly) and workflow_dispatch only
   cicd-functional-tests-l2:
@@ -731,8 +643,8 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l2) }}
-    needs: [is-not-external-contributor, pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+    needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     if: |
       (
         success()
@@ -768,7 +680,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   cicd-functional-tests-flaky:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
@@ -776,8 +688,8 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_flaky) }}
-    needs: [is-not-external-contributor, pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+    needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: ${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
@@ -804,7 +716,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.is-not-external-contributor.outputs.selected_runner }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   Nemo_CICD_Test:
     needs:
