@@ -2817,9 +2817,10 @@ class TestLoadCheckpointFromPathDirectIterDir:
         self, mock_reader, mock_unwrap, mock_get_pg, mock_is_iter_dir
     ):
         """When load_dir is an iteration directory, FileSystemReader should receive it directly."""
+        from megatron.core.msc_utils import MultiStorageClientFeature
+
         from megatron.bridge.training.checkpointing import _load_checkpoint_from_path
 
-        from megatron.core.msc_utils import MultiStorageClientFeature
         MultiStorageClientFeature.enable()
 
         mock_is_iter_dir.return_value = True
