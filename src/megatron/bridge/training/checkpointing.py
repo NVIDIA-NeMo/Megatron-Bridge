@@ -1720,6 +1720,7 @@ def load_checkpoint(
         opt_param_scheduler,
         strict,
         checkpointing_context,
+        skip_load_to_model_and_opt=skip_load_to_model_and_opt,
         pg_collection=pg_collection,
         module_name=module_name,
     )
