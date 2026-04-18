@@ -257,8 +257,8 @@ jobs:
 
   cicd-container-build:
     needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    runs-on: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
+    environment: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') && 'nemo-ci' || '' }}
     if: |
       (
         success()
@@ -336,7 +336,7 @@ jobs:
 
       - name: Install Azure CLI
         shell: bash
-        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+        if: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') }}
         run: |
           echo "::group::Install Azure CLI"
           # Create systemd override for proper dependencies
@@ -349,14 +349,14 @@ jobs:
 
       - name: Azure Login
         uses: azure/login@v2
-        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+        if: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') }}
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Azure ACR Login
-        if: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+        if: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') }}
         shell: bash
         run: |
           az acr login --name nemoci
@@ -385,7 +385,7 @@ jobs:
                 }
               }
             }' | jq -r '.data.repository.pullRequests.nodes[].number' | while read -r number; do
-              echo "type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:$number-buildcache,mode=max"
+              echo "type=registry,ref=${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:$number-buildcache,mode=max"
             done)
 
           echo "LAST_PRS<<EOF" | tee -a $GITHUB_OUTPUT
@@ -409,7 +409,7 @@ jobs:
             KEY="$BRANCH_SANITIZED"
           fi
           echo "key=$KEY" >> $GITHUB_OUTPUT
-          echo "cache-to=type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
+          echo "cache-to=type=registry,ref=${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -422,14 +422,14 @@ jobs:
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
           cache-from: |
-            type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
-            type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:main-buildcache,mode=max
+            type=registry,ref=${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
+            type=registry,ref=${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:main-buildcache,mode=max
             ${{ steps.cache_from.outputs.LAST_PRS }}
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |
-            ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
-            ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+            ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
+            ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
 
@@ -444,9 +444,9 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
     name: Launch_Unit_Tests_Core
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    environment: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') && 'nemo-ci' || '' }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -462,14 +462,14 @@ jobs:
           script: Launch_Unit_Tests_Core
           timeout: 18
           is_unit_test: "true"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          has-azure-credentials: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
-          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          container-image: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+          runner: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
 
   cicd-unit-tests-diffusion:
     if: |
@@ -482,9 +482,9 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
     name: Launch_Unit_Tests_Diffusion
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    environment: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') && 'nemo-ci' || '' }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -500,14 +500,14 @@ jobs:
           script: Launch_Unit_Tests_Diffusion
           timeout: 18
           is_unit_test: "true"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          has-azure-credentials: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
-          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          container-image: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+          runner: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
 
   generate-test-matrix:
     needs: [pre-flight, cicd-container-build]
@@ -562,7 +562,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l0) }}
     needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
     if: |
       (
         success()
@@ -573,7 +573,7 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    environment: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -590,14 +590,14 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          has-azure-credentials: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
-          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          container-image: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+          runner: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
 
   # L1: runs on main push, schedule, and PRs with "needs-more-tests" label
   cicd-functional-tests-l1:
@@ -606,7 +606,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l1) }}
     needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
     if: |
       (
         success()
@@ -618,7 +618,7 @@ jobs:
       && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.configure.outputs.needs_more_tests == 'true' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    environment: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -635,14 +635,14 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          has-azure-credentials: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
-          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          container-image: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+          runner: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
 
   # L2: runs on schedule (nightly/weekly) and workflow_dispatch only
   cicd-functional-tests-l2:
@@ -651,7 +651,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l2) }}
     needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
     if: |
       (
         success()
@@ -663,7 +663,7 @@ jobs:
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    environment: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -680,14 +680,14 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          has-azure-credentials: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
-          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          container-image: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+          runner: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
 
   cicd-functional-tests-flaky:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
@@ -696,9 +696,9 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_flaky) }}
     needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
     name: ${{ matrix.script }}
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    environment: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -716,14 +716,14 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          has-azure-credentials: ${{ contains(vars.NON_NVIDIA_CONTAINER_REGISTRY, 'azure') }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
-          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          container-image: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+          runner: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}-gpu-x2
 
   Nemo_CICD_Test:
     needs:
