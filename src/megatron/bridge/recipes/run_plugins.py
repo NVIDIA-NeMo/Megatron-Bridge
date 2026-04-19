@@ -297,6 +297,13 @@ class NsysPlugin(Plugin):
         launcher.nsys_profile = True
         launcher.nsys_trace = self.nsys_trace or ["nvtx", "cuda"]
 
+        # Reduce CPU-side collection overhead: disable context-switch tracing,
+        # backtrace collection, and CUDA graph node tracing.
+        existing = launcher.nsys_extra_args or []
+        existing = [a for a in existing if not a.startswith("--cuda-graph-trace")]
+        existing.extend(["--cpuctxsw=none", "--backtrace=none"])
+        launcher.nsys_extra_args = existing
+
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
             launcher.nsys_filename = "profile_%p_%q{SLURM_JOB_ID}_node%q{SLURM_NODEID}_rank%q{SLURM_PROCID}"

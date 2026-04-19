@@ -121,12 +121,16 @@ class NsysPlugin(Plugin):
         if self.nsys_trace is not None:
             launcher.nsys_trace = self.nsys_trace
 
-        # Combine default extra args with user-provided extra args
+        # Reduce CPU-side collection overhead: disable context-switch tracing,
+        # backtrace collection, and CUDA graph node tracing.
+        existing = launcher.nsys_extra_args or []
+        existing = [a for a in existing if not a.startswith("--cuda-graph-trace")]
+        existing.extend(["--cpuctxsw=none", "--backtrace=none"])
+        launcher.nsys_extra_args = existing
+
+        # Combine with user-provided extra args (user args first for precedence)
         if self.nsys_extra_args is not None:
-            # Get existing launcher extra args (nemo_run defaults)
-            existing_extra_args = launcher.nsys_extra_args or []
-            # Combine user args with existing args (user args first for precedence)
-            launcher.nsys_extra_args = self.nsys_extra_args + existing_extra_args
+            launcher.nsys_extra_args = self.nsys_extra_args + launcher.nsys_extra_args
             logger.info(f"Combined nsys_extra_args: {launcher.nsys_extra_args}")
 
         if isinstance(executor, SlurmExecutor):
