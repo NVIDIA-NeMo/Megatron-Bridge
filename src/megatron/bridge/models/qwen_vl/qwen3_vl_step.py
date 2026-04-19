@@ -37,6 +37,61 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 logger = logging.getLogger(__name__)
 
+# Global gradient debug hooks instance. Set via enable_grad_debug_hooks().
+_grad_debug_hooks = None
+
+
+def enable_grad_debug_hooks(
+    model,
+    log_every_n_steps: int = 1,
+    verbose: bool = True,
+    rank_filter: int = 0,
+    module_name_filter: str = None,
+):
+    """Enable gradient debug hooks on the Qwen3 VL model.
+
+    Call this once after model construction. Gradient stats will be logged
+    after each backward pass.
+
+    Args:
+        model: The Qwen3VLModel (or wrapped model).
+        log_every_n_steps: Only log every N backward passes.
+        verbose: If True, log all gradient stats. If False, only log NaN/Inf.
+        rank_filter: Only log on this distributed rank (default 0). None for all ranks.
+        module_name_filter: Only hook modules whose name contains this substring.
+
+    Example:
+        from megatron.bridge.models.qwen_vl.qwen3_vl_step import enable_grad_debug_hooks
+        enable_grad_debug_hooks(model, log_every_n_steps=10, verbose=False)
+    """
+    global _grad_debug_hooks
+
+    # Unwrap if needed (e.g. DDP / Float16Module wrapper)
+    unwrapped = model
+    while hasattr(unwrapped, "module"):
+        unwrapped = unwrapped.module
+
+    if hasattr(unwrapped, "enable_grad_debug_hooks"):
+        _grad_debug_hooks = unwrapped.enable_grad_debug_hooks(
+            log_every_n_steps=log_every_n_steps,
+            verbose=verbose,
+            rank_filter=rank_filter,
+            module_name_filter=module_name_filter,
+        )
+    else:
+        from megatron.bridge.utils.grad_debug_hooks import GradDebugHooks
+
+        _grad_debug_hooks = GradDebugHooks(
+            model=unwrapped,
+            log_every_n_steps=log_every_n_steps,
+            verbose=verbose,
+            rank_filter=rank_filter,
+            module_name_filter=module_name_filter,
+        )
+        _grad_debug_hooks.register()
+    logger.info("Gradient debug hooks enabled on Qwen3 VL model")
+    return _grad_debug_hooks
+
 
 def get_batch_from_iterator(
     data_iterator: Iterable,
@@ -224,6 +279,12 @@ def forward_step(
     Returns:
         tuple containing the output tensor and the loss function
     """
+    # Auto-enable gradient debug hooks on the first forward_step call
+    global _grad_debug_hooks
+    # if _grad_debug_hooks is None:
+    #     _grad_debug_hooks = enable_grad_debug_hooks(model, log_every_n_steps=1, verbose=True, module_name_filter="language_model.output_layer")
+        # _grad_debug_hooks = enable_grad_debug_hooks(model, log_every_n_steps=1, verbose=True, module_name_filter="language_model.grad_output")
+
     timers = state.timers
     straggler_timer = state.straggler_timer
 
@@ -316,6 +377,16 @@ def forward_step(
         else:
             output_tensor = model(**forward_args)
 
+    # if _grad_debug_hooks is not None:
+    #     _grad_debug_hooks.register_tensor_hook(output_tensor, "output_tensor")
+
     loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+
+    # Log gradient debug stats if hooks are enabled.
+    # Stats are populated during backward() of the previous step and logged here.
+    # if _grad_debug_hooks is not None:
+    #     wandb_writer = state.wandb_logger
+    #     iteration = state.train_state.step
+    #     _grad_debug_hooks.print_summary(wandb_writer=wandb_writer, iteration=iteration)
 
     return output_tensor, loss_function
