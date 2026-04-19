@@ -38,7 +38,19 @@ from megatron.training.config import DistributedInitConfig as MTrainDistributedI
 from megatron.training.config import LoggerConfig as MTrainLoggerConfig
 from megatron.training.config import ProfilingConfig as MTrainProfilingConfig
 from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
-from megatron.training.config import RNGConfig, ValidationConfig
+from megatron.training.config import RNGConfig
+from megatron.training.config import ValidationConfig as _MTrainValidationConfig
+
+
+@dataclass(kw_only=True)
+class ValidationConfig(_MTrainValidationConfig):
+    """Extends upstream ValidationConfig with configurable eval batch sizes."""
+
+    eval_global_batch_size: int | None = None
+    """Global batch size for evaluation. Defaults to train.global_batch_size if not set."""
+
+    eval_micro_batch_size: int | None = None
+    """Micro batch size for evaluation. Defaults to train.micro_batch_size if not set."""
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
