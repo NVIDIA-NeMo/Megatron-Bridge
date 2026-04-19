@@ -12,6 +12,8 @@
 
 ## 📣 News
 
+- [04/19/2026] [**Qwen3.6-35B-A3B**](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) is now supported! Qwen3.6 uses the same architecture as Qwen3.5 VL MoE (`Qwen3_5MoeForConditionalGeneration`) and works with the existing [Qwen3.5-VL bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_vl) out of the box — no code changes needed. HF→Megatron conversion and inference verified.
+
 - [04/12/2026] [**MiniMax-M2.5 / M2.7**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/minimax_m2) are now supported! Both models share the same architecture as MiniMax-M2 and work with the existing bridge out of the box — checkpoint conversion and inference verified on real FP8 checkpoints.
 
 - [04/10/2026] [**Qwen3-ASR**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/audio_lm/qwen3_asr) is now supported! Checkpoint conversion and inference for [Qwen3's ASR model](https://github.com/QwenLM/Qwen3-ASR) are available on **main**.
@@ -200,6 +202,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 - [Qwen2.5-VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_vl) — [recipes (3B/7B/32B/72B)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen_vl/qwen25_vl.py)
 - [Qwen3-VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_vl) — [recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen_vl/qwen3_vl.py)
 - [Qwen3.5-VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_vl) — [recipes (800M/2B/4B/9B/27B/35B-A3B/122B-A10B/397B-A17B)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen_vl/qwen35_vl.py)
+- [Qwen3.6-VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_vl) — uses Qwen3.5-VL MoE bridge (35B-A3B)
 
 ### Omni Models
 
