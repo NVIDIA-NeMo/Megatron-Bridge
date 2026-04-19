@@ -13,6 +13,9 @@
 # limitations under the License.
 
 
+from typing import Any
+
+
 import torch
 
 
@@ -42,7 +45,7 @@ class Wan3DRopeEmbeddings(torch.nn.Module):
         )
         return freqs
 
-    def forward(self, n_head, dim_head, cu_seqlens_q_padded, grid_sizes, device):
+    def forward(self, n_head, dim_head, cu_seqlens_q_padded, grid_sizes, device, qkv_format: str = "thd"):
         _, c = n_head, dim_head // 2
 
         # split freqs
@@ -66,7 +69,7 @@ class Wan3DRopeEmbeddings(torch.nn.Module):
             freqs_real.append(freqs_real_i)
 
         # Pad freqs_real_i to (padded_seq_len, 1, 1, dim_head) with 0s
-        for i, freqs_real_i in enumerate(freqs_real):
+        for i, freqs_real_i in enumerate[Any](freqs_real):
             seq_len_q_padded = cu_seqlens_q_padded[i + 1] - cu_seqlens_q_padded[i]
             if freqs_real_i.shape[0] < seq_len_q_padded:
                 pad_shape = (seq_len_q_padded - freqs_real_i.shape[0], 1, 1, dim_head)
@@ -75,13 +78,21 @@ class Wan3DRopeEmbeddings(torch.nn.Module):
                 )
             freqs_real[i] = freqs_real_i
 
-        # Each freqs_real[i] is (seq_len, 1, 1, dim_head)
-        # We concatenate them along dim=0 to get (concatenated_seq_len, 1, 1, dim_head)
-        freqs_real = torch.cat(freqs_real, dim=0)
-
-        # Note:
-        # when running context_parallel, which must use "thd" for qkv_format,
-        # we don't need to scatter the freqs to the context parallel region,
-        # because mcore rope_utils will automatically retrieve the correct freqs for each context parallel region
+        # Each freqs_real[i] is (seq_len_padded, 1, 1, dim_head)
+        if qkv_format == "sbhd":
+            # SBHD: we assumeall samples in the batch share the same grid_size, so rope
+            # embeddings are identical across samples. Use the first one directly
+            # → (seq_len_padded, 1, 1, dim_head), broadcasting over the batch dim.
+            freqs_real = freqs_real[0]
+            # Note:
+            # when running context_parallel with SBHD qkv_format, the caller is responsible
+            # for splitting freqs_real across CP ranks via get_pos_emb_on_this_cp_rank().
+        else:
+            # THD: concatenate along the sequence dim → (total_seq_len, 1, 1, dim_head).
+            freqs_real = torch.cat(freqs_real, dim=0)
+            # Note:
+            # when running context_parallel with THD qkv_format, we don't need to scatter
+            # the freqs to the context parallel region — mcore rope_utils automatically
+            # retrieves the correct freqs for each context parallel region.
 
         return freqs_real

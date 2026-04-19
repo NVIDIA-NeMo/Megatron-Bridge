@@ -17,6 +17,7 @@ from typing import Any, Dict, Tuple
 import torch
 import torch.nn as nn
 from megatron.core import parallel_state
+from megatron.core.utils import get_batch_on_this_cp_rank
 
 from megatron.bridge.diffusion.common.flow_matching.adapters.base import FlowMatchingContext, ModelAdapter
 from megatron.bridge.diffusion.common.flow_matching.flow_matching_pipeline import FlowMatchingPipeline
@@ -33,15 +34,9 @@ class WanAdapter(ModelAdapter):
     def prepare_inputs(self, context: FlowMatchingContext) -> Dict[str, Any]:
         grid_sizes = context.batch["grid_sizes"]
         noisy_latents = context.noisy_latents
-        video_latents = context.video_latents  # noqa: F841
-        loss_mask = context.batch["loss_mask"]  # noqa: F841
         context_embeddings = context.batch["context_embeddings"]
         timesteps = context.timesteps
         packed_seq_params = context.batch["packed_seq_params"]
-
-        # tranpose back to have shape "sbhd"
-        # (before we reshaped to "bshd" to be compatible with flow matching pipeline)
-        noisy_latents = noisy_latents.transpose(0, 1)
 
         # ========================================================================
         # Cast model inputs to bf16
@@ -55,35 +50,60 @@ class WanAdapter(ModelAdapter):
         # timesteps = timesteps.float()  # NOT bf16!
         timesteps = timesteps.to(torch.bfloat16)
 
-        # ========================================================================
-        # Split accross context parallelism
-        # ========================================================================
+        if packed_seq_params is None:
+            # ====================================================================
+            # SBHD mode: inputs are [n, seq, D] (batch-first).
+            # Split across CP ranks, then transpose to SBHD [seq, n, D] for model.
+            # AttnMaskType.no_mask is used for both self- and cross-attention, so
+            # no attention_mask or context_mask tensors are needed.
+            # ====================================================================
+            if parallel_state.get_context_parallel_world_size() > 1:
+                cp_batch = get_batch_on_this_cp_rank({"noisy_latents": noisy_latents})
+                noisy_latents = cp_batch["noisy_latents"]
 
-        if parallel_state.get_context_parallel_world_size() > 1:
-            noisy_latents = thd_split_inputs_cp(
-                noisy_latents,
-                packed_seq_params["self_attention"].cu_seqlens_q_padded,
-                parallel_state.get_context_parallel_group(),
-            )
-            # TODO (pmannan): Disable CP for CrossAttention as KV context is small.
-            # We don't need to split context embeddings across context parallelism
-            # if we disable context parallelism for cross-attention
-            context_embeddings = thd_split_inputs_cp(
-                context_embeddings,
-                packed_seq_params["cross_attention"].cu_seqlens_kv_padded,
-                parallel_state.get_context_parallel_group(),
-            )
+            # Transpose from BSHD [n, s, D] to SBHD [s, n, D]
+            noisy_latents = noisy_latents.transpose(0, 1)
+            context_embeddings = context_embeddings.transpose(0, 1)
+
+            return {
+                "noisy_latents": noisy_latents,
+                "grid_sizes": grid_sizes,
+                "timesteps": timesteps,
+                "context_embeddings": context_embeddings,
+                "packed_seq_params": None,
+            }
         else:
-            noisy_latents = noisy_latents
-            context_embeddings = context_embeddings
+            # ====================================================================
+            # THD mode: inputs are [1, seq, D] (BSHD); transpose to THD/SBHD
+            # [seq, 1, D], then split across CP ranks via cu_seqlens.
+            # ====================================================================
 
-        return {
-            "noisy_latents": noisy_latents,
-            "grid_sizes": grid_sizes,
-            "timesteps": timesteps,
-            "context_embeddings": context_embeddings,
-            "packed_seq_params": packed_seq_params,
-        }
+            # tranpose back to have shape "sbhd"
+            # (before we reshaped to "bshd" to be compatible with flow matching pipeline)
+            noisy_latents = noisy_latents.transpose(0, 1)
+
+            if parallel_state.get_context_parallel_world_size() > 1:
+                noisy_latents = thd_split_inputs_cp(
+                    noisy_latents,
+                    packed_seq_params["self_attention"].cu_seqlens_q_padded,
+                    parallel_state.get_context_parallel_group(),
+                )
+                # TODO (pmannan): Disable CP for CrossAttention as KV context is small.
+                # We don't need to split context embeddings across context parallelism
+                # if we disable context parallelism for cross-attention
+                context_embeddings = thd_split_inputs_cp(
+                    context_embeddings,
+                    packed_seq_params["cross_attention"].cu_seqlens_kv_padded,
+                    parallel_state.get_context_parallel_group(),
+                )
+
+            return {
+                "noisy_latents": noisy_latents,
+                "grid_sizes": grid_sizes,
+                "timesteps": timesteps,
+                "context_embeddings": context_embeddings,
+                "packed_seq_params": packed_seq_params,
+            }
 
     def forward(self, model: nn.Module, inputs: Dict[str, Any]) -> torch.Tensor:
         """
@@ -103,6 +123,8 @@ class WanAdapter(ModelAdapter):
             t=inputs["timesteps"],
             context=inputs["context_embeddings"],
             packed_seq_params=inputs["packed_seq_params"],
+            attention_mask=inputs.get("attention_mask"),
+            context_mask=inputs.get("context_mask"),
         )
         return self.post_process_prediction(model_pred)
 
@@ -131,28 +153,53 @@ class WanFlowMatchingPipeline(FlowMatchingPipeline):
         loss_mask = batch["loss_mask"]
         packed_seq_params = batch["packed_seq_params"]
 
-        # tranpose back to have shape "sbhd"
-        # (before we reshaped to "bshd" to be compatible with flow matching pipeline)
-        target = target.transpose(0, 1)
+        if packed_seq_params is None:
+            # ====================================================================
+            # SBHD mode: model_pred comes out of the model as SBHD [S/cp, n, D];
+            # transpose to BSHD [n, S/cp, D] so sigma ([n]) broadcasts correctly
+            # as loss_weight.view(-1, 1, 1) = [n, 1, 1].
+            # target and loss_mask are already BSHD [n, seq_q, D/1] — no transpose needed.
+            # ====================================================================
+            model_pred = model_pred.transpose(0, 1)  # SBHD [S/cp,n,D] → BSHD [n,S/cp,D]
 
-        # ========================================================================
-        # Split accross context parallelism
-        # ========================================================================
+            if parallel_state.get_context_parallel_world_size() > 1:
+                cp_batch = get_batch_on_this_cp_rank({
+                    "target": target,
+                    "loss_mask": loss_mask,
+                })
+                target = cp_batch["target"]
+                split_loss_mask = cp_batch["loss_mask"]
+            else:
+                split_loss_mask = loss_mask
+            # model_pred:      BSHD [n, S/cp, D]
+            # target:          BSHD [n, S/cp, D]
+            # split_loss_mask: BSHD [n, S/cp]
 
-        if parallel_state.get_context_parallel_world_size() > 1:
-            target = thd_split_inputs_cp(
-                target,
-                packed_seq_params["self_attention"].cu_seqlens_q_padded,
-                parallel_state.get_context_parallel_group(),
-            )
-            split_loss_mask = thd_split_inputs_cp(
-                loss_mask,
-                packed_seq_params["self_attention"].cu_seqlens_q_padded,
-                parallel_state.get_context_parallel_group(),
-            )
         else:
-            target = target
-            split_loss_mask = loss_mask
+            # ====================================================================
+            # THD mode: model_pred comes out of the model as THD [S/cp, 1, D];
+            # transpose it to BSHD [1, S/cp, D].
+            # target is [1, seq_q, D] (BSHD); transpose to THD [seq_q, 1, D] for
+            # CP splitting via cu_seqlens, then transpose back to BSHD [1, S/cp, D].
+            # ====================================================================
+            model_pred = model_pred.transpose(0, 1)  # THD [S/cp,1,D] → BSHD [1,S/cp,D]
+
+            if parallel_state.get_context_parallel_world_size() > 1:
+                target = thd_split_inputs_cp(
+                    target.transpose(0, 1),  # BSHD [1,S,D] → THD [S,1,D] for split
+                    packed_seq_params["self_attention"].cu_seqlens_q_padded,
+                    parallel_state.get_context_parallel_group(),
+                ).transpose(0, 1)  # THD [S/cp,1,D] → BSHD [1,S/cp,D]
+                split_loss_mask = thd_split_inputs_cp(
+                    loss_mask,
+                    packed_seq_params["self_attention"].cu_seqlens_q_padded,
+                    parallel_state.get_context_parallel_group(),
+                ).transpose(0, 1)  # THD [S/cp,1] → BSHD [1,S/cp]
+            else:
+                split_loss_mask = loss_mask.transpose(0, 1)  # THD [S,1] → BSHD [1,S]
+            # model_pred:      BSHD [n=1, S/cp, D]
+            # target:          BSHD [n=1, S/cp, D]
+            # split_loss_mask: BSHD [n=1, S/cp]
 
         batch["loss_mask"] = split_loss_mask
         weighted_loss, average_weighted_loss, unweighted_loss, average_unweighted_loss, loss_weight, loss_mask = (

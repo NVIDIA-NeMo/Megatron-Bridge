@@ -52,7 +52,7 @@ class WanDatasetConfig(DatasetProvider):
 
     path: Optional[Union[str, list]] = None
     seq_length: int = 1024
-    packing_buffer_size: int = 200
+    packing_buffer_size: Optional[int] = 200
     micro_batch_size: int = 1
     global_batch_size: int = 4
     num_workers: int = 16
@@ -68,8 +68,6 @@ class WanDatasetConfig(DatasetProvider):
     context_embeddings_dim: int = 4096
 
     def __post_init__(self):
-        if self.packing_buffer_size is None:
-            raise ValueError("WAN requires sequence packing: `packing_buffer_size` cannot be None.")
         self.sequence_length = self.seq_length
 
     def build_datasets(self, context: DatasetBuildContext):
@@ -113,7 +111,7 @@ class WanDatasetConfig(DatasetProvider):
 class WanDataModuleConfig(DiffusionDataModuleConfig):  # noqa: D101
     path: str
     seq_length: int
-    packing_buffer_size: int
+    packing_buffer_size: Optional[int]
     micro_batch_size: int
     global_batch_size: int
     num_workers: int

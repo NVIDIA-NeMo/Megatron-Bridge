@@ -27,6 +27,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.transformer_block import TransformerBlock
 from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.models.common.embeddings.rope_utils import get_pos_emb_on_this_cp_rank
 from megatron.core.utils import make_sharded_tensor_for_checkpoint
 from torch import Tensor
 
@@ -104,7 +105,7 @@ class WanModel(VisionModule):
 
         self.config: TransformerConfig = config
 
-        self.transformer_decoder_layer_spec = transformer_decoder_layer_spec()
+        self.transformer_decoder_layer_spec = transformer_decoder_layer_spec(qkv_format=config.qkv_format)
         self.pre_process = pre_process
         self.post_process = post_process
         self.fp16_lm_cross_entropy = fp16_lm_cross_entropy
@@ -184,6 +185,8 @@ class WanModel(VisionModule):
         t: Tensor,
         context: Tensor,
         packed_seq_params: PackedSeqParams = None,
+        attention_mask: Optional[Tensor] = None,
+        context_mask: Optional[Tensor] = None,
         **kwargs,
     ) -> Tensor:
         """Forward pass.
@@ -200,6 +203,15 @@ class WanModel(VisionModule):
         """
         #################################
         ########## Wan forward ##########
+
+        # DEBUGGING (enable sbhd)
+        if torch.distributed.get_rank() == 0:
+            print("[DEBUG] DEBUGGING (enable sbhd)")
+            print("[DEBUG] x.shape: ", x.shape)
+            print("[DEBUG] grid_sizes[:4]: ", grid_sizes[:4])
+            print("[DEBUG] t.shape: ", t.shape)
+            print("[DEBUG] context.shape: ", context.shape)
+            print("[DEBUG] packed_seq_params: ", packed_seq_params)
 
         # ============= embedders =============
 
@@ -236,20 +248,45 @@ class WanModel(VisionModule):
         # ============= decoder =============
         # calculate rotary pos emb
         n_head, dim_head = self.num_heads, self.config.hidden_size // self.num_heads
-        cu_seqlens_q_padded = packed_seq_params["self_attention"].cu_seqlens_q_padded
+        if packed_seq_params is not None:
+            # THD mode: cu_seqlens_q_padded comes from packed sequence parameters.
+            cu_seqlens_q_padded = packed_seq_params["self_attention"].cu_seqlens_q_padded
+            qkv_format = "thd"
+        else:
+            # SBHD mode: x.shape[0] has already been divided by CP, so multiply back to
+            # recover the full per-sample padded length (max_seq_q).
+            cp_size = parallel_state.get_context_parallel_world_size()
+            seq_len_sbhd = x.shape[0] * cp_size  # = max_seq_q
+            batch_size_sbhd = x.shape[1]
+            cu_seqlens_q_padded = (
+                torch.arange(batch_size_sbhd + 1, dtype=torch.int32, device=t.device) * seq_len_sbhd
+            )
+            qkv_format = "sbhd"
+
         rotary_pos_emb = self.rope_embeddings(
-            n_head, dim_head, cu_seqlens_q_padded, grid_sizes, t.device
-        )  # output: rotary_pos_emb.shape [s, b, 1, dim_head]
+            n_head, dim_head, cu_seqlens_q_padded, grid_sizes, t.device, qkv_format=qkv_format
+        )  # THD: [total_s, 1, 1, dim_head]  SBHD: [s, 1, 1, dim_head]
+        # Note: In the sbhd case, we assume all samples in the batch share the same grid_size
+
+        # For SBHD + CP: transpose to BSHD, split with get_batch_on_this_cp_rank, transpose back.
+        # For THD + CP: no need to slice, mcore rope_utils will take care of it.
+        if qkv_format == "sbhd" and parallel_state.get_context_parallel_world_size() > 1:
+            rotary_pos_emb = get_pos_emb_on_this_cp_rank(
+                pos_emb=rotary_pos_emb,
+                seq_dim=0,
+                cp_group=parallel_state.get_context_parallel_group(),
+            )
 
         # run decoder
         x = self.decoder(
             hidden_states=x,
-            attention_mask=e0,
+            attention_mask=None,
             context=context,
             context_mask=None,
             rotary_pos_emb=rotary_pos_emb,
             rotary_pos_cos=None,
             rotary_pos_sin=None,
+            conditions_embeddings=e0,
             packed_seq_params=packed_seq_params,
         )
 
@@ -260,7 +297,7 @@ class WanModel(VisionModule):
         # head
         x = x.transpose(0, 1)  # head expects shape [b, s, hidden_size]
         x = self.head(x, e)  # output: x.shape [b, s, c * pF * pH * pW]
-        x = x.transpose(0, 1)  # reshape back to shape [s, b, c * pF * pH * pW]
+        x = x.transpose(0, 1).contiguous()  # reshape back to shape [s, b, c * pF * pH * pW]; .contiguous() is critical: without it, torch.empty_like(x) in the CP all_gather creates a non-contiguous tensor (strides match the transposed layout), causing the gathered data to be interpreted in batch-major order while the sent data is seq-major, scrambling batch items across sequence positions.
 
         # gather outputs for sequence_parallel
         # Note: in GPT models, because the vocab projection matrix is ColumnParallelLinear, the sequence is
