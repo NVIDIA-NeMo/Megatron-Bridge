@@ -123,7 +123,6 @@ def _create_glm5_toy_model(model_dir: Path) -> None:
         json.dump(config_to_save, f, indent=2)
 
 
-@pytest.mark.pleasefixme
 class TestGLM5Conversion:
     """
     Test GLM-5 (MoE + MLA + DSA) model conversion with different parallelism configurations.
