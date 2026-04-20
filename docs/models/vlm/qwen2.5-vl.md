@@ -64,7 +64,7 @@ Before training, ensure the following environment variables are set.
 Example usage for full parameter finetuning:
 
 ```bash
-uv run torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --dataset-type hf \
@@ -92,7 +92,7 @@ Note:
 Parameter-efficient finetuning (PEFT) using LoRA or DoRA is supported. You can use the `--peft_scheme` argument to enable PEFT training:
 
 ```bash
-uv run torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --peft_scheme lora \
@@ -112,7 +112,7 @@ You can also combine PEFT with freeze options to control which components are tr
 
 Example with LoRA and freeze options:
 ```bash
-uv run torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --peft_scheme lora \

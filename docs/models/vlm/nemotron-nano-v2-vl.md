@@ -85,7 +85,7 @@ Example usage for full parameter finetuning using the
 [Raven dataset](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron/viewer/raven):
 
 ```bash
-uv run torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint <megatron model path> \
 dataset.maker_name=make_raven_dataset \
@@ -110,7 +110,7 @@ settings out of the box in the example script:
    distribution is substantially different from pretrained.)
 
 ```bash
-uv run torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
@@ -126,7 +126,7 @@ model.freeze_vision_projection=False
 2. Apply LoRA to all linear layers in attention and MLP modules of the vision model, vision projection, and the language model.
 
 ```bash
-uv run torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
@@ -186,7 +186,7 @@ Note on video training example:
 
 Full video training example command:
 ```bash
-uv run torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --config-file "examples/models/vlm/nemotron_vl/conf/nemotron_nano_v2_vl_video.yaml" \

@@ -266,7 +266,7 @@ PY
 ### Launch with multiple GPUs (example)
 
 ```bash
-uv run torchrun --nproc-per-node=2 -m examples.conversion.generate_from_hf
+uv run python -m torch.distributed.run --nproc-per-node=2 -m examples.conversion.generate_from_hf
 ```
 
 ## AutoBridge API Reference

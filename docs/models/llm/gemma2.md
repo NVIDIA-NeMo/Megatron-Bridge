@@ -166,7 +166,7 @@ config = gemma2_27b_pretrain_config(
 
 #### Gemma 2 2B
 ```bash
-uv run torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-2b \
 --recipe gemma2_2b_sft_config \
 train.global_batch_size=64 \
@@ -188,7 +188,7 @@ config = gemma2_2b_sft_config(
 
 #### Gemma 2 9B
 ```bash
-uv run torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-9b \
 --recipe gemma2_9b_sft_config \
 train.global_batch_size=64 \
@@ -198,7 +198,7 @@ checkpoint.save=$SAVE_DIR/gemma2_9b_finetune
 
 #### Gemma 2 27B
 ```bash
-uv run torchrun --nproc-per-node=16 run/run_recipe.py \
+uv run python -m torch.distributed.run --nproc-per-node=16 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-27b \
 --recipe gemma2_27b_sft_config \
 train.global_batch_size=64 \
@@ -210,7 +210,7 @@ checkpoint.save=$SAVE_DIR/gemma2_27b_finetune
 
 #### Gemma 2 2B
 ```bash
-uv run torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 run/run_recipe.py \
 --pretrained-checkpoint /models/gemma-2-2b \
 --recipe gemma2_2b_peft_config \
 --peft_scheme lora \

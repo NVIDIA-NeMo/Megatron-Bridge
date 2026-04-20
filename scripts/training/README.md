@@ -25,13 +25,13 @@ uv run python run_recipe.py --recipe llama32_1b_pretrain_config
 ### Pretrain (multi-GPU)
 
 ```bash
-uv run torchrun --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
 ```
 
 ### Finetune
 
 ```bash
-uv run torchrun --nproc_per_node=8 run_recipe.py --recipe llama32_1b_sft_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_sft_config
 ```
 
 ## Usage with Different Models
@@ -40,16 +40,16 @@ Same scripts work across all model families:
 
 ```bash
 # Llama
-uv run torchrun --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
 
 # Gemma
-uv run torchrun --nproc_per_node=8 run_recipe.py --recipe gemma3_1b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe gemma3_1b_pretrain_config
 
 # Qwen
-uv run torchrun --nproc_per_node=8 run_recipe.py --recipe qwen3_8b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe qwen3_8b_pretrain_config
 
 # GPT
-uv run torchrun --nproc_per_node=8 run_recipe.py --recipe gpt_126m_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe gpt_126m_pretrain_config
 ```
 
 ## CLI Overrides
@@ -57,7 +57,7 @@ uv run torchrun --nproc_per_node=8 run_recipe.py --recipe gpt_126m_pretrain_conf
 Override any config field using dot notation:
 
 ```bash
-uv run torchrun --nproc_per_node=8 run_recipe.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     train.train_iters=5000 \
     optimizer.lr=0.0002 \
@@ -82,7 +82,7 @@ Use `--step_func` to control the step function used during training. Available o
 - `llava_step` - LLaVA models
 
 ```bash
-uv run torchrun --nproc_per_node=8 run_recipe.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py \
     --recipe qwen25_vl_pretrain_config \
     --step_func vlm_step
 ```

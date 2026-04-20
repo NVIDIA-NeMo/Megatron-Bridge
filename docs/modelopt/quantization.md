@@ -52,7 +52,7 @@ PTQ quantizes a pretrained model by running calibration with a small dataset to 
 Use the `examples/quantization/quantize.py` script for LLM PTQ:
 
 ```bash
-uv run torchrun --nproc_per_node 2 examples/quantization/quantize.py \
+uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/quantize.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --export-quant-cfg fp8 \
     --tp 2 \
@@ -62,7 +62,7 @@ uv run torchrun --nproc_per_node 2 examples/quantization/quantize.py \
 Use the `examples/quantization/quantize_vlm.py` script for VLM PTQ:
 
 ```bash
-uv run torchrun --nproc_per_node 8 examples/quantization/quantize_vlm.py \
+uv run python -m torch.distributed.run --nproc_per_node 8 examples/quantization/quantize_vlm.py \
     --hf-model-id Qwen/Qwen3-VL-30B-A3B-Instruct \
     --export-quant-cfg fp8 \
     --megatron-save-path ./Qwen3-VL-30B-A3B-Instruct_fp8 \
@@ -87,7 +87,7 @@ uv run torchrun --nproc_per_node 8 examples/quantization/quantize_vlm.py \
 Resume the quantized checkpoint and test with text generation using `examples/quantization/ptq_generate.py` for LLM:
 
 ```bash
-uv run torchrun --nproc_per_node 2 examples/quantization/ptq_generate.py \
+uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/ptq_generate.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --megatron-load-path ./llama3_2_1b_fp8 \
     --tp 2
@@ -96,7 +96,7 @@ uv run torchrun --nproc_per_node 2 examples/quantization/ptq_generate.py \
 Resume the quantized checkpoint and test with text generation using `examples/quantization/ptq_generate_vlm.py` for VLM:
 
 ```bash
-uv run torchrun --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
+uv run python -m torch.distributed.run --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
     --hf-model-id Qwen/Qwen3-VL-30B-A3B-Instruct \
     --megatron-load-path ./Qwen3-VL-30B-A3B-Instruct_fp8 \
     --tp 8 \
@@ -116,7 +116,7 @@ uv run torchrun --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
 Export the quantized checkpoint to unified HuggingFace format using `examples/quantization/export.py`:
 
 ```bash
-uv run torchrun --nproc_per_node 2 examples/quantization/export.py \
+uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/export.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --megatron-load-path ./llama3_2_1b_fp8 \
     --export-dir ./llama3_2_1b_fp8_hf \
@@ -151,7 +151,7 @@ In QAT, a model quantized using `mtq.quantize()` can be directly fine-tuned with
 #### Step 1: Create Initial Quantized Checkpoint (PTQ)
 
 ```bash
-uv run torchrun --nproc_per_node 8 examples/quantization/quantize.py \
+uv run python -m torch.distributed.run --nproc_per_node 8 examples/quantization/quantize.py \
     --hf-model-id meta-llama/Meta-Llama-3-8B \
     --export-quant-cfg fp8 \
     --tp 8 \
@@ -200,7 +200,7 @@ uv run python pretrain_quantized_llama3_8b.py \
 You can also use command-line overrides:
 
 ```bash
-uv run torchrun pretrain_quantized_llama3_8b.py \
+uv run python -m torch.distributed.run pretrain_quantized_llama3_8b.py \
     --nproc_per_node 4 \
     model.tensor_model_parallel_size=4 \
     model.gradient_accumulation_fusion=False \

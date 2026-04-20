@@ -155,7 +155,7 @@ config = gemma3_1b_peft_config(
 
 **Full Finetuning:**
 ```bash
-uv run torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 run/run_recipe.py \
   --pretrained-checkpoint /models/gemma-3-1b-it \
   --recipe gemma3_1b_sft_config \
   train.global_batch_size=64 \
@@ -165,7 +165,7 @@ uv run torchrun --nproc-per-node=8 run/run_recipe.py \
 
 **LoRA Finetuning:**
 ```bash
-uv run torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 run/run_recipe.py \
   --pretrained-checkpoint /models/gemma-3-1b-it \
   --recipe gemma3_1b_peft_config \
   --peft_scheme lora \

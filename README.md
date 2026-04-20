@@ -130,7 +130,7 @@ if __name__ == "__main__":
 You can launch the above script with:
 
 ```sh
-uv run torchrun --nproc-per-node=<num devices> /path/to/script.py
+uv run python -m torch.distributed.run --nproc-per-node=<num devices> /path/to/script.py
 ```
 
 More examples:

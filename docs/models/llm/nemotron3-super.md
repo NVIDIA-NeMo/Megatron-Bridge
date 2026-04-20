@@ -59,7 +59,7 @@ without model parallelism.
 HF_MODEL=/path/to/hf/model
 MEGATRON_PATH=/path/to/output/megatron/ckpt
 
-uv run torchrun --nproc-per-node=8 examples/conversion/convert_checkpoints_multi_gpu.py import \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/conversion/convert_checkpoints_multi_gpu.py import \
 --hf-model $HF_MODEL \
 --megatron-path $MEGATRON_PATH \
 --tp 1 \
@@ -76,7 +76,7 @@ HF_MODEL=/path/to/hf/model
 MEGATRON_PATH=/path/to/trained/megatron/ckpt
 OUTPUT_PATH=/path/to/output/hf/ckpt
 
-uv run torchrun --nproc-per-node=8 examples/conversion/convert_checkpoints_multi_gpu.py export \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/conversion/convert_checkpoints_multi_gpu.py export \
 --hf-model $HF_MODEL \
 --megatron-path $MEGATRON_PATH \
 --hf-path $OUTPUT_PATH \
@@ -91,7 +91,7 @@ To verify the correctness of import/export conversions:
 HF_MODEL=/path/to/hf/model
 MEGATRON_PATH=/path/to/megatron/ckpt
 
-uv run torchrun --nproc-per-node=8 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
 --hf-model-id $HF_MODEL \
 --megatron-load-path $MEGATRON_PATH \
 --tp 1 \
@@ -106,7 +106,7 @@ To compare outputs between HF and Megatron models:
 HF_MODEL=/path/to/hf/model
 MEGATRON_PATH=/path/to/megatron/ckpt
 
-uv run torchrun --nproc-per-node=8 examples/conversion/compare_hf_and_megatron/compare.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/conversion/compare_hf_and_megatron/compare.py \
 --hf_model_path $HF_MODEL \
 --megatron_model_path $MEGATRON_PATH \
 --prompt "Hello who are " \
@@ -122,7 +122,7 @@ uv run torchrun --nproc-per-node=8 examples/conversion/compare_hf_and_megatron/c
 BLEND_PATH=/path/to/dataset/blend.json
 CHECKPOINT_DIR=/path/to/checkpoints
 
-uv run torchrun --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_super.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_super.py \
 --per-split-data-args-path=${BLEND_PATH} \
 logger.wandb_project=your_project \
 logger.wandb_entity=nvidia \
@@ -155,7 +155,7 @@ For quick testing without a dataset:
 ```bash
 CHECKPOINT_DIR=/path/to/checkpoints
 
-uv run torchrun --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_super.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_super.py \
 logger.wandb_project=your_project \
 logger.wandb_entity=nvidia \
 checkpoint.load=${CHECKPOINT_DIR} \
@@ -181,7 +181,7 @@ Notes:
 MEGATRON_PATH=/path/to/pretrained/megatron/ckpt
 CHECKPOINT_DIR=/path/to/finetuned/checkpoints
 
-uv run torchrun --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_super.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_super.py \
 logger.wandb_project=your_project \
 logger.wandb_entity=nvidia \
 logger.log_interval=5 \
@@ -210,7 +210,7 @@ To enable LoRA fine-tuning, pass `--peft lora` to the script:
 MEGATRON_PATH=/path/to/pretrained/megatron/ckpt
 CHECKPOINT_DIR=/path/to/lora/checkpoints
 
-uv run torchrun --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_super.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_super.py \
 --peft lora \
 logger.wandb_project=your_project \
 logger.wandb_entity=nvidia \
@@ -255,7 +255,7 @@ Pass the desired config name via `--export-quant-cfg` to `quantize.py`.
 export HF_MODEL=/path/to/hf/model
 export MEGATRON_SAVE_PATH=/path/to/quantized/megatron/ckpt
 
-uv run torchrun --nproc_per_node=8 examples/quantization/quantize.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/quantization/quantize.py \
     --hf-model-id $HF_MODEL \
     --export-quant-cfg mamba_moe_nvfp4_conservative \
     --megatron-save-path $MEGATRON_SAVE_PATH \
@@ -267,7 +267,7 @@ uv run torchrun --nproc_per_node=8 examples/quantization/quantize.py \
 
 ### Verify with PTQ Generate
 ```bash
-uv run torchrun --nproc_per_node=8 examples/quantization/ptq_generate.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/quantization/ptq_generate.py \
     --hf-model-id $HF_MODEL \
     --megatron-load-path $MEGATRON_SAVE_PATH \
     --pp 1 \
@@ -288,7 +288,7 @@ HF_MODEL=/path/to/hf/model
 MEGATRON_LOAD_PATH=/path/to/quantized/megatron/ckpt
 EXPORT_DIR=/path/to/output/hf/ckpt
 
-uv run torchrun --nproc_per_node=8 examples/quantization/export.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/quantization/export.py \
     --hf-model-id $HF_MODEL \
     --megatron-load-path $MEGATRON_LOAD_PATH \
     --export-dir $EXPORT_DIR \
@@ -305,7 +305,7 @@ After quantization, further improve model quality with QAT by continuing trainin
 MEGATRON_PATH=/path/to/quantized/megatron/ckpt
 CHECKPOINT_DIR=/path/to/qat/checkpoints
 
-uv run torchrun --nproc-per-node=8 examples/models/nemotron_3/qat_nemotron_3_super.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/qat_nemotron_3_super.py \
 --megatron-load-path=${MEGATRON_PATH} \
 --seq-length=8192 \
 --packed-sequence \

@@ -7,7 +7,7 @@ This guide shows you how to pretrain and finetune Llama models using Megatron Br
 The fastest way to get started with Megatron Bridge pretraining:
 
 ```bash
-uv run torchrun --nproc_per_node=1 00_quickstart_pretrain.py
+uv run python -m torch.distributed.run --nproc_per_node=1 00_quickstart_pretrain.py
 ```
 
 This runs Llama 3.2 1B pretraining on a single GPU with mock data.
@@ -25,7 +25,7 @@ uv run python ../../conversion/convert_checkpoints.py import \
 Then run finetuning:
 
 ```bash
-uv run torchrun --nproc_per_node=1 01_quickstart_finetune.py \
+uv run python -m torch.distributed.run --nproc_per_node=1 01_quickstart_finetune.py \
     --pretrained-checkpoint ./checkpoints/llama32_1b
 ```
 
@@ -56,7 +56,7 @@ The recipes include optional support for YAML configuration and dot-notation ove
 To use the provided YAML system:
 
 ```bash
-uv run torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
+uv run python -m torch.distributed.run --nproc_per_node=2 02_pretrain_with_yaml.py \
     --config-file conf/llama32_1b_pretrain.yaml
 ```
 
@@ -93,7 +93,7 @@ Command-Line Overrides:
 You can override values using dot notation (`section.field=value`):
 
 ```bash
-uv run torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
+uv run python -m torch.distributed.run --nproc_per_node=2 02_pretrain_with_yaml.py \
     --config-file conf/llama32_1b_pretrain.yaml \
     train.train_iters=5000 \
     train.global_batch_size=512 \
@@ -110,7 +110,7 @@ Priority order (highest to lowest):
 For more complex finetuning configurations:
 
 ```bash
-uv run torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
+uv run python -m torch.distributed.run --nproc_per_node=2 03_finetune_with_yaml.py \
     --config-file conf/llama32_1b_finetune.yaml
 ```
 
@@ -145,7 +145,7 @@ optimizer:                        # OptimizerConfig
 Full Finetuning (No LoRA)
 
 ```bash
-uv run torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
+uv run python -m torch.distributed.run --nproc_per_node=2 03_finetune_with_yaml.py \
     --peft none \
     train.train_iters=1000
 ```

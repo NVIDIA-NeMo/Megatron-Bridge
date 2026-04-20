@@ -1754,7 +1754,7 @@ Megatron Bridge supports standard PyTorch distributed execution patterns:
 uv run python -m torch.distributed.run --nproc_per_node=8 my_training_script.py
 
 # Multi-node execution
-uv run torchrun --nnodes=4 --nproc_per_node=8 \
+uv run python -m torch.distributed.run --nnodes=4 --nproc_per_node=8 \
     --master_addr="node0" --master_port=12345 \
     my_training_script.py
 ```
