@@ -31,6 +31,7 @@ from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
     _resolve_hf_mm_token_ids,
     convert_to_qwenvl_content,
     find_pattern_indices,
+    greedy_knapsack,
     get_ltor_masks_and_position_ids,
     process_vision,
     videohandler,
@@ -85,6 +86,24 @@ class TestHelperFunctions(unittest.TestCase):
         self.assertEqual(loss_mask.shape, (1, 3))
         self.assertEqual(pos_ids.shape, (1, 3))
         self.assertTrue(torch.all(loss_mask == 1.0))
+
+
+class TestGreedyKnapsack(unittest.TestCase):
+    def test_empty_input(self):
+        self.assertEqual(greedy_knapsack([], [], max_capacity=8), [])
+
+    def test_single_item(self):
+        bins = greedy_knapsack([4], ["a"], max_capacity=8)
+        self.assertEqual(bins, [["a"]])
+
+    def test_exact_fill(self):
+        bins = greedy_knapsack([5, 3], ["a", "b"], max_capacity=8)
+        self.assertEqual(len(bins), 1)
+        self.assertCountEqual(bins[0], ["a", "b"])
+
+    def test_item_exceeds_capacity(self):
+        with self.assertRaises(ValueError):
+            greedy_knapsack([9], ["a"], max_capacity=8)
 
 
 class TestResolveHfMmTokenIds(unittest.TestCase):

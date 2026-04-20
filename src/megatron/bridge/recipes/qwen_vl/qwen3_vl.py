@@ -27,6 +27,8 @@ import torch
 from transformers import AutoTokenizer
 from typing_extensions import TypedDict, Unpack
 
+logger = logging.getLogger(__name__)
+
 try:
     from transformers import Qwen3VLProcessor
 except (ImportError, ModuleNotFoundError) as exc:
@@ -58,8 +60,6 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
-
-logger = logging.getLogger(__name__)
 
 
 class Qwen3VLCommonKwargs(TypedDict, total=False):

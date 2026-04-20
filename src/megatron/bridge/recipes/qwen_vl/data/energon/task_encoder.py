@@ -102,6 +102,8 @@ def greedy_knapsack(item_sizes: List[int], samples: List, max_capacity: int) -> 
             current_knapsack.append(sorted_samples.pop(idx))
         knapsacks.append(current_knapsack)
     return knapsacks
+
+
 def process_vision(
     processor, images, videos, fps=None, model_version: str = "qwen-vl", min_pixels=None, max_pixels=None
 ):
