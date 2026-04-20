@@ -399,6 +399,7 @@ class FluxSingleAttention(SelfAttention):
         cp_comm_type: str = None,
         **kwargs,
     ):
+        # Use RMSnorm for qk norm
         config.normalization = "RMSNorm"
         config.qk_layernorm = True
         super().__init__(
