@@ -130,7 +130,7 @@ uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/ne
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
-—-lora-on-vision-model \
+--lora-on-vision-model \
 dataset.maker_name=make_raven_dataset \
 logger.wandb_project=<optional wandb project name> \
 logger.wandb_save_dir=$SAVE_DIR \

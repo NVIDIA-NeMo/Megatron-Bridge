@@ -51,7 +51,7 @@ MBRIDGE_PATH="</path/to/mbridge>"
 JOB_NAME="dsv3_gb300"
 RESULTS_DIR="${MBRIDGE_PATH}/results/${JOB_NAME}"
 
-uv run python scripts/performance/setup_experiment.py 
+uv run python scripts/performance/setup_experiment.py \
   --account <slurm_account> \
   -i ${CONTAINER} \
   --partition <slurm_partition> \

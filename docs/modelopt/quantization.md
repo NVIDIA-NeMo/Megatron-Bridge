@@ -189,8 +189,7 @@ checkpoint:
 Use `examples/quantization/pretrain_quantized_llama3_8b.py`:
 
 ```bash
-uv run python pretrain_quantized_llama3_8b.py \
-  --nproc-per-node=4 \
+uv run python -m torch.distributed.run --nproc-per-node=4 pretrain_quantized_llama3_8b.py \
   --config-file=conf/my_qat_config.yaml \
   --hf-path=meta-llama/Meta-Llama-3-8B
 ```
@@ -200,8 +199,7 @@ uv run python pretrain_quantized_llama3_8b.py \
 You can also use command-line overrides:
 
 ```bash
-uv run python -m torch.distributed.run pretrain_quantized_llama3_8b.py \
-    --nproc_per_node 4 \
+uv run python -m torch.distributed.run --nproc_per_node 4 pretrain_quantized_llama3_8b.py \
     model.tensor_model_parallel_size=4 \
     model.gradient_accumulation_fusion=False \
     checkpoint.pretrained_checkpoint=/models/llama3_8b_fp8_init
