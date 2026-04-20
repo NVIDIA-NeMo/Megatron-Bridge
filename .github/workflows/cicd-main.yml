@@ -812,9 +812,9 @@ jobs:
     if: |
       always()
       && !cancelled()
-      && contains(needs.pre-flight.outputs.runner_prefix, 'ephemeral')
-      && !needs.pre-flight.outputs.is_deployment_workflow == 'true'
+      && needs.pre-flight.outputs.is_deployment_workflow != 'true'
     steps:
       - name: Taint node for cleanup
+        if: contains(runner.name, 'ephemeral')
         shell: bash
         run: taint-node.sh
