@@ -39,7 +39,7 @@ huggingface-cli login --token <your token>
 Example: prune Qwen3-8B to 6B on 2 GPUs (Pipeline Parallelism = 2), skipping pruning of `num_attention_heads`. Defaults: 1024 samples from [nemotron-post-training-dataset-v2](https://huggingface.co/datasets/nvidia/Nemotron-Post-Training-Dataset-v2) for calibration, at most 20% depth (`num_layers`) and 40% width per prunable hyperparameter (`hidden_size`, `ffn_hidden_size`, ...), top-10 candidates evaluated for MMLU (5% sampled data) to select the best model.
 
 ```bash
-torchrun --nproc_per_node 2 prune_minitron.py \
+uv run python -m torch.distributed.run --nproc_per_node 2 prune_minitron.py \
     --pp_size 2 \
     --hf_model_name_or_path Qwen/Qwen3-8B \
     --prune_target_params 6e9 \
@@ -52,7 +52,7 @@ torchrun --nproc_per_node 2 prune_minitron.py \
 Example: prune Qwen3-8B to a fixed architecture. Defaults: 1024 samples from [nemotron-post-training-dataset-v2](https://huggingface.co/datasets/nvidia/Nemotron-Post-Training-Dataset-v2) for calibration.
 
 ```bash
-torchrun --nproc_per_node 2 prune_minitron.py \
+uv run python -m torch.distributed.run --nproc_per_node 2 prune_minitron.py \
     --pp_size 2 \
     --hf_model_name_or_path Qwen/Qwen3-8B \
     --prune_export_config '{"hidden_size": 3584, "ffn_hidden_size": 9216}' \
@@ -62,7 +62,7 @@ torchrun --nproc_per_node 2 prune_minitron.py \
 To see the full list of options for advanced configurations, run:
 
 ```bash
-torchrun --nproc_per_node 1 prune_minitron.py --help
+uv run python -m torch.distributed.run --nproc_per_node 1 prune_minitron.py --help
 ```
 
 ### Uneven pipeline parallelism

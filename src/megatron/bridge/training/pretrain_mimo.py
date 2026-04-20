@@ -30,8 +30,10 @@ from typing import Callable, Optional
 import torch.distributed as dist
 
 from megatron.bridge.training.config import ConfigContainer, mimo_runtime_config_update
+from megatron.bridge.training.pretrain import _maybe_destroy_process_group
 from megatron.bridge.training.setup_mimo import setup_mimo
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.train import _finish_train
 from megatron.bridge.training.train_mimo import train_mimo
 
 
@@ -58,21 +60,25 @@ def pretrain_mimo(
         forward_step_func: Forward step function for training.
         build_data_iterators_fn: Function to build data iterators.
             Signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
-        global_state: Optional GlobalState. If not provided, creates a new one.
-
-    TODO(liding): check if build_data_iterators_fn and global_state are needed (deferred to phase 5 review)
+        global_state: Optional GlobalState for testing.  If not provided,
+            creates a new one.  Production callers should not pass this.
     """
     logger.info("Starting MIMO pretraining")
+
+    # If the caller already initialized distributed, we should not destroy it on exit.
+    should_destroy_process_group = not dist.is_initialized()
 
     # Apply runtime config updates (MIMO-equivalent of runtime_config_update).
     mimo_runtime_config_update(cfg)
 
-    # Setup all MIMO components (model, optimizer, schedulers, data, communicators)
+    # Create GlobalState (mirrors standard pretrain path).
+    state = global_state if global_state is not None else GlobalState()
+    state.cfg = cfg
+
+    # Setup: model, optimizer, schedulers, MPU bridging, checkpoint load, data iterators.
     setup_output = setup_mimo(
-        cfg=cfg,
+        state=state,
         build_data_iterators_fn=build_data_iterators_fn,
-        build_optimizer=True,
-        global_state=global_state,
     )
 
     logger.info(f"Rank {dist.get_rank()}: Starting training loop")
@@ -88,15 +94,15 @@ def pretrain_mimo(
         global_state=setup_output.global_state,
         mimo_infra=setup_output.mimo_infra,
         multimodule_communicator=setup_output.multimodule_communicator,
+        checkpoint_manager=setup_output.checkpoint_manager,
         multimodule_pg_collection=setup_output.multimodule_pg_collection,
         module_to_grid_tuple=setup_output.module_to_grid_tuple,
     )
 
-    # Cleanup global state initialized by setup_mimo.
-    # Phase 5 replaces this with _finish_train() which also handles async
-    # checkpoint finalization and logger shutdown.
-    from megatron.bridge.training.initialize import destroy_global_state
+    # Post-training cleanup: finalize async saves, shut down NVRx/FT, flush
+    # loggers, destroy GlobalState (which calls destroy_model_parallel internally).
+    _finish_train(setup_output.global_state, setup_output.checkpoint_manager)
 
-    destroy_global_state()
+    _maybe_destroy_process_group(should_destroy_process_group)
 
     logger.info("MIMO pretraining completed")
