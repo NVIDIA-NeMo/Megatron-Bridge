@@ -12,6 +12,7 @@ if HAVE_MEGATRON_BRIDGE:
         gpt_oss_120b_pretrain_config_gb200,
         gpt_oss_120b_pretrain_config_gb300,
         gpt_oss_120b_pretrain_config_h100,
+        gpt_oss_120b_pretrain_config_vr200,
     )
 
 from .gpt_oss_workload_base_configs import (
@@ -35,6 +36,8 @@ from .gpt_oss_workload_base_configs import (
     GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V2,
     GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_V1,
     GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_V2,
+    GPT_OSS_120B_PRETRAIN_CONFIG_VR200_BF16_V2,
+    GPT_OSS_120B_PRETRAIN_CONFIG_VR200_FP8_MX_V2,
 )
 
 
@@ -61,6 +64,8 @@ __all__ = [
     "GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_V2",
     "GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V2",
     "GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_VR200_BF16_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_VR200_FP8_MX_V2",
 ]
 
 if HAVE_MEGATRON_BRIDGE:
@@ -71,5 +76,6 @@ if HAVE_MEGATRON_BRIDGE:
             "gpt_oss_120b_pretrain_config_b300",
             "gpt_oss_120b_pretrain_config_b200",
             "gpt_oss_120b_pretrain_config_h100",
+            "gpt_oss_120b_pretrain_config_vr200",
         ]
     )
