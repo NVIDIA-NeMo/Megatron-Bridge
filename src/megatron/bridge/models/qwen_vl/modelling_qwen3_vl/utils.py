@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import os
 from dataclasses import dataclass
 from typing import Optional, Sequence, Union
 
@@ -26,6 +27,22 @@ from megatron.core.utils import get_tensor_model_parallel_group_if_none
 from torch import nn
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.utils.common_utils import is_rank_0
+
+
+def thd_diag_enabled() -> bool:
+    """Return whether THD diagnostics are enabled."""
+    return os.environ.get("THD_DIAG", "0") not in ("0", "", "false", "False")
+
+
+def thd_diag_align_enabled() -> bool:
+    """Return whether THD alignment diagnostics are enabled."""
+    return os.environ.get("THD_DIAG_ALIGN", "0") not in ("0", "", "false", "False")
+
+
+def thd_diag_mrope_enabled() -> bool:
+    """Return whether THD MRoPE diagnostics are enabled."""
+    return os.environ.get("THD_DIAG_MROPE", "0") not in ("0", "", "false", "False")
 
 
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py

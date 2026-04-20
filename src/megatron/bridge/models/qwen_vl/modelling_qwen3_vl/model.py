@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-import os
 from typing import Optional
 
 import torch
@@ -45,34 +44,20 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
     pack_dist_train_vision_module_output,
+    is_rank_0,
     preprocess_packed_seqs,
     qwen3vl_cp_split,
     reorganize_inputs,
     split_data_cp_rank,
     split_deepstack_embs,
+    thd_diag_align_enabled,
+    thd_diag_enabled,
+    thd_diag_mrope_enabled,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
 
 
 logger = logging.getLogger(__name__)
-
-
-def _thd_diag_enabled() -> bool:
-    return os.environ.get("THD_DIAG", "0") not in ("0", "", "false", "False")
-
-
-def _thd_diag_align_enabled() -> bool:
-    return os.environ.get("THD_DIAG_ALIGN", "0") not in ("0", "", "false", "False")
-
-
-def _thd_diag_mrope_enabled() -> bool:
-    return os.environ.get("THD_DIAG_MROPE", "0") not in ("0", "", "false", "False")
-
-
-def _rank0() -> bool:
-    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
-        return True
-    return torch.distributed.get_rank() == 0
 
 
 class Qwen3VLModel(MegatronModule):
@@ -555,12 +540,7 @@ class Qwen3VLModel(MegatronModule):
                         pre_process=True,
                         pg_collection=self.pg_collection,
                     )[0].bool()
-                if (
-                    _thd_diag_align_enabled()
-                    and _rank0()
-                    and labels is not None
-                    and loss_mask is not None
-                ):
+                if thd_diag_align_enabled() and is_rank_0() and labels is not None and loss_mask is not None:
                     labels_thd = preprocess_packed_seqs(
                         labels,
                         attn_mask_bool,
@@ -734,7 +714,7 @@ class Qwen3VLModel(MegatronModule):
                     sl_int = int(sl)
                     packed_pos[:, 0, start : start + sl_int] = position_ids[:, i, :sl_int]
 
-                if _thd_diag_mrope_enabled() and _rank0():
+                if thd_diag_mrope_enabled() and is_rank_0():
                     # Summarize per-subsequence MRoPE position behavior before THD remap.
                     # This is diagnostics-only and intentionally does not affect semantics.
                     show_n = 4
@@ -773,7 +753,7 @@ class Qwen3VLModel(MegatronModule):
                     .permute(2, 0, 1)
                     .contiguous()
                 )
-                if _thd_diag_mrope_enabled() and _rank0():
+                if thd_diag_mrope_enabled() and is_rank_0():
                     pos0_post = position_ids[0, 0]
                     post_len = int(pos0_post.numel())
                     head_vals = pos0_post[:12].tolist()
@@ -858,7 +838,7 @@ class Qwen3VLModel(MegatronModule):
                 # Fallback for old call sites that do not provide explicit packed padding mask.
                 padding_mask_for_moe = lm_input_ids.eq(0)
                 mask_source = "token_eq_0_fallback"
-            if _thd_diag_enabled() and _rank0():
+            if thd_diag_enabled() and is_rank_0():
                 input_zero_cnt = int(input_ids.eq(0).sum().item()) if input_ids is not None else -1
                 lm_zero_cnt = int(lm_input_ids.eq(0).sum().item())
                 pad_cnt = int(padding_mask_for_moe.sum().item())
