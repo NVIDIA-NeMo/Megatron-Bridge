@@ -340,14 +340,17 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             self._tensor_spec_output_cache[cache_key] = tensor_spec_output
 
         # ------------------------------------------------------------------
-        # 2.  Identify the owning rank (the only rank with a non-None spec).
+        # 2.  Identify the first owning rank (pick the lowest-ranked PP stage
+        #     that holds the tensor).  Shared / tied parameters such as
+        #     ``embed_tokens`` and ``lm_head`` legitimately exist on more
+        #     than one PP rank, so we must *not* raise on duplicates –
+        #     instead we deterministically pick the first owner as the
+        #     broadcast source.
         # ------------------------------------------------------------------
         target_tensor_spec = None
         src_rank = None  # Rank *inside* the PP group.
         for rank, spec in enumerate(tensor_spec_output):
-            if spec is not None:
-                if target_tensor_spec is not None:
-                    raise ValueError(f"Tensor exists on more than one PP rank. Found on ranks {src_rank} and {rank}.")
+            if spec is not None and target_tensor_spec is None:
                 target_tensor_spec = spec
                 src_rank = rank
 
@@ -410,12 +413,15 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather_object(obj_flags, has_obj, group=self.pp_group)
 
         # ------------------------------------------------------------------
-        # 2. Identify the owning rank (the only rank with True flag)
+        # 2. Identify the first owning rank (lowest PP stage with the object).
+        #    Shared / tied parameters legitimately exist on more than one PP
+        #    rank, so we pick the first owner deterministically.
         # ------------------------------------------------------------------
         src_rank = None  # Rank *inside* the PP group
         for rank, flag in enumerate(obj_flags):
             if flag:
                 src_rank = rank
+                break
 
         if src_rank is None:
             raise ValueError("Object must exist on at least one PP rank")
@@ -423,8 +429,6 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # ------------------------------------------------------------------
         # 3. Broadcast the object from the source rank to all ranks
         # ------------------------------------------------------------------
-        if src_rank is None:
-            raise ValueError("Could not determine source rank")
 
         # Use broadcast_object_list which is more robust than all_gather_object
         obj_list = [obj]

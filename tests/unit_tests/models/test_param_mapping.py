@@ -595,6 +595,62 @@ class TestMappingEdgeCases:
             with pytest.raises(ValueError, match="Object must exist on at least one PP rank"):
                 mapping.broadcast_from_pp_rank(None)
 
+    def test_broadcast_from_pp_rank_shared_embeddings(self, mock_distributed_env):
+        """Test PP broadcast handles tensors present on multiple PP ranks.
+
+        Shared / tied parameters (e.g. embed_tokens with share_embeddings_and_output_weights)
+        legitimately exist on more than one PP rank. broadcast_from_pp_rank must
+        pick the first owner rather than raising ValueError.
+        """
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
+        mapping = DirectMapping("weight", "weight")
+
+        tensor = torch.randn(16, 16)
+        spec = (tensor.shape, tensor.dtype, None, None)
+
+        # Simulate both PP ranks owning the tensor (shared embeddings)
+        with patch("torch.distributed.all_gather_object") as mock_gather:
+            mock_gather.side_effect = lambda output, obj, group: output.__setitem__(slice(None), [spec, spec])
+
+            def mock_broadcast(t, src, group):
+                pass  # no-op for single-process test
+
+            mock_dist.broadcast.side_effect = mock_broadcast
+
+            # Must not raise — should pick rank 0 as source
+            result = mapping.broadcast_from_pp_rank(tensor)
+            assert result is not None
+
+            # Verify broadcast was called with src=rank 0
+            mock_dist.broadcast.assert_called_once()
+            call_kwargs = mock_dist.broadcast.call_args
+            assert call_kwargs[1]["src"] == 0 or call_kwargs[0][1] == 0
+
+    def test_broadcast_obj_from_pp_rank_shared_embeddings(self, mock_distributed_env):
+        """Test PP object broadcast handles objects present on multiple PP ranks.
+
+        Similar to tensor broadcast, shared objects must not cause errors and
+        the first owning rank must be selected deterministically.
+        """
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
+        mapping = DirectMapping("weight", "weight")
+
+        test_obj = {"config": "value"}
+
+        # Simulate both PP ranks owning the object
+        with patch("torch.distributed.all_gather_object") as mock_gather:
+            mock_gather.side_effect = lambda output, obj, group: output.__setitem__(slice(None), [True, True])
+
+            mock_dist.broadcast_object_list.side_effect = lambda obj_list, src, group: None
+
+            # Must not raise — should pick rank 0 as source
+            result = mapping.broadcast_obj_from_pp_rank(test_obj)
+
+            # Verify broadcast_object_list was called with src=rank 0
+            mock_dist.broadcast_object_list.assert_called_once()
+            call_args = mock_dist.broadcast_object_list.call_args
+            assert call_args[1].get("src", call_args[0][1] if len(call_args[0]) > 1 else None) == 0
+
     def test_tp_aware_unknown_module_error(self, transformer_config):
         """Test AutoMapping error for unknown module types."""
         mapping = AutoMapping("weight", "hf.weight")
