@@ -308,7 +308,6 @@ RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_n
 ##############################################################################
 ##
 ## Install DeepEP and nvshmem
-## Install DeepEP, nvshmem and rdma-core
 ##
 ##############################################################################
 
@@ -320,12 +319,17 @@ ENV RDMA_CORE_HOME=/opt/rdma-core/build
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/:$LD_LIBRARY_PATH
 RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
     if [ "$INSTALL_DEEPEP" = "True" ]; then \
-    # README for rdma-core installation- https://github.com/deepseek-ai/DeepEP/blob/hybrid-ep/Hybrid-EP_Implementation.md#multi-node-rdma-installation
-    git clone https://github.com/linux-rdma/rdma-core.git && \
-    pushd rdma-core && \
-        git checkout tags/v60.0 && \
-        TORCH_CUDA_ARCH_LIST="9.0;10.0;12.0" && sh build.sh && \
-    popd && \
+    # Upgrade system rdma-core to v60 (EFA brings this when aws_ofi_builder runs; make it
+    # explicit so the DeepEP build works even when FW_NETWORK_LAYER=fw_dep_builder).
+    # libibverbs-dev and libmlx5-dev supply the unversioned .so symlinks required at link time.
+    apt-get update && apt-get install -y --allow-change-held-packages \
+        rdma-core libibverbs-dev libmlx5-dev && \
+    apt-get clean && \
+    # Expose the system install under RDMA_CORE_HOME so DeepEP setup.py finds
+    # $RDMA_CORE_HOME/include and $RDMA_CORE_HOME/lib without a separate source build.
+    mkdir -p ${RDMA_CORE_HOME} && \
+    ln -sfn /usr/include ${RDMA_CORE_HOME}/include && \
+    ln -sfn /usr/lib/x86_64-linux-gnu ${RDMA_CORE_HOME}/lib && \
     git clone https://github.com/deepseek-ai/DeepEP.git && \
     pushd DeepEP && \
         git pull && \
