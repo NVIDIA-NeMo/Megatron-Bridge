@@ -94,6 +94,23 @@ The release goes out on the **first Wednesday after the code-freeze window ends*
 
 -----
 
+## Patch Release
+
+After the main release ships (Week 7, typically mid-month), the release branches are **reopened** for contributions targeting the patch release.
+
+### Patch Release Timeline
+
+| Period | Approximate Timing | Key Activity |
+|--------|--------------------|--------------|
+| Reopening | Release day (Week 7) | Branches accept contributions; patch development begins |
+| Lockdown | First Monday of the following month (~2 weeks later) | Release branches locked; **patch RC0 (`XX.YY.01.RC0`) shipped internally** |
+| Stabilization | Week 1–2 after RC0 | Bug fixes and small improvements only |
+| | End of Week 2 | QA exit, patch release |
+
+The patch stabilization flow mirrors the main release's code-freeze phase, but compressed into approximately two weeks.
+
+-----
+
 ## CI and Known Failures
 
 ### Ticket-Annotated Tests
