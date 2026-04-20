@@ -407,7 +407,7 @@ def get_rng_state(
         data_parallel_random_init: If True, gathers RNG states across data parallel ranks.
         ckpt_format: The checkpoint format being used.
         pg_collection: Process group collection for accessing parallel ranks/sizes.
-        module_name: Optional module name for MIMO per-module RNG namespacing.
+        module_name: Optional module name for OmniModal per-module RNG namespacing.
             When set, the ShardedObject key becomes ``"rng_state.{module_name}"``
             to avoid duplicate shard keys across modules that share the same
             (pp_rank, tp_rank) coordinates from module-local process groups.
@@ -439,7 +439,7 @@ def get_rng_state(
         tp_size = pg_collection.tp.size()
         ep_size = get_pg_size(pg_collection.ep)
 
-        # MIMO per-module namespacing: use "rng_state.{module_name}" to avoid
+        # OmniModal per-module namespacing: use "rng_state.{module_name}" to avoid
         # duplicate ShardedObject keys when different modules have the same
         # (pp_rank, tp_rank) from their module-local process groups.
         key = f"rng_state.{module_name}" if module_name else "rng_state"
@@ -782,7 +782,7 @@ def save_checkpoint(
                             where factories are expanded and model deleted before save.
         pg_collection: Optional ProcessGroupCollection. When provided, uses this instead of
                       extracting from model. Required when model is empty (e.g., low-memory save).
-        module_name: Optional MIMO module name for per-module RNG state namespacing.
+        module_name: Optional OmniModal module name for per-module RNG state namespacing.
                     When set, RNG ShardedObject keys are namespaced to avoid collisions
                     across modules with identical (pp_rank, tp_rank) coordinates.
     """
@@ -963,11 +963,11 @@ def save_checkpoint(
                         pg_collection.dp_cp,
                         ckpt_cfg.ckpt_assume_constant_structure,
                     )
-            # MiMo + torch_dist can hit known access-pattern validation failures
+            # OmniModal + torch_dist can hit known access-pattern validation failures
             # for nested DDP language model tensors in PP>1 runs when
             # fully_parallel_save is disabled. Keep validation enabled otherwise.
-            is_mimo = len(model) == 1 and hasattr(model[0], "mimo_config")
-            if is_mimo and ckpt_cfg.ckpt_format == "torch_dist" and not ckpt_cfg.fully_parallel_save:
+            is_omni_modal = len(model) == 1 and hasattr(model[0], "mimo_config")
+            if is_omni_modal and ckpt_cfg.ckpt_format == "torch_dist" and not ckpt_cfg.fully_parallel_save:
                 validate_sharding_integrity = False
             # Store save strategy for future checkpoint saves
             if checkpointing_context is not None:
@@ -1688,9 +1688,9 @@ def load_checkpoint(
         skip_load_to_model_and_opt: If True, only loads metadata (iteration, rng) but
                                       skips loading state into model and optimizer modules.
         pg_collection: Optional ProcessGroupCollection. When provided, uses this instead of
-                      extracting from model via get_pg_collection(). Required for MiMo where
+                      extracting from model via get_pg_collection(). Required for OmniModal where
                       model-level PG extraction may not reflect rank-local topology.
-        module_name: Optional MIMO module name for per-module RNG state namespacing.
+        module_name: Optional OmniModal module name for per-module RNG state namespacing.
 
     Returns:
         A tuple containing:
@@ -1773,7 +1773,7 @@ def _load_checkpoint_from_path(
         ignore_ckpt_step: If True, ignores the ckpt_step config and loads latest checkpoint.
                           Used when loading pretrained checkpoints in PEFT scenarios.
         pg_collection: Optional ProcessGroupCollection. When provided, uses this instead of
-                      extracting from model via get_pg_collection(). Required for MiMo where
+                      extracting from model via get_pg_collection(). Required for OmniModal where
                       model-level PG extraction may not reflect rank-local topology.
 
     Returns:
@@ -1795,7 +1795,7 @@ def _load_checkpoint_from_path(
             checkpointing_context=checkpointing_context,
             ignore_ckpt_step=ignore_ckpt_step,
             cfg=cfg,
-            is_mimo=False,
+            is_omni_modal=False,
             pg_collection=pg_collection,
         )
 
@@ -1837,13 +1837,13 @@ def _load_checkpoint_from_path(
                 print_rank_0("run_config.yaml not found, extracting config from legacy Megatron-LM checkpoint")
                 run_config = _extract_megatron_lm_args_from_state_dict(state_dict)
 
-        # MiMo manages per-module parallelism via OmniModalParallelismConfig,
+        # OmniModal manages per-module parallelism via OmniModalParallelismConfig,
         # so there is no single global (TP, PP) to compare.  Skip the
-        # compatibility check entirely for MiMo configs.
-        _is_mimo = "mimo_parallelism_config" in run_config.get("model", {}) or hasattr(
-            cfg.model, "mimo_parallelism_config"
+        # compatibility check entirely for OmniModal configs.
+        _is_omni_modal = "omni_modal_parallelism_config" in run_config.get("model", {}) or hasattr(
+            cfg.model, "omni_modal_parallelism_config"
         )
-        if _is_mimo:
+        if _is_omni_modal:
             tp_pp_match = True
             mismatch_msg = ""
         else:
@@ -2045,7 +2045,7 @@ def _load_checkpoint_from_path(
         checkpointing_context=checkpointing_context,
         ignore_ckpt_step=ignore_ckpt_step,
         cfg=cfg,
-        is_mimo=(_is_mimo if ckpt_format == "torch_dist" else False),
+        is_omni_modal=(_is_omni_modal if ckpt_format == "torch_dist" else False),
         pg_collection=pg_collection,
         **load_kwargs,
     )
@@ -2120,9 +2120,9 @@ def _load_checkpoint_from_path(
                 and optimizer is not None
                 and not getattr(optimizer, "is_stub_optimizer", False)
             ):
-                # For MiMo with global torch_dist checkpoints, skip
+                # For OmniModal with global torch_dist checkpoints, skip
                 # optimizer.load_state_dict(): dist_checkpointing only saves
-                # common state from rank 0, but non-colocated MiMo has different
+                # common state from rank 0, but non-colocated OmniModal has different
                 # common state per rank (each rank only holds its active
                 # module's param_groups).  The sharded param states are already
                 # loaded by dist_checkpointing.load, and the optimizer was
@@ -2130,9 +2130,9 @@ def _load_checkpoint_from_path(
                 # Local checkpoints save per-rank state, so the skip does not
                 # apply — each rank has its own correct optimizer state.
                 # TODO: Make dist_checkpointing.save collect common state from
-                # all ranks in MiMo, or have MiMo replicate all modules' common
+                # all ranks in OmniModal, or have OmniModal replicate all modules' common
                 # state on every rank during save.  That fix belongs in MCore.
-                if not (ckpt_type == CheckpointType.GLOBAL and _is_mimo):
+                if not (ckpt_type == CheckpointType.GLOBAL and _is_omni_modal):
                     if isinstance(optimizer, LayerWiseDistributedOptimizer) and ckpt_type == CheckpointType.LOCAL:
                         # Local checkpoints save LayerWiseDistributedOptimizer state to a
                         # separate per-rank file at the base local checkpoint directory rather
@@ -2546,7 +2546,7 @@ def _load_global_dist_base_checkpoint(
     release: bool,
     checkpoint_path_override: Optional[str] = None,
     checkpointing_context: Optional[dict[str, Any]] = None,
-    is_mimo: bool = False,
+    is_omni_modal: bool = False,
     *,
     pg_collection: ProcessGroupCollection,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
@@ -2579,7 +2579,7 @@ def _load_global_dist_base_checkpoint(
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     validate_sharding_integrity = True
-    if is_mimo and ckpt_cfg.ckpt_format == "torch_dist" and not ckpt_cfg.fully_parallel_save:
+    if is_omni_modal and ckpt_cfg.ckpt_format == "torch_dist" and not ckpt_cfg.fully_parallel_save:
         validate_sharding_integrity = False
     state_dict = dist_checkpointing.load(
         sharded_state_dict,
@@ -2599,7 +2599,7 @@ def _load_base_checkpoint(
     checkpointing_context: Optional[dict[str, Any]] = None,
     ignore_ckpt_step: bool = False,
     cfg: Optional[ConfigContainer] = None,
-    is_mimo: bool = False,
+    is_omni_modal: bool = False,
     *,
     pg_collection: ProcessGroupCollection,
 ) -> tuple[Optional[dict[str, Any]], str, bool, Optional[CheckpointType]]:
@@ -2728,7 +2728,7 @@ def _load_base_checkpoint(
             iteration,
             release,
             checkpointing_context=checkpointing_context,
-            is_mimo=is_mimo,
+            is_omni_modal=is_omni_modal,
             pg_collection=pg_collection,
         )
     elif ckpt_format == "fsdp_dtensor":

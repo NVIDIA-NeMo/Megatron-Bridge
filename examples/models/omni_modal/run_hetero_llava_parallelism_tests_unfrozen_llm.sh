@@ -10,7 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEST_FILE="${SCRIPT_DIR}/test_mimo_training_llava.py"
+TEST_FILE="${SCRIPT_DIR}/omni_modal_training_llava.py"
 
 # Default values
 NUM_GPUS=${NUM_GPUS:-8}
@@ -38,7 +38,7 @@ UV_CACHE_DIR=${UV_CACHE_DIR:-/workspace/uv_cache/}
 HF_VISION_MODEL=${HF_VISION_MODEL:-"openai/clip-vit-large-patch14-336"}
 HF_LLM_MODEL=${HF_LLM_MODEL:-"lmsys/vicuna-7b-v1.5"}
 MEGATRON_VOCAB_SIZE=${MEGATRON_VOCAB_SIZE:-32256}
-CHECKPOINT_BASE_DIR=${CHECKPOINT_BASE_DIR:-/tmp/mimo_checkpoints}
+CHECKPOINT_BASE_DIR=${CHECKPOINT_BASE_DIR:-/tmp/omni_modal_checkpoints}
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -66,7 +66,7 @@ echo "=========================================="
 # Define configurations as: "name|llm_tp|llm_pp|llm_dp|llm_offset|vision_tp|vision_pp|vision_dp|vision_offset|mbs"
 # Note: Vision encoder (CLIPViT) does not support PP > 1, only LLM can use PP
 # Heterogeneous: LLM and vision occupy non-overlapping GPU sets
-# MBS must be divisible by every module's DP size (enforced by build_mimo_data_loaders)
+# MBS must be divisible by every module's DP size (enforced by build_omni_modal_data_loaders)
 
 declare -a CONFIGS_8GPU=(
     "tp4_both|4|1|1|0|4|1|1|4|2"

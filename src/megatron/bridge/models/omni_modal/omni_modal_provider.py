@@ -44,9 +44,9 @@ if TYPE_CHECKING:
 
 @dataclass
 class OmniModalInfra:
-    """MIMO infrastructure metadata (separate from model).
+    """OmniModal infrastructure metadata (separate from model).
 
-    This dataclass contains the parallelism infrastructure that MIMO builds,
+    This dataclass contains the parallelism infrastructure that OmniModal builds,
     separated from the model itself to maintain the standard provide() contract.
 
     Attributes:
@@ -66,10 +66,10 @@ class OmniModalInfra:
 
 @dataclass
 class OmniModalProvider(ModelProviderMixin[MimoModel]):
-    """MIMO provider with heterogeneous parallelism support.
+    """OmniModal provider with heterogeneous parallelism support.
 
     Integrates with the standard training loop via provide_distributed_model().
-    Use build_infra() to access MIMO-specific infrastructure (grids, topology, pg_collections).
+    Use build_infra() to access OmniModal-specific infrastructure (grids, topology, pg_collections).
 
     This provider handles:
     - HyperCommGrid creation per module (heterogeneous parallelism)
@@ -80,10 +80,10 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
 
     **Per-Encoder Parallelism:**
     To use different parallelism for each encoder, treat each encoder as a
-    separate module in both `modality_submodules_spec` and `mimo_parallelism_config`:
+    separate module in both `modality_submodules_spec` and `omni_modal_parallelism_config`:
 
     Example:
-        >>> mimo_parallelism_config = OmniModalParallelismConfig(
+        >>> omni_modal_parallelism_config = OmniModalParallelismConfig(
         ...     module_parallelisms={
         ...         "language": ModuleParallelismConfig(tensor_model_parallel_size=8),
         ...         "clip_encoder": ModuleParallelismConfig(tensor_model_parallel_size=2),
@@ -92,7 +92,7 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
         >>> provider = OmniModalProvider(
         ...     language_model_spec=gpt_spec,
         ...     modality_submodules_spec={"clip_encoder": clip_spec},
-        ...     mimo_parallelism_config=mimo_parallelism_config,
+        ...     omni_modal_parallelism_config=omni_modal_parallelism_config,
         ... )
         >>> # For training loop integration:
         >>> model = provider.provide_distributed_model(ddp_config=ddp_config)
@@ -107,7 +107,7 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
     modality_submodules_spec: Dict[str, ModuleSpec] = field(default_factory=dict)
     special_token_ids: Dict[str, int] = field(default_factory=dict)
 
-    mimo_parallelism_config: Optional[OmniModalParallelismConfig] = None
+    omni_modal_parallelism_config: Optional[OmniModalParallelismConfig] = None
 
     # Module data-flow DAG for MultiModulePipelineCommunicator.
     # If None, auto-derived as: all modality_submodules → MIMO_LANGUAGE_MODULE_KEY (terminal).
@@ -134,10 +134,10 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
     init_model_with_meta_device: bool = False
 
     def build_infra(self) -> OmniModalInfra:
-        """Build MIMO parallelism infrastructure.
+        """Build OmniModal parallelism infrastructure.
 
         This method builds HyperCommGrids, ProcessGroupCollections, and topology
-        for MIMO's heterogeneous parallelism. It is idempotent and does not
+        for OmniModal's heterogeneous parallelism. It is idempotent and does not
         mutate provider state (results are not cached).
 
         Can be called before or after provide(). Call finalize() first to
@@ -147,8 +147,8 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
             OmniModalInfra containing grids, topology, pg_collections,
             and the list of modules this rank participates in.
         """
-        if self.mimo_parallelism_config is not None:
-            grids = build_hypercomm_grids(self.mimo_parallelism_config)
+        if self.omni_modal_parallelism_config is not None:
+            grids = build_hypercomm_grids(self.omni_modal_parallelism_config)
             pg_collections = self._get_pg_collections_from_grids(grids)
         else:
             grids = {}
@@ -278,9 +278,9 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
         topology, pg_collections), use build_infra() separately.
 
         Args:
-            pre_process: Unused for MIMO (accepted for API compatibility).
-            post_process: Unused for MIMO (accepted for API compatibility).
-            vp_stage: Unused for MIMO (accepted for API compatibility).
+            pre_process: Unused for OmniModal (accepted for API compatibility).
+            post_process: Unused for OmniModal (accepted for API compatibility).
+            vp_stage: Unused for OmniModal (accepted for API compatibility).
 
         Returns:
             MimoModel instance.
@@ -304,7 +304,7 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
 
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
-        if self.mimo_parallelism_config:
+        if self.omni_modal_parallelism_config:
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
                 language_spec = self._inject_pg_collection_into_language_spec(
@@ -327,15 +327,15 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
             language_model_spec=language_spec,
             modality_submodules_spec=modality_specs,
             special_token_ids=self.special_token_ids,
-            module_to_grid_map=(infra.module_to_grid_map if self.mimo_parallelism_config is not None else None),
+            module_to_grid_map=(infra.module_to_grid_map if self.omni_modal_parallelism_config is not None else None),
         )
 
-        mimo_model = MimoModel(mimo_model_config)
+        omni_modal_model = MimoModel(mimo_model_config)
 
         # Apply freezing
-        self._apply_freezing(mimo_model)
+        self._apply_freezing(omni_modal_model)
 
-        return mimo_model
+        return omni_modal_model
 
     def provide_distributed_model(
         self,
@@ -358,9 +358,9 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
         ] = None,
         post_wrap_hook: Optional[Callable[[List[MegatronModule]], List[MegatronModule]]] = None,
     ) -> List[MegatronModule]:
-        """Build MIMO model with heterogeneous parallelism and DDP wrapping.
+        """Build OmniModal model with heterogeneous parallelism and DDP wrapping.
 
-        This overrides the standard ModelProviderMixin implementation because MIMO:
+        This overrides the standard ModelProviderMixin implementation because OmniModal:
         - Uses per-module HyperCommGrids instead of global mpu
         - Has different pg_collections per module
         - May have ranks that don't participate in all modules
@@ -378,7 +378,7 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
 
         Args:
             ddp_config: Configuration for distributed data parallel.
-            model_type: Type of model (unused for MIMO, accepted for compatibility).
+            model_type: Type of model (unused for OmniModal, accepted for compatibility).
             overlap_param_gather_with_optimizer_step: Whether to overlap param gathering.
             fp16: Override FP16 setting.
             bf16: Override BF16 setting.
@@ -403,7 +403,7 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
 
         if use_megatron_fsdp or use_torch_fsdp2:
             raise NotImplementedError(
-                "FSDP is not yet supported for MIMO models. Use DDP (wrap_with_ddp=True) instead."
+                "FSDP is not yet supported for OmniModal models. Use DDP (wrap_with_ddp=True) instead."
             )
 
         # Finalize parallelism config
@@ -462,12 +462,12 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
             self._move_frozen_params_to_device(m)
 
         # Per-submodule DDP for heterogeneous parallelism
-        if wrap_with_ddp and ddp_config is not None and self.mimo_parallelism_config:
+        if wrap_with_ddp and ddp_config is not None and self.omni_modal_parallelism_config:
             model_list = [
                 wrap_omni_modal_model_distributed(
-                    mimo_model=m,
+                    omni_modal_model=m,
                     ddp_config=ddp_config,
-                    mimo_parallelism_config=self.mimo_parallelism_config,
+                    omni_modal_parallelism_config=self.omni_modal_parallelism_config,
                     grids=infra.module_to_grid_map,
                     pg_collections=infra.pg_collections,
                 )
@@ -512,14 +512,14 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
         seed_kwargs: Optional[dict] = None,
         **model_parallel_kwargs,
     ) -> None:
-        """MIMO uses per-module HyperCommGrids, not global MPU state.
+        """OmniModal uses per-module HyperCommGrids, not global MPU state.
 
         Raises NotImplementedError to prevent accidental global MPU initialization,
         which would corrupt process groups for heterogeneous parallelism.
         Use finalize() + build_infra() instead.
         """
         raise NotImplementedError(
-            "MIMO does not use global model parallelism initialization. "
+            "OmniModal does not use global model parallelism initialization. "
             "Use finalize() to validate config and build_infra() to create HyperCommGrids."
         )
 
@@ -565,7 +565,7 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
                 buf.data = buf.data.to(device)
 
     def finalize(self) -> None:
-        """Finalize MIMO parallelism configuration.
+        """Finalize OmniModal parallelism configuration.
 
         This validates the parallelism config and should be called before
         build_infra() or provide(). It is called automatically by
@@ -576,10 +576,10 @@ class OmniModalProvider(ModelProviderMixin[MimoModel]):
                 This indicates the parallelism configuration doesn't cover all
                 ranks in the world (validated by OmniModalParallelismConfig.finalize()).
         """
-        if self.mimo_parallelism_config is not None:
+        if self.omni_modal_parallelism_config is not None:
             if not dist.is_initialized():
                 raise RuntimeError(
-                    "MIMO requires torch.distributed to be initialized before finalize(). "
+                    "OmniModal requires torch.distributed to be initialized before finalize(). "
                     "Call torch.distributed.init_process_group() first."
                 )
-            self.mimo_parallelism_config.finalize(dist.get_world_size())
+            self.omni_modal_parallelism_config.finalize(dist.get_world_size())

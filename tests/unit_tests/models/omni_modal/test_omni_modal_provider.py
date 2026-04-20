@@ -1,5 +1,5 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-"""Unit tests for MIMO Model Provider."""
+"""Unit tests for OmniModal Model Provider."""
 
 from unittest.mock import MagicMock, Mock, patch
 
@@ -26,13 +26,13 @@ class TestOmniModalProvider:
         assert provider.language_model_spec == language_spec
         assert provider.modality_submodules_spec == {}
         assert provider.special_token_ids == {}
-        assert provider.mimo_parallelism_config is None
+        assert provider.omni_modal_parallelism_config is None
 
     def test_provider_initialization_full(self):
         """Test provider initializes with all fields."""
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         modality_spec = ModuleSpec(module=Mock, params={})
-        mimo_parallelism_config = OmniModalParallelismConfig(
+        omni_modal_parallelism_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(tensor_model_parallel_size=2),
             },
@@ -42,7 +42,7 @@ class TestOmniModalProvider:
             language_model_spec=language_spec,
             modality_submodules_spec={"images": modality_spec},
             special_token_ids={"images": 32000},
-            mimo_parallelism_config=mimo_parallelism_config,
+            omni_modal_parallelism_config=omni_modal_parallelism_config,
             freeze_language_model=True,
             freeze_modality_encoders={"images": True},
         )
@@ -50,7 +50,7 @@ class TestOmniModalProvider:
         assert provider.language_model_spec == language_spec
         assert "images" in provider.modality_submodules_spec
         assert provider.special_token_ids == {"images": 32000}
-        assert provider.mimo_parallelism_config == mimo_parallelism_config
+        assert provider.omni_modal_parallelism_config == omni_modal_parallelism_config
         assert provider.freeze_language_model is True
         assert provider.freeze_modality_encoders == {"images": True}
 
@@ -138,7 +138,7 @@ class TestOmniModalProvider:
         mock_new_group.return_value = MagicMock()
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
 
-        mimo_parallelism_config = OmniModalParallelismConfig(
+        omni_modal_parallelism_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
@@ -156,13 +156,13 @@ class TestOmniModalProvider:
 
         provider = OmniModalProvider(
             language_model_spec=language_spec,
-            mimo_parallelism_config=mimo_parallelism_config,
+            omni_modal_parallelism_config=omni_modal_parallelism_config,
         )
 
         infra = provider.build_infra()
 
         # Should build grids
-        mock_build_grids.assert_called_once_with(mimo_parallelism_config)
+        mock_build_grids.assert_called_once_with(omni_modal_parallelism_config)
 
         # Should return populated infrastructure
         assert isinstance(infra, OmniModalInfra)
@@ -181,7 +181,7 @@ class TestOmniModalProvider:
         mock_new_group.return_value = MagicMock()
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
 
-        mimo_parallelism_config = OmniModalParallelismConfig(
+        omni_modal_parallelism_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0),
             },
@@ -195,7 +195,7 @@ class TestOmniModalProvider:
 
         provider = OmniModalProvider(
             language_model_spec=language_spec,
-            mimo_parallelism_config=mimo_parallelism_config,
+            omni_modal_parallelism_config=omni_modal_parallelism_config,
         )
 
         # Call multiple times
@@ -219,7 +219,7 @@ class TestOmniModalProvider:
         mock_new_group.return_value = MagicMock()
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
 
-        mimo_parallelism_config = OmniModalParallelismConfig(
+        omni_modal_parallelism_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
@@ -236,7 +236,7 @@ class TestOmniModalProvider:
 
         provider = OmniModalProvider(
             language_model_spec=language_spec,
-            mimo_parallelism_config=mimo_parallelism_config,
+            omni_modal_parallelism_config=omni_modal_parallelism_config,
         )
 
         mock_model_instance = MagicMock()
@@ -324,7 +324,7 @@ class TestOmniModalProvider:
         clip_spec = ModuleSpec(module=Mock, params={})
         dino_spec = ModuleSpec(module=Mock, params={})
 
-        mimo_parallelism_config = OmniModalParallelismConfig(
+        omni_modal_parallelism_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(tensor_model_parallel_size=8, data_parallel_size=1),
                 "clip_encoder": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1),
@@ -364,7 +364,7 @@ class TestOmniModalProvider:
                 "clip_encoder": 32000,
                 "dino_encoder": 32001,
             },
-            mimo_parallelism_config=mimo_parallelism_config,
+            omni_modal_parallelism_config=omni_modal_parallelism_config,
         )
 
         mock_model_instance = MagicMock()
@@ -374,7 +374,7 @@ class TestOmniModalProvider:
         infra = provider.build_infra()
 
         # Should build grids with all three modules
-        mock_build_grids.assert_called_with(mimo_parallelism_config)
+        mock_build_grids.assert_called_with(omni_modal_parallelism_config)
 
         # Should have pg_collections for all modules
         assert "language" in infra.pg_collections
@@ -385,15 +385,15 @@ class TestOmniModalProvider:
         assert model == mock_model_instance
 
     def test_initialize_model_parallel_raises(self):
-        """Test that initialize_model_parallel() raises NotImplementedError for MIMO."""
+        """Test that initialize_model_parallel() raises NotImplementedError for OmniModal."""
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         provider = OmniModalProvider(language_model_spec=language_spec)
 
         import pytest
 
-        with pytest.raises(NotImplementedError, match="MIMO does not use global model parallelism"):
+        with pytest.raises(NotImplementedError, match="OmniModal does not use global model parallelism"):
             provider.initialize_model_parallel(seed=42)
-        with pytest.raises(NotImplementedError, match="MIMO does not use global model parallelism"):
+        with pytest.raises(NotImplementedError, match="OmniModal does not use global model parallelism"):
             provider.initialize_model_parallel()
 
     @patch("megatron.core.transformer.module.Float16Module")
@@ -589,7 +589,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         mock_is_last.return_value = False
 
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
-        mimo_parallelism_config = OmniModalParallelismConfig(
+        omni_modal_parallelism_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
             },
@@ -603,7 +603,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
 
         provider = OmniModalProvider(
             language_model_spec=language_spec,
-            mimo_parallelism_config=mimo_parallelism_config,
+            omni_modal_parallelism_config=omni_modal_parallelism_config,
         )
 
         pg_collections = provider._get_pg_collections_from_grids({"language": mock_grid})
@@ -628,7 +628,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         mock_is_last.return_value = False
 
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
-        mimo_parallelism_config = OmniModalParallelismConfig(
+        omni_modal_parallelism_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
             },
@@ -642,7 +642,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
 
         provider = OmniModalProvider(
             language_model_spec=language_spec,
-            mimo_parallelism_config=mimo_parallelism_config,
+            omni_modal_parallelism_config=omni_modal_parallelism_config,
         )
 
         pg_collections = provider._get_pg_collections_from_grids({"language": mock_grid})
@@ -663,7 +663,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         mock_is_last.return_value = True
 
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
-        mimo_parallelism_config = OmniModalParallelismConfig(
+        omni_modal_parallelism_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
             },
@@ -696,7 +696,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
 
         provider = OmniModalProvider(
             language_model_spec=language_spec,
-            mimo_parallelism_config=mimo_parallelism_config,
+            omni_modal_parallelism_config=omni_modal_parallelism_config,
         )
 
         pg_collections = provider._get_pg_collections_from_grids({"language": mock_grid})

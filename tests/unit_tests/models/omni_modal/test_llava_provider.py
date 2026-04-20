@@ -1,5 +1,5 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-"""Unit tests for LLaVA MIMO Provider."""
+"""Unit tests for LLaVA OmniModal Provider."""
 
 from unittest.mock import Mock
 
@@ -198,7 +198,7 @@ class TestLlavaOmniModalProvider:
         # Check projector has MLP submodules
         assert projector_spec.params["submodules"] is not None
 
-    def test_inherits_from_mimo_model_provider(self):
+    def test_inherits_from_omni_modal_provider(self):
         """Test that LlavaOmniModalProvider inherits from OmniModalProvider."""
         mock_vision_encoder = Mock
 
@@ -210,7 +210,7 @@ class TestLlavaOmniModalProvider:
         assert hasattr(provider, "language_model_spec")
         assert hasattr(provider, "modality_submodules_spec")
         assert hasattr(provider, "special_token_ids")
-        assert hasattr(provider, "mimo_parallelism_config")
+        assert hasattr(provider, "omni_modal_parallelism_config")
         assert hasattr(provider, "provide")
         assert hasattr(provider, "build_infra")
 
@@ -222,7 +222,7 @@ class TestLlavaOmniModalProvider:
         )
 
         mock_vision_encoder = Mock
-        mimo_config = OmniModalParallelismConfig(
+        omni_modal_config = OmniModalParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(tensor_model_parallel_size=4),
             }
@@ -230,10 +230,10 @@ class TestLlavaOmniModalProvider:
 
         provider = LlavaOmniModalProvider(
             vision_encoder_module=mock_vision_encoder,
-            mimo_parallelism_config=mimo_config,
+            omni_modal_parallelism_config=omni_modal_config,
         )
 
-        assert provider.mimo_parallelism_config == mimo_config
+        assert provider.omni_modal_parallelism_config == omni_modal_config
 
     def test_can_set_freezing_options(self):
         """Test that freezing options can be set on LlavaOmniModalProvider."""

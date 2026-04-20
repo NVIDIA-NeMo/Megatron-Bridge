@@ -183,30 +183,30 @@ def build_train_valid_test_data_loaders(
     Returns:
         A tuple (train_dataloader, valid_dataloader, test_dataloader).
     """
-    # Check for MIMO path
-    from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
+    # Check for OmniModal path
+    from megatron.bridge.data.omni_modal.base_provider import OmniModalDatasetProvider
     from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
 
     if isinstance(cfg.model, OmniModalProvider):
-        if not isinstance(cfg.dataset, MimoDatasetProvider):
+        if not isinstance(cfg.dataset, OmniModalDatasetProvider):
             raise ValueError(
-                "MIMO models require cfg.dataset to be a MimoDatasetProvider. "
-                "Use HFMimoDatasetProvider, MockMimoProvider, or a subclass of MimoDatasetProvider."
+                "OmniModal models require cfg.dataset to be a OmniModalDatasetProvider. "
+                "Use HFOmniModalDatasetProvider, MockOmniModalProvider, or a subclass of OmniModalDatasetProvider."
             )
-        from megatron.bridge.data.mimo.loaders import build_mimo_data_loaders
+        from megatron.bridge.data.omni_modal.loaders import build_omni_modal_data_loaders
 
         train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
-        train_dataloader, valid_dataloader, test_dataloader = build_mimo_data_loaders(
+        train_dataloader, valid_dataloader, test_dataloader = build_omni_modal_data_loaders(
             cfg=cfg,
             train_state=train_state,
-            mimo_provider=cfg.dataset,
+            omni_modal_provider=cfg.dataset,
             train_samples=train_samples,
             valid_samples=valid_samples,
             test_samples=test_samples,
         )
 
         # Sync train_state flags across all ranks.
-        # Use all_reduce(MAX) since some ranks may not have loaders in heterogeneous MIMO.
+        # Use all_reduce(MAX) since some ranks may not have loaders in heterogeneous OmniModal.
         do_train = train_dataloader is not None and cfg.train.train_iters > 0
         do_valid = valid_dataloader is not None and cfg.validation.eval_iters > 0
         do_test = test_dataloader is not None and cfg.validation.eval_iters > 0

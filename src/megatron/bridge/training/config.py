@@ -1603,8 +1603,8 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     cfg.validate()
 
 
-def mimo_runtime_config_update(cfg: ConfigContainer) -> None:
-    """MIMO-equivalent of ``runtime_config_update``.
+def omni_modal_runtime_config_update(cfg: ConfigContainer) -> None:
+    """OmniModal-equivalent of ``runtime_config_update``.
 
     The standard ``runtime_config_update`` cannot be used directly because it
     accesses ``cfg.model`` attributes (``bf16``, ``tensor_model_parallel_size``,
@@ -1612,25 +1612,25 @@ def mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
     This function cherry-picks the safe, model-agnostic parts:
 
-    Keeps (safe for MIMO):
-    - ``data_parallel_size = 1`` (MIMO-specific hard-code)
+    Keeps (safe for OmniModal):
+    - ``data_parallel_size = 1`` (OmniModal-specific hard-code)
     - Sub-config finalization (optimizer, ddp, logger, train, scheduler, checkpoint)
     - Distributed optimizer sync validation
     - Deterministic mode validation
 
     Skips (would crash or is N/A):
     - Mixed precision resolution (per-module, not container-level)
-    - Communication overlap setup (not supported for MIMO)
+    - Communication overlap setup (not supported for OmniModal)
     - Model-level validations (FSDP, CUDA graphs, TE RNG tracker sync, etc.)
 
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
-    # MIMO: data_parallel_size is always 1 from the training loop's perspective.
+    # OmniModal: data_parallel_size is always 1 from the training loop's perspective.
     cfg.data_parallel_size = 1
 
     # Finalize sub-configs that don't depend on model construction order.
     # NOTE: cfg.model.finalize() is NOT called here — it validates parallelism
-    # config and is called inside setup_mimo() right before build_infra().
+    # config and is called inside setup_omni_modal() right before build_infra().
     if hasattr(cfg.optimizer, "finalize"):
         cfg.optimizer.finalize()
     if hasattr(cfg.ddp, "finalize"):

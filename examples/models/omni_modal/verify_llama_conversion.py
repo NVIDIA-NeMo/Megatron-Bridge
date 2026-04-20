@@ -88,7 +88,7 @@ def _init_megatron(tp_size: int = 1):
 
 
 # ---------------------------------------------------------------------------
-# Language config (mirrors test_mimo_training_llava.py _make_language_config)
+# Language config (mirrors omni_modal_training_llava.py _make_language_config)
 # ---------------------------------------------------------------------------
 
 

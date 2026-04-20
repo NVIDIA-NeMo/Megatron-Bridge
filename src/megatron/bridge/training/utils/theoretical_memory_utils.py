@@ -230,7 +230,7 @@ def report_theoretical_memory(
         verbose (bool, optional): If True, passes verbosity flag to helper functions.
                                 Defaults to False.
     """
-    # Skip for MIMO: OmniModalProvider is not a TransformerConfig, so it lacks
+    # Skip for OmniModal: OmniModalProvider is not a TransformerConfig, so it lacks
     # kv_channels/num_attention_heads/etc. needed for the calculation.
     # (Other providers like GPTModelProvider inherit TransformerConfig and work fine.)
     from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider

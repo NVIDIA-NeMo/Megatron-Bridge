@@ -1,5 +1,5 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-"""DDP wrapping utilities for MIMO models.
+"""DDP wrapping utilities for OmniModal models.
 
 Called from the training layer after OmniModalProvider.provide().
 
@@ -23,41 +23,41 @@ if TYPE_CHECKING:
 
 
 def wrap_omni_modal_model_distributed(
-    mimo_model: "MimoModel",
+    omni_modal_model: "MimoModel",
     ddp_config: "DistributedDataParallelConfig",
-    mimo_parallelism_config: "OmniModalParallelismConfig",
+    omni_modal_parallelism_config: "OmniModalParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
     pg_collections: Dict[str, Optional["ProcessGroupCollection"]],
 ) -> "MimoModel":
-    """Wrap MIMO model's submodules with DDP.
+    """Wrap OmniModal model's submodules with DDP.
 
-    Modifies mimo_model in-place and returns it.
+    Modifies omni_modal_model in-place and returns it.
 
     Args:
-        mimo_model: The MimoModel to wrap.
+        omni_modal_model: The MimoModel to wrap.
         ddp_config: DDP configuration from Bridge.
-        mimo_parallelism_config: MIMO parallelism configuration.
+        omni_modal_parallelism_config: OmniModal parallelism configuration.
         grids: Module name to HyperCommGrid mapping.
         pg_collections: Module name to ProcessGroupCollection mapping.
 
     Returns:
-        The same mimo_model with wrapped submodules.
+        The same omni_modal_model with wrapped submodules.
     """
     from megatron.core.distributed import DistributedDataParallel
 
     # Lazy import to avoid circular dependency (models layer loads before training layer)
-    from megatron.bridge.training.mimo_parallel_utils import is_current_rank_in_grid
+    from megatron.bridge.training.omni_modal_parallel_utils import is_current_rank_in_grid
 
     # Wrap language model if present and rank participates
-    if mimo_model.language_model is not None:
+    if omni_modal_model.language_model is not None:
         llm_grid = grids.get(MIMO_LANGUAGE_MODULE_KEY)
         if llm_grid is not None and is_current_rank_in_grid(llm_grid):
             llm_pg = pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
                 wrapped_lm = DistributedDataParallel(
-                    config=mimo_model.language_model.config,
+                    config=omni_modal_model.language_model.config,
                     ddp_config=ddp_config,
-                    module=mimo_model.language_model,
+                    module=omni_modal_model.language_model,
                     pg_collection=llm_pg,
                 )
                 # MCore's DDP wrapper does not proxy arbitrary module methods.
@@ -67,11 +67,11 @@ def wrap_omni_modal_model_distributed(
                 # are wired correctly when language_model is DDP-wrapped.
                 if hasattr(wrapped_lm.module, "set_input_tensor"):
                     wrapped_lm.set_input_tensor = wrapped_lm.module.set_input_tensor
-                mimo_model.language_model = wrapped_lm
+                omni_modal_model.language_model = wrapped_lm
 
     # Wrap modality submodules
-    if hasattr(mimo_model, "modality_submodules"):
-        for module_name, submodule in mimo_model.modality_submodules.items():
+    if hasattr(omni_modal_model, "modality_submodules"):
+        for module_name, submodule in omni_modal_model.modality_submodules.items():
             if submodule is None:
                 continue
             module_grid = grids.get(module_name)
@@ -87,7 +87,7 @@ def wrap_omni_modal_model_distributed(
             # Get config from first encoder in the submodule.
             # Note: We use the first encoder's config for DDP bucket sizing.
             # This assumes all encoders in a modality submodule share similar
-            # parallelism settings, which is typical for MIMO models.
+            # parallelism settings, which is typical for OmniModal models.
             if hasattr(submodule, "encoders") and submodule.encoders:
                 encoder_key = next(iter(submodule.encoders.keys()))
                 first_encoder = submodule.encoders[encoder_key]
@@ -104,6 +104,6 @@ def wrap_omni_modal_model_distributed(
                     module=submodule,
                     pg_collection=module_pg,
                 )
-                mimo_model.modality_submodules[module_name] = wrapped
+                omni_modal_model.modality_submodules[module_name] = wrapped
 
-    return mimo_model
+    return omni_modal_model

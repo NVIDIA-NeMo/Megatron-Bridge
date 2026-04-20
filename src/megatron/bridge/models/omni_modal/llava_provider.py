@@ -29,7 +29,7 @@ class LlavaOmniModalProvider(OmniModalProvider):
         >>> from my_encoders import HFCLIPEncoder
         >>> provider = LlavaOmniModalProvider(
         ...     vision_encoder_module=HFCLIPEncoder,
-        ...     mimo_parallelism_config=mimo_parallelism_config,
+        ...     omni_modal_parallelism_config=omni_modal_parallelism_config,
         ... )
         >>> result = provider.provide()
     """

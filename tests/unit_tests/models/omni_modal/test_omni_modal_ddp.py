@@ -60,9 +60,9 @@ class TestWrapOmniModalModelDistributed:
         mock_get_rank.return_value = 0
         mock_ddp.return_value = MagicMock()
 
-        mimo_model = self._create_mock_omni_modal_model(has_language_model=True)
+        omni_modal_model = self._create_mock_omni_modal_model(has_language_model=True)
         ddp_config = MagicMock()
-        mimo_parallelism_config = self._create_omni_modal_parallelism_config(
+        omni_modal_parallelism_config = self._create_omni_modal_parallelism_config(
             {
                 "language": {"tp": 2, "dp": 2},
             }
@@ -72,7 +72,7 @@ class TestWrapOmniModalModelDistributed:
         pg_collections = {"language": MagicMock()}
 
         result = wrap_omni_modal_model_distributed(
-            mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
+            omni_modal_model, ddp_config, omni_modal_parallelism_config, grids, pg_collections
         )
 
         # Should wrap language model
@@ -85,11 +85,11 @@ class TestWrapOmniModalModelDistributed:
         """Test that language model is NOT wrapped when rank doesn't participate."""
         mock_get_rank.return_value = 10  # Outside grid range
 
-        mimo_model = self._create_mock_omni_modal_model(has_language_model=True)
-        original_lm = mimo_model.language_model
+        omni_modal_model = self._create_mock_omni_modal_model(has_language_model=True)
+        original_lm = omni_modal_model.language_model
 
         ddp_config = MagicMock()
-        mimo_parallelism_config = self._create_omni_modal_parallelism_config(
+        omni_modal_parallelism_config = self._create_omni_modal_parallelism_config(
             {
                 "language": {"tp": 2, "dp": 2},
             }
@@ -99,7 +99,7 @@ class TestWrapOmniModalModelDistributed:
         pg_collections = {"language": MagicMock()}
 
         result = wrap_omni_modal_model_distributed(
-            mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
+            omni_modal_model, ddp_config, omni_modal_parallelism_config, grids, pg_collections
         )
 
         # Should NOT wrap language model
@@ -113,9 +113,9 @@ class TestWrapOmniModalModelDistributed:
         mock_get_rank.return_value = 0
         mock_ddp.return_value = MagicMock()
 
-        mimo_model = self._create_mock_omni_modal_model(has_language_model=True, modality_names=["images"])
+        omni_modal_model = self._create_mock_omni_modal_model(has_language_model=True, modality_names=["images"])
         ddp_config = MagicMock()
-        mimo_parallelism_config = self._create_omni_modal_parallelism_config(
+        omni_modal_parallelism_config = self._create_omni_modal_parallelism_config(
             {
                 "language": {"tp": 2, "dp": 2},
                 "images": {"tp": 1, "dp": 4},
@@ -131,7 +131,9 @@ class TestWrapOmniModalModelDistributed:
             "images": MagicMock(),
         }
 
-        wrap_omni_modal_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        wrap_omni_modal_model_distributed(
+            omni_modal_model, ddp_config, omni_modal_parallelism_config, grids, pg_collections
+        )
 
         # Should wrap both language model and images submodule
         assert mock_ddp.call_count == 2
@@ -143,9 +145,11 @@ class TestWrapOmniModalModelDistributed:
         mock_get_rank.return_value = 0
         mock_ddp.return_value = MagicMock()
 
-        mimo_model = self._create_mock_omni_modal_model(has_language_model=True, modality_names=["images", "audio"])
+        omni_modal_model = self._create_mock_omni_modal_model(
+            has_language_model=True, modality_names=["images", "audio"]
+        )
         ddp_config = MagicMock()
-        mimo_parallelism_config = self._create_omni_modal_parallelism_config(
+        omni_modal_parallelism_config = self._create_omni_modal_parallelism_config(
             {
                 "language": {"tp": 2, "dp": 2},
                 "images": {"tp": 1, "dp": 4},
@@ -163,7 +167,9 @@ class TestWrapOmniModalModelDistributed:
             "images": MagicMock(),
         }
 
-        wrap_omni_modal_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        wrap_omni_modal_model_distributed(
+            omni_modal_model, ddp_config, omni_modal_parallelism_config, grids, pg_collections
+        )
 
         # Should wrap llm and images, but not audio (no grid)
         assert mock_ddp.call_count == 2
@@ -175,11 +181,11 @@ class TestWrapOmniModalModelDistributed:
         mock_get_rank.return_value = 4  # In images grid but not llm grid
         mock_ddp.return_value = MagicMock()
 
-        mimo_model = self._create_mock_omni_modal_model(has_language_model=True, modality_names=["images"])
-        original_lm = mimo_model.language_model
+        omni_modal_model = self._create_mock_omni_modal_model(has_language_model=True, modality_names=["images"])
+        original_lm = omni_modal_model.language_model
 
         ddp_config = MagicMock()
-        mimo_parallelism_config = self._create_omni_modal_parallelism_config(
+        omni_modal_parallelism_config = self._create_omni_modal_parallelism_config(
             {
                 "language": {"tp": 2, "dp": 2, "rank_offset": 0},
                 "images": {"tp": 2, "dp": 2, "rank_offset": 4},
@@ -196,7 +202,7 @@ class TestWrapOmniModalModelDistributed:
         }
 
         result = wrap_omni_modal_model_distributed(
-            mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
+            omni_modal_model, ddp_config, omni_modal_parallelism_config, grids, pg_collections
         )
 
         # Should wrap only images (rank 4 is in images grid, not llm grid)
@@ -211,9 +217,9 @@ class TestWrapOmniModalModelDistributed:
         mock_get_rank.return_value = 0
         mock_ddp.return_value = MagicMock()
 
-        mimo_model = self._create_mock_omni_modal_model(has_language_model=False, modality_names=["images"])
+        omni_modal_model = self._create_mock_omni_modal_model(has_language_model=False, modality_names=["images"])
         ddp_config = MagicMock()
-        mimo_parallelism_config = self._create_omni_modal_parallelism_config(
+        omni_modal_parallelism_config = self._create_omni_modal_parallelism_config(
             {
                 "language": {"tp": 2, "dp": 2},
                 "images": {"tp": 1, "dp": 4},
@@ -230,7 +236,7 @@ class TestWrapOmniModalModelDistributed:
         }
 
         result = wrap_omni_modal_model_distributed(
-            mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
+            omni_modal_model, ddp_config, omni_modal_parallelism_config, grids, pg_collections
         )
 
         # Should wrap only images (no language model)
@@ -244,9 +250,9 @@ class TestWrapOmniModalModelDistributed:
         mock_get_rank.return_value = 0
         mock_ddp.return_value = MagicMock()
 
-        mimo_model = self._create_mock_omni_modal_model(has_language_model=True)
+        omni_modal_model = self._create_mock_omni_modal_model(has_language_model=True)
         ddp_config = MagicMock()
-        mimo_parallelism_config = self._create_omni_modal_parallelism_config(
+        omni_modal_parallelism_config = self._create_omni_modal_parallelism_config(
             {
                 "language": {"tp": 2, "dp": 2},
             }
@@ -256,11 +262,11 @@ class TestWrapOmniModalModelDistributed:
         pg_collections = {"language": MagicMock()}
 
         result = wrap_omni_modal_model_distributed(
-            mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
+            omni_modal_model, ddp_config, omni_modal_parallelism_config, grids, pg_collections
         )
 
         # Should return the same model instance (modified in-place)
-        assert result is mimo_model
+        assert result is omni_modal_model
 
     @patch("megatron.core.distributed.DistributedDataParallel")
     @patch("torch.distributed.get_rank")
@@ -269,13 +275,13 @@ class TestWrapOmniModalModelDistributed:
         mock_get_rank.return_value = 0
         mock_ddp.return_value = MagicMock()
 
-        mimo_model = self._create_mock_omni_modal_model(has_language_model=True)
+        omni_modal_model = self._create_mock_omni_modal_model(has_language_model=True)
         # Capture original config before wrapping (wrapping replaces language_model)
-        original_lm_config = mimo_model.language_model.config
-        original_lm = mimo_model.language_model
+        original_lm_config = omni_modal_model.language_model.config
+        original_lm = omni_modal_model.language_model
 
         ddp_config = MagicMock()
-        mimo_parallelism_config = self._create_omni_modal_parallelism_config(
+        omni_modal_parallelism_config = self._create_omni_modal_parallelism_config(
             {
                 "language": {"tp": 2, "dp": 2},
             }
@@ -285,7 +291,9 @@ class TestWrapOmniModalModelDistributed:
         llm_pg_collection = MagicMock()
         pg_collections = {"language": llm_pg_collection}
 
-        wrap_omni_modal_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
+        wrap_omni_modal_model_distributed(
+            omni_modal_model, ddp_config, omni_modal_parallelism_config, grids, pg_collections
+        )
 
         # Verify DDP call arguments
         mock_ddp.assert_called_once()

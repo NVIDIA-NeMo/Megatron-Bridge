@@ -13,15 +13,15 @@ if TYPE_CHECKING:
 
 
 def build_hypercomm_grids(
-    mimo_parallelism_config: OmniModalParallelismConfig,
+    omni_modal_parallelism_config: OmniModalParallelismConfig,
 ) -> Dict[str, "HyperCommGrid"]:
-    """Create HyperCommGrid objects per module from MIMO parallelism config.
+    """Create HyperCommGrid objects per module from OmniModal parallelism config.
 
     Creates grids on ALL ranks (required for consistent collective calls),
     but only ranks in each grid's range will participate in its operations.
 
     Args:
-        mimo_parallelism_config: OmniModalParallelismConfig specifying parallelism per module.
+        omni_modal_parallelism_config: OmniModalParallelismConfig specifying parallelism per module.
 
     Returns:
         Dict mapping module names to their HyperCommGrids.
@@ -29,7 +29,7 @@ def build_hypercomm_grids(
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
     grids: Dict[str, HyperCommGrid] = {}
-    for module_name, parallelism in mimo_parallelism_config.module_parallelisms.items():
+    for module_name, parallelism in omni_modal_parallelism_config.module_parallelisms.items():
         shape = [
             parallelism.tensor_model_parallel_size,
             parallelism.context_parallel_size,

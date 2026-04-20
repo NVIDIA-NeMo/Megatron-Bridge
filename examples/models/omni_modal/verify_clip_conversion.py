@@ -67,7 +67,7 @@ def _init_megatron(tp_size: int = 1):
 
 
 # ---------------------------------------------------------------------------
-# Vision config (mirrors test_mimo_training_llava.py _make_vision_config)
+# Vision config (mirrors omni_modal_training_llava.py _make_vision_config)
 # ---------------------------------------------------------------------------
 
 HF_MODEL = "openai/clip-vit-large-patch14-336"

@@ -10,7 +10,7 @@ from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
 @dataclass
 class ModuleParallelismConfig:
-    """Parallelism config for a single module in a MIMO model."""
+    """Parallelism config for a single module in a OmniModal model."""
 
     tensor_model_parallel_size: int = 1
     pipeline_model_parallel_size: int = 1
@@ -59,7 +59,7 @@ class ModuleParallelismConfig:
 
 @dataclass
 class OmniModalParallelismConfig:
-    """Configuration for multi-module (MIMO) heterogeneous parallelism.
+    """Configuration for multi-module (OmniModal) heterogeneous parallelism.
 
     Note: Phase 1 only supports heterogeneous deployment where each module
     can have different parallelism configurations and rank offsets.
@@ -152,7 +152,7 @@ class OmniModalParallelismConfig:
 
         Args:
             world_size: Total number of ranks in the distributed world.
-                MIMO requires a distributed environment, so this must always be provided.
+                OmniModal requires a distributed environment, so this must always be provided.
         """
         if MIMO_LANGUAGE_MODULE_KEY not in self.module_parallelisms:
             raise ValueError(
@@ -169,4 +169,4 @@ class OmniModalParallelismConfig:
 
         expected = self.total_world_size
         if expected and world_size != expected:
-            raise ValueError(f"MIMO world size mismatch: expected {expected}, got {world_size}.")
+            raise ValueError(f"OmniModal world size mismatch: expected {expected}, got {world_size}.")
