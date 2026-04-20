@@ -127,6 +127,8 @@ Run WAN pretraining with the generic **run_recipe** script (same entry point as 
 
 **Recipe:** [megatron.bridge.diffusion.recipes.wan.wan](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/diffusion/recipes/wan/wan.py)
 
+Example W&B results (for pre-training, SFT for different parallelism configs) runs can be found at: ([W&B results](https://api.wandb.ai/links/nvidia-nemo-fw-public/lbk87jeh))
+
 From the **Megatron-Bridge repository root**:
 
 ### Sequence packing

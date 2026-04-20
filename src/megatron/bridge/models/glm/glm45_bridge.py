@@ -100,11 +100,7 @@ class GLM45Bridge(MegatronModelBridge):
         return provider
 
     def build_conversion_tasks(self, hf_pretrained, megatron_model):
-        """Override to store config before mapping_registry is called."""
-        from transformers import PretrainedConfig
-
-        # Store config on instance for use in mapping_registry
-        self._hf_config = hf_pretrained if isinstance(hf_pretrained, PretrainedConfig) else hf_pretrained.config
+        """Override to store HF state source before mapping_registry is called."""
         has_state = hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")
         self._hf_state_source = hf_pretrained.state.source if has_state else None
         self._hf_keys = list(self._hf_state_source.get_all_keys()) if self._hf_state_source else None
@@ -208,10 +204,10 @@ class GLM45Bridge(MegatronModelBridge):
                 ]
             )
         # optionally add MTP mappings
-        if not hasattr(self, "_hf_config"):
+        if self.hf_config is None:
             logger.warning("No HF config found, skipping MTP mappings.")
             return MegatronMappingRegistry(*mapping_list)
-        hf_config = self._hf_config
+        hf_config = self.hf_config
         num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
         num_transformer_layers = hf_config.num_hidden_layers
         for mtp_layer in range(num_mtp_layers):
