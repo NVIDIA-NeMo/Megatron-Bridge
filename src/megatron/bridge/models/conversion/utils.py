@@ -20,9 +20,39 @@ from typing import Iterable, List, Optional, Tuple
 
 import torch
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.utils import unwrap_model
 from rich.table import Table
 from transformers.configuration_utils import PretrainedConfig
+
+
+def unwrap_model(model, module_instances=None):
+    """Unwrap model to return the final model instance.
+
+    Supports DDP, torch FSDP, Megatron FSDP adapters, Float16Module, and MegatronFSDP
+    wrappers used in conversion and Bridge contexts.
+    """
+    if module_instances is None:
+        from megatron.core.distributed import DistributedDataParallel as DDP
+        from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
+        from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+            FullyShardedDataParallel as megatron_FSDP,
+        )
+        from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
+        from megatron.core.transformer.module import Float16Module
+
+        module_instances = (DDP, torch_FSDP, megatron_FSDP, Float16Module, MegatronFSDP)
+
+    return_list = True
+    if not isinstance(model, list):
+        model = [model]
+        return_list = False
+    unwrapped_model = []
+    for model_module in model:
+        while isinstance(model_module, module_instances):
+            model_module = model_module.module
+        unwrapped_model.append(model_module)
+    if not return_list:
+        return unwrapped_model[0]
+    return unwrapped_model
 
 
 def weights_verification_table(bridge, megatron_model) -> Table:
@@ -43,8 +73,14 @@ def weights_verification_table(bridge, megatron_model) -> Table:
     table.add_column("Device")
     table.add_column("Matches Original", justify="center")
 
+    # TODO: Remove fix_gpt_oss_export_transpose once GPT-OSS bridge export is fixed.
+    from megatron.bridge.utils.common_utils import fix_gpt_oss_export_transpose, get_hf_model_type
+
+    weight_iter = bridge.export_hf_weights(megatron_model, show_progress=True)
+    if get_hf_model_type(bridge) == "gpt_oss":
+        weight_iter = fix_gpt_oss_export_transpose(weight_iter)
     # Check each weight against the original HF-model
-    for name, param in bridge.export_hf_weights(megatron_model, show_progress=True):
+    for name, param in weight_iter:
         original_param = bridge.hf_pretrained.state[name]
         table.add_row(
             name,

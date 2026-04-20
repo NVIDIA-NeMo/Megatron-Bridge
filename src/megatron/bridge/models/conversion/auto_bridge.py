@@ -822,6 +822,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
             generator = _filter_quant(generator)
 
+        # TODO: Remove once GPT-OSS bridge export no longer transposes per-expert weights.
+        from megatron.bridge.utils.common_utils import fix_gpt_oss_export_transpose, get_hf_model_type
+
+        if get_hf_model_type(self) == "gpt_oss":
+            generator = fix_gpt_oss_export_transpose(generator)
+
         # Check if the state source is SafeTensorsStateSource for streaming save.
         if (
             hasattr(self.hf_pretrained, "state")
