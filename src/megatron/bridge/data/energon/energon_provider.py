@@ -34,10 +34,14 @@ class EnergonProvider(DatasetProvider):
     num_workers: int_repr
     dataloader_type: str = "external"
     task_encoder: Optional[Any] = None
-    # Legacy in-batch packing switch. Keep for compatibility with existing recipes.
+    # Existing in-batch packing switch.
+    # Semantics: pack samples *within each already formed micro-batch*.
+    # This path keeps historical behavior used by existing recipes.
     pack_sequences_in_batch: bool = False
     # THD dataloader switch for batch-level online packing.
-    # This is independent from pack_sequences_in_batch.
+    # Semantics: pack samples *across a dataloader-side candidate buffer*
+    # before a micro-batch is formed.
+    # This mode is independent from pack_sequences_in_batch.
     batch_level_packing: bool = False
     packing_buffer_size: Optional[int] = None
     shuffle_buffer_size: int = 100
