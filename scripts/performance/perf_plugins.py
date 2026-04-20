@@ -275,10 +275,10 @@ class PerfEnvPlugin(Plugin):
             model_family_name in ["deepseek"]
             and model_recipe_name in ["deepseek_v3"]
             and train_task == "pretrain"
-            and gpu in ["h100", "gb200"]
+            and gpu in ["h100", "gb200", "b200"]
         ):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-            if gpu in ["gb200"]:
+            if gpu in ["gb200", "b200"]:
                 executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         elif (
             model_family_name in ["qwen"]
