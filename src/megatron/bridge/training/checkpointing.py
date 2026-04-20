@@ -1544,6 +1544,16 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     state_dict = raw_state_dict.copy()
     handle_fp8_extra_state_case(state_dict["model"])
 
+    # MCore FSDP functions (handle_swiglu_in_state_dict, handle_gdn_in_state_dict)
+    # expect model.get_parameter("module.{key}") to resolve through a wrapper's
+    # .module attribute.  Since MCore's unwrap_model now also strips the
+    # MegatronFSDP layer, the model arriving here may be fully unwrapped.
+    # Re-wrap it so the "module." parameter lookups succeed.
+    if not hasattr(model, "module"):
+        _wrapper = torch.nn.Module()
+        _wrapper.module = model
+        model = _wrapper
+
     model_config = get_model_config(model)
     # SWiGLU is enabled when activation is SiLU and GLU gating is on
     is_swiglu = (
