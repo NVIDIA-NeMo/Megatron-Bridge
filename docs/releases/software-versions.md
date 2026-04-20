@@ -21,7 +21,7 @@
 | vLLM | 0.16.0 |
 
 ```{note}
-NVIDIA NeMo™ Framework Training container is built on top of NVIDIA Optimized Frameworks PyTorch 25.06 container: https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html
+NVIDIA NeMo™ Framework Training container is built on top of NVIDIA Optimized Frameworks PyTorch 26.02 container: https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html
 ```
 
 ## NeMo Framework 26.02
