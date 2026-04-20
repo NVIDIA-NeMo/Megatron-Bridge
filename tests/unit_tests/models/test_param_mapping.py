@@ -595,12 +595,13 @@ class TestMappingEdgeCases:
             with pytest.raises(ValueError, match="Object must exist on at least one PP rank"):
                 mapping.broadcast_from_pp_rank(None)
 
-    def test_broadcast_from_pp_rank_shared_embeddings(self, mock_distributed_env):
+    def test_broadcast_from_pp_rank_multi_owner(self, mock_distributed_env):
         """Test PP broadcast handles tensors present on multiple PP ranks.
 
-        Shared / tied parameters (e.g. embed_tokens with share_embeddings_and_output_weights)
-        legitimately exist on more than one PP rank. broadcast_from_pp_rank must
-        pick the first owner rather than raising ValueError.
+        MLA (Multi-Latent Attention) architectures such as DeepSeek-V3 and
+        MTP models can place the same weight tensor on more than one PP stage.
+        broadcast_from_pp_rank must pick the first owner deterministically
+        rather than raising ValueError.
         """
         _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
         mapping = DirectMapping("weight", "weight")
@@ -608,7 +609,7 @@ class TestMappingEdgeCases:
         tensor = torch.randn(16, 16)
         spec = (tensor.shape, tensor.dtype, None, None)
 
-        # Simulate both PP ranks owning the tensor (shared embeddings)
+        # Simulate both PP ranks owning the tensor
         with patch("torch.distributed.all_gather_object") as mock_gather:
             mock_gather.side_effect = lambda output, obj, group: output.__setitem__(slice(None), [spec, spec])
 
@@ -626,7 +627,40 @@ class TestMappingEdgeCases:
             call_kwargs = mock_dist.broadcast.call_args
             assert call_kwargs[1]["src"] == 0 or call_kwargs[0][1] == 0
 
-    def test_broadcast_obj_from_pp_rank_shared_embeddings(self, mock_distributed_env):
+    def test_broadcast_from_pp_rank_multi_owner_with_cache(self, mock_distributed_env):
+        """Test PP broadcast with cache_key when tensor exists on multiple ranks.
+
+        Every real mapping calls broadcast_from_pp_rank with
+        cache_key=str(self.hf_param). Verify that the cached path also
+        handles multi-owner tensors correctly and that the second call
+        skips the all_gather_object collective.
+        """
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
+        mapping = DirectMapping("weight", "weight")
+
+        tensor = torch.randn(16, 16)
+        spec = (tensor.shape, tensor.dtype, None, None)
+
+        with patch("torch.distributed.all_gather_object") as mock_gather:
+            mock_gather.side_effect = lambda output, obj, group: output.__setitem__(slice(None), [spec, spec])
+            mock_dist.broadcast.side_effect = lambda t, src, group: None
+
+            cache_key = "model.layers.0.self_attn.kv_b_proj.weight"
+
+            # First call — populates cache
+            result1 = mapping.broadcast_from_pp_rank(tensor, cache_key=cache_key)
+            assert result1 is not None
+            assert mock_gather.call_count == 1
+
+            # Second call with same cache_key — must reuse cached spec
+            result2 = mapping.broadcast_from_pp_rank(tensor, cache_key=cache_key)
+            assert result2 is not None
+            # all_gather_object should NOT be called again
+            assert mock_gather.call_count == 1
+            # broadcast should be called twice (once per call)
+            assert mock_dist.broadcast.call_count == 2
+
+    def test_broadcast_obj_from_pp_rank_multi_owner(self, mock_distributed_env):
         """Test PP object broadcast handles objects present on multiple PP ranks.
 
         Similar to tensor broadcast, shared objects must not cause errors and

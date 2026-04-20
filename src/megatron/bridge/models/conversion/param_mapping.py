@@ -341,11 +341,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         # ------------------------------------------------------------------
         # 2.  Identify the first owning rank (pick the lowest-ranked PP stage
-        #     that holds the tensor).  Shared / tied parameters such as
-        #     ``embed_tokens`` and ``lm_head`` legitimately exist on more
-        #     than one PP rank, so we must *not* raise on duplicates –
-        #     instead we deterministically pick the first owner as the
-        #     broadcast source.
+        #     that holds the tensor).  Certain architectures (MLA / DeepSeek-V3,
+        #     MTP, or models with tied embeddings) legitimately place the same
+        #     weight on more than one PP rank, so we must *not* raise on
+        #     duplicates – instead we deterministically pick the first owner
+        #     as the broadcast source.
         # ------------------------------------------------------------------
         target_tensor_spec = None
         src_rank = None  # Rank *inside* the PP group.
@@ -414,8 +414,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         # ------------------------------------------------------------------
         # 2. Identify the first owning rank (lowest PP stage with the object).
-        #    Shared / tied parameters legitimately exist on more than one PP
-        #    rank, so we pick the first owner deterministically.
+        #    Certain architectures (MLA, MTP, tied embeddings) place the same
+        #    parameter on multiple PP ranks — pick the first owner.
         # ------------------------------------------------------------------
         src_rank = None  # Rank *inside* the PP group
         for rank, flag in enumerate(obj_flags):
