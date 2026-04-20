@@ -396,7 +396,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Any: Broadcasted object on all ranks.
 
         Raises:
-            ValueError: If object exists on multiple ranks or no ranks.
+            ValueError: If object does not exist on any rank.
         """
         if self.pp_size == 1:
             return obj

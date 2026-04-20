@@ -645,6 +645,7 @@ class TestMappingEdgeCases:
 
             # Must not raise — should pick rank 0 as source
             result = mapping.broadcast_obj_from_pp_rank(test_obj)
+            assert result == test_obj
 
             # Verify broadcast_object_list was called with src=rank 0
             mock_dist.broadcast_object_list.assert_called_once()
