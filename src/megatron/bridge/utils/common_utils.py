@@ -251,33 +251,6 @@ def hook_hf_module_setattr_for_tp_grad_sync(module: torch.nn.Module) -> torch.nn
     return module
 
 
-def get_hf_model_type(bridge) -> str | None:
-    """Extract the HF ``model_type`` string from a bridge instance.
-
-    Works with both ``AutoBridge`` (reads ``bridge.hf_pretrained.config.model_type``)
-    and registered bridge subclasses (falls back to the ``MODEL_TYPE`` class attribute).
-    """
-    hf_config = getattr(getattr(bridge, "hf_pretrained", None), "config", None)
-    return getattr(hf_config, "model_type", None) or getattr(bridge, "MODEL_TYPE", None)
-
-
-# TODO: Remove once GPT-OSS bridge export no longer transposes per-expert weights.
-_GPT_OSS_TRANSPOSED_SUFFIXES = ("mlp.experts.down_proj",)
-
-
-def fix_gpt_oss_export_transpose(gen):
-    """Wrap a weight generator to undo GPT-OSS per-expert transpose on export.
-
-    The GPT-OSS bridge transposes down_proj expert weights in ``megatron_to_hf``
-    for vLLM compatibility.  This wrapper transposes them back so saved
-    checkpoints match the original HF layout.
-    """
-    for name, tensor in gen:
-        if name.endswith(_GPT_OSS_TRANSPOSED_SUFFIXES):
-            tensor = tensor.transpose(-2, -1).contiguous()
-        yield name, tensor
-
-
 def extract_expert_number_from_param(param_name: str) -> int:
     """Extract the expert number from a parameter name.
     Args:
