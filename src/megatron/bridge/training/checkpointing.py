@@ -92,6 +92,7 @@ from megatron.bridge.utils.import_utils import safe_import
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
 
 try:
+    from megatron.core.distributed.fsdp.src.megatron_fsdp import MegatronFSDP
     from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
         preprocess_state_dict_for_uneven_dtensor,
     )
@@ -1720,6 +1721,7 @@ def load_checkpoint(
         opt_param_scheduler,
         strict,
         checkpointing_context,
+        skip_load_to_model_and_opt=skip_load_to_model_and_opt,
         pg_collection=pg_collection,
         module_name=module_name,
     )
@@ -1727,6 +1729,12 @@ def load_checkpoint(
 
 def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
     """Helper function to load state dict with fallback for missing extra states."""
+    if HAVE_MEGATRON_FSDP and isinstance(module, MegatronFSDP):
+        # Because the state dictionary was generated from the nested module of Megatron-FSDP,
+        # but MegatronFSDP.load_state_dict() is called at MegatronFSDP(torch.nn.Module).
+        # In Megatron-LM, handled via adapter: FullyShardedDataParallel.load_state_dict().
+        for key in list(state_dict.keys()):
+            state_dict[f"module.{key}"] = state_dict.pop(key)
     try:
         module.load_state_dict(state_dict, strict=strict)
     except Exception as e:
@@ -2087,7 +2095,7 @@ def _load_checkpoint_from_path(
         update_num_microbatches(consumed_samples=state.train_state.consumed_train_samples, verbose=True)
 
     # Load model weights
-    if not skip_load_to_model_and_opt and ckpt_type != CheckpointType.FSDP_DTENSOR:
+    if not skip_load_to_model_and_opt:
         # Handle PEFT resume for strict loading
         load_strict = strict
         is_peft_resume = (
