@@ -2808,7 +2808,6 @@ class TestLoadCheckpointFromPathDirectIterDir:
             mock_reader.assert_called_once_with("/ckpt/iter_0001000")
             mock_is_iter_dir.assert_called_once_with("/ckpt/iter_0001000")
 
-
     @patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory")
     @patch("megatron.bridge.training.checkpointing.get_pg_collection")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
