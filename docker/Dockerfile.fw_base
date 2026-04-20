@@ -321,10 +321,14 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
     if [ "$INSTALL_DEEPEP" = "True" ]; then \
     # Upgrade system rdma-core to v60 (EFA brings this when aws_ofi_builder runs; make it
     # explicit so the DeepEP build works even when FW_NETWORK_LAYER=fw_dep_builder).
-    # libibverbs-dev and libmlx5-dev supply the unversioned .so symlinks required at link time.
+    # libibverbs-dev supplies the unversioned libibverbs.so symlink required at link time.
     apt-get update && apt-get install -y --allow-change-held-packages \
-        rdma-core libibverbs-dev libmlx5-dev && \
+        rdma-core libibverbs-dev && \
     apt-get clean && \
+    # libmlx5-dev is not available in the apt sources; EFA installer (aws_ofi_builder)
+    # provides libmlx5.so — create it from the versioned symlink as a fallback.
+    test -f /usr/lib/x86_64-linux-gnu/libmlx5.so || \
+        ln -sf /usr/lib/x86_64-linux-gnu/libmlx5.so.1 /usr/lib/x86_64-linux-gnu/libmlx5.so && \
     # Expose the system install under RDMA_CORE_HOME so DeepEP setup.py finds
     # $RDMA_CORE_HOME/include and $RDMA_CORE_HOME/lib without a separate source build.
     mkdir -p ${RDMA_CORE_HOME} && \
