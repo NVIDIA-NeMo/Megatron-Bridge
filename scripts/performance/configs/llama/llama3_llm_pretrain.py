@@ -117,6 +117,41 @@ def llama3_70b_pretrain_config_gb200(
     return cfg
 
 
+def llama3_70b_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_70b",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    if precision == "bf16":
+        comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
+    else:
+        comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
+
+    cfg = llama3_70b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_llama3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    if cfg.ddp.use_megatron_fsdp:
+        cfg.ddp.fsdp_double_buffer = True
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
+        cfg.ddp.suggested_communication_unit_size = 800000000
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
+
+    return cfg
+
+
 def llama3_70b_pretrain_config_b300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
