@@ -54,7 +54,7 @@ def register_allowed_target_prefix(prefix: str) -> None:
     _ALLOWED_TARGET_PREFIXES.add(prefix)
 
 
-def _validate_target_prefix(target: str, full_key: str) -> None:
+def _validate_target_prefix(*, target: str, full_key: str) -> None:
     """Validate that a _target_ string starts with an allowed module prefix."""
     if not any(target.startswith(prefix) for prefix in _ALLOWED_TARGET_PREFIXES):
         raise InstantiationException(
@@ -461,7 +461,7 @@ def _resolve_target(
 ) -> Union[type, Callable[..., Any], object]:
     """Resolve target string, type or callable into type or callable."""
     if isinstance(target, str):
-        _validate_target_prefix(target, full_key)
+        _validate_target_prefix(target=target, full_key=full_key)
         try:
             target = _locate(target)
         except Exception as e:

@@ -637,47 +637,47 @@ class TestTargetPrefixValidation:
 
     def test_allowed_prefix_passes(self):
         """Test that targets with allowed prefixes pass validation."""
-        _validate_target_prefix("megatron.bridge.Foo", "key")
-        _validate_target_prefix("torch.nn.Module", "key")
-        _validate_target_prefix("transformers.AutoModel", "key")
-        _validate_target_prefix("numpy.array", "key")
-        _validate_target_prefix("nvidia.dali.Pipeline", "key")
-        _validate_target_prefix("nemo.collections.nlp", "key")
+        _validate_target_prefix(target="megatron.bridge.Foo", full_key="key")
+        _validate_target_prefix(target="torch.nn.Module", full_key="key")
+        _validate_target_prefix(target="transformers.AutoModel", full_key="key")
+        _validate_target_prefix(target="numpy.array", full_key="key")
+        _validate_target_prefix(target="nvidia.dali.Pipeline", full_key="key")
+        _validate_target_prefix(target="nemo.collections.nlp", full_key="key")
 
     def test_disallowed_prefix_rejected(self):
         """Test that targets without allowed prefixes are rejected."""
         with pytest.raises(InstantiationException, match="is not allowed"):
-            _validate_target_prefix("os.system", "key")
+            _validate_target_prefix(target="os.system", full_key="key")
         with pytest.raises(InstantiationException, match="is not allowed"):
-            _validate_target_prefix("subprocess.run", "key")
+            _validate_target_prefix(target="subprocess.run", full_key="key")
         with pytest.raises(InstantiationException, match="is not allowed"):
-            _validate_target_prefix("shutil.rmtree", "key")
+            _validate_target_prefix(target="shutil.rmtree", full_key="key")
 
     def test_disallowed_prefix_error_includes_full_key(self):
         """Test that the error message includes the full_key when present."""
         with pytest.raises(InstantiationException, match="full_key: my.config.key"):
-            _validate_target_prefix("os.system", "my.config.key")
+            _validate_target_prefix(target="os.system", full_key="my.config.key")
 
     def test_disallowed_prefix_error_no_full_key(self):
         """Test that the error message omits full_key when empty."""
         with pytest.raises(InstantiationException, match="is not allowed") as exc_info:
-            _validate_target_prefix("os.system", "")
+            _validate_target_prefix(target="os.system", full_key="")
         assert "full_key" not in str(exc_info.value)
 
     def test_empty_string_target(self):
         """Test that empty string target is rejected."""
         with pytest.raises(InstantiationException, match="is not allowed"):
-            _validate_target_prefix("", "key")
+            _validate_target_prefix(target="", full_key="key")
 
     def test_register_allowed_target_prefix(self):
         """Test that register_allowed_target_prefix extends the allowlist."""
         original = _ALLOWED_TARGET_PREFIXES.copy()
         try:
             with pytest.raises(InstantiationException, match="is not allowed"):
-                _validate_target_prefix("custom_pkg.MyClass", "key")
+                _validate_target_prefix(target="custom_pkg.MyClass", full_key="key")
 
             register_allowed_target_prefix("custom_pkg.")
-            _validate_target_prefix("custom_pkg.MyClass", "key")  # should not raise
+            _validate_target_prefix(target="custom_pkg.MyClass", full_key="key")  # should not raise
         finally:
             _ALLOWED_TARGET_PREFIXES.clear()
             _ALLOWED_TARGET_PREFIXES.update(original)
