@@ -14,7 +14,7 @@
 
 
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 import torch
 from megatron.core import mpu
@@ -613,6 +613,33 @@ def get_vision_cp_data(
     new_vision_data = vision_data_list[cp_rank]
     new_seqlens_list = [t // square_merge_size for t in seqlens_list]
     return new_vision_data, new_vision_grid_thw, new_seqlens_list
+
+
+def get_dist_train_vision_dp_data(
+    vision_data: torch.Tensor,
+    vision_grid_thw: torch.Tensor,
+    *,
+    num_chunks: int,
+    dp_rank: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Shard vision batch on dim 0 by ``num_chunks``; return this DP rank's slice."""
+    chunk_idx = dp_rank % num_chunks
+    vision_data_chunks = torch.chunk(vision_data, chunks=num_chunks, dim=0)
+    vision_data_out = vision_data_chunks[chunk_idx]
+    vision_grid_thw_chunks = torch.chunk(vision_grid_thw, chunks=num_chunks, dim=0)
+    vision_grid_thw_out = vision_grid_thw_chunks[chunk_idx]
+    return vision_data_out, vision_grid_thw_out
+
+
+def pack_dist_train_vision_module_output(
+    vision_embeds: torch.Tensor,
+    deepstack_feature_lists: Sequence[torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Concat deepstack features and final vision embeddings; shape as 3D for bridge communicator."""
+    vision_module_output_tensor = torch.cat([vision_embeds, *deepstack_feature_lists], dim=0)
+    # 2D [batch*seq, hidden] -> 3D [1, batch*seq, hidden]
+    vision_module_output_tensor = vision_module_output_tensor.unsqueeze(0)
+    return {"vision_module": vision_module_output_tensor}
 
 
 class AllGatherVisionEmbeddings(torch.autograd.Function):

@@ -127,6 +127,8 @@ Run WAN pretraining with the generic **run_recipe** script (same entry point as 
 
 **Recipe:** [megatron.bridge.diffusion.recipes.wan.wan](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/diffusion/recipes/wan/wan.py)
 
+Example W&B results (for pre-training, SFT for different parallelism configs) runs can be found at: ([W&B results](https://api.wandb.ai/links/nvidia-nemo-fw-public/lbk87jeh))
+
 From the **Megatron-Bridge repository root**:
 
 ### Sequence packing
@@ -146,7 +148,7 @@ WAN uses different flow-matching hyperparameters for pretraining vs fine-tuning.
 
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe wan_1_3B_pretrain_config \
+  --recipe wan_1_3b_pretrain_config \
   --step_func wan_step
 ```
 
@@ -154,7 +156,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 
 ```bash
 uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe wan_1_3B_pretrain_config \
+  --recipe wan_1_3b_pretrain_config \
   --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan
 ```
@@ -163,7 +165,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 
 ```bash
 uv run torchrun --nproc_per_node=$NUM_GPUS scripts/training/run_recipe.py \
-  --recipe wan_1_3B_pretrain_config \
+  --recipe wan_1_3b_pretrain_config \
   --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan \
   train.global_batch_size=8 \

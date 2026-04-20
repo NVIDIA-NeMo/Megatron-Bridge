@@ -18,10 +18,11 @@ from typing import Any, Callable, Optional, Union
 
 import torch
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
-from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.pipeline_parallel.utils import is_pp_last_stage
+from megatron.core.process_groups_config import MultiModuleProcessGroupCollection, ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.enums import CudaGraphScope
@@ -50,6 +51,8 @@ def evaluate(
     config: ConfigContainer,
     verbose: bool = False,
     non_loss_data_func: Optional[Callable] = None,
+    p2p_communicator: Optional[Union[P2PCommunicator, "MultiModulePipelineCommunicator"]] = None,
+    pg_collection: Optional[Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]] = None,
     callback_manager: CallbackManager | None = None,
     is_test: bool = False,
 ) -> tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]:
@@ -64,6 +67,12 @@ def evaluate(
         config (ConfigContainer): Configuration container (potentially redundant).
         verbose (bool, optional): Whether to print evaluation progress. Defaults to False.
         non_loss_data_func (Optional[Callable], optional): Function to compute non-loss data. Defaults to None.
+        p2p_communicator (Optional[Union[P2PCommunicator, MultiModulePipelineCommunicator]], optional):
+            Custom communicator for pipeline parallelism. If None, creates a default P2PCommunicator.
+            For MIMO models, pass a MultiModulePipelineCommunicator. Defaults to None.
+        pg_collection (Optional[Union[ProcessGroupCollection, MultiModuleProcessGroupCollection]], optional):
+            Custom process group collection. If None, extracts from model via get_pg_collection().
+            For MIMO models, pass a MultiModuleProcessGroupCollection. Defaults to None.
         callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
         is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
             Controls which callback events are fired (on_test_* vs on_eval_*).
@@ -89,7 +98,9 @@ def evaluate(
         model_module.eval()
 
     # Retrieve process group collection and model config from the model
-    pg_collection = get_pg_collection(model)
+    # Use injected pg_collection if provided, otherwise extract from model
+    if pg_collection is None:
+        pg_collection = get_pg_collection(model)
     model_config = get_model_config(model[0])
 
     # Disable result validation during evaluation
@@ -100,14 +111,25 @@ def evaluate(
     total_loss_dict = {}
 
     # make validation batch size independent from training batch size
-    eval_batch_size = state.cfg.train.global_batch_size
-    eval_num_microbatches = eval_batch_size // (state.cfg.train.micro_batch_size * state.cfg.data_parallel_size)
+    eval_batch_size = state.cfg.validation.eval_global_batch_size
+    eval_micro_batch_size = state.cfg.validation.eval_micro_batch_size
+    eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * state.cfg.data_parallel_size)
+
+    # Determine if this is a multimodule evaluation (MIMO)
+    is_multimodule = isinstance(pg_collection, MultiModuleProcessGroupCollection) or isinstance(
+        p2p_communicator, MultiModulePipelineCommunicator
+    )
+
+    if is_multimodule and not isinstance(p2p_communicator, MultiModulePipelineCommunicator):
+        raise ValueError(
+            "Multimodule (MIMO) evaluation requires an explicit MultiModulePipelineCommunicator as p2p_communicator."
+        )
 
     if not state.cfg.dist.use_decentralized_pg:
         adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
             model,
             seq_length=state.cfg.model.seq_length,
-            micro_batch_size=state.cfg.train.micro_batch_size,
+            micro_batch_size=eval_micro_batch_size,
             decoder_seq_length=state.cfg.model.seq_length,
         )
     else:
@@ -117,7 +139,15 @@ def evaluate(
         if verbose:
             print_rank_0(f"Evaluating on {state.cfg.validation.eval_iters * eval_batch_size} samples")
 
-        if (
+        if is_multimodule:
+            # For multimodule, use forward_backward_pipelining_without_interleaving directly
+            # CUDA graphs not yet supported for multimodule
+            from megatron.core.pipeline_parallel.schedules import (
+                forward_backward_pipelining_without_interleaving,
+            )
+
+            forward_backward_func = forward_backward_pipelining_without_interleaving
+        elif (
             state.cfg.model.cuda_graph_impl == "local"
             and CudaGraphScope.full_iteration in state.cfg.model.cuda_graph_scope
         ):
@@ -164,7 +194,11 @@ def evaluate(
             # Don't care about timing during evaluation
             config.timers = None
             fault_tolerance.on_eval_step_start(state)
-            p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+
+            # Use injected communicator or create default P2PCommunicator
+            eval_p2p_communicator = p2p_communicator
+            if eval_p2p_communicator is None:
+                eval_p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
 
             if should_fire(callback_manager, step_start_event):
                 callback_manager.fire(
@@ -182,10 +216,10 @@ def evaluate(
                 model=model,
                 num_microbatches=eval_num_microbatches,
                 seq_length=seq_length,
-                micro_batch_size=state.cfg.train.micro_batch_size,
+                micro_batch_size=eval_micro_batch_size,
                 forward_only=True,
                 adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
-                p2p_communicator=p2p_communicator,
+                p2p_communicator=eval_p2p_communicator,
                 pg_collection=pg_collection,
             )
             fault_tolerance.on_eval_step_end(state)
@@ -213,8 +247,21 @@ def evaluate(
             if state.cfg.train.empty_unused_memory_level >= 1:
                 torch.cuda.empty_cache()
 
-            if is_pp_last_stage(pg_collection.pp):
+            # Check if this is the last pipeline stage
+            # For multimodule, use communicator property; for single module, use pg_collection.pp
+            if is_multimodule:
+                is_last_stage = eval_p2p_communicator.is_pp_last_stage
+            else:
+                is_last_stage = is_pp_last_stage(pg_collection.pp)
+
+            if is_last_stage:
                 # Reduce across processes.
+                # For multimodule, get dp_cp from the language model's pg_collection
+                if is_multimodule:
+                    dp_cp_group = pg_collection.get_language_model_collection().dp_cp
+                else:
+                    dp_cp_group = pg_collection.dp_cp
+
                 for key in loss_dicts[0].keys():
                     if key not in total_loss_dict:
                         total_loss_dict[key] = torch.tensor([0.0, 0.0], dtype=torch.float).cuda()
@@ -222,7 +269,7 @@ def evaluate(
 
                     if val[0].numel() == 2:
                         val = torch.vstack(val).sum(dim=0)
-                        torch.distributed.all_reduce(val, group=pg_collection.dp_cp)
+                        torch.distributed.all_reduce(val, group=dp_cp_group)
                         total_loss_dict[key] += val
                     elif val[0].numel() == 1:
                         val = torch.cat(val).sum()
@@ -257,7 +304,7 @@ def evaluate(
                 # Finetuning path: prepare batch and wrap for VPP
                 non_loss_microbatch_iterator, non_loss_seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
-                    num_microbatches=get_num_microbatches(),
+                    num_microbatches=eval_num_microbatches,
                     default_seq_length=state.cfg.model.seq_length,
                     seq_key="tokens",
                 )
@@ -266,17 +313,21 @@ def evaluate(
                     data_iterator=non_loss_microbatch_iterator,
                 )
 
-            p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+            # Use injected communicator or create default P2PCommunicator
+            non_loss_p2p_communicator = p2p_communicator
+            if non_loss_p2p_communicator is None:
+                non_loss_p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+
             collected_non_loss_data = forward_backward_func(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=non_loss_data_iterator,
                 model=model,
-                num_microbatches=get_num_microbatches(),
+                num_microbatches=eval_num_microbatches,
                 seq_length=non_loss_seq_length,
-                micro_batch_size=state.cfg.train.micro_batch_size,
+                micro_batch_size=eval_micro_batch_size,
                 forward_only=True,
                 collect_non_loss_data=True,
-                p2p_communicator=p2p_communicator,
+                p2p_communicator=non_loss_p2p_communicator,
                 pg_collection=pg_collection,
             )
 
@@ -307,6 +358,8 @@ def evaluate_and_print_results(
     write_to_tensorboard: bool = True,
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
+    p2p_communicator: Optional[Union[P2PCommunicator, "MultiModulePipelineCommunicator"]] = None,
+    pg_collection: Optional[Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]] = None,
     callback_manager: CallbackManager | None = None,
     is_test: bool = False,
 ) -> None:
@@ -323,6 +376,10 @@ def evaluate_and_print_results(
         write_to_tensorboard (bool, optional): Whether to write results to TensorBoard. Defaults to True.
         process_non_loss_data_func (Optional[Callable], optional): Function to process non-loss data. Defaults to None.
         non_loss_data_func (Optional[Callable], optional): Function to compute non-loss data. Defaults to None.
+        p2p_communicator (Optional[Union[P2PCommunicator, MultiModulePipelineCommunicator]], optional):
+            Custom communicator for pipeline parallelism. Passed to evaluate(). Defaults to None.
+        pg_collection (Optional[Union[ProcessGroupCollection, MultiModuleProcessGroupCollection]], optional):
+            Custom process group collection. Passed to evaluate(). Defaults to None.
         callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
         is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
             Controls which callback events are fired (on_test_* vs on_eval_*).
@@ -359,6 +416,8 @@ def evaluate_and_print_results(
         config,
         verbose,
         non_loss_data_func,
+        p2p_communicator=p2p_communicator,
+        pg_collection=pg_collection,
         callback_manager=callback_manager,
         is_test=is_test,
     )
