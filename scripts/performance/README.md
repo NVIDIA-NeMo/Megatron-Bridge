@@ -40,7 +40,7 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
 The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
-`python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
+`uv run python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
 
 You can also create a bash file to define the experiment arguments and launch it. For e.g. The bash file will look as follows-
 
@@ -51,7 +51,7 @@ MBRIDGE_PATH="</path/to/mbridge>"
 JOB_NAME="dsv3_gb300"
 RESULTS_DIR="${MBRIDGE_PATH}/results/${JOB_NAME}"
 
-python scripts/performance/setup_experiment.py 
+uv run python scripts/performance/setup_experiment.py \
   --account <slurm_account> \
   -i ${CONTAINER} \
   --partition <slurm_partition> \
@@ -216,6 +216,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 - `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`).
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
+- `-lgc/--lock_gpu_freq`: Lock GPU graphics clock to a fixed frequency in MHz (e.g. `1200`). Used for silicon simulation correlation studies. Disabled by default.
 - `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
 - `-pyp/--pytorch_profiler`: Enable PyTorch profiler. Pass `true` or `false`. Disabled by default.
 - `--profiling_start_step`: Defines start step for profiling. Default `10`.
