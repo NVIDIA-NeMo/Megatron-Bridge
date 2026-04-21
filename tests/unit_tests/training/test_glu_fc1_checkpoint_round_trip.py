@@ -21,7 +21,6 @@ import torch
 
 from megatron.bridge.training.checkpointing import _process_state_dict_for_glu_interleaving
 
-
 MOE_FC1_KEY = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight"
 MOE_FC1_BIAS_KEY = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.bias"
 DENSE_FC1_KEY = "decoder.layers.0.mlp.linear_fc1.weight"
