@@ -12,29 +12,23 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
 ## Setup Instructions
 
-### Step 1. Virtual Environment
+Follow the steps below on login node to launch Megatron-Bridge experiments.
 
-- Create a virtual env at your preferred location on login node on a Slurm cluster and install the NeMo-Run package-
-
-  ```
-  pip install git+https://github.com/NVIDIA-NeMo/Run.git
-  ```
-
-- The YAML config files are resolved on compute node inside the container.
-
-### Step 2. Clone the Repo and Pick the corresponding release branch to the container
+### Step 1. Clone Megatron-Bridge Repo
 
   ```
   git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
-  git switch <branch> 
-  Example: If using 25.11 Container ```git switch r0.2.0
   ```
-  
-  To find out which branch is used to build the container, refer <https://docs.nvidia.com/nemo-framework/user-guide/latest/softwarecomponentversions.html>
 
-  Why? This is required because when running a job the version of Megatron-Bridge in the setup and the one built into the container should match.
+  Next, we need to switch to a branch that was used to build the container you want to use for your experiments.
 
-### Step 3. Run instructions
+  ```
+  cd Megatron-Bridge
+  git switch <branch> 
+  ```
+  Example: If using 26.04 container `git switch r0.4.0`
+
+### Step 2. Run instructions
 
 #### <ins>Examples</ins>
 
@@ -45,7 +39,7 @@ The following line shows an example of how you can launch a pre-training benchma
 You can also create a bash file to define the experiment arguments and launch it. For e.g. The bash file will look as follows-
 
 ```
-CONTAINER="nvcr.io/nvidia/nemo:25.11.01"
+CONTAINER="nvcr.io/nvidia/nemo:26.04"
 MBRIDGE_PATH="</path/to/mbridge>"
 
 JOB_NAME="dsv3_gb300"
@@ -82,7 +76,7 @@ uv run python scripts/performance/setup_experiment.py \
 ##### Container Image
 
 - `-i/--container_image`: NeMo container image to launch. For release container XX.YY use nvcr.io/nvidia/nemo:XX.YY.
-  For 25.09, use nvcr.io/nvidia/nemo:25.09. For the complete list of NGC containers refer <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags>.
+  For 26.04, use nvcr.io/nvidia/nemo:26.04. For the complete list of NGC containers refer <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags>.
   Defaults to `nvcr.io/nvidia/nemo:dev`.
 
 ##### General arguments
