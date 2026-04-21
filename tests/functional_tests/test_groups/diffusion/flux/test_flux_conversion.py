@@ -33,8 +33,8 @@ import torch
 diffusers = pytest.importorskip("diffusers")
 FluxTransformer2DModel = diffusers.FluxTransformer2DModel
 
-# Repo root: tests/functional_tests/diffusion/flux -> five parents
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+# Repo root: tests/functional_tests/test_groups/diffusion/flux -> six parents
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
 CONVERT_SCRIPT = "examples/diffusion/recipes/flux/conversion/convert_checkpoints.py"
 
 
