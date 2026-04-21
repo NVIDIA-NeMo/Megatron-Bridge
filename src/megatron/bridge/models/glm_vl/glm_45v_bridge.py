@@ -89,8 +89,7 @@ class GLM45VBridge(MegatronModelBridge):
         return provider
 
     def build_conversion_tasks(self, hf_pretrained, megatron_model):
-        """Override to store config before mapping_registry is called."""
-        self._hf_config = hf_pretrained.config
+        """Override to store HF state source before mapping_registry is called."""
         self._hf_state_source = hf_pretrained.state.source
         self._hf_keys = list(self._hf_state_source.get_all_keys())
         return super().build_conversion_tasks(hf_pretrained, megatron_model)

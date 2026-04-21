@@ -137,6 +137,46 @@ def kimi_k2_pretrain_config_gb200(
     return cfg
 
 
+def kimi_k2_pretrain_config_vr200(
+    precision: str = "bf16",
+    mock: bool = True,
+    config_variant: str = "v1",
+    optimizer_type: str = "muon",
+) -> ConfigContainer:
+    """VR200, baseline config. optimizer_type: 'adam' or 'muon' (default)."""
+    base_cfg = get_workload_base_config(
+        model_family_name="kimi",
+        model_recipe_name="kimi_k2",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+
+    cfg = pretrain_config(optimizer_type=optimizer_type)
+    precision_config = get_precision_config(precision)
+    cfg.mixed_precision = precision_config
+
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        pp_size = base_cfg.pipeline_model_parallel_size
+        vp_size = base_cfg.virtual_pipeline_model_parallel_size
+        layout = _get_kimi_k2_pipeline_layout(pp_size, vp_size)
+        cfg.model.pipeline_model_parallel_layout = layout
+
+    set_kimi_k2_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    return cfg
+
+
 def kimi_k2_pretrain_config_b200(
     precision: str = "bf16",
     mock: bool = True,

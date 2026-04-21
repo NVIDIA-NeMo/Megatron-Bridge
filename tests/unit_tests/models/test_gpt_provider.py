@@ -373,3 +373,99 @@ class TestGPTModelProvider:
         mock_te_full_spec.assert_not_called()
         mock_te_spec.assert_called_once_with(provider)
         assert result == "te_spec"
+
+    def test_dense_grouped_gemm_defaults_to_false(self):
+        """GPTModelProvider.dense_grouped_gemm defaults to False."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+        )
+        assert provider.dense_grouped_gemm is False
+
+    def test_dense_grouped_gemm_can_be_enabled(self):
+        """GPTModelProvider.dense_grouped_gemm is a settable bool attribute."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            dense_grouped_gemm=True,
+        )
+        assert provider.dense_grouped_gemm is True
+
+    def test_transformer_engine_layer_spec_forwards_dense_grouped_gemm_when_supported(self):
+        """When the upstream spec function exposes a dense_grouped_gemm parameter,
+        transformer_engine_layer_spec must forward the provider's value to it."""
+        from megatron.bridge.models.gpt_provider import transformer_engine_layer_spec
+
+        captured: dict = {}
+
+        # Signature intentionally includes `dense_grouped_gemm` so the feature-detect
+        # branch in gpt_provider.py activates.
+        def fake_spec_supported(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=False,
+            fp8=False,
+            dense_grouped_gemm=False,
+        ):
+            captured["num_experts"] = num_experts
+            captured["moe_grouped_gemm"] = moe_grouped_gemm
+            captured["qk_layernorm"] = qk_layernorm
+            captured["fp8"] = fp8
+            captured["dense_grouped_gemm"] = dense_grouped_gemm
+            return "te_spec_supported"
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            dense_grouped_gemm=True,
+        )
+
+        with patch(
+            "megatron.bridge.models.gpt_provider.get_gpt_layer_with_transformer_engine_spec",
+            new=fake_spec_supported,
+        ):
+            result = transformer_engine_layer_spec(provider)
+
+        assert result == "te_spec_supported"
+        assert captured["dense_grouped_gemm"] is True
+
+    def test_transformer_engine_layer_spec_omits_dense_grouped_gemm_when_unsupported(self):
+        """When the upstream spec function does not expose a dense_grouped_gemm
+        parameter (older Megatron-Core), transformer_engine_layer_spec must not
+        pass the kwarg — otherwise the call would raise TypeError at runtime."""
+        from megatron.bridge.models.gpt_provider import transformer_engine_layer_spec
+
+        captured: dict = {}
+
+        # Signature intentionally excludes `dense_grouped_gemm`. If the production
+        # code were to forward it, the call below would raise TypeError.
+        def fake_spec_unsupported(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=False,
+            fp8=False,
+        ):
+            captured["num_experts"] = num_experts
+            captured["moe_grouped_gemm"] = moe_grouped_gemm
+            captured["qk_layernorm"] = qk_layernorm
+            captured["fp8"] = fp8
+            return "te_spec_unsupported"
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            dense_grouped_gemm=True,
+        )
+
+        with patch(
+            "megatron.bridge.models.gpt_provider.get_gpt_layer_with_transformer_engine_spec",
+            new=fake_spec_unsupported,
+        ):
+            result = transformer_engine_layer_spec(provider)
+
+        assert result == "te_spec_unsupported"
+        assert "dense_grouped_gemm" not in captured

@@ -86,6 +86,32 @@ def gpt_oss_120b_pretrain_config_gb200(
     return cfg
 
 
+def gpt_oss_120b_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="gpt_oss",
+        model_recipe_name="gpt_oss_120b",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = gpt_oss_120b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(base_cfg.tensor_model_parallel_size > 1))
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
+    set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
 def gpt_oss_120b_pretrain_config_b300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:

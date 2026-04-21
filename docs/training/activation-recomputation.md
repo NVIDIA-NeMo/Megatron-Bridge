@@ -1,14 +1,38 @@
 # Activation Recomputation
 
-The input activations of network layers are stored in device memory and are used to compute gradients during back-propagation. When training a LLM with a long sequence length or a large micro-batch size, these input activations can quickly saturate device memory. Checkpointing a few activations and recomputing the rest is a common technique to reduce device memory usage.
+The input activations of network layers are stored in device memory and are used
+to compute gradients during back-propagation. When training a model with long
+sequences, large micro-batches, or heavy MoE memory pressure, these activations
+can quickly saturate device memory. Checkpointing some activations and
+recomputing the rest is a common way to trade extra compute for lower memory
+use.
 
-Activation recomputation in Megatron Bridge is configured through the model provider's recomputation parameters, which are based on Megatron Core's `TransformerConfig`.
+Activation recomputation in Megatron Bridge is configured through the model
+provider's recomputation parameters, which are based on Megatron Core's
+`TransformerConfig`.
+
+## Quick Guidance
+
+As a rule of thumb:
+
+- start with **selective recomputation** before using full recomputation
+- use **full recomputation** only when selective recomputation still does not fit
+- for MoE and long-context training, prefer recomputing smaller modules such as
+  normalization, activation, MoE-side, or model-specific up-projection work
+  rather than recomputing the whole layer
+- revisit recomputation after enabling CUDA graphs, because TE-scoped graphs and
+  full recomputation are not always compatible
 
 ## Transformer Layer Recomputation
 
-Megatron Bridge supports transformer layer recomputation, which checkpoints the input of each transformer layer and recomputes the activations for the remaining layers. This technique significantly reduces activation memory usage. However, it increases the per-transformer layer computation cost by 30% due to re-executing the entire layer's forward computation.
+Megatron Bridge supports transformer layer recomputation, which checkpoints the
+input of each transformer layer and recomputes the activations for the
+remaining layers. This technique significantly reduces activation memory usage.
+However, it also adds a large compute cost because the whole layer forward is
+executed again during backward.
 
-Megatron Bridge also supports partial transformer layer recomputation, which is beneficial when recomputing a few transformer layers helps to reduce enough GPU memory for the model to fit. This approach avoids the need to recompute the rest of the layers.
+Megatron Bridge also supports partial transformer layer recomputation, which is
+useful when recomputing only some layers is enough to make the model fit.
 
 ### Configuration
 
@@ -64,7 +88,10 @@ When training with pipeline parallelism:
 
 Megatron Bridge supports selective self-attention recomputation that checkpoints the inputs of each self-attention block and recomputes the intermediate input activations. This cost-efficient method achieves high memory savings with minimal recomputation cost.
 
-The intermediate layers of the self-attention block account for the majority of the activation memory because the input sizes of softmax, dropout, and QKV dot-product attention layers have memory complexity proportional to the sequence length squared. However, their recomputation cost is relatively smaller than other linear projection layers that scale with the hidden size squared.
+The intermediate layers of the self-attention block account for a large share
+of activation memory because softmax, dropout, and QKV dot-product attention
+scale with sequence length squared. Their recomputation cost is often lower than
+recomputing the larger projection-heavy parts of the layer.
 
 ![Activation Recomputation Granularity](images/activation-recomputation-example-2.jpg)
 *Figure 2: Scheme of full and selective checkpointing granularity*
@@ -104,7 +131,10 @@ model_config = GPTModelProvider(
 
 ### Flash Attention Integration
 
-Self-attention recomputation is automatically enabled when using Flash Attention through Transformer Engine. Flash Attention inherently provides memory efficiency by recomputing attention scores rather than storing them, making additional explicit recomputation often unnecessary.
+Self-attention recomputation is automatically enabled when using Flash Attention
+through Transformer Engine. Flash Attention already recovers some memory by
+recomputing attention scores rather than storing them, so extra explicit
+attention recomputation is often less important than recomputing other modules.
 
 ## Advanced Recomputation Configuration
 
@@ -124,9 +154,11 @@ model_config = GPTModelProvider(
 
 Different recomputation strategies offer different memory-computation trade-offs:
 
-- **Selective recomputation**: Provides high memory savings with minimal recomputation cost by targeting memory-intensive operations like attention
-- **Full recomputation**: Significantly reduces activation memory usage but increases per-transformer layer computation cost by approximately 30%
-- **No recomputation**: Preserves all activations in memory, requiring more GPU memory but no additional computation
+- **Selective recomputation**: Usually the best first choice. Targets the most
+  memory-expensive operations while keeping the compute penalty relatively low.
+- **Full recomputation**: Strongest memory reduction, but also the highest
+  compute overhead.
+- **No recomputation**: Best for throughput when the model already fits.
 
 ### MoE-Specific Recomputation
 
@@ -143,3 +175,23 @@ model_config = GPTModelProvider(
     recompute_modules=["moe", "moe_act"],  # Recompute MoE-specific modules
 )
 ```
+
+For MoE training, it is often better to start with selective recomputation of
+MoE-side modules, normalization, activation functions, or model-specific
+up-projection modules than to enable blanket full recomputation immediately.
+
+## Feature Interactions
+
+- TE-scoped CUDA graphs are usually paired with selective recomputation rather
+  than full recomputation.
+- MoE communication overlap paths often require recomputation settings that are
+  more selective than "full."
+- At long context, recomputing SDPA-heavy attention internals can cost more than
+  recomputing smaller supporting modules.
+
+## Related Docs
+
+- [docs/training/cuda-graphs.md](cuda-graphs.md)
+- [docs/training/moe-optimization.md](moe-optimization.md)
+- [skills/perf-techniques/activation-recompute/SKILL.md](../skills/perf-techniques/activation-recompute/SKILL.md) — per-module cost/savings data, measured results
+- [skills/perf-techniques/memory-tuning/SKILL.md](../skills/perf-techniques/memory-tuning/SKILL.md) — expandable segments, parallelism resizing, and other memory reduction strategies

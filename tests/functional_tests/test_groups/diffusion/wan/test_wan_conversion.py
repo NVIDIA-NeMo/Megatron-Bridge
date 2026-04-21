@@ -32,8 +32,8 @@ import torch
 diffusers = pytest.importorskip("diffusers")
 WanTransformer3DModel = diffusers.WanTransformer3DModel
 
-# Repo root: tests/functional_tests/diffusion/wan -> five parents
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+# Repo root: tests/functional_tests/test_groups/diffusion/wan -> six parents
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
 CONVERT_SCRIPT = "examples/diffusion/recipes/wan/conversion/convert_checkpoints.py"
 
 
