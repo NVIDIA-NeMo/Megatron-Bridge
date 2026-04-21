@@ -30,6 +30,7 @@ from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
+    from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,23 @@ def is_current_rank_in_grid(grid: "HyperCommGrid") -> bool:
     """
     current_rank = dist.get_rank()
     return grid.rank_offset <= current_rank < (grid.rank_offset + grid.size)
+
+
+def get_active_module_pg(mimo_infra: MimoModelInfra) -> tuple[str, "ProcessGroupCollection"]:
+    """Return the (module_name, pg_collection) for the single active module on this rank.
+
+    Non-colocated MiMo assigns each rank to exactly one module.  This helper
+    extracts that module's name and ``ProcessGroupCollection``.
+
+    Raises:
+        AssertionError: If more or fewer than one module is active on this rank.
+    """
+    active = [(name, pg) for name, pg in mimo_infra.pg_collections.items() if pg is not None]
+    assert len(active) == 1, (
+        f"Non-colocated MiMo requires exactly one active ProcessGroupCollection per rank, "
+        f"got {len(active)}. Colocated MiMo is not supported by this code path."
+    )
+    return active[0]
 
 
 def get_module_to_grid_tuple(
