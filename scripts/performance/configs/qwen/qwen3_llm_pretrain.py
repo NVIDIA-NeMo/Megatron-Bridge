@@ -96,6 +96,32 @@ def qwen3_235b_a22b_pretrain_config_gb200(
     return cfg
 
 
+def qwen3_235b_a22b_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="qwen",
+        model_recipe_name="qwen3_235b_a22b",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
 def qwen3_235b_a22b_pretrain_config_b300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
@@ -208,6 +234,32 @@ def qwen3_30b_a3b_pretrain_config_gb200(
         model_family_name="qwen",
         model_recipe_name="qwen3_30b_a3b",
         gpu="gb200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="qwen",
+        model_recipe_name="qwen3_30b_a3b",
+        gpu="vr200",
         compute_dtype=precision.upper(),
         task="pretrain",
         config_variant=config_variant,
