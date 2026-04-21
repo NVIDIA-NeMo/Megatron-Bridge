@@ -23,6 +23,8 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
+_HF_MODEL_ID = "Qwen/Qwen3-Next-80B-A3B-Instruct"
+
 
 def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3-Next 80B-A3B.
@@ -32,13 +34,11 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").to_megatron_provider(
-        load_weights=False
-    )
+    # Model config - using MambaModel with GDN layers (derived from HF config)
+    cfg.model = AutoBridge.from_hf_pretrained(_HF_MODEL_ID).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-Next-80B-A3B-Instruct"
+    cfg.tokenizer.tokenizer_model = _HF_MODEL_ID
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
@@ -48,13 +48,13 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     # Parallelism settings (MoE-specific: includes expert_model_parallel_size)
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = False
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
@@ -158,17 +158,20 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
     # Override dataset - Qwen3-Next does NOT support packed_sequence
     cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
 
-    # Model config from HuggingFace
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").to_megatron_provider(
-        load_weights=False
-    )
+    # Model config - using MambaModel with GDN layers (derived from HF config)
+    cfg.model = AutoBridge.from_hf_pretrained(_HF_MODEL_ID).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-Next-80B-A3B-Instruct"
+    cfg.tokenizer.tokenizer_model = _HF_MODEL_ID
 
     # Sequence length
     cfg.model.seq_length = 2048
     cfg.dataset.seq_length = 2048
+    cfg.model.init_method_std = 0.02
+
+    # Multi-Token Prediction (MTP) settings - must match pretrained checkpoint
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # Parallelism settings (MoE-specific)
     cfg.model.pipeline_model_parallel_layout = None
@@ -185,7 +188,7 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "alltoall"
     # Note: moe_flex_dispatcher_backend may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_flex_dispatcher_backend = (
-        "deepep"  # qwen3_next has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+        "deepep"  # Options: None, deepep, hybridep
     )
     cfg.model.moe_hybridep_num_sms = 16
 
