@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import Any, List, Literal, Optional, Tuple
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.transformer.moe.router import TopKRouter
 from torch import nn
@@ -29,7 +28,9 @@ from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import (
     GroupedExpertLinearAdapter,
     ParallelLinearAdapter,
+    align_expert_dim_for_tp,
     get_adapter_attributes_from_linear,
+    get_effective_lora_dim,
     is_expert_linear,
     is_grouped_expert_linear,
 )
@@ -232,43 +233,6 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
     normalize_moe_lora: bool = False
     share_expert_adapters: bool = True
 
-    def _get_effective_dim(self, m: nn.Module, is_expert: bool) -> int:
-        """Return the LoRA rank to use, reduced for expert layers when normalize_moe_lora is enabled."""
-        if not self.normalize_moe_lora or not is_expert:
-            return self.dim
-        topk = m.config.moe_router_topk
-        if topk is None or topk <= 0:
-            raise ValueError(
-                f"normalize_moe_lora is enabled but moe_router_topk is {topk!r}; "
-                f"it must be set to a positive integer on the model config"
-            )
-        if self.dim % topk != 0:
-            raise ValueError(
-                f"LoRA dim={self.dim} must be divisible by moe_router_topk={topk} when normalize_moe_lora is enabled"
-            )
-        return self.dim // topk
-
-    def _align_expert_dim_for_tp(
-        self,
-        module: nn.Module,
-        dim: int,
-        *,
-        is_expert: bool,
-        input_is_parallel: bool,
-    ) -> int:
-        """Round normalized expert LoRA ranks up to the expert-TP granularity when needed."""
-
-        if not self.normalize_moe_lora or not is_expert or input_is_parallel:
-            return dim
-
-        expert_tp_size = (
-            parallel_state.get_expert_tensor_parallel_world_size() or module.config.expert_tensor_parallel_size or 1
-        )
-        if expert_tp_size <= 1 or dim % expert_tp_size == 0:
-            return dim
-
-        return ((dim + expert_tp_size - 1) // expert_tp_size) * expert_tp_size
-
     def __post_init__(self) -> None:
         """
         Initialize the canonical mapping and call the parent post_init.
@@ -340,10 +304,13 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(m, is_expert=is_expert)
 
-            dim = self._get_effective_dim(m, is_expert)
-            dim = self._align_expert_dim_for_tp(
+            dim = get_effective_lora_dim(
+                m, dim=self.dim, normalize_moe_lora=self.normalize_moe_lora, is_expert=is_expert
+            )
+            dim = align_expert_dim_for_tp(
                 m,
                 dim,
+                normalize_moe_lora=self.normalize_moe_lora,
                 is_expert=is_expert,
                 input_is_parallel=attrs.input_is_parallel,
             )

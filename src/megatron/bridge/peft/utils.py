@@ -215,6 +215,46 @@ def is_grouped_expert_linear(fqn: str) -> bool:
     return is_expert_linear(fqn) and ".local_experts." not in fqn
 
 
+def get_effective_lora_dim(module: nn.Module, *, dim: int, normalize_moe_lora: bool, is_expert: bool) -> int:
+    """Return the LoRA rank to use, reduced for expert layers when ``normalize_moe_lora`` is enabled."""
+
+    if not normalize_moe_lora or not is_expert:
+        return dim
+    topk = module.config.moe_router_topk
+    if topk is None or topk <= 0:
+        raise ValueError(
+            f"normalize_moe_lora is enabled but moe_router_topk is {topk!r}; "
+            f"it must be set to a positive integer on the model config"
+        )
+    if dim % topk != 0:
+        raise ValueError(
+            f"LoRA dim={dim} must be divisible by moe_router_topk={topk} when normalize_moe_lora is enabled"
+        )
+    return dim // topk
+
+
+def align_expert_dim_for_tp(
+    module: nn.Module,
+    dim: int,
+    *,
+    normalize_moe_lora: bool,
+    is_expert: bool,
+    input_is_parallel: bool,
+) -> int:
+    """Round normalized expert LoRA ranks up to the expert-TP granularity when needed."""
+
+    if not normalize_moe_lora or not is_expert or input_is_parallel:
+        return dim
+
+    expert_tp_size = (
+        parallel_state.get_expert_tensor_parallel_world_size() or module.config.expert_tensor_parallel_size or 1
+    )
+    if expert_tp_size <= 1 or dim % expert_tp_size == 0:
+        return dim
+
+    return ((dim + expert_tp_size - 1) // expert_tp_size) * expert_tp_size
+
+
 def wildcard_match(pattern: str, key: Optional[str]) -> Optional[bool]:
     """Return whether the pattern (target module to add LoRA) matches the key (model weight name).
 
@@ -1086,6 +1126,11 @@ class GroupedExpertLinearAdapter(nn.Module):
         )
         outputs = []
         start = 0
+        # TODO: Replace the per-expert for-loop with a grouped GEMM
+        # (e.g. te.pytorch.GroupedLinear / TEGroupedMLP) so both adapter
+        # matrices run as single fused kernels. Per-expert LoRA makes this
+        # non-trivial because expert-TP needs an all-gather between linear_in
+        # and linear_out, and each local expert has its own A/B shard.
         for expert_idx, split_size in enumerate(expert_splits):
             expert_input = x.narrow(0, start, split_size)
             start += split_size
