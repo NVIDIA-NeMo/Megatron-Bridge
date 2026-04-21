@@ -152,6 +152,12 @@ class WanModel(VisionModule):
             dim_head=self.config.hidden_size // self.num_heads, max_position_len=1024
         )
 
+        # DEBUGGING (init following original Wan2.1)
+        # Use xavier_uniform_ for decoder TE layers to match original Wan2.1 init.
+        # Must be set before TransformerBlock is built since TE layers read init_method at construction.
+        self.config.init_method = nn.init.xavier_uniform_
+        self.config.output_layer_init_method = nn.init.xavier_uniform_
+
         # decoder blocks
         self.decoder = TransformerBlock(
             config=self.config,
@@ -176,6 +182,53 @@ class WanModel(VisionModule):
                 self.head,
             ]
         )
+
+        # Initialize weights
+        self.init_weights()
+
+    # DEBUGGING (init following original Wan2.1)
+    def init_weights(self):
+        """Initialize non-decoder parameters to match original Wan2.1 init_weights().
+
+        Decoder TE layers (TEColumnParallelLinear / TERowParallelLinear) are already
+        initialized with xavier_uniform_ via config.init_method set in __init__.
+
+        - All plain nn.Linear: xavier_uniform_ weight, zeros bias
+        - patch_embedding (Conv3d): xavier_uniform_ on flattened weight
+        - text_embedding linears: normal(std=0.02)  [matches original]
+        - time_embedder linears + time_proj: normal(std=0.02)  [matches original]
+        - head output linear: zeros weight
+        """
+        # xavier for all plain nn.Linear (text_embedding, time_embedder, time_proj, head.head)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+        # patch_embedding: Conv3d — flatten spatial dims before xavier
+        nn.init.xavier_uniform_(self.patch_embedding.weight.flatten(1))
+
+        # text_embedding: override to normal(std=0.02) matching original
+        for m in self.text_embedding.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=0.02)
+
+        # time_embedder + time_proj: override to normal(std=0.02) matching original
+        for m in self.time_embedder.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=0.02)
+        nn.init.xavier_normal_(self.time_proj.weight)
+
+        # output head: zero-init so predictions start near zero
+        nn.init.zeros_(self.head.head.weight)
+
+        # DEBUGGING (init following original Wan2.1)
+        # print param stats for comparison with original Wan2.1
+        if torch.distributed.get_rank() == 0:
+            for name, param in self.named_parameters():
+                print(f"{name:80s}  mean={param.data.float().mean():.4f}  std={param.data.float().std():.4f}  shape={list(param.shape)}")
+            print(stop_here)
 
     def forward(
         self,
