@@ -12,13 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-import random
 import time
 import unittest.mock as mock
 from dataclasses import dataclass
 from functools import partial
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -66,44 +63,6 @@ class MockModelChunk:
         yield self.layer_name, self.param
 
 
-def make_default_model_config():
-    """Create a SimpleNamespace with sane defaults for model attributes."""
-    return SimpleNamespace(
-        num_moe_experts=None,
-        moe_router_load_balancing_type="",
-        moe_z_loss_coeff=None,
-        moe_per_layer_logging=False,
-        num_layers=24,
-        moe_layer_freq=1,
-        mtp_num_layers=None,
-        kv_channels=128,
-        num_attention_heads=32,
-        hidden_size=4096,
-        num_query_groups=None,
-        moe_router_topk=1,
-        ffn_hidden_size=16384,
-        moe_ffn_hidden_size=None,
-        moe_shared_expert_intermediate_size=None,
-        gated_linear_unit=False,
-        activation_func=None,
-        multi_latent_attention=False,
-        q_lora_rank=None,
-        kv_lora_rank=None,
-        qk_head_dim=64,
-        qk_pos_emb_head_dim=0,
-        v_head_dim=64,
-        seq_length=2048,
-        vocab_size=51200,
-        make_vocab_size_divisible_by=128,
-        tensor_model_parallel_size=1,
-        group_query_attention=False,
-        num_moe_experts_routed_to=None,
-        moe_router_load_balancing_threshold=None,
-        moe_z_loss_scale=None,
-        is_hybrid_model=False,
-    )
-
-
 class TestTrainingLog:
     """Test suite for the training_log function."""
 
@@ -134,14 +93,14 @@ class TestTrainingLog:
         config.logger.log_world_size_to_tensorboard = True
         config.logger.log_memory_to_tensorboard = False
         config.logger.log_throughput = False
-        config.logger.timing_log_level = 0
 
         # Training config
         config.train.micro_batch_size = 2
         config.train.train_iters = 1000
 
-        # Model config as a simple namespace to avoid auto-mocking methods
-        config.model = make_default_model_config()
+        # Model config
+        config.model.num_moe_experts = None
+        config.model.mtp_num_layers = None
 
         # Optimizer config
         config.optimizer.decoupled_lr = None
@@ -191,10 +150,12 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     def test_basic_logging_without_skip(
         self,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -210,6 +171,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Override iteration to avoid log interval reset (101 % 5 != 0)
         mock_global_state.train_state.step = 101
@@ -251,10 +213,12 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     def test_skipped_iterations(
         self,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -270,6 +234,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Override iteration to avoid log interval reset (101 % 5 != 0)
         mock_global_state.train_state.step = 101
@@ -308,10 +273,12 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     def test_nan_detection(
         self,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -326,6 +293,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Override iteration to avoid log interval reset (101 % 5 != 0)
         mock_global_state.train_state.step = 101
@@ -359,6 +327,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
@@ -369,6 +338,7 @@ class TestTrainingLog:
         mock_report_throughput,
         mock_report_runtime,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -387,6 +357,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Set iteration to match tensorboard logging interval
         mock_global_state.train_state.step = 100  # Should trigger tensorboard logging (100 % 10 == 0)
@@ -416,144 +387,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
-    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
-    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
-    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
-    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
-    def test_timing_log_level_1(
-        self,
-        mock_report_l2_norm_grad,
-        mock_report_throughput,
-        mock_report_runtime,
-        mock_print_rank_last,
-        mock_get_world_size,
-        mock_reduce_lr,
-        mock_get_microbatches,
-        mock_config,
-        mock_global_state,
-        loss_dict,
-    ):
-        """Test that timing_log_level=1 includes level 1 timers."""
-        total_loss_dict = self.get_fresh_total_loss_dict()
-
-        # Setup mocks
-        mock_report_l2_norm_grad.return_value = {}
-        mock_report_throughput.return_value = {}
-        mock_report_runtime.return_value = {}
-        mock_get_microbatches.return_value = 8
-        mock_reduce_lr.return_value = 1e-4
-        mock_get_world_size.return_value = 32
-
-        # Set timing_log_level to 1
-        mock_config.logger.timing_log_level = 1
-        mock_global_state.train_state.step = 100
-        mock_config.logger.tensorboard_log_interval = 10
-
-        training_log(
-            loss_dict=loss_dict,
-            total_loss_dict=total_loss_dict,
-            learning_rate=1e-4,
-            decoupled_learning_rate=None,
-            loss_scale=1024.0,
-            report_memory_flag=False,
-            skipped_iter=0,
-            grad_norm=2.5,
-            params_norm=15.2,
-            num_zeros_in_grad=0,
-            config=mock_config,
-            global_state=mock_global_state,
-            history_wct=None,
-            model=None,
-        )
-
-        # Verify timers.write was called with level 1 timers
-        mock_global_state.timers.write.assert_called()
-        call_args = mock_global_state.timers.write.call_args
-        timers_to_log = call_args[0][0]
-
-        # Level 1 timers should be present
-        assert "forward-backward" in timers_to_log
-        assert "optimizer" in timers_to_log
-        assert "layernorm-grads-all-reduce" in timers_to_log
-
-        # Level 2 timers should NOT be present
-        assert "batch-generator" not in timers_to_log
-        assert "forward-compute" not in timers_to_log
-        assert "backward-compute" not in timers_to_log
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
-    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
-    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
-    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
-    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
-    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
-    def test_timing_log_level_2(
-        self,
-        mock_report_l2_norm_grad,
-        mock_report_throughput,
-        mock_report_runtime,
-        mock_print_rank_last,
-        mock_get_world_size,
-        mock_reduce_lr,
-        mock_get_microbatches,
-        mock_config,
-        mock_global_state,
-        loss_dict,
-    ):
-        """Test that timing_log_level=2 includes both level 1 and level 2 timers."""
-        total_loss_dict = self.get_fresh_total_loss_dict()
-
-        # Setup mocks
-        mock_report_l2_norm_grad.return_value = {}
-        mock_report_throughput.return_value = {}
-        mock_report_runtime.return_value = {}
-        mock_get_microbatches.return_value = 8
-        mock_reduce_lr.return_value = 1e-4
-        mock_get_world_size.return_value = 32
-
-        # Set timing_log_level to 2
-        mock_config.logger.timing_log_level = 2
-        mock_global_state.train_state.step = 100
-        mock_config.logger.tensorboard_log_interval = 10
-
-        training_log(
-            loss_dict=loss_dict,
-            total_loss_dict=total_loss_dict,
-            learning_rate=1e-4,
-            decoupled_learning_rate=None,
-            loss_scale=1024.0,
-            report_memory_flag=False,
-            skipped_iter=0,
-            grad_norm=2.5,
-            params_norm=15.2,
-            num_zeros_in_grad=0,
-            config=mock_config,
-            global_state=mock_global_state,
-            history_wct=None,
-            model=None,
-        )
-
-        # Verify timers.write was called with both level 1 and level 2 timers
-        mock_global_state.timers.write.assert_called()
-        call_args = mock_global_state.timers.write.call_args
-        timers_to_log = call_args[0][0]
-
-        # Level 1 timers should be present
-        assert "forward-backward" in timers_to_log
-        assert "optimizer" in timers_to_log
-        assert "layernorm-grads-all-reduce" in timers_to_log
-
-        # Level 2 timers should also be present
-        assert "batch-generator" in timers_to_log
-        assert "forward-compute" in timers_to_log
-        assert "backward-compute" in timers_to_log
-        assert "forward-recv" in timers_to_log
-        assert "backward-send" in timers_to_log
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
-    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_theoretical_memory")
@@ -564,6 +398,7 @@ class TestTrainingLog:
         mock_report_theoretical,
         mock_report_memory,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -579,6 +414,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
         mock_get_rank.return_value = 0
 
         # Set iteration to match log interval for memory reporting
@@ -613,114 +449,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
-    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
-    @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
-    @mock.patch("megatron.bridge.training.utils.train_utils.report_theoretical_memory")
-    @mock.patch("torch.distributed.get_rank")
-    def test_memory_reporting_kept_on_second_iteration(
-        self,
-        mock_get_rank,
-        mock_report_theoretical,
-        mock_report_memory,
-        mock_print_rank_last,
-        mock_get_world_size,
-        mock_reduce_lr,
-        mock_get_microbatches,
-        mock_config,
-        mock_global_state,
-        loss_dict,
-    ):
-        """Test memory flag is kept on the second iteration to capture optimizer state peak."""
-        total_loss_dict = self.get_fresh_total_loss_dict()
-
-        mock_get_microbatches.return_value = 8
-        mock_reduce_lr.return_value = 1e-4
-        mock_get_world_size.return_value = 32
-        mock_get_rank.return_value = 0
-
-        # Iteration 1 with loaded_iteration=0: flag should be kept
-        mock_global_state.train_state.step = 1
-        mock_config.logger.log_interval = 1
-
-        result = training_log(
-            loss_dict=loss_dict,
-            total_loss_dict=total_loss_dict,
-            learning_rate=1e-4,
-            decoupled_learning_rate=None,
-            loss_scale=1024.0,
-            report_memory_flag=True,
-            skipped_iter=0,
-            grad_norm=2.5,
-            params_norm=15.2,
-            num_zeros_in_grad=0,
-            config=mock_config,
-            global_state=mock_global_state,
-            history_wct=None,
-            model=None,
-            loaded_iteration=0,
-        )
-
-        # Flag should remain True (iteration 1 <= loaded_iteration + 1)
-        assert result is True
-        mock_report_memory.assert_called_once()
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
-    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
-    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
-    @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
-    @mock.patch("megatron.bridge.training.utils.train_utils.report_theoretical_memory")
-    @mock.patch("torch.distributed.get_rank")
-    def test_memory_reporting_checkpoint_resume(
-        self,
-        mock_get_rank,
-        mock_report_theoretical,
-        mock_report_memory,
-        mock_print_rank_last,
-        mock_get_world_size,
-        mock_reduce_lr,
-        mock_get_microbatches,
-        mock_config,
-        mock_global_state,
-        loss_dict,
-    ):
-        """Test memory reporting after checkpoint resume reports for 2 iterations."""
-        total_loss_dict = self.get_fresh_total_loss_dict()
-
-        mock_get_microbatches.return_value = 8
-        mock_reduce_lr.return_value = 1e-4
-        mock_get_world_size.return_value = 32
-        mock_get_rank.return_value = 0
-
-        # First iteration after resume from checkpoint at iteration 100
-        mock_global_state.train_state.step = 101
-        mock_config.logger.log_interval = 1
-
-        result = training_log(
-            loss_dict=loss_dict,
-            total_loss_dict=total_loss_dict,
-            learning_rate=1e-4,
-            decoupled_learning_rate=None,
-            loss_scale=1024.0,
-            report_memory_flag=True,
-            skipped_iter=0,
-            grad_norm=2.5,
-            params_norm=15.2,
-            num_zeros_in_grad=0,
-            config=mock_config,
-            global_state=mock_global_state,
-            history_wct=None,
-            model=None,
-            loaded_iteration=100,
-        )
-
-        # Flag should remain True (101 <= 100 + 1)
-        assert result is True
-        mock_report_memory.assert_called_once()
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
-    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.track_moe_metrics")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
@@ -733,6 +462,7 @@ class TestTrainingLog:
         mock_report_runtime,
         mock_track_moe,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -751,6 +481,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Enable MoE configuration
         mock_config.model.num_moe_experts = 8
@@ -787,6 +518,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.track_moe_metrics")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
@@ -799,6 +531,7 @@ class TestTrainingLog:
         mock_report_runtime,
         mock_track_moe,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -816,6 +549,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Enable MoE with seq_aux_loss
         mock_config.model.num_moe_experts = 8
@@ -856,6 +590,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.track_moe_metrics")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
@@ -868,6 +603,7 @@ class TestTrainingLog:
         mock_report_runtime,
         mock_track_moe,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -885,6 +621,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Enable MoE with global_aux_loss
         mock_config.model.num_moe_experts = 8
@@ -925,6 +662,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.track_moe_metrics")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
@@ -937,6 +675,7 @@ class TestTrainingLog:
         mock_report_runtime,
         mock_track_moe,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -954,6 +693,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Enable MoE with combined aux losses (string contains multiple types)
         mock_config.model.num_moe_experts = 8
@@ -995,6 +735,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.track_moe_metrics")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
@@ -1007,6 +748,7 @@ class TestTrainingLog:
         mock_report_runtime,
         mock_track_moe,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -1024,6 +766,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Enable MoE with only z_loss
         mock_config.model.num_moe_experts = 8
@@ -1064,6 +807,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.track_moe_metrics")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
@@ -1076,6 +820,7 @@ class TestTrainingLog:
         mock_report_runtime,
         mock_track_moe,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -1093,6 +838,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Enable MoE with aux_loss but no z_loss
         mock_config.model.num_moe_experts = 8
@@ -1131,6 +877,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.MTPLossLoggingHelper")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
@@ -1143,6 +890,7 @@ class TestTrainingLog:
         mock_report_runtime,
         mock_mtp_helper,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -1161,6 +909,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Enable MTP configuration
         mock_config.model.mtp_num_layers = 4
@@ -1189,10 +938,73 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage")
+    @mock.patch("megatron.core.pipeline_parallel.utils.is_pp_last_stage")
+    def test_decoupled_learning_rate(
+        self,
+        mock_is_pp_last,
+        mock_is_pp_first,
+        mock_print_rank_last,
+        mock_is_last_rank,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test decoupled learning rate logging."""
+        # Get fresh total_loss_dict for this test
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        # Setup mocks
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
+        mock_is_pp_first.return_value = True
+        mock_is_pp_last.return_value = False
+
+        # Enable decoupled learning rate
+        mock_config.optimizer.decoupled_lr = 0.01
+
+        # Set iteration to match log interval
+        mock_global_state.train_state.step = 5
+        mock_config.logger.log_interval = 5
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=2e-5,  # Different from regular LR
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        # Check that the log string includes decoupled learning rate
+        mock_print_rank_last.assert_called()
+        log_call_args = mock_print_rank_last.call_args[0][0]
+        assert "decoupled learning rate" in log_call_args
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     def test_energy_monitoring(
         self,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -1208,6 +1020,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Enable energy monitoring
         mock_energy_monitor = mock.MagicMock()
@@ -1255,8 +1068,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe")
-    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("torch.cuda.memory._snapshot")
     @mock.patch("builtins.open")
@@ -1273,8 +1085,7 @@ class TestTrainingLog:
         mock_open,
         mock_memory_snapshot,
         mock_print_rank_last,
-        mock_print_rank_0,
-        mock_get_rank_safe,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -1293,7 +1104,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
-        mock_get_rank_safe.return_value = 7
+        mock_is_last_rank.return_value = True
         mock_memory_snapshot.return_value = {"mock": "snapshot"}
         mock_file_handle = mock.MagicMock()
         mock_open.return_value.__enter__.return_value = mock_file_handle
@@ -1302,12 +1113,11 @@ class TestTrainingLog:
         mock_profiling_config = mock.MagicMock()
         mock_profiling_config.record_memory_history = True
         mock_profiling_config.memory_snapshot_path = "/tmp/memory_snapshot.pkl"
-        mock_profiling_config.profile_ranks = [7]
         mock_config.profiling = mock_profiling_config
-        mock_config.logger.tensorboard_dir = "/tmp/tb"
 
-        # Set iteration (snapshot itself is not gated by tensorboard log interval anymore)
+        # Set iteration to match tensorboard logging interval
         mock_global_state.train_state.step = 10
+        mock_config.logger.tensorboard_log_interval = 10
 
         training_log(
             loss_dict=loss_dict,
@@ -1328,13 +1138,13 @@ class TestTrainingLog:
 
         # Verify memory snapshot was taken and saved
         mock_memory_snapshot.assert_called_once()
-        mock_open.assert_called_once_with("/tmp/memory_snapshot_7.pkl", "wb")
+        mock_open.assert_called_once_with("/tmp/memory_snapshot.pkl", "wb")
         mock_pickle_dump.assert_called_once_with({"mock": "snapshot"}, mock_file_handle)
-        mock_print_rank_0.assert_any_call("Saved memory snapshot to /tmp/memory_snapshot_7.pkl")
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
@@ -1345,6 +1155,7 @@ class TestTrainingLog:
         mock_report_throughput,
         mock_report_runtime,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -1363,6 +1174,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Set iteration to match tensorboard logging interval
         mock_global_state.train_state.step = 10
@@ -1400,10 +1212,12 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     def test_no_loggers_present(
         self,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -1419,11 +1233,11 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         # Remove loggers
         mock_global_state.tensorboard_logger = None
         mock_global_state.wandb_logger = None
-        mock_global_state.mlflow_logger = None
 
         # Set iteration to match logging intervals
         mock_global_state.train_state.step = 10
@@ -1455,6 +1269,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
@@ -1469,6 +1284,7 @@ class TestTrainingLog:
         mock_report_memory,
         mock_memory_stats,
         mock_print_rank_last,
+        mock_is_last_rank,
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
@@ -1487,6 +1303,7 @@ class TestTrainingLog:
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
+        mock_is_last_rank.return_value = True
 
         mock_memory_stats.return_value = {
             "mem-reserved-gigabytes": 2.048,
@@ -1649,64 +1466,6 @@ class TestTrainingLog:
         assert "Warning: elapsed_wct is -5.0" in warning_message
         assert "skipping throughput calculation" in warning_message
         assert f"iteration {iteration}" in warning_message
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
-    def test_report_throughput_resume_from_ckpt(self, mock_print_rank_0):
-        global_batch_size = 128
-        micro_batch_size = 2
-        iteration = 100
-        seq_length = 8192
-        window_size = 10
-
-        # first run
-        history_wct = [i + random.uniform(2, 2.5) for i in range(window_size)]
-        train_config = MockTrainConfig(global_batch_size=global_batch_size, micro_batch_size=micro_batch_size)
-        throughput_report_initial = report_throughput(
-            train_config=train_config,
-            iteration=iteration,
-            seq_length=seq_length,
-            history_wct=history_wct,
-            window_size=window_size,
-        )
-
-        assert "throughput/tokens_per_sec" in list(throughput_report_initial.keys())
-        assert "throughput/samples_per_sec" in list(throughput_report_initial.keys())
-
-        # second run with no metrics for the first iterations (<= window_size)
-        history_wct = [i + random.uniform(2, 3) for i in range(2)]
-        iteration = 102
-        throughput_report_resume = report_throughput(
-            train_config=train_config,
-            iteration=iteration,
-            seq_length=seq_length,
-            history_wct=history_wct,
-            window_size=window_size,
-        )
-
-        assert throughput_report_resume == {}
-
-        # second run with metrics
-        history_wct = [i + random.uniform(2, 2.5) for i in range(window_size)]
-        iteration = 110
-        throughput_report_resume = report_throughput(
-            train_config=train_config,
-            iteration=iteration,
-            seq_length=seq_length,
-            history_wct=history_wct,
-            window_size=window_size,
-        )
-
-        assert "throughput/tokens_per_sec" in list(throughput_report_resume.keys())
-        assert "throughput/samples_per_sec" in list(throughput_report_resume.keys())
-
-        resume_tokens = throughput_report_resume["throughput/tokens_per_sec"]
-        initial_tokens = throughput_report_initial["throughput/tokens_per_sec"]
-
-        # check that there is no spike
-        if resume_tokens > initial_tokens:
-            assert (1 - initial_tokens / resume_tokens) <= 0.1
-        else:
-            assert (1 - resume_tokens / initial_tokens) <= 0.1
 
     def test_l2_norm_grad(self):
         """Test l2 norm grad metrics."""
@@ -2766,327 +2525,3 @@ class TestCalcParamsL2Norm:
         # This currently raises a TypeError because None is passed to multi_tensor_l2norm
         with pytest.raises(TypeError, match="incompatible function arguments"):
             calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
-
-    # ==================== MoE BF16 main_param tests ====================
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
-    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
-    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
-    @mock.patch("torch.distributed.get_process_group_ranks")
-    @mock.patch("torch.distributed.all_reduce")
-    def test_moe_params_bf16_with_main_param(
-        self,
-        mock_all_reduce,
-        mock_get_ranks,
-        mock_get_expert_group,
-        mock_get_model_group,
-        mock_get_dp_group,
-        mock_to_local,
-        mock_is_not_tp_dup,
-        mock_get_dp_group_if_dtensor,
-        mock_model_config_bf16,
-    ):
-        """Test calc_params_l2_norm with MoE params in BF16 mode using main_param.
-
-        This tests the memory optimization where MoE params use the existing
-        main_param (FP32 copy from optimizer) instead of creating a new FP32 copy.
-        """
-        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
-
-        # Setup mocks
-        mock_get_dp_group_if_dtensor.return_value = None
-        mock_is_not_tp_dup.return_value = True
-        mock_to_local.side_effect = lambda x: x
-        mock_get_ranks.return_value = [0]
-
-        # Mark as MoE param and add main_param attribute
-        for param in model.parameters():
-            torch.nn.init.constant_(param, 1.0)
-            param.allreduce = False  # MoE parameter
-            param.main_param = torch.ones_like(param, dtype=torch.float32).cuda()
-            param.main_param_sharded = False
-
-        expected_norm = 5.0  # sqrt(25)
-
-        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
-
-        assert result == pytest.approx(expected_norm, rel=1e-5)
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
-    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
-    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
-    @mock.patch("torch.distributed.get_process_group_ranks")
-    @mock.patch("torch.distributed.all_reduce")
-    def test_moe_params_bf16_with_sharded_main_param(
-        self,
-        mock_all_reduce,
-        mock_get_ranks,
-        mock_get_expert_group,
-        mock_get_model_group,
-        mock_get_dp_group,
-        mock_to_local,
-        mock_is_not_tp_dup,
-        mock_get_dp_group_if_dtensor,
-        mock_model_config_bf16,
-    ):
-        """Test calc_params_l2_norm with MoE params using sharded main_param (distributed optimizer).
-
-        When MoE params have main_param_sharded=True, they should be added to
-        sharded_params_data for proper all-reduce across DP groups.
-        """
-        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
-
-        # Setup mocks
-        mock_get_dp_group_if_dtensor.return_value = None
-        mock_is_not_tp_dup.return_value = True
-        mock_to_local.side_effect = lambda x: x
-        mock_get_ranks.return_value = [0]
-
-        # Mark as MoE param with sharded main_param
-        for param in model.parameters():
-            torch.nn.init.constant_(param, 1.0)
-            param.allreduce = False  # MoE parameter
-            param.main_param = torch.ones(13, dtype=torch.float32).cuda()  # Sharded to 13 elements
-            param.main_param_sharded = True
-
-        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
-
-        # Should use sharded params path and call all_reduce
-        assert isinstance(result, float)
-        assert result > 0
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
-    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
-    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
-    @mock.patch("torch.distributed.get_process_group_ranks")
-    @mock.patch("torch.distributed.all_reduce")
-    def test_moe_params_bf16_without_main_param(
-        self,
-        mock_all_reduce,
-        mock_get_ranks,
-        mock_get_expert_group,
-        mock_get_model_group,
-        mock_get_dp_group,
-        mock_to_local,
-        mock_is_not_tp_dup,
-        mock_get_dp_group_if_dtensor,
-        mock_model_config_bf16,
-    ):
-        """Test calc_params_l2_norm with MoE params in BF16 mode without main_param.
-
-        When main_param is not available, should fallback to creating FP32 copy
-        from bf16 data.
-        """
-        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
-
-        # Setup mocks
-        mock_get_dp_group_if_dtensor.return_value = None
-        mock_is_not_tp_dup.return_value = True
-        mock_to_local.side_effect = lambda x: x
-        mock_get_ranks.return_value = [0]
-
-        # Mark as MoE param without main_param attribute
-        for param in model.parameters():
-            torch.nn.init.constant_(param, 1.0)
-            param.allreduce = False  # MoE parameter
-            # No main_param attribute - should fallback to param.data.float()
-
-        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
-
-        # Should create FP32 copy from bf16 params
-        expected_norm = 5.0  # sqrt(25)
-        assert result == pytest.approx(expected_norm, rel=1e-3)
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
-    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
-    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
-    @mock.patch("torch.distributed.get_process_group_ranks")
-    @mock.patch("torch.distributed.all_reduce")
-    def test_moe_params_force_create_fp32_copy(
-        self,
-        mock_all_reduce,
-        mock_get_ranks,
-        mock_get_expert_group,
-        mock_get_model_group,
-        mock_get_dp_group,
-        mock_to_local,
-        mock_is_not_tp_dup,
-        mock_get_dp_group_if_dtensor,
-        mock_model_config_bf16,
-    ):
-        """Test force_create_fp32_copy flag ignores main_param for MoE params."""
-        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
-
-        # Setup mocks
-        mock_get_dp_group_if_dtensor.return_value = None
-        mock_is_not_tp_dup.return_value = True
-        mock_to_local.side_effect = lambda x: x
-        mock_get_ranks.return_value = [0]
-
-        # Mark as MoE param with main_param that should be ignored
-        for param in model.parameters():
-            torch.nn.init.constant_(param, 1.0)
-            param.allreduce = False  # MoE parameter
-            # Set main_param to zeros - it should be ignored with force_create_fp32_copy=True
-            param.main_param = torch.zeros_like(param, dtype=torch.float32).cuda()
-            param.main_param_sharded = False
-
-        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=True)
-
-        # Should create FP32 copy from bf16 params (value 1.0), not use main_param (value 0.0)
-        expected_norm = 5.0  # sqrt(25 * 1.0^2)
-        assert result == pytest.approx(expected_norm, rel=1e-3)
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
-    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
-    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
-    @mock.patch("torch.distributed.get_process_group_ranks")
-    @mock.patch("torch.distributed.all_reduce")
-    def test_moe_main_param_none_with_sharded(
-        self,
-        mock_all_reduce,
-        mock_get_ranks,
-        mock_get_expert_group,
-        mock_get_model_group,
-        mock_get_dp_group,
-        mock_to_local,
-        mock_is_not_tp_dup,
-        mock_get_dp_group_if_dtensor,
-        mock_model_config_bf16,
-    ):
-        """Test MoE params when main_param is None with main_param_sharded=True.
-
-        When main_param_sharded=True but main_param is None, the parameter is skipped
-        (nothing is added to sharded_params_data list).
-        """
-        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
-
-        # Setup mocks
-        mock_get_dp_group_if_dtensor.return_value = None
-        mock_is_not_tp_dup.return_value = True
-        mock_to_local.side_effect = lambda x: x
-        mock_get_ranks.return_value = [0]
-
-        # Mark as MoE param with main_param=None and main_param_sharded=True
-        for param in model.parameters():
-            torch.nn.init.constant_(param, 1.0)
-            param.allreduce = False  # MoE parameter
-            param.main_param = None
-            param.main_param_sharded = True
-
-        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
-
-        # Parameter is skipped, so norm should be 0
-        assert result == pytest.approx(0.0, abs=1e-5)
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
-    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
-    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
-    @mock.patch("torch.distributed.get_process_group_ranks")
-    @mock.patch("torch.distributed.all_reduce")
-    def test_moe_main_param_none_without_sharded(
-        self,
-        mock_all_reduce,
-        mock_get_ranks,
-        mock_get_expert_group,
-        mock_get_model_group,
-        mock_get_dp_group,
-        mock_to_local,
-        mock_is_not_tp_dup,
-        mock_get_dp_group_if_dtensor,
-        mock_model_config_bf16,
-    ):
-        """Test MoE params when main_param is None with main_param_sharded=False.
-
-        This is an edge case that causes an error because None is added to
-        moe_params_data, and multi_tensor_l2norm doesn't accept None values.
-        """
-        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
-
-        # Setup mocks
-        mock_get_dp_group_if_dtensor.return_value = None
-        mock_is_not_tp_dup.return_value = True
-        mock_to_local.side_effect = lambda x: x
-        mock_get_ranks.return_value = [0]
-
-        # Mark as MoE param with main_param=None and main_param_sharded=False
-        for param in model.parameters():
-            torch.nn.init.constant_(param, 1.0)
-            param.allreduce = False  # MoE parameter
-            param.main_param = None
-            param.main_param_sharded = False
-
-        # This currently raises a TypeError because None is passed to multi_tensor_l2norm
-        with pytest.raises(TypeError, match="incompatible function arguments"):
-            calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
-    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
-    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
-    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
-    @mock.patch("torch.distributed.get_process_group_ranks")
-    @mock.patch("torch.distributed.all_reduce")
-    def test_mixed_dense_and_moe_params_bf16_with_main_param(
-        self,
-        mock_all_reduce,
-        mock_get_ranks,
-        mock_get_expert_group,
-        mock_get_model_group,
-        mock_get_dp_group,
-        mock_to_local,
-        mock_is_not_tp_dup,
-        mock_get_dp_group_if_dtensor,
-        mock_model_config_bf16,
-    ):
-        """Test calc_params_l2_norm with mixed dense and MoE params in BF16 with main_param.
-
-        Both dense and MoE params should use main_param optimization when available.
-        """
-        # Create a model with multiple layers
-        model = torch.nn.Sequential(
-            torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16),
-            torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16),
-        ).cuda()
-
-        # Setup mocks
-        mock_get_dp_group_if_dtensor.return_value = None
-        mock_is_not_tp_dup.return_value = True
-        mock_to_local.side_effect = lambda x: x
-        mock_get_ranks.return_value = [0]
-
-        # Initialize all params and add main_param
-        params = list(model.parameters())
-        for param in params:
-            torch.nn.init.constant_(param, 1.0)
-            param.main_param = torch.ones_like(param, dtype=torch.float32).cuda()
-            param.main_param_sharded = False
-
-        # Mark first layer as dense, second as MoE
-        params[0].allreduce = True
-        params[1].allreduce = False
-
-        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
-
-        # Both layers contribute: sqrt(25 + 25) = sqrt(50)
-        expected_norm = math.sqrt(50)
-        assert result == pytest.approx(expected_norm, rel=1e-5)

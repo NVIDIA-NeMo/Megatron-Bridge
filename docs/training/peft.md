@@ -143,10 +143,10 @@ Note: dimensions of weight matrices are as follows:
 
 $$
 \begin{align}
-W_q:     &\ n_q d \times h          \qquad & A_q:     &\ r \times h \qquad  & B_q:     &\ n_q d \times r \\
-W_k:     &\ n_{kv} d \times h       \qquad & A_k:     &\ r \times h \qquad  & B_k:     &\ n_{kv} d \times r \\
-W_v:     &\ n_{kv} d \times h       \qquad & A_v:     &\ r \times h \qquad  & B_v:     &\ n_{kv} d \times r \\
-W_{qkv}: &\ (n_q+2n_{kv})d \times h \qquad & A_{qkv}: &\ r \times h \qquad  & B_{qkv}: &\ (n_q+2n_{kv})d \times r
+W_q:     &\ h \times n_q d          \qquad & A_q:     &\ h \times r \qquad  & B_q:     &\ r \times n_q d \\
+W_k:     &\ h \times n_{kv} d       \qquad & A_k:     &\ h \times r \qquad  & B_k:     &\ r \times n_{kv} d \\
+W_v:     &\ h \times n_{kv} d       \qquad & A_v:     &\ h \times r \qquad  & B_v:     &\ r \times n_{kv} d \\
+W_{qkv}: &\ h \times (n_q+2n_{kv})d \qquad & A_{qkv}: &\ h \times r \qquad  & B_{qkv}: &\ r \times (n_q+2n_{kv})d
 \end{align}
 $$
 

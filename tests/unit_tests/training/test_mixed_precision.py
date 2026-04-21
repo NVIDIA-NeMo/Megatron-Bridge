@@ -20,10 +20,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
-from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.config import DistributedDataParallelConfig, OptimizerConfig
 from megatron.bridge.training.mixed_precision import (
     MixedPrecisionConfig,
@@ -847,42 +845,3 @@ class TestRegisterAndGetMixedPrecisionConfig:
 
         assert result is config
         assert result.fp16 is True
-
-
-def _make_gpt_model_config_for_mp():
-    """Create a GPTModelConfig suitable for mixed precision tests."""
-    tc = TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=1)
-    return GPTModelConfig(transformer=tc, vocab_size=32000)
-
-
-class TestMixedPrecisionSetupWithModelConfig:
-    """Tests that MixedPrecisionConfig.setup() works with real GPTModelConfig instances.
-
-    GPTModelConfig uses __setattr__ proxying to forward attribute writes to its
-    embedded TransformerConfig, so these tests verify that the mixed-precision
-    setup path correctly propagates values through that proxy layer.
-    """
-
-    def test_setup_with_gpt_model_config_bf16(self):
-        """setup() with bf16 settings propagates through GPTModelConfig proxy."""
-        mixed_precision_config = MixedPrecisionConfig(bf16=True, fp16=False, params_dtype=torch.bfloat16)
-
-        config = _make_gpt_model_config_for_mp()
-        mixed_precision_config.setup(config)
-
-        assert config.bf16 is True
-        assert config.transformer.bf16 is True
-        assert config.params_dtype == torch.bfloat16
-        assert config.transformer.params_dtype == torch.bfloat16
-
-    def test_setup_with_gpt_model_config_fp16(self):
-        """setup() with fp16 settings propagates through GPTModelConfig proxy."""
-        mixed_precision_config = MixedPrecisionConfig(fp16=True, bf16=False, params_dtype=torch.float16)
-
-        config = _make_gpt_model_config_for_mp()
-        mixed_precision_config.setup(config)
-
-        assert config.fp16 is True
-        assert config.transformer.fp16 is True
-        assert config.params_dtype == torch.float16
-        assert config.transformer.params_dtype == torch.float16

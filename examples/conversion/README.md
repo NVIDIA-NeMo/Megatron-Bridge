@@ -16,13 +16,13 @@ Demonstrates round-trip conversion between HuggingFace and Megatron-LM model for
 **Usage:**
 ```bash
 # Basic conversion (uses default Llama-3.2-1B)
-uv run python examples/conversion/hf_megatron_roundtrip.py
+python examples/conversion/hf_megatron_roundtrip.py
 
 # Convert specific model
-uv run python examples/conversion/hf_megatron_roundtrip.py --hf-model-id meta-llama/Llama-3.2-3B
+python examples/conversion/hf_megatron_roundtrip.py --hf-model-id meta-llama/Llama-3.2-3B
 
 # Save to specific directory
-uv run python examples/conversion/hf_megatron_roundtrip.py --hf-model-id meta-llama/Llama-3.2-1B --output-dir ./converted_models
+python examples/conversion/hf_megatron_roundtrip.py --hf-model-id meta-llama/Llama-3.2-1B --output-dir ./converted_models
 ```
 
 **Example Output:**
@@ -59,12 +59,12 @@ A tool for importing/exporting models between HuggingFace and Megatron checkpoin
 **Import HF to Megatron:**
 ```bash
 # Basic import
-uv run python examples/conversion/convert_checkpoints.py import \
+python examples/conversion/convert_checkpoints.py import \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b
 
 # Import with custom settings
-uv run python examples/conversion/convert_checkpoints.py import \
+python examples/conversion/convert_checkpoints.py import \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b \
   --torch-dtype bfloat16 \
@@ -74,13 +74,13 @@ uv run python examples/conversion/convert_checkpoints.py import \
 **Export Megatron to HF:**
 ```bash
 # Basic export
-uv run python examples/conversion/convert_checkpoints.py export \
+python examples/conversion/convert_checkpoints.py export \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b \
   --hf-path ./exports/llama3_2_1b_hf
 
 # Export without progress bar
-uv run python examples/conversion/convert_checkpoints.py export \
+python examples/conversion/convert_checkpoints.py export \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b \
   --hf-path ./exports/llama3_2_1b_hf \
@@ -114,13 +114,13 @@ Demonstrates text generation using HuggingFace models converted to Megatron form
 **Single GPU generation:**
 ```bash
 # From HuggingFace model
-uv run python examples/conversion/hf_to_megatron_generate_text.py \
+python examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path meta-llama/Llama-3.2-1B \
   --prompt "Hello, how are you?" \
   --max_new_tokens 50
 
 # From Megatron checkpoint
-uv run python examples/conversion/hf_to_megatron_generate_text.py \
+python examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path meta-llama/Llama-3.2-1B \
   --megatron_model_path ./checkpoints/llama3_2_1b \
   --prompt "The future of AI is" \
@@ -130,13 +130,13 @@ uv run python examples/conversion/hf_to_megatron_generate_text.py \
 **Multi-GPU generation:**
 ```bash
 # Tensor parallelism
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/hf_to_megatron_generate_text.py \
+torchrun --nproc_per_node=2 examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path meta-llama/Llama-3.2-1B \
   --prompt "Hello world" \
   --tp 2
 
 # Pipeline parallelism
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/hf_to_megatron_generate_text.py \
+torchrun --nproc_per_node=2 examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path meta-llama/Llama-3.2-1B \
   --prompt "Hello world" \
   --pp 2
@@ -175,14 +175,14 @@ Demonstrates vision-language model inference with support for both image and tex
 **With image input:**
 ```bash
 # Image from URL
-uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
+python examples/conversion/hf_to_megatron_generate_vlm.py \
   --hf_model_path Qwen/Qwen2.5-VL-3B-Instruct \
   --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
   --prompt "Describe this image." \
   --max_new_tokens 100
 
 # Local image file
-uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
+python examples/conversion/hf_to_megatron_generate_vlm.py \
   --hf_model_path Qwen/Qwen2.5-VL-3B-Instruct \
   --image_path ./images/sample.jpg \
   --prompt "What objects do you see in this image?"
@@ -190,7 +190,7 @@ uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 
 **Text-only generation:**
 ```bash
-uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
+python examples/conversion/hf_to_megatron_generate_vlm.py \
   --hf_model_path Qwen/Qwen2.5-VL-3B-Instruct \
   --prompt "Hello, how are you?" \
   --max_new_tokens 50
@@ -198,7 +198,7 @@ uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 
 **Multi-GPU with vision:**
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/hf_to_megatron_generate_vlm.py \
+torchrun --nproc_per_node=2 examples/conversion/hf_to_megatron_generate_vlm.py \
   --hf_model_path Qwen/Qwen2.5-VL-3B-Instruct \
   --image_path ./images/sample.jpg \
   --prompt "Describe this image." \
@@ -224,7 +224,7 @@ Lists all HuggingFace model architectures supported by the AutoBridge system.
 
 **Usage:**
 ```bash
-uv run python examples/conversion/list_supported_architectures.py
+python examples/conversion/list_supported_architectures.py
 ```
 
 **Example Output:**
@@ -256,45 +256,7 @@ uv run python examples/conversion/list_supported_architectures.py
 📚 For more examples, see the examples/bridge/ directory.
 ```
 
-### 6. `hf_megatron_roundtrip_benchmark.py` - Conversion Benchmarking
-
-Benchmark the HF ↔ Megatron round-trip pipeline without writing checkpoints. The script times both the import (HF tensors → Megatron weights) and export (Megatron weights → HF tensors) phases so you can quickly compare performance across different models or parallelism settings.
-
-**Features:**
-- Measures import/export timings only (no checkpoints saved)
-- Supports tensor, pipeline, and expert parallelism
-
-**Usage:**
-```bash
-# Single-node benchmark (default Llama-3.2-1B)
-uv run python examples/conversion/hf_megatron_roundtrip_benchmark.py
-
-# Specify a custom model
-uv run python examples/conversion/hf_megatron_roundtrip_benchmark.py \
-  --hf-model-id meta-llama/Llama-3.2-3B
-
-# Multi-GPU benchmark with expert parallelism
-uv run python -m torch.distributed.run --nproc_per_node=8 \
-  examples/conversion/hf_megatron_roundtrip_benchmark.py \
-  --hf-model-id Qwen/Qwen3-30B-A3B --tp 1 --pp 1 --ep 8
-```
-
-**Example Output:**
-```
-Benchmarking round-trip for Qwen/Qwen3-30B-A3B
-TP=1 | PP=1 | EP=8 | ETP=1 | world_size=8
-
-           HF ↔ Megatron Round-Trip Benchmark
-┏━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Stage  ┃ Duration (s) ┃ Description                   ┃
-┡━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ Import │        19.09 │ HF tensors → Megatron weights │
-│ Export │         2.43 │ Megatron weights → HF tensors │
-│ Total  │        21.52 │ Import + export               │
-└────────┴──────────────┴───────────────────────────────┘
-```
-
-### 7. `hf_megatron_roundtrip_multi_gpu.py` - Multi-GPU Model Conversion
+### 6. `hf_megatron_roundtrip_multi_gpu.py` - Multi-GPU Model Conversion
 
 Demonstrates model conversion and weight verification on multiple GPUs using distributed training.
 
@@ -308,18 +270,18 @@ Demonstrates model conversion and weight verification on multiple GPUs using dis
 
 **Basic multi-GPU conversion:**
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+torchrun --nproc_per_node=2 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
   --hf-model-id meta-llama/Llama-3.2-1B \
   --tp 2
 
-uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+torchrun --nproc_per_node=4 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
   --hf-model-id meta-llama/Llama-3.2-1B \
   --tp 2 --pp 2
 ```
 
 **Save in Megatron format:**
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+torchrun --nproc_per_node=2 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
   --hf-model-id meta-llama/Llama-3.2-1B \
   --tp 2 \
   --megatron-save-path ./megatron_checkpoints/llama3_2_1b
@@ -327,7 +289,7 @@ uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/hf
 
 **Load from existing Megatron checkpoint:**
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+torchrun --nproc_per_node=2 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
   --hf-model-id meta-llama/Llama-3.2-1B \
   --tp 2 \
   --megatron-load-path ./megatron_checkpoints/llama3_2_1b
@@ -355,7 +317,7 @@ Expert tensor parallel size: 1
 Success: All tensors from the original checkpoint were written.
 ```
 
-### 8. `compare_hf_and_megatron/` - Model Comparison Tools
+### 7. `compare_hf_and_megatron/` - Model Comparison Tools
 
 Advanced tools for comparing outputs between HuggingFace and Megatron models.
 
@@ -373,14 +335,14 @@ Compares 1-step generation between HuggingFace and Megatron models with detailed
 
 **Basic text model comparison:**
 ```bash
-uv run python examples/conversion/compare_hf_and_megatron/compare.py \
+python examples/conversion/compare_hf_and_megatron/compare.py \
   --hf_model_path Qwen/Qwen3-1.7B \
   --prompt "Hello, how are you?"
 ```
 
 **Vision-language model comparison:**
 ```bash
-uv run python examples/conversion/compare_hf_and_megatron/compare.py \
+python examples/conversion/compare_hf_and_megatron/compare.py \
   --hf_model_path Qwen/Qwen2.5-VL-3B-Instruct \
   --model_class Qwen2_5_VLForConditionalGeneration \
   --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
@@ -389,7 +351,7 @@ uv run python examples/conversion/compare_hf_and_megatron/compare.py \
 
 **Multi-GPU comparison:**
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/compare_hf_and_megatron/compare.py \
+torchrun --nproc_per_node=2 examples/conversion/compare_hf_and_megatron/compare.py \
   --hf_model_path Qwen/Qwen3-1.7B \
   --prompt "Hello world" \
   --tp 2
@@ -397,7 +359,7 @@ uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/co
 
 **With debug hooks:**
 ```bash
-uv run python examples/conversion/compare_hf_and_megatron/compare.py \
+python examples/conversion/compare_hf_and_megatron/compare.py \
   --hf_model_path Qwen/Qwen3-1.7B \
   --prompt "Hello world" \
   --enable_debug_hooks
@@ -448,28 +410,4 @@ Each log entry captures detailed tensor information for every module:
 **Use Cases:**
 - **Model Verification**: Compare intermediate results between HuggingFace and Megatron models
 - **Numerical Debugging**: Identify divergence points in model conversion
-
-### 9. `adapter/` — LoRA/DoRA Adapter Export & Verification
-
-Scripts for exporting Megatron-Bridge LoRA/DoRA adapter weights to HuggingFace PEFT format and verifying correctness. See [`adapter/README.md`](adapter/README.md) for full details.
-
-| Script | Description |
-|---|---|
-| `adapter/export_adapter.py` | Export a Megatron PEFT checkpoint to HF PEFT format (CPU-only) |
-| `adapter/verify_adapter.py` | Verify exported adapter via logit comparison |
-| `adapter/stream_adapter_weights.py` | Stream individual adapter tensors for custom workflows |
-
-**Quick start:**
-```bash
-# Export
-uv run python examples/conversion/adapter/export_adapter.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-peft-checkpoint /path/to/finetune_ckpt \
-    --output-hf-path ./my_adapter
-
-# Verify
-uv run python examples/conversion/adapter/verify_adapter.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --hf-adapter-path ./my_adapter
-```
 

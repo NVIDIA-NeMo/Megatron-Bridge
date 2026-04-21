@@ -16,12 +16,14 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import NemotronConfig, NemotronForCausalLM
+from transformers import GenerationConfig, NemotronConfig, NemotronForCausalLM
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron.nemotron_bridge import NemotronBridge
+from megatron.bridge.models.nemotron.nemotron_provider import (
+    NemotronModelProvider,
+)
 
 
 class TestNemotronBridge:
@@ -45,7 +47,7 @@ class TestNemotronBridge:
             "num_hidden_layers": 32,
             "num_key_value_heads": 8,
             "partial_rotary_factor": 0.5,
-            "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
+            "rope_theta": 10000.0,
             "tie_word_embeddings": False,
             "torch_dtype": "bfloat16",
             "use_cache": True,
@@ -70,6 +72,7 @@ class TestNemotronBridge:
         """Create a mock PreTrainedCausalLM with Nemotron model."""
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = nemotron_config
+        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
         mock_pretrained.model = Mock(spec=NemotronForCausalLM)
         mock_pretrained.model.dtype = torch.bfloat16
         return mock_pretrained
@@ -86,7 +89,7 @@ class TestNemotronBridge:
         provider = bridge.provider_bridge(mock_pretrained_nemotron)
 
         # Verify that provider is of correct type
-        assert isinstance(provider, GPTModelProvider)
+        assert isinstance(provider, NemotronModelProvider)
 
         # Check that key configuration values are correctly mapped
         assert provider.num_layers == nemotron_config.num_hidden_layers
@@ -96,7 +99,7 @@ class TestNemotronBridge:
         assert provider.num_query_groups == nemotron_config.num_key_value_heads
         assert provider.seq_length == nemotron_config.max_position_embeddings
         assert provider.layernorm_epsilon == nemotron_config.norm_eps
-        assert provider.rotary_base == nemotron_config.rope_parameters["rope_theta"]
+        assert provider.rotary_base == nemotron_config.rope_theta
         assert provider.rotary_percent == nemotron_config.partial_rotary_factor
         assert provider.vocab_size == nemotron_config.vocab_size
         assert provider.share_embeddings_and_output_weights == nemotron_config.tie_word_embeddings

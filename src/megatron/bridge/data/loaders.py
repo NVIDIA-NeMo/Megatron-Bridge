@@ -16,6 +16,7 @@ import json
 from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
 import torch
+from megatron.core import mpu
 from megatron.core.datasets.utils import get_blend_from_list
 from megatron.core.rerun_state_machine import RerunDataIterator
 from torch.utils.data import DataLoader
@@ -125,21 +126,13 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         # Otherwise fallback to calculating samples based on iterations and global batch size
         train_samples = cfg.train.train_iters * cfg.train.global_batch_size
 
-    if cfg.validation.eval_interval:
-        eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
-    else:
-        eval_iters = 0
-    test_iters = cfg.validation.eval_iters
+    eval_iters = (cfg.train.train_iters // cfg.train.eval_interval + 1) * cfg.train.eval_iters
+    test_iters = cfg.train.eval_iters
 
-    eval_gbs = (
-        cfg.validation.eval_global_batch_size
-        if cfg.validation.eval_global_batch_size is not None
-        else cfg.train.global_batch_size
-    )
     return (
         train_samples,
-        eval_iters * eval_gbs,
-        test_iters * eval_gbs,
+        eval_iters * cfg.train.global_batch_size,
+        test_iters * cfg.train.global_batch_size,
     )
 
 
@@ -165,10 +158,7 @@ def build_train_valid_test_datasets(
 
 
 def build_train_valid_test_data_loaders(
-    cfg: ConfigContainer,
-    train_state: TrainState,
-    build_train_valid_test_datasets_provider: Callable,
-    dp_group: torch.distributed.ProcessGroup,
+    cfg: ConfigContainer, train_state: TrainState, build_train_valid_test_datasets_provider: Callable
 ) -> tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Build train, validation, and test data loaders.
 
@@ -183,41 +173,6 @@ def build_train_valid_test_data_loaders(
     Returns:
         A tuple (train_dataloader, valid_dataloader, test_dataloader).
     """
-    # Check for MIMO path
-    from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
-    from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
-
-    if isinstance(cfg.model, MimoModelProvider):
-        if not isinstance(cfg.dataset, MimoDatasetProvider):
-            raise ValueError(
-                "MIMO models require cfg.dataset to be a MimoDatasetProvider. "
-                "Use HFMimoDatasetProvider, MockMimoProvider, or a subclass of MimoDatasetProvider."
-            )
-        from megatron.bridge.data.mimo.loaders import build_mimo_data_loaders
-
-        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
-        train_dataloader, valid_dataloader, test_dataloader = build_mimo_data_loaders(
-            cfg=cfg,
-            train_state=train_state,
-            mimo_provider=cfg.dataset,
-            train_samples=train_samples,
-            valid_samples=valid_samples,
-            test_samples=test_samples,
-        )
-
-        # Sync train_state flags across all ranks.
-        # Use all_reduce(MAX) since some ranks may not have loaders in heterogeneous MIMO.
-        do_train = train_dataloader is not None and cfg.train.train_iters > 0
-        do_valid = valid_dataloader is not None and cfg.validation.eval_iters > 0
-        do_test = test_dataloader is not None and cfg.validation.eval_iters > 0
-        flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
-        torch.distributed.all_reduce(flags, op=torch.distributed.ReduceOp.MAX)
-        train_state.do_train = flags[0].item()
-        train_state.do_valid = flags[1].item()
-        train_state.do_test = flags[2].item()
-
-        return train_dataloader, valid_dataloader, test_dataloader
-
     (train_dataloader, valid_dataloader, test_dataloader) = (None, None, None)
 
     print_rank_0("> building train, validation, and test datasets ...")
@@ -235,10 +190,6 @@ def build_train_valid_test_data_loaders(
 
     maybe_worker_init_fn = worker_init_fn if cfg.train.exit_signal_handler_for_dataloader else None
 
-    # Resolve DP rank/size from provided data-parallel process group
-    dp_rank = torch.distributed.get_rank(group=dp_group)
-    dp_size = torch.distributed.get_world_size(group=dp_group)
-
     # Build dataloders.
     train_dataloader = build_pretraining_data_loader(
         train_ds,
@@ -251,75 +202,65 @@ def build_train_valid_test_data_loaders(
         collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
         pin_memory=cfg.dataset.pin_memory,
         persistent_workers=cfg.dataset.persistent_workers,
-        data_parallel_rank=dp_rank,
-        data_parallel_size=dp_size,
+        data_parallel_rank=mpu.get_data_parallel_rank(),
+        data_parallel_size=mpu.get_data_parallel_world_size(),
         global_batch_size=cfg.train.global_batch_size,
     )
-    eval_gbs = (
-        cfg.validation.eval_global_batch_size
-        if cfg.validation.eval_global_batch_size is not None
-        else cfg.train.global_batch_size
-    )
-    eval_mbs = (
-        cfg.validation.eval_micro_batch_size
-        if cfg.validation.eval_micro_batch_size is not None
-        else cfg.train.micro_batch_size
-    )
-    if cfg.validation.skip_train and cfg.validation.eval_iters > 0:
+    if cfg.train.skip_train and cfg.train.eval_iters > 0:
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
             0,
             cfg.dataset.dataloader_type,
-            eval_mbs,
+            cfg.train.micro_batch_size,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
             collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=dp_rank,
-            data_parallel_size=dp_size,
-            global_batch_size=eval_gbs,
+            data_parallel_rank=mpu.get_data_parallel_rank(),
+            data_parallel_size=mpu.get_data_parallel_world_size(),
+            global_batch_size=cfg.train.global_batch_size,
         )
-    elif cfg.validation.eval_iters > 0:
+    elif cfg.train.eval_iters > 0:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
             train_state.consumed_valid_samples,
             val_dataloader_type,
-            eval_mbs,
+            cfg.train.micro_batch_size,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
             collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=dp_rank,
-            data_parallel_size=dp_size,
-            global_batch_size=eval_gbs,
+            data_parallel_rank=mpu.get_data_parallel_rank(),
+            data_parallel_size=mpu.get_data_parallel_world_size(),
+            global_batch_size=cfg.train.global_batch_size,
         )
 
-    if cfg.validation.eval_iters > 0:
+    if cfg.train.eval_iters > 0:
         test_dataloader = build_pretraining_data_loader(
             test_ds,
             0,
             cfg.dataset.dataloader_type,
-            eval_mbs,
+            cfg.train.micro_batch_size,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
             collate_fn=test_ds.collate_fn if hasattr(test_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=dp_rank,
-            data_parallel_size=dp_size,
-            global_batch_size=eval_gbs,
+            data_parallel_rank=mpu.get_data_parallel_rank(),
+            data_parallel_size=mpu.get_data_parallel_world_size(),
+            global_batch_size=cfg.train.global_batch_size,
         )
 
     # Flags to know if we need to do training/validation/testing.
     do_train = train_dataloader is not None and cfg.train.train_iters > 0
-    do_valid = valid_dataloader is not None and cfg.validation.eval_iters > 0
-    do_test = test_dataloader is not None and cfg.validation.eval_iters > 0
+    do_valid = valid_dataloader is not None and cfg.train.eval_iters > 0
+    do_test = test_dataloader is not None and cfg.train.eval_iters > 0
     flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
 
     torch.distributed.broadcast(flags, 0)
@@ -332,10 +273,7 @@ def build_train_valid_test_data_loaders(
 
 
 def build_train_valid_test_data_iterators(
-    cfg: ConfigContainer,
-    train_state: TrainState,
-    build_train_valid_test_datasets_provider: Callable,
-    dp_group: torch.distributed.ProcessGroup,
+    cfg: ConfigContainer, train_state: TrainState, build_train_valid_test_datasets_provider: Callable
 ) -> tuple[Optional[RerunDataIterator], Optional[RerunDataIterator], Optional[RerunDataIterator]]:
     """Build train, validation, and test data iterators.
 
@@ -356,7 +294,6 @@ def build_train_valid_test_data_iterators(
         cfg=cfg,
         train_state=train_state,
         build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider,
-        dp_group=dp_group,
     )
 
     # Build iterators.
@@ -386,8 +323,7 @@ def build_train_valid_test_data_iterators(
         train_data_iterator = None
 
     if valid_dataloader is not None:
-        val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
-        valid_data_iterator = _get_iterator(val_dataloader_type, valid_dataloader)
+        valid_data_iterator = _get_iterator("cyclic", valid_dataloader)
     else:
         valid_data_iterator = None
 
@@ -404,7 +340,6 @@ def setup_data_iterators(
     train_state: TrainState,
     model_length: int,
     train_valid_test_datasets_provider: Callable,
-    dp_group: torch.distributed.ProcessGroup,
 ) -> tuple[
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
@@ -427,11 +362,24 @@ def setup_data_iterators(
         Each element can be a single iterator or a list of iterators if virtual
         pipeline parallelism is enabled.
     """
-    train_data_iterator, valid_data_iterator, test_data_iterator = build_train_valid_test_data_iterators(
-        cfg=cfg,
-        train_state=train_state,
-        build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-        dp_group=dp_group,
-    )
+    if cfg.model.virtual_pipeline_model_parallel_size is not None and cfg.dataset.dataloader_type != "batch":
+        train_data_iterator = []
+        valid_data_iterator = []
+        test_data_iterator = []
+        for i in range(model_length):
+            iterators = build_train_valid_test_data_iterators(
+                cfg=cfg,
+                train_state=train_state,
+                build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+            )
+            train_data_iterator.append(iterators[0])
+            valid_data_iterator.append(iterators[1])
+            test_data_iterator.append(iterators[2])
+    else:
+        train_data_iterator, valid_data_iterator, test_data_iterator = build_train_valid_test_data_iterators(
+            cfg=cfg,
+            train_state=train_state,
+            build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+        )
 
     return train_data_iterator, valid_data_iterator, test_data_iterator

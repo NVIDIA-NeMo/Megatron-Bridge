@@ -32,21 +32,7 @@ def _load_args_from_checkpoint(checkpoint_path: str) -> argparse.Namespace:
     assert state_dict is not None, f"Could not load state from checkpoint at {checkpoint_path}"
     assert "args" in state_dict, "Provided checkpoint does not have arguments saved."
 
-    args = state_dict["args"]
-
-    # Backward compat: old checkpoints used hybrid_override_pattern; new ones use
-    # hybrid_layer_pattern. Mirror the conversion done in MCore's load_args_from_checkpoint.
-    if (
-        getattr(args, "hybrid_override_pattern", None) is not None
-        and getattr(args, "hybrid_layer_pattern", None) is None
-    ):
-        args.hybrid_layer_pattern = args.hybrid_override_pattern
-        # num_layers is now derived from hybrid_layer_pattern in validate_args
-        # and should not be set at the same time.
-        if hasattr(args, "num_layers"):
-            args.num_layers = None
-
-    return args
+    return state_dict["args"]
 
 
 def _tokenizer_config_from_args(args: argparse.Namespace) -> TokenizerConfig:
@@ -76,10 +62,8 @@ def _transformer_config_from_args(
         if hasattr(args, f.name):
             kw_args[f.name] = getattr(args, f.name)
     kw_args["persist_layer_norm"] = not args.no_persist_layer_norm
-    kw_args["layernorm_zero_centered_gamma"] = getattr(
-        args, "layernorm_zero_centered_gamma", getattr(args, "apply_layernorm_1p", False)
-    )
-    kw_args["layernorm_epsilon"] = getattr(args, "layernorm_epsilon", getattr(args, "norm_epsilon", 1e-5))
+    kw_args["layernorm_zero_centered_gamma"] = args.apply_layernorm_1p
+    kw_args["layernorm_epsilon"] = args.norm_epsilon
     kw_args["deallocate_pipeline_outputs"] = True
     kw_args["pipeline_dtype"] = args.params_dtype
     kw_args["batch_p2p_comm"] = not args.overlap_p2p_comm

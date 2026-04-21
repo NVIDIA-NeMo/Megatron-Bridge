@@ -12,38 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#
-# Test purpose:
-# - Parametrize over all exported Nemotron VL recipe functions in `megatron.bridge.recipes.nemotron_vl`.
-# - For each recipe, monkeypatch AutoBridge and the provider to avoid I/O.
-# - Build a config and assert it forms a valid `ConfigContainer`.
-# - Verify dataset provider selection and sanity-check parallelism fields.
-#
-
 import importlib
-from typing import Callable
 
 import pytest
+import torch
 
 
-_nemotron_vl_module = importlib.import_module("megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl")
+_nemotron_module = importlib.import_module("megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl")
 
-# SFT configs (parameterless)
-_NEMOTRON_VL_SFT_FUNCS = [
-    _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config,
-]
 
-# PEFT configs (take peft_scheme parameter)
-_NEMOTRON_VL_PEFT_FUNCS = [
-    _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config,
-]
+def _safe_overrides() -> dict:
+    """Create safe test overrides for Nemotron VL recipe functions."""
+    return {
+        "name": "unit_nemotron_vl",
+        "dir": ".",
+        "hf_model_path": "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
+        "train_iters": 10,
+        "global_batch_size": 2,
+        "micro_batch_size": 1,
+        "seq_length": 64,
+        "lr": 1e-4,
+        "min_lr": 1e-5,
+        "lr_warmup_iters": 2,
+        "tensor_parallelism": 1,
+        "pipeline_parallelism": 1,
+        "context_parallelism": 1,
+        "sequence_parallelism": False,
+    }
 
 
 class _FakeModelCfg:
     """Fake model configuration for testing."""
 
     def __init__(self):
-        # Set default attributes that recipes might set
         self.tensor_model_parallel_size = 1
         self.pipeline_model_parallel_size = 1
         self.pipeline_dtype = None
@@ -60,20 +61,17 @@ class _FakeModelCfg:
 
 
 class _FakeAutoBridge:
-    """Fake AutoBridge for testing."""
+    """Fake AutoBridge for testing to avoid HF downloads and I/O."""
 
     @staticmethod
-    def from_hf_pretrained(hf_path: str, **kwargs):
-        """Mock from_hf_pretrained method."""
+    def from_hf_pretrained(hf_path: str, *args, **kwargs):
         return _FakeAutoBridge()
 
     def to_megatron_provider(self, load_weights: bool = False):
-        """Return a fake model config."""
         return _FakeModelCfg()
 
 
 def _assert_basic_config(cfg):
-    """Assert that a config has all required components."""
     from megatron.bridge.training.config import ConfigContainer
 
     assert isinstance(cfg, ConfigContainer)
@@ -89,215 +87,107 @@ def _assert_basic_config(cfg):
 
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
-    assert cfg.dataset.seq_length >= 1
+    assert cfg.dataset.sequence_length >= 1
 
 
-@pytest.mark.parametrize("recipe_func", _NEMOTRON_VL_SFT_FUNCS)
-def test_each_nemotron_vl_sft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that each Nemotron VL SFT recipe function builds a valid configuration."""
-    # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+def test_nemotron_vl_pretrain_builds_config(monkeypatch: pytest.MonkeyPatch):
+    """Test that pretrain_config builds a valid configuration and sets basic fields."""
+    monkeypatch.setattr(_nemotron_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = recipe_func()
-
-    _assert_basic_config(cfg)
-
-    # Check that NullTokenizer is used
-    if hasattr(cfg, "tokenizer") and hasattr(cfg.tokenizer, "tokenizer_type"):
-        assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
-
-    # Verify parallelism settings
-    assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
-    assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
-
-    # Verify freeze settings are set
-    assert hasattr(cfg.model, "freeze_language_model")
-    assert hasattr(cfg.model, "freeze_vision_model")
-    assert hasattr(cfg.model, "freeze_vision_projection")
-
-    # SFT configs should not have PEFT
-    assert cfg.peft is None
-
-
-@pytest.mark.parametrize("recipe_func", _NEMOTRON_VL_PEFT_FUNCS)
-def test_each_nemotron_vl_peft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that each Nemotron VL PEFT recipe function builds a valid configuration."""
-    # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = recipe_func()  # Default peft_scheme="lora"
+    overrides = _safe_overrides()
+    cfg = _nemotron_module.nemotron_nano_v2_vl_12b_pretrain_config(**overrides)
 
     _assert_basic_config(cfg)
 
-    # Check that NullTokenizer is used
-    if hasattr(cfg, "tokenizer") and hasattr(cfg.tokenizer, "tokenizer_type"):
-        assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
-
-    # Verify parallelism settings
-    assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
-    assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
-
-    # Verify freeze settings are set
-    assert hasattr(cfg.model, "freeze_language_model")
-    assert hasattr(cfg.model, "freeze_vision_model")
-    assert hasattr(cfg.model, "freeze_vision_projection")
-
-    # PEFT configs should have PEFT configured
-    assert cfg.peft is not None
-
-
-def test_nemotron_vl_12b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 12B SFT has correct default parallelism."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, 12B should use TP=4, PP=1
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.peft is None
-
-
-def test_nemotron_vl_12b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 12B PEFT has correct default parallelism."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
-
-    _assert_basic_config(cfg)
-
-    # For PEFT, 12B should use TP=2, PP=1
-    assert cfg.model.tensor_model_parallel_size == 2
-    assert cfg.model.pipeline_model_parallel_size == 1
-
-    # Check PEFT config (uses VLMLoRA)
-    assert cfg.peft is not None
-
-
-def test_nemotron_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFDatasetConversationProvider by default."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
-
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+    # Dataset provider should be HF-based
+    from megatron.bridge.data.vlm_datasets import HFDatasetConversationProvider
 
     assert isinstance(cfg.dataset, HFDatasetConversationProvider)
 
+    # Null tokenizer is used
+    assert getattr(cfg.tokenizer, "tokenizer_type", None) == "NullTokenizer"
 
-def test_nemotron_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFDatasetConversationProvider by default."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
-
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
-
-    assert isinstance(cfg.dataset, HFDatasetConversationProvider)
+    # Parallelism settings should be wired into model cfg
+    assert getattr(cfg.model, "tensor_model_parallel_size", 0) == overrides["tensor_parallelism"]
+    assert getattr(cfg.model, "pipeline_model_parallel_size", 0) == overrides["pipeline_parallelism"]
+    assert getattr(cfg.model, "context_parallel_size", 0) == overrides["context_parallelism"]
+    assert getattr(cfg.model, "sequence_parallel", None) is overrides["sequence_parallelism"]
+    assert getattr(cfg.model, "seq_length", 0) == overrides["seq_length"]
 
 
-def test_nemotron_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs have freeze options set to False by default."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+def test_nemotron_vl_pretrain_pipeline_dtype(monkeypatch: pytest.MonkeyPatch):
+    """Test that pipeline_parallelism_dtype is respected."""
+    monkeypatch.setattr(_nemotron_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
+    overrides = _safe_overrides()
+    overrides["pipeline_parallelism_dtype"] = torch.bfloat16
 
-    # Default freeze options should be False for full SFT
-    assert cfg.model.freeze_language_model is False
-    assert cfg.model.freeze_vision_model is False
-    assert cfg.model.freeze_vision_projection is False
+    cfg = _nemotron_module.nemotron_nano_v2_vl_12b_pretrain_config(**overrides)
 
-
-def test_nemotron_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs have freeze options set to False by default."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
-
-    # Default freeze options should be False for PEFT
-    assert cfg.model.freeze_language_model is False
-    assert cfg.model.freeze_vision_model is False
-    assert cfg.model.freeze_vision_projection is False
+    assert getattr(cfg.model, "pipeline_dtype", None) is torch.bfloat16
 
 
-def test_nemotron_vl_precision_config(monkeypatch: pytest.MonkeyPatch):
-    """Test that precision config is correctly set."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+def test_nemotron_vl_finetune_with_lora(monkeypatch: pytest.MonkeyPatch):
+    """Test finetune_config wiring including LoRA when enabled."""
+    monkeypatch.setattr(_nemotron_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
+    overrides = _safe_overrides()
+    cfg = _nemotron_module.nemotron_nano_v2_vl_12b_finetune_config(
+        pretrained_checkpoint="/fake/ckpt",
+        lora_on_language_model=True,
+        lora_on_vision_model=False,
+        **overrides,
+    )
 
     _assert_basic_config(cfg)
 
-    # Default should be bf16_mixed
-    assert cfg.mixed_precision == "bf16_mixed"
+    # Check that checkpoint wiring includes the pretrained checkpoint
+    assert getattr(cfg.checkpoint, "pretrained_checkpoint", None) == "/fake/ckpt"
 
-
-def test_nemotron_vl_ddp_config(monkeypatch: pytest.MonkeyPatch):
-    """Test that DDP config is correctly set for VLMs."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # VLMs should have overlap disabled
-    assert cfg.ddp.overlap_grad_reduce is False
-    assert cfg.ddp.overlap_param_gather is False
-    assert cfg.ddp.check_for_nan_in_grad is True
-    assert cfg.ddp.use_distributed_optimizer is True
-
-
-def test_nemotron_vl_peft_uses_vlm_lora(monkeypatch: pytest.MonkeyPatch):
-    """Test that Nemotron Nano V2 VL uses VLMLoRA for PEFT."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
-
-    _assert_basic_config(cfg)
-
-    # Check PEFT config is present (should be VLMLoRA)
-    assert cfg.peft is not None
-
-    # Check PEFT type is VLMLoRA
+    # LoRA should be configured
     from megatron.bridge.peft.lora import VLMLoRA
 
-    assert isinstance(cfg.peft, VLMLoRA)
+    assert isinstance(getattr(cfg, "peft", None), VLMLoRA)
+
+    # Finetune defaults applied (since overrides didn't provide finetune-specific lr)
+    assert hasattr(cfg.optimizer, "lr") and cfg.optimizer.lr == 5e-5
+    assert hasattr(cfg.optimizer, "min_lr") and cfg.optimizer.min_lr == 5e-6
+    assert getattr(cfg.model, "tensor_model_parallel_size", None) == 2
 
 
-def test_nemotron_vl_sft_training_params(monkeypatch: pytest.MonkeyPatch):
-    """Test that training parameters are correctly set for SFT."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+def test_nemotron_vl_finetune_without_lora(monkeypatch: pytest.MonkeyPatch):
+    """Test finetune_config when LoRA is disabled."""
+    monkeypatch.setattr(_nemotron_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # Check training parameters
-    assert cfg.train.train_iters == 2000
-    assert cfg.train.micro_batch_size == 1
-
-
-def test_nemotron_vl_peft_training_params(monkeypatch: pytest.MonkeyPatch):
-    """Test that training parameters are correctly set for PEFT."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
+    overrides = _safe_overrides()
+    del overrides["lr"]
+    del overrides["min_lr"]
+    cfg = _nemotron_module.nemotron_nano_v2_vl_12b_finetune_config(
+        pretrained_checkpoint="/fake/ckpt",
+        lora_on_language_model=False,
+        **overrides,
+    )
 
     _assert_basic_config(cfg)
 
-    # Check training parameters (should match SFT after update)
-    assert cfg.train.train_iters == 2000
-    assert cfg.train.micro_batch_size == 1
+    # No PEFT configured
+    assert getattr(cfg, "peft", None) is None
+
+    # Finetune defaults applied when not explicitly provided in overrides
+    assert hasattr(cfg.optimizer, "lr") and cfg.optimizer.lr == 1e-5
+    assert hasattr(cfg.optimizer, "min_lr") and cfg.optimizer.min_lr == 1e-6
+
+
+def test_nemotron_vl_finetune_custom_save_dir(monkeypatch: pytest.MonkeyPatch):
+    """Test that save_checkpoint_dir overrides are respected in finetune_config."""
+    monkeypatch.setattr(_nemotron_module, "AutoBridge", _FakeAutoBridge)
+
+    overrides = _safe_overrides()
+    cfg = _nemotron_module.nemotron_nano_v2_vl_12b_finetune_config(
+        pretrained_checkpoint="/fake/ckpt",
+        save_checkpoint_dir="/fake/save",
+        **overrides,
+    )
+
+    assert getattr(cfg.checkpoint, "save", None) == "/fake/save"
+    assert getattr(cfg.checkpoint, "load", None) == "/fake/save"

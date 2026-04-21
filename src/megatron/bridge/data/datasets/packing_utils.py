@@ -25,75 +25,43 @@ PACKING_ALGOS = ["first_fit_decreasing", "first_fit_shuffle"]
 logger = logging.getLogger(__name__)
 
 
-class _SegmentTree:
-    def __init__(self, capacity: int):
-        self._n = capacity
-        self._tree = [0] * (4 * capacity)
+def find_first_bin_that_fits(bins: List[List[int]], s: int, bin_size: int) -> int:
+    """
+    Finds the first bin in a list of bins that has enough space to fit a sequence of size 's'.
 
-    def _push_up(self, node: int):
-        self._tree[node] = max(self._tree[2 * node], self._tree[2 * node + 1])
+    Args:
+      bins: A list of lists, where each inner list represents a bin and contains the current elements in that bin.
+      s: The size of the sequence to be placed in a bin.
+      bin_size: The maximum capacity of each bin.
 
-    def _update(self, node: int, start: int, end: int, idx: int, val: int):
-        if start == end:
-            self._tree[node] = val
-            return
-        mid = (start + end) // 2
-        if idx <= mid:
-            self._update(2 * node, start, mid, idx, val)
-        else:
-            self._update(2 * node + 1, mid + 1, end, idx, val)
-        self._push_up(node)
-
-    def _query(self, node: int, start: int, end: int, need: int) -> int:
-        if self._tree[node] < need:
-            return -1
-        if start == end:
-            return start
-        mid = (start + end) // 2
-        left = self._query(2 * node, start, mid, need)
-        if left != -1:
-            return left
-        return self._query(2 * node + 1, mid + 1, end, need)
-
-    def update(self, idx: int, val: int):
-        self._update(1, 0, self._n - 1, idx, val)
-
-    def query_first_fit(self, need: int) -> int:
-        return self._query(1, 0, self._n - 1, need)
+    Returns:
+      The index of the first bin that can fit the sequence 's', or -1 if no such bin exists.
+    """
+    for i, abin in enumerate(bins):
+        if sum(abin) + s <= bin_size:
+            return i
+    return -1
 
 
 def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
     """
-    Packs sequences of varying lengths into bins using the First-Fit algorithm
-    with a segment-tree index for O(N log N) performance.
+    Packs sequences of varying lengths into bins using the First-Fit algorithm.
 
     Args:
       seqlens: A list of integers, representing the lengths of the sequences to be packed.
       pack_size: The maximum capacity of each bin.
 
     Returns:
-      A list of lists, where each inner list represents a bin and contains the
-        lengths of the sequences assigned to that bin.
+      A list of lists, where each inner list represents a bin and contains the indices
+        of the sequences assigned to that bin.
     """
-    if not seqlens:
-        return []
-
-    n = len(seqlens)
-    tree = _SegmentTree(n)
     res = []
-    remaining = []
-
     for s in seqlens:
-        first_bin = tree.query_first_fit(s)
-        if first_bin == -1 or first_bin >= len(res):
-            new_idx = len(res)
+        first_bin = find_first_bin_that_fits(res, s, pack_size)
+        if first_bin == -1:  # open a new bin
             res.append([s])
-            remaining.append(pack_size - s)
-            tree.update(new_idx, remaining[new_idx])
         else:
             res[first_bin].append(s)
-            remaining[first_bin] -= s
-            tree.update(first_bin, remaining[first_bin])
     return res
 
 
@@ -301,91 +269,3 @@ def fill_packing_strategy(
     assert all(not seq[0] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
     assert all(not seq[1] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
     return output_data
-
-
-def get_seqlen_list(elem: Dict) -> Tuple[List[int], int]:
-    """Extract per-sequence token counts from a packed dataset element.
-
-    Args:
-        elem: A packed dataset element with 'input_ids' and 'seq_start_id' fields.
-
-    Returns:
-        A tuple of (token_counts, tokens_minus_eos) where token_counts is a list of
-        per-sequence token counts (excluding EOS) and tokens_minus_eos is the total
-        token count excluding EOS tokens.
-    """
-    num_seq = len(elem["seq_start_id"])
-    tokens_total = len(elem["input_ids"])
-    tokens_minus_eos = tokens_total - num_seq
-
-    seq_boundaries = elem["seq_start_id"] + [tokens_total]
-
-    # subtract 1 to account for removing eos token
-    token_counts = [seq_boundaries[i + 1] - seq_boundaries[i] - 1 for i in range(num_seq)]
-
-    assert sum(token_counts) == tokens_minus_eos, (sum(token_counts), tokens_minus_eos)
-
-    return token_counts, tokens_minus_eos
-
-
-def calculate_avg_seqlen(
-    dataset_file: str, gbs: int, max_seq_len: int, drop_remainder: bool
-) -> Tuple[float, float, float, float]:
-    """Calculate average sequence length statistics from a packed dataset.
-
-    Args:
-        dataset_file: Path to the .npy packed dataset file.
-        gbs: Global batch size used to determine how many rows to process.
-        max_seq_len: Maximum sequence length (reserved for future use).
-        drop_remainder: If True, drop rows that don't fill a complete batch.
-
-    Returns:
-        A tuple of (avg_seqlen_count, avg_seqlen_total, avg_seqlen_sq_individual, avg_seqlen_sq_per_row):
-            - avg_seqlen_count: Average number of sequences per row.
-            - avg_seqlen_total: Average total tokens (excluding EOS) per row.
-            - avg_seqlen_sq_individual: Average of squared per-sequence lengths.
-            - avg_seqlen_sq_per_row: Average of summed squared sequence lengths per row.
-
-    Raises:
-        ValueError: If no rows remain after applying drop_remainder, or if no sequences are found.
-    """
-    # SECURITY: allow_pickle=True is required here because packed datasets store object
-    # arrays (dicts with variable-length lists). Only load datasets from trusted sources.
-    logger.warning(
-        "Loading packed dataset with allow_pickle=True from '%s'. Only load datasets from trusted sources.",
-        dataset_file,
-    )
-    data = np.load(dataset_file, allow_pickle=True)
-
-    total_len_accum = 0
-    seqlen_sq_accum = 0
-    seq_count_accum = 0
-
-    rows_total = len(data)
-    count = (rows_total // gbs) * gbs if drop_remainder else rows_total
-
-    if count != rows_total:
-        logger.info(f"Dropping {rows_total - count}, total was {rows_total}")
-
-    for i, elem in enumerate(data):
-        if i >= count:
-            break
-        seqlen_list, total_count = get_seqlen_list(elem)
-        seqlen_sq_list = [s * s for s in seqlen_list]
-        total_len_accum += total_count
-        seqlen_sq_accum += sum(seqlen_sq_list)
-        seq_count_accum += len(seqlen_list)
-
-    if count == 0:
-        raise ValueError(
-            f"No rows to process: dataset has {rows_total} rows but gbs={gbs} with drop_remainder={drop_remainder}."
-        )
-    if seq_count_accum == 0:
-        raise ValueError("No sequences found in dataset; cannot compute average sequence length.")
-
-    avg_seqlen_count = seq_count_accum / count
-    avg_seqlen_total = total_len_accum / count
-    avg_seqlen_sq_individual = seqlen_sq_accum / seq_count_accum
-    avg_seqlen_sq_per_row = seqlen_sq_accum / count
-
-    return avg_seqlen_count, avg_seqlen_total, avg_seqlen_sq_individual, avg_seqlen_sq_per_row

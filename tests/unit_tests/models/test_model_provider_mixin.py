@@ -50,14 +50,14 @@ def ddp_config():
     return DistributedDataParallelConfig()
 
 
-@patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")
 @patch("megatron.bridge.models.model_provider.get_model")
+@patch("megatron.bridge.models.model_provider.parallel_state")
 @patch("megatron.bridge.models.model_provider.torch.distributed")
-@patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True)
 def test_provide_distributed_model_with_hooks_as_args(
-    mock_ps_init, mock_dist, mock_get_model, mock_use_pg, provider, ddp_config
+    mock_dist, mock_parallel_state, mock_get_model, provider, ddp_config
 ):
     """Test that provide_distributed_model calls hooks passed as arguments."""
+    mock_parallel_state.is_initialized.return_value = True
     mock_dist.is_initialized.return_value = True
     mock_model = [MockMegatronModule()]
     mock_get_model.return_value = mock_model
@@ -65,28 +65,7 @@ def test_provide_distributed_model_with_hooks_as_args(
     pre_hook = Mock(return_value=mock_model)
     post_hook = Mock(return_value=mock_model)
 
-    # Attach minimal pg_collection required by provider.provide
-    provider._pg_collection = type(
-        "PG",
-        (),
-        {"pp": object(), "tp": object(), "cp": object(), "dp": object(), "dp_cp": object(), "expt_dp": object()},
-    )()
-
-    # Return a stub pg_collection to avoid requiring real initialization
-    class _PG:
-        def __init__(self):
-            self.pp = object()
-            self.tp = object()
-            self.cp = object()
-            self.dp = object()
-            self.dp_cp = object()
-            self.expt_dp = object()
-
-    mock_use_pg.return_value = _PG()
-
-    provider.provide_distributed_model(
-        ddp_config=ddp_config, pre_wrap_hook=pre_hook, post_wrap_hook=post_hook, wrap_with_ddp=False
-    )
+    provider.provide_distributed_model(ddp_config=ddp_config, pre_wrap_hook=pre_hook, post_wrap_hook=post_hook)
 
     mock_get_model.assert_called_once()
     # Check that the argument hook is passed directly to get_model
@@ -95,14 +74,14 @@ def test_provide_distributed_model_with_hooks_as_args(
     post_hook.assert_called_once_with(mock_model)
 
 
-@patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")
 @patch("megatron.bridge.models.model_provider.get_model")
+@patch("megatron.bridge.models.model_provider.parallel_state")
 @patch("megatron.bridge.models.model_provider.torch.distributed")
-@patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True)
 def test_provide_distributed_model_with_registered_hooks(
-    mock_ps_init, mock_dist, mock_get_model, mock_use_pg, provider, ddp_config
+    mock_dist, mock_parallel_state, mock_get_model, provider, ddp_config
 ):
     """Test that provide_distributed_model uses hooks registered on the instance."""
+    mock_parallel_state.is_initialized.return_value = True
     mock_dist.is_initialized.return_value = True
     mock_model = [MockMegatronModule()]
     mock_get_model.return_value = mock_model
@@ -113,18 +92,7 @@ def test_provide_distributed_model_with_registered_hooks(
     provider.register_pre_wrap_hook(pre_hook)
     provider.register_post_wrap_hook(post_hook)
 
-    # stub pg
-    class _PG:
-        def __init__(self):
-            self.pp = object()
-            self.tp = object()
-            self.cp = object()
-            self.dp = object()
-            self.dp_cp = object()
-            self.expt_dp = object()
-
-    mock_use_pg.return_value = _PG()
-    provider.provide_distributed_model(ddp_config=ddp_config, wrap_with_ddp=False)
+    provider.provide_distributed_model(ddp_config=ddp_config)
 
     mock_get_model.assert_called_once()
 
@@ -140,14 +108,12 @@ def test_provide_distributed_model_with_registered_hooks(
     post_hook.assert_called_once_with(mock_model)
 
 
-@patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")
 @patch("megatron.bridge.models.model_provider.get_model")
+@patch("megatron.bridge.models.model_provider.parallel_state")
 @patch("megatron.bridge.models.model_provider.torch.distributed")
-@patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True)
-def test_arg_hook_overrides_registered_hook(
-    mock_ps_init, mock_dist, mock_get_model, mock_use_pg, provider, ddp_config
-):
+def test_arg_hook_overrides_registered_hook(mock_dist, mock_parallel_state, mock_get_model, provider, ddp_config):
     """Test that argument hooks override registered instance hooks."""
+    mock_parallel_state.is_initialized.return_value = True
     mock_dist.is_initialized.return_value = True
     mock_model = [MockMegatronModule()]
     mock_get_model.return_value = mock_model
@@ -162,19 +128,7 @@ def test_arg_hook_overrides_registered_hook(
     arg_pre_hook = Mock(return_value=mock_model)
     arg_post_hook = Mock(return_value=mock_model)
 
-    class _PG:
-        def __init__(self):
-            self.pp = object()
-            self.tp = object()
-            self.cp = object()
-            self.dp = object()
-            self.dp_cp = object()
-            self.expt_dp = object()
-
-    mock_use_pg.return_value = _PG()
-    provider.provide_distributed_model(
-        ddp_config=ddp_config, pre_wrap_hook=arg_pre_hook, post_wrap_hook=arg_post_hook, wrap_with_ddp=False
-    )
+    provider.provide_distributed_model(ddp_config=ddp_config, pre_wrap_hook=arg_pre_hook, post_wrap_hook=arg_post_hook)
 
     mock_get_model.assert_called_once()
 
@@ -185,35 +139,6 @@ def test_arg_hook_overrides_registered_hook(
     arg_post_hook.assert_called_once_with(mock_model)
     # The registered hook should NOT be called
     registered_post_hook.assert_not_called()
-
-
-@patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")
-@patch("megatron.bridge.models.model_provider.get_model")
-@patch("megatron.bridge.models.model_provider.torch.distributed")
-@patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True)
-def test_pg_collection_attached_to_provider(
-    mock_ps_init, mock_dist, mock_get_model, mock_use_pg, provider, ddp_config
-):
-    """Process group collection should be available on the provider."""
-    mock_dist.is_initialized.return_value = True
-    mock_model = [MockMegatronModule()]
-    mock_get_model.return_value = mock_model
-
-    class _PG:
-        def __init__(self):
-            self.pp = object()
-            self.tp = object()
-            self.cp = object()
-            self.dp = object()
-            self.dp_cp = object()
-            self.expt_dp = object()
-
-    pg_instance = _PG()
-    mock_use_pg.return_value = pg_instance
-
-    provider.provide_distributed_model(ddp_config=ddp_config, wrap_with_ddp=False)
-
-    assert provider._pg_collection is pg_instance
 
 
 def test_hook_registration_and_composition(provider):

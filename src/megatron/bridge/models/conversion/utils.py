@@ -20,7 +20,13 @@ from typing import Iterable, List, Optional, Tuple
 
 import torch
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.utils import unwrap_model
+# vlm2 branch of Megatron-LM moved unwrap_model from megatron.core.utils
+# to megatron.training.utils. This fallback is required for the vlm2
+# submodule used by nemotron_omni (sound/audio support).
+try:
+    from megatron.core.utils import unwrap_model
+except ImportError:
+    from megatron.training.utils import unwrap_model
 from rich.table import Table
 from transformers.configuration_utils import PretrainedConfig
 
@@ -159,7 +165,7 @@ def get_module_and_param_from_name(
     raise ValueError(f"Parameter '{param_name}' not found in model at VP stage {vp_stage}")
 
 
-def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
+def remove_non_pickleables(obj, max_depth: int = 2, current_depth: int = 0):
     """Remove non-pickleable objects from a configuration object recursively.
 
     This utility function identifies and removes objects that cannot be pickled for
@@ -168,7 +174,7 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
 
     Args:
         obj: The object to clean
-        max_depth: Maximum recursion depth (default: 3)
+        max_depth: Maximum recursion depth (default: 2)
         current_depth: Current recursion depth (internal use)
 
     Returns:
@@ -182,16 +188,6 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
     # Handle None
     if obj is None:
         return obj
-
-    # Explicitly drop process group objects without importing their classes directly.
-    cls = obj if isinstance(obj, type) else type(obj)
-    cls_module = getattr(cls, "__module__", "")
-    cls_name = getattr(cls, "__qualname__", getattr(cls, "__name__", ""))
-    if (cls_module, cls_name) in {
-        ("megatron.core.process_groups_config", "ProcessGroupCollection"),
-        ("torch._C._distributed_c10d", "ProcessGroup"),
-    }:
-        return None
 
     # Check if object is a problematic callable
     if callable(obj):
@@ -273,18 +269,6 @@ def get_causal_lm_class_name_via_auto_map(
     return None
 
 
-def conform_config_to_reference(
-    hf_config_dict: dict[str, object], reference_config: dict[str, object]
-) -> dict[str, object]:
-    """Return a projected hf_config_dict onto the reference key set, imputing missing keys with reference values."""
-    reference_config_keys = set(reference_config.keys())
-    filtered_config_dict = {key: value for (key, value) in hf_config_dict.items() if key in reference_config_keys}
-    for key, value in reference_config.items():
-        if key not in filtered_config_dict:
-            filtered_config_dict[key] = value
-    return filtered_config_dict
-
-
 def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tensor]]:
     """Return an iterator over persistent module buffers, yielding both the name of the buffer as well as the buffer itself."""
 
@@ -294,13 +278,3 @@ def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tens
             if local_name not in getattr(mod, "_non_persistent_buffers_set", set()):
                 full_name = f"{mod_prefix + '.' if mod_prefix else ''}{local_name}"
                 yield full_name, buffer
-
-
-def is_modelopt_dynamic_module(module):
-    """Check if a module is a modelopt dynamic module."""
-    try:
-        from modelopt.torch.opt.dynamic import DynamicModule
-
-        return isinstance(module, DynamicModule)
-    except ImportError:
-        return False

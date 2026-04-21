@@ -12,259 +12,237 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Nemotron Nano V2 VL finetuning recipes with parameterless API.
-
-This module provides SFT and PEFT configurations for Nemotron Nano V2 VL 12B.
-"""
+import os
+from typing import Optional, Union
 
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.peft.base import PEFT
+from megatron.bridge.data.vlm_datasets import (
+    HFDatasetConversationProvider,
+)
+from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
 from megatron.bridge.peft.lora import VLMLoRA
-from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
+from megatron.bridge.training.config import (
+    CheckpointConfig,
+    ConfigContainer,
+    DistributedDataParallelConfig,
+    LoggerConfig,
+    RNGConfig,
+    TokenizerConfig,
+    TrainingConfig,
+)
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-# =============================================================================
-# Nemotron Nano V2 VL 12B SFT Configuration
-# =============================================================================
-def nemotron_nano_v2_vl_12b_sft_config() -> ConfigContainer:
-    """Return a full SFT config for Nemotron Nano V2 VL 12B.
-
-    Default configuration: 1 node, 8 GPUs
-    - TP=4, PP=1
-    - LR=1e-5 (finetune default)
-    - Sequence length: 4096
-    """
-    cfg = _sft_common_vlm()
-
-    # Model configuration
-    hf_path = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
-    cfg.model.seq_length = 4096
-
-    # Parallel settings
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.pipeline_dtype = None
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
-
-    # VLM-specific settings
-    cfg.model.freeze_language_model = False
-    cfg.model.freeze_vision_model = False
-    cfg.model.freeze_vision_projection = False
-
-    # TE / Transformer implementation
-    cfg.model.transformer_impl = "transformer_engine"
-
-    # CUDA Graph settings
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = "full"
-    cfg.model.cuda_graph_warmup_steps = 3
-
-    # Kernel selections
-    cfg.model.attention_backend = "flash"
-    cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"
-
-    # Memory saving (disabled by default)
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
-    cfg.model.fine_grained_activation_offloading = False
-    cfg.model.offload_modules = None
-
-    # Training config
-    cfg.train.train_iters = 2000
-    cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 1
-    cfg.train.manual_gc = True
-    cfg.train.manual_gc_interval = 100
-    cfg.train.manual_gc_eval = 100
-
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 0
-
-    # Optimizer - finetune defaults
-    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=5,
-        lr_decay_iters=None,
-        max_lr=2e-5,
-        min_lr=2e-6,
-    )
-    cfg.optimizer = opt_cfg
-    cfg.scheduler = scheduler_cfg
-
-    # Optimizer precision settings (disabled by default for full precision)
-    cfg.optimizer.use_precision_aware_optimizer = False
-    cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.float32
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32
-
+def nemotron_nano_v2_vl_12b_pretrain_config(
+    dir: Optional[str] = None,
+    name: str = "nemotron_nano_v2_vl_pretrain",
+    hf_model_path: str = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
     # Dataset configuration
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.hf_processor_path = hf_path
+    dataset_type: Optional[str] = None,
+    mock: bool = False,
+    dataset_maker_name: str = "make_cord_v2_dataset",
+    # Model configuration
+    tensor_parallelism: int = 4,
+    pipeline_parallelism: int = 1,
+    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_parallelism: Optional[int] = None,
+    context_parallelism: int = 1,
+    sequence_parallelism: bool = False,
+    # Training hyperparameters
+    train_iters: int = 300000,
+    global_batch_size: int = 32,
+    micro_batch_size: int = 2,
+    seq_length: int = 4096,
+    lr: float = 3e-4,
+    min_lr: float = 3e-5,
+    lr_warmup_iters: int = 500,
+    lr_decay_iters: Optional[int] = None,
+    # Precision and comm overlap
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
+    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    # Checkpointing
+    save_interval: Optional[int] = 200,
+) -> ConfigContainer:
+    """
+    Create a pre-training configuration for Nemotron Nano V2 VL.
 
-    # DDP settings - Nemotron uses average_in_collective=False
-    cfg.ddp.overlap_grad_reduce = False
-    cfg.ddp.overlap_param_gather = False
-    cfg.ddp.check_for_nan_in_grad = True
-    cfg.ddp.use_distributed_optimizer = True
-    cfg.ddp.grad_reduce_in_fp32 = True
-    cfg.ddp.average_in_collective = False
-    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    Note: Current dataset pipeline is text-centric. To train multimodal tokens,
+    your preprocessed data should include placeholder tokens (e.g., <image>) as needed.
+    """
+    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, name)
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
-    # Checkpoint config - override save_interval from common
-    cfg.checkpoint.save_interval = 200
+    # Build provider via AutoBridge and set parallel/seq params here
+    bridge = AutoBridge.from_hf_pretrained(hf_model_path, trust_remote_code=True)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg.tensor_model_parallel_size = tensor_parallelism
+    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
+    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    model_cfg.context_parallel_size = context_parallelism
+    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.seq_length = seq_length
 
-    # FP8 and MXFP8 settings (disabled by default)
-    cfg.mixed_precision = "bf16_mixed"
-    # cfg.mixed_precision.fp8_recipe = None
-    # cfg.mixed_precision.fp8 = False
-    # cfg.mixed_precision.fp8_param_gather = False
-    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=lr_warmup_iters,
+        lr_decay_iters=lr_decay_iters,
+        max_lr=lr,
+        min_lr=min_lr,
+    )
 
-    # Checkpoint config
-    # cfg.checkpoint.save = "path/to/save"
-    # cfg.checkpoint.load = "path/to/load"
-    # Uncomment below to use a pretrained checkpoint
-    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+    # Dataset provider selection
+    _dataset_choice = (dataset_type or ("mock" if mock else "hf")).lower()
+
+    if _dataset_choice == "mock":
+        dataset_cfg = MockVLMConversationProvider(
+            sequence_length=seq_length,
+            hf_processor_path=hf_model_path,
+            dataloader_type="single",
+        )
+    elif _dataset_choice == "hf":
+        dataset_cfg = HFDatasetConversationProvider(
+            sequence_length=seq_length,
+            hf_processor_path=hf_model_path,
+            maker_name=dataset_maker_name,
+            # Dataloader config parameters
+            num_workers=2,
+            dataloader_type="single",
+            data_sharding=True,
+            pin_memory=True,
+            persistent_workers=False,
+        )
+    else:
+        raise ValueError(f"Unknown dataset_type '{_dataset_choice}'. Expected one of: 'mock', 'hf', 'preloaded'.")
+
+    # Config Container
+    cfg = ConfigContainer(
+        model=model_cfg,
+        train=TrainingConfig(
+            train_iters=train_iters,
+            eval_interval=500,
+            eval_iters=32,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+            manual_gc=True,
+            manual_gc_interval=100,
+            manual_gc_eval=100,
+        ),
+        optimizer=opt_config,
+        scheduler=scheduler,
+        ddp=DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=True,
+            overlap_grad_reduce=False,
+            overlap_param_gather=False,
+            average_in_collective=False,
+            data_parallel_sharding_strategy="optim_grads_params",
+            use_distributed_optimizer=True,
+            # use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
+        ),
+        dataset=dataset_cfg,
+        logger=LoggerConfig(
+            log_interval=10,
+            tensorboard_dir=tensorboard_dir,
+            log_timers_to_tensorboard=True,
+        ),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
+        checkpoint=CheckpointConfig(
+            save_interval=save_interval,
+            save=checkpoint_dir,
+            load=checkpoint_dir,
+            ckpt_format="torch_dist",
+            fully_parallel_save=True,
+        ),
+        rng=RNGConfig(seed=1234),
+        comm_overlap=comm_overlap_config,
+        mixed_precision=precision_config,
+    )
 
     return cfg
 
 
-# =============================================================================
-# Nemotron Nano V2 VL 12B PEFT Configuration
-# =============================================================================
-def nemotron_nano_v2_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Return a PEFT config for Nemotron Nano V2 VL 12B.
+def nemotron_nano_v2_vl_12b_finetune_config(
+    *,
+    pretrained_checkpoint: str = "",
+    lora_on_language_model: bool = False,
+    lora_on_vision_model: bool = False,
+    save_checkpoint_dir: Optional[str] = None,
+    **pretrain_kwargs,
+) -> ConfigContainer:
+    """Create a finetuning configuration for Nemotron Nano V2 VL.
 
-    Default configuration: 1 node, 8 GPUs
-    - TP=2, PP=1
-    - LR=5e-5 (PEFT)
-    - Sequence length: 4096
+    This helper wraps :func:`nemotron_nano_v2_vl_12b_pretrain_config`, forwarding all keyword arguments to it
+    while additionally wiring up the :class:`CheckpointConfig` for finetuning from a
+    given *``pretrained_checkpoint``*.
 
-    Args:
-        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
-            Note: Default uses VLMLoRA targeting all model components.
+    Parameters:
+    pretrained_checkpoint: str
+        Path to a Megatron-Bridge checkpoint (or a directory produced by
+        ``convert_ckpt_hf_to_megatron``) that will be loaded before training.
+    save_checkpoint_dir: str | None, default ``run_output_dir / "checkpoints"``
+        Directory where new checkpoints will be saved / resumed from.  If not
+        provided, we reuse the default path chosen by *nemotron_nano_v2_vl_12b_pretrain_config*.
+    lora_on_language_model: bool = True
+        Whether to apply PEFT to the language model.
+    lora_on_vision_model: bool = True
+        Whether to apply PEFT to the vision model.
+    **pretrain_kwargs: Any
+        Additional keyword arguments are forwarded verbatim to
+        :func:`nemotron_nano_v2_vl_12b_pretrain_config` to customise the base recipe (e.g. batch size,
+        learning rate, parallelism).
     """
-    cfg = _peft_common_vlm()
 
-    # PEFT scheme - Nemotron uses VLMLoRA by default
-    if isinstance(peft_scheme, str) and peft_scheme.lower() == "lora":
-        cfg.peft = VLMLoRA(
-            target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
-            dim=16,
-            alpha=32,
-        )
-    elif isinstance(peft_scheme, str) and peft_scheme.lower() == "dora":
-        cfg.peft = VLMLoRA(
-            target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
-            dim=16,
-            alpha=32,
-            dora=True,
-        )
-    else:
-        cfg.peft = peft_scheme
+    cfg = nemotron_nano_v2_vl_12b_pretrain_config(**pretrain_kwargs)
 
-    # Model configuration
-    hf_path = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
-    cfg.model.seq_length = 4096
+    # Override Train hyper-parameters suitable for finetuning if the caller did
+    # not explicitly pass them via **pretrain_kwargs.
+    if pretrain_kwargs.get("train_iters") is None:
+        cfg.train.train_iters = 10_000
+    if pretrain_kwargs.get("lr") is None and hasattr(cfg.optimizer, "lr"):
+        cfg.optimizer.lr = 1e-5  # type: ignore[attr-defined]
+    if pretrain_kwargs.get("min_lr") is None and hasattr(cfg.optimizer, "min_lr"):
+        cfg.optimizer.min_lr = 1e-6  # type: ignore[attr-defined]
 
-    # Parallel settings - lower TP for PEFT
-    cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.pipeline_dtype = None
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
-
-    # VLM-specific settings
-    cfg.model.freeze_language_model = False
-    cfg.model.freeze_vision_model = False
-    cfg.model.freeze_vision_projection = False
-
-    # TE / Transformer implementation
-    cfg.model.transformer_impl = "transformer_engine"
-
-    # CUDA Graph settings
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = "full"
-    cfg.model.cuda_graph_warmup_steps = 3
-
-    # Kernel selections
-    cfg.model.attention_backend = "flash"
-    cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"
-
-    # Memory saving (disabled by default)
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
-    cfg.model.fine_grained_activation_offloading = False
-    cfg.model.offload_modules = None
-
-    # Training config
-    cfg.train.train_iters = 2000
-    cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 1
-    cfg.train.manual_gc = True
-    cfg.train.manual_gc_interval = 100
-    cfg.train.manual_gc_eval = 100
-
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 0
-
-    # Optimizer - PEFT LR settings
-    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=5,
-        lr_decay_iters=None,
-        max_lr=2e-5,
-        min_lr=2e-6,
+    # Update CheckpointConfig for finetuning.
+    ckpt_dir = save_checkpoint_dir or cfg.checkpoint.save or cfg.checkpoint.load  # type: ignore[attr-defined]
+    cfg.checkpoint = CheckpointConfig(
+        pretrained_checkpoint=pretrained_checkpoint,
+        save=ckpt_dir,
+        load=ckpt_dir,
+        ckpt_format=cfg.checkpoint.ckpt_format,  # preserve existing choice
+        fully_parallel_save=cfg.checkpoint.fully_parallel_save,
+        save_interval=cfg.checkpoint.save_interval,
     )
-    cfg.optimizer = opt_cfg
-    cfg.scheduler = scheduler_cfg
+    if lora_on_language_model:
+        if lora_on_vision_model:
+            cfg.peft = VLMLoRA(
+                target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
+                dim=16,
+                alpha=32,
+            )
+        else:
+            cfg.peft = VLMLoRA(
+                target_modules=[
+                    "*language_model*.linear_qkv",
+                    "*language_model*.linear_proj",
+                    "*language_model*.linear_fc1",
+                    "*language_model*.linear_fc2",
+                ],
+                dim=16,
+                alpha=32,
+                freeze_vision_model=False,
+                freeze_vision_projection=False,
+            )
 
-    # Optimizer precision settings (disabled by default for full precision)
-    cfg.optimizer.use_precision_aware_optimizer = False
-    cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.float32
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32
-
-    # Dataset configuration
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.hf_processor_path = hf_path
-
-    # DDP settings - Nemotron uses average_in_collective=False
-    cfg.ddp.overlap_grad_reduce = False
-    cfg.ddp.overlap_param_gather = False
-    cfg.ddp.check_for_nan_in_grad = True
-    cfg.ddp.use_distributed_optimizer = True
-    cfg.ddp.grad_reduce_in_fp32 = True
-    cfg.ddp.average_in_collective = False
-    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
-
-    # Checkpoint config - override save_interval from common
-    cfg.checkpoint.save_interval = 200
-
-    # FP8 and MXFP8 settings (disabled by default)
-    cfg.mixed_precision = "bf16_mixed"
-    # cfg.mixed_precision.fp8_recipe = None
-    # cfg.mixed_precision.fp8 = False
-    # cfg.mixed_precision.fp8_param_gather = False
-    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-
-    # Checkpoint config
-    # cfg.checkpoint.save = "path/to/save"
-    # cfg.checkpoint.load = "path/to/load"
-    # Uncomment below to use a pretrained checkpoint
-    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+        cfg.optimizer.lr = 5e-5
+        cfg.optimizer.min_lr = 5e-6
+        cfg.model.tensor_model_parallel_size = 2
 
     return cfg

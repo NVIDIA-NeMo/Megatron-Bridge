@@ -17,8 +17,8 @@ from functools import partial
 from typing import Iterable
 
 import torch
+from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
-from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
 from megatron.bridge.training.config import ConfigContainer
@@ -27,7 +27,6 @@ from megatron.bridge.training.gpt_step import (
 )
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
@@ -36,17 +35,12 @@ logger = logging.getLogger(__name__)
 def get_batch_from_iterator(
     data_iterator: Iterable,
     skip_getting_attention_mask_from_dataset: bool = True,
-    *,
-    is_first_pp_stage: bool,
-    is_last_pp_stage: bool,
 ) -> dict[str, torch.Tensor]:
     """Get a batch of data from the iterator.
 
     Args:
         data_iterator: The data iterator to get the batch from.
         skip_getting_attention_mask_from_dataset: If set, the dataset will pass a None attention mask.
-        is_first_pp_stage: Whether this is the first pipeline parallel stage.
-        is_last_pp_stage: Whether this is the last pipeline parallel stage.
 
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
@@ -68,9 +62,9 @@ def get_batch_from_iterator(
         required_host_keys.add("cu_seqlens_argmin")
         required_host_keys.add("max_seqlen")
 
-    if is_first_pp_stage:
+    if parallel_state.is_pipeline_first_stage():
         required_device_keys.update(("tokens", "input_ids", "position_ids"))
-    if is_last_pp_stage:
+    if parallel_state.is_pipeline_last_stage():
         required_device_keys.update(("labels", "loss_mask"))
 
     _batch_required_keys = {}
@@ -86,7 +80,7 @@ def get_batch_from_iterator(
 
 
 def get_batch(
-    data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection
+    data_iterator: Iterable, cfg: ConfigContainer
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -104,29 +98,23 @@ def get_batch(
     Args:
         data_iterator: Input data iterator
         cfg: Configuration container
-        pg_collection: Process group collection for distributed training
 
     Returns:
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
         cu_seqlens (optional), cu_seqlens_argmin (optional), max_seqlen (optional), images (optional)
     """
-    # Determine pipeline stage role via process group collection
-    is_first = is_pp_first_stage(pg_collection.pp)
-    is_last = is_pp_last_stage(pg_collection.pp)
-    if (not is_first) and (not is_last):
+    if (not parallel_state.is_pipeline_first_stage()) and (not parallel_state.is_pipeline_last_stage()):
         return None, None, None, None, None, None, None, None, None, None
     batch = get_batch_from_iterator(
         data_iterator,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
-        is_first_pp_stage=is_first,
-        is_last_pp_stage=is_last,
     )
 
     # Keep optional vision tensors aside to avoid being dropped by CP slicing util
     images = batch.get("pixel_values")
 
     # slice batch along sequence dimension for context parallelism
-    batch = get_batch_on_this_cp_rank(batch, cp_group=pg_collection.cp)
+    batch = get_batch_on_this_cp_rank(batch)
     if images is not None:
         batch["images"] = images
 
@@ -164,8 +152,6 @@ def forward_step(
 
     config = get_model_config(model)
 
-    pg_collection = get_pg_collection(model)
-
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
         (
@@ -179,7 +165,7 @@ def forward_step(
             cu_seqlens,
             cu_seqlens_argmin,
             max_seqlen,
-        ) = get_batch(data_iterator, state.cfg, pg_collection=pg_collection)
+        ) = get_batch(data_iterator, state.cfg)
 
     timers("batch-generator").stop()
 

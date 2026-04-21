@@ -17,8 +17,6 @@
 
 import dataclasses
 import functools
-from enum import Enum
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pytest
@@ -36,7 +34,6 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
     parse_hydra_overrides,
-    process_config_with_overrides,
 )
 
 
@@ -73,7 +70,7 @@ class ConfigWithOptionalFields:
     name: str = "test"
     optional_str: Optional[str] = None  # Should be preserved
     optional_int: Optional[int] = None  # Should be preserved
-    activation_func: Any = torch.nn.functional.relu  # Should be serialized as "relu"
+    activation_func: Any = torch.nn.functional.relu  # Should be excluded
     value: int = 42
 
 
@@ -174,37 +171,6 @@ class TestIsOmegaconfProblematic:
         assert _is_omegaconf_problematic(TestClass.class_method)  # bound class method
         assert _is_omegaconf_problematic(TestClass.static_method)  # function object
 
-    def test_arbitrary_objects_problematic(self):
-        """Test that arbitrary objects (not dataclasses/primitives) are problematic."""
-
-        class ArbitraryObj:
-            pass
-
-        # Arbitrary object instance should be problematic now
-        obj = ArbitraryObj()
-        assert _is_omegaconf_problematic(obj)
-
-    def test_allowed_special_types(self):
-        """Test that Path, Enum, and torch.dtype instances are allowed."""
-
-        class MyEnum(Enum):
-            A = 1
-
-        # Path instance
-        assert not _is_omegaconf_problematic(Path("/tmp"))
-
-        # Enum member
-        assert not _is_omegaconf_problematic(MyEnum.A)
-
-        # torch.dtype
-        assert not _is_omegaconf_problematic(torch.float32)
-
-    def test_dataclass_instance_allowed(self):
-        """Test that dataclass instances are allowed."""
-        # Dataclass instance
-        config = SimpleConfig()
-        assert not _is_omegaconf_problematic(config)
-
 
 class TestDataclassToOmegaconfDict:
     """Test _dataclass_to_omegaconf_dict function."""
@@ -224,15 +190,15 @@ class TestDataclassToOmegaconfDict:
 
         assert result["dtype"] == "torch.float16"
         assert result["name"] == "test"
-        # activation_func should be serialized as its short string name
-        assert result["activation_func"] == "relu"
+        # activation_func should be excluded (None not included)
+        assert "activation_func" not in result
 
-    def test_callable_serialization(self):
-        """Test that known callable fields are serialized as strings."""
+    def test_callable_exclusion(self):
+        """Test that callable fields are excluded."""
         config = ConfigWithCallable(activation_func=torch.nn.functional.gelu)
         result = _dataclass_to_omegaconf_dict(config)
 
-        assert result["activation_func"] == "gelu"
+        assert "activation_func" not in result
         assert "name" in result
         assert "dtype" in result
 
@@ -245,7 +211,7 @@ class TestDataclassToOmegaconfDict:
         assert "with_callable" in result
         assert result["simple"]["name"] == "test"
         assert result["simple"]["value"] == 42
-        assert result["with_callable"]["activation_func"] == "relu"
+        assert "activation_func" not in result["with_callable"]
 
     def test_list_handling(self):
         """Test handling of lists."""
@@ -343,18 +309,15 @@ class TestTrackExcludedFields:
         config = ConfigWithCallable()
         excluded = _track_excluded_fields(config)
 
-        # activation_func is now serialized as a string, so it is NOT excluded
-        assert "activation_func" not in excluded
-        assert len(excluded) == 0
+        assert "activation_func" in excluded
+        assert excluded["activation_func"] == torch.nn.functional.relu
 
     def test_nested_tracking(self):
         """Test tracking callable fields in nested config."""
         config = NestedConfig()
         excluded = _track_excluded_fields(config, "root")
 
-        # activation_func is now serialized as a string, so it is NOT excluded
-        assert "root.with_callable.activation_func" not in excluded
-        assert len(excluded) == 0
+        assert "root.with_callable.activation_func" in excluded
 
     def test_no_callables(self):
         """Test tracking when no callables exist."""
@@ -451,10 +414,9 @@ class TestSafeCreateOmegaconfWithPreservation:
         omega_conf, excluded = create_omegaconf_dict_config(config)
 
         assert isinstance(omega_conf, DictConfig)
-        # activation_func is now serialized as a string in the OmegaConf dict
-        assert omega_conf.activation_func == "relu"
-        # No fields should be excluded since activation_func is serializable
-        assert len(excluded) == 0
+        assert len(excluded) > 0
+        assert "root.activation_func" in excluded
+        assert excluded["root.activation_func"] == torch.nn.functional.relu
 
     def test_nested_preservation(self):
         """Test preservation with nested configs."""
@@ -462,9 +424,7 @@ class TestSafeCreateOmegaconfWithPreservation:
         omega_conf, excluded = create_omegaconf_dict_config(config)
 
         assert isinstance(omega_conf, DictConfig)
-        # activation_func is serialized as a string, not excluded
-        assert omega_conf.with_callable.activation_func == "relu"
-        assert "root.with_callable.activation_func" not in excluded
+        assert "root.with_callable.activation_func" in excluded
 
 
 class TestApplyOverrides:
@@ -595,170 +555,6 @@ class TestApplyOverridesWithPreservation:
         assert config.activation_func == original_func
 
 
-class TestProcessConfigWithOverrides:
-    """Test process_config_with_overrides function."""
-
-    def test_no_overrides(self):
-        """Test processing config without any overrides."""
-        config = NestedConfig()
-        original_func = config.with_callable.activation_func
-
-        result = process_config_with_overrides(config)
-
-        # Config should be unchanged
-        assert result.simple.name == "test"
-        assert result.simple.value == 42
-        assert result.with_callable.activation_func == original_func
-
-    def test_with_cli_overrides(self):
-        """Test processing config with CLI overrides."""
-        config = NestedConfig()
-        original_func = config.with_callable.activation_func
-
-        result = process_config_with_overrides(
-            config,
-            cli_overrides=["simple.name=cli_updated", "simple.value=999"],
-        )
-
-        assert result.simple.name == "cli_updated"
-        assert result.simple.value == 999
-        assert result.with_callable.activation_func == original_func
-
-    def test_with_config_filepath(self, tmp_path):
-        """Test processing config with YAML config file."""
-        config = NestedConfig()
-        original_func = config.with_callable.activation_func
-
-        # Create a temp YAML config file
-        config_file = tmp_path / "test_config.yaml"
-        config_file.write_text(
-            """
-simple:
-  name: yaml_updated
-  value: 500
-with_callable:
-  name: yaml_callable
-"""
-        )
-
-        result = process_config_with_overrides(
-            config,
-            config_filepath=str(config_file),
-        )
-
-        assert result.simple.name == "yaml_updated"
-        assert result.simple.value == 500
-        assert result.with_callable.name == "yaml_callable"
-        assert result.with_callable.activation_func == original_func
-
-    def test_with_config_file_and_cli_overrides(self, tmp_path):
-        """Test processing config with both YAML file and CLI overrides (CLI wins)."""
-        config = NestedConfig()
-        original_func = config.with_callable.activation_func
-
-        # Create a temp YAML config file
-        config_file = tmp_path / "test_config.yaml"
-        config_file.write_text(
-            """
-simple:
-  name: yaml_name
-  value: 100
-"""
-        )
-
-        result = process_config_with_overrides(
-            config,
-            config_filepath=str(config_file),
-            cli_overrides=["simple.name=cli_wins", "simple.value=999"],
-        )
-
-        # CLI overrides should win over YAML
-        assert result.simple.name == "cli_wins"
-        assert result.simple.value == 999
-        assert result.with_callable.activation_func == original_func
-
-    def test_config_file_not_found(self):
-        """Test that FileNotFoundError is raised for missing config file."""
-        config = SimpleConfig()
-
-        with pytest.raises(FileNotFoundError, match="Config file not found"):
-            process_config_with_overrides(
-                config,
-                config_filepath="/nonexistent/path/config.yaml",
-            )
-
-    def test_invalid_cli_overrides(self):
-        """Test that OverridesError is raised for invalid CLI overrides."""
-        config = SimpleConfig()
-
-        with pytest.raises(OverridesError):
-            process_config_with_overrides(
-                config,
-                cli_overrides=["invalid override syntax"],
-            )
-
-    def test_callable_preservation(self):
-        """Test that callable fields are preserved through the entire process."""
-        config = ConfigWithCallable()
-        original_func = config.activation_func
-
-        result = process_config_with_overrides(
-            config,
-            cli_overrides=["name=updated", "dtype=torch.float16"],
-        )
-
-        # Callable should be preserved
-        assert result.activation_func == original_func
-        # Other fields should be updated
-        assert result.name == "updated"
-        assert result.dtype == torch.float16
-
-    def test_returns_same_config_object(self):
-        """Test that the function returns the same config object (mutated in place)."""
-        config = SimpleConfig()
-
-        result = process_config_with_overrides(
-            config,
-            cli_overrides=["name=updated"],
-        )
-
-        # Should return the same object
-        assert result is config
-        assert config.name == "updated"
-
-    def test_empty_cli_overrides_list(self):
-        """Test processing with empty CLI overrides list."""
-        config = SimpleConfig()
-
-        result = process_config_with_overrides(
-            config,
-            cli_overrides=[],
-        )
-
-        # Config should be unchanged
-        assert result.name == "test"
-        assert result.value == 42
-
-    def test_none_handling_preserved(self):
-        """Test that None values are preserved through processing."""
-        config = ConfigWithOptionalFields()
-        original_func = config.activation_func
-
-        result = process_config_with_overrides(
-            config,
-            cli_overrides=["name=updated", "value=100"],
-        )
-
-        # None values should be preserved
-        assert result.optional_str is None
-        assert result.optional_int is None
-        # Overrides should be applied
-        assert result.name == "updated"
-        assert result.value == 100
-        # Callable should be preserved
-        assert result.activation_func == original_func
-
-
 class TestParseHydraOverrides:
     """Test parse_hydra_overrides function."""
 
@@ -832,9 +628,9 @@ class TestIntegration:
         assert omega_conf.simple.name == "test"
         assert omega_conf.simple.value == 42
         assert omega_conf.with_callable.name == "test"
-        assert omega_conf.with_callable.activation_func == "relu"  # Serialized as string
+        assert "activation_func" not in omega_conf.with_callable  # Excluded
         assert omega_conf.with_callable.dtype == "torch.float32"  # Converted to string
-        assert len(excluded) == 0  # activation_func is serialized, not excluded
+        assert len(excluded) > 0  # Should have excluded callables
 
         # 3. Apply YAML-style overrides
         yaml_overrides = OmegaConf.create(
@@ -866,8 +662,9 @@ class TestIntegration:
         assert config.with_callable.activation_func == original_func  # Preserved
         assert config.with_callable.dtype == torch.float16  # Type converted back correctly
 
-        # 7. Verify that activation_func was serialized (not excluded) and roundtripped
-        assert len(excluded) == 0  # activation_func is serialized, not excluded
+        # 7. Verify that excluded fields were properly tracked and restored
+        assert "root.with_callable.activation_func" in excluded
+        assert excluded["root.with_callable.activation_func"] == original_func
 
         # Note: New fields are not added to dataclasses (this is expected behavior)
         # The dataclass structure remains strongly typed
@@ -959,12 +756,12 @@ class TestNoneHandling:
         assert omega_conf.name == "test"
         assert omega_conf.value == 42
 
-        # Verify callable was serialized as a string in OmegaConf
-        assert omega_conf.activation_func == "relu"
+        # Verify callable was excluded from OmegaConf
+        assert "activation_func" not in omega_conf
 
-        # activation_func is serialized (not excluded), so excluded should be empty
-        assert "root.activation_func" not in excluded
-        assert len(excluded) == 0
+        # Verify callable was tracked for restoration
+        assert "root.activation_func" in excluded
+        assert excluded["root.activation_func"] == torch.nn.functional.relu
 
     def test_none_values_roundtrip_correctly(self):
         """Test that None values survive the full conversion roundtrip."""

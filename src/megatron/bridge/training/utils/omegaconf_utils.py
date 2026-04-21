@@ -19,17 +19,12 @@ import dataclasses
 import functools
 import inspect
 import logging
-from enum import Enum
-from pathlib import Path
-from typing import Any, Dict, List, Tuple, TypeVar
+from typing import Any, Dict, Tuple, TypeVar
 
 import torch
 from hydra._internal.config_loader_impl import ConfigLoaderImpl
 from hydra.core.override_parser.overrides_parser import OverridesParser
 from omegaconf import DictConfig, OmegaConf
-
-# Re-export so existing callers (e.g. transformer_config.py) keep working.
-from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable  # noqa: F401
 
 
 logger = logging.getLogger(__name__)
@@ -38,9 +33,6 @@ DataclassInstance = TypeVar("DataclassInstance")
 
 # Sentinel object to distinguish between "exclude this field" and "field is legitimately None"
 _EXCLUDE_FIELD = object()
-
-# Fields whose callables should be serialized as strings (not excluded)
-_SERIALIZABLE_CALLABLE_FIELDS: frozenset[str] = frozenset({"activation_func"})
 
 
 def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dict[str, Any]]:
@@ -102,65 +94,7 @@ def apply_overrides(
     logger.debug("Configuration updated with overrides and excluded fields preserved")
 
 
-def process_config_with_overrides(
-    config: DataclassInstance,
-    config_filepath: str | None = None,
-    cli_overrides: list[str] | None = None,
-) -> DataclassInstance:
-    """Process a configuration object with optional YAML file and CLI overrides.
-
-    This function provides a unified way to:
-    1. Convert the config to OmegaConf while preserving callable fields
-    2. Merge an optional YAML configuration file
-    3. Apply optional CLI overrides using Hydra syntax
-    4. Apply the final configuration back to the original object
-
-    Args:
-        config: The dataclass configuration instance to process
-        config_filepath: Optional path to a YAML config file to merge
-        cli_overrides: Optional list of Hydra-style CLI override strings
-
-    Returns:
-        The modified configuration object with all overrides applied
-
-    Raises:
-        FileNotFoundError: If the specified config_filepath does not exist
-        OverridesError: If there's an error parsing CLI overrides
-
-    Example:
-        >>> config = load_recipe("llama3_8b")
-        >>> config = process_config_with_overrides(
-        ...     config,
-        ...     config_filepath="my_config.yaml",
-        ...     cli_overrides=["model_config.hidden_size=4096", "training_config.lr=1e-4"]
-        ... )
-    """
-    # Convert config to OmegaConf, tracking excluded callable fields
-    omega_conf, excluded_fields = create_omegaconf_dict_config(config)
-
-    # Merge YAML config file if provided
-    if config_filepath:
-        config_filepath = Path(config_filepath)
-        if not config_filepath.exists():
-            raise FileNotFoundError(f"Config file not found: {config_filepath}")
-
-        yaml_conf = OmegaConf.load(config_filepath)
-        omega_conf = OmegaConf.merge(omega_conf, yaml_conf)
-        logger.debug(f"Merged configuration from {config_filepath}")
-
-    # Apply CLI overrides if provided
-    if cli_overrides:
-        omega_conf = parse_hydra_overrides(omega_conf, cli_overrides)
-        logger.debug(f"Applied {len(cli_overrides)} CLI overrides")
-
-    # Convert back to dict and apply to original config object
-    final_config_dict = OmegaConf.to_container(omega_conf, resolve=True)
-    apply_overrides(config, final_config_dict, excluded_fields)
-
-    return config
-
-
-def parse_hydra_overrides(cfg: DictConfig, overrides: List[str]) -> DictConfig:
+def parse_hydra_overrides(cfg: DictConfig, overrides: list[str]) -> DictConfig:
     """Parse and apply Hydra overrides to an OmegaConf config.
 
     This function uses Hydra's override parser to support advanced override syntax
@@ -204,7 +138,7 @@ def _is_omegaconf_problematic(val: Any) -> bool:
     Returns:
         True if the value is a problematic callable, False otherwise
     """
-    if val is None:
+    if not callable(val):
         return False
 
     # Allow classes/types
@@ -212,19 +146,11 @@ def _is_omegaconf_problematic(val: Any) -> bool:
         return False
 
     # Block function objects, methods, partial functions, etc.
-    if callable(val) or (
+    return (
         hasattr(val, "__call__")
+        and not isinstance(val, type)
         and (hasattr(val, "__module__") or hasattr(val, "__qualname__") or isinstance(val, functools.partial))
-    ):
-        return True
-
-    # Block arbitrary objects that are not dataclasses or safe primitives
-    if not isinstance(
-        val, (int, float, bool, str, list, tuple, dict, Path, Enum, torch.dtype)
-    ) and not dataclasses.is_dataclass(val):
-        return True
-
-    return False
+    )
 
 
 def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
@@ -266,15 +192,8 @@ def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
         logger.debug(f"Converting torch.dtype at {current_path}: {val_to_convert}")
         return str(val_to_convert)
 
-    # Handle callables — serialize known activation functions as strings,
-    # exclude everything else.
+    # Handle callables - exclude them completely
     if _is_omegaconf_problematic(val_to_convert):
-        field_name = current_path.rsplit(".", 1)[-1] if "." in current_path else current_path
-        if field_name in _SERIALIZABLE_CALLABLE_FIELDS:
-            str_name = callable_to_str(val_to_convert)
-            if str_name is not None:
-                logger.debug(f"Serializing callable at {current_path} as string: {str_name}")
-                return str_name
         logger.debug(f"Excluding callable at {current_path}: {type(val_to_convert)} - {val_to_convert}")
         return _EXCLUDE_FIELD
 
@@ -369,12 +288,8 @@ def _track_excluded_fields(obj: Any, path: str = "") -> Dict[str, Any]:
             field_value = getattr(obj, field_name)
 
             if _is_omegaconf_problematic(field_value):
-                # Skip fields that are serialized as strings (not excluded)
-                if field_name in _SERIALIZABLE_CALLABLE_FIELDS and callable_to_str(field_value) is not None:
-                    logger.debug(f"Skipping serializable callable (not excluded): {field_path}")
-                else:
-                    excluded_fields[field_path] = field_value
-                    logger.debug(f"Tracking excluded callable: {field_path}")
+                excluded_fields[field_path] = field_value
+                logger.debug(f"Tracking excluded callable: {field_path}")
             elif dataclasses.is_dataclass(field_value):
                 nested_excluded = _track_excluded_fields(field_value, field_path)
                 excluded_fields.update(nested_excluded)
@@ -497,20 +412,11 @@ def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, An
 
                 # If the original was a torch.dtype and value is a string, convert back
                 if isinstance(current_attr, torch.dtype) and isinstance(value, str):
-                    from megatron.bridge.utils.activation_map import str_to_dtype
-
                     try:
-                        final_value = str_to_dtype(value)
-                    except ValueError:
+                        final_value = getattr(torch, value.split(".")[-1])
+                    except AttributeError:
                         logger.warning(f"Could not convert string '{value}' back to torch.dtype")
                         final_value = value
-
-                # Restore serialized callable fields (e.g. "relu" → F.relu)
-                if key in _SERIALIZABLE_CALLABLE_FIELDS and isinstance(final_value, str):
-                    try:
-                        final_value = str_to_callable(final_value)
-                    except ValueError:
-                        logger.warning(f"Could not restore callable for {key}='{final_value}'; keeping string")
 
                 setattr(config_obj, key, final_value)
                 logger.debug(f"Set {type(config_obj).__name__}.{key} = {final_value}")

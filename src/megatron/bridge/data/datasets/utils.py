@@ -29,11 +29,10 @@ from typing import Any, Callable, Optional, Pattern, Type
 import numpy as np
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
-from megatron.core.tokenizers import MegatronTokenizer
 from torch.utils.data import Dataset
 
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe
-from megatron.bridge.utils.safe_pickle import safe_pickle_load
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -345,7 +344,7 @@ class _TextMemMapDataset(Dataset):
         """Allows child-classes to modify the parsing of raw text, prior to tokenization"""
         # tokenize text if tokenizer is given
         if self.tokenizer is not None:
-            data = _tokenize(self.tokenizer, text)
+            data = self.tokenizer.text_to_ids(text)
         else:
             data = text
 
@@ -374,9 +373,9 @@ class _TextMemMapDataset(Dataset):
             # load index file into memory map
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
-                midx = msc.numpy.load(idx_fn + ".npy", allow_pickle=False, mmap_mode="r")
+                midx = msc.numpy.load(idx_fn + ".npy", allow_pickle=True, mmap_mode="r")
             else:
-                midx = np.load(idx_fn + ".npy", allow_pickle=False, mmap_mode="r")
+                midx = np.load(idx_fn + ".npy", allow_pickle=True, mmap_mode="r")
 
             # test for header
             if len(midx) < self._header_lines:
@@ -386,10 +385,10 @@ class _TextMemMapDataset(Dataset):
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
                 with msc.open(idx_fn + ".info", "rb") as fp:
-                    idx_info_dict = safe_pickle_load(fp)
+                    idx_info_dict = pickle.load(fp)
             else:
                 with open(idx_fn + ".info", "rb") as fp:
-                    idx_info_dict = safe_pickle_load(fp)
+                    idx_info_dict = pickle.load(fp)
 
             # test for mismatch in expected newline_int
             if "newline_int" in idx_info_dict:
@@ -732,10 +731,11 @@ def _get_samples_mapping(
     binary_head,
     index_mapping_dir: str = None,
     samples_mapping: Any = None,
+    sanity_check_dist_workers: bool = True,
 ):
     """Get a list that maps a sample index to a starting sentence index, end sentence index, and length"""
-    is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
-    rank = torch.distributed.get_rank() if is_distributed else 0
+
+    from megatron.core import parallel_state
 
     if not num_epochs:
         if not max_num_samples:
@@ -760,7 +760,7 @@ def _get_samples_mapping(
     indexmap_filename += ".npy"
 
     # Build the indexed mapping if not exist and not provided externally.
-    if samples_mapping is None and rank == 0 and not os.path.isfile(indexmap_filename):
+    if samples_mapping is None and torch.distributed.get_rank() == 0 and not os.path.isfile(indexmap_filename):
         # Fake index mapping if missing
         if (getattr(indexed_dataset, "doc_idx", None) is None) and (getattr(indexed_dataset, "sizes", None) is None):
             _make_indexed_dataset_compatibility(indexed_dataset)
@@ -776,7 +776,7 @@ def _get_samples_mapping(
         assert indexed_dataset.sizes.dtype == np.int32
 
         # Build samples mapping
-        verbose = rank == 0
+        verbose = torch.distributed.get_rank() == 0
         start_time = time.time()
         logger.info(" > building samples index mapping for {} ...".format(name))
         # First compile and then import.
@@ -799,23 +799,27 @@ def _get_samples_mapping(
             2 if binary_head else 1,
         )
         logger.info(" > done building samples index maping")
-        np.save(indexmap_filename, samples_mapping, allow_pickle=False)
+        np.save(indexmap_filename, samples_mapping, allow_pickle=True)
         logger.info(" > saved the index mapping in {}".format(indexmap_filename))
         # Make sure all the ranks have built the mapping
         logger.info(
             " > elasped time to build and save samples mapping (seconds): {:4f}".format(time.time() - start_time)
         )
 
-    # Ensure the mapping exists before all ranks attempt to load it.
-    # Skip barrier when invoked from a rank-0-only data preparation flow (see `rank_0_prepare_data()`).
-    if is_distributed and not rank_0_prepare_data():
+    if sanity_check_dist_workers:
         torch.distributed.barrier()
-
+        counts = torch.cuda.LongTensor([1])
+        torch.distributed.all_reduce(counts, group=parallel_state.get_data_parallel_group(with_context_parallel=True))
+        torch.distributed.all_reduce(counts, group=parallel_state.get_pipeline_model_parallel_group())
+        assert counts[0].item() == (
+            torch.distributed.get_world_size()
+            // torch.distributed.get_world_size(group=parallel_state.get_tensor_model_parallel_group())
+        )
     # Load indexed dataset if not given externally.
     if samples_mapping is None:
         logger.info(" > loading indexed mapping from {}".format(indexmap_filename))
         start_time = time.time()
-        samples_mapping = np.load(indexmap_filename, allow_pickle=False, mmap_mode="r")
+        samples_mapping = np.load(indexmap_filename, allow_pickle=True, mmap_mode="r")
         logger.info("    loaded indexed file in {:3.3f} seconds".format(time.time() - start_time))
         logger.info("    total number of samples: {}".format(samples_mapping.shape[0]))
 
@@ -928,13 +932,10 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
     else:
         tools = tool_schemas
 
-    if getattr(tokenizer, "legacy", False):
-        tokenizer = tokenizer._tokenizer
-
     # assistant mask only works if chat template has generation keyword
-    template_has_generation_kwd = GENERATION_REGEX.search(tokenizer.chat_template) is not None
+    template_has_generation_kwd = GENERATION_REGEX.search(tokenizer._tokenizer.chat_template) is not None
 
-    tokenized_chat = tokenizer.apply_chat_template(
+    tokenized_chat = tokenizer._tokenizer.apply_chat_template(
         chat,
         tools=tools,
         tokenize=True,
@@ -949,6 +950,10 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
         mask = tokenized_chat["assistant_masks"]
     else:
         mask = [1] * len(input_ids)
+
+    if tokenizer.eos_id and input_ids[-1] != tokenizer.eos_id:
+        input_ids += [tokenizer.eos_id]
+        mask += [1]
 
     if 0 in mask:
         # traverse the list backward for first occurrence of masked token
@@ -984,9 +989,9 @@ def _preprocess(
     """
     header, conversation, data_type, mask_role = _get_header_conversation_type_mask_role(source, special_tokens)
     # tokenize conversations
-    input_ids = _tokenize(tokenizer, conversation)
+    input_ids = tokenizer.text_to_ids(conversation)
     target = copy.deepcopy(input_ids)
-    header_tokens = _tokenize(tokenizer, header)
+    header_tokens = tokenizer.text_to_ids(header)
     header_len = len(header_tokens)
 
     ids = []
@@ -998,8 +1003,8 @@ def _preprocess(
         )
     for s in source["conversations"]:
         # hack to remove the extra empty token in front
-        id1 = _tokenize(tokenizer, PREFIX_STR + s["value"])
-        id2 = _tokenize(tokenizer, PREFIX_STR)
+        id1 = tokenizer.text_to_ids(PREFIX_STR + s["value"])
+        id2 = tokenizer.text_to_ids(PREFIX_STR)
         tokenized_sentence = id1[len(id2) :]
         ids.append(torch.tensor(tokenized_sentence))
         tokenized_lens.append(len(tokenized_sentence))
@@ -1077,8 +1082,8 @@ def _mask_targets(
     tgt_len = target.shape[0]
     for i, (tokenized_len, speaker, s_id) in enumerate(zip(tokenized_lens, speakers, s_ids)):
         # note, sentence piece will add extra empty token in front. has to compute the diff
-        id1 = _tokenize(tokenizer, PREFIX_STR)
-        id2 = _tokenize(tokenizer, PREFIX_STR + TURN_TOKEN + speaker + END_NAME_SIGNAL)
+        id1 = tokenizer.text_to_ids(PREFIX_STR)
+        id2 = tokenizer.text_to_ids(PREFIX_STR + TURN_TOKEN + speaker + END_NAME_SIGNAL)
         skip_name_len = len(id2) - len(
             id1
         )  # s_ids[:skip_name_len] is the name part of the prompt 'TURN_TOKEN + speaker + END_NAME_SIGNAL'
@@ -1257,9 +1262,9 @@ def _build_memmap_index_files(newline_int, build_index_fn, fn, index_mapping_dir
         logger.info(f"Saving idx file = {idx_fn}.npy")
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
-            msc.numpy.save(idx_fn + ".npy", midx, allow_pickle=False)
+            msc.numpy.save(idx_fn + ".npy", midx, allow_pickle=True)
         else:
-            np.save(idx_fn + ".npy", midx, allow_pickle=False)
+            np.save(idx_fn + ".npy", midx, allow_pickle=True)
         logger.info(f"Saving metadata file = {idx_fn}.info")
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
@@ -1332,15 +1337,3 @@ def _deallocate_indexed_dataset_memory(indexed_dataset):
     """Deallocate memory of an IndexedDataset."""
     indexed_dataset.sizes = None
     indexed_dataset.doc_idx = None
-
-
-def _tokenize(tokenizer, text):
-    """
-    Returns tokenized text depending on the type of tokenizer (legacy or new).
-    """
-    if getattr(tokenizer, "legacy", False):
-        # legacy tokenizer system
-        return tokenizer.text_to_ids(text)
-    else:
-        # new tokenizer system
-        return tokenizer.tokenize(text)

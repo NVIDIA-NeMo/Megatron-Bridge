@@ -30,18 +30,59 @@ _gemma_module = importlib.import_module("megatron.bridge.recipes.gemma")
 _GEMMA3_RECIPE_FUNCS = [
     getattr(_gemma_module, name)
     for name in getattr(_gemma_module, "__all__", [])
-    if callable(getattr(_gemma_module, name, None)) and "gemma3" in name.lower()
+    if callable(getattr(_gemma_module, name, None))
 ]
 
 
 def _safe_overrides_for(name: str) -> dict:
-    """Return overrides for recipe functions.
+    # Detect if this is a finetune recipe
+    is_finetune = "finetune" in name.lower()
 
-    All configs (pretrain, SFT, PEFT) now use the parameterless API.
-    This function returns an empty dict since configs are modified after creation.
-    """
-    # All configs now use the parameterless API
-    return {}
+    overrides = {
+        "name": f"unit_{name}",
+        "dir": ".",
+        "train_iters": 10,
+        "global_batch_size": 2,
+        "micro_batch_size": 1,
+        "seq_length": 64,
+        "min_lr": 1e-5,
+        "lr_warmup_iters": 2,
+    }
+
+    if is_finetune:
+        # Finetuning-specific overrides
+        overrides.update(
+            {
+                "finetune_lr": 1e-4,
+                "pretrained_checkpoint": "/fake/checkpoint/path",
+            }
+        )
+        # Note: Finetuning recipes set parallelism internally based on PEFT vs full SFT
+        # Note: Finetuning always uses HF tokenizer, never null tokenizer
+    else:
+        # Pretrain-specific overrides
+        overrides.update(
+            {
+                "mock": True,
+                "lr": 1e-4,
+                "tensor_model_parallel_size": 1,
+                "pipeline_model_parallel_size": 1,
+                "context_parallel_size": 1,
+                "use_null_tokenizer": True,
+            }
+        )
+
+        # Large models/variants may set additional flags in recipes; keep harmless defaults
+        lname = name.lower()
+        if "12b" in lname or "27b" in lname:
+            overrides.update(
+                {
+                    "virtual_pipeline_model_parallel_size": None,
+                    "sequence_parallel": True,
+                }
+            )
+
+    return overrides
 
 
 class _FakeModelCfg:
@@ -103,7 +144,15 @@ def _assert_basic_config(cfg):
 
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
-    assert cfg.dataset.seq_length >= 1
+
+    # Check sequence length (different attribute names for different dataset types)
+    if hasattr(cfg.dataset, "sequence_length"):
+        assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
+    elif hasattr(cfg.dataset, "seq_length"):
+        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / HFDatasetConfig
+    else:
+        # Some other dataset type
+        assert cfg.dataset is not None
 
 
 @pytest.mark.parametrize("recipe_func", _GEMMA3_RECIPE_FUNCS)
@@ -123,173 +172,103 @@ def test_each_gemma3_recipe_builds_config(recipe_func: Callable, monkeypatch: py
     monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider12B", FakeProvider)
     monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider27B", FakeProvider)
 
-    # For SFT/PEFT recipes, also monkeypatch AutoBridge and AutoTokenizer
-    is_sft_or_peft = "sft" in recipe_func.__name__.lower() or "peft" in recipe_func.__name__.lower()
-    if is_sft_or_peft:
+    # For finetune recipes, also monkeypatch AutoBridge and AutoTokenizer
+    is_finetune = "finetune" in recipe_func.__name__.lower()
+    if is_finetune:
         module_name = recipe_func.__module__
         mod = importlib.import_module(module_name)
         monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
         # Mock AutoTokenizer to avoid HF I/O
-        from unittest.mock import MagicMock
+        import transformers
 
-        mock_tokenizer = MagicMock()
-        mock_tokenizer.__len__ = MagicMock(return_value=256000)
+        monkeypatch.setattr(
+            transformers,
+            "AutoTokenizer",
+            type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+        )
 
-        mock_auto_tokenizer = MagicMock()
-        mock_auto_tokenizer.from_pretrained = MagicMock(return_value=mock_tokenizer)
+    overrides = _safe_overrides_for(recipe_func.__name__)
 
-        monkeypatch.setattr("transformers.AutoTokenizer", mock_auto_tokenizer)
-
-    # All configs now use the parameterless API
-    cfg = recipe_func()
+    cfg = recipe_func(**overrides)
 
     _assert_basic_config(cfg)
 
-    # Ensure tokenizer is properly configured
-    if is_sft_or_peft:
-        # SFT/PEFT recipes always use HF tokenizer
+    # Ensure tokenizer choice matches recipe type
+    if is_finetune:
+        # Finetuning recipes always use HF tokenizer
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert cfg.tokenizer.tokenizer_model is not None
     else:
-        # Pretrain recipes use either NullTokenizer or HuggingFaceTokenizer
-        if cfg.tokenizer.tokenizer_type == "NullTokenizer":
-            assert cfg.tokenizer.vocab_size is not None
-        else:
-            assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-            assert cfg.tokenizer.tokenizer_model is not None
+        # Pretrain recipes honor use_null_tokenizer override
+        if overrides.get("use_null_tokenizer"):
+            assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
 
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
 
-# Gemma3 SFT-specific tests
-_GEMMA3_SFT_FUNCS = [
+# Gemma3 finetune-specific tests
+_GEMMA3_FINETUNE_FUNCS = [
     getattr(_gemma_module, name)
     for name in [
-        "gemma3_1b_sft_config",
-    ]
-    if callable(getattr(_gemma_module, name, None))
-]
-
-# Gemma3 PEFT-specific tests
-_GEMMA3_PEFT_FUNCS = [
-    getattr(_gemma_module, name)
-    for name in [
-        "gemma3_1b_peft_config",
+        "gemma3_1b_finetune_config",
     ]
     if callable(getattr(_gemma_module, name, None))
 ]
 
 
-@pytest.mark.parametrize("recipe_func", _GEMMA3_SFT_FUNCS)
-def test_gemma3_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that each Gemma3 SFT recipe builds a valid config."""
+@pytest.mark.parametrize("recipe_func", _GEMMA3_FINETUNE_FUNCS)
+@pytest.mark.parametrize("peft", ["lora", "dora", "none"])
+def test_gemma3_finetune_peft_vs_full_sft(recipe_func: Callable, peft: str, monkeypatch: pytest.MonkeyPatch):
+    """Test that PEFT and full SFT configurations are correctly applied for Gemma3 models."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
-    from unittest.mock import MagicMock
+    import transformers
 
-    mock_tokenizer = MagicMock()
-    mock_tokenizer.__len__ = MagicMock(return_value=256000)
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
 
-    mock_auto_tokenizer = MagicMock()
-    mock_auto_tokenizer.from_pretrained = MagicMock(return_value=mock_tokenizer)
+    overrides = _safe_overrides_for(recipe_func.__name__)
+    overrides["peft"] = peft
 
-    monkeypatch.setattr("transformers.AutoTokenizer", mock_auto_tokenizer)
-
-    # SFT configs use the parameterless API
-    cfg = recipe_func()
-
-    _assert_basic_config(cfg)
-
-    # SFT always uses HF tokenizer
-    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert cfg.tokenizer.tokenizer_model is not None
-
-    # SFT should not have PEFT config
-    assert cfg.peft is None
-
-
-@pytest.mark.parametrize("recipe_func", _GEMMA3_PEFT_FUNCS)
-def test_gemma3_peft_config_builds(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that each Gemma3 PEFT recipe builds a valid config."""
-    module_name = recipe_func.__module__
-    mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
-
-    # Mock AutoTokenizer to avoid HF I/O
-    from unittest.mock import MagicMock
-
-    mock_tokenizer = MagicMock()
-    mock_tokenizer.__len__ = MagicMock(return_value=256000)
-
-    mock_auto_tokenizer = MagicMock()
-    mock_auto_tokenizer.from_pretrained = MagicMock(return_value=mock_tokenizer)
-
-    monkeypatch.setattr("transformers.AutoTokenizer", mock_auto_tokenizer)
-
-    # PEFT configs take peft_scheme parameter (default is "lora")
-    cfg = recipe_func()
+    cfg = recipe_func(**overrides)
 
     _assert_basic_config(cfg)
 
-    # PEFT always uses HF tokenizer
-    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert cfg.tokenizer.tokenizer_model is not None
-
-    # PEFT should have PEFT config
-    assert cfg.peft is not None
-
-
-@pytest.mark.parametrize("recipe_func", _GEMMA3_PEFT_FUNCS)
-@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
-def test_gemma3_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configurations are correctly applied for different schemes."""
-    module_name = recipe_func.__module__
-    mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
-
-    # Mock AutoTokenizer to avoid HF I/O
-    from unittest.mock import MagicMock
-
-    mock_tokenizer = MagicMock()
-    mock_tokenizer.__len__ = MagicMock(return_value=256000)
-
-    mock_auto_tokenizer = MagicMock()
-    mock_auto_tokenizer.from_pretrained = MagicMock(return_value=mock_tokenizer)
-
-    monkeypatch.setattr("transformers.AutoTokenizer", mock_auto_tokenizer)
-
-    cfg = recipe_func(peft_scheme=peft_scheme)
-
-    _assert_basic_config(cfg)
-
-    # PEFT should have PEFT config
-    assert cfg.peft is not None
+    # Check PEFT config presence
+    if peft in ["lora", "dora"]:
+        assert cfg.peft is not None
+    elif peft == "none":
+        assert cfg.peft is None
 
 
 def test_gemma3_1b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 1B LoRA has correct default parallelism and performance optimizations."""
-    from megatron.bridge.recipes.gemma import gemma3_1b_peft_config
+    from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
-    from unittest.mock import MagicMock
+    import transformers
 
-    mock_tokenizer = MagicMock()
-    mock_tokenizer.__len__ = MagicMock(return_value=256000)
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
 
-    mock_auto_tokenizer = MagicMock()
-    mock_auto_tokenizer.from_pretrained = MagicMock(return_value=mock_tokenizer)
+    overrides = _safe_overrides_for("gemma3_1b_finetune_config")
+    overrides["peft"] = "lora"
 
-    monkeypatch.setattr("transformers.AutoTokenizer", mock_auto_tokenizer)
-
-    cfg = gemma3_1b_peft_config(peft_scheme="lora")
+    cfg = gemma3_1b_finetune_config(**overrides)
 
     _assert_basic_config(cfg)
 
@@ -309,23 +288,24 @@ def test_gemma3_1b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_gemma3_1b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 1B DoRA has correct default parallelism and performance optimizations."""
-    from megatron.bridge.recipes.gemma import gemma3_1b_peft_config
+    from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
-    from unittest.mock import MagicMock
+    import transformers
 
-    mock_tokenizer = MagicMock()
-    mock_tokenizer.__len__ = MagicMock(return_value=256000)
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
 
-    mock_auto_tokenizer = MagicMock()
-    mock_auto_tokenizer.from_pretrained = MagicMock(return_value=mock_tokenizer)
+    overrides = _safe_overrides_for("gemma3_1b_finetune_config")
+    overrides["peft"] = "dora"
 
-    monkeypatch.setattr("transformers.AutoTokenizer", mock_auto_tokenizer)
-
-    cfg = gemma3_1b_peft_config(peft_scheme="dora")
+    cfg = gemma3_1b_finetune_config(**overrides)
 
     _assert_basic_config(cfg)
 
@@ -345,23 +325,24 @@ def test_gemma3_1b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_gemma3_1b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 1B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.gemma import gemma3_1b_sft_config
+    from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
-    from unittest.mock import MagicMock
+    import transformers
 
-    mock_tokenizer = MagicMock()
-    mock_tokenizer.__len__ = MagicMock(return_value=256000)
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
 
-    mock_auto_tokenizer = MagicMock()
-    mock_auto_tokenizer.from_pretrained = MagicMock(return_value=mock_tokenizer)
+    overrides = _safe_overrides_for("gemma3_1b_finetune_config")
+    overrides["peft"] = "none"
 
-    monkeypatch.setattr("transformers.AutoTokenizer", mock_auto_tokenizer)
-
-    cfg = gemma3_1b_sft_config()
+    cfg = gemma3_1b_finetune_config(**overrides)
 
     _assert_basic_config(cfg)
 
@@ -372,31 +353,29 @@ def test_gemma3_1b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.parametrize("packed", [True, False])
-def test_gemma3_1b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
+def test_gemma3_1b_finetune_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
     """Test that packed sequence configuration works correctly."""
-    from megatron.bridge.recipes.gemma import gemma3_1b_sft_config
+    from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
-    from unittest.mock import MagicMock
+    import transformers
 
-    mock_tokenizer = MagicMock()
-    mock_tokenizer.__len__ = MagicMock(return_value=256000)
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
 
-    mock_auto_tokenizer = MagicMock()
-    mock_auto_tokenizer.from_pretrained = MagicMock(return_value=mock_tokenizer)
+    overrides = _safe_overrides_for("gemma3_1b_finetune_config")
+    overrides["packed_sequence"] = packed
 
-    monkeypatch.setattr("transformers.AutoTokenizer", mock_auto_tokenizer)
-
-    cfg = gemma3_1b_sft_config()
-
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
+    cfg = gemma3_1b_finetune_config(**overrides)
 
     _assert_basic_config(cfg)
 
     # Packed sequence affects default seq_length (4096 vs 2048)
-    # But we modify packed_sequence after creation, so just verify config is valid
+    # But we override seq_length in tests, so just verify config is valid
     assert cfg.dataset is not None

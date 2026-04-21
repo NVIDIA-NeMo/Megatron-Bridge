@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import re
 from typing import List, Optional
 
-from megatron.bridge.models.conversion.param_mapping import AutoMapping, MegatronParamMapping
-from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map
+from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
 
 
 class MegatronMappingRegistry:
@@ -69,58 +67,6 @@ class MegatronMappingRegistry:
         - '**' matches any sequence of characters - designed for nested paths
     """
 
-    # Mapping aliases for separate LayerNorm params vs fused TE LayerNormLinear params.
-    # Source: https://github.com/NVIDIA/Megatron-LM/blob/3cf7a63fe9316102a498690ae4cf2b22d5ff4be0/megatron/core/post_training/modelopt/gpt/state_dict_hooks.py#L38-L51
-    _SEPARATE_LAYERNORM_REWRITES = [
-        ("self_attention.linear_qkv.layer_norm_weight", "input_layernorm.weight"),
-        ("self_attention.linear_qkv.layer_norm_bias", "input_layernorm.bias"),
-        ("self_attention.linear_q_up_proj.layer_norm_weight", "self_attention.q_layernorm.weight"),
-        ("self_attention.linear_q_up_proj.layer_norm_bias", "self_attention.q_layernorm.bias"),
-        ("self_attention.linear_kv_up_proj.layer_norm_weight", "self_attention.kv_layernorm.weight"),
-        ("self_attention.linear_kv_up_proj.layer_norm_bias", "self_attention.kv_layernorm.bias"),
-        ("mlp.linear_fc1.layer_norm_weight", "pre_mlp_layernorm.weight"),
-        ("mlp.linear_fc1.layer_norm_bias", "pre_mlp_layernorm.bias"),
-        ("mixer.in_proj.layer_norm_weight", "norm.weight"),
-    ]
-
-    def _add_separate_layernorm_mappings(self) -> None:
-        """Add mapping aliases for separate LayerNorm module naming.
-
-        Some Megatron implementations keep LayerNorm weights inside fused TE
-        linear modules (e.g., `self_attention.linear_qkv.layer_norm_weight`),
-        while others expose them as standalone modules (e.g., `input_layernorm.weight`).
-        To avoid requiring every bridge to add both names, duplicate any matching
-        mapping so both naming conventions resolve to the same HF parameter.
-        """
-        original_mappings = list(self.mappings)
-        existing_names = {mapping.megatron_param for mapping in self.mappings}
-        extra_mappings = []
-
-        for mapping in original_mappings:
-            for old_name, new_name in self._SEPARATE_LAYERNORM_REWRITES:
-                if not mapping.megatron_param.endswith(f"*.{old_name}"):
-                    continue
-                new_megatron_param = mapping.megatron_param[: -len(old_name)] + new_name
-                if new_megatron_param in existing_names:
-                    break
-                if isinstance(mapping, AutoMapping):
-                    new_mapping = AutoMapping(new_megatron_param, mapping.hf_param, mapping.permute_dims)
-                else:
-                    print(f"Unrecognized mapping type for {mapping.megatron_param} -> {mapping.hf_param}")
-                    break
-                extra_mappings.append(new_mapping)
-                existing_names.add(new_megatron_param)
-                break
-
-        if extra_mappings:
-            self.mappings.extend(extra_mappings)
-
-    def _add_quantization_mappings(self) -> None:
-        """Add quantization mappings for weight quantizers and input quantizers."""
-        original_mappings = list(self.mappings)
-        self.mappings.extend(convert_to_amax_map(original_mappings, ".weight_quantizer._amax"))
-        self.mappings.extend(convert_to_amax_map(original_mappings, ".input_quantizer._amax"))
-
     def _convert_pattern_to_regex(self, pattern: str) -> str:
         """Convert a pattern with wildcards to regex pattern.
 
@@ -155,15 +101,12 @@ class MegatronMappingRegistry:
             *mappings: MegatronParamMapping objects
         """
         self.mappings = list(mappings)
-        self._add_separate_layernorm_mappings()
-        if int(os.environ.get("ENABLE_BRIDGE_QUANT_MAPPING", "0")):
-            self._add_quantization_mappings()
 
         # Pre-compile patterns for efficiency
         self._compiled_patterns = []
         self._reverse_patterns = []  # For hf_param -> megatron lookups
 
-        for mapping in self.mappings:
+        for mapping in mappings:
             # Compile source patterns
             if "*" in mapping.megatron_param:
                 # Convert glob pattern to regex with support for * and **

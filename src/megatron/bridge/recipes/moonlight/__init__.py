@@ -12,15 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.moonlight.moonlight_16b import (
-    moonlight_16b_peft_config,
-    moonlight_16b_pretrain_config,
-    moonlight_16b_sft_config,
-)
+from megatron.bridge.recipes.moonlight.moonlight_16b import moonlight_16b_pretrain_config
 
 
 __all__ = [
     "moonlight_16b_pretrain_config",
-    "moonlight_16b_sft_config",
-    "moonlight_16b_peft_config",
 ]

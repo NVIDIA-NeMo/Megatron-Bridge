@@ -16,15 +16,13 @@
 
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_processors.gsm8k import process_gsm8k_example
-from megatron.bridge.data.hf_processors.openmathinstruct2 import process_openmathinstruct2_example
 from megatron.bridge.data.hf_processors.squad import process_squad_example
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import LoRA
 
 
-def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None:
+def default_peft_config(peft_scheme: str | PEFT | None) -> PEFT | None:
     """Create default PEFT configuration matching NeMo2 exactly.
 
     Args:
@@ -40,26 +38,22 @@ def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None
         return peft_scheme  # User provided custom PEFT
 
     if isinstance(peft_scheme, str):
-        if peft_scheme.lower() == "none":
-            return None
         if peft_scheme.lower() == "lora":
-            return LoRA(**kwargs)
+            return LoRA()
         elif peft_scheme.lower() == "dora":
-            return DoRA(**kwargs)
+            return DoRA()
         else:
             raise ValueError(f"Unknown PEFT scheme: {peft_scheme}. Supported: 'lora', 'dora', or None")
 
     raise ValueError(f"Invalid peft type: {type(peft_scheme)}. Expected str, PEFT instance, or None")
 
 
-def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_to_mult: int = 1) -> HFDatasetConfig:
+def default_squad_config(seq_length: int, packed_sequence: bool = False) -> HFDatasetConfig:
     """Create default SQuAD dataset configuration for finetuning recipes.
 
     Args:
         seq_length: Sequence length for the dataset
         packed_sequence: Whether to enable packed sequences for training efficiency
-        pad_seq_to_mult: Optional multiple to pad each sequence to when packing
-            (set to `2 * context_parallel_size` for THD CP runs).
 
     Returns:
         HFDatasetConfig configured for SQuAD finetuning
@@ -74,7 +68,7 @@ def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_
     if packed_sequence:
         # Packed sequence configuration
         dataset_kwargs = {"pad_to_max_length": True}
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
     else:
         # Standard configuration
         dataset_kwargs = {}
@@ -95,87 +89,6 @@ def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_
         do_test=False,
         val_proportion=0.1,
         dataset_kwargs=dataset_kwargs,
-        packed_sequence_specs=packed_sequence_specs,
-        rewrite=False,
-    )
-
-
-def default_openmathinstruct2_config(
-    seq_length: int = 4096,
-    packed_sequence: bool = False,
-    pad_seq_to_mult: int = 1,
-) -> HFDatasetConfig:
-    """Create default OpenMathInstruct-2 dataset configuration for finetuning recipes."""
-    # Create packed sequence specs if needed
-    packed_sequence_specs = None
-    if packed_sequence:
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
-
-    return HFDatasetConfig(
-        dataset_name="nvidia/OpenMathInstruct-2",  # Hugging Face dataset name
-        split="train_1M",  # Default to the 1M subset
-        process_example_fn=process_openmathinstruct2_example,  # Processing function
-        seq_length=seq_length,
-        seed=5678,
-        memmap_workers=1,
-        # Dataloader config parameters
-        dataloader_type="batch",
-        do_validation=True,
-        do_test=False,
-        val_proportion=0.05,  # 950k train, 50k val
-        num_workers=2,
-        data_sharding=True,
-        pin_memory=True,
-        persistent_workers=False,
-        packed_sequence_specs=packed_sequence_specs,
-        rewrite=False,  # Rewrite existing processed files
-    )
-
-
-def default_gsm8k_config(
-    seq_length: int = 2048,
-    packed_sequence: bool = False,
-    pad_seq_to_mult: int = 1,
-) -> HFDatasetConfig:
-    """Create default GSM8K dataset configuration for finetuning recipes.
-
-    GSM8K (Grade School Math 8K) is a dataset of 8.5K high quality linguistically diverse
-    grade school math word problems. See: https://huggingface.co/datasets/openai/gsm8k
-
-    Args:
-        seq_length: Sequence length for the dataset (default 2048, sufficient for GSM8K)
-        packed_sequence: Whether to enable packed sequences for training efficiency
-        pad_seq_to_mult: Optional multiple to pad each sequence to when packing
-            (set to `2 * context_parallel_size` for THD CP runs).
-
-    Returns:
-        HFDatasetConfig configured for GSM8K finetuning
-
-    Note:
-        - GSM8K has 7,473 train and 1,319 test examples
-        - Loads the full DatasetDict so the published test split is used for evaluation
-        - Uses 'batch' dataloader type for variable-length finetuning
-    """
-    # Create packed sequence specs if needed
-    packed_sequence_specs = None
-    if packed_sequence:
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
-
-    return HFDatasetConfig(
-        dataset_name="openai/gsm8k",  # Hugging Face dataset name
-        dataset_subset="main",  # 'main' or 'socratic'
-        process_example_fn=process_gsm8k_example,  # Processing function
-        seq_length=seq_length,
-        seed=5678,
-        memmap_workers=1,
-        # Dataloader config parameters
-        dataloader_type="batch",
-        do_validation=False,
-        do_test=True,
-        num_workers=2,
-        data_sharding=True,
-        pin_memory=True,
-        persistent_workers=False,
         packed_sequence_specs=packed_sequence_specs,
         rewrite=False,
     )

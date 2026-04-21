@@ -32,7 +32,7 @@ Supports loading the Megatron model with different parallelisms.
 
 Usage examples:
     # Nemtron-H 8B Base with PP=2
-    uv run python -m torch.distributed.run --nproc-per-node=2 examples/conversion/compare_text_generation.py \
+    torchrun --nproc-per-node=2 examples/conversion/compare_text_generation.py \
       --hf-model-id nvidia/Nemotron-H-8B-Base-8K \
       --max-new-tokens 40 \
       --megatron-path /tmp/nemotronh-8b-megatron-import \
@@ -41,7 +41,7 @@ Usage examples:
       --logits-compare-method cosine
 
     # Llama-3.2-1B Instruct with TP=2
-    uv run python -m torch.distributed.run --nproc-per-node=2 examples/conversion/compare_text_generation.py \
+    torchrun --nproc-per-node=2 examples/conversion/compare_text_generation.py \
       --hf-model-id meta-llama/Llama-3.2-1B-Instruct \
       --max-new-tokens 40 \
       --megatron-path /tmp/llama32-1b-megatron-import \
@@ -211,22 +211,7 @@ def megatron_generate(
         m.eval()
 
     print_rank_0("Tokenizing input prompt.")
-    token_ids = tokenizer.tokenize(prompt)
-
-    # Prepend BOS if not already present and the tokenizer has one.
-    # This mirrors HF model.generate(), which uses the tokenizer's add_bos_token=True
-    # setting and includes BOS in the generation context. Without this, Megatron and HF
-    # generate from different contexts and produce different tokens.
-    bos_id = None
-    for tok in (tokenizer, getattr(tokenizer, "_tokenizer", None)):
-        if tok is not None:
-            bos_id = getattr(tok, "bos_id", None)
-            if bos_id is not None:
-                break
-    if bos_id is not None and (not token_ids or token_ids[0] != bos_id):
-        token_ids = [bos_id] + token_ids
-
-    input_ids = torch.tensor(token_ids).unsqueeze(0).cuda()
+    input_ids = torch.tensor(tokenizer.tokenize(prompt)).unsqueeze(0).cuda()
     generated_ids = input_ids.clone()
     num_input_tokens = input_ids.shape[1]
 
@@ -281,8 +266,7 @@ def megatron_generate(
             input_ids = generated_ids
 
             # If the generated token is the end of sequence token, stop generating
-            eod_id = getattr(tokenizer, "eod_id", tokenizer.eos_id)
-            if next_token_ids.item() in [tokenizer.eos_id, eod_id]:
+            if next_token_ids.item() in [tokenizer.eos_id, tokenizer.eod_id]:
                 break
 
     if parallel_state.get_pipeline_model_parallel_world_size() > 1:

@@ -72,9 +72,7 @@ def initialize_tensor_inspect_pre_model_initialization(tensor_inspect_config: Te
         raise
 
 
-def _maybe_attach_metric_loggers(
-    tensorboard_logger: Any | None, wandb_logger: Any | None, comet_logger: Any | None
-) -> None:
+def _maybe_attach_metric_loggers(tensorboard_logger: Any | None, wandb_logger: Any | None) -> None:
     """Attach supported metric loggers (TensorBoard, W&B raw module)."""
 
     try:
@@ -97,21 +95,6 @@ def _maybe_attach_metric_loggers(
                     self._wandb.log({name: value}, step=iteration)
 
             MetricLogger.add_logger(_WandbModuleLogger(wandb_logger))
-
-        # Comet ML experiment (with .log_metrics)
-        if comet_logger is not None and hasattr(comet_logger, "log_metrics"):
-            if BaseLogger is None:
-                return
-
-            class _CometExperimentLogger(BaseLogger):  # type: ignore
-                def __init__(self, experiment):
-                    super().__init__()
-                    self._experiment = experiment
-
-                def log_scalar(self, name: str, value: float | int, iteration: int, **kwargs):  # type: ignore[override]
-                    self._experiment.log_metrics({name: value}, step=iteration)
-
-            MetricLogger.add_logger(_CometExperimentLogger(comet_logger))
     except Exception as e:
         print_rank_0(f"Skipping NVIDIA DLFw Inspect metric logger attach due to error: {e}")
 
@@ -121,7 +104,6 @@ def finalize_tensor_inspect_post_model_initialization(
     model: list[MegatronModule],
     tensorboard_logger: Any | None,
     wandb_logger: Any | None,
-    comet_logger: Any | None = None,
     current_training_step: int | None = None,
 ) -> None:
     """Finalize setup after model creation: attach loggers, set names and groups."""
@@ -136,7 +118,7 @@ def finalize_tensor_inspect_post_model_initialization(
     try:
         from megatron.core.parallel_state import get_tensor_and_data_parallel_group
 
-        _maybe_attach_metric_loggers(tensorboard_logger, wandb_logger, comet_logger)
+        _maybe_attach_metric_loggers(tensorboard_logger, wandb_logger)
 
         # Align nvinspect_api's step count with the resumed training step after checkpoint load
         if current_training_step is not None:

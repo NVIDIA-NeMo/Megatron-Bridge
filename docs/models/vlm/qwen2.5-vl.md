@@ -20,7 +20,7 @@ Unless explicitly stated, any megatron model path in the commands below should N
 ### Import HF → Megatron
 To import the HF model to your desired `$MEGATRON_MODEL_PATH`, run the following command.
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+python examples/conversion/convert_checkpoints.py import \
 --hf-model $HF_MODEL_PATH \
 --megatron-path $MEGATRON_MODEL_PATH
 ```
@@ -28,7 +28,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 You can export a trained model with the following command.
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+python examples/conversion/convert_checkpoints.py export \
 --hf-model $HF_MODEL_PATH \
 --megatron-path <trained megatron model path> \
 --hf-path <output hf model path>
@@ -37,7 +37,7 @@ uv run python examples/conversion/convert_checkpoints.py export \
 ### Run In-Framework Inference on Converted Checkpoint
 You can run a quick sanity check on the converted checkpoint with the following command.
 ```bash
-uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
+python examples/conversion/hf_to_megatron_generate_vlm.py \
 --hf_model_path $HF_MODEL_PATH \
 --megatron_model_path $MEGATRON_MODEL_PATH \
 --image_path <example image path> \
@@ -64,7 +64,7 @@ Before training, ensure the following environment variables are set.
 Example usage for full parameter finetuning:
 
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
+torchrun --nproc-per-node=8 examples/recipes/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --dataset-type hf \
@@ -82,7 +82,7 @@ Note:
   - `qwen25_vl_7b_finetune_config` - for 7B model  
   - `qwen25_vl_32b_finetune_config` - for 32B model
   - `qwen25_vl_72b_finetune_config` - for 72B model
-- The config file `examples/models/vlm/qwen_vl/conf/qwen25_vl_pretrain_override_example.yaml` contains a list of arguments 
+- The config file `examples/recipes/qwen_vl/conf/qwen25_vl_pretrain_override_example.yaml` contains a list of arguments 
   that can be overridden in the command. For example, you can set `train.global_batch_size=<batch size>` in the command. 
 - The dataset format should be JSONL with conversation format (see dataset section below).
 - After training, you can run inference with `hf_to_megatron_generate_vlm.py` by supplying the trained megatron checkpoint. 
@@ -92,7 +92,7 @@ Note:
 Parameter-efficient finetuning (PEFT) using LoRA or DoRA is supported. You can use the `--peft_scheme` argument to enable PEFT training:
 
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
+torchrun --nproc-per-node=8 examples/recipes/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --peft_scheme lora \
@@ -112,7 +112,7 @@ You can also combine PEFT with freeze options to control which components are tr
 
 Example with LoRA and freeze options:
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
+torchrun --nproc-per-node=8 examples/recipes/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --peft_scheme lora \
@@ -123,17 +123,58 @@ checkpoint.save=$SAVE_DIR/<experiment name>
 ```
 
 
-## Example Datasets
+## Dataset Format
 
-Megatron Bridge supports various vision-language dataset examples which can be used to finetune Qwen 2.5 VL:
-| Dataset | Maker Name | Description |
-|---------|------------|-------------|
-| [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `make_cord_v2_dataset` | OCR receipts: Single-image-text dataset for receipt understanding, outputs xml-like annotated text. |
-| [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `make_medpix_dataset` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
-| [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `make_raven_dataset` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
+The Qwen2.5-VL finetuning script supports three dataset types:
 
-To change the dataset, specify `dataset.maker_name=make_raven_dataset`
+1. **Mock Dataset** (`--dataset-type mock`): Uses synthetic data for testing. No data path required.
 
+2. **Preloaded Dataset** (`--dataset-type preloaded`): Loads from JSONL files with conversation format:
+   ```json
+   {
+     "conversation": [
+       {
+         "role": "user",
+         "content": [
+           {"type": "image", "image": "path/to/image.jpg"},
+           {"type": "text", "text": "Describe this image."}
+         ]
+       },
+       {
+         "role": "assistant", 
+         "content": [
+           {"type": "text", "text": "This image shows..."}
+         ]
+       }
+     ]
+   }
+   ```
+
+3. **HuggingFace Dataset** (`--dataset-type hf`): Uses HuggingFace datasets. Specify the dataset maker name.
+
+Example with preloaded dataset:
+```bash
+torchrun --nproc-per-node=8 examples/recipes/qwen_vl/finetune_qwen25_vl.py \
+--pretrained-checkpoint $MEGATRON_MODEL_PATH \
+--data-path /path/to/train.jsonl \
+--image-folder /path/to/images \
+--dataset-type preloaded \
+--recipe qwen25_vl_3b_finetune_config \
+checkpoint.save $SAVE_DIR/<experiment name>
+```
+
+## Model Variants
+
+Qwen2.5-VL is available in multiple sizes with different recommended parallelism configurations:
+
+| Model Size | HuggingFace Model ID | Recommended TP | Recommended PP |
+|------------|---------------------|----------------|----------------|
+| 3B | `Qwen/Qwen2.5-VL-3B-Instruct` | 1 | 1 |
+| 7B | `Qwen/Qwen2.5-VL-7B-Instruct` | 2 | 1 |
+| 32B | `Qwen/Qwen2.5-VL-32B-Instruct` | 8 | 2 |
+| 72B | `Qwen/Qwen2.5-VL-72B-Instruct` | 8 | 4 |
+
+These can be adjusted based on your hardware configuration. Larger models benefit from pipeline parallelism to fit in memory.
 
 ## Hugging Face Model Cards
 - Qwen2.5-VL-3B: `https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct`

@@ -13,114 +13,43 @@
 # limitations under the License.
 
 import logging
-import os
-import re
-import sys
 
 import torch
 from argument_parser import parse_cli_args
-from utils.overrides import set_cli_overrides, set_post_overrides, set_user_overrides
-from utils.utils import get_perf_optimized_recipe
+from omegaconf import OmegaConf
+from utils.helpers import get_model_recipe_with_user_overrides
 
-from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
-from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
-from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
-
-
-logger = logging.getLogger(__name__)
-SENSITIVE_ENV_VAR_PATTERN = re.compile(
-    r"(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|AUTHORIZATION)(_|$)",
-    re.IGNORECASE,
+from megatron.bridge.training.utils.omegaconf_utils import (
+    apply_overrides,
+    create_omegaconf_dict_config,
+    parse_hydra_overrides,
 )
 
 
-def _dump_env_rank0() -> None:
-    """Capture the container environment to /nemo_run/env_<SLURM_JOB_ID>.log on rank 0.
-
-    The file lands alongside log*.out and configs/ inside the per-run nemo_run
-    directory for easy post-run debugging.
-    """
-    if os.environ.get("SLURM_JOB_ID") is None:
-        return
-    if int(os.environ.get("SLURM_PROCID", "-1")) != 0:
-        return
-    job_id = os.environ["SLURM_JOB_ID"]
-    env_path = f"/nemo_run/env_{job_id}.log"
-    try:
-        fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            for k, v in sorted(os.environ.items()):
-                if SENSITIVE_ENV_VAR_PATTERN.search(k):
-                    f.write(f"{k}=[REDACTED]\n")
-                else:
-                    safe_v = v.replace("\r", "\\r").replace("\n", "\\n")
-                    f.write(f"{k}={safe_v}\n")
-        logger.info(f"Environment dump written to {env_path} (mode 600)")
-    except OSError as e:
-        logger.warning(f"Failed to write environment dump to {env_path}: {e}")
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def main():
     """Main function to run the pretraining/finetuning script."""
-    # Parse known args and treat any unknown args as Hydra-style config overrides.
-    # `argparse.parse_known_args()` returns the unknown args as a `list[str]`.
-    parser = parse_cli_args()
-    args, cli_overrides = parser.parse_known_args()
+    args, cli_overrides = parse_cli_args()
 
-    if args.dump_env:
-        _dump_env_rank0()
+    recipe = get_model_recipe_with_user_overrides(**vars(args))
 
-    recipe = get_perf_optimized_recipe(
-        model_family_name=args.model_family_name,
-        model_recipe_name=args.model_recipe_name,
-        train_task=args.task,
-        gpu=args.gpu,
-        compute_dtype=args.compute_dtype,
-        mock=args.data == "mock",
-        config_variant=args.config_variant,
-        optimizer_type=getattr(args, "optimizer_type", None),
-    )
+    merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
+    if cli_overrides:
+        logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
+        merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
+        logger.debug("Hydra-style command-line overrides applied successfully.")
 
-    recipe = set_cli_overrides(recipe, cli_overrides)
-    recipe = set_user_overrides(recipe, args)
-    recipe = set_post_overrides(
-        recipe,
-        args.model_family_name,
-        args.model_recipe_name,
-        args.gpu,
-        args.num_gpus,
-        args.compute_dtype,
-        args.task,
-        user_gbs=args.global_batch_size,
-        config_variant=args.config_variant,
-    )
+    # Apply the final merged OmegaConf configuration back to the original ConfigContainer
+    logger.debug("Applying final merged configuration back to Python ConfigContainer...")
+    final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
+    # Apply overrides while preserving excluded fields
+    apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
 
-    # Set NCCL env vars for nccl_ub enabled via recipe config (not just CLI).
-    if getattr(recipe.ddp, "nccl_ub", False):
-        os.environ.setdefault("NCCL_NVLS_ENABLE", "1")
-        os.environ.setdefault("NCCL_CTA_POLICY", "1")
-
-    if args.dryrun:
-        save_path = args.save_config_filepath or "ConfigContainer.yaml"
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
-        recipe.to_yaml(save_path)
-        logger.info(f"ConfigContainer saved to: {os.path.abspath(save_path)}")
-        recipe.print_yaml()
-        sys.exit(0)
-
-    # Select forward step function based on the model family name.
-    if args.domain == "vlm":
-        forward_step_func = vlm_forward_step
-    elif args.domain == "qwen3vl":
-        forward_step_func = qwen3_vl_forward_step
-    elif args.domain == "diffusion":
-        forward_step_func = WanForwardStep(mode=args.task)
-    else:
-        forward_step_func = forward_step
-
-    pretrain(config=recipe, forward_step_func=forward_step_func)
+    pretrain(config=recipe, forward_step_func=forward_step)
 
     if torch.distributed.is_initialized():
         torch.distributed.barrier()

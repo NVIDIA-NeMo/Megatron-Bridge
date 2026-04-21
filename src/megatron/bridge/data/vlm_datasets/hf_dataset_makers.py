@@ -259,56 +259,6 @@ def make_llava_video_178k_dataset(
     return [ex for ex in formatted if ex is not None]
 
 
-def make_default_audio_dataset(
-    path_or_dataset: str,
-    subset: str | None = None,
-    split: str = "train",
-    audio_column: str = "audio",
-    text_column: str = "text",
-    prompt: str = "Transcribe the audio clip.",
-    remove_text_spaces: bool = True,
-    **kwargs,
-) -> List[Dict[str, Any]]:
-    """Load and preprocess a HuggingFace audio dataset for audio-to-text fine-tuning.
-
-    Formats each example into a conversation with an audio user turn and a text assistant turn.
-    Works with any HF dataset that has audio and text columns.
-    """
-    dataset = load_dataset(path_or_dataset, subset, split=split)
-    try:
-        all_columns = dataset.column_names
-    except Exception:
-        first_example = dataset[0] if len(dataset) > 0 else {}
-        all_columns = list(first_example.keys()) if isinstance(first_example, dict) else []
-    if hasattr(dataset, "remove_columns"):
-        columns_to_remove = [col for col in all_columns if col not in [audio_column, text_column]]
-        if columns_to_remove:
-            dataset = dataset.remove_columns(columns_to_remove)
-
-    def format_example(example):
-        text = example[text_column]
-        if remove_text_spaces:
-            text = text.replace(" ", "")
-        return {
-            "conversation": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "audio", "audio_url": "placeholder"},
-                        {"type": "text", "text": prompt},
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": text}],
-                },
-            ],
-            "audio": (example[audio_column]["array"], example[audio_column]["sampling_rate"]),
-        }
-
-    return [format_example(example) for example in dataset]
-
-
 def make_cv17_dataset(
     path_or_dataset: str = "ysdede/commonvoice_17_tr_fixed", split: str = "train", **kwargs
 ) -> List[Dict[str, Any]]:

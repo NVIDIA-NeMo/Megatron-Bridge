@@ -112,22 +112,12 @@ main() {
         uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
 
         # Install dependencies
-        # Skip --locked flag when testing against different MCore version
-        if [[ "${MCORE_TRIGGERED_TESTING:-false}" == "true" ]]; then
-            echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
-            uv sync --only-group build ${UV_ARGS[@]}
-            uv sync \
-                --link-mode copy \
-                --all-extras \
-                --all-groups ${UV_ARGS[@]}
-        else
-            uv sync --locked --only-group build ${UV_ARGS[@]}
-            uv sync \
-                --link-mode copy \
-                --locked \
-                --all-extras \
-                --all-groups ${UV_ARGS[@]}
-        fi
+        uv sync --locked --only-group build ${UV_ARGS[@]}
+        uv sync \
+            --link-mode copy \
+            --locked \
+            --all-extras \
+            --all-groups ${UV_ARGS[@]}
 
         # Install the package
         uv pip install --no-deps -e .

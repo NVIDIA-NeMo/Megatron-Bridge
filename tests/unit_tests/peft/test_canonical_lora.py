@@ -26,7 +26,6 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.canonical_lora import CanonicalLoRA, LoRALinearSplitFC1UpGate, LoRALinearSplitQKV, ModuleDict
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
-from megatron.bridge.peft.utils import AdapterAttributes
 
 
 class SimpleModel(nn.Module):
@@ -51,24 +50,23 @@ class SimpleModel(nn.Module):
 class MockMegatronLinear(nn.Module):
     """Mock Megatron linear layer that's not nn.Linear to trigger parallel adapter path."""
 
-    def __init__(self, in_features, out_features, kv_channels=None, num_query_groups=None, moe_router_topk=None):
+    def __init__(self, in_features, out_features, kv_channels=None, num_query_groups=None):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
         self.in_features = in_features
         self.out_features = out_features
 
+        # Mock config
         class MockConfig:
             def __init__(self):
                 self.kv_channels = kv_channels or 64
                 self.num_query_groups = num_query_groups or 8
-                self.num_attention_heads = self.num_query_groups
                 self.sequence_parallel = False
-                self.moe_router_topk = moe_router_topk
 
         self.config = MockConfig()
 
     def forward(self, x):
-        return self.linear(x), None
+        return self.linear(x), None  # Return tuple like Megatron layers
 
 
 class MegatronStyleModel(nn.Module):
@@ -82,37 +80,6 @@ class MegatronStyleModel(nn.Module):
         self.linear_proj = MockMegatronLinear(512, 512)
         self.linear_fc1 = MockMegatronLinear(512, 2048)
         self.linear_fc2 = MockMegatronLinear(2048, 512)
-
-
-class VisionLanguageMegatronStyleModel(nn.Module):
-    """Model with both language and vision linear_fc1 modules."""
-
-    def __init__(self):
-        super().__init__()
-        self.language_model = nn.Module()
-        self.language_model.linear_fc1 = MockMegatronLinear(512, 2048)
-
-        self.vision_model = nn.Module()
-        self.vision_model.merger = nn.Module()
-        self.vision_model.merger.linear_fc1 = MockMegatronLinear(512, 512)
-
-
-class MoEMegatronStyleModel(nn.Module):
-    """Model with dense, expert, and shared-expert linear_fc1 modules."""
-
-    def __init__(self, moe_router_topk=None):
-        super().__init__()
-        self.language_model = nn.Module()
-        self.language_model.decoder = nn.Module()
-        self.language_model.decoder.layers = nn.ModuleList([nn.Module()])
-
-        layer = self.language_model.decoder.layers[0]
-        layer.mlp = nn.Module()
-        layer.mlp.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
-        layer.mlp.experts = nn.Module()
-        layer.mlp.experts.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
-        layer.mlp.shared_experts = nn.Module()
-        layer.mlp.shared_experts.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
 
 
 class NestedModel(nn.Module):
@@ -250,34 +217,13 @@ class TestCanonicalLoRA:
         lora = CanonicalLoRA(target_modules=["linear_q", "linear_k", "linear_v", "linear_fc1_up", "linear_fc1_gate"])
 
         # Mock the get_adapter_attributes_from_linear function
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module):
             if hasattr(module, "out_features"):
                 if module.out_features == 1536:  # linear_qkv
-                    return AdapterAttributes(
-                        input_is_parallel=False,
-                        in_features=512,
-                        out_features=1536,
-                        disable_tensor_parallel_comm=False,
-                        disable_sequence_parallel_comm=True,
-                        base_linear_is_parallel=True,
-                    )
+                    return (False, 512, 1536, False, True)
                 elif module.out_features == 2048:  # linear_fc1
-                    return AdapterAttributes(
-                        input_is_parallel=False,
-                        in_features=512,
-                        out_features=2048,
-                        disable_tensor_parallel_comm=False,
-                        disable_sequence_parallel_comm=True,
-                        base_linear_is_parallel=True,
-                    )
-            return AdapterAttributes(
-                input_is_parallel=False,
-                in_features=512,
-                out_features=512,
-                disable_tensor_parallel_comm=False,
-                disable_sequence_parallel_comm=True,
-                base_linear_is_parallel=True,
-            )  # default
+                    return (False, 512, 2048, False, True)
+            return (False, 512, 512, False, True)  # default
 
         with patch(
             "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
@@ -303,135 +249,6 @@ class TestCanonicalLoRA:
                 # Check that non-target layers were not transformed
                 assert isinstance(transformed_model.linear_proj, MockMegatronLinear)
                 assert isinstance(transformed_model.linear_fc2, MockMegatronLinear)
-
-    def test_canonical_lora_treats_visual_linear_fc1_as_unfused(self):
-        """Vision-side linear_fc1 should keep a single unfused LoRA adapter."""
-        model = VisionLanguageMegatronStyleModel()
-        lora = CanonicalLoRA(target_modules=["linear_fc1_up", "linear_fc1_gate"])
-
-        def mock_get_attrs(module, is_expert=False):
-            return AdapterAttributes(
-                input_is_parallel=False,
-                in_features=module.in_features,
-                out_features=module.out_features,
-                disable_tensor_parallel_comm=False,
-                disable_sequence_parallel_comm=True,
-                base_linear_is_parallel=True,
-            )
-
-        with patch(
-            "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
-        ):
-            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
-                mock_adapter.return_value = nn.Linear(1, 1)
-
-                transformed_model = lora(model, training=True)
-
-        assert isinstance(transformed_model.language_model.linear_fc1, LoRALinearSplitFC1UpGate)
-        assert isinstance(transformed_model.vision_model.merger.linear_fc1, LoRALinear)
-        assert not isinstance(transformed_model.vision_model.merger.linear_fc1, LoRALinearSplitFC1UpGate)
-
-    def test_canonical_lora_treats_moe_expert_linear_fc1_as_unfused(self):
-        """Grouped expert linear_fc1 should keep a single unfused LoRA adapter."""
-        model = MoEMegatronStyleModel()
-        lora = CanonicalLoRA(target_modules=["linear_fc1_up", "linear_fc1_gate"])
-
-        def mock_get_attrs(module, is_expert=False):
-            return AdapterAttributes(
-                input_is_parallel=False,
-                in_features=module.in_features,
-                out_features=module.out_features,
-                disable_tensor_parallel_comm=False,
-                disable_sequence_parallel_comm=True,
-                base_linear_is_parallel=True,
-            )
-
-        with patch(
-            "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
-        ):
-            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
-                mock_adapter.return_value = nn.Linear(1, 1)
-
-                transformed_model = lora(model, training=True)
-
-        layer = transformed_model.language_model.decoder.layers[0]
-        assert isinstance(layer.mlp.linear_fc1, LoRALinearSplitFC1UpGate)
-        assert isinstance(layer.mlp.experts.linear_fc1, LoRALinear)
-        assert not isinstance(layer.mlp.experts.linear_fc1, LoRALinearSplitFC1UpGate)
-        assert isinstance(layer.mlp.shared_experts.linear_fc1, LoRALinearSplitFC1UpGate)
-
-    def test_canonical_lora_normalize_moe_lora_reduces_expert_dim(self):
-        """Expert linear_fc1 should get reduced dim when normalize_moe_lora is enabled."""
-        model = MoEMegatronStyleModel(moe_router_topk=2)
-        lora = CanonicalLoRA(
-            target_modules=["linear_fc1_up", "linear_fc1_gate"],
-            dim=32,
-            normalize_moe_lora=True,
-        )
-
-        def mock_get_attrs(module, is_expert=False):
-            return AdapterAttributes(
-                input_is_parallel=False,
-                in_features=module.in_features,
-                out_features=module.out_features,
-                disable_tensor_parallel_comm=False,
-                disable_sequence_parallel_comm=True,
-                base_linear_is_parallel=True,
-            )
-
-        with patch(
-            "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
-        ):
-            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
-                mock_adapter.return_value = nn.Linear(1, 1)
-                lora(model, training=True)
-
-        expert_calls = {}
-        non_expert_calls = {}
-        for call in mock_adapter.call_args_list:
-            kwargs = call.kwargs
-            name = kwargs.get("base_linear_name", "")
-            dim_used = kwargs.get("dim")
-            if ".mlp.experts." in name and ".shared_experts." not in name:
-                expert_calls[name] = dim_used
-            else:
-                non_expert_calls[name] = dim_used
-
-        assert len(expert_calls) > 0, "Should have expert adapter calls"
-        assert len(non_expert_calls) > 0, "Should have non-expert adapter calls"
-
-        for name, dim_used in expert_calls.items():
-            assert dim_used == 16, f"Expert {name} should get dim=16 (32 // 2), got {dim_used}"
-
-        for name, dim_used in non_expert_calls.items():
-            assert dim_used == 32, f"Non-expert {name} should get full dim=32, got {dim_used}"
-
-    def test_canonical_lora_normalize_moe_lora_indivisible_raises(self):
-        """Should raise ValueError when dim is not divisible by moe_router_topk."""
-        model = MoEMegatronStyleModel(moe_router_topk=3)
-        lora = CanonicalLoRA(
-            target_modules=["linear_fc1_up", "linear_fc1_gate"],
-            dim=32,
-            normalize_moe_lora=True,
-        )
-
-        def mock_get_attrs(module, is_expert=False):
-            return AdapterAttributes(
-                input_is_parallel=False,
-                in_features=module.in_features,
-                out_features=module.out_features,
-                disable_tensor_parallel_comm=False,
-                disable_sequence_parallel_comm=True,
-                base_linear_is_parallel=True,
-            )
-
-        with patch(
-            "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
-        ):
-            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
-                mock_adapter.return_value = nn.Linear(1, 1)
-                with pytest.raises(ValueError, match="must be divisible by moe_router_topk"):
-                    lora(model, training=True)
 
     def test_canonical_lora_transform_nested_model(self):
         """Test CanonicalLoRA transformation on nested model structures."""
@@ -490,10 +307,9 @@ class TestCanonicalLoRA:
         # Check adapter properties
         adapter = transformed_model.linear_proj
         assert hasattr(adapter, "dim")
-        assert hasattr(adapter, "alpha")
         assert hasattr(adapter, "scale")
-        assert hasattr(adapter, "linear_in")
-        assert hasattr(adapter, "linear_out")
+        assert hasattr(adapter, "lora_a")
+        assert hasattr(adapter, "lora_b")
         assert hasattr(adapter, "dropout")
 
         assert adapter.dim == 16
@@ -515,8 +331,8 @@ class TestCanonicalLoRA:
             assert not linear_adapter.bias.requires_grad
 
         # Check that LoRA parameters are trainable
-        assert linear_adapter.linear_in.weight.requires_grad
-        assert linear_adapter.linear_out.weight.requires_grad
+        assert linear_adapter.lora_a.weight.requires_grad
+        assert linear_adapter.lora_b.weight.requires_grad
 
     def test_canonical_lora_forward_pass(self):
         """Test that CanonicalLoRA adapted models can perform forward passes."""
@@ -616,13 +432,13 @@ class TestCanonicalLoRA:
         adapted_model2 = lora2(model2, training=True)
 
         # LoRA weights should be identical with same seed
-        linear_in_1 = adapted_model1.linear_proj.linear_in.weight.data
-        linear_in_2 = adapted_model2.linear_proj.linear_in.weight.data
-        assert torch.equal(linear_in_1, linear_in_2)
+        lora_a_1 = adapted_model1.linear_proj.lora_a.weight.data
+        lora_a_2 = adapted_model2.linear_proj.lora_a.weight.data
+        assert torch.equal(lora_a_1, lora_a_2)
 
-        linear_out_1 = adapted_model1.linear_proj.linear_out.weight.data
-        linear_out_2 = adapted_model2.linear_proj.linear_out.weight.data
-        assert torch.equal(linear_out_1, linear_out_2)
+        lora_b_1 = adapted_model1.linear_proj.lora_b.weight.data
+        lora_b_2 = adapted_model2.linear_proj.lora_b.weight.data
+        assert torch.equal(lora_b_1, lora_b_2)
 
     def test_canonical_lora_transform_idempotent(self):
         """Test that CanonicalLoRA transform is idempotent (applying twice has same effect as applying once)."""
@@ -657,10 +473,10 @@ class TestCanonicalLoRA:
 
         # Verify the LoRA parameters are identical
         assert torch.equal(
-            first_transform.linear_proj.linear_in.weight.data, second_transform.linear_proj.linear_in.weight.data
+            first_transform.linear_proj.lora_a.weight.data, second_transform.linear_proj.lora_a.weight.data
         )
         assert torch.equal(
-            first_transform.linear_proj.linear_out.weight.data, second_transform.linear_proj.linear_out.weight.data
+            first_transform.linear_proj.lora_b.weight.data, second_transform.linear_proj.lora_b.weight.data
         )
 
     def test_canonical_lora_transform_idempotent_fused_layers(self):
@@ -670,14 +486,7 @@ class TestCanonicalLoRA:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = AdapterAttributes(
-                input_is_parallel=False,
-                in_features=512,
-                out_features=1536,
-                disable_tensor_parallel_comm=False,
-                disable_sequence_parallel_comm=True,
-                base_linear_is_parallel=True,
-            )
+            mock_get_attrs.return_value = (False, 512, 1536, False, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -715,14 +524,7 @@ class TestCanonicalLoRAMegatronLayers:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = AdapterAttributes(
-                input_is_parallel=False,
-                in_features=512,
-                out_features=1536,
-                disable_tensor_parallel_comm=False,
-                disable_sequence_parallel_comm=True,
-                base_linear_is_parallel=True,
-            )
+            mock_get_attrs.return_value = (False, 512, 1536, False, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -744,14 +546,7 @@ class TestCanonicalLoRAMegatronLayers:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = AdapterAttributes(
-                input_is_parallel=False,
-                in_features=512,
-                out_features=2048,
-                disable_tensor_parallel_comm=False,
-                disable_sequence_parallel_comm=True,
-                base_linear_is_parallel=True,
-            )
+            mock_get_attrs.return_value = (False, 512, 2048, False, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -817,78 +612,6 @@ class TestCanonicalLoRAHelperClasses:
             assert output.shape == (2, 10, 1536)
             assert bias is None
 
-    def test_lora_linear_split_qkv_interleaves_gqa(self):
-        """Test that LoRALinearSplitQKV interleaves QKV outputs for GQA."""
-
-        class MockConfig:
-            kv_channels = 4
-            num_query_groups = 2
-            num_attention_heads = 4
-
-        base_layer = nn.Linear(4, 4)
-        base_layer.config = MockConfig()
-        adapters = ModuleDict({"adapter_q": nn.Identity(), "adapter_k": nn.Identity(), "adapter_v": nn.Identity()})
-        wrapper = LoRALinearSplitQKV(base_layer, adapters)
-
-        head_size = 4
-        q_heads = [torch.full((head_size,), i + 1, dtype=torch.float32) for i in range(4)]
-        k_heads = [torch.full((head_size,), 10 + i, dtype=torch.float32) for i in range(2)]
-        v_heads = [torch.full((head_size,), 20 + i, dtype=torch.float32) for i in range(2)]
-
-        query = torch.cat(q_heads).reshape(1, 1, -1)
-        key = torch.cat(k_heads).reshape(1, 1, -1)
-        value = torch.cat(v_heads).reshape(1, 1, -1)
-
-        output = wrapper._interleave_qkv(query, key, value)
-        expected = torch.cat(
-            [q_heads[0], q_heads[1], k_heads[0], v_heads[0], q_heads[2], q_heads[3], k_heads[1], v_heads[1]]
-        ).reshape(1, 1, -1)
-
-        assert torch.equal(output, expected)
-
-    def test_lora_linear_split_qkv_infers_head_size_from_hidden_size(self):
-        """Test LoRALinearSplitQKV infers head size when kv_channels is missing."""
-
-        class MockConfig:
-            kv_channels = None
-            num_query_groups = None
-            num_attention_heads = 4
-            hidden_size = 16
-
-        base_layer = nn.Linear(4, 4)
-        base_layer.config = MockConfig()
-        adapters = ModuleDict({"adapter_q": nn.Identity(), "adapter_k": nn.Identity(), "adapter_v": nn.Identity()})
-        wrapper = LoRALinearSplitQKV(base_layer, adapters)
-
-        head_size = 4
-        q_heads = [torch.full((head_size,), i + 1, dtype=torch.float32) for i in range(4)]
-        k_heads = [torch.full((head_size,), 10 + i, dtype=torch.float32) for i in range(4)]
-        v_heads = [torch.full((head_size,), 20 + i, dtype=torch.float32) for i in range(4)]
-
-        query = torch.cat(q_heads).reshape(1, 1, -1)
-        key = torch.cat(k_heads).reshape(1, 1, -1)
-        value = torch.cat(v_heads).reshape(1, 1, -1)
-
-        output = wrapper._interleave_qkv(query, key, value)
-        expected = torch.cat(
-            [
-                q_heads[0],
-                k_heads[0],
-                v_heads[0],
-                q_heads[1],
-                k_heads[1],
-                v_heads[1],
-                q_heads[2],
-                k_heads[2],
-                v_heads[2],
-                q_heads[3],
-                k_heads[3],
-                v_heads[3],
-            ]
-        ).reshape(1, 1, -1)
-
-        assert torch.equal(output, expected)
-
     def test_lora_linear_split_fc1_up_gate_forward(self):
         """Test LoRALinearSplitFC1UpGate forward pass."""
         # Create mock base layer
@@ -946,19 +669,13 @@ class TestCanonicalLoRAMegatronIntegration:
             )
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
-        from megatron.core.process_groups_config import ProcessGroupCollection
-
         from megatron.bridge.training.initialize import _set_random_seed
-
-        # Create pg_collection from initialized mpu
-        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         _set_random_seed(
             seed_=1234,
             data_parallel_random_init=False,
             te_rng_tracker=True,
             inference_rng_tracker=False,
-            pg_collection=pg_collection,
         )
 
         yield
@@ -1008,10 +725,6 @@ class TestCanonicalLoRAMegatronIntegration:
             vocab_size=1000,
             ffn_hidden_size=256,
         )
-
-        from megatron.core.process_groups_config import ProcessGroupCollection
-
-        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         # Create CanonicalLoRA instance targeting linear layers
         lora = CanonicalLoRA(

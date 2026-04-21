@@ -49,22 +49,12 @@ inputs:
   container-image:
     description: "Container image to use for test"
     required: true
-  test-data-path:
-    description: "Test data path"
-    required: true
-  script_dir:
-    description: "Subdirectory within launch_scripts/ for functional tests (active or flaky)"
-    required: false
-    default: "active"
-  runner:
-    description: "Runner to use for test"
-    required: true
 
 runs:
   using: "composite"
   steps:
     - name: Checkout repository
-      uses: actions/checkout@v6
+      uses: actions/checkout@v2
       with:
         path: ${{ github.workspace }}/Megatron-Bridge
         submodules: recursive
@@ -75,11 +65,7 @@ runs:
       run: |
         echo "::group::Install Azure CLI"
         # Create systemd override for proper dependencies
-        for i in 1 2 3; do
-          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash && break
-          echo "Attempt $i failed, retrying in 10s..."
-          sleep 10
-        done
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
         echo "::endgroup::"
 
     - name: Azure Login
@@ -96,24 +82,15 @@ runs:
       run: |
         az acr login --name nemoci
 
-    - name: Install uuidgen
-      shell: bash -x -e -u -o pipefail {0}
-      if: ${{ contains(inputs.runner, 'aws') }}
-      run: |
-        for i in 1 2 3; do
-          apt-get update && apt-get install -y uuid-runtime && break
-          echo "Attempt $i failed, retrying in 10s..."
-          sleep 10
-        done
-
     - name: Start container
       shell: bash
       env:
-        MOUNT_FS: ${{ inputs.is_unit_test == 'false' }}
+        MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
+        MOUNT_FS: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
       run: |
         echo "::group::Start test container"
         if [[ "$MOUNT_FS" == "true" ]]; then
-          VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"
+          VOLUME_ARGS="--volume /mnt/datadrive/TestData:/home/TestData"
         else
           VOLUME_ARGS=""
         fi
@@ -121,21 +98,20 @@ runs:
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
         docker container rm -f nemo_container_${{ github.run_id }} || true
-
         docker run \
           --rm \
           -d \
           --name nemo_container_${{ github.run_id }} \
           --runtime=nvidia --gpus all \
           --shm-size=64g \
+          --env TRANSFORMERS_OFFLINE=0 \
           --cpus=40 \
-          --env GHA_RUNNER=${{ inputs.runner }} \
           --env HYDRA_FULL_ERROR=1 \
           --env HF_HOME=/home/TestData/HF_HOME \
           --env NEMO_HOME=/home/TestData/nemo_home \
           --env RUN_ID=${{ github.run_id }} \
-          --env UV_NO_SYNC=1 \
           --workdir /opt/Megatron-Bridge \
+          --volume ${{ github.workspace }}/Megatron-Bridge:/opt/Megatron-Bridge \
           $VOLUME_ARGS \
           ${{ inputs.container-image }} \
           bash -c "sleep $(( ${{ inputs.timeout }} * 60 + 60 ))"
@@ -160,41 +136,8 @@ runs:
         docker exec -t nemo_container_${{ github.run_id }} bash -c '
           set -e
           export GH_TOKEN=${{ inputs.PAT }}
-
-          # Reinstall MCore if the submodule was updated
-          if [ -n "${{ github.event.inputs.mcore_commit }}" ]; then
-            echo "🔄 Reinstalling MCore from updated submodule..."
-            cd /opt/Megatron-Bridge
-
-            # Force uninstall existing megatron-core to ensure fresh install
-            uv pip uninstall megatron-core || true
-
-            # Reinstall from the updated submodule
-            uv sync --all-extras --all-groups
-            echo "✅ MCore reinstalled"
-
-            # Verify the commit matches what we expected
-            cd 3rdparty/Megatron-LM
-            EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
-            ACTUAL_COMMIT=$(git rev-parse HEAD)
-            echo "🔍 Verifying MCore commit..."
-            echo "   Expected: ${EXPECTED_COMMIT}"
-            echo "   Actual:   ${ACTUAL_COMMIT}"
-
-            if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-              echo "   ❌ ERROR: Commit mismatch!"
-              exit 1
-            fi
-
-            echo "   ✅ MCore commit verified"
-            cd /opt/Megatron-Bridge
-
-            # Store commit SHA for verification (since Docker build file was overridden by volume mount)
-            echo "${{ github.event.inputs.mcore_commit }}" > /opt/Megatron-Bridge/.mcore_commit_sha
-            echo "📝 Stored MCore commit SHA: ${{ github.event.inputs.mcore_commit }}"
-          fi
-
-          timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/${{ inputs.script }}.sh || EXIT_CODE=$?
+          
+          timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || 'functional_tests' }}/${{ inputs.script }}.sh || EXIT_CODE=$?
 
           if [[ "$EXIT_CODE" -eq 124 ]]; then
             echo "::error:: Test timed out after ${{ inputs.timeout }} minutes. Please reach out to the PIC."
@@ -211,68 +154,43 @@ runs:
         echo "::endgroup::"
 
     - name: Run main script
-      id: run-main-script
-      shell: bash -e -u -o pipefail {0}
-      run: |
-        echo -e "\033[1;34m┌─ launching test ─────────────────────────────────────────────────────────┐\033[0m"
-        echo -e "\033[1;34m│  script    : ${{ inputs.script }}\033[0m"
-        echo -e "\033[1;34m│  runner    : ${{ inputs.runner }}\033[0m"
-        echo -e "\033[1;34m│  container : ${{ inputs.container-image }}\033[0m"
-        echo -e "\033[1;34m└──────────────────────────────────────────────────────────────────────────┘\033[0m"
-        echo "::group::Logs"
-        EXIT_CODE=0
-        /bin/bash job.sh || EXIT_CODE=$?
-        echo "exit_code=$EXIT_CODE" | tee -a "$GITHUB_OUTPUT"
-        echo "::endgroup::"
-        exit $EXIT_CODE
+      shell: bash
+      run: /bin/bash job.sh
 
     - name: Check result
       id: check
-      shell: bash -e -u -o pipefail {0}
-      if: always()
+      shell: bash
       run: |
+        echo "::group::Check result"
+
         docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage combine || true
-        docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage xml || true
-        docker cp nemo_container_${{ github.run_id }}:/opt/Megatron-Bridge/.coverage .coverage || true
-        docker cp nemo_container_${{ github.run_id }}:/opt/Megatron-Bridge/coverage.xml coverage.xml || true
+        docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage xml
+        docker cp nemo_container_${{ github.run_id }}:/opt/Megatron-Bridge/.coverage .coverage
+        docker cp nemo_container_${{ github.run_id }}:/opt/Megatron-Bridge/coverage.xml coverage.xml
 
         coverage_report=coverage-${{ steps.create.outputs.coverage-prefix }}-${{ github.run_id }}-$(uuidgen)
-        echo "coverage_report=$coverage_report" | tee -a "$GITHUB_OUTPUT"
+        echo "coverage_report=$coverage_report" >> "$GITHUB_OUTPUT"
 
         EXIT_CODE=${{ steps.run-main-script.outputs.exit_code }}
         IS_SUCCESS=$([[ "$EXIT_CODE" -eq 0 ]] && echo "true" || echo "false")
 
         if [[ "$IS_SUCCESS" == "false" && "${{ inputs.is-optional }}" == "true" ]]; then
-          echo "::warning::Test failed but is marked optional — treating as success."
+          echo "::warning:: Test failed, but displayed as successful because it is marked as optional."
           IS_SUCCESS=true
         fi
 
-        echo "::group::Coverage report"
-        docker exec -t nemo_container_${{ github.run_id }} /opt/venv/bin/coverage report -i || true
-        echo "::endgroup::"
-
-        if [[ "$IS_SUCCESS" == "true" ]]; then
-          echo -e "\033[1;32m╔══════════════════════════════════════════════════════════════════════════╗\033[0m"
-          echo -e "\033[1;32m║                                                                          ║\033[0m"
-          echo -e "\033[1;32m║   ✅  PASSED                                                             ║\033[0m"
-          echo -e "\033[1;32m║   ${{ inputs.script }}\033[0m"
-          echo -e "\033[1;32m║                                                                          ║\033[0m"
-          echo -e "\033[1;32m╚══════════════════════════════════════════════════════════════════════════╝\033[0m"
-          echo "::notice title=Result::✅ ${{ inputs.script }} — PASSED"
-          exit 0
-        else
-          echo -e "\033[1;31m╔══════════════════════════════════════════════════════════════════════════╗\033[0m"
-          echo -e "\033[1;31m║                                                                          ║\033[0m"
-          echo -e "\033[1;31m║   ❌  FAILED  (exit code: ${EXIT_CODE})                                  ║\033[0m"
-          echo -e "\033[1;31m║   ${{ inputs.script }}\033[0m"
-          echo -e "\033[1;31m║                                                                          ║\033[0m"
-          echo -e "\033[1;31m╚══════════════════════════════════════════════════════════════════════════╝\033[0m"
-          echo "::error title=Result::❌ ${{ inputs.script }} — FAILED (exit $EXIT_CODE)"
+        if [[ "$IS_SUCCESS" == "false" ]]; then
+          echo Test did not finish successfully.
           exit 1
+        else
+          docker exec -t nemo_container_${{ github.run_id }} /opt/venv/bin/coverage report -i
         fi
 
+        exit $EXIT_CODE
+        echo "::endgroup::"
+
     - name: Upload artifacts
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v4
       if: ${{ steps.check.outputs.coverage_report != 'none' }}
       with:
         name: ${{ steps.check.outputs.coverage_report }}

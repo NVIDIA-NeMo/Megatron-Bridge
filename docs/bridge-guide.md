@@ -199,32 +199,19 @@ model = bridge.to_megatron_model()  # Uses default settings
 ```
 
 ### 3. Leverage the Parameter Streaming API
-You can stream converted weights from Megatron to HF without saving to disk:
+You can stream converted weights from Megatron to HF without saving to disk. You can also use config-only loading for architecture exploration without loading weights:
 
 ```python
 # ✅ Use streaming for large models
 for name, weight in bridge.export_hf_weights(model, cpu=True):
     process_weight(name, weight)
+
+# ✅ Use config-only loading for architecture exploration
+config = AutoConfig.from_pretrained("meta-llama/Llama-3-8B")
+bridge = AutoBridge.from_hf_config(config)
+transformer_config = bridge.transformer_config
+print(f"Hidden size: {transformer_config.hidden_size}")
 ```
-
-### 4. Use `from_hf_pretrained` for Export Workflows
-
-When exporting Megatron checkpoints back to 🤗 Hugging Face format, always use `from_hf_pretrained()` instead of `from_hf_config()`. The `from_hf_config()` method does not load the tokenizer and other artifacts required for saving a complete 🤗 Hugging Face checkpoint:
-
-```python
-from megatron.bridge import AutoBridge
-
-# ✅ Correct: Use from_hf_pretrained for export workflows
-bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
-bridge.export_ckpt("./megatron_checkpoints/llama32_1b", "./hf_exports/llama32_1b")
-
-# ❌ Avoid: from_hf_config lacks artifacts needed for saving
-# config = AutoConfig.from_pretrained("meta-llama/Llama-3.2-1B")
-# bridge = AutoBridge.from_hf_config(config)  # Missing tokenizer, etc.
-# bridge.export_ckpt(...)  # Will fail!
-```
-
-The `from_hf_config()` method is only suitable for architecture exploration and introspection (e.g., inspecting `transformer_config`), not for checkpoint conversion workflows.
 
 For more examples and advanced usage patterns, see the `examples/conversion/` directory in the repository.
 
@@ -236,19 +223,19 @@ These examples can be run directly as shell commands.
 
 ```bash
 huggingface-cli login --token <your token>
-uv run python -c "from megatron.bridge import AutoBridge; AutoBridge.import_ckpt('meta-llama/Llama-3.2-1B','./megatron_checkpoints/llama32_1b')"
+python -c "from megatron.bridge import AutoBridge; AutoBridge.import_ckpt('meta-llama/Llama-3.2-1B','./megatron_checkpoints/llama32_1b')"
 ```
 
 ### Megatron → HF export (one call)
 
 ```bash
-uv run python -c "from megatron.bridge import AutoBridge; b=AutoBridge.from_hf_pretrained('meta-llama/Llama-3.2-1B'); b.export_ckpt('./megatron_checkpoints/llama32_1b','./hf_exports/llama32_1b')"
+python -c "from megatron.bridge import AutoBridge; from transformers import AutoConfig; cfg=AutoConfig.from_pretrained('meta-llama/Llama-3.2-1B'); b=AutoBridge.from_hf_config(cfg); b.export_ckpt('./megatron_checkpoints/llama32_1b','./hf_exports/llama32_1b')"
 ```
 
 ### Create Megatron models and run locally
 
 ```bash
-uv run python - << 'PY'
+python - << 'PY'
 from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained('meta-llama/Llama-3.2-1B')
@@ -266,7 +253,7 @@ PY
 ### Launch with multiple GPUs (example)
 
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=2 -m examples.conversion.generate_from_hf
+torchrun --nproc-per-node=2 -m examples.conversion.generate_from_hf
 ```
 
 ## AutoBridge API Reference

@@ -20,27 +20,16 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
+from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
+from megatron.core.energy_monitor import EnergyMonitor
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.utils.tensorboard.writer import SummaryWriter
 
-
-# TODO: Remove try/except guards once these land in mcore dev.
-try:
-    from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
-except ImportError:
-    get_async_strategy = None  # type: ignore[assignment]
-
-try:
-    from megatron.core.energy_monitor import EnergyMonitor
-except ImportError:
-    EnergyMonitor = None  # type: ignore[assignment]
-
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-from megatron.bridge.training.utils.log_utils import safe_serialize
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe
 
@@ -73,10 +62,10 @@ class TrainState(Stateful):
             their corresponding tensor representations.
         """
         return {
-            "step": torch.tensor(self.step, dtype=torch.int64),
-            "consumed_train_samples": torch.tensor(self.consumed_train_samples, dtype=torch.int64),
-            "skipped_train_samples": torch.tensor(self.skipped_train_samples, dtype=torch.int64),
-            "consumed_valid_samples": torch.tensor(self.consumed_valid_samples, dtype=torch.int64),
+            "step": torch.tensor(self.step, dtype=torch.int32),
+            "consumed_train_samples": torch.tensor(self.consumed_train_samples, dtype=torch.int32),
+            "skipped_train_samples": torch.tensor(self.skipped_train_samples, dtype=torch.int32),
+            "consumed_valid_samples": torch.tensor(self.consumed_valid_samples, dtype=torch.int32),
             "floating_point_operations_so_far": torch.tensor(
                 self.floating_point_operations_so_far, dtype=torch.float64
             ),
@@ -135,8 +124,6 @@ class GlobalState:
         self._tokenizer: Optional[Any] = None
         self._tensorboard_logger: Optional[SummaryWriter] = None
         self._wandb_logger: Optional[Any] = None
-        self._mlflow_logger: Optional[Any] = None
-        self._comet_logger: Optional[Any] = None
         self._timers: Optional[Timers] = None
         self._train_state: Optional[TrainState] = None
         self.rank_monitor_client: Optional[Any] = None
@@ -144,10 +131,10 @@ class GlobalState:
         self.start_time: float = time.time()
         self._ft_state: Optional[FaultToleranceState] = None
         self._straggler_timer: Optional[StragglerDetector] = None
-        self._async_calls_queue: Optional[Any] = None
+        self._async_calls_queue: Optional[AsyncCallsQueue] = None
         self._nvrx_straggler_manager: Optional[NVRxStragglerDetectionManager] = None
         self._nvrx_straggler_created: bool = False
-        self._energy_monitor: Optional[Any] = None
+        self._energy_monitor: Optional[EnergyMonitor] = None
         self._energy_monitor_created: bool = False
 
     @property
@@ -206,12 +193,28 @@ class GlobalState:
 
                 save_dir = self.cfg.logger.wandb_save_dir or os.path.join(self.cfg.checkpoint.save, "wandb")
 
+                # Sanitize config for WandB by doing a JSON round-trip
+                # This ensures all objects are converted to basic Python types that WandB can handle
+                def safe_serialize(obj):
+                    """Safely convert any object to a JSON-serializable type.
+
+                    Handles objects with broken __str__ or __repr__ methods that return
+                    non-string types (e.g., PipelineParallelLayerLayout returns list).
+                    """
+                    try:
+                        # Try str() first
+                        result = str(obj)
+                        # Verify it actually returns a string
+                        if not isinstance(result, str):
+                            # __str__ returned non-string type, use type name instead
+                            return f"<{type(obj).__name__}>"
+                        return result
+                    except Exception:
+                        # __str__ raised an exception, use type name as fallback
+                        return f"<{type(obj).__name__}>"
+
                 config_dict = self.cfg.to_dict()
                 sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
-
-                # Strip whitespace from WANDB_API_KEY if it exists in environment
-                if "WANDB_API_KEY" in os.environ:
-                    os.environ["WANDB_API_KEY"] = os.environ["WANDB_API_KEY"].strip()
 
                 wandb_kwargs = {
                     "dir": save_dir,
@@ -228,127 +231,11 @@ class GlobalState:
         return self._wandb_logger
 
     @property
-    def mlflow_logger(self) -> Optional[Any]:
-        """The MLFlow logger instance.
-
-        Uses the configuration under LoggerConfig to create or resume an MLFlow run.
-        Restricted to the last rank to avoid duplicate entries or probably any racing conditions.
-        """
-        if self._mlflow_logger is None:
-            cfg = self.cfg
-            if cfg is None:
-                self._mlflow_logger = None
-                return self._mlflow_logger
-
-            logger_cfg = cfg.logger
-            if logger_cfg.mlflow_experiment and get_rank_safe() == (get_world_size_safe() - 1):
-                if logger_cfg.mlflow_run_name == "":
-                    raise ValueError("Please specify the mlflow_run_name for MLFlow logging!")
-
-                import mlflow
-
-                # set tracking URI
-                if logger_cfg.mlflow_tracking_uri:
-                    mlflow.set_tracking_uri(logger_cfg.mlflow_tracking_uri)
-
-                # Set or get experiment
-                mlflow.set_experiment(logger_cfg.mlflow_experiment)
-
-                # Prepare tags and params
-                def _flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = ".") -> dict[str, Any]:
-                    items: dict[str, Any] = {}
-                    for k, v in d.items():
-                        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-                        if isinstance(v, dict):
-                            items.update(_flatten_dict(v, new_key, sep=sep))
-                        else:
-                            if isinstance(v, (list, tuple)):
-                                v = [safe_serialize(x) for x in v]
-                            items[new_key] = v
-                    return items
-
-                config_dict = cfg.to_dict()
-                sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
-                flat_params = _flatten_dict(sanitized_config)
-
-                # Start or resume a run
-                run_name = logger_cfg.mlflow_run_name
-                tags = logger_cfg.mlflow_tags or {}
-
-                active_run = mlflow.active_run()
-                if active_run is None:
-                    mlflow.start_run(run_name=run_name, tags=tags or None)
-                elif tags:
-                    # If there is already an active run, at least set provided tags
-                    mlflow.set_tags(tags)
-
-                # Log flattened configuration as params (best-effort)
-                stringified_params = {
-                    key: (safe_serialize(value) if not isinstance(value, (int, float, bool, str)) else value)
-                    for key, value in flat_params.items()
-                }
-                mlflow.log_params(stringified_params)
-                self._mlflow_logger = mlflow
-            else:
-                self._mlflow_logger = None
-        return self._mlflow_logger
-
-    @property
-    def comet_logger(self) -> Optional[Any]:
-        """The Comet ML Experiment instance, lazily initialized for rank N-1."""
-        if self._comet_logger is None:
-            cfg = self.cfg
-            if cfg is None:
-                self._comet_logger = None
-                return self._comet_logger
-
-            logger_cfg = cfg.logger
-            if logger_cfg.comet_project and get_rank_safe() == (get_world_size_safe() - 1):
-                if not logger_cfg.comet_experiment_name:
-                    raise ValueError("Please specify the comet_experiment_name for Comet ML logging!")
-
-                import comet_ml
-
-                init_kwargs: dict[str, Any] = {
-                    "project_name": logger_cfg.comet_project,
-                    "auto_metric_logging": False,
-                }
-
-                api_key = logger_cfg.comet_api_key
-                if api_key is None:
-                    api_key = os.environ.get("COMET_API_KEY")
-                if api_key:
-                    api_key = api_key.strip()
-                    if "COMET_API_KEY" in os.environ:
-                        os.environ["COMET_API_KEY"] = api_key
-                    init_kwargs["api_key"] = api_key
-
-                if logger_cfg.comet_workspace:
-                    init_kwargs["workspace"] = logger_cfg.comet_workspace
-
-                experiment = comet_ml.Experiment(**init_kwargs)
-                experiment.set_name(logger_cfg.comet_experiment_name)
-
-                if logger_cfg.comet_tags:
-                    experiment.add_tags(logger_cfg.comet_tags)
-
-                config_dict = cfg.to_dict()
-                sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
-                experiment.log_parameters(sanitized_config)
-
-                self._comet_logger = experiment
-            else:
-                self._comet_logger = None
-        return self._comet_logger
-
-    @property
     def timers(self) -> Timers:
         """The Megatron Timers instance used for tracking execution times."""
         if self._timers is None:
             self._timers = Timers(self.cfg.logger.timing_log_level, self.cfg.logger.timing_log_option)
             self._timers.write_to_wandb = types.MethodType(_timers_write_to_wandb, self._timers)
-            self._timers.write_to_mlflow = types.MethodType(_timers_write_to_mlflow, self._timers)
-            self._timers.write_to_comet = types.MethodType(_timers_write_to_comet, self._timers)
         return self._timers
 
     @property
@@ -405,36 +292,10 @@ class GlobalState:
             and self.cfg.checkpoint.save is not None
             and self.cfg.checkpoint.async_save
         ):
-            if get_async_strategy is not None:
-                # mcore main path: get_async_strategy selects nvrx vs mcore backend
-                async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
-                async_calls_queue_cls = async_modules["AsyncCallsQueue"]
-                get_write_results_queue_fn = async_modules["get_write_results_queue"]
-            else:
-                # mcore dev path: nvrx modules merged into core, no strategy selector
-                from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
-                from megatron.core.dist_checkpointing.strategies.filesystem_async import (
-                    get_write_results_queue,
-                )
-
-                async_strategy = None
-                async_calls_queue_cls = AsyncCallsQueue
-                get_write_results_queue_fn = get_write_results_queue
-
-            self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
-
-            if self.cfg.checkpoint.use_persistent_ckpt_worker:
-                warmup_kwargs = {
-                    "cpu_priority": self.cfg.checkpoint.async_ckpt_cpu_priority,
-                    "io_priority": self.cfg.checkpoint.async_ckpt_io_priority,
-                }
-                if async_strategy == "mcore":
-                    warmup_kwargs["mp_mode"] = "spawn"
-                self._async_calls_queue.warmup_persistent_caller(get_rank_safe(), **warmup_kwargs)
-                get_write_results_queue_fn(self.cfg.checkpoint.async_write_results_mp_mode)
+            self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
 
     @property
-    def async_calls_queue(self) -> Optional[Any]:
+    def async_calls_queue(self) -> Optional[AsyncCallsQueue]:
         """The AsyncCallsQueue instance for handling asynchronous checkpoint saves."""
         return self._async_calls_queue
 
@@ -452,14 +313,13 @@ class GlobalState:
         return self._nvrx_straggler_manager
 
     @property
-    def energy_monitor(self) -> Optional[Any]:
+    def energy_monitor(self) -> Optional[EnergyMonitor]:
         """The EnergyMonitor instance for tracking energy consumption."""
         if (
             not self._energy_monitor_created
             and self._energy_monitor is None
             and self.cfg is not None
             and self.cfg.logger.log_energy
-            and EnergyMonitor is not None
         ):
             self._energy_monitor = EnergyMonitor()
             self._energy_monitor_created = True
@@ -480,8 +340,6 @@ class GlobalState:
         self._train_state = None
         self._tensorboard_logger = None
         self._wandb_logger = None
-        self._mlflow_logger = None
-        self._comet_logger = None
         self._energy_monitor = None
         self._energy_monitor_created = False
         self._signal_handler = None
@@ -509,54 +367,3 @@ def _timers_write_to_wandb(
         for name in name_to_min_max_time:
             _, max_time = name_to_min_max_time[name]
             writer.log({name + "-time": max_time}, iteration)
-
-
-def _timers_write_to_mlflow(
-    self: Timers,
-    names: list[str],
-    logger: Any,
-    iteration: int,
-    normalizer: float = 1.0,
-    reset: bool = True,
-    barrier: bool = False,
-) -> None:
-    """Patch to write timers to MLFlow for Megatron Core Timers."""
-    assert normalizer > 0.0
-    name_to_min_max_time = self._get_global_min_max_time(names, reset, barrier, normalizer)
-    if logger is not None:
-        metrics: dict[str, float] = {}
-        for name in name_to_min_max_time:
-            _, max_time = name_to_min_max_time[name]
-            sanitized_name = name.replace("/", "_") + "-time"
-            metrics[sanitized_name] = max_time
-        try:
-            logger.log_metrics(metrics, step=iteration)
-        except Exception:
-            import warnings
-
-            warnings.warn("Failed to log timer metrics to MLFlow; continuing without timer metrics.")
-
-
-def _timers_write_to_comet(
-    self: Timers,
-    names: list[str],
-    logger: Any,
-    iteration: int,
-    normalizer: float = 1.0,
-    reset: bool = True,
-    barrier: bool = False,
-) -> None:
-    """Patch to write timers to Comet ML for Megatron Core Timers."""
-    assert normalizer > 0.0
-    name_to_min_max_time = self._get_global_min_max_time(names, reset, barrier, normalizer)
-    if logger is not None:
-        metrics: dict[str, float] = {}
-        for name in name_to_min_max_time:
-            _, max_time = name_to_min_max_time[name]
-            metrics[name + "-time"] = max_time
-        try:
-            logger.log_metrics(metrics, step=iteration)
-        except Exception:
-            import warnings
-
-            warnings.warn("Failed to log timer metrics to Comet ML; continuing without timer metrics.", stacklevel=2)

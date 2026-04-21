@@ -36,11 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessExampleOutput(TypedDict):
-    """Legacy output structure for input/output-style processors.
-
-    Process functions may return this format or any other ``dict[str, Any]``
-    (e.g. ``{"messages": [...], "tools": [...]}`` for chat datasets).
-    """
+    """Expected output structure from a `ProcessExampleFn`."""
 
     input: str
     output: str
@@ -48,14 +44,11 @@ class ProcessExampleOutput(TypedDict):
 
 
 class ProcessExampleFn(Protocol):
-    """Protocol defining the signature for a function that processes a single dataset example.
+    """Protocol defining the signature for a function that processes a single dataset example."""
 
-    The returned dict is written directly as a JSONL line, so the keys must
-    match what the downstream dataset class expects (e.g. ``input``/``output``
-    for ``GPTSFTDataset``, or ``messages``/``tools`` for ``GPTSFTChatDataset``).
-    """
-
-    def __call__(self, example: dict[str, Any], tokenizer: MegatronTokenizer | None = None) -> dict[str, Any]: ...
+    def __call__(
+        self, example: dict[str, Any], tokenizer: Optional[MegatronTokenizer] = None
+    ) -> ProcessExampleOutput: ...
 
 
 @dataclass(kw_only=True)
@@ -204,8 +197,15 @@ def preprocess_and_split_data(
 
         with output_file.open("w", encoding="utf-8") as f:
             for example in tqdm(dataset, desc=f"Processing {split_name} split"):
+                json_line = {}
+
                 processed_example = process_example_fn(example, tokenizer)
-                f.write(json.dumps(processed_example) + "\n")
+                # Write each example as a JSON line in the output file
+                json_line["input"] = processed_example["input"]
+                json_line["output"] = processed_example["output"]
+                if split_name == "test":
+                    json_line["original_answers"] = processed_example["original_answers"]
+                f.write(json.dumps(json_line) + "\n")
 
         logger.info(f"{split_name} split saved to {output_file}")
 
@@ -358,18 +358,5 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
             )
         else:
             raise ValueError("Expected `dataset_name` to be str, got " + str(type(self.dataset_name)))
-        # If a specific split was requested, load_dataset returns a Dataset, not DatasetDict.
-        # We need to wrap it in a DatasetDict for downstream processing.
-        if isinstance(dataset, Dataset):
-            normalized_split = (self.split or "train").split("[", 1)[0]
-            if normalized_split.startswith("train"):
-                split_key = "train"
-            elif normalized_split.startswith(("validation", "valid", "val", "eval")):
-                split_key = "validation"
-            elif normalized_split.startswith("test"):
-                split_key = "test"
-            else:
-                split_key = "train"
-            dataset = DatasetDict({split_key: dataset})
 
         return dataset

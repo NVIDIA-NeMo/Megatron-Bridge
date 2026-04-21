@@ -17,22 +17,15 @@ from dataclasses import dataclass, field
 from typing import List, Literal, Optional
 
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 import transformer_engine.pytorch as te
-from megatron.core import parallel_state
-from megatron.core.transformer.moe.router import TopKRouter
-from megatron.core.utils import unwrap_model
+try:
+    from megatron.core.utils import unwrap_model
+except ImportError:
+    from megatron.training.utils import unwrap_model
 
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import (
-    LinearAdapter,
-    LoRALinear,
-    LoRATopKRouter,
-    TEFusedLoRALinear,
-    TELinearAdapter,
-    patch_linear_module,
-)
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TELinearAdapter, patch_linear_module
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 
@@ -78,9 +71,6 @@ class LoRA(PEFT, ModuleMatcher):
         lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
         lora_dtype (torch.dtype): Parameter data type for LoRA weights. Default None (will use model's dtype).
-        normalize_moe_lora (bool): When True, expert linear layers use dim // moe_router_topk as the LoRA rank
-            while non-expert layers keep the full dim. This normalizes the total adapter capacity for MoE models
-            so it is comparable to a dense model. Defaults to False.
     """
 
     target_modules: List[str] = field(
@@ -94,23 +84,6 @@ class LoRA(PEFT, ModuleMatcher):
     lora_B_init_method: str = "zero"
     a2a_experimental: bool = False
     lora_dtype: torch.dtype = None
-    normalize_moe_lora: bool = False
-
-    def _get_effective_dim(self, module: nn.Module, is_expert: bool) -> int:
-        """Return the LoRA rank to use, reduced for expert layers when normalize_moe_lora is enabled."""
-        if not self.normalize_moe_lora or not is_expert:
-            return self.dim
-        topk = getattr(getattr(module, "config", None), "moe_router_topk", None)
-        if topk is None or topk <= 0:
-            raise ValueError(
-                f"normalize_moe_lora is enabled but moe_router_topk is {topk!r}; "
-                f"it must be set to a positive integer on the model config"
-            )
-        if self.dim % topk != 0:
-            raise ValueError(
-                f"LoRA dim={self.dim} must be divisible by moe_router_topk={topk} when normalize_moe_lora is enabled"
-            )
-        return self.dim // topk
 
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
@@ -125,7 +98,7 @@ class LoRA(PEFT, ModuleMatcher):
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
         # Skip already transformed modules
-        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter)
+        adapter_types = (LinearAdapter, LoRALinear)
         adapter_types = adapter_types + (TELinearAdapter,)
         if isinstance(module, adapter_types):
             return module
@@ -157,46 +130,31 @@ class LoRA(PEFT, ModuleMatcher):
                     lora_dtype=self.lora_dtype,
                 )
 
-            is_expert = is_expert_linear(full_name)
-            attrs = get_adapter_attributes_from_linear(module, is_expert=is_expert)
-
-            dim = self._get_effective_dim(module, is_expert)
-
-            enable_op_fuser = (
-                hasattr(module, "config")
-                and getattr(module.config, "use_transformer_engine_op_fuser", False)
-                # TP not yet supported
-                and parallel_state.get_tensor_model_parallel_world_size() == 1
+            input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
+                get_adapter_attributes_from_linear(module)
             )
-
             logging.info(f"Adding lora to: {full_name}")
             adapter = ParallelLinearAdapter(
-                attrs.in_features,
-                attrs.out_features,
-                dim,
+                in_features,
+                out_features,
+                self.dim,
                 base_linear_name=full_name,
                 activation="identity",
                 norm_type=None,
                 column_init_method=self.lora_A_init_method,
                 row_init_method=self.lora_B_init_method,
                 gather_output=False,
-                input_is_parallel=attrs.input_is_parallel,
+                input_is_parallel=input_is_parallel,
                 dropout=self.dropout,
                 dropout_position=self.dropout_position,
                 model_parallel_config=getattr(module, "config", None),
                 alpha=self.alpha,
-                is_expert=is_expert,
+                is_expert=is_expert_linear(full_name),
                 a2a_experimental=self.a2a_experimental,
-                disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
-                disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
-                base_linear_is_parallel=attrs.base_linear_is_parallel,
+                disable_sequence_parallel_comm=disable_sp_comm,
+                base_linear_is_parallel=base_linear_is_parallel,
             )
-            if isinstance(module, TopKRouter):
-                return LoRATopKRouter(module, adapter)
-            if enable_op_fuser:
-                return TEFusedLoRALinear(module, adapter)
-            else:
-                return LoRALinear(module, adapter)
+            return LoRALinear(module, adapter)
         return module
 
 
@@ -248,78 +206,6 @@ class LoRAMerge(PEFT):
     Implements the LoRA weight merge for parameter-efficient fine-tuning.
     """
 
-    def merge(
-        self,
-        base_weight: torch.Tensor,
-        linear_out: torch.Tensor,
-        linear_in: torch.Tensor,
-        alpha: int,
-        dim: int,
-    ) -> torch.Tensor:
-        """
-        Merges the LoRA adapter weights with the base model weights.
-        Handles tensor parallelism by gathering sharded dimensions.
-
-        For ColumnParallelLinear (e.g., linear_qkv, linear_fc1):
-            - base_weight: (out_features/TP, in_features)
-            - linear_in: (dim/TP, in_features) ← Need to gather this
-            - linear_out: (out_features/TP, dim)
-            - Target: (out_features/TP, dim) @ (dim, in_features) = (out_features/TP, in_features)
-
-        For RowParallelLinear (e.g., linear_proj, linear_fc2):
-            - base_weight: (out_features, in_features/TP)
-            - linear_in: (dim, in_features/TP)
-            - linear_out: (out_features/TP, dim) ← Need to gather this
-            - Target: (out_features, dim) @ (dim, in_features/TP) = (out_features, in_features/TP)
-
-        Args:
-            base_weight (torch.Tensor): The base model weights.
-            linear_out (torch.Tensor): LoRA's B matrix.
-            linear_in (torch.Tensor): LoRA's A matrix.
-            alpha (int): Weighting factor for the low-rank projection.
-            dim (int): Dimension of the low-rank projection space.
-
-        Returns:
-            torch.Tensor: The merged weights.
-        """
-
-        tp_size = parallel_state.get_tensor_model_parallel_world_size()
-
-        if tp_size == 1:
-            # No tensor parallelism, simple multiplication
-            lora_weight = alpha / dim * (linear_out @ linear_in)
-            return base_weight + lora_weight
-
-        tp_group = parallel_state.get_tensor_model_parallel_group()
-
-        # Case 1: ColumnParallelLinear - linear_in is sharded on dim 0
-        # linear_in: (dim/TP, in_features), linear_out: (out_features/TP, dim)
-        if linear_in.shape[0] * tp_size == dim and linear_out.shape[1] == dim:
-            # Gather linear_in along dimension 0 to get full dim
-            linear_in_list = [torch.empty_like(linear_in) for _ in range(tp_size)]
-            dist.all_gather(linear_in_list, linear_in, group=tp_group)
-            linear_in_full = torch.cat(linear_in_list, dim=0)
-
-            # Multiply: (out_features/TP, dim) @ (dim, in_features)
-            lora_weight = alpha / dim * (linear_out @ linear_in_full)
-
-        # Case 2: RowParallelLinear - linear_out is sharded on dim 0
-        # linear_in: (dim, in_features/TP), linear_out: (out_features/TP, dim)
-        elif linear_out.shape[0] * tp_size == base_weight.shape[0]:
-            # Gather linear_out along dimension 0 to get full out_features
-            linear_out_list = [torch.empty_like(linear_out) for _ in range(tp_size)]
-            dist.all_gather(linear_out_list, linear_out, group=tp_group)
-            linear_out_full = torch.cat(linear_out_list, dim=0)
-
-            # Multiply: (out_features, dim) @ (dim, in_features/TP)
-            lora_weight = alpha / dim * (linear_out_full @ linear_in)
-
-        else:
-            # Fallback: no gathering needed or already full-size
-            lora_weight = alpha / dim * (linear_out @ linear_in)
-
-        return base_weight + lora_weight
-
     @torch.no_grad()
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
@@ -337,26 +223,13 @@ class LoRAMerge(PEFT):
         if not isinstance(module, LoRALinear):
             return module
         logging.info(f"merging {(prefix if prefix else '') + '.' + (name if name else '')}")
-
-        if hasattr(module.to_wrap, "weight"):
-            base_device = module.to_wrap.weight.device
-            merged_weight = self.merge(
-                module.to_wrap.weight,
-                module.adapter.linear_out.weight.to(base_device),
-                module.adapter.linear_in.weight.to(base_device),
-                module.adapter.alpha,
-                module.adapter.dim,
-            )
-            module.to_wrap.weight.data = merged_weight
-        else:  # TE Grouped Linear
-            for i in range(module.to_wrap.num_gemms):
-                base_device = getattr(module.to_wrap, f"weight{i}").device
-                merged_weight = self.merge(
-                    getattr(module.to_wrap, f"weight{i}"),
-                    module.adapter.linear_out.weight.to(base_device),
-                    module.adapter.linear_in.weight.to(base_device),
-                    module.adapter.alpha,
-                    module.adapter.dim,
-                )
-                getattr(module.to_wrap, f"weight{i}").data = merged_weight
+        base_weight = module.to_wrap.weight
+        lora_weight = (
+            module.adapter.alpha
+            / module.adapter.dim
+            * module.adapter.linear_out.weight.to(base_weight.device)
+            @ module.adapter.linear_in.weight.to(base_weight.device)
+        )
+        merged_weight = base_weight + lora_weight
+        module.to_wrap.weight.data = merged_weight
         return module

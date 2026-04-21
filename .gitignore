@@ -14,8 +14,6 @@ runs
 fastspeech_output
 .hydra
 .bash_history.local
-logs*
-*.jsonl
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -91,7 +89,6 @@ instance/
 # Sphinx documentation
 docs/_build
 docs/apidocs
-docs/skills
 
 # PyBuilder
 target/

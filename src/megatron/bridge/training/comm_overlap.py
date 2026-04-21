@@ -18,12 +18,9 @@ from typing import Optional
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
-from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
-from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 
 
 try:
@@ -383,7 +380,7 @@ class CommOverlapConfig:
 
     tp_comm_overlap: bool
     tp_comm_overlap_cfg: Optional[TransformerLayerTPOverlapCfg] = None
-    tp_comm_bootstrap_backend: Optional[str] = "nccl"
+    tp_comm_bootstrap_backend: Optional[str] = None
     overlap_p2p_comm: Optional[bool] = None
     batch_p2p_comm: Optional[bool] = None
     overlap_grad_reduce: Optional[bool] = None
@@ -418,10 +415,12 @@ class CommOverlapConfig:
             overlap_moe_expert_parallel_comm=self.overlap_moe_expert_parallel_comm,
             delay_wgrad_compute=self.delay_wgrad_compute,
         )
+        self.tp_comm_overlap_cfg = None
+        self.tp_comm_bootstrap_backend = None
 
     def _get_model_comm_overlap_cfgs(
         self,
-        model_cfg: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
+        model_cfg: GPTModelProvider | T5ModelProvider,
         ddp_config: DistributedDataParallelConfig,
     ) -> _CommOverlapConfig:
         comm_overlap_cfg = _CommOverlapConfig()
@@ -433,6 +432,7 @@ class CommOverlapConfig:
         # Optimizations disabled by default, can be overriden by user
         comm_overlap_cfg.tp_comm_overlap = False
         comm_overlap_cfg.tp_comm_overlap_cfg = None
+        comm_overlap_cfg.tp_comm_bootstrap_backend = None
         comm_overlap_cfg.defer_embedding_wgrad_compute = False
         comm_overlap_cfg.wgrad_deferral_limit = -1
         comm_overlap_cfg.overlap_moe_expert_parallel_comm = False
@@ -520,83 +520,14 @@ class CommOverlapConfig:
                 model_cfg.overlap_moe_expert_parallel_comm
                 or self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm
             ), "overlap_moe_expert_parallel_comm is required for delay_wgrad_compute"
-
-            # CUDA graph scope-specific validations for delayed wgrad.
-            cuda_graph_scope = getattr(model_cfg, "cuda_graph_scope", []) or []
-            if isinstance(cuda_graph_scope, str):
-                cuda_graph_scope = cuda_graph_scope.split(",") if cuda_graph_scope else []
-            elif not isinstance(cuda_graph_scope, list):
-                cuda_graph_scope = [cuda_graph_scope]
-            attn_scope_enabled = (
-                CudaGraphScope.attn in cuda_graph_scope
-                or CudaGraphScope.attn.value in cuda_graph_scope
-                or f"CudaGraphScope.{CudaGraphScope.attn.value}" in cuda_graph_scope
+            assert not model_cfg.moe_use_legacy_grouped_gemm, (
+                "delay_wgrad_compute is not supported with legacy groupedgemm implementation"
             )
-            moe_router_scope_enabled = (
-                CudaGraphScope.moe_router in cuda_graph_scope
-                or CudaGraphScope.moe_router.value in cuda_graph_scope
-                or f"CudaGraphScope.{CudaGraphScope.moe_router.value}" in cuda_graph_scope
-            )
-            wgrad_in_graph_scope = attn_scope_enabled or (
-                moe_router_scope_enabled
-                and getattr(model_cfg, "moe_shared_expert_intermediate_size", None) is not None
-                and not getattr(model_cfg, "moe_shared_expert_overlap", False)
-            )
-            if wgrad_in_graph_scope:
-                assert is_te_min_version("2.12.0"), (
-                    "CUDA graph with delay_wgrad_compute requires TE version >= 2.12.0."
-                )
-                assert model_cfg.gradient_accumulation_fusion, (
-                    "CUDA graph with delay_wgrad_compute requires gradient_accumulation_fusion "
-                    "to be enabled. This is because default gradient accumulation does not use "
-                    "static memory addresses, which breaks CUDA graph requirements."
-                )
-                if attn_scope_enabled:
-                    assert not model_cfg.add_bias_linear and not model_cfg.add_qkv_bias, (
-                        "CUDA graph with delay_wgrad_compute does not support attention bias for now."
-                    )
-
-            # CUDA graph scope-specific validations for delayed wgrad.
-            cuda_graph_scope = getattr(model_cfg, "cuda_graph_scope", None)
-            if cuda_graph_scope is None or cuda_graph_scope == "full":
-                cuda_graph_scope = []
-            elif isinstance(cuda_graph_scope, (str, CudaGraphScope)):
-                cuda_graph_scope = [cuda_graph_scope]
-            attn_scope_enabled = (
-                CudaGraphScope.attn in cuda_graph_scope
-                or CudaGraphScope.attn.value in cuda_graph_scope
-                or f"CudaGraphScope.{CudaGraphScope.attn.value}" in cuda_graph_scope
-            )
-            moe_router_scope_enabled = (
-                CudaGraphScope.moe_router in cuda_graph_scope
-                or CudaGraphScope.moe_router.value in cuda_graph_scope
-                or f"CudaGraphScope.{CudaGraphScope.moe_router.value}" in cuda_graph_scope
-            )
-            wgrad_in_graph_scope = attn_scope_enabled or (
-                moe_router_scope_enabled
-                and getattr(model_cfg, "moe_shared_expert_intermediate_size", None) is not None
-                and not getattr(model_cfg, "moe_shared_expert_overlap", False)
-            )
-            if wgrad_in_graph_scope:
-                assert is_te_min_version("2.12.0"), (
-                    "CUDA graph with delay_wgrad_compute requires TE version >= 2.12.0."
-                )
-                assert model_cfg.gradient_accumulation_fusion, (
-                    "CUDA graph with delay_wgrad_compute requires gradient_accumulation_fusion "
-                    "to be enabled. This is because default gradient accumulation does not use "
-                    "static memory addresses, which breaks CUDA graph requirements."
-                )
-                if attn_scope_enabled:
-                    assert not model_cfg.add_bias_linear and not model_cfg.add_qkv_bias, (
-                        "CUDA graph with delay_wgrad_compute does not support attention bias for now."
-                    )
 
         comm_overlap_cfg = self._override_user_cfgs(comm_overlap_cfg)
         return comm_overlap_cfg
 
-    def _get_optimizer_overlap_cfgs(
-        self, model_cfg: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig
-    ) -> _CommOverlapConfig:
+    def _get_optimizer_overlap_cfgs(self, model_cfg: GPTModelProvider | T5ModelProvider) -> _CommOverlapConfig:
         vp_size = model_cfg.virtual_pipeline_model_parallel_size
         if vp_size is None:
             vp_size = 1
@@ -638,7 +569,7 @@ class CommOverlapConfig:
 
     def setup(
         self,
-        model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
+        model_config: GPTModelProvider | T5ModelProvider,
         optimizer_config: OptimizerConfig,
         ddp_config: DistributedDataParallelConfig,
     ) -> None:

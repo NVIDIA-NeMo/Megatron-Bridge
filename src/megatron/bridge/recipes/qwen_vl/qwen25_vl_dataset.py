@@ -19,7 +19,6 @@ import numpy
 import torch
 from PIL import Image
 
-from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
@@ -99,13 +98,13 @@ class MockQwen25VLDataset(torch.utils.data.Dataset):
             processor_kwargs["images"] = images
 
         if self.config.pad_to_max_length:
-            processor_kwargs["max_length"] = self.config.seq_length
+            processor_kwargs["max_length"] = self.config.sequence_length
 
         inputs = self.config._processor(**processor_kwargs)
 
         input_ids: torch.Tensor = inputs.input_ids[0]  # [L]
         # Enforce exact sequence length by truncating or padding with random token ids
-        target_len = int(self.config.seq_length) + 1
+        target_len = int(self.config.sequence_length) + 1
         cur_len = input_ids.numel()
         if cur_len > target_len:
             input_ids = input_ids[:target_len]
@@ -186,7 +185,7 @@ class MockQwen25VLDatasetProvider(DatasetProvider):
     """
 
     # Required to match model.seq_length
-    seq_length: int
+    sequence_length: int
 
     # HF processor/model ID for Qwen2.5-VL
     hf_model_path: str = "Qwen/Qwen2.5-VL-3B-Instruct"
@@ -220,13 +219,7 @@ class MockQwen25VLDatasetProvider(DatasetProvider):
         from transformers import AutoProcessor
 
         # Initialize and store processor on the provider so the dataset can use it
-        self._processor = AutoProcessor.from_pretrained(
-            self.hf_model_path,
-            trust_remote_code=is_safe_repo(
-                trust_remote_code=self.trust_remote_code,
-                hf_path=self.hf_model_path,
-            ),
-        )
+        self._processor = AutoProcessor.from_pretrained(self.hf_model_path, trust_remote_code=True)
 
         def _maybe_make(size: int) -> Optional[MockQwen25VLDataset]:
             return MockQwen25VLDataset(size=size, config=self) if size and size > 0 else None

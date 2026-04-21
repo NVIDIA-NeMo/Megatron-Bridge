@@ -19,15 +19,13 @@ Tests the AdapterWrapper base class and its functionality for wrapping
 modules with adapters in Parameter-Efficient Fine-Tuning scenarios.
 """
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 import torch
 import torch.nn as nn
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LoRALinear
 
 
 class MockLinear(nn.Module):
@@ -67,33 +65,6 @@ class ConcreteAdapterWrapper(AdapterWrapper):
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
         adapter_output = self.adapter(layernorm_output)
         return linear_output + adapter_output, bias
-
-
-class DummyPEFT(PEFT):
-    """Minimal PEFT implementation for adapter enable/disable tests."""
-
-    def transform(self, module: nn.Module, name=None, prefix=None) -> nn.Module:
-        return module
-
-
-class AdapterModel(nn.Module):
-    """Model with a single LoRALinear adapter wrapper for testing."""
-
-    def __init__(self, to_wrap: nn.Module, adapter: nn.Module) -> None:
-        super().__init__()
-        self.lora = LoRALinear(to_wrap, adapter)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        output, _ = self.lora(x)
-        return output
-
-
-class MockParallelLinearAdapter(nn.Module):
-    """Minimal ParallelLinearAdapter stand-in for sharded_state_dict tests."""
-
-    def __init__(self, base_linear_name: str):
-        super().__init__()
-        self.base_linear_name = base_linear_name
 
 
 class TestAdapterWrapper:
@@ -243,46 +214,6 @@ class TestAdapterWrapper:
         mock_linear_simple.sharded_state_dict.assert_called_once_with("test_", (), None)
         simple_adapter.sharded_state_dict.assert_called_once_with("test_adapter.", (), None)
 
-    def test_sharded_state_dict_skips_mamba_metadata_for_non_mixer_in_proj(self, mock_linear_simple):
-        """Test that non-Mamba in_proj adapters do not request Mamba metadata."""
-        mock_linear_simple.sharded_state_dict = Mock(return_value={"linear_shard": "value1"})
-        adapter = MockParallelLinearAdapter("decoder.layers.0.self_attention.in_proj")
-        adapter.sharded_state_dict = Mock(return_value={"adapter_shard": "value2"})
-
-        with (
-            patch("megatron.bridge.peft.adapter_wrapper.ParallelLinearAdapter", MockParallelLinearAdapter),
-            patch(
-                "megatron.bridge.peft.adapter_wrapper._compute_mamba_dim_info", return_value={"dummy": 1}
-            ) as mock_dim,
-        ):
-            wrapper = ConcreteAdapterWrapper(mock_linear_simple, adapter)
-            result = wrapper.sharded_state_dict(prefix="test_")
-
-        assert "linear_shard" in result
-        assert "adapter_shard" in result
-        mock_dim.assert_not_called()
-        adapter.sharded_state_dict.assert_called_once_with("test_adapter.", (), None)
-
-    def test_sharded_state_dict_adds_mamba_metadata_for_mixer_in_proj(self, mock_linear_simple):
-        """Test that Mamba mixer.in_proj adapters request Mamba metadata."""
-        mock_linear_simple.sharded_state_dict = Mock(return_value={"linear_shard": "value1"})
-        adapter = MockParallelLinearAdapter("decoder.layers.0.mixer.in_proj")
-        adapter.sharded_state_dict = Mock(return_value={"adapter_shard": "value2"})
-
-        with (
-            patch("megatron.bridge.peft.adapter_wrapper.ParallelLinearAdapter", MockParallelLinearAdapter),
-            patch(
-                "megatron.bridge.peft.adapter_wrapper._compute_mamba_dim_info", return_value={"dummy": 1}
-            ) as mock_dim,
-        ):
-            wrapper = ConcreteAdapterWrapper(mock_linear_simple, adapter)
-            result = wrapper.sharded_state_dict(prefix="test_")
-
-        assert "linear_shard" in result
-        assert "adapter_shard" in result
-        mock_dim.assert_called_once_with(mock_linear_simple)
-        adapter.sharded_state_dict.assert_called_once_with("test_adapter.", (), None, mamba_dim_info={"dummy": 1})
-
     def test_forward_integration(self, mock_linear_simple, simple_adapter):
         """Test full forward pass integration."""
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
@@ -327,59 +258,3 @@ class TestAdapterWrapper:
         assert hasattr(AdapterWrapper, "base_linear_forward")
         assert hasattr(AdapterWrapper, "state_dict")
         assert hasattr(AdapterWrapper, "sharded_state_dict")
-
-    def test_adapter_wrapper_enable_disable_toggle(self, mock_linear_simple, simple_adapter):
-        """Test adapter output toggling via AdapterWrapper methods."""
-        wrapper = LoRALinear(mock_linear_simple, simple_adapter)
-        x = torch.randn(5, 10)
-
-        base_output, _ = mock_linear_simple(x)
-        enabled_output, _ = wrapper(x)
-        expected = base_output + simple_adapter(x)
-        assert torch.allclose(enabled_output, expected, atol=1e-6)
-
-        wrapper.disable_adapter_layers()
-        disabled_output, _ = wrapper(x)
-        assert torch.allclose(disabled_output, base_output, atol=1e-6)
-
-        wrapper.enable_adapter_layers()
-        reenabled_output, _ = wrapper(x)
-        assert torch.allclose(reenabled_output, enabled_output, atol=1e-6)
-
-    def test_peft_disable_adapter_context_manager(self, mock_linear_simple, simple_adapter):
-        """Test PEFT.disable_adapter restores adapter state."""
-        peft = DummyPEFT()
-        model = AdapterModel(mock_linear_simple, simple_adapter)
-        x = torch.randn(5, 10)
-
-        base_output, _ = mock_linear_simple(x)
-        enabled_output = model(x)
-
-        with peft.disable_adapter(model):
-            disabled_output = model(x)
-            assert torch.allclose(disabled_output, base_output, atol=1e-6)
-
-        assert torch.allclose(model(x), enabled_output, atol=1e-6)
-
-        with pytest.raises(RuntimeError):
-            with peft.disable_adapter(model):
-                raise RuntimeError("boom")
-
-        assert torch.allclose(model(x), enabled_output, atol=1e-6)
-
-    def test_peft_enable_disable_adapter_layers_manual(self, mock_linear_simple, simple_adapter):
-        """Test manual adapter enable/disable via PEFT helpers."""
-        peft = DummyPEFT()
-        model = AdapterModel(mock_linear_simple, simple_adapter)
-        x = torch.randn(5, 10)
-
-        base_output, _ = mock_linear_simple(x)
-        enabled_output = model(x)
-
-        peft.disable_adapter_layers(model)
-        disabled_output = model(x)
-        assert torch.allclose(disabled_output, base_output, atol=1e-6)
-
-        peft.enable_adapter_layers(model)
-        reenabled_output = model(x)
-        assert torch.allclose(reenabled_output, enabled_output, atol=1e-6)

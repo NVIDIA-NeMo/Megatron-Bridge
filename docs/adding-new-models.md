@@ -159,13 +159,11 @@ Goal: Implement a bridge class that connects an HF model class to a Megatron mod
 Tasks:
 - Add `@MegatronModelBridge.register_bridge(source=<HFClass>, target=GPTModel)`.
 - Implement `provider_bridge(self, hf_pretrained)` to read `hf_pretrained.config` and return `YourModelProvider(...)` with mapped fields (layers, hidden size, FFN, heads, groups, RoPE, dtype via `self.dtype_from_hf(cfg)`).
-- If any of your config fields aren't bijective through `CONFIG_MAPPING` (e.g. MoE topology, sliding window, custom RoPE), override `megatron_to_hf_config` to reconstruct them for auto-config export.
 - Implement `mapping_registry(self)` returning `MegatronMappingRegistry(...)` with:
   - `AutoMapping` for embeddings, final norm, output layer, 1:1 mapped weights.
   - `QKVMapping` for fused QKV if applicable.
   - `GatedMLPMapping` for gate/up if applicable.
 - Use `*` wildcards consistently between Megatron and HF patterns.
-- Add model organization to SAFE_REPOS list at `megatron.bridge.models.hf_pretrained.utils`
 
 References:
 - `src/megatron/bridge/models/conversion/model_bridge.py`
@@ -209,8 +207,8 @@ Use the examples in `examples/conversion/` to verify bidirectional conversion an
 - Multi-GPU HF load to Megatron
 
 ```sh
-uv run python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path <org>/<model-id> --prompt "Hello"
-uv run python examples/conversion/convert_checkpoints.py import --hf-model <org>/<model-id> --megatron-path ./checkpoints/<model-dir>
+python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path <org>/<model-id> --prompt "Hello"
+python examples/conversion/convert_checkpoints.py import --hf-model <org>/<model-id> --megatron-path ./checkpoints/<model-dir>
 ```
 ## 7) Add tests
 

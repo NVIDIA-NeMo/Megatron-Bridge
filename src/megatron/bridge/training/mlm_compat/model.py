@@ -21,9 +21,6 @@ from megatron.core import tensor_parallel
 from megatron.core.enums import ModelType
 from megatron.core.fp8_utils import correct_amax_history_if_needed
 from megatron.core.models.gpt import GPTModel
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    get_transformer_block_with_experimental_attention_variant_spec,
-)
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_decoder_block_spec,
     get_gpt_layer_local_spec,
@@ -34,7 +31,6 @@ from megatron.core.models.gpt.heterogeneous.heterogeneous_layer_specs import (
     get_gpt_heterogeneous_layer_spec,
 )
 from megatron.core.models.mamba import MambaModel
-from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, parse_hybrid_pattern
 from megatron.core.transformer import MegatronModule, ModuleSpec, TransformerConfig
 from megatron.core.transformer.module import Float16Module
 from megatron.core.transformer.spec_utils import import_module
@@ -52,7 +48,7 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
         use_kitchen: Whether to use kitchen extension
 
     Returns:
-        ModuleSpec: The transformer layer specification
+        transformer_layer_spec: The transformer layer specification
     """
     if use_te:
         return get_gpt_layer_with_transformer_engine_spec(
@@ -60,6 +56,8 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
             moe_grouped_gemm=args.moe_grouped_gemm,
             qk_layernorm=args.qk_layernorm,
             multi_latent_attention=args.multi_latent_attention,
+            linear_attention_type=getattr(args, "linear_attention_type", None),
+            moe_use_legacy_grouped_gemm=args.moe_use_legacy_grouped_gemm,
             qk_l2_norm=args.qk_l2_norm,
             use_kitchen=use_kitchen,
         )
@@ -69,6 +67,8 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
             moe_grouped_gemm=args.moe_grouped_gemm,
             qk_layernorm=args.qk_layernorm,
             multi_latent_attention=args.multi_latent_attention,
+            linear_attention_type=getattr(args, "linear_attention_type", None),
+            moe_use_legacy_grouped_gemm=args.moe_use_legacy_grouped_gemm,
             normalization=args.normalization,
             use_kitchen=use_kitchen,
         )
@@ -90,11 +90,7 @@ def _gpt_provider(
     if config is None:
         config = _transformer_config_from_args(args)
 
-    if getattr(args, "experimental_attention_variant", None) is not None:
-        transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec(
-            config=config, vp_stage=vp_stage
-        )
-    elif args.num_experts:
+    if args.num_experts:
         # Define the decoder block spec
         transformer_layer_spec = get_gpt_decoder_block_spec(
             config,
@@ -157,55 +153,15 @@ def _mamba_provider(
     assert args.spec is not None, "You must provide a valid Mamba layer spec!"
     mamba_stack_spec = import_module(args.spec)
 
-    # Migrate deprecated hybrid_override_pattern → hybrid_layer_pattern
-    if getattr(args, "hybrid_override_pattern", None) is not None and args.hybrid_layer_pattern is None:
-        args.hybrid_layer_pattern = args.hybrid_override_pattern
-        args.hybrid_override_pattern = None
-
-    sep = Symbols.MTP_SEPARATOR
-    if (
-        getattr(args, "mtp_hybrid_override_pattern", None) is not None
-        and args.mtp_num_layers is not None
-        and args.mtp_num_layers > 0
-        and (args.hybrid_layer_pattern is None or sep not in args.hybrid_layer_pattern)
-    ):
-        main_pattern = args.hybrid_layer_pattern or ""
-        mtp_pattern = args.mtp_hybrid_override_pattern
-        args.hybrid_layer_pattern = main_pattern + sep + sep.join([mtp_pattern] * args.mtp_num_layers)
-        args.mtp_hybrid_override_pattern = None
-        print(f"Converted legacy MTP pattern to unified: {args.hybrid_layer_pattern}")
-
-    # Infer mtp_num_layers from unified pattern
-    if args.hybrid_layer_pattern and sep in args.hybrid_layer_pattern:
-        parsed = parse_hybrid_pattern(args.hybrid_layer_pattern)
-        if parsed.mtp_pattern and parsed.mtp_num_depths > 0:
-            inferred_mtp_num_layers = parsed.mtp_num_depths
-            if args.mtp_num_layers is None:
-                args.mtp_num_layers = inferred_mtp_num_layers
-            elif args.mtp_num_layers != inferred_mtp_num_layers:
-                print(
-                    f"--mtp-num-layers ({args.mtp_num_layers}) conflicts with "
-                    f"MTP depth count ({inferred_mtp_num_layers}) in pattern '{args.hybrid_layer_pattern}'. "
-                    f"Using the inferred value ({inferred_mtp_num_layers}).",
-                    args.rank,
-                )
-                args.mtp_num_layers = inferred_mtp_num_layers
-
-    # MTP validation
-    if args.mtp_num_layers:
-        assert not args.use_legacy_models, "The legacy Megatron models does not support Multi-Token Prediction (MTP)."
-        assert args.position_embedding_type == "rope" or args.position_embedding_type == "none", (
-            f"Multi-Token Prediction (MTP) is not supported with {args.position_embedding_type} position embedding type."
-            + "The supported position embedding types are rope and none."
-        )
-
     model = MambaModel(
         config=config,
         mamba_stack_spec=mamba_stack_spec,
         vocab_size=args.padded_vocab_size,
         max_sequence_length=args.max_position_embeddings,
         pre_process=pre_process,
-        hybrid_layer_pattern=args.hybrid_layer_pattern,
+        hybrid_attention_ratio=args.hybrid_attention_ratio,
+        hybrid_mlp_ratio=args.hybrid_mlp_ratio,
+        hybrid_override_pattern=args.hybrid_override_pattern,
         post_process=post_process,
         fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
         parallel_output=True,
@@ -213,7 +169,6 @@ def _mamba_provider(
         position_embedding_type=args.position_embedding_type,
         rotary_percent=args.rotary_percent,
         rotary_base=args.rotary_base,
-        vp_stage=vp_stage,
     )
 
     return model

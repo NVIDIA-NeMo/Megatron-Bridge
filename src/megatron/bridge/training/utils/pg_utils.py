@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import fields
-from typing import Optional, Union
+from typing import Union
 
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
@@ -37,57 +36,5 @@ def get_pg_collection(model: Union[MegatronModule, list[MegatronModule]]) -> Pro
     else:
         model_ref = model
 
-    # Prefer pg_collection attached to the wrapped model, but fall back to the
-    # default MPU-based process groups if it is not present.
-    try:
-        return get_attr_wrapped_model(model_ref, "pg_collection", allow_none=False)
-    except RuntimeError as e:
-        # get_attr_wrapped_model raises a RuntimeError with this exact message
-        # when the requested attribute does not exist on the wrapped model.
-        if "couldn't find attribute pg_collection" in str(e):
-            return ProcessGroupCollection.use_mpu_process_groups()
-        raise
-
-
-class DistTrainProcessGroupCollection(ProcessGroupCollection):
-    """Process group collection for dist train."""
-
-    def __init__(self, pg_collection: ProcessGroupCollection, language_model_module_name: Optional[str] = None):
-        """Initialize the dist train process group collection.
-
-        Args:
-            pg_collection: The process group collection.
-            language_model_module_name: The name of the language model module.
-        """
-        for field_info in fields(ProcessGroupCollection):
-            setattr(
-                self,
-                field_info.name,
-                getattr(pg_collection, field_info.name, None),
-            )
-        self.language_model_module_name = language_model_module_name
-        if language_model_module_name is not None:
-            self.language_model_collection = pg_collection
-        else:
-            self.language_model_collection = None
-
-    def get_language_model_cp_size(self) -> int:
-        """Get context parallel size for the language model.
-
-        Returns:
-            Context parallel size for the language model.
-
-        Raises:
-            ValueError: If no language model is specified for this collection.
-        """
-        if self.language_model_collection is None:
-            raise ValueError("No language model specified for this collection")
-        return self.language_model_collection.cp.size()
-
-    def has_language_model(self) -> bool:
-        """Check if this rank has a language model.
-
-        Returns:
-            True if this rank has a language model, False otherwise.
-        """
-        return self.language_model_module_name is not None
+    # Do not add any fallback; this must exist on the model
+    return get_attr_wrapped_model(model_ref, "pg_collection", allow_none=False)

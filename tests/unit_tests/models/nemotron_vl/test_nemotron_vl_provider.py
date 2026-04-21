@@ -20,11 +20,10 @@ from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
 class TestNemotronNano12Bv2VLModelProvider:
     def test_provider_initialization_minimal(self):
         provider = NemotronNano12Bv2VLModelProvider(
-            hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
+            num_layers=28,
             hidden_size=5120,
             num_attention_heads=40,
         )
-        provider.finalize()
 
         # Core fields
         assert provider.num_layers == 28
@@ -50,13 +49,13 @@ class TestNemotronNano12Bv2VLModelProvider:
 
     def test_provider_freeze_overrides(self):
         provider = NemotronNano12Bv2VLModelProvider(
+            num_layers=28,
             hidden_size=5120,
             num_attention_heads=40,
             freeze_language_model=True,
             freeze_vision_model=True,
             freeze_vision_projection=True,
         )
-        provider.finalize()
 
         assert provider.freeze_language_model is True
         assert provider.freeze_vision_model is True

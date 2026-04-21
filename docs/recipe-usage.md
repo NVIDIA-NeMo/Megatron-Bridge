@@ -15,7 +15,7 @@ This guide will cover the next steps to make use of a training recipe, including
 Recipes are provided through a {py:class}`~bridge.training.config.ConfigContainer` object. This is a dataclass that holds all configuration objects needed for training. You can find a more detailed overview of the `ConfigContainer` [here](training/config-container-overview.md).
 The benefit of providing the full recipe through a pythonic structure is that it is agnostic to any configuration approach that a user may prefer, whether that's YAML, `argparse` or something else. In other words, the user may override the recipe however they see fit.
 
-The following sections detail a few different ways to override the configuration recipe. For a complete training script, please see [this example](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/llama/pretrain_llama3_8b.py).
+The following sections detail a few different ways to override the configuration recipe. For a complete training script, please see [this example](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b.py).
 
 
 ### Python
@@ -114,7 +114,7 @@ After the above snippet, `cfg` will be updated with all CLI-provided overrides.
 A script containing the above code could be called like so:
 
 ```sh
-uv run python -m torch.distributed.run <torchrun arguments> pretrain_cli_overrides.py model.tensor_model_parallel_size=4 train.train_iters=100000 ...
+torchrun <torchrun arguments> pretrain_cli_overrides.py model.tensor_model_parallel_size=4 train.train_iters=100000 ...
 ```
 
 ## Launch methods
@@ -127,7 +127,7 @@ Megatron Bridge training scripts can be launched with the `torchrun` command tha
 Simply specify the number of GPUs to use with `--nproc-per-node` and the number of nodes with `--nnodes`. For example, on a single node:
 
 ```sh
-uv run python -m torch.distributed.run --nnodes 1 --nproc-per-node 8 /path/to/train/script.py <args to pretrain script>
+torchrun --nnodes 1 --nproc-per-node 8 /path/to/train/script.py <args to pretrain script>
 ```
 
 For multi-node training, it is recommended to use a cluster orchestration system like SLURM.
@@ -140,7 +140,7 @@ For example, with Slurm, wrap the `torchrun` command inside of `srun`:
 srun --nodes 2 --gpus-per-node 8 \
     --container-image <image tag> --container-mounts <mounts> \
     bash -c "
-        uv run python -m torch.distributed.run --nnodes $SLURM_NNODES --nproc-per-node $SLURM_GPUS_PER_NODE /path/to/train/script.py <args to pretrain script>
+        torchrun --nnodes $SLURM_NNODES --nproc-per-node $SLURM_GPUS_PER_NODE /path/to/train/script.py <args to pretrain script>
     "
 ```
 
@@ -184,7 +184,7 @@ if __name__ == "__main__":
     train_script = run.Script(..., args=args_to_fwd)
 ```
 
-For a complete example of the `run.Script` API, including argument forwarding, please see [this script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/llama/pretrain_llama3_8b_nemo_run_script.py).
+For a complete example of the `run.Script` API, including argument forwarding, please see [this script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b_nemo_run_script.py).
 
 #### Plugins
 

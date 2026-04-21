@@ -55,13 +55,13 @@ class MockModelParallelConfig:
         self.cpu_offloading_activations = False
         # Add missing attributes needed by real Megatron classes
         self.expert_model_parallel_size = 1
-        self.expert_tensor_parallel_size = 1
         self.pipeline_model_parallel_size = 1
         self.virtual_pipeline_model_parallel_size = None
         self.params_dtype = torch.float32
         self.perform_initialization = True
         self.use_cpu_initialization = False
         self.gradient_accumulation_fusion = False
+        self.async_tensor_model_parallel_allreduce = False
 
 
 class MockColumnParallelLinear(ColumnParallelLinear):
@@ -269,74 +269,65 @@ class TestAll2AllCommunication:
 class TestGetAdapterAttributes:
     """Test get_adapter_attributes_from_linear function."""
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
-    def test_get_adapter_attributes_column_parallel(self, mock_parallel_state):
+    def test_get_adapter_attributes_column_parallel(self):
         """Test with ColumnParallelLinear."""
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         linear = MockColumnParallelLinear(input_size=100, output_size=50)
 
-        attrs = get_adapter_attributes_from_linear(linear)
+        input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
+            get_adapter_attributes_from_linear(linear)
+        )
 
-        assert not attrs.input_is_parallel
-        assert attrs.in_features == 100
-        assert attrs.out_features == 50
-        assert not attrs.disable_tensor_parallel_comm
-        assert attrs.disable_sequence_parallel_comm  # Should be True when sequence_parallel is False
-        assert attrs.base_linear_is_parallel  # Should be True for parallel linear layers
+        assert not input_is_parallel
+        assert in_features == 100
+        assert out_features == 50
+        assert disable_sp_comm  # Should be True when sequence_parallel is False
+        assert base_linear_is_parallel  # Should be True for parallel linear layers
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
-    def test_get_adapter_attributes_row_parallel(self, mock_parallel_state):
+    def test_get_adapter_attributes_row_parallel(self):
         """Test with RowParallelLinear."""
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         linear = MockRowParallelLinear(input_size=100, output_size=50)
 
-        attrs = get_adapter_attributes_from_linear(linear)
+        input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
+            get_adapter_attributes_from_linear(linear)
+        )
 
-        assert attrs.input_is_parallel
-        assert attrs.in_features == 100
-        assert attrs.out_features == 50
-        assert not attrs.disable_tensor_parallel_comm
-        assert attrs.disable_sequence_parallel_comm
-        assert attrs.base_linear_is_parallel  # Should be True for parallel linear layers
+        assert input_is_parallel
+        assert in_features == 100
+        assert out_features == 50
+        assert disable_sp_comm
+        assert base_linear_is_parallel  # Should be True for parallel linear layers
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
-    def test_get_adapter_attributes_sequence_parallel(self, mock_parallel_state):
+    def test_get_adapter_attributes_sequence_parallel(self):
         """Test with sequence parallel enabled."""
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         linear = MockColumnParallelLinear(input_size=100, output_size=50)
         linear.config.sequence_parallel = True
 
-        attrs = get_adapter_attributes_from_linear(linear)
+        input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
+            get_adapter_attributes_from_linear(linear)
+        )
 
-        assert not attrs.disable_tensor_parallel_comm
-        assert not attrs.disable_sequence_parallel_comm  # Should be False when sequence_parallel is True
-        assert attrs.base_linear_is_parallel  # Should be True for parallel linear layers
+        assert not disable_sp_comm  # Should be False when sequence_parallel is True
+        assert base_linear_is_parallel  # Should be True for parallel linear layers
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
-    def test_get_adapter_attributes_unsupported_module(self, mock_parallel_state):
+    def test_get_adapter_attributes_unsupported_module(self):
         """Test with unsupported module type."""
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         linear = nn.Conv2d(3, 3, 3)
         linear.config = MockModelParallelConfig()
 
         with pytest.raises(NotImplementedError):
             get_adapter_attributes_from_linear(linear)
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
-    def test_get_adapter_attributes_base_linear_is_parallel_flag(self, mock_parallel_state):
+    def test_get_adapter_attributes_base_linear_is_parallel_flag(self):
         """Test that base_linear_is_parallel flag is correctly returned."""
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         # Test with ColumnParallelLinear - should return True for base_linear_is_parallel
         column_linear = MockColumnParallelLinear(input_size=100, output_size=50)
-        assert get_adapter_attributes_from_linear(
-            column_linear
-        ).base_linear_is_parallel  # Should be True for parallel linear layers
+        _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(column_linear)
+        assert base_linear_is_parallel  # Should be True for parallel linear layers
 
         # Test with RowParallelLinear - should return True for base_linear_is_parallel
         row_linear = MockRowParallelLinear(input_size=100, output_size=50)
-        assert get_adapter_attributes_from_linear(
-            row_linear
-        ).base_linear_is_parallel  # Should be True for parallel linear layers
+        _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(row_linear)
+        assert base_linear_is_parallel  # Should be True for parallel linear layers
 
 
 class TestParallelLinearAdapter:
@@ -515,7 +506,7 @@ class TestParallelLinearAdapter:
             dropout=0.0,
             model_parallel_config=mock_config,
         )
-        assert isinstance(adapter1.dropout, nn.Identity)
+        assert adapter1.dropout is None
 
         # Reset mocks
         mock_col_linear.reset_mock()
@@ -563,19 +554,12 @@ class TestParallelLinearAdapter:
         expected_scale = adapter.alpha / adapter.dim
         assert expected_scale > 0
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
-    def test_parallel_linear_adapter_expert_mode(
-        self, mock_row_linear, mock_col_linear, mock_parallel_state, mock_config
-    ):
+    def test_parallel_linear_adapter_expert_mode(self, mock_row_linear, mock_col_linear, mock_config):
         """Test adapter in expert mode (MoE)."""
-        # Mock parallel state for expert mode
-        mock_parallel_state.get_expert_tensor_parallel_world_size.return_value = 4
-
         # Set tensor_model_parallel_size to 4 so that sequence length 7 gets padded to 8
         mock_config.tensor_model_parallel_size = 4
-        mock_config.expert_tensor_parallel_size = 4
 
         mock_linear_in = Mock()
         mock_linear_out = Mock()

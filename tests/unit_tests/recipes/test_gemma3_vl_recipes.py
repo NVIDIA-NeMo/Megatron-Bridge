@@ -16,7 +16,7 @@
 # Test purpose:
 # - Parametrize over all exported Gemma3-VL recipe functions in `megatron.bridge.recipes.gemma3_vl.gemma3_vl`.
 # - For each recipe, monkeypatch AutoBridge and the provider to avoid I/O.
-# - Build a config and assert it forms a valid `ConfigContainer`.
+# - Build a config with small, safe overrides and assert it forms a valid `ConfigContainer`.
 # - Verify dataset provider selection and sanity-check parallelism fields.
 #
 
@@ -24,27 +24,45 @@ import importlib
 from typing import Callable
 
 import pytest
-import torch
 
 
 _gemma3_vl_module = importlib.import_module("megatron.bridge.recipes.gemma3_vl.gemma3_vl")
-
-# SFT configs (parameterless)
-_GEMMA3_VL_SFT_FUNCS = [
-    _gemma3_vl_module.gemma3_vl_4b_sft_config,
-    _gemma3_vl_module.gemma3_vl_12b_sft_config,
-    _gemma3_vl_module.gemma3_vl_27b_sft_config,
+_GEMMA3_VL_RECIPE_FUNCS = [
+    _gemma3_vl_module.gemma3_vl_4b_finetune_config,
+    _gemma3_vl_module.gemma3_vl_12b_finetune_config,
+    _gemma3_vl_module.gemma3_vl_27b_finetune_config,
 ]
 
-# PEFT configs (take peft_scheme parameter)
-_GEMMA3_VL_PEFT_FUNCS = [
-    _gemma3_vl_module.gemma3_vl_4b_peft_config,
-    _gemma3_vl_module.gemma3_vl_12b_peft_config,
-    _gemma3_vl_module.gemma3_vl_27b_peft_config,
-]
 
-# All recipe functions
-_GEMMA3_VL_ALL_FUNCS = _GEMMA3_VL_SFT_FUNCS + _GEMMA3_VL_PEFT_FUNCS
+def _safe_overrides_for(name: str) -> dict:
+    """Create safe test overrides for a given recipe function name."""
+    overrides = {
+        "name": f"unit_{name}",
+        "dir": ".",
+        "dataset_type": "mock",
+        "train_iters": 10,
+        "global_batch_size": 2,
+        "micro_batch_size": 1,
+        "seq_length": 64,
+        "lr": 1e-4,
+        "min_lr": 1e-5,
+        "lr_warmup_iters": 2,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
+    }
+
+    # Large models/variants may set additional flags in recipes; keep harmless defaults
+    lname = name.lower()
+    if "12b" in lname or "27b" in lname:
+        overrides.update(
+            {
+                "virtual_pipeline_model_parallel_size": None,
+                "sequence_parallel": True,
+            }
+        )
+
+    return overrides
 
 
 class _FakeModelCfg:
@@ -97,16 +115,18 @@ def _assert_basic_config(cfg):
 
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
-    assert cfg.dataset.seq_length >= 1
+    assert cfg.dataset.sequence_length >= 1
 
 
-@pytest.mark.parametrize("recipe_func", _GEMMA3_VL_SFT_FUNCS)
-def test_each_gemma3_vl_sft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that each Gemma3-VL SFT recipe function builds a valid configuration."""
+@pytest.mark.parametrize("recipe_func", _GEMMA3_VL_RECIPE_FUNCS)
+def test_each_gemma3_vl_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that each Gemma3-VL recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
     monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = recipe_func()
+    overrides = _safe_overrides_for(recipe_func.__name__)
+
+    cfg = recipe_func(**overrides)
 
     _assert_basic_config(cfg)
 
@@ -123,274 +143,65 @@ def test_each_gemma3_vl_sft_recipe_builds_config(recipe_func: Callable, monkeypa
     assert hasattr(cfg.model, "freeze_vision_model")
     assert hasattr(cfg.model, "freeze_vision_projection")
 
-    # SFT configs should not have PEFT
-    assert cfg.peft is None
 
-
-@pytest.mark.parametrize("recipe_func", _GEMMA3_VL_PEFT_FUNCS)
-def test_each_gemma3_vl_peft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that each Gemma3-VL PEFT recipe function builds a valid configuration."""
-    # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = recipe_func()  # Default peft_scheme="lora"
-
-    _assert_basic_config(cfg)
-
-    # Check that NullTokenizer is used
-    if hasattr(cfg, "tokenizer") and hasattr(cfg.tokenizer, "tokenizer_type"):
-        assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
-
-    # Verify parallelism settings
-    assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
-    assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
-
-    # Verify freeze settings are set
-    assert hasattr(cfg.model, "freeze_language_model")
-    assert hasattr(cfg.model, "freeze_vision_model")
-    assert hasattr(cfg.model, "freeze_vision_projection")
-
-    # PEFT configs should have PEFT configured
-    assert cfg.peft is not None
-    assert hasattr(cfg.peft, "dim")
-    assert hasattr(cfg.peft, "alpha")
-
-
-@pytest.mark.parametrize("recipe_func", _GEMMA3_VL_PEFT_FUNCS)
-@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
-def test_gemma3_vl_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
-    """Test that different PEFT schemes are correctly applied for Gemma3-VL models."""
+@pytest.mark.parametrize("dataset_type", ["mock", "hf", "preloaded"])
+def test_gemma3_vl_dataset_type_selection(dataset_type: str, monkeypatch: pytest.MonkeyPatch):
+    """Test that different dataset_type values produce correct dataset providers."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = recipe_func(peft_scheme=peft_scheme)
+    overrides = _safe_overrides_for("gemma3_vl_4b_finetune_config")
+    overrides["dataset_type"] = dataset_type
 
-    _assert_basic_config(cfg)
+    # For preloaded, we need to provide data paths
+    if dataset_type == "preloaded":
+        overrides["train_data_path"] = ["/fake/train.json"]
+        overrides["valid_data_path"] = ["/fake/valid.json"]
+        overrides["test_data_path"] = ["/fake/test.json"]
+        overrides["image_folder"] = "/fake/images"
 
-    # Check PEFT config presence
-    assert cfg.peft is not None
-    # Verify PEFT config has expected attributes
-    assert hasattr(cfg.peft, "dim")
-    assert hasattr(cfg.peft, "alpha")
+    cfg = _gemma3_vl_module.gemma3_vl_4b_finetune_config(**overrides)
+
+    # Check that appropriate dataset provider is used
+    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
+    from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
+
+    if dataset_type == "mock":
+        assert isinstance(cfg.dataset, MockVLMConversationProvider)
+    elif dataset_type == "hf":
+        assert isinstance(cfg.dataset, HFDatasetConversationProvider)
+    elif dataset_type == "preloaded":
+        assert isinstance(cfg.dataset, PreloadedVLMConversationProvider)
 
 
-def test_gemma3_vl_4b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 4B SFT has correct default parallelism and learning rate."""
+def test_gemma3_vl_freeze_options(monkeypatch: pytest.MonkeyPatch):
+    """Test that freeze options are correctly passed to the model config."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
+    overrides = _safe_overrides_for("gemma3_vl_4b_finetune_config")
+    overrides["freeze_language_model"] = True
+    overrides["freeze_vision_model"] = True
+    overrides["freeze_vision_projection"] = False
 
-    _assert_basic_config(cfg)
+    cfg = _gemma3_vl_module.gemma3_vl_4b_finetune_config(**overrides)
 
-    # For full SFT, 4B should use TP=1, PP=1
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.peft is None
+    assert cfg.model.freeze_language_model is True
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
 
 
-def test_gemma3_vl_4b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 4B LoRA has correct default parallelism."""
+def test_gemma3_vl_27b_pipeline_dtype(monkeypatch: pytest.MonkeyPatch):
+    """Test that 27B model sets pipeline_dtype correctly."""
+    import torch
+
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _gemma3_vl_module.gemma3_vl_4b_peft_config(peft_scheme="lora")
+    overrides = _safe_overrides_for("gemma3_vl_27b_finetune_config")
 
-    _assert_basic_config(cfg)
+    cfg = _gemma3_vl_module.gemma3_vl_27b_finetune_config(**overrides)
 
-    # For LoRA, 4B should use TP=1, PP=1
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-
-    # Check PEFT config
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 32
-
-
-def test_gemma3_vl_4b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 4B DoRA has correct default parallelism."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_4b_peft_config(peft_scheme="dora")
-
-    _assert_basic_config(cfg)
-
-    # For DoRA, 4B should use same parallelism as LoRA
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-
-    # Check PEFT config (DoRA has alpha=64 by default, unlike LoRA's alpha=32)
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 64
-
-
-def test_gemma3_vl_12b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 12B SFT has correct default parallelism."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_12b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, 12B should use TP=4, PP=1
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.peft is None
-
-
-def test_gemma3_vl_12b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 12B PEFT has correct default parallelism."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_12b_peft_config()
-
-    _assert_basic_config(cfg)
-
-    # For LoRA, 12B should use TP=1, PP=1
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-
-    # Check PEFT config
-    assert cfg.peft is not None
-
-
-def test_gemma3_vl_27b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 27B SFT has correct default parallelism and pipeline_dtype."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_27b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, 27B should use TP=8, PP=2
-    assert cfg.model.tensor_model_parallel_size == 8
-    assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.peft is None
-
-    # For full SFT, pipeline_dtype should be set to bfloat16
+    # The 27B model should set pipeline_dtype to bfloat16 by default
     assert cfg.model.pipeline_dtype == torch.bfloat16
-
-
-def test_gemma3_vl_27b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 27B PEFT has correct default parallelism."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_27b_peft_config()
-
-    _assert_basic_config(cfg)
-
-    # For LoRA, 27B should use TP=4, PP=1
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 1
-
-    # Check PEFT config
-    assert cfg.peft is not None
-
-    # For LoRA, pipeline_dtype should NOT be set
-    assert cfg.model.pipeline_dtype is None
-
-
-def test_gemma3_vl_27b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 27B DoRA has correct default parallelism."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_27b_peft_config(peft_scheme="dora")
-
-    _assert_basic_config(cfg)
-
-    # For DoRA, 27B should use same parallelism as LoRA (TP=4, PP=1)
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 1
-
-    # Check PEFT config
-    assert cfg.peft is not None
-
-    # For DoRA, pipeline_dtype should NOT be set
-    assert cfg.model.pipeline_dtype is None
-
-
-def test_gemma3_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFDatasetConversationProvider by default."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
-
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
-
-    assert isinstance(cfg.dataset, HFDatasetConversationProvider)
-
-
-def test_gemma3_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFDatasetConversationProvider by default."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_4b_peft_config()
-
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
-
-    assert isinstance(cfg.dataset, HFDatasetConversationProvider)
-
-
-def test_gemma3_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs have freeze options set to False by default."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
-
-    # Default freeze options should be False for full SFT
-    assert cfg.model.freeze_language_model is False
-    assert cfg.model.freeze_vision_model is False
-    assert cfg.model.freeze_vision_projection is False
-
-
-def test_gemma3_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs have freeze options set to False by default."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_4b_peft_config()
-
-    # Default freeze options should be False for PEFT
-    assert cfg.model.freeze_language_model is False
-    assert cfg.model.freeze_vision_model is False
-    assert cfg.model.freeze_vision_projection is False
-
-
-def test_gemma3_vl_precision_config(monkeypatch: pytest.MonkeyPatch):
-    """Test that precision config is correctly set."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # Default should be bf16_mixed
-    assert cfg.mixed_precision == "bf16_mixed"
-
-
-def test_gemma3_vl_ddp_config(monkeypatch: pytest.MonkeyPatch):
-    """Test that DDP config is correctly set for VLMs."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # VLMs should have overlap disabled
-    assert cfg.ddp.overlap_grad_reduce is False
-    assert cfg.ddp.overlap_param_gather is False
-    assert cfg.ddp.check_for_nan_in_grad is True
-    assert cfg.ddp.use_distributed_optimizer is True

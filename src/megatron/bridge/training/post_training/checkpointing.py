@@ -25,7 +25,10 @@ import torch
 from megatron.core import dist_checkpointing
 from megatron.core.dist_checkpointing.strategies.common import COMMON_STATE_FNAME
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.utils import unwrap_model
+try:
+    from megatron.core.utils import unwrap_model
+except ImportError:
+    from megatron.training.utils import unwrap_model
 
 
 def _get_modelopt_checkpoint_path(checkpoint_path: str) -> str:
@@ -68,30 +71,28 @@ def _get_modelopt_checkpoint_path(checkpoint_path: str) -> str:
     return checkpoint_path  # No iteration dirs, use root
 
 
-def has_modelopt_state(checkpoint_path: str) -> bool:
-    """Check if ModelOpt state exists inside the checkpoint path.
+def has_modelopt_state(checkpoint_path: str, ignore_kd_state: bool = False) -> bool:
+    """Check if modelopt_state folder exists inside the checkpoint path.
 
     Checks for modelopt_state in iteration directories (iter_*) or root directory.
-    NOTE: Ignores distillation state which is deprecated and unused.
 
     Args:
         checkpoint_path: Path to the checkpoint directory
+        ignore_kd_state: If True, ignore the distillation state, as it is a placeholder
 
     Returns:
-        True if modelopt_state folder exists and contains nontrivial state, else False.
+        True if modelopt_state folder exists when ignore_kd_state is False,
+        True if modelopt_state folder exists when ignore_kd_state is True and has only
+        distillation state, False otherwise
     """
     modelopt_checkpoint_path = _get_modelopt_checkpoint_path(checkpoint_path)
     modelopt_state_path = os.path.join(modelopt_checkpoint_path, "modelopt_state")
     if not os.path.isdir(modelopt_state_path):
         return False
-
-    modelopt_state = torch.load(modelopt_state_path + "/" + COMMON_STATE_FNAME, weights_only=True)
-    modes = modelopt_state["modelopt_state_dict"]
-    if len(modes) == 1 and modes[0][0] == "kd_loss":
-        # Ignore KD state
-        modes.pop()
-
-    return len(modes) > 0
+    elif ignore_kd_state:
+        return _has_only_kd_state(modelopt_state_path)
+    else:
+        return True
 
 
 def load_modelopt_state(model: list[MegatronModule], checkpoint_path: str) -> None:
@@ -103,3 +104,11 @@ def load_modelopt_state(model: list[MegatronModule], checkpoint_path: str) -> No
     modelopt_checkpoint_path = _get_modelopt_checkpoint_path(checkpoint_path)
     unwrapped_model = unwrap_model(model)
     restore_sharded_modelopt_state(unwrapped_model, modelopt_checkpoint_path)
+
+
+def _has_only_kd_state(modelopt_state_path: str) -> bool:
+    modelopt_state = torch.load(modelopt_state_path + "/" + COMMON_STATE_FNAME, weights_only=False)
+    modes_dict = modelopt_state["modelopt_state_dict"]
+    if len(modes_dict) == 1 and modes_dict[0][0] == "kd_loss":
+        return True
+    return False

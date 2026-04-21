@@ -33,7 +33,8 @@ What this shows
 
 Run (single GPU)
 ```bash
-uv run python examples/rl/rlhf_with_bridge.py \
+export CUDA_VISIBLE_DEVICES=0
+python examples/rl/rlhf_with_bridge.py \
   --hf-policy-model Qwen/Qwen3-0.6B \
   --hf-reward-model distilbert-base-uncased-finetuned-sst-2-english \
   --train-iters 5 --mbs 1 --gbs 1 --seq-length 256 --max-new-tokens 32
@@ -41,7 +42,7 @@ uv run python examples/rl/rlhf_with_bridge.py \
 
 Run (multi-GPU)
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/rl/rlhf_with_bridge.py \
+torchrun --nproc_per_node=2 examples/rl/rlhf_with_bridge.py \
   --hf-policy-model Qwen/Qwen3-0.6B \
   --hf-reward-model distilbert-base-uncased-finetuned-sst-2-english \
   --train-iters 20 --mbs 1 --gbs 2 --seq-length 256 --max-new-tokens 32
@@ -61,11 +62,9 @@ from typing import Iterable, Iterator
 import torch
 import torch.nn.functional as F
 from megatron.core.pipeline_parallel import get_forward_backward_func
-from megatron.core.process_groups_config import ProcessGroupCollection
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -94,7 +93,6 @@ class Args:
     global_batch_size: int
     train_iters: int
     seq_length: int
-    trust_remote_code: bool = False
 
 
 def build_config(provider, args: Args) -> ConfigContainer:
@@ -201,7 +199,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Dummy RLHF: HF inference + Megatron training via Bridge")
     p.add_argument("--hf-policy-model", type=str, default="Qwen/Qwen3-0.6B")
     p.add_argument("--hf-reward-model", type=str, default="distilbert-base-uncased-finetuned-sst-2-english")
-    p.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
     p.add_argument("--max-new-tokens", type=int, default=32)
     p.add_argument("--lr", type=float, default=5e-5)
     p.add_argument("--mbs", type=int, default=1)
@@ -234,7 +231,6 @@ def main() -> None:
         global_batch_size=ns.gbs,
         train_iters=ns.train_iters,
         seq_length=ns.seq_length,
-        trust_remote_code=ns.trust_remote_code,
     )
 
     # Resolve per-rank device up front for multi-GPU runs
@@ -246,25 +242,12 @@ def main() -> None:
         local_device = torch.device("cpu")
 
     # HF tokenizer/model for generation (policy sampling) and HF reward pipeline
-    hf_policy_model = args.hf_policy_model
-    gen_tokenizer = AutoTokenizer.from_pretrained(
-        hf_policy_model,
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=args.trust_remote_code,
-            hf_path=hf_policy_model,
-        ),
-    )
+    gen_tokenizer = AutoTokenizer.from_pretrained(args.hf_policy_model, trust_remote_code=True)
     # Use left padding for decoder-only models to avoid generation warnings and ensure correctness
     gen_tokenizer.padding_side = "left"
     if gen_tokenizer.pad_token_id is None:
         gen_tokenizer.pad_token = gen_tokenizer.eos_token
-    hf_gen_model = AutoModelForCausalLM.from_pretrained(
-        hf_policy_model,
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=args.trust_remote_code,
-            hf_path=hf_policy_model,
-        ),
-    )
+    hf_gen_model = AutoModelForCausalLM.from_pretrained(args.hf_policy_model, trust_remote_code=True)
     # Ensure pad_token_id is set on model config/generation config
     if getattr(hf_gen_model.config, "pad_token_id", None) is None:
         hf_gen_model.config.pad_token_id = gen_tokenizer.pad_token_id
@@ -283,13 +266,7 @@ def main() -> None:
     )
 
     # Bridge: load HF, create Megatron provider and training stack
-    bridge = AutoBridge.from_hf_pretrained(
-        hf_policy_model,
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=args.trust_remote_code,
-            hf_path=hf_policy_model,
-        ),
-    )
+    bridge = AutoBridge.from_hf_pretrained(args.hf_policy_model, trust_remote_code=True)
     provider = bridge.to_megatron_provider(load_weights=True)
 
     cfg = build_config(provider, args)
@@ -298,9 +275,6 @@ def main() -> None:
     initialize_megatron(cfg=cfg)
     set_jit_fusion_options(cfg.model, cfg.train.micro_batch_size)
 
-    # Get process group collection after initialization
-    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
-
     # Build model + optimizer + scheduler
     model_list = get_model(
         cfg.model,
@@ -308,7 +282,6 @@ def main() -> None:
         overlap_param_gather_with_optimizer_step=False,
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
-        pg_collection=pg_collection,
     )
     model = model_list[0]
     optimizer, scheduler = setup_optimizer(
