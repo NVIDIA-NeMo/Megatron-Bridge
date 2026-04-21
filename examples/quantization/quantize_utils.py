@@ -64,29 +64,33 @@ def get_modelopt_torch_quantization_config(
     # Use deepcopy to avoid mutating the original config in QUANT_CFG_CHOICES
     mtq_config = copy.deepcopy(QUANT_CFG_CHOICES[export_quant_cfg])
 
-    fp8_config = {"enable": True, "num_bits": (4, 3), "axis": None}
-    fp4_config = {
+    fp8_cfg = {"num_bits": (4, 3), "axis": None}
+    fp4_cfg = {
         "num_bits": (2, 1),
         "block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (4, 3)},
         "axis": None,
-        "enable": True,
     }
 
     if "fp8" == export_quant_cfg:
         # Enable Medusa heads and kv-cache quantization
-        mtq_config["quant_cfg"]["*medusa_heads**"] = fp8_config
+        mtq_config["quant_cfg"].append({"quantizer_name": "*medusa_heads**", "cfg": fp8_cfg})
     if "fp4" in export_quant_cfg:
         # Enable Medusa heads and kv-cache quantization
-        mtq_config["quant_cfg"]["*medusa_heads**"] = fp4_config
+        mtq_config["quant_cfg"].append({"quantizer_name": "*medusa_heads**", "cfg": fp4_cfg})
     if "awq" in export_quant_cfg:
-        weight_quantizer = mtq_config["quant_cfg"]["*weight_quantizer"]  # type: ignore
-        if isinstance(weight_quantizer, list):
-            weight_quantizer = weight_quantizer[0]
-        weight_quantizer["block_sizes"][-1] = 128
+        weight_entry = mtq.config.find_quant_cfg_entry_by_path(
+            mtq_config["quant_cfg"], "*weight_quantizer"
+        )
+        weight_cfg = weight_entry["cfg"]
+        if isinstance(weight_cfg, list):
+            weight_cfg = weight_cfg[0]
+        weight_cfg["block_sizes"][-1] = 128
     if export_kv_cache_quant:
-        mtq_config["quant_cfg"]["*linear_qkv.output_quantizer"] = fp8_config
+        mtq_config["quant_cfg"].append(
+            {"quantizer_name": "*linear_qkv.output_quantizer", "cfg": fp8_cfg}
+        )
     if weight_only:
-        mtq_config["quant_cfg"]["*input_quantizer"] = {"enable": False}
+        mtq_config["quant_cfg"].append({"quantizer_name": "*input_quantizer", "enable": False})
 
     return mtq_config
 
