@@ -610,22 +610,19 @@ class TestMappingEdgeCases:
         spec = (tensor.shape, tensor.dtype, None, None)
 
         # Simulate both PP ranks owning the tensor
-        with patch("torch.distributed.all_gather_object") as mock_gather:
-            mock_gather.side_effect = lambda output, obj, group: output.__setitem__(slice(None), [spec, spec])
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [spec, spec]
+        )
+        mock_dist.broadcast.side_effect = lambda t, src, group: None
 
-            def mock_broadcast(t, src, group):
-                pass  # no-op for single-process test
+        # Must not raise — should pick rank 0 as source
+        result = mapping.broadcast_from_pp_rank(tensor)
+        assert result is not None
 
-            mock_dist.broadcast.side_effect = mock_broadcast
-
-            # Must not raise — should pick rank 0 as source
-            result = mapping.broadcast_from_pp_rank(tensor)
-            assert result is not None
-
-            # Verify broadcast was called with src=rank 0
-            mock_dist.broadcast.assert_called_once()
-            call_kwargs = mock_dist.broadcast.call_args
-            assert call_kwargs[1]["src"] == 0 or call_kwargs[0][1] == 0
+        # Verify broadcast was called with src=rank 0
+        mock_dist.broadcast.assert_called_once()
+        call_kwargs = mock_dist.broadcast.call_args
+        assert call_kwargs[1]["src"] == 0 or call_kwargs[0][1] == 0
 
     def test_broadcast_from_pp_rank_multi_owner_with_cache(self, mock_distributed_env):
         """Test PP broadcast with cache_key when tensor exists on multiple ranks.
@@ -641,24 +638,25 @@ class TestMappingEdgeCases:
         tensor = torch.randn(16, 16)
         spec = (tensor.shape, tensor.dtype, None, None)
 
-        with patch("torch.distributed.all_gather_object") as mock_gather:
-            mock_gather.side_effect = lambda output, obj, group: output.__setitem__(slice(None), [spec, spec])
-            mock_dist.broadcast.side_effect = lambda t, src, group: None
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [spec, spec]
+        )
+        mock_dist.broadcast.side_effect = lambda t, src, group: None
 
-            cache_key = "model.layers.0.self_attn.kv_b_proj.weight"
+        cache_key = "model.layers.0.self_attn.kv_b_proj.weight"
 
-            # First call — populates cache
-            result1 = mapping.broadcast_from_pp_rank(tensor, cache_key=cache_key)
-            assert result1 is not None
-            assert mock_gather.call_count == 1
+        # First call — populates cache
+        result1 = mapping.broadcast_from_pp_rank(tensor, cache_key=cache_key)
+        assert result1 is not None
+        assert mock_dist.all_gather_object.call_count == 1
 
-            # Second call with same cache_key — must reuse cached spec
-            result2 = mapping.broadcast_from_pp_rank(tensor, cache_key=cache_key)
-            assert result2 is not None
-            # all_gather_object should NOT be called again
-            assert mock_gather.call_count == 1
-            # broadcast should be called twice (once per call)
-            assert mock_dist.broadcast.call_count == 2
+        # Second call with same cache_key — must reuse cached spec
+        result2 = mapping.broadcast_from_pp_rank(tensor, cache_key=cache_key)
+        assert result2 is not None
+        # all_gather_object should NOT be called again
+        assert mock_dist.all_gather_object.call_count == 1
+        # broadcast should be called twice (once per call)
+        assert mock_dist.broadcast.call_count == 2
 
     def test_broadcast_obj_from_pp_rank_multi_owner(self, mock_distributed_env):
         """Test PP object broadcast handles objects present on multiple PP ranks.
@@ -672,19 +670,19 @@ class TestMappingEdgeCases:
         test_obj = {"config": "value"}
 
         # Simulate both PP ranks owning the object
-        with patch("torch.distributed.all_gather_object") as mock_gather:
-            mock_gather.side_effect = lambda output, obj, group: output.__setitem__(slice(None), [True, True])
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [True, True]
+        )
+        mock_dist.broadcast_object_list.side_effect = lambda obj_list, src, group: None
 
-            mock_dist.broadcast_object_list.side_effect = lambda obj_list, src, group: None
+        # Must not raise — should pick rank 0 as source
+        result = mapping.broadcast_obj_from_pp_rank(test_obj)
+        assert result == test_obj
 
-            # Must not raise — should pick rank 0 as source
-            result = mapping.broadcast_obj_from_pp_rank(test_obj)
-            assert result == test_obj
-
-            # Verify broadcast_object_list was called with src=rank 0
-            mock_dist.broadcast_object_list.assert_called_once()
-            call_args = mock_dist.broadcast_object_list.call_args
-            assert call_args[1].get("src", call_args[0][1] if len(call_args[0]) > 1 else None) == 0
+        # Verify broadcast_object_list was called with src=rank 0
+        mock_dist.broadcast_object_list.assert_called_once()
+        call_args = mock_dist.broadcast_object_list.call_args
+        assert call_args[1].get("src", call_args[0][1] if len(call_args[0]) > 1 else None) == 0
 
     def test_tp_aware_unknown_module_error(self, transformer_config):
         """Test AutoMapping error for unknown module types."""
