@@ -287,6 +287,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     # Set this in bridge subclasses to include model-specific files beyond standard artifacts
     ADDITIONAL_FILE_PATTERNS = None
 
+    # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
+    # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
+    hf_config = None
+
     # Common bidirectional config field name mapping: (hf_name, megatron_name)
     # Some mappings may not be used by all models - that's fine, unused fields are skipped
     CONFIG_MAPPING = [

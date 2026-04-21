@@ -48,6 +48,13 @@ Avoid EP overlap when:
 - the run is still being brought up for correctness
 - PyTorch < 2.6.0
 
+Expected outcome:
+
+- if all-to-all dispatch is a clear profile bottleneck, overlap can produce a
+  modest to meaningful speedup
+- if the run is tiny, communication-light, or dominated by another wall, the
+  gain may be negligible
+
 ## Enablement
 
 ### alltoall dispatcher
@@ -109,6 +116,10 @@ cfg.model.moe_token_dispatcher_type = "alltoall"
 cfg.model.moe_shared_expert_overlap = False
 cfg.model.bf16 = True
 ```
+
+Use this as the correctness-first starting point. Add delayed wgrad, flex
+dispatch, and CUDA-graph interactions only after the plain overlap path is
+known to work.
 
 ## Minimal Runnable Command
 
@@ -231,7 +242,8 @@ def _set_moe_a2a_overlap_overrides(recipe, moe_a2a_overlap=False):
 - Public recipes are often conservative and leave MoE overlap disabled by
   default.
 - End-to-end throughput gains have not yet been measured in a controlled Bridge
-  experiment. Code validation is stronger than performance evidence.
+  experiment for every model family. Code validation is stronger than a single
+  universal performance claim.
 - MoE overlap and shared-expert overlap are mutually exclusive.
 - CUDA graph plus delayed wgrad is a multi-constraint path that requires
   careful TE version and scope validation.

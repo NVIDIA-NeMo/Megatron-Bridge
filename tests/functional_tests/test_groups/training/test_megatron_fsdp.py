@@ -34,9 +34,13 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
     ValidationConfig,
+    runtime_config_update,
 )
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
+from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.train import _finish_train
+from megatron.bridge.training.train import train as run_training
 from tests.functional_tests.utils import (
     broadcast_path,
     clear_directories,
@@ -261,6 +265,60 @@ def create_fsdp_config_container(
     )
 
 
+def _compute_forward_only_loss(forward_step_func, model, data_iterator, state, pg_collection):
+    """Run one forward-only microbatch pass and return the reduced loss dict.
+
+    Used to verify checkpoint correctness by comparing the loss from the same
+    model state and data position before and after a save/load cycle.
+    """
+    from megatron.core.num_microbatches_calculator import get_num_microbatches
+    from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
+    from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+    from megatron.core.pipeline_parallel.utils import is_pp_last_stage
+    from megatron.core.utils import get_model_config
+
+    from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
+
+    model_config = get_model_config(model[0])
+    wrapped_fwd = prepare_forward_step_func(forward_step_func, state)
+
+    forward_backward_func = get_forward_backward_func(
+        pp_size=pg_collection.pp.size(),
+        vp_size=state.cfg.model.virtual_pipeline_model_parallel_size,
+    )
+    p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+
+    for m in model:
+        m.eval()
+
+    with torch.no_grad():
+        losses_reduced = forward_backward_func(
+            forward_step_func=wrapped_fwd,
+            data_iterator=data_iterator,
+            model=model,
+            num_microbatches=get_num_microbatches(),
+            seq_length=state.cfg.model.seq_length,
+            micro_batch_size=state.cfg.train.micro_batch_size,
+            decoder_seq_length=state.cfg.model.seq_length,
+            forward_only=True,
+            p2p_communicator=p2p_communicator,
+            pg_collection=pg_collection,
+        )
+
+    if is_pp_last_stage(pg_collection.pp):
+        loss_dict = {}
+        for key in losses_reduced[0]:
+            val = [x[key].view(-1) for x in losses_reduced]
+            if val[0].numel() == 2:
+                val = torch.vstack(val).sum(dim=0)
+                torch.distributed.all_reduce(val, group=pg_collection.dp_cp)
+                loss_dict[key] = val[0] / val[1]
+            elif val[0].numel() == 1:
+                loss_dict[key] = torch.cat(val).mean()
+        return loss_dict
+    return {}
+
+
 class TestMegatronFSDP:
     """
     Test end to end training with Megatron FSDP and fsdp_dtensor checkpoint functionality.
@@ -339,12 +397,21 @@ class TestMegatronFSDP:
         finally:
             clear_directories(tmp_path)
 
-    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_fsdp_pretrain_save_resume(self, tmp_path):
         """
-        Test FSDP training with checkpoint saving and resuming using fsdp_dtensor format.
+        Test FSDP checkpoint correctness by verifying that a model loaded from a
+        checkpoint produces the same forward-pass loss as the original model.
+
+        Phase 1: Train for N iterations, save checkpoint, compute a forward-only
+                 loss with the trained model still in memory.
+        Phase 2: Load the checkpoint into a fresh model, compute a forward-only
+                 loss on the same data position.
+        Assert the two losses are equal.
         """
+        from megatron.bridge.data.utils import get_dataset_provider
+        from megatron.bridge.training.setup import setup
+
         initialize_distributed()
         shared_base_dir = broadcast_path(tmp_path)
 
@@ -359,57 +426,87 @@ class TestMegatronFSDP:
 
         try:
             seq_length = 512
-            total_iters = 10
-            checkpoint_iters = 5
+            train_iters = 5
 
-            # First training run - train for 10 iterations and save checkpoint
-            cfg_first = create_fsdp_config_container(
+            # --- Phase 1: train, save, compute reference loss ----------------
+            cfg_train = create_fsdp_config_container(
                 seq_length=seq_length,
-                train_iters=checkpoint_iters,
+                train_iters=train_iters,
                 checkpoint_dir=checkpoint_dir,
                 tensorboard_dir=tensorboard_dir,
-                save_interval=checkpoint_iters,
-                scheduler={"lr_decay_iters": total_iters},  # Override scheduler for total iterations
+                save_interval=train_iters,
+            )
+            runtime_config_update(cfg_train)
+
+            state = GlobalState()
+            state.cfg = cfg_train
+            setup_out = setup(state, get_dataset_provider(cfg_train.dataset))
+
+            run_training(
+                forward_step,
+                setup_out.model,
+                setup_out.optimizer,
+                setup_out.scheduler,
+                setup_out.train_data_iterator,
+                setup_out.valid_data_iterator,
+                setup_out.state,
+                setup_out.checkpoint_manager,
+                setup_out.pg_collection,
             )
 
-            # Run first training job
-            pretrain(cfg_first, forward_step)
+            loss_before = _compute_forward_only_loss(
+                forward_step,
+                setup_out.model,
+                setup_out.train_data_iterator,
+                setup_out.state,
+                setup_out.pg_collection,
+            )
+
+            _finish_train(setup_out.state, setup_out.checkpoint_manager)
 
             torch.distributed.barrier()
 
-            # Verify FSDP DTensor checkpoint files from first run
             verify_checkpoint_files(
                 checkpoint_dir,
-                checkpoint_iters,
-                ckpt_format=cfg_first.checkpoint.ckpt_format,
-                storage_writers_per_rank=cfg_first.checkpoint.storage_writers_per_rank,
+                train_iters,
+                ckpt_format=cfg_train.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg_train.checkpoint.storage_writers_per_rank,
             )
 
             torch.distributed.barrier()
 
-            # Second training run - resume from checkpoint and train remaining iterations
-            cfg_second = create_fsdp_config_container(
+            # --- Phase 2: load checkpoint, compute loss ----------------------
+            cfg_load = create_fsdp_config_container(
                 seq_length=seq_length,
-                train_iters=total_iters,
-                checkpoint_dir=checkpoint_dir,
-                load_dir=checkpoint_dir,  # Resume from checkpoint
+                train_iters=train_iters,
+                load_dir=checkpoint_dir,
                 tensorboard_dir=tensorboard_dir,
-                save_interval=checkpoint_iters,
-                scheduler={"lr_decay_iters": total_iters},  # Override scheduler for total iterations
+            )
+            runtime_config_update(cfg_load)
+
+            state2 = GlobalState()
+            state2.cfg = cfg_load
+            setup_out2 = setup(state2, get_dataset_provider(cfg_load.dataset))
+
+            loss_after = _compute_forward_only_loss(
+                forward_step,
+                setup_out2.model,
+                setup_out2.train_data_iterator,
+                setup_out2.state,
+                setup_out2.pg_collection,
             )
 
-            # Run second training job (resume from checkpoint)
-            pretrain(cfg_second, forward_step)
+            _finish_train(setup_out2.state, setup_out2.checkpoint_manager)
 
-            torch.distributed.barrier()
-
-            # Verify FSDP DTensor checkpoint files from second run (should be at total_iters)
-            verify_checkpoint_files(
-                checkpoint_dir,
-                total_iters,
-                ckpt_format=cfg_second.checkpoint.ckpt_format,
-                storage_writers_per_rank=cfg_second.checkpoint.storage_writers_per_rank,
-            )
+            # --- Verify losses match -----------------------------------------
+            assert loss_before, "No loss computed before checkpoint save"
+            for key in loss_before:
+                assert key in loss_after, f"Key '{key}' missing from loaded model loss"
+                torch.testing.assert_close(
+                    loss_before[key],
+                    loss_after[key],
+                    msg=f"Loss mismatch for key '{key}'",
+                )
 
         finally:
             clear_directories(shared_base_dir)

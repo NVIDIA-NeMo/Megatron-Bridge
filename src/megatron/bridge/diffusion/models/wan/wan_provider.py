@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class WanModelProvider(TransformerConfig, ModelProviderMixin[VisionModule]):  # noqa: D101
     crossattn_emb_size: int = 1536  # cross attention emebedding size after linear projection
+    qk_layernorm: bool = True
     add_bias_linear: bool = True
     gated_linear_unit: bool = False
 

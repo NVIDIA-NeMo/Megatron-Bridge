@@ -417,3 +417,45 @@ def _patch_yarn_concentration_factor():
 
 
 _patch_yarn_concentration_factor()
+
+
+def _patch_te_grouped_linear_single_grouped_weight():
+    """Guard for main/dev branch submodule compat: single_grouped_weight/bias kwargs.
+
+    MCore dev (commit 5c544844) passes ``single_grouped_weight`` and
+    ``single_grouped_bias`` to TE ``GroupedLinear.__init__`` when
+    ``is_te_min_version("2.14.0")``.  However some TE 2.14.0 builds only
+    expose a single ``single_grouped_parameter`` kwarg.  Remap so both
+    APIs work.
+
+    TODO: remove guard once TE ships the split weight/bias API in a
+    stable release and the CI container is updated.
+    """
+    try:
+        import transformer_engine.pytorch as te_pytorch
+
+        _te_gl_init_params = set(inspect.signature(te_pytorch.GroupedLinear.__init__).parameters)
+
+        # Nothing to patch if TE already accepts the split kwargs.
+        if "single_grouped_weight" in _te_gl_init_params:
+            return
+
+        # Nothing to patch if TE has neither API (older TE without the feature).
+        if "single_grouped_parameter" not in _te_gl_init_params:
+            return
+
+        _original_init = te_pytorch.GroupedLinear.__init__
+
+        def _patched_init(self, *args, **kwargs):
+            sgw = kwargs.pop("single_grouped_weight", False)
+            sgb = kwargs.pop("single_grouped_bias", False)
+            if sgw or sgb:
+                kwargs["single_grouped_parameter"] = True
+            _original_init(self, *args, **kwargs)
+
+        te_pytorch.GroupedLinear.__init__ = _patched_init
+    except ImportError:
+        pass
+
+
+_patch_te_grouped_linear_single_grouped_weight()

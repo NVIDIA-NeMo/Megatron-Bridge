@@ -51,6 +51,7 @@ training/communication-overlap.md
 training/attention-optimizations.md
 training/activation-recomputation.md
 training/cpu-offloading.md
+training/moe-optimization.md
 training/peft.md
 training/packed-sequences.md
 training/multi-token-prediction.md
