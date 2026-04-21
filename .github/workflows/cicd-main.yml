@@ -69,12 +69,12 @@ jobs:
   pre-flight:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
     with:
-      default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
-      non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
-      default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
-      non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
-      default_registry: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}
-      non_nvidia_registry: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}
+      default_runner_prefix: nemo-ci-aws-gpu-x2
+      non_nvidia_runner_prefix: nemo-ci-aws-gpu-x2-ephemeral
+      default_test_data_path: /mnt/datadrive/TestData/nemo-fw/TestData
+      non_nvidia_test_data_path: /mnt/datadrive/TestData/nemo-fw/TestData
+      default_registry: 766267172432.dkr.ecr.us-east-1.amazonaws.com
+      non_nvidia_registry: 766267172432.dkr.ecr.us-east-1.amazonaws.com
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
     secrets:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
@@ -369,33 +369,6 @@ jobs:
         with:
           python-version: 3.12
 
-      - name: Install Azure CLI
-        shell: bash
-        if: ${{ contains(matrix.registry, 'azure') }}
-        run: |
-          echo "::group::Install Azure CLI"
-          # Create systemd override for proper dependencies
-          for i in 1 2 3; do
-            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash && break
-            echo "Attempt $i failed, retrying in 10s..."
-            sleep 10
-          done
-          echo "::endgroup::"
-
-      - name: Azure Login
-        uses: azure/login@v2
-        if: ${{ contains(matrix.registry, 'azure') }}
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Azure ACR Login
-        if: ${{ contains(matrix.registry, 'azure') }}
-        shell: bash
-        run: |
-          az acr login --name nemoci
-
       - name: Install GH CLI
         shell: bash
         run: |
@@ -489,9 +462,8 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Core
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -507,14 +479,10 @@ jobs:
           script: Launch_Unit_Tests_Core
           timeout: 18
           is_unit_test: "true"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   cicd-unit-tests-diffusion:
     if: |
@@ -527,9 +495,8 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Diffusion
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -545,14 +512,10 @@ jobs:
           script: Launch_Unit_Tests_Diffusion
           timeout: 18
           is_unit_test: "true"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   generate-test-matrix:
     needs: [pre-flight, cicd-container-build]
@@ -607,7 +570,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l0) }}
     needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     if: |
       (
         success()
@@ -618,7 +581,6 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -635,14 +597,10 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   # L1: runs on main push, schedule, and PRs with "needs-more-tests" label
   cicd-functional-tests-l1:
@@ -651,7 +609,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l1) }}
     needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     if: |
       (
         success()
@@ -663,7 +621,6 @@ jobs:
       && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.configure.outputs.needs_more_tests == 'true' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -680,14 +637,10 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   # L2: runs on schedule (nightly/weekly) and workflow_dispatch only
   cicd-functional-tests-l2:
@@ -696,7 +649,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l2) }}
     needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     if: |
       (
         success()
@@ -708,7 +661,6 @@ jobs:
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
     name: ${{ matrix.script }}
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -725,14 +677,10 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   cicd-functional-tests-flaky:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
@@ -741,9 +689,8 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_flaky) }}
     needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: ${{ matrix.script }}
-    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
@@ -761,14 +708,10 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   generate-gb200-test-matrix:
     needs: [pre-flight, cicd-container-build]
@@ -1129,3 +1072,20 @@ jobs:
           path: |
             .coverage
           include-hidden-files: true
+
+  cleanup-taint-node:
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    needs:
+      - pre-flight
+      - Nemo_CICD_Test
+      - Coverage
+      - Coverage_Fake
+    if: |
+      always()
+      && !cancelled()
+      && needs.pre-flight.outputs.is_deployment_workflow != 'true'
+    steps:
+      - name: Taint node for cleanup
+        if: contains(runner.name, 'ephemeral')
+        shell: bash
+        run: taint-node.sh
