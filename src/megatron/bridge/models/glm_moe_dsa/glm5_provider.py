@@ -12,13 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/bin/bash
-set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
+"""GLM5 uses MLAModelProvider directly. This module is kept for import compatibility."""
 
-export CUDA_VISIBLE_DEVICES="0,1"
+from megatron.bridge.models.mla_provider import MLAModelProvider as GLM5ModelProvider  # noqa: F401
 
-uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
-  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/diffusion/flux/test_flux_pretrain.py \
-  tests/functional_tests/test_groups/diffusion/flux/test_flux_conversion.py
-coverage combine -q
+
+__all__ = ["GLM5ModelProvider"]
