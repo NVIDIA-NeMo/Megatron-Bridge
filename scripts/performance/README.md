@@ -12,7 +12,7 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
 ## Setup Instructions
 
-Follow the steps below on login node to launch Megatron-Bridge experiments.
+Follow the steps below on a Slurm based login node to launch Megatron-Bridge experiments.
 
 ### Step 1. Clone Megatron-Bridge Repo
 
@@ -26,7 +26,7 @@ Follow the steps below on login node to launch Megatron-Bridge experiments.
   cd Megatron-Bridge
   git switch <branch> 
   ```
-  Example: If using 26.04 container `git switch r0.4.0`
+  Example: If using 26.04 container, then execute- `git switch r0.4.0`
 
 ### Step 2. Run instructions
 
