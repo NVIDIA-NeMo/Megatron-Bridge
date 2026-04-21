@@ -17,7 +17,7 @@ Functional tests for WAN HF <-> Megatron checkpoint conversion.
 
 Uses a tiny randomly initialized diffusers WanTransformer3DModel saved under a local
 ``transformer/`` layout (same as Wan2.1-T2V) and drives
-``examples/diffusion/recipes/wan/conversion/convert_checkpoints.py``.
+``examples/diffusion/models/wan/conversion/convert_checkpoints.py``.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ WanTransformer3DModel = diffusers.WanTransformer3DModel
 
 # Repo root: tests/functional_tests/diffusion/wan -> five parents
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
-CONVERT_SCRIPT = "examples/diffusion/recipes/wan/conversion/convert_checkpoints.py"
+CONVERT_SCRIPT = "examples/diffusion/models/wan/conversion/convert_checkpoints.py"
 
 
 def _build_toy_wan_hf_root(base: Path) -> Path:

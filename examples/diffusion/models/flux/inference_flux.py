@@ -36,7 +36,7 @@ Examples:
             --height 512 --width 512 --num_inference_steps 20 --output_path ./flux_output
 
     From repository root:
-        $ uv run python examples/diffusion/recipes/flux/inference_flux.py \\
+        $ uv run python examples/diffusion/models/flux/inference_flux.py \\
             --flux_ckpt /aot/checkpoints/dfm/flux.1-dev/iter_0000000 \\
             --vae_ckpt /aot/checkpoints/flux.1-dev/vae \\
             --prompts "a dog holding a sign said hello world" --output_path ./flux_output
