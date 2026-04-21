@@ -150,9 +150,9 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             provider.rotary_percent = rotary_dim / head_dim
 
         # Full-dimension QK norm via custom layer spec (see minimax_m2_provider.py).
-        # qk_layernorm stays False to avoid the default per-head TENorm; our custom
-        # spec injects FullDimQNorm/FullDimKNorm directly into SelfAttention.
-        provider.qk_layernorm = False
+        # qk_layernorm=True so mcore creates QK norms; the spec overrides the default
+        # TENorm with FullDimQNorm/FullDimKNorm for full-dimension normalization.
+        provider.qk_layernorm = True
         provider.transformer_layer_spec = minimax_m2_layer_spec
 
         # MoE settings — sigmoid routing with expert bias (same pattern as DeepSeek V3)

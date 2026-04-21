@@ -44,7 +44,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model mistralai/Mistral-Small-24B-Base-2501 \
   --megatron-path /checkpoints/mistral_small_24b_megatron
 ```
@@ -67,7 +67,7 @@ bridge.export_ckpt(
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path mistralai/Mistral-Small-24B-Base-2501 \
   --megatron_model_path /checkpoints/mistral_small_24b_megatron \
   --prompt "What is artificial intelligence?" \
