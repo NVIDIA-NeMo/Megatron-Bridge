@@ -41,6 +41,7 @@ from megatron.training.config import RerunStateMachineConfig as MTrainRerunState
 from megatron.training.config import RNGConfig, ValidationConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
+from megatron.training.config import TokenizerConfig as MTrainTokenizerConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -954,6 +955,86 @@ class InProcessRestartConfig:
     monitor_process_logdir: Optional[str] = None
     """Directory for monitor process log files. If None, monitor process logging is disabled."""
 
+
+@dataclass(kw_only=True)
+class TokenizerConfig(MTrainTokenizerConfig):
+    """Configuration settings for tokenizers."""
+
+    metadata_path: Optional[Union[str | dict]] = None
+    """Path to the tokenizer metadata file."""
+
+    special_tokens: Optional[list[str]] = None
+    """List of special tokens. For TikToken, needs to have ["<unk>", "<s>", "</s>"]."""
+
+    chat_template: Optional[str] = None
+    """Custom chat template in jinja format for conversation formatting."""
+
+    hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
+    """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
+
+    Common options include:
+        - use_fast (bool): Whether to use fast tokenizer implementation
+        - trust_remote_code (bool): Whether to trust remote code when loading tokenizer
+        - include_special_tokens (bool): Whether to include special tokens when converting text to ids
+
+    Example:
+        hf_tokenizer_kwargs = {
+            "use_fast": True,
+            "trust_remote_code": True,
+            "include_special_tokens": True
+        }
+    """
+
+    sp_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
+    """Additional keyword arguments to pass to SentencePiece tokenizer.
+
+    Common options include:
+        - legacy (bool): Whether to use legacy format of sentencepiece tokenizer
+
+    Example:
+        sp_tokenizer_kwargs = {
+            "legacy": True,
+        }
+    """
+
+    tokenizer_prompt_format: Optional[str] = None
+    """Prompt format for the tokenizer."""
+
+    image_tag_type: Optional[str] = None
+    """Image tag to apply, if any. For example <img><image></img>."""
+
+    force_system_message: Optional[bool] = False
+
+    def __post_init__(self) -> None:
+        """Sync with MCore values"""
+        self.tokenizer_metadata = self.metadata_path
+        if self.metadata_path:
+            warn_rank_0(
+                "`metadata_path` is deprecated and will be removed soon. "
+                "Please, use `tokenizer_metadata` instead."
+            )
+        self.tokenizer_special_tokens = self.spcial_tokens
+
+        # HuggingFace tokenizer kwargs
+        self.tokenizer_hf_no_use_fast = not self.hf_tokenizer_kwargs.get("use_fast", True)
+        self.tokenizer_hf_no_include_special_tokens = not self.hf_tokenizer_kwargs.get("include_special_tokens", True)
+        self.trust_remote_code = self.hf_tokenizer_kwargs.get("trust_remote_code", False)
+        if self.hf_tokenizer_kwargs:
+            warn_rank_0(
+                "`hf_tokenizer_kwargs` is deprecated and will be removed soon. "
+                "Please, use `tokenizer_hf_no_use_fast` / `tokenizer_hf_no_include_special_tokens` / "
+                "`trust_remote_code` arguments directly instead."
+            )
+
+        # SentencePiece tokenizer kwargs
+        self.tokenizer_sentencepiece_legacy = self.sp_tokenizer_kwargs.get("tokenizer_sentencepiece_legacy", False)
+        if self.sp_tokenizer_kwargs:
+            warn_rank_0(
+                "`sp_tokenizer_kwargs` is deprecated and will be removed soon. "
+                "Please, use `tokenizer_sentencepiece_legacy` (bool) argument directly instead."
+            )
+
+        super().__post_init__()
 
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
