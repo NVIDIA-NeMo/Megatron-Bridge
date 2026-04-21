@@ -101,8 +101,8 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         # patchify video_latent
         video_latent = patchify([video_latent], (self.patch_temporal, self.patch_spatial, self.patch_spatial))[0]
 
-        # process text embeddings
-        # pad here for text embeddings
+        # Note: in original Wan 2.1 github implementation (https://github.com/Wan-Video/Wan2.1/blob/main/wan/modules/model.py)
+        # the context is always padded to a fixed length of 512 tokens, and it pays attention to the all tokens (including padding tokens).
         context_max_len = 512
         context_embeddings = F.pad(context_embeddings, (0, 0, 0, context_max_len - context_embeddings.shape[0]))
 
@@ -113,18 +113,26 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         # loss mask
         loss_mask = torch.ones(seq_len_q, dtype=torch.bfloat16)
 
-        # CAVEAT:
-        #   when using context parallelism, we need to pad batch sequence length to be divisible by [cp_rank*2]
-        #   (because TransformerEngine's context parallelism requires "AssertionError: Sequence length per GPU needs to be divisible by 2!")
         if parallel_state.get_context_parallel_world_size() > 1:
             sharding_factor = parallel_state.get_context_parallel_world_size() * 2
-            seq_len_q_padded = ((seq_len_q + sharding_factor - 1) // sharding_factor) * sharding_factor
-            seq_len_kv_padded = ((seq_len_kv + sharding_factor - 1) // sharding_factor) * sharding_factor
+            if self.packing_buffer_size is None:
+                # SBHD mode: no padding — data must already satisfy CP divisibility.
+                assert seq_len_q % sharding_factor == 0, (
+                    f"SBHD mode: seq_len_q={seq_len_q} must be divisible by "
+                    f"2*context_parallel_size={sharding_factor}"
+                )
+                seq_len_q_padded = seq_len_q
+                seq_len_kv_padded = seq_len_kv
+            else:
+                # THD mode: pad seq_len_q and seq_len_kv to be divisible by 2*cp_size
+                # (TransformerEngine CP requires sequence length divisible by 2*cp_size)
+                seq_len_q_padded = ((seq_len_q + sharding_factor - 1) // sharding_factor) * sharding_factor
+                seq_len_kv_padded = ((seq_len_kv + sharding_factor - 1) // sharding_factor) * sharding_factor
         else:
             seq_len_q_padded = seq_len_q
             seq_len_kv_padded = seq_len_kv
 
-        # padding
+        # padding (THD mode only; SBHD asserts no padding is needed above)
         if seq_len_q < seq_len_q_padded:
             video_latent = F.pad(video_latent, (0, 0, 0, seq_len_q_padded - seq_len_q))
             loss_mask = F.pad(loss_mask, (0, seq_len_q_padded - seq_len_q))
@@ -158,24 +166,32 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
 
     @stateless
     def batch(self, samples: List[DiffusionSample]) -> dict:
-        """Return dictionary with data for batch."""
-        # NOTE: Wan always need to run with sequence packing
-        # packing
+        """Return dictionary with data for batch.
+
+        Dispatches to :meth:`_batch_bshd` when ``packing_buffer_size`` is ``None``
+        (SBHD mode, N samples per batch) or to :meth:`_batch_thd` otherwise
+        (THD mode, one packed sample with batch=1).
+        """
+        if self.packing_buffer_size is None:
+            return self._batch_bshd(samples)
+        return self._batch_thd(samples)
+
+    def _batch_thd(self, samples: List[DiffusionSample]) -> dict:
+        """THD batch: single sequence-packed sample, batch dim = 1.
+
+        Batch value shapes:
+            video_latents:        [seq_len, 1, latents_channels * pF * pH * pW]
+            context_embeddings:   [context_seq_len, 1, text_embedding_dim]
+            loss_mask:            [seq_len, 1]
+            seq_len_q:            [num_packed_samples]
+            seq_len_q_padded:     [num_packed_samples]
+            seq_len_kv:           [num_packed_samples]
+            seq_len_kv_padded:    [num_packed_samples]
+            grid_sizes:           [num_packed_samples, 3]
+            video_metadata:       list of length num_packed_samples
+        """
         sample = samples[0]
-
-        # # CAVEAT:
-        # #   when using pipeline parallelism, we need to set batch sequence length to DataModule's seq_length because
-        # #   because pipeline parallelism requires pre-specified sequence length to create buffer
-        # if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-        #     if sample.video.shape[0] > self.seq_length:
-        #         raise ValueError(
-        #             f"video sequence length {sample.video.shape[0]} is greater than DataModule's seq_length {self.seq_length}"
-        #         )
-        #     else:
-        #         # set max_video_seq_len to DataModule's seq_length
-        #         padded_seq_len = self.seq_length
-
-        batch = dict(
+        return dict(
             video_latents=sample.video.unsqueeze(1),
             context_embeddings=sample.context_embeddings.unsqueeze(1),
             loss_mask=sample.loss_mask.unsqueeze(1) if sample.loss_mask is not None else None,
@@ -187,15 +203,53 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
             video_metadata=sample.video_metadata,
         )
 
-        ### Note: shape of batch's values
-        # video_latents: [seq_len, 1, latents_channels * pF * pH * pW]
-        # context_embeddings: [seq_len, 1, text_embedding_dim]
-        # loss_mask: [seq_len, 1]
-        # seq_len_q: [num_samples]
-        # seq_len_q_padded: [num_samples]
-        # seq_len_kv: [num_samples]
-        # seq_len_kv_padded: [num_samples]
-        # grid_sizes: [num_samples, 3]
-        # video_metadata: [num_samples]
+    def _batch_bshd(self, samples: List[DiffusionSample]) -> dict:
+        """BSHD batch: N samples stacked directly, batch dim first.
 
-        return batch
+        No sequence packing and no padding is performed.  All samples must
+        have identical video sequence lengths and identical context sequence
+        lengths (asserted).  Callers are responsible for transposing to SBHD
+        ([S, B, D]) before passing to the model.
+
+        Batch value shapes:
+            video_latents:        [n, seq_q, latents_channels * pF * pH * pW]
+            context_embeddings:   [n, seq_kv, text_embedding_dim]
+            loss_mask:            [n, seq_q]
+            seq_len_q:            [n]  actual video token counts
+            seq_len_kv:           [n]  actual context token counts
+            grid_sizes:           [n, 3]
+            video_metadata:       list of length n
+        """
+        n = len(samples)
+        seq_len_q = torch.cat([s.seq_len_q for s in samples])    # [n]
+        seq_len_kv = torch.cat([s.seq_len_kv for s in samples])  # [n]
+
+        # Note: with sbhd, we assume all samples in the batch share the same grid_size, so we can 
+        # stack the video latents and loss mask
+        video_seq_lens = [s.video.shape[0] for s in samples]
+        assert len(set(video_seq_lens)) == 1, (
+            f"SBHD batch mode requires all video sequences to have the same length, got: {video_seq_lens}"
+        )
+        video_latents = torch.stack([s.video for s in samples], dim=0)  # [n, seq_q, D]
+        loss_mask = (
+            torch.stack([s.loss_mask for s in samples], dim=0)
+            if samples[0].loss_mask is not None else None
+        )  # [n, seq_q]
+        # stack the context embeddings
+        ctx_seq_lens = [s.context_embeddings.shape[0] for s in samples]
+        assert len(set(ctx_seq_lens)) == 1, (
+            f"SBHD batch mode requires all context sequences to have the same length, got: {ctx_seq_lens}"
+        )
+        context_embeddings = torch.stack(
+            [s.context_embeddings for s in samples], dim=0
+        )  # [n, seq_kv, D_text]
+
+        return dict(
+            video_latents=video_latents,
+            context_embeddings=context_embeddings,
+            loss_mask=loss_mask,
+            seq_len_q=seq_len_q,   # [n]
+            seq_len_kv=seq_len_kv,   # [n]
+            grid_sizes=torch.stack([s.latent_shape for s in samples], dim=0),  # [n, 3]
+            video_metadata=[s.video_metadata for s in samples],
+        )

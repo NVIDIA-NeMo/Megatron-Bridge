@@ -114,20 +114,23 @@ class WanLayerWithAdaLN(TransformerLayer):
             config=config, submodules=submodules, layer_number=layer_number, hidden_dropout=hidden_dropout
         )
 
-        # TODO (pmannan): Override Cross Attention to disable CP.
-        # Disable TP Comm overlap as well. Not disabling will attempt re-use of buffer size same as
-        #   Q and lead to incorrect tensor shapes.
-        # if submodules.cross_attention != IdentityOp:
-        #     cp_override_config = copy.deepcopy(config)
-        #     cp_override_config.context_parallel_size = 1
-        #     cp_override_config.tp_comm_overlap = False
-        #     self.cross_attention = build_module(
-        #         submodules.cross_attention,
-        #         config=cp_override_config,
-        #         layer_number=layer_number,
-        #     )
-        # else:
-        #     self.cross_attention = None
+        if submodules.cross_attention != IdentityOp:
+            if config.qkv_format == "sbhd":
+                # SBHD: disable CP for cross-attention since the KV (text) context is
+                # small and doesn't need to be split. Also disable TP comm overlap to
+                # avoid buffer-size mismatches with the Q tensor.
+                cp_override_config = copy.deepcopy(config)
+                cp_override_config.context_parallel_size = 1
+                cp_override_config.tp_comm_overlap = False
+            else:
+                cp_override_config = config
+            self.cross_attention = build_module(
+                submodules.cross_attention,
+                config=cp_override_config,
+                layer_number=layer_number,
+            )
+        else:
+            self.cross_attention = None
 
         self.full_self_attention = build_module(
             submodules.full_self_attention,
@@ -186,10 +189,11 @@ class WanLayerWithAdaLN(TransformerLayer):
         sequence_len_offset=None,
         inference_context=None,
         rotary_pos_cos_sin=None,
+        conditions_embeddings=None,
         **kwargs,
     ):
-        # the timestep embedding is stored in attention_mask argument
-        timestep_emb = attention_mask
+        # the timestep embedding is stored in conditions_embeddings argument
+        timestep_emb = conditions_embeddings
         rope_emb = rotary_pos_emb
 
         shift_full, scale_full, gate_full, shift_mlp, scale_mlp, gate_mlp = self.adaLN(timestep_emb)
@@ -216,11 +220,11 @@ class WanLayerWithAdaLN(TransformerLayer):
 
         attention_output, bias = self.full_self_attention(
             pre_full_attn_layernorm_output_ada,
-            attention_mask=None,
+            attention_mask=attention_mask if packed_seq_params is None else None,
             rotary_pos_emb=rope_emb,
             rotary_pos_cos=rotary_pos_cos,
             rotary_pos_sin=rotary_pos_sin,
-            packed_seq_params=packed_seq_params["self_attention"],
+            packed_seq_params=packed_seq_params["self_attention"] if packed_seq_params is not None else None,
         )
         if bias is not None:
             attention_output = attention_output + bias
@@ -239,7 +243,7 @@ class WanLayerWithAdaLN(TransformerLayer):
             self.norm3(hidden_states),
             attention_mask=context_mask,
             key_value_states=context,
-            packed_seq_params=packed_seq_params["cross_attention"],
+            packed_seq_params=packed_seq_params["cross_attention"] if packed_seq_params is not None else None,
         )
         if bias is not None:
             attention_output = attention_output + bias
@@ -273,8 +277,12 @@ class WanLayerWithAdaLN(TransformerLayer):
         return output, context
 
 
-def get_wan_block_with_transformer_engine_spec() -> ModuleSpec:  # noqa: D103
-    params = {"attn_mask_type": AttnMaskType.padding}
+def get_wan_block_with_transformer_engine_spec(qkv_format: str = "thd") -> ModuleSpec:  # noqa: D103
+    # THD (sequence-packed) uses padding masks; SBHD (batched) uses no_mask.
+    # because TE ring attention rejects padding masks with CP enabled for SBHD mode.
+    # Hence, when running with SBHD, we assume no padding required, meaning all input data (images/videos) 
+    # have the same shape and already divisible by CP_size*2.
+    params = {"attn_mask_type": AttnMaskType.padding if qkv_format == "thd" else AttnMaskType.no_mask}
     return ModuleSpec(
         module=WanLayerWithAdaLN,
         submodules=WanWithAdaLNSubmodules(
