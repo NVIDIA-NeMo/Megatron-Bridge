@@ -56,7 +56,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model nvidia/Llama-3_3-Nemotron-Super-49B-v1_5 \
   --megatron-path /checkpoints/llama_nemotron_super_49b_megatron \
   --trust-remote-code
@@ -83,7 +83,7 @@ bridge.export_ckpt(
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path nvidia/Llama-3_3-Nemotron-Super-49B-v1_5 \
   --megatron_model_path /checkpoints/llama_nemotron_super_49b_megatron \
   --prompt "What is artificial intelligence?" \

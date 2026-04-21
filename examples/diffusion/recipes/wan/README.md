@@ -2,7 +2,7 @@
 
 This directory contains example scripts for [WAN 2.1](https://github.com/Wan-Video/Wan2.1) (text-to-video/image) with Megatron-Bridge: dataset preparation, checkpoint conversion, and inference. Pretraining and fine-tuning use the generic `scripts/training/run_recipe.py` entry point. Built on [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) and [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge), it supports advanced parallelism strategies (data, tensor, sequence, and context parallelism) and optimized kernels (e.g., Transformer Engine fused attention).
 
-All commands below assume you run them from the **Megatron-Bridge repository root** unless noted. Use `uv run` when you need the project's virtualenv (e.g. `uv run python ...`, `uv run torchrun ...`).
+All commands below assume you run them from the **Megatron-Bridge repository root** unless noted. Use `uv run` when you need the project's virtualenv (e.g. `uv run python ...`, `uv run python -m torch.distributed.run ...`).
 
 ## Workspace Configuration
 
@@ -45,7 +45,7 @@ export HF_TOKEN=<your_huggingface_token>
 #      --height/--width: resize target (832x480 supported for both 1.3B and 14B)
 #      --center-crop: center crop to exact target size after resize
 #      --mode: process "video" or "frames" of video
-uv run torchrun --nproc_per_node=8 \
+uv run python -m torch.distributed.run --nproc_per_node=8 \
   examples/diffusion/recipes/wan/prepare_dataset_wan.py \
   --video_folder "${DATASET_SRC}" \
   --output_dir "${DATASET_PATH}" \
@@ -127,6 +127,8 @@ Run WAN pretraining with the generic **run_recipe** script (same entry point as 
 
 **Recipe:** [megatron.bridge.diffusion.recipes.wan.wan](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/diffusion/recipes/wan/wan.py)
 
+Example W&B results (for pre-training, SFT for different parallelism configs) runs can be found at: ([W&B results](https://api.wandb.ai/links/nvidia-nemo-fw-public/lbk87jeh))
+
 From the **Megatron-Bridge repository root**:
 
 ### Sequence packing
@@ -145,7 +147,7 @@ WAN uses different flow-matching hyperparameters for pretraining vs fine-tuning.
 ### WAN 1.3B — Mock data (no dataset path):
 
 ```bash
-uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe wan_1_3b_pretrain_config \
   --step_func wan_step
 ```
@@ -153,7 +155,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 ### WAN 1.3B — Real data (WebDataset path):
 
 ```bash
-uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe wan_1_3b_pretrain_config \
   --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan
@@ -162,7 +164,7 @@ uv run torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
 ### With CLI overrides (iters, LR, batch size, parallelism, etc.):
 
 ```bash
-uv run torchrun --nproc_per_node=$NUM_GPUS scripts/training/run_recipe.py \
+uv run python -m torch.distributed.run --nproc_per_node=$NUM_GPUS scripts/training/run_recipe.py \
   --recipe wan_1_3b_pretrain_config \
   --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan \
@@ -185,7 +187,7 @@ For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/wan/w
 The script [inference_wan.py](inference_wan.py) runs text-to-video generation with a Megatron-format WAN checkpoint. Set `--checkpoint_step` to use a specific checkpoint iteration, `--sizes` and `--frame_nums` to specify video shape, and `--sample_steps` (default 50) for the number of noise diffusion steps.
 
 ```bash
-uv run torchrun --nproc_per_node=1 \
+uv run python -m torch.distributed.run --nproc_per_node=1 \
   examples/diffusion/recipes/wan/inference_wan.py \
   --task t2v-1.3B \
   --frame_nums 81 \

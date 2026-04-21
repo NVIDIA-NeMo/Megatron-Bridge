@@ -290,7 +290,7 @@ def setup(
             model=model,
             optimizer=optimizer,
             opt_param_scheduler=scheduler,
-            skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2 or cfg.dist.use_megatron_fsdp,
+            skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
         ))
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])

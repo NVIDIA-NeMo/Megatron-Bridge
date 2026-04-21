@@ -709,7 +709,7 @@ export WORLD_SIZE=${SLURM_NNODES:-2}   # number of nodes
 export RANK=${SLURM_NODEID:-0}         # 0..N-1 per node
 
 export OMP_NUM_THREADS=1
-python -u /home/dpsk_a2a/deepep/tests/test_internode.py
+uv run python -u /home/dpsk_a2a/deepep/tests/test_internode.py
 '
 
 ```

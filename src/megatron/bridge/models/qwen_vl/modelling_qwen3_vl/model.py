@@ -204,6 +204,30 @@ class Qwen3VLModel(MegatronModule):
                 "Qwen3-VL model only supports context parallelism with calculate_per_token_loss enabled"
             )
 
+        self._expose_language_model_for_cuda_graph_helper()
+
+    def _expose_language_model_for_cuda_graph_helper(self) -> None:
+        """Expose LM fields on the VLM root for the CUDA graph helper when cuda_graph_impl is enabled.
+
+        The CUDA graph helper expects ``position_embedding_type``, ``rotary_pos_emb``, and ``decoder`` on
+        the model, but in Qwen3-VL these live on ``language_model``. Assigning ``decoder`` here shadows
+        the :meth:`decoder` property for this instance only when graphs are used.
+        """
+        llm_cuda_graph_enabled = (
+            self.language_model is not None
+            and getattr(self.language_model.config, "cuda_graph_impl", "none") != "none"
+        )
+        if not llm_cuda_graph_enabled:
+            return
+        assert not self.language_model.config.variable_seq_lengths, (
+            "Qwen3-VL MoE with CUDA graph requires fixed sequence lengths (variable_seq_lengths=False). "
+            "Disable variable-length / packed pipelines (e.g. in-batch packing with PP, or other modes "
+            "that set variable_seq_lengths) or turn off CUDA graph."
+        )
+        self.position_embedding_type = self.language_model.position_embedding_type
+        self.rotary_pos_emb = self.language_model.rotary_pos_emb
+        self.decoder = self.language_model.decoder
+
     def shared_embedding_or_output_weight(self):
         """This is a convenience method to surface the language model's word embeddings, which is
         necessary for `finalize_model_grads._allreduce_word_embedding_grads`."""
@@ -389,6 +413,8 @@ class Qwen3VLModel(MegatronModule):
                 video_token_id=self.video_token_id,
                 square_merge_size=self.square_merge_size,
             )
+
+            vision_embeds = None
 
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
                 if cp_size > 1 and self.config.vision_dp_when_cp:
