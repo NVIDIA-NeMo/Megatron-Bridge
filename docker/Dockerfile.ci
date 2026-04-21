@@ -54,4 +54,4 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     fi && \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
 
-COPY . /opt/Megatron-Bridge
+COPY --chmod=644 . /opt/Megatron-Bridge
