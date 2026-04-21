@@ -2170,7 +2170,7 @@ def _load_checkpoint_from_path(
             )
             raise e
     else:
-        if (cfg.model.fp16 or cfg.model.bf16) and optimizer is not None:
+        if (cfg.model.fp16 or cfg.model.bf16) and optimizer is not None and not cfg.ddp.use_megatron_fsdp:
             if cfg.checkpoint.load_main_params_from_ckpt:
                 optimizer.reload_model_params(state_dict=state_dict)
             else:
