@@ -40,7 +40,7 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
 The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
-`python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
+`uv run python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
 
 You can also create a bash file to define the experiment arguments and launch it. For e.g. The bash file will look as follows-
 
@@ -51,7 +51,7 @@ MBRIDGE_PATH="</path/to/mbridge>"
 JOB_NAME="dsv3_gb300"
 RESULTS_DIR="${MBRIDGE_PATH}/results/${JOB_NAME}"
 
-python scripts/performance/setup_experiment.py 
+uv run python scripts/performance/setup_experiment.py \
   --account <slurm_account> \
   -i ${CONTAINER} \
   --partition <slurm_partition> \
