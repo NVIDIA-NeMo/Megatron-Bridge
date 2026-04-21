@@ -584,6 +584,7 @@ class SafeTensorsStateSource(StateSource):
         if not keys_to_load:
             return {}
 
+        import time
         from glob import glob as file_glob
 
         from safetensors import safe_open
@@ -591,6 +592,8 @@ class SafeTensorsStateSource(StateSource):
         loaded_tensors = {}
         remaining_keys = set(keys_to_load)
         key_to_filename_map = self.key_to_filename_map
+
+        max_retries = 3
 
         if key_to_filename_map:
             file_to_keys_map = defaultdict(list)
@@ -602,11 +605,22 @@ class SafeTensorsStateSource(StateSource):
             for filename, keys_in_file in file_to_keys_map.items():
                 file_path = self.path / filename
                 if file_path.exists():
-                    with safe_open(file_path, framework="pt", device="cpu") as f:
-                        for key in keys_in_file:
-                            if key in f.keys():
-                                loaded_tensors[key] = f.get_tensor(key)
-                                remaining_keys.discard(key)
+                    for attempt in range(max_retries):
+                        with safe_open(file_path, framework="pt", device="cpu") as f:
+                            file_keys = set(f.keys())
+                            for key in keys_in_file:
+                                if key in file_keys and key not in loaded_tensors:
+                                    loaded_tensors[key] = f.get_tensor(key)
+                                    remaining_keys.discard(key)
+                        still_missing = [k for k in keys_in_file if k in remaining_keys]
+                        if not still_missing:
+                            break
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                f"Retry {attempt + 1}/{max_retries}: {len(still_missing)} keys "
+                                f"not found in {filename}, retrying after delay..."
+                            )
+                            time.sleep(1.0 * (attempt + 1))
 
         if remaining_keys:
             safetensor_files = file_glob(str(self.path / "*.safetensors"))
