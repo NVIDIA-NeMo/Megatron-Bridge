@@ -72,6 +72,10 @@ class GLM5Bridge(MegatronModelBridge):
         provider.qk_layernorm = True
         provider.multi_latent_attention = True
 
+        # Disable MTP (Multi-Token Prediction) — HF config has num_nextn_predict_layers=1
+        # but Bridge does not yet have MTP weight mappings for GLM-5.
+        provider.mtp_num_layers = None
+
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = True
         provider.moe_token_dispatcher_type = "alltoall"
