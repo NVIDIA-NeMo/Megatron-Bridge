@@ -406,9 +406,7 @@ class TestGPTModelProvider:
 
         result = mtp_block_spec(provider, vp_stage=None)
 
-        mock_get_mtp.assert_called_once_with(
-            provider, block_spec, use_transformer_engine=True, vp_stage=None
-        )
+        mock_get_mtp.assert_called_once_with(provider, block_spec, use_transformer_engine=True, vp_stage=None)
         assert result == "mtp_spec"
 
     @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_decoder_layer_specs")
@@ -444,9 +442,7 @@ class TestGPTModelProvider:
             normalization=provider.normalization,
             qk_l2_norm=provider.qk_l2_norm,
         )
-        mock_get_mtp.assert_called_once_with(
-            provider, moe_layer_spec, use_transformer_engine=True, vp_stage=2
-        )
+        mock_get_mtp.assert_called_once_with(provider, moe_layer_spec, use_transformer_engine=True, vp_stage=2)
         assert result == "mtp_spec"
 
     @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
@@ -475,9 +471,7 @@ class TestGPTModelProvider:
         result = mtp_block_spec(provider, vp_stage=3)
 
         assert received_vp_stage["vp_stage"] == 3
-        mock_get_mtp.assert_called_once_with(
-            provider, block_spec, use_transformer_engine=True, vp_stage=3
-        )
+        mock_get_mtp.assert_called_once_with(provider, block_spec, use_transformer_engine=True, vp_stage=3)
         assert result == "mtp_spec"
 
     def test_dense_grouped_gemm_defaults_to_false(self):
