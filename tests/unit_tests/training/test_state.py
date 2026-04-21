@@ -86,11 +86,13 @@ class TestTrainState:
         }
         assert set(state_dict.keys()) == expected_keys
 
-        # Check tensor types
-        assert state_dict["step"].dtype == torch.int32
-        assert state_dict["consumed_train_samples"].dtype == torch.int32
-        assert state_dict["skipped_train_samples"].dtype == torch.int32
-        assert state_dict["consumed_valid_samples"].dtype == torch.int32
+        # Check tensor types (int64 to avoid overflow on long training runs;
+        # torch.uint64 is not supported by torch's legacy pickle path used inside
+        # broadcast_object_list during dist-checkpoint save, so use int64 instead).
+        assert state_dict["step"].dtype == torch.int64
+        assert state_dict["consumed_train_samples"].dtype == torch.int64
+        assert state_dict["skipped_train_samples"].dtype == torch.int64
+        assert state_dict["consumed_valid_samples"].dtype == torch.int64
         assert state_dict["floating_point_operations_so_far"].dtype == torch.float64
         assert state_dict["do_train"].dtype == torch.bool
         assert state_dict["do_valid"].dtype == torch.bool
@@ -388,9 +390,9 @@ class TestGlobalState:
             patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
             patch(
                 "builtins.__import__",
-                side_effect=lambda name, *args, **kwargs: mock_wandb
-                if name == "wandb"
-                else __import__(name, *args, **kwargs),
+                side_effect=lambda name, *args, **kwargs: (
+                    mock_wandb if name == "wandb" else __import__(name, *args, **kwargs)
+                ),
             ),
         ):
             logger = state.wandb_logger

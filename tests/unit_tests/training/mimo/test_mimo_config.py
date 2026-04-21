@@ -22,7 +22,7 @@ def test_mimo_heterogeneous_rank_offset_overlap():
     """Test that overlapping rank ranges are detected in heterogeneous deployment."""
     module_parallelisms = {
         "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=0),
-        "llm": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=2),
+        "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=2),
     }
     mimo_parallelism_config = MimoParallelismConfig(
         module_parallelisms=module_parallelisms,
@@ -36,7 +36,7 @@ def test_mimo_heterogeneous_valid_contiguous():
     # Note: encoder DP must be >= LLM DP for embedding alignment
     module_parallelisms = {
         "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=0),
-        "llm": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=4),
+        "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=4),
     }
     mimo_parallelism_config = MimoParallelismConfig(
         module_parallelisms=module_parallelisms,

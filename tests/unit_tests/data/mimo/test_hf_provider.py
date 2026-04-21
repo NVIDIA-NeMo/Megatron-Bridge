@@ -54,8 +54,8 @@ def test_build_datasets_happy_path(monkeypatch):
         calls.is_safe_repo += 1
         return False
 
-    def fake_load_dataset(path, name=None, split=None, trust_remote_code=None):
-        del path, name, trust_remote_code
+    def fake_load_dataset(path, name=None, split=None, trust_remote_code=None, data_files=None):
+        del path, name, trust_remote_code, data_files
         calls.load_dataset += 1
         if split == "validation":
             raise ValueError("missing split")

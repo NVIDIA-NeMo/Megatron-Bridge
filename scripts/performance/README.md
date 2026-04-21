@@ -40,7 +40,7 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
 The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
-`python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
+`uv run python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
 
 You can also create a bash file to define the experiment arguments and launch it. For e.g. The bash file will look as follows-
 
@@ -51,7 +51,7 @@ MBRIDGE_PATH="</path/to/mbridge>"
 JOB_NAME="dsv3_gb300"
 RESULTS_DIR="${MBRIDGE_PATH}/results/${JOB_NAME}"
 
-python scripts/performance/setup_experiment.py 
+uv run python scripts/performance/setup_experiment.py \
   --account <slurm_account> \
   -i ${CONTAINER} \
   --partition <slurm_partition> \
@@ -136,6 +136,41 @@ python scripts/performance/setup_experiment.py
 - `-hf/--hf_token`: HuggingFace token for accessing tokenizers and checkpoints.
   - User can generate a token from- huggingface.co/settings/tokens (click on "Create new token" button)
   - For a "Fine-grained" token, only "User permissions" are needed. Under "User permissions", make selections for "Repositories", "Webhooks" and "Collections".
+- `--offline`: Set `HF_HUB_OFFLINE=1` (Slurm launcher path).
+  - Cannot be used together with `--hf_token`.
+
+##### HuggingFace connectivity and cache behavior (Slurm launcher)
+
+This launcher uses split defaults:
+
+- `TRANSFORMERS_OFFLINE=1`
+- `HF_HUB_OFFLINE=0`
+
+What each variable controls in this workflow:
+
+- `TRANSFORMERS_OFFLINE`: Transformers calls (for example `AutoTokenizer`) stay offline unless `--hf_token` is provided.
+- `HF_HUB_OFFLINE`: HuggingFace Hub calls (for example Hub-backed config/model resolution such as `AutoConfig`) stay online unless `--offline` is provided.
+
+Why this split exists:
+
+- Most benchmark recipes use `NullTokenizer`, so `TRANSFORMERS_OFFLINE=1` avoids unnecessary network traffic.
+- Most performance model families (`llama`, `qwen`, `qwen_vl`, `deepseek`, `gpt_oss`) use HF-backed config/model lookup paths.
+
+Flag mapping:
+
+- `--hf_token` sets `HF_TOKEN` and `TRANSFORMERS_OFFLINE=0`.
+- `--offline` sets `HF_HUB_OFFLINE=1`.
+- `--hf_token` and `--offline` are mutually exclusive.
+
+Practical guidance:
+
+1. Prefetch required model/tokenizer/config files into a local HF cache.
+2. Mount that cache into the container with `-cm/--custom_mounts`.
+3. Set `HF_HOME` to that mounted cache path before launch (Slurm exports env vars by default), for example `export HF_HOME=/path/to/hf_cache`.
+4. If needed, explicitly override `HF_HOME` with `-ce/--custom_env_vars`.
+5. Pass `--offline` to block Hub network checks.
+
+Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, Hub-backed code paths may still perform network checks and hit HuggingFace rate limits.
 
 ##### Parallelism arguments
 
@@ -146,12 +181,17 @@ python scripts/performance/setup_experiment.py
 - `-ep/--expert_model_parallel_size`: MoE expert parallel degree. Distributes MoE experts across sub data parallel dimension.
 - `-et/--expert_tensor_parallel_size`: Expert tensor parallel degree. Intra-layer tensor model parallelism for expert layer. Use `-et` (no value) for `None` or `-et <int>`.
 
+##### Slurm launcher behavior
+
+- The launcher always adds `--container-writable` to `srun`.
+- This avoids benchmark failures on clusters using Enroot defaults, where `ENROOT_ROOTFS_WRITABLE=no`.
+
 ##### Slurm arguments
 
 - `-a/--account`: Slurm account to use for experiment.
 - `-p/--partition`: Slurm partition to use for experiment.
 - `-t/--time_limit`: Maximum time limit before the Slurm job is cancelled. Format `HH:MM:SS`. Default `00:30:00`.
-- `-gn/--gpus_per_node`: GPUs per node. Default `None`. If not provided, will be inferred from the GPU type.
+- `-gn/--gpus_per_node`: GPUs per node. Default `None`. If not provided, it is inferred from the GPU type.
 - `-cm/--custom_mounts`: Comma-separated list of host mounts to expose inside the container.
 - `-ce/--custom_env_vars`: Comma-separated string of environment variables (format: `key1=value1,key2=value2`).
 - `-E/--env`: Set environment variable (repeatable arg). This is an alternative to `--custom_env_vars`. (`--custom_env_vars` is preferred for most cases). Example: `-E var1=value1,value2 -E var2=value3"`.
@@ -176,6 +216,7 @@ python scripts/performance/setup_experiment.py
 - `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`).
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
+- `-lgc/--lock_gpu_freq`: Lock GPU graphics clock to a fixed frequency in MHz (e.g. `1200`). Used for silicon simulation correlation studies. Disabled by default.
 - `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
 - `-pyp/--pytorch_profiler`: Enable PyTorch profiler. Pass `true` or `false`. Disabled by default.
 - `--profiling_start_step`: Defines start step for profiling. Default `10`.

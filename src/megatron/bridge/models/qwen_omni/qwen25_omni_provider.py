@@ -21,7 +21,9 @@ Reference: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
 """
 
 from dataclasses import dataclass, field
+from typing import Callable
 
+import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import (
@@ -66,6 +68,13 @@ class Qwen25OmniModelProvider(GPTModelProvider):
     bos_token_id: int = 151643
     eos_token_id: int = 151645
 
+    # Qwen2.5 architecture: SwiGLU activation (SiLU + gated MLP)
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    normalization: str = "RMSNorm"
+    hidden_dropout: float = 0.0
+    add_bias_linear: bool = False
+
     head_dim: int = 128
     add_qkv_bias: bool = True
     qk_layernorm: bool = False
@@ -99,6 +108,7 @@ class Qwen25OmniModelProvider(GPTModelProvider):
     async_tensor_model_parallel_allreduce: bool = True
     distribute_saved_activations: bool = False
     cp_comm_type: str = "p2p"
+    gradient_accumulation_fusion: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """Provide a Qwen2.5 Omni model instance with vision, audio, and language components."""

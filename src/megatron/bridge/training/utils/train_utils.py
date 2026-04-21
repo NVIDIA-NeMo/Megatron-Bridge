@@ -347,7 +347,9 @@ def training_log(
     global_state: GlobalState,
     history_wct: list,
     model: list[MegatronModule],
+    pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
+    loaded_iteration: int = 0,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -370,6 +372,8 @@ def training_log(
         global_state: The global training state.
         history_wct (list): list of elapsed time per each iteration.
         model (list[MegatronModule]): megatron model state.
+        pg_collection (Optional[Any]): ProcessGroupCollection to use for logging reductions.
+            If None, falls back to extracting from model wrappers.
         log_max_attention_logit (Optional[float]): Maximum attention logit if available, None otherwise.
     Returns:
         bool: The updated report_memory_flag.
@@ -384,7 +388,7 @@ def training_log(
     energy_monitor = global_state.energy_monitor
     logger_config = config.logger
     train_config = config.train
-    pg_collection = get_pg_collection(model)
+    pg_collection = pg_collection or get_pg_collection(model)
 
     loggers_exist = writer is not None or wandb_writer is not None or mlflow_logger is not None
 
@@ -687,24 +691,25 @@ def training_log(
             if comet_logger:
                 comet_logger.log_metrics({"max-attention-logit": log_max_attention_logit}, step=iteration)
 
-    if config.model.num_moe_experts is not None:
+    num_moe_experts = getattr(config.model, "num_moe_experts", None)
+    if num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_names = []
 
-        moe_router_load_balancing_type = config.model.moe_router_load_balancing_type
+        moe_router_load_balancing_type = getattr(config.model, "moe_router_load_balancing_type", "")
         if "aux_loss" in moe_router_load_balancing_type:
             track_names.append("load_balancing_loss")
         if "seq_aux_loss" in moe_router_load_balancing_type:
             track_names.append("seq_load_balancing_loss")
         if "global_aux_loss" in moe_router_load_balancing_type:
             track_names.append("global_load_balancing_loss")
-        if config.model.moe_z_loss_coeff is not None:
+        if getattr(config.model, "moe_z_loss_coeff", None) is not None:
             track_names.append("z_loss")
 
-        if config.model.is_hybrid_model:
-            layers = config.model.hybrid_layer_pattern.count("E")
+        if getattr(config.model, "is_hybrid_model", False):
+            layers = getattr(config.model, "hybrid_layer_pattern", "").count("E")
         else:
-            layers = config.model.num_layers
+            layers = getattr(config.model, "num_layers", None)
 
         track_moe_metrics(
             loss_scale=moe_loss_scale,
@@ -712,15 +717,15 @@ def training_log(
             writer=writer,
             wandb_writer=wandb_writer,
             total_loss_dict=total_loss_dict,
-            per_layer_logging=config.model.moe_per_layer_logging,
+            per_layer_logging=getattr(config.model, "moe_per_layer_logging", False),
             force_initialize=True,
             track_names=track_names,
             num_layers=layers,
-            moe_layer_freq=config.model.moe_layer_freq,
-            mtp_num_layers=config.model.mtp_num_layers,
+            moe_layer_freq=getattr(config.model, "moe_layer_freq", None),
+            mtp_num_layers=getattr(config.model, "mtp_num_layers", None),
             pg_collection=pg_collection,
         )
-    if config.model.mtp_num_layers is not None:
+    if getattr(config.model, "mtp_num_layers", None) is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
         MTPLossLoggingHelper.track_mtp_metrics(mtp_loss_scale, iteration, writer, wandb_writer, total_loss_dict)
 
@@ -729,14 +734,16 @@ def training_log(
         elapsed_time_per_iteration = elapsed_time / total_iterations
 
         # Calculate GPU utilization
-        num_flops = num_floating_point_operations(config, batch_size)
-        per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
-        print_rank_0(
-            f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
-        )
+        num_flops = None
+        if hasattr(config.model, "kv_channels") and hasattr(config.model, "num_attention_heads"):
+            num_flops = num_floating_point_operations(config, batch_size)
+            per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
+            print_rank_0(
+                f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
+            )
 
         # throughput
-        if logger_config.log_throughput_to_tensorboard:
+        if num_flops is not None and logger_config.log_throughput_to_tensorboard:
             if writer:
                 writer.add_scalar("throughput/tflops/device", per_gpu_tf, iteration)
                 writer.add_scalar("throughput/tflops", per_gpu_tf * get_world_size_safe(), iteration)
@@ -777,7 +784,7 @@ def training_log(
             log_string += " skipped samples: {:12d} |".format(global_state.train_state.skipped_train_samples)
         log_string += " elapsed time per iteration (ms): {:.1f} |".format(elapsed_time_per_iteration * 1000.0)
 
-        if logger_config.log_throughput:
+        if num_flops is not None and logger_config.log_throughput:
             log_string += f" throughput per GPU (TFLOP/s/GPU): {per_gpu_tf:.1f} |"
 
         if energy_monitor is not None:
@@ -833,7 +840,10 @@ def training_log(
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
-            report_memory_flag = False
+            if iteration > (loaded_iteration + 1):
+                # Make sure the memory after the second iteration is reported
+                # to include optimizer state memory.
+                report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 
     return report_memory_flag
@@ -923,7 +933,7 @@ def report_l2_norm_grad(model: list[MegatronModule]) -> dict:
 
     for model_chunk in model:
         for name, p in model_chunk.named_parameters():
-            if p.main_grad is not None and p.requires_grad:
+            if p.requires_grad and p.main_grad is not None:
                 if f"l2_norm/grad/{name}" not in optimizer_metrics:
                     param_grad_norm = torch.linalg.vector_norm(p.main_grad)
                     optimizer_metrics[f"l2_norm/grad/{name}"] = param_grad_norm
