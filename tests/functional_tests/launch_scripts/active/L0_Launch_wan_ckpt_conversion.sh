@@ -17,7 +17,7 @@ set -xeuo pipefail
 
 export CUDA_VISIBLE_DEVICES="0"
 
-TEST_FILE="tests/functional_tests/diffusion/wan/test_wan_ckpt_conversion.py"
+TEST_FILE="tests/functional_tests/test_groups/diffusion/wan/test_wan_conversion.py"
 # Run all conversion tests in a single invocation so the class-scoped fixtures
 # (toy model creation, HF->Megatron import) are shared across tests.
 uv run coverage run \
