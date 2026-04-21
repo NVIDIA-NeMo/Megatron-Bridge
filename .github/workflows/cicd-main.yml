@@ -278,13 +278,18 @@ jobs:
           RUNNER_PREFIX: ${{ needs.pre-flight.outputs.runner_prefix }}
           REGISTRY_AWS: ${{ needs.pre-flight.outputs.registry }}
           REGISTRY_GCP: ${{ env.container-registry-gb200 }}
+          IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
         run: |
           AWS_ENTRY=$(jq -nc --arg registry "$REGISTRY_AWS" --arg runner "${RUNNER_PREFIX}" \
             '{"cloud": "aws", "registry": $registry, "runner": $runner}')
-          GCP_ENTRY=$(jq -nc --arg registry "$REGISTRY_GCP" --arg runner "nemo-ci-gcp-gpu-x2" \
-            '{"cloud": "gcp", "registry": $registry, "runner": $runner}')
-          MATRIX=$(jq -nc --argjson aws "$AWS_ENTRY" --argjson gcp "$GCP_ENTRY" \
-            '{"include": [$aws, $gcp]}')
+          if [[ "$IS_MEMBER" == "true" ]]; then
+            GCP_ENTRY=$(jq -nc --arg registry "$REGISTRY_GCP" --arg runner "nemo-ci-gcp-gpu-x2" \
+              '{"cloud": "gcp", "registry": $registry, "runner": $runner}')
+            MATRIX=$(jq -nc --argjson aws "$AWS_ENTRY" --argjson gcp "$GCP_ENTRY" \
+              '{"include": [$aws, $gcp]}')
+          else
+            MATRIX=$(jq -nc --argjson aws "$AWS_ENTRY" '{"include": [$aws]}')
+          fi
           echo "matrix=$MATRIX" | tee -a "$GITHUB_OUTPUT"
 
   cicd-container-build:
@@ -729,6 +734,7 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
+      && needs.pre-flight.outputs.is_member == 'true'
     steps:
       - uses: actions/checkout@v6
       - id: scan
@@ -775,6 +781,7 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
+      && needs.pre-flight.outputs.is_member == 'true'
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     name: gb200_${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
@@ -820,6 +827,7 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
+      && needs.pre-flight.outputs.is_member == 'true'
       && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.configure.outputs.needs_more_tests == 'true' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: gb200_${{ matrix.script }}
@@ -866,6 +874,7 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
+      && needs.pre-flight.outputs.is_member == 'true'
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
     name: gb200_${{ matrix.script }}
@@ -897,7 +906,7 @@ jobs:
           runner: nemo-ci-gcp-gpu-x2
 
   cicd-functional-tests-gb200-flaky:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all' && needs.pre-flight.outputs.is_member == 'true'
     strategy:
       fail-fast: false
       max-parallel: 16
@@ -959,6 +968,7 @@ jobs:
           EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
+          IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
         run: |
           FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
 
@@ -980,9 +990,11 @@ jobs:
           check_tier_skips "L0" "$EXPECT_L0"
           check_tier_skips "L1" "$EXPECT_L1"
           check_tier_skips "L2" "$EXPECT_L2"
-          check_tier_skips "gb200_L0" "$EXPECT_L0"
-          check_tier_skips "gb200_L1" "$EXPECT_L1"
-          check_tier_skips "gb200_L2" "$EXPECT_L2"
+          if [[ "$IS_MEMBER" == "true" ]]; then
+            check_tier_skips "gb200_L0" "$EXPECT_L0"
+            check_tier_skips "gb200_L1" "$EXPECT_L1"
+            check_tier_skips "gb200_L2" "$EXPECT_L2"
+          fi
 
           if [ "${FAILED_JOBS:-0}" -gt 0 ]; then
             echo "❌ Found $FAILED_JOBS failed job(s):"
