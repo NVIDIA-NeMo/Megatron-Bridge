@@ -373,3 +373,199 @@ class TestGPTModelProvider:
         mock_te_full_spec.assert_not_called()
         mock_te_spec.assert_called_once_with(provider)
         assert result == "te_spec"
+
+    def test_mtp_block_spec_returns_none_when_mtp_disabled(self):
+        """mtp_block_spec returns None when mtp_num_layers is unset."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+        )
+
+        assert mtp_block_spec(provider) is None
+
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
+    def test_mtp_block_spec_uses_callable_spec_directly_when_layer_specs_nonempty(self, mock_get_mtp):
+        """When the callable spec returns a non-empty block spec, use it as-is."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            mtp_num_layers=1,
+        )
+
+        block_spec = Mock()
+        block_spec.layer_specs = ["layer_a", "layer_b"]
+        provider.transformer_layer_spec = lambda config: block_spec
+
+        mock_get_mtp.return_value = "mtp_spec"
+
+        result = mtp_block_spec(provider, vp_stage=None)
+
+        mock_get_mtp.assert_called_once_with(provider, block_spec, use_transformer_engine=True, vp_stage=None)
+        assert result == "mtp_spec"
+
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_decoder_layer_specs")
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
+    def test_mtp_block_spec_re_derives_last_decoder_spec_when_layer_specs_empty(
+        self, mock_get_mtp, mock_get_decoder_specs
+    ):
+        """When the last-stage spec has empty layer_specs (MoE block spec on the last PP stage),
+        re-derive all decoder layer specs and pass the last one to get_gpt_mtp_block_spec."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            mtp_num_layers=1,
+        )
+
+        empty_block_spec = Mock()
+        empty_block_spec.layer_specs = []
+        provider.transformer_layer_spec = lambda config: empty_block_spec
+
+        dense_layer_spec = Mock(name="dense_layer_spec")
+        moe_layer_spec = Mock(name="moe_layer_spec")
+        mock_get_decoder_specs.return_value = [dense_layer_spec, moe_layer_spec]
+        mock_get_mtp.return_value = "mtp_spec"
+
+        result = mtp_block_spec(provider, vp_stage=2)
+
+        mock_get_decoder_specs.assert_called_once_with(
+            provider,
+            use_transformer_engine=True,
+            normalization=provider.normalization,
+            qk_l2_norm=provider.qk_l2_norm,
+        )
+        mock_get_mtp.assert_called_once_with(provider, moe_layer_spec, use_transformer_engine=True, vp_stage=2)
+        assert result == "mtp_spec"
+
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
+    def test_mtp_block_spec_passes_vp_stage_to_callable_spec(self, mock_get_mtp):
+        """When the transformer_layer_spec callable accepts vp_stage, it is forwarded."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            mtp_num_layers=1,
+        )
+
+        block_spec = Mock()
+        block_spec.layer_specs = ["layer_a"]
+        received_vp_stage = {}
+
+        def spec_fn(config, vp_stage=None):
+            received_vp_stage["vp_stage"] = vp_stage
+            return block_spec
+
+        provider.transformer_layer_spec = spec_fn
+        mock_get_mtp.return_value = "mtp_spec"
+
+        result = mtp_block_spec(provider, vp_stage=3)
+
+        assert received_vp_stage["vp_stage"] == 3
+        mock_get_mtp.assert_called_once_with(provider, block_spec, use_transformer_engine=True, vp_stage=3)
+        assert result == "mtp_spec"
+
+    def test_dense_grouped_gemm_defaults_to_false(self):
+        """GPTModelProvider.dense_grouped_gemm defaults to False."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+        )
+        assert provider.dense_grouped_gemm is False
+
+    def test_dense_grouped_gemm_can_be_enabled(self):
+        """GPTModelProvider.dense_grouped_gemm is a settable bool attribute."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            dense_grouped_gemm=True,
+        )
+        assert provider.dense_grouped_gemm is True
+
+    def test_transformer_engine_layer_spec_forwards_dense_grouped_gemm_when_supported(self):
+        """When the upstream spec function exposes a dense_grouped_gemm parameter,
+        transformer_engine_layer_spec must forward the provider's value to it."""
+        from megatron.bridge.models.gpt_provider import transformer_engine_layer_spec
+
+        captured: dict = {}
+
+        # Signature intentionally includes `dense_grouped_gemm` so the feature-detect
+        # branch in gpt_provider.py activates.
+        def fake_spec_supported(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=False,
+            fp8=False,
+            dense_grouped_gemm=False,
+        ):
+            captured["num_experts"] = num_experts
+            captured["moe_grouped_gemm"] = moe_grouped_gemm
+            captured["qk_layernorm"] = qk_layernorm
+            captured["fp8"] = fp8
+            captured["dense_grouped_gemm"] = dense_grouped_gemm
+            return "te_spec_supported"
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            dense_grouped_gemm=True,
+        )
+
+        with patch(
+            "megatron.bridge.models.gpt_provider.get_gpt_layer_with_transformer_engine_spec",
+            new=fake_spec_supported,
+        ):
+            result = transformer_engine_layer_spec(provider)
+
+        assert result == "te_spec_supported"
+        assert captured["dense_grouped_gemm"] is True
+
+    def test_transformer_engine_layer_spec_omits_dense_grouped_gemm_when_unsupported(self):
+        """When the upstream spec function does not expose a dense_grouped_gemm
+        parameter (older Megatron-Core), transformer_engine_layer_spec must not
+        pass the kwarg — otherwise the call would raise TypeError at runtime."""
+        from megatron.bridge.models.gpt_provider import transformer_engine_layer_spec
+
+        captured: dict = {}
+
+        # Signature intentionally excludes `dense_grouped_gemm`. If the production
+        # code were to forward it, the call below would raise TypeError.
+        def fake_spec_unsupported(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=False,
+            fp8=False,
+        ):
+            captured["num_experts"] = num_experts
+            captured["moe_grouped_gemm"] = moe_grouped_gemm
+            captured["qk_layernorm"] = qk_layernorm
+            captured["fp8"] = fp8
+            return "te_spec_unsupported"
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            dense_grouped_gemm=True,
+        )
+
+        with patch(
+            "megatron.bridge.models.gpt_provider.get_gpt_layer_with_transformer_engine_spec",
+            new=fake_spec_unsupported,
+        ):
+            result = transformer_engine_layer_spec(provider)
+
+        assert result == "te_spec_unsupported"
+        assert "dense_grouped_gemm" not in captured

@@ -10,6 +10,7 @@ and verification steps.
 :maxdepth: 1
 
 skills/developer-guide/SKILL
+skills/test-system/SKILL
 skills/mlm-bridge-training/SKILL
 skills/recipe-recommender/SKILL
 ```
@@ -37,6 +38,14 @@ skills/perf-techniques/sequence-packing/SKILL
 skills/perf-techniques/hybrid-context-parallel/SKILL
 skills/perf-techniques/expert-parallel-overlap/SKILL
 skills/perf-techniques/moe-comm-overlap/SKILL
+skills/perf-techniques/activation-recompute/SKILL
+skills/perf-techniques/memory-tuning/SKILL
+skills/perf-techniques/moe-dispatcher-selection/SKILL
+skills/perf-techniques/moe-hardware-configs/SKILL
+skills/perf-techniques/moe-long-context/SKILL
+skills/perf-techniques/moe-optimization-workflow/SKILL
+skills/perf-techniques/moe-vlm-training/SKILL
+skills/perf-techniques/cpu-offloading/SKILL
 ```
 
 ```{toctree}

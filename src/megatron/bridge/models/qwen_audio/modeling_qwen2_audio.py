@@ -149,7 +149,7 @@ class Qwen2AudioModel(MegatronModule):
 
         # Store audio token id from config
         self.audio_token_id = getattr(config, "audio_token_id", 151646)
-        self.pad_token_id = getattr(config.hf_config, "pad_token_id", -1)
+        self.pad_token_id = getattr(config, "pad_token_id", -1)
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""

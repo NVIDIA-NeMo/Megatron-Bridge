@@ -23,6 +23,7 @@ from utils.utils import get_workload_base_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import nemotron_3_super_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import nemotron_3_super_bf16_with_nvfp4_mixed
 
 
 logger = logging.getLogger(__name__)
@@ -38,17 +39,18 @@ def set_nemotron_3_nano_common_configs(cfg: ConfigContainer) -> None:
 
 def set_nemotron_3_super_common_configs(cfg: ConfigContainer, precision: str) -> None:
     """Common Nemotron 3 Super pretrain perf settings; restores model recipe fields for ``precision``."""
+    if precision.lower() == "nvfp4":
+        cfg.mixed_precision = nemotron_3_super_bf16_with_nvfp4_mixed()
+        # Disabled until MCore PR 4358 lands.
+        cfg.mixed_precision.fp4_param_gather = False
+        cfg.model.quant_recipe = load_quantization_recipe(os.path.join(os.path.dirname(__file__), "te_quant.cfg"))
+
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.checkpoint.async_save = False
-
-    if precision.lower() == "nvfp4":
-        cfg.mixed_precision.first_last_layers_bf16 = True
-        cfg.mixed_precision.num_layers_at_end_in_bf16 = 14
-        cfg.model.quant_recipe = load_quantization_recipe(os.path.join(os.path.dirname(__file__), "te_quant.cfg"))
 
     if precision.lower() in ("nvfp4", "fp8_mx"):
         cfg.model.moe_router_padding_for_quantization = True
@@ -86,6 +88,30 @@ def nemotron_3_super_pretrain_config_gb200(
         model_family_name="nemotronh",
         model_recipe_name="nemotron_3_super",
         gpu="gb200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_nemotron_3_super_common_configs(cfg, precision)
+    set_workload_base_configs(cfg, base_cfg)
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    return cfg
+
+
+def nemotron_3_super_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_super",
+        gpu="vr200",
         compute_dtype=precision.upper(),
         task="pretrain",
         config_variant=config_variant,
@@ -182,6 +208,30 @@ def nemotron_3_nano_pretrain_config_gb200(
         model_family_name="nemotronh",
         model_recipe_name="nemotron_3_nano",
         gpu="gb200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = nemotron_3_nano_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_nemotron_3_nano_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    return cfg
+
+
+def nemotron_3_nano_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_nano",
+        gpu="vr200",
         compute_dtype=precision.upper(),
         task="pretrain",
         config_variant=config_variant,

@@ -125,6 +125,15 @@ class Qwen3VLModelProvider(GPTModelProvider):
     add_encoder: bool = True
     add_decoder: bool = True
 
+    # Vision encoder CUDA graph settings
+    # Set to "transformer_engine" to enable TE CUDA graph for vision encoder
+    vision_cuda_graph_impl: str = "none"
+    # CUDA graph scope for vision encoder (e.g., ["attn"] for attention only)
+    vision_cuda_graph_scope: List[str] = field(default_factory=list)
+    # Maximum sequence length for vision encoder CUDA graphs (must accommodate largest input)
+    # If None, calculated from num_position_embeddings / spatial_merge_size^2
+    max_vision_cuda_graph_seq_length: Optional[int] = None
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3 VL model instance with vision and language components."""
         language_transformer_config = self
@@ -276,6 +285,14 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     dist_train: DistTrainConfig = field(default_factory=DistTrainConfig)
     add_encoder: bool = True
     add_decoder: bool = True
+
+    # Vision encoder CUDA graph settings
+    # Set to "transformer_engine" to enable TE CUDA graph for vision encoder
+    vision_cuda_graph_impl: str = "none"
+    # CUDA graph scope for vision encoder (e.g., ["attn"] for attention only)
+    vision_cuda_graph_scope: List[str] = field(default_factory=list)
+    # Maximum sequence length for vision encoder CUDA graphs (must accommodate largest input)
+    max_vision_cuda_graph_seq_length: Optional[int] = None
 
     def finalize(self) -> None:
         if self.tensor_model_parallel_size > 1:
