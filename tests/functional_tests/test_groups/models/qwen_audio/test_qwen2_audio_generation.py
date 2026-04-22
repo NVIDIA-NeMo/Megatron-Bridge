@@ -95,6 +95,7 @@ class TestQwen2AudioGeneration:
         # Create a temporary directory for this test class
         temp_dir = tmp_path_factory.mktemp("qwen2_audio_generation_toy_model")
         model_dir = temp_dir / "qwen2_audio_toy"
+        model_dir.mkdir(parents=True, exist_ok=True)
 
         # Create Qwen2 Audio config from the toy model config
         config = Qwen2AudioConfig(**HF_QWEN2_AUDIO_TOY_MODEL_CONFIG)
