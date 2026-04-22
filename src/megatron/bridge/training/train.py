@@ -1456,11 +1456,7 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
     if cuda_graph_helper is not None:
-        for layers in cuda_graph_helper.callables_per_chunk:
-            for layer in layers:
-                for cuda_graph in layer.cuda_graphs:
-                    del cuda_graph
-                del layer.cuda_graphs
+        cuda_graph_helper.delete_cuda_graphs()
 
     # Run GC to collect the freshed object
     gc.collect()
