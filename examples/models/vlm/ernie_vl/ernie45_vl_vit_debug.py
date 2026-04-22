@@ -1,3 +1,17 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Layer-by-layer ViT alignment debug script.
 
@@ -11,8 +25,9 @@ This helps isolate exactly WHERE the output divergence occurs.
 """
 
 import argparse
-import sys
 import os
+import sys
+
 
 os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
 
@@ -21,6 +36,7 @@ import torch.nn.functional as F
 
 
 def main():
+    """Run layer-by-layer ViT alignment debug."""
     parser = argparse.ArgumentParser(description="ERNIE 4.5 VL ViT debug")
     parser.add_argument("--hf-model-path", type=str, required=True)
     parser.add_argument("--num-images", type=int, default=2)
@@ -34,9 +50,11 @@ def main():
         torch.distributed.init_process_group(
             backend="nccl" if torch.cuda.is_available() else "gloo",
             init_method="tcp://127.0.0.1:29501",
-            world_size=1, rank=0,
+            world_size=1,
+            rank=0,
         )
     from megatron.core import parallel_state
+
     if not parallel_state.is_initialized():
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=1,
@@ -55,13 +73,16 @@ def main():
     vision_config = getattr(hf_config, "vision_config", None)
 
     from megatron.bridge.models.ernie_vl.modeling_ernie45_vl import _normalize_vision_config
+
     _normalize_vision_config(vision_config, hf_config=hf_config)
 
     hf_vit = Ernie4_5_VLMoeVisionTransformerPretrainedModel._from_config(vision_config)
 
     # Load weights from safetensors
-    from safetensors import safe_open
     from pathlib import Path
+
+    from safetensors import safe_open
+
     model_dir = Path(args.hf_model_path)
     text_cfg_attr = getattr(hf_config, "text_config", None)
     is_flat = (text_cfg_attr is None) or (text_cfg_attr is hf_config)
@@ -72,7 +93,7 @@ def main():
         with safe_open(str(st_file), framework="pt", device="cpu") as f:
             for key in f.keys():
                 if key.startswith(vision_prefix):
-                    local_key = key[len(vision_prefix):]
+                    local_key = key[len(vision_prefix) :]
                     vision_state_dict[local_key] = f.get_tensor(key)
 
     hf_vit.load_state_dict(vision_state_dict, strict=False)
@@ -82,8 +103,8 @@ def main():
     # =====================================================================
     # Build MG ViT
     # =====================================================================
-    from megatron.bridge.models.ernie_vl.vision_model import ErnieVLVisionModel
     from megatron.bridge.models.ernie_vl.vision_layer_spec import get_ernie_vit_layer_spec
+    from megatron.bridge.models.ernie_vl.vision_model import ErnieVLVisionModel
     from megatron.bridge.models.ernie_vl.vision_transformer_config import get_ernie_vision_config
 
     vit_config = get_ernie_vision_config(vision_config)
@@ -105,8 +126,7 @@ def main():
     key_mapping["ln.weight"] = "decoder.final_layernorm.weight"
     key_mapping["ln.bias"] = "decoder.final_layernorm.bias"
 
-    num_layers = getattr(vision_config, "depth",
-                         getattr(vision_config, "num_hidden_layers", 32))
+    num_layers = getattr(vision_config, "depth", getattr(vision_config, "num_hidden_layers", 32))
     for i in range(num_layers):
         key_mapping[f"blocks.{i}.attn.qkv.weight"] = f"decoder.layers.{i}.self_attention.linear_qkv.weight"
         key_mapping[f"blocks.{i}.attn.qkv.bias"] = f"decoder.layers.{i}.self_attention.linear_qkv.bias"
@@ -145,8 +165,10 @@ def main():
     total_patches = int(torch.prod(grid_thw, dim=1).sum().item())
 
     pixel_values = torch.randn(
-        total_patches, in_channels * patch_size * patch_size,
-        dtype=torch.bfloat16, device=device,
+        total_patches,
+        in_channels * patch_size * patch_size,
+        dtype=torch.bfloat16,
+        device=device,
     )
     print(f"\nInput: pixel_values {pixel_values.shape}, grid_thw {grid_thw}")
 
@@ -159,8 +181,9 @@ def main():
     with torch.no_grad():
         hf_patch_out = hf_vit.patch_embed(pixel_values)
         mg_patch_out = mg_vit.patch_embed(pixel_values)
-    cos_sim = F.cosine_similarity(hf_patch_out.float().flatten().unsqueeze(0),
-                                   mg_patch_out.float().flatten().unsqueeze(0)).item()
+    cos_sim = F.cosine_similarity(
+        hf_patch_out.float().flatten().unsqueeze(0), mg_patch_out.float().flatten().unsqueeze(0)
+    ).item()
     max_diff = (hf_patch_out.float() - mg_patch_out.float()).abs().max().item()
     print(f"  PatchEmbed cosine_sim: {cos_sim:.8f}, max_diff: {max_diff:.6e}")
     assert cos_sim > 0.999, f"PatchEmbed MISMATCH: cos_sim = {cos_sim}"
@@ -181,13 +204,13 @@ def main():
 
         # MG RoPE
         mg_rotary = mg_vit.rot_pos_emb(grid_thw)  # [N, 40]
-        mg_emb = torch.cat((mg_rotary.reshape(total_patches, 1, 1, -1),
-                           mg_rotary.reshape(total_patches, 1, 1, -1)), dim=-1)
+        mg_emb = torch.cat(
+            (mg_rotary.reshape(total_patches, 1, 1, -1), mg_rotary.reshape(total_patches, 1, 1, -1)), dim=-1
+        )
         mg_cos = mg_emb.cos().flatten()
 
     cos_sim_rope = F.cosine_similarity(
-        hf_rotary.float().flatten().unsqueeze(0),
-        mg_rotary.float().flatten().unsqueeze(0)
+        hf_rotary.float().flatten().unsqueeze(0), mg_rotary.float().flatten().unsqueeze(0)
     ).item()
     max_diff_rope = (hf_rotary.float() - mg_rotary.float()).abs().max().item()
     print(f"  HF rot_pos_emb shape: {hf_rotary.shape}")
@@ -195,8 +218,7 @@ def main():
     print(f"  RoPE freqs cosine_sim: {cos_sim_rope:.8f}, max_diff: {max_diff_rope:.6e}")
 
     cos_sim_cos = F.cosine_similarity(
-        hf_cos.float().flatten().unsqueeze(0),
-        mg_cos.float().flatten().unsqueeze(0)
+        hf_cos.float().flatten().unsqueeze(0), mg_cos.float().flatten().unsqueeze(0)
     ).item()
     print(f"  cos(emb) cosine_sim: {cos_sim_cos:.8f}")
 
@@ -210,17 +232,18 @@ def main():
     num_heads = 16
     with torch.no_grad():
         # Create dummy Q, K
-        q_test = torch.randn(total_patches, num_heads, head_dim,
-                              dtype=torch.float32, device=device)
+        q_test = torch.randn(total_patches, num_heads, head_dim, dtype=torch.float32, device=device)
 
         # HF RoPE application
         from transformers.models.ernie4_5_vl_moe.modeling_ernie4_5_vl_moe import (
             apply_rotary_pos_emb_vision,
         )
+
         hf_q_rot, _ = apply_rotary_pos_emb_vision(q_test, q_test, hf_cos, hf_sin)
 
         # MG RoPE application
         from megatron.bridge.models.ernie_vl.vision_attention import apply_rotary_pos_emb_absolute
+
         mg_freqs = torch.cat((mg_rotary, mg_rotary), dim=-1)  # [N, 80]
         mg_freqs_4d = mg_freqs.reshape(total_patches, 1, 1, -1)  # [N, 1, 1, 80]
         # MG path: bshd format
@@ -232,8 +255,7 @@ def main():
         ).squeeze(1)  # [N, 16, 80]
 
     cos_sim_qrot = F.cosine_similarity(
-        hf_q_rot.float().flatten().unsqueeze(0),
-        mg_q_rot.float().flatten().unsqueeze(0)
+        hf_q_rot.float().flatten().unsqueeze(0), mg_q_rot.float().flatten().unsqueeze(0)
     ).item()
     max_diff_qrot = (hf_q_rot.float() - mg_q_rot.float()).abs().max().item()
     print(f"  RoPE-applied Q cosine_sim: {cos_sim_qrot:.8f}, max_diff: {max_diff_qrot:.6e}")
@@ -249,9 +271,9 @@ def main():
         hf_hidden = hf_patch_out.clone()
         hf_position_embeddings = (hf_cos, hf_sin)
         # HF cu_seqlens
-        cu_seqlens = torch.repeat_interleave(
-            grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]
-        ).cumsum(dim=0, dtype=torch.int32)
+        cu_seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]).cumsum(
+            dim=0, dtype=torch.int32
+        )
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
         hf_block0_out = hf_vit.blocks[0](
@@ -266,8 +288,7 @@ def main():
 
         mg_packed_seq = mg_vit.build_packed_seq_params(grid_thw)
         mg_rotary_for_block = torch.cat(
-            (mg_rotary.reshape(total_patches, 1, 1, -1),
-             mg_rotary.reshape(total_patches, 1, 1, -1)),
+            (mg_rotary.reshape(total_patches, 1, 1, -1), mg_rotary.reshape(total_patches, 1, 1, -1)),
             dim=-1,
         )
 
@@ -283,8 +304,7 @@ def main():
         )
 
     cos_sim_block0 = F.cosine_similarity(
-        hf_block0_out.float().flatten().unsqueeze(0),
-        mg_block0_out.squeeze(1).float().flatten().unsqueeze(0)
+        hf_block0_out.float().flatten().unsqueeze(0), mg_block0_out.squeeze(1).float().flatten().unsqueeze(0)
     ).item()
     max_diff_block0 = (hf_block0_out.float() - mg_block0_out.squeeze(1).float()).abs().max().item()
     print(f"  Block 0 cosine_sim: {cos_sim_block0:.8f}, max_diff: {max_diff_block0:.6e}")
@@ -308,8 +328,7 @@ def main():
         mg_qkv_flat = mg_qkv_out.squeeze(1)
 
     cos_sim_qkv = F.cosine_similarity(
-        hf_qkv.float().flatten().unsqueeze(0),
-        mg_qkv_flat.float().flatten().unsqueeze(0)
+        hf_qkv.float().flatten().unsqueeze(0), mg_qkv_flat.float().flatten().unsqueeze(0)
     ).item()
     max_diff_qkv = (hf_qkv.float() - mg_qkv_flat.float()).abs().max().item()
     print(f"  QKV output cosine_sim: {cos_sim_qkv:.8f}, max_diff: {max_diff_qkv:.6e}")
@@ -325,8 +344,7 @@ def main():
         mg_out = mg_vit(pixel_values, grid_thw)
 
     cos_sim_full = F.cosine_similarity(
-        hf_out.float().flatten().unsqueeze(0),
-        mg_out.float().flatten().unsqueeze(0)
+        hf_out.float().flatten().unsqueeze(0), mg_out.float().flatten().unsqueeze(0)
     ).item()
     max_diff_full = (hf_out.float() - mg_out.float()).abs().max().item()
     print(f"  Full model cosine_sim: {cos_sim_full:.8f}, max_diff: {max_diff_full:.6e}")

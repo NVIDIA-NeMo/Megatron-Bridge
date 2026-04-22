@@ -30,8 +30,8 @@ from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
-from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
 from megatron.core.transformer.moe.experts import SequentialMLP
+from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
 from megatron.core.transformer.moe.shared_experts import SharedExpertMLP
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import (
@@ -48,6 +48,7 @@ from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import 
     ErnieMultiTypeMoE,
     MultiTypeMoeSubmodules,
 )
+
 
 try:
     import transformer_engine  # noqa: F401
@@ -179,9 +180,7 @@ def _get_ernie_decoder_layer_spec(
     Returns:
         ModuleSpec for a TransformerLayer.
     """
-    _, RowParallel, DotProductAttention, LayerNormColumnParallel, Norm = (
-        _get_linear_modules()
-    )
+    _, RowParallel, DotProductAttention, LayerNormColumnParallel, Norm = _get_linear_modules()
 
     mlp_spec = _get_mlp_module_spec(
         num_experts=num_experts,
@@ -267,7 +266,7 @@ def get_ernie45_vl_decoder_block_spec(
     # Slice for pipeline parallelism
     offset = get_transformer_layer_offset(config)
     num_layers_to_build = get_num_layers_to_build(config)
-    layer_specs = layer_specs[offset: offset + num_layers_to_build]
+    layer_specs = layer_specs[offset : offset + num_layers_to_build]
 
     # Get the Norm class for final_layernorm (TENorm or WrappedTorchNorm).
     # Without this, TransformerBlock.final_layernorm would be None because

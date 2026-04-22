@@ -26,9 +26,7 @@ from transformers import AutoTokenizer, Ernie4_5_MoeConfig, Ernie4_5_MoeForCausa
 
 # Path to the local ERNIE VL model that contains tokenizer files.
 # Used as a tokenizer source when running offline (CI/air-gapped environments).
-_ERNIE_VL_MODEL_PATH = Path(__file__).parent.parent.parent.parent.parent.parent / (
-    "ERNIE-4.5-VL-28B-A3B-Thinking"
-)
+_ERNIE_VL_MODEL_PATH = Path(__file__).parent.parent.parent.parent.parent.parent / ("ERNIE-4.5-VL-28B-A3B-Thinking")
 # Tokenizer files to copy from the reference model directory.
 _TOKENIZER_FILES = [
     "tokenizer_config.json",
@@ -175,9 +173,7 @@ class TestErnie45MoEConversion:
 
         # Check for tokenizer files
         tokenizer_config_file = model_path / "tokenizer_config.json"
-        assert tokenizer_config_file.exists(), (
-            f"tokenizer_config.json not found at {tokenizer_config_file}"
-        )
+        assert tokenizer_config_file.exists(), f"tokenizer_config.json not found at {tokenizer_config_file}"
 
         # Load and verify config
         with open(config_file) as f:
@@ -208,10 +204,7 @@ class TestErnie45MoEConversion:
                 tokenizer = AutoTokenizer.from_pretrained(ernie45_moe_toy_model_path)
                 print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
             except Exception as e:
-                print(
-                    f"Warning: Could not load tokenizer "
-                    f"(this might be OK for conversion testing): {e}"
-                )
+                print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")
 
             # Verify model structure
             assert hasattr(model, "model")
@@ -246,9 +239,7 @@ class TestErnie45MoEConversion:
             pytest.param(1, 1, 2, "EP", marks=pytest.mark.pleasefixme),
         ],
     )
-    def test_ernie45_moe_conversion_parallelism(
-        self, ernie45_moe_toy_model_path, tmp_path, tp, pp, ep, test_name
-    ):
+    def test_ernie45_moe_conversion_parallelism(self, ernie45_moe_toy_model_path, tmp_path, tp, pp, ep, test_name):
         """
         Test ERNIE 4.5 MoE model conversion with different parallelism configurations.
 
@@ -311,23 +302,16 @@ class TestErnie45MoEConversion:
             if result.returncode != 0:
                 print(f"STDOUT: {result.stdout}")
                 print(f"STDERR: {result.stderr}")
-                pytest.fail(
-                    f"ERNIE 4.5 MoE {test_name} conversion failed "
-                    f"with return code {result.returncode}"
-                )
+                pytest.fail(f"ERNIE 4.5 MoE {test_name} conversion failed with return code {result.returncode}")
 
             # Verify that the converted model was saved
             model_name = Path(ernie45_moe_toy_model_path).name  # "ernie45_moe_toy"
             converted_model_dir = test_output_dir / model_name
-            assert converted_model_dir.exists(), (
-                f"Converted model directory not found at {converted_model_dir}"
-            )
+            assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
 
             # Check that essential model files exist
             config_file = converted_model_dir / "config.json"
-            assert config_file.exists(), (
-                f"config.json not found in converted model at {config_file}"
-            )
+            assert config_file.exists(), f"config.json not found in converted model at {config_file}"
 
             # Check for model weights file
             weights_file_safetensors = converted_model_dir / "model.safetensors"
@@ -340,31 +324,19 @@ class TestErnie45MoEConversion:
                 sharded_pytorch = list(converted_model_dir.glob("pytorch_model-*-of-*.bin"))
                 weights_found = len(sharded_safetensors) > 0 or len(sharded_pytorch) > 0
 
-            assert weights_found, (
-                f"Model weights file not found in converted model at {converted_model_dir}"
-            )
+            assert weights_found, f"Model weights file not found in converted model at {converted_model_dir}"
 
             # Verify the config contains ERNIE 4.5 MoE-specific parameters
             with open(config_file) as f:
                 saved_config = json.load(f)
 
-            assert saved_config["model_type"] == "ernie4_5_moe", (
-                "Model type should be ernie4_5_moe"
-            )
+            assert saved_config["model_type"] == "ernie4_5_moe", "Model type should be ernie4_5_moe"
             assert saved_config["hidden_size"] == 256, "Hidden size should match toy config"
-            assert saved_config["num_attention_heads"] == 4, (
-                "Number of attention heads should match toy config"
-            )
+            assert saved_config["num_attention_heads"] == 4, "Number of attention heads should match toy config"
             # Verify MoE specific parameters are preserved
-            assert saved_config["moe_num_experts"] == 4, (
-                "Number of experts should match toy config"
-            )
-            assert saved_config["moe_k"] == 2, (
-                "moe_k (top-k routing) should match toy config"
-            )
-            assert saved_config["moe_intermediate_size"] == 128, (
-                "MoE intermediate size should match toy config"
-            )
+            assert saved_config["moe_num_experts"] == 4, "Number of experts should match toy config"
+            assert saved_config["moe_k"] == 2, "moe_k (top-k routing) should match toy config"
+            assert saved_config["moe_intermediate_size"] == 128, "MoE intermediate size should match toy config"
 
             print(f"SUCCESS: ERNIE 4.5 MoE {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")

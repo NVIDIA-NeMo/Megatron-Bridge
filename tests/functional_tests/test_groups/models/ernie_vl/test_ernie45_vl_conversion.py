@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 import torch
 
+
 try:
     from transformers import AutoTokenizer
     from transformers.models.ernie4_5_vl_moe.configuration_ernie4_5_vl_moe import (
@@ -147,7 +148,9 @@ class TestErnie45VLConversion:
         model = model.to(dtype=torch.bfloat16)
 
         # Load tokenizer from local model or a reference model, or create minimal fallback
-        _local_tokenizer_path = Path(__file__).parent.parent.parent.parent.parent.parent / "ERNIE-4.5-VL-28B-A3B-Thinking"
+        _local_tokenizer_path = (
+            Path(__file__).parent.parent.parent.parent.parent.parent / "ERNIE-4.5-VL-28B-A3B-Thinking"
+        )
         try:
             if _local_tokenizer_path.exists():
                 tokenizer = AutoTokenizer.from_pretrained(str(_local_tokenizer_path))
@@ -158,8 +161,9 @@ class TestErnie45VLConversion:
             # Create a functional dummy tokenizer from a readily available model
             # so that save_hf_pretrained can re-save it without errors.
             try:
+                from tokenizers import Tokenizer as TkTokenizer
+                from tokenizers import models as tk_models
                 from transformers import PreTrainedTokenizerFast
-                from tokenizers import Tokenizer as TkTokenizer, models as tk_models
 
                 # Build a minimal BPE tokenizer with a few tokens
                 tk = TkTokenizer(tk_models.BPE())
@@ -256,9 +260,7 @@ class TestErnie45VLConversion:
             (1, 1, 2, "EP"),
         ],
     )
-    def test_ernie45_vl_conversion_parallelism(
-        self, ernie45_vl_toy_model_path, tmp_path, tp, pp, ep, test_name
-    ):
+    def test_ernie45_vl_conversion_parallelism(self, ernie45_vl_toy_model_path, tmp_path, tp, pp, ep, test_name):
         """
         Test ERNIE 4.5 VL MoE model conversion with different parallelism configurations.
 
@@ -284,6 +286,7 @@ class TestErnie45VLConversion:
         # Run HF-to-Megatron roundtrip conversion as a subprocess
         # Use sys.executable to ensure the same Python interpreter (venv-aware)
         import sys
+
         cmd = [
             sys.executable,
             "-m",
@@ -314,16 +317,12 @@ class TestErnie45VLConversion:
             if result.returncode != 0:
                 print(f"STDOUT: {result.stdout}")
                 print(f"STDERR: {result.stderr}")
-                pytest.fail(
-                    f"ERNIE 4.5 VL {test_name} conversion failed with return code {result.returncode}"
-                )
+                pytest.fail(f"ERNIE 4.5 VL {test_name} conversion failed with return code {result.returncode}")
 
             # Verify converted model directory exists
             model_name = Path(ernie45_vl_toy_model_path).name  # "ernie45_vl_toy"
             converted_model_dir = test_output_dir / model_name
-            assert converted_model_dir.exists(), (
-                f"Converted model directory not found at {converted_model_dir}"
-            )
+            assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
 
             # Check that essential model files exist
             config_file = converted_model_dir / "config.json"
@@ -386,9 +385,7 @@ class TestErnie45VLConversion:
         """
         import sys
 
-        fwd_bwd_script = str(
-            Path(__file__).parent / "ernie45_vl_fwd_bwd.py"
-        )
+        fwd_bwd_script = str(Path(__file__).parent / "ernie45_vl_fwd_bwd.py")
 
         cmd = [
             sys.executable,
@@ -425,14 +422,12 @@ class TestErnie45VLConversion:
                 print(f"STDOUT: {result.stdout[-3000:]}")
                 print(f"STDERR: {result.stderr[-3000:]}")
                 pytest.fail(
-                    f"ERNIE 4.5 VL {test_name} forward/backward test failed "
-                    f"with return code {result.returncode}"
+                    f"ERNIE 4.5 VL {test_name} forward/backward test failed with return code {result.returncode}"
                 )
 
             # Verify the output contains the success marker
             assert "ALL CHECKS PASSED" in result.stdout, (
-                f"Forward/backward test did not complete successfully. "
-                f"STDOUT tail: {result.stdout[-1000:]}"
+                f"Forward/backward test did not complete successfully. STDOUT tail: {result.stdout[-1000:]}"
             )
 
             print(f"SUCCESS: ERNIE 4.5 VL {test_name} forward/backward test passed")

@@ -76,21 +76,18 @@ def get_ernie_vision_config(
     Returns:
         ErnieVisionTransformerConfig ready for ErnieVLVisionModel.
     """
-    embed_dim = getattr(hf_vision_config, "embed_dim",
-                        getattr(hf_vision_config, "hidden_size", 1280))
-    num_heads = getattr(hf_vision_config, "num_heads",
-                        getattr(hf_vision_config, "num_attention_heads", 16))
+    embed_dim = getattr(hf_vision_config, "embed_dim", getattr(hf_vision_config, "hidden_size", 1280))
+    num_heads = getattr(hf_vision_config, "num_heads", getattr(hf_vision_config, "num_attention_heads", 16))
     mlp_ratio = getattr(hf_vision_config, "mlp_ratio", 4)
-    depth = getattr(hf_vision_config, "depth",
-                    getattr(hf_vision_config, "num_hidden_layers", 32))
+    depth = getattr(hf_vision_config, "depth", getattr(hf_vision_config, "num_hidden_layers", 32))
 
     config = ErnieVisionTransformerConfig(
         num_layers=depth,
         hidden_size=embed_dim,
         num_attention_heads=num_heads,
         ffn_hidden_size=int(embed_dim * mlp_ratio),
-        add_bias_linear=True,     # ERNIE ViT: all linear layers have bias=True
-        add_qkv_bias=True,        # ERNIE ViT: QKV projection has bias=True
+        add_bias_linear=True,  # ERNIE ViT: all linear layers have bias=True
+        add_qkv_bias=True,  # ERNIE ViT: QKV projection has bias=True
     )
 
     # Copy parallelism / recompute settings from language model config
