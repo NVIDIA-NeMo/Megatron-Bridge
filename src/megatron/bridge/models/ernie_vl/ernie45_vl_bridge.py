@@ -97,6 +97,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
+    RowParallelMapping,
 )
 from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
@@ -112,129 +113,92 @@ _ERNIE45_VL_MOE_HF_CLASS_NAME = "Ernie4_5_VLMoeForConditionalGeneration"
 
 
 # ---------------------------------------------------------------------------
-# Dual-pool expert EP export support
+# Vision pool expert offset mappings
 # ---------------------------------------------------------------------------
 # In ERNIE VL's dual-pool MoE, vision expert j maps to HF flat expert
-# (j + num_text_experts).  The _Offset*Mapping classes handle the HF→Megatron
-# direction by shifting expert indices during resolve().  For the Megatron→HF
-# export direction with EP > 1, gather_from_ep_ranks must reconstruct the
-# pool-offset HF expert indices.  The mixin below overrides that method so
-# the offset logic stays in this file instead of the base param_mapping.py.
+# (j + num_text_experts).  Two offset-aware mapping classes handle both
+# directions:
+#   - resolve(): shifts the expert index wildcard for the HF side only
+#   - gather_from_ep_ranks(): reconstructs offset HF indices during EP export
 # ---------------------------------------------------------------------------
 
 
-class _DualPoolExpertMixin:
-    """Mixin that adds pool-offset awareness to ``gather_from_ep_ranks``.
+def _offset_gather_from_ep_ranks(
+    mapping,
+    megatron_weights: Optional[torch.Tensor],
+    megatron_module,
+    hf_param_name: Optional[str] = None,
+) -> Dict[str, torch.Tensor]:
+    """EP all-gather with pool offset for dual-pool MoE vision experts.
 
-    For dual-pool MoE, the resolved HF param name already carries the offset
-    (e.g. ``experts.67.weight`` for vision expert 3 with 64 text experts).
-    The mixin computes ``pool_offset = hf_index - megatron_local_index`` and
-    uses it when constructing the HF names for every EP rank.
+    Per EP rank *i* the HF expert index is:
+        expert_offset + local_expert_number + num_experts_per_rank * i
     """
+    if mapping.ep_size == 1:
+        return {str(hf_param_name): megatron_weights}
 
-    def gather_from_ep_ranks(
-        self,
-        megatron_weights: Optional[torch.Tensor],
-        megatron_module,
-        hf_param_name: Optional[str] = None,
-    ) -> Dict[str, torch.Tensor]:
-        if self.ep_size == 1:
-            return {str(hf_param_name): megatron_weights}
+    if megatron_module is None:
+        num_experts_per_rank = mapping.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
+    else:
+        model_config = mapping._get_config(megatron_module)
+        num_experts = model_config.num_moe_experts
+        num_experts_per_rank = num_experts // mapping.ep_size
+        num_experts_per_rank = mapping.broadcast_obj_from_pp_rank(num_experts_per_rank, "num_experts_per_rank")
 
-        if megatron_module is None:
-            num_experts_per_rank = self.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
+    global_expert_number = extract_expert_number_from_param(mapping.megatron_param)
+    local_expert_number = global_expert_number % num_experts_per_rank
+
+    gathered_expert_param_names = [
+        re.sub(
+            r"experts\.(\d+)",
+            f"experts.{mapping._expert_offset + local_expert_number + num_experts_per_rank * i}",
+            str(hf_param_name),
+        )
+        for i in range(mapping.ep_size)
+    ]
+    assert str(hf_param_name) in gathered_expert_param_names, (
+        f"hf_param_name {hf_param_name} not in gathered_expert_param_names {gathered_expert_param_names}"
+    )
+
+    gathered_weights = [torch.empty_like(megatron_weights) for _ in range(mapping.ep_size)]
+    torch.distributed.all_gather(gathered_weights, megatron_weights, group=mapping.ep_group)
+
+    weights_dict: Dict[str, torch.Tensor] = {}
+    for i, param_name in enumerate(gathered_expert_param_names):
+        if param_name in weights_dict:
+            weights_dict[param_name] = torch.cat([weights_dict[param_name], gathered_weights[i].unsqueeze(0)], dim=0)
         else:
-            model_config = self._get_config(megatron_module)
-            num_experts = model_config.num_moe_experts
-            num_experts_per_rank = num_experts // self.ep_size
-            num_experts_per_rank = self.broadcast_obj_from_pp_rank(num_experts_per_rank, "num_experts_per_rank")
-
-        global_expert_number = extract_expert_number_from_param(self.megatron_param)
-        local_expert_number = global_expert_number % num_experts_per_rank
-
-        # Compute pool offset from the resolved HF param name.
-        hf_expert_match = re.search(r"experts\.(\d+)", str(hf_param_name))
-        if hf_expert_match:
-            hf_expert_number = int(hf_expert_match.group(1))
-            pool_offset = hf_expert_number - local_expert_number
-        else:
-            pool_offset = 0
-
-        gathered_expert_param_names = [
-            re.sub(
-                r"experts\.(\d+)",
-                f"experts.{pool_offset + int(local_expert_number) + num_experts_per_rank * i}",
-                str(hf_param_name),
-            )
-            for i in range(self.ep_size)
-        ]
-        assert str(hf_param_name) in gathered_expert_param_names
-
-        gathered_weights = [torch.empty_like(megatron_weights) for _ in range(self.ep_size)]
-        torch.distributed.all_gather(gathered_weights, megatron_weights, group=self.ep_group)
-
-        weights_dict: Dict[str, torch.Tensor] = {}
-        for i, param_name in enumerate(gathered_expert_param_names):
-            if param_name in weights_dict:
-                weights_dict[param_name] = torch.cat(
-                    [weights_dict[param_name], gathered_weights[i].unsqueeze(0)], dim=0
-                )
-            else:
-                weights_dict[param_name] = gathered_weights[i].unsqueeze(0)
-        for param_name in weights_dict:
-            weights_dict[param_name] = weights_dict[param_name].squeeze()
-        return weights_dict
+            weights_dict[param_name] = gathered_weights[i].unsqueeze(0)
+    for param_name in weights_dict:
+        weights_dict[param_name] = weights_dict[param_name].squeeze()
+    return weights_dict
 
 
-class _DualPoolGatedMLPMapping(_DualPoolExpertMixin, GatedMLPMapping):
-    """GatedMLPMapping with pool-offset-aware EP export."""
+def _resolve_with_offset(
+    megatron_pattern: str,
+    hf_pattern,
+    captures: Tuple[str, ...],
+    expert_offset: int,
+) -> Tuple[str, ...]:
+    """Resolve wildcard captures, shifting the 2nd capture (expert index) for HF side."""
+    if expert_offset and len(captures) >= 2:
+        shifted_expert = str(int(captures[1]) + expert_offset)
+        hf_captures = (captures[0], shifted_expert) + captures[2:]
+    else:
+        hf_captures = captures
 
-    pass
+    resolved_megatron = megatron_pattern
+    idx = 0
+    while "**" in resolved_megatron and idx < len(captures):
+        resolved_megatron = resolved_megatron.replace("**", captures[idx], 1)
+        idx += 1
+    while "*" in resolved_megatron and idx < len(captures):
+        resolved_megatron = resolved_megatron.replace("*", captures[idx], 1)
+        idx += 1
 
-
-class _DualPoolAutoMapping(_DualPoolExpertMixin, AutoMapping):
-    """AutoMapping with pool-offset-aware EP export."""
-
-    pass
-
-
-class _OffsetGatedMLPMapping(GatedMLPMapping):
-    """GatedMLPMapping that adds a fixed offset to the expert index wildcard.
-
-    Used for vision MoE experts where Megatron expert index j maps to
-    HF flat expert index (j + offset).  The offset is the number of text
-    experts, so vision expert 0 maps to HF expert N, etc.
-
-    The Megatron pattern has two ``*`` wildcards: layer index and expert index.
-    The HF patterns also have two ``*`` wildcards.  During ``resolve()``, the
-    second capture (expert index) is shifted by ``expert_offset`` **only** for
-    HF patterns.  The Megatron side keeps the original (unshifted) expert index.
-    """
-
-    def __init__(self, megatron_param: str, gate: str, up: str, expert_offset: int = 0):
-        super().__init__(megatron_param=megatron_param, gate=gate, up=up)
-        self._expert_offset = expert_offset
-
-    def resolve(self, captures: Tuple[str, ...]):
-        """Override resolve to apply the expert index offset only to HF side."""
-        if self._expert_offset and len(captures) >= 2:
-            # Use original captures for Megatron, shifted for HF
-            shifted_expert = str(int(captures[1]) + self._expert_offset)
-            hf_captures = (captures[0], shifted_expert) + captures[2:]
-        else:
-            hf_captures = captures
-        # Resolve Megatron side with original captures
-        resolved_megatron_param = self.megatron_param
-        idx = 0
-        while "**" in resolved_megatron_param and idx < len(captures):
-            resolved_megatron_param = resolved_megatron_param.replace("**", captures[idx], 1)
-            idx += 1
-        while "*" in resolved_megatron_param and idx < len(captures):
-            resolved_megatron_param = resolved_megatron_param.replace("*", captures[idx], 1)
-            idx += 1
-        # Resolve HF side with shifted captures
-        resolved_hf_param = {}
-        for k, v in self.hf_param.items():
+    if isinstance(hf_pattern, dict):
+        resolved_hf: dict | str = {}
+        for k, v in hf_pattern.items():
             resolved_v = v
             idx = 0
             while "**" in resolved_v and idx < len(hf_captures):
@@ -243,19 +207,57 @@ class _OffsetGatedMLPMapping(GatedMLPMapping):
             while "*" in resolved_v and idx < len(hf_captures):
                 resolved_v = resolved_v.replace("*", hf_captures[idx], 1)
                 idx += 1
-            resolved_hf_param[k] = resolved_v
-        return _DualPoolGatedMLPMapping(
-            megatron_param=resolved_megatron_param,
-            gate=resolved_hf_param["gate"],
-            up=resolved_hf_param["up"],
+            resolved_hf[k] = resolved_v
+    else:
+        resolved_hf = hf_pattern
+        idx = 0
+        while "**" in resolved_hf and idx < len(hf_captures):
+            resolved_hf = resolved_hf.replace("**", hf_captures[idx], 1)
+            idx += 1
+        while "*" in resolved_hf and idx < len(hf_captures):
+            resolved_hf = resolved_hf.replace("*", hf_captures[idx], 1)
+            idx += 1
+
+    return resolved_megatron, resolved_hf
+
+
+class _OffsetGatedMLPMapping(GatedMLPMapping):
+    """GatedMLPMapping with expert index offset for vision pool.
+
+    Handles both directions:
+    - resolve(): shifts expert index for HF side only
+    - gather_from_ep_ranks(): reconstructs offset HF indices during EP export
+    """
+
+    def __init__(self, megatron_param: str, gate: str, up: str, expert_offset: int = 0):
+        super().__init__(megatron_param=megatron_param, gate=gate, up=up)
+        self._expert_offset = expert_offset
+
+    def resolve(self, captures: Tuple[str, ...]):
+        resolved_megatron, resolved_hf = _resolve_with_offset(
+            self.megatron_param,
+            self.hf_param,
+            captures,
+            self._expert_offset,
+        )
+        return _OffsetGatedMLPMapping(
+            megatron_param=resolved_megatron,
+            gate=resolved_hf["gate"],
+            up=resolved_hf["up"],
+            expert_offset=self._expert_offset,
         )
 
+    def gather_from_ep_ranks(self, megatron_weights, megatron_module, hf_param_name=None):
+        return _offset_gather_from_ep_ranks(self, megatron_weights, megatron_module, hf_param_name)
 
-class _OffsetAutoMapping(AutoMapping):
-    """AutoMapping that adds a fixed offset to the expert index wildcard.
 
-    Same concept as _OffsetGatedMLPMapping but for simple 1:1 mappings
-    (e.g. down_proj).  The offset is applied only to HF side, not Megatron.
+class _OffsetRowParallelMapping(RowParallelMapping):
+    """RowParallelMapping with expert index offset for vision pool.
+
+    Used for vision expert down_proj (linear_fc2), which is always
+    row-parallel in SequentialMLP.  Using explicit RowParallelMapping
+    avoids the AutoMapping delegation issue where the delegate's
+    gather_from_ep_ranks bypasses offset logic.
     """
 
     def __init__(self, megatron_param: str, hf_param: str, expert_offset: int = 0):
@@ -263,34 +265,20 @@ class _OffsetAutoMapping(AutoMapping):
         self._expert_offset = expert_offset
 
     def resolve(self, captures: Tuple[str, ...]):
-        """Override resolve to apply the expert index offset only to HF side."""
-        if self._expert_offset and len(captures) >= 2:
-            shifted_expert = str(int(captures[1]) + self._expert_offset)
-            hf_captures = (captures[0], shifted_expert) + captures[2:]
-        else:
-            hf_captures = captures
-        # Resolve Megatron side with original captures
-        resolved_megatron_param = self.megatron_param
-        idx = 0
-        while "**" in resolved_megatron_param and idx < len(captures):
-            resolved_megatron_param = resolved_megatron_param.replace("**", captures[idx], 1)
-            idx += 1
-        while "*" in resolved_megatron_param and idx < len(captures):
-            resolved_megatron_param = resolved_megatron_param.replace("*", captures[idx], 1)
-            idx += 1
-        # Resolve HF side with shifted captures
-        resolved_hf_param = self.hf_param
-        idx = 0
-        while "**" in resolved_hf_param and idx < len(hf_captures):
-            resolved_hf_param = resolved_hf_param.replace("**", hf_captures[idx], 1)
-            idx += 1
-        while "*" in resolved_hf_param and idx < len(hf_captures):
-            resolved_hf_param = resolved_hf_param.replace("*", hf_captures[idx], 1)
-            idx += 1
-        return _DualPoolAutoMapping(
-            megatron_param=resolved_megatron_param,
-            hf_param=resolved_hf_param,
+        resolved_megatron, resolved_hf = _resolve_with_offset(
+            self.megatron_param,
+            self.hf_param,
+            captures,
+            self._expert_offset,
         )
+        return _OffsetRowParallelMapping(
+            megatron_param=resolved_megatron,
+            hf_param=resolved_hf,
+            expert_offset=self._expert_offset,
+        )
+
+    def gather_from_ep_ranks(self, megatron_weights, megatron_module, hf_param_name=None):
+        return _offset_gather_from_ep_ranks(self, megatron_weights, megatron_module, hf_param_name)
 
 
 class _ConcatBiasMapping(AutoMapping):
@@ -881,7 +869,7 @@ class Ernie45VLBridge(MegatronModelBridge):
                     up="model.layers.*.mlp.experts.*.up_proj.weight",
                     expert_offset=num_experts,
                 ),
-                _OffsetAutoMapping(
+                _OffsetRowParallelMapping(
                     megatron_param=(
                         "language_model.decoder.layers.*.mlp.vision_moe_layer"
                         ".experts.local_experts.*.linear_fc2.weight"

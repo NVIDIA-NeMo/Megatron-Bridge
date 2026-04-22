@@ -155,7 +155,7 @@ class TestErnie45VLConversion:
             if _local_tokenizer_path.exists():
                 tokenizer = AutoTokenizer.from_pretrained(str(_local_tokenizer_path))
             else:
-                tokenizer = AutoTokenizer.from_pretrained("baidu/ERNIE-4.5-VL-28B-A3B-Instruct")
+                tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
             tokenizer.save_pretrained(model_dir)
         except (OSError, ValueError):
             # Create a functional dummy tokenizer from a readily available model
