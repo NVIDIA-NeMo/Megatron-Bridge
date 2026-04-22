@@ -14,9 +14,11 @@
 
 # Build layer variables
 # To install trtllm set FW_DEP_BUILDER=trtllm_builder, FW_BASE_FINAL=trtllm_install
-# To exclude trtllm set FW_DEP_BUILDER=base, FW_BASE_FINAL=fw_dep_builder
+# To exclude trtllm set FW_DEP_BUILDER=base, FW_BASE_FINAL=fw_toolkit_builder
+# To skip AWS-OFI-NCCL set FW_NETWORK_LAYER=fw_dep_builder
 ARG FW_DEP_BUILDER
 ARG FW_BASE_FINAL
+ARG FW_NETWORK_LAYER=aws_ofi_builder
 
 ARG NEMO_FW_BASE_IMAGE
 FROM ${NEMO_FW_BASE_IMAGE} AS base
@@ -177,13 +179,19 @@ RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | XDG_BIN_HOME=/usr
 
 ##############################################################################
 ##
+## AWS-OFI-NCCL upgrade stage
+##
 ## Upgrade AWS-OFI-NCCL from v1.17.0 to v1.17.3
 ##
 ## IMPORTANT: Do NOT remove ibverbs/libmlx5 packages — they are required for
 ## InfiniBand/RDMA transport on Slurm clusters with Mellanox ConnectX adapters.
 ## The EFA stack is installed alongside (not replacing) the existing IB stack.
 ##
+## To skip this stage, set FW_NETWORK_LAYER=fw_dep_builder
+##
 ##############################################################################
+
+FROM fw_dep_builder AS aws_ofi_builder
 
 RUN apt-get update -y
 
@@ -255,6 +263,17 @@ RUN export LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/openmpi/lib:${LD_LIBR
 
 ##############################################################################
 ##
+## CUDA toolkit + DeepEP stage
+##
+## Chains from FW_NETWORK_LAYER (default: aws_ofi_builder).
+## Set FW_NETWORK_LAYER=fw_dep_builder to skip the AWS-OFI-NCCL stage.
+##
+##############################################################################
+
+FROM ${FW_NETWORK_LAYER} AS fw_toolkit_builder
+
+##############################################################################
+##
 ## Reinstall CUDA toolkit packages
 ##
 ##############################################################################
@@ -266,10 +285,13 @@ ARG CUDNN_VERSION
 ENV NSIGHT_SYSTEMS_VERSION $NSYS_VERSION
 ARG REINSTALL_NCCL
 ARG NCCL_VERSION
+ARG REINSTALL_CUBLAS
+ARG CUBLAS_VERSION
 
 RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_nsys.sh \
     --mount=type=bind,source=docker/common/install_cudnn.sh,target=/opt/install_cudnn.sh \
     --mount=type=bind,source=docker/common/install_nccl.sh,target=/opt/install_nccl.sh \
+    --mount=type=bind,source=docker/common/install_cublas.sh,target=/opt/install_cublas.sh \
     if [ $REINSTALL_NSYS = "True" ]; then \
     bash /opt/install_nsys.sh --NSYS_VERSION=$NSYS_VERSION; \
     fi && \
@@ -278,12 +300,14 @@ RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_n
     fi && \
     if [ $REINSTALL_NCCL = "True" ]; then \
     bash /opt/install_nccl.sh --NCCL_VER=$NCCL_VERSION; \
+    fi && \
+    if [ $REINSTALL_CUBLAS = "True" ]; then \
+    bash /opt/install_cublas.sh --CUBLAS_VER=$CUBLAS_VERSION; \
     fi
 
 ##############################################################################
 ##
 ## Install DeepEP and nvshmem
-## Install DeepEP, nvshmem and rdma-core
 ##
 ##############################################################################
 
@@ -295,12 +319,22 @@ ENV RDMA_CORE_HOME=/opt/rdma-core/build
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/:$LD_LIBRARY_PATH
 RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
     if [ "$INSTALL_DEEPEP" = "True" ]; then \
-    # README for rdma-core installation- https://github.com/deepseek-ai/DeepEP/blob/hybrid-ep/Hybrid-EP_Implementation.md#multi-node-rdma-installation
-    git clone https://github.com/linux-rdma/rdma-core.git && \
-    pushd rdma-core && \
-        git checkout tags/v60.0 && \
-        TORCH_CUDA_ARCH_LIST="9.0;10.0;12.0" && sh build.sh && \
-    popd && \
+    # Upgrade system rdma-core to v60 (EFA brings this when aws_ofi_builder runs; make it
+    # explicit so the DeepEP build works even when FW_NETWORK_LAYER=fw_dep_builder).
+    # libibverbs-dev supplies the unversioned libibverbs.so symlink required at link time.
+    apt-get update && apt-get install -y --allow-change-held-packages \
+        rdma-core libibverbs-dev && \
+    apt-get clean && \
+    ARCH_LIB=$(dpkg-architecture -qDEB_HOST_MULTIARCH) && \
+    # libmlx5-dev is not available in the apt sources; EFA installer (aws_ofi_builder)
+    # provides libmlx5.so — create it from the versioned symlink as a fallback.
+    test -f /usr/lib/${ARCH_LIB}/libmlx5.so || \
+        ln -sf /usr/lib/${ARCH_LIB}/libmlx5.so.1 /usr/lib/${ARCH_LIB}/libmlx5.so && \
+    # Expose the system install under RDMA_CORE_HOME so DeepEP setup.py finds
+    # $RDMA_CORE_HOME/include and $RDMA_CORE_HOME/lib without a separate source build.
+    mkdir -p ${RDMA_CORE_HOME} && \
+    ln -sfn /usr/include ${RDMA_CORE_HOME}/include && \
+    ln -sfn /usr/lib/${ARCH_LIB} ${RDMA_CORE_HOME}/lib && \
     git clone https://github.com/deepseek-ai/DeepEP.git && \
     pushd DeepEP && \
         git pull && \
@@ -312,7 +346,6 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
         NVSHMEM_LIB_PATH=$(pip show nvidia-nvshmem-cu13 | grep "Location:" | cut -d' ' -f2)/nvidia/nvshmem/lib && \
         ln -sf ${NVSHMEM_LIB_PATH}/libnvshmem_host.so.3 ${NVSHMEM_LIB_PATH}/libnvshmem_host.so && \
         apt-get update && \
-        apt-get install -y libcublas-dev-13-1 libcublaslt12 && \
         apt-get install -y --no-install-recommends libnvidia-ml-dev && \
         TORCH_CUDA_ARCH_LIST="9.0 10.0 12.0" pip install --no-cache-dir --no-build-isolation -v . && \
         apt-get purge -y libnvidia-ml-dev && \
@@ -327,7 +360,7 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
 ##
 ##############################################################################
 
-FROM fw_dep_builder AS trtllm_install
+FROM fw_toolkit_builder AS trtllm_install
 
 WORKDIR /opt/tensorrt_llm
 
@@ -353,7 +386,7 @@ RUN --mount=type=bind,from=trtllm_wheel,source=/src/tensorrt_llm/build/,target=/
 ## Final layer of FW_BASE container
 ##
 ## When TRTLLM is re-installed, FW_BASE_FINAL=trtllm_install
-## default, FW_BASE_FINAL=fw_dep_builder
+## default, FW_BASE_FINAL=fw_toolkit_builder
 ##
 ##############################################################################
 

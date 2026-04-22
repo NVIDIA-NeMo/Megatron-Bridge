@@ -103,6 +103,12 @@ def get_rope_index(
         total_input_ids = input_ids
         if attention_mask is not None:
             attention_mask = attention_mask == 1
+            # Handle multi-dimensional attention masks (3D or 4D)
+            if attention_mask.dim() > 2:
+                attention_mask = attention_mask.any(dim=-1)
+                if attention_mask.dim() == 3:
+                    attention_mask = attention_mask.squeeze(1)
+                attention_mask = attention_mask.to(dtype=torch.bool, device=input_ids.device)
         position_ids = torch.ones(
             3,
             input_ids.shape[0],
@@ -302,6 +308,12 @@ def get_rope_index(
     else:
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
+        # Handle multi-dimensional attention masks (3D or 4D)
+        if attention_mask.dim() > 2:
+            attention_mask = attention_mask.any(dim=-1)
+            if attention_mask.dim() == 3:
+                attention_mask = attention_mask.squeeze(1)
+            attention_mask = attention_mask.to(dtype=torch.long)
         attention_mask = attention_mask.to(input_ids.device)
         position_ids = attention_mask.long().cumsum(-1) - 1
         position_ids.masked_fill_(attention_mask == 0, 1)

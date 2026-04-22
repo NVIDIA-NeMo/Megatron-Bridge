@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional smoke tests for Mcore WAN pretrain mock runs."""
+"""Functional smoke tests for Mcore WAN pretrain mock runs.
+
+Uses the generic run_recipe.py entry point with wan_1_3b_pretrain_config and wan_step.
+Mock/synthetic data is used when dataset.path is not set (no --mock flag).
+"""
 
 import os
 import subprocess
@@ -29,16 +33,13 @@ class TestMcoreWanPretrain:
         Functional test for WAN pretrain recipe with mock data.
 
         This test verifies that the WAN pretrain recipe can run successfully
-        in mock mode with minimal configuration, ensuring:
+        via run_recipe.py with minimal configuration (mock data when no dataset.path), ensuring:
         1. The distributed training can start without errors
         2. Model initialization works correctly
         3. Forward/backward passes complete successfully
         4. The training loop executes without crashes
         """
-        # Set up temporary directories for dataset and checkpoints
-        dataset_path = os.path.join(tmp_path, "mock_dataset")
         checkpoint_dir = os.path.join(tmp_path, "checkpoints")
-        os.makedirs(dataset_path, exist_ok=True)
         os.makedirs(checkpoint_dir, exist_ok=True)
 
         # Build the command for the mock run
@@ -54,19 +55,20 @@ class TestMcoreWanPretrain:
             "--data-file=/opt/Megatron-Bridge/.coverage",
             "--source=/opt/Megatron-Bridge/",
             "--parallel-mode",
-            "examples/diffusion/recipes/wan/pretrain_wan.py",
-            "--training-mode",
-            "pretrain",
+            "scripts/training/run_recipe.py",
+            "--recipe",
+            "wan_1_3b_pretrain_config",
+            "--step_func",
+            "wan_step",
             "model.tensor_model_parallel_size=1",
             "model.pipeline_model_parallel_size=1",
-            "model.context_parallel_size=1",
+            "model.context_parallel_size=2",
             "model.crossattn_emb_size=1536",
             "model.hidden_size=1536",
             "model.ffn_hidden_size=8960",
             "model.num_attention_heads=12",
             "model.num_layers=3",
             "model.qkv_format=thd",
-            f"dataset.path={dataset_path}",
             f"checkpoint.save={checkpoint_dir}",
             f"checkpoint.load={checkpoint_dir}",
             "checkpoint.load_optim=false",
@@ -84,7 +86,6 @@ class TestMcoreWanPretrain:
             "dataset.global_batch_size=2",
             "dataset.micro_batch_size=1",
             "logger.log_interval=1",
-            "--mock",
         ]
 
         # Run the command with a timeout
@@ -105,7 +106,7 @@ class TestMcoreWanPretrain:
             pytest.fail("WAN pretrain mock run exceeded timeout of 1800 seconds (30 minutes)")
         except subprocess.CalledProcessError as e:
             result = e
-            pytest.fail(f"WAN pretrain mock run failed with return code {e.returncode}")
+            pytest.fail(f"WAN pretrain mock run failed with return code {e.returncode}. Check STDOUT/STDERR above.")
         finally:
             # Always print output for debugging
             if result is not None:

@@ -59,8 +59,8 @@ jobs:
   pre-flight:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
     with:
-      default_runner_prefix: ${{ vars.INSTALL_TEST_DEFAULT_RUNNER_PREFIX }}
-      non_nvidia_runner_prefix: ${{ vars.INSTALL_TEST_NON_NVIDIA_RUNNER_PREFIX }}
+      default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
+      non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
     secrets:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
@@ -89,7 +89,7 @@ jobs:
   #         apt-get install -y git
 
   #     - name: Checkout repository
-  #       uses: actions/checkout@v4
+  #       uses: actions/checkout@v6
   #       with:
   #         submodules: recursive
 
@@ -107,7 +107,7 @@ jobs:
   #       run: bash docker/common/install.sh --base-image pytorch --python-version ${{ matrix.python-version }}
 
   #     - name: Checkout check-imports
-  #       uses: actions/checkout@v4
+  #       uses: actions/checkout@v6
   #       with:
   #         repository: NVIDIA-NeMo/FW-CI-templates
   #         ref: v0.39.0
@@ -124,7 +124,7 @@ jobs:
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2-container
     name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC PyTorch
     container:
       image: nvcr.io/nvidia/pytorch:25.05-py3
@@ -136,11 +136,14 @@ jobs:
       - name: Install git
         shell: bash -x -e -u -o pipefail {0}
         run: |
-          apt-get update
-          apt-get install -y git
+          for i in 1 2 3; do
+            apt-get update && apt-get install -y git && break
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 

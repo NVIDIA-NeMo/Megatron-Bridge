@@ -1,109 +1,153 @@
 # Communication Overlap
 
 Communication overlap reduces exposed communication cost in distributed training
-by overlapping collectives or point-to-point transfers with useful compute.
-Megatron Bridge supports overlap across several parallelism dimensions, but the
-available behavior is not identical for every mode.
+by hiding collectives or point-to-point transfers under useful compute.
 
-This page is the stable overview for what communication overlap is, when to use
-it, and which constraints are durable. For operational setup, code anchors, and
-verification commands, see:
+This page is the stable guide for what communication overlap is, when it tends
+to help, and which boundaries are durable across Megatron Bridge. For exact
+knobs, code anchors, and verification commands, see:
 
 - [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
 - [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
 
 ## What It Is
 
-In Bridge, communication overlap spans several related subfeatures:
+In Bridge, communication overlap is a family of related techniques rather than a
+single switch:
 
-- data-parallel overlap for gradient reduce-scatter and parameter all-gather
-- tensor-parallel overlap for TP communication under GEMM work
-- pipeline-parallel overlap for PP send and receive behavior
-- context-parallel overlap built into context-parallel execution paths
-- MoE expert-parallel overlap for expert token dispatch communication
+| Mode | What gets hidden | Main gate |
+|---|---|---|
+| DP | gradient reduce-scatter and parameter all-gather | distributed-optimizer overlap path |
+| TP | tensor-parallel collectives under layer compute | `CommOverlapConfig.tp_comm_overlap` plus sequence parallelism |
+| PP | pipeline send/recv work under schedule execution | pipeline schedule and virtual pipeline layout |
+| CP | context-parallel communication inside CP execution paths | CP implementation choice |
+| EP | MoE token dispatch/combine communication under expert compute | `overlap_moe_expert_parallel_comm` |
 
-These are related performance techniques, but they do not share the same gates,
-defaults, or operational risks.
+These paths share the same goal, but they do not share the same enablement
+rules, evidence level, or failure modes.
+
+## What Problem It Solves
+
+Distributed training often becomes communication-bound before it becomes
+compute-bound. Once TP, DP, PP, CP, or EP traffic is visible on the critical
+path, adding more GPUs may raise communication time faster than it raises useful
+compute.
+
+Communication overlap addresses that by moving communication earlier or later in
+the step so the same transfer can happen while some other part of the model is
+already doing useful work. It does not change the training objective. It tries
+to reduce idle time.
+
+## Impacted Training Dimensions
+
+| Dimension | Effect | Confidence | Why |
+|---|---|---|---|
+| `speed` | flat to moderately faster, mode-dependent | medium | The goal is to hide communication time, but gains depend strongly on which overlap mode is active and whether communication is actually exposed. Small-EP MoE runs can still be flat or even slower. |
+| `memory` | usually near-neutral; some modes add modest buffers | low | Overlap itself is usually not a primary memory technique, although some implementations add buffer or scheduling constraints. |
+| `scale` | positive at higher parallelism degrees | medium | Overlap becomes more valuable as communication dominates larger distributed runs. |
+| `convergence` | no change expected | medium | The intent is to preserve the same training math, though schedule changes can alter floating-point accumulation order. |
+| `stability` | adds operational constraints | medium | More overlap usually means tighter requirements around schedule shape, precision, runtime versions, and feature combinations. |
 
 ## When to Use It
 
-Communication overlap is a good fit when:
+Enable communication overlap when all of the following are mostly true:
 
-- the model already needs TP, DP, PP, CP, or EP for scale
+- the distributed configuration already works correctly without overlap
 - communication is a meaningful part of step time
-- correctness is already established and you are tuning for throughput
+- you are tuning throughput or utilization, not doing first bring-up
+- you can benchmark the specific overlap mode you plan to use
 
-It is less appropriate when:
+As a rule of thumb:
 
-- you are still bringing up a new training path and want minimal moving parts
-- the feature combination is branch-sensitive or weakly validated
-- launch-time environment tuning is likely to conflict with another technique
+| Mode | Good first use case | Recommendation |
+|---|---|---|
+| DP | distributed optimizer on multi-GPU or multi-node training | Usually worth considering early once optimizer sharding is already chosen. |
+| TP | `TP >= 2` with sequence parallelism and TE-enabled path | Benchmark when TP collectives are visible in the profile. |
+| PP | interleaved pipeline schedules where p2p overhead is visible | Treat as schedule tuning, not a blanket PP default. |
+| CP | large-context runs already using CP | Follow the CP-specific guidance rather than treating it as a separate generic knob. |
+| EP | large-scale MoE with many micro-batches and inter-node A2A cost | Most promising at larger EP and with higher-latency dispatcher backends. |
 
-## Stable Per-Mode Guidance
+Measured repo evidence today is strongest for MoE EP overlap. The pattern is
+mixed rather than universally positive:
 
-### Data Parallel
+- small-EP `alltoall` runs can be correct but flat or slower
+- larger MoE runs show stronger evidence that the overlap path is operationally
+  useful
+- `delay_wgrad_compute` can help some schedules, but it is not a guaranteed
+  speedup over overlap-only
 
-DP overlap is tied to the distributed-optimizer path. It is the natural overlap
-mechanism for sharded optimizer-state training and should be reasoned about
-together with distributed optimizer behavior rather than as an isolated knob.
+So, in this repo, EP overlap is better described as correctness-backed and
+workload-sensitive rather than universally speedup-backed.
 
-### Tensor Parallel
+## When Not to Use It
 
-TP overlap is conceptually tied to sequence parallelism. If sequence
-parallelism is not available or not enabled, TP overlap should not be assumed to
-remain active.
+Avoid communication overlap when any of these are true:
 
-### Pipeline Parallel
+- you are still debugging a new distributed setup
+- the profile is compute-bound rather than communication-bound
+- the required companion feature is missing, such as sequence parallelism for TP
+- another feature already imposes conflicting runtime constraints
+- you have not benchmarked the exact model and parallelism shape
 
-PP overlap is not a blanket property of all pipeline-parallel training. In
-practice, interleaved pipeline schedules are the most important positive case.
+For MoE EP overlap specifically, avoid treating it as a default when:
 
-### Context Parallel
+- `EP <= 4` with `alltoall` on `<= 2` nodes
+- the run has very few pipeline micro-batches
+- `moe_shared_expert_overlap` must stay enabled
+- full recompute or recompute scheduling incompatible with EP overlap is required
 
-CP overlap is part of Bridge's context-parallel execution model rather than a
-separate standalone technique page. For hierarchical or `a2a+p2p` CP guidance,
-see `docs/training/hybrid-context-parallel.md`.
+## Feature Interactions
 
-### MoE Expert Parallel
+The most important interactions are:
 
-MoE expert-parallel overlap hides the cost of token dispatch/combine all-to-all
-communication by overlapping it with expert FFN compute. Optionally, delayed
-expert weight-gradient computation (`moe_delay_wgrad_compute`) provides
-additional overlap.
+- DP overlap is tied to distributed-optimizer behavior rather than a fully independent tuning path.
+- TP overlap depends on sequence parallelism and the supported TE overlap path.
+- PP and EP overlap interact with virtual pipeline layout when `PP > 1`.
+- CP overlap should be reasoned about together with the chosen CP communication type.
+- EP overlap with DeepEP or HybridEP requires explicitly switching the dispatcher to `flex`.
+- EP overlap and `moe_shared_expert_overlap` are mutually exclusive.
+- CUDA graphs plus `delay_wgrad_compute` adds extra TE-version and graph-scope restrictions.
+- Launch-time environment tuning can conflict across overlap paths, especially TP or CP overlap versus DeepEP or HybridEP tuning.
 
-MoE overlap should be treated separately from generic TP, DP, and PP overlap.
-Its constraints depend on dispatcher choice (`alltoall` or `flex`), expert
-parallelism degree, precision (BF16/FP16), and runtime support. When pipeline
-parallelism is used, virtual pipeline parallelism is required for the overlap
-scheduling to interleave correctly.
+## Bridge Configuration
 
-## Stable Constraints and Caveats
+Communication overlap is configured through `CommOverlapConfig` plus
+mode-specific model settings. There is no single universal toggle — DP, TP,
+PP, CP, and EP each have different prerequisites and should be enabled based
+on the actual bottleneck.
 
-The most durable caveats are:
+For config examples and minimal runnable commands, see:
 
-1. Not all overlap modes are auto-enabled in the same situations.
-2. Some overlap-related precision settings are owned by mixed-precision config,
-   not by standalone overlap tuning alone.
-3. Launch-time environment settings are part of the technique in practice,
-   especially for TP, CP, and MoE overlap paths.
-4. Recipe defaults are often conservative; feature existence does not imply that
-   every public recipe enables the corresponding overlap path.
+- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
+- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
 
-## Recommendation Level
+## Expected Metric Changes
 
-Treat communication overlap as a tuning layer on top of a working distributed
-configuration, not as the first knob to reach for when basic correctness is
-still uncertain.
+| Metric | Expected Change | Conditions | Evidence |
+|---|---|---|---|
+| `step_time` | down | DP overlap with distributed optimizer on communication-heavy runs | expected |
+| `step_time` | down | TP overlap with `TP >= 2`, sequence parallelism, and supported TE path | expected |
+| `pipeline_idle_time` | down | interleaved PP where p2p cost is visible | expected |
+| `step_time` | flat to mixed | small-EP MoE with `alltoall` | measured |
+| `step_time` | mixed | larger MoE with EP overlap plus delayed wgrad | measured |
 
-For most teams, the right order is:
+Do not assume one overlap win transfers automatically to another mode. The
+correct question is always "which communication path is exposed in this run?"
 
-1. establish a correct distributed configuration
-2. choose the necessary parallelism strategy
-3. enable or tune overlap for the specific communication bottleneck
+## Common Failure Modes
+
+- TP overlap silently disables itself when sequence parallelism is off or `TP < 2`.
+- PP overlap expectations are wrong when the schedule is non-interleaved or VPP is missing.
+- EP overlap asserts when `PP > 1` but `virtual_pipeline_model_parallel_size` is unset.
+- EP overlap asserts when full recompute, recompute method, or shared-expert overlap stays enabled.
+- Setting `moe_flex_dispatcher_backend` alone does not activate DeepEP or HybridEP; the dispatcher must actually switch to `flex`.
+- Small-EP `alltoall` MoE runs can get slower because scheduling overhead is
+  larger than the communication being hidden.
 
 ## Related Docs
 
 - [docs/performance-guide.md](../performance-guide.md)
+- [docs/training/cuda-graphs.md](cuda-graphs.md)
 - [docs/training/hybrid-context-parallel.md](hybrid-context-parallel.md)
 - [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
 - [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)

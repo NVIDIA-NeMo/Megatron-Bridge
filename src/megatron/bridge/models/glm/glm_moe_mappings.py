@@ -18,7 +18,7 @@ These are thin aliases around the shared FusedExpertMapping / FusedGatedExpertMa
 classes in param_mapping.py.  Kept for backwards compatibility with existing imports.
 """
 
-from typing import Optional, Tuple
+from __future__ import annotations
 
 from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
@@ -31,14 +31,18 @@ from megatron.bridge.models.conversion.param_mapping import (
 class GLMExpertDownProjMapping(FusedExpertMapping):
     """FusedExpertMapping for GLM down-projection expert weights.
 
-    GLM down-projection weights are stored transposed relative to Megatron's layout,
-    so ``transpose_on_export`` is always enabled.
+    Grouped-export transpose is disabled for the current GLM fused-expert export
+    paths. The per-expert tensors are already in HF layout by the time they are
+    stacked into the fused expert weight, so applying an additional grouped-
+    export transpose would produce the wrong orientation.
+
     """
 
     def __init__(
         self,
         megatron_param: str,
         hf_param: str,
-        permute_dims: Optional[Tuple[int, ...]] = None,
+        permute_dims: tuple[int, ...] | None = None,
+        transpose_on_export: bool = False,
     ):
-        super().__init__(megatron_param, hf_param, permute_dims, transpose_on_export=True)
+        super().__init__(megatron_param, hf_param, permute_dims, transpose_on_export=False)

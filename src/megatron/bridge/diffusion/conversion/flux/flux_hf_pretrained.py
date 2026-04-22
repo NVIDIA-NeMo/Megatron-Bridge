@@ -14,11 +14,11 @@
 
 import json
 import shutil
+import types
 from pathlib import Path
-from typing import Union
+from typing import Any, Union
 
 from diffusers import FluxTransformer2DModel
-from transformers import AutoConfig
 
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict, StateSource
@@ -63,12 +63,10 @@ class PreTrainedFlux(PreTrainedBase):
         return FluxTransformer2DModel.from_pretrained(self.model_name_or_path)
 
     # Config is required by the FLUX bridge
-    def _load_config(self) -> AutoConfig:
-        # FluxTransformer2DModel returns a config-like object with required fields
-
-        print(f"Loading config from {self.model_name_or_path}")
-
-        return FluxTransformer2DModel.from_pretrained(self.model_name_or_path, subfolder="transformer").config
+    def _load_config(self) -> Any:
+        # Use load_config only — from_pretrained would download and load all safetensor shards.
+        cfg_raw = FluxTransformer2DModel.load_config(self.model_name_or_path, subfolder="transformer")
+        return types.SimpleNamespace(**cfg_raw)
 
     @property
     def state(self) -> StateDict:

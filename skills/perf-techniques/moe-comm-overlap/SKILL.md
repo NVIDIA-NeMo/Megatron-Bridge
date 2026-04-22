@@ -5,10 +5,21 @@ description: MoE expert-parallel communication overlap in Megatron Bridge. Use w
 
 # MoE Communication Overlap
 
-For what MoE communication overlap is and when to use it, see:
+For the higher-level overview, see:
 
 - `docs/training/communication-overlap.md`
 - `card.yaml` (co-located)
+
+## Quick Decision
+
+Use MoE communication overlap when:
+
+- `EP > 1`
+- token dispatch or combine time is visible in the profile
+- the run is already correct and you are now tuning throughput
+
+Avoid turning it on as an early bring-up step. It is easier to validate after
+the dispatcher, routing mode, and recompute plan are already stable.
 
 ## Enablement
 
@@ -16,7 +27,7 @@ For what MoE communication overlap is and when to use it, see:
 cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
 
 # Optional: delayed wgrad for additional overlap
-cfg.model.moe_delay_wgrad_compute = True
+cfg.comm_overlap.delay_wgrad_compute = True
 
 # IMPORTANT: disable shared expert overlap when using dispatch overlap
 cfg.model.moe_shared_expert_overlap = False
@@ -28,12 +39,19 @@ cfg.model.moe_shared_expert_overlap = False
 - `num_moe_experts > 1`
 - `moe_token_dispatcher_type` must be `"alltoall"` or `"flex"`
 - Precision: BF16 or FP16
-- If PP is used, VPP (`virtual_pipeline_model_parallel_size > 1`) is required
+- If PP is used, VPP (`virtual_pipeline_model_parallel_size`) must be set (non-`None`)
 
 ### Flex dispatcher activation
 
 Setting `moe_flex_dispatcher_backend` alone does **not** activate flex dispatch.
 You must also set `moe_token_dispatcher_type = "flex"`.
+
+## Recompute And CUDA Graph Interaction
+
+- Full recompute is not a good companion for the overlap path.
+- `delay_wgrad_compute` adds further constraints if CUDA-graph scopes include
+  attention or MoE-router work.
+- In practice, selective recompute is the safer pairing when overlap is enabled.
 
 ## Code Anchors
 
@@ -57,6 +75,10 @@ You must also set `moe_token_dispatcher_type = "flex"`.
 
 4. **Conservative recipe defaults**: Most public recipes leave MoE overlap
    disabled. You need to explicitly enable it via overrides.
+
+5. **Performance gains are workload-dependent**: overlap helps most when dispatch
+   communication is already a visible slice of step time. It is not guaranteed
+   to help every small or lightly loaded EP run.
 
 ## Verification
 

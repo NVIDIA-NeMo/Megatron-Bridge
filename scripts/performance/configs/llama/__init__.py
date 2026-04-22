@@ -25,11 +25,13 @@ if HAVE_MEGATRON_BRIDGE:
         llama3_8b_pretrain_config_gb300,
         llama3_8b_pretrain_config_h100,
         llama3_8b_pretrain_config_r100,
+        llama3_8b_pretrain_config_vr200,
         llama3_70b_pretrain_config_b200,
         llama3_70b_pretrain_config_b300,
         llama3_70b_pretrain_config_gb200,
         llama3_70b_pretrain_config_gb300,
         llama3_70b_pretrain_config_h100,
+        llama3_70b_pretrain_config_vr200,
     )
     from .llama31_llm_pretrain import (
         llama31_405b_pretrain_config_b200,
@@ -37,6 +39,7 @@ if HAVE_MEGATRON_BRIDGE:
         llama31_405b_pretrain_config_gb200,
         llama31_405b_pretrain_config_gb300,
         llama31_405b_pretrain_config_h100,
+        llama31_405b_pretrain_config_vr200,
     )
 
 from .llama3_workload_base_configs import (
@@ -62,6 +65,10 @@ from .llama3_workload_base_configs import (
     LLAMA3_8B_PRETRAIN_CONFIG_R100_FP8_CS_V1,
     LLAMA3_8B_PRETRAIN_CONFIG_R100_FP8_MX_V1,
     LLAMA3_8B_PRETRAIN_CONFIG_R100_NVFP4_V1,
+    LLAMA3_8B_PRETRAIN_CONFIG_VR200_BF16_V1,
+    LLAMA3_8B_PRETRAIN_CONFIG_VR200_FP8_CS_V1,
+    LLAMA3_8B_PRETRAIN_CONFIG_VR200_FP8_MX_V1,
+    LLAMA3_8B_PRETRAIN_CONFIG_VR200_NVFP4_V1,
     LLAMA3_8B_SFT_CONFIG_GB200_BF16_V1,
     LLAMA3_8B_SFT_CONFIG_GB200_FP8_CS_V1,
     LLAMA3_8B_SFT_CONFIG_GB200_FP8_MX_V1,
@@ -117,6 +124,9 @@ from .llama3_workload_base_configs import (
     LLAMA3_70B_PRETRAIN_CONFIG_H100_BF16_V2,
     LLAMA3_70B_PRETRAIN_CONFIG_H100_FP8_CS_V1,
     LLAMA3_70B_PRETRAIN_CONFIG_H100_FP8_CS_V2,
+    LLAMA3_70B_PRETRAIN_CONFIG_VR200_BF16_V2,
+    LLAMA3_70B_PRETRAIN_CONFIG_VR200_FP8_MX_V2,
+    LLAMA3_70B_PRETRAIN_CONFIG_VR200_NVFP4_V2,
     LLAMA3_70B_SFT_CONFIG_GB200_BF16_V1,
     LLAMA3_70B_SFT_CONFIG_GB200_FP8_CS_V1,
     LLAMA3_70B_SFT_CONFIG_GB200_FP8_MX_V1,
@@ -155,6 +165,9 @@ from .llama31_workload_base_configs import (
     LLAMA31_405B_PRETRAIN_CONFIG_H100_BF16_V2,
     LLAMA31_405B_PRETRAIN_CONFIG_H100_FP8_CS_V1,
     LLAMA31_405B_PRETRAIN_CONFIG_H100_FP8_CS_V2,
+    LLAMA31_405B_PRETRAIN_CONFIG_VR200_BF16_V2,
+    LLAMA31_405B_PRETRAIN_CONFIG_VR200_FP8_MX_V2,
+    LLAMA31_405B_PRETRAIN_CONFIG_VR200_NVFP4_V2,
 )
 
 
@@ -189,6 +202,9 @@ __all__ = [
     "LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V2",
     "LLAMA31_405B_PRETRAIN_CONFIG_H100_BF16_V2",
     "LLAMA31_405B_PRETRAIN_CONFIG_H100_FP8_CS_V2",
+    "LLAMA31_405B_PRETRAIN_CONFIG_VR200_BF16_V2",
+    "LLAMA31_405B_PRETRAIN_CONFIG_VR200_FP8_MX_V2",
+    "LLAMA31_405B_PRETRAIN_CONFIG_VR200_NVFP4_V2",
     # 8B Pretrain V1
     "LLAMA3_8B_PRETRAIN_CONFIG_B200_BF16_V1",
     "LLAMA3_8B_PRETRAIN_CONFIG_B200_FP8_CS_V1",
@@ -212,6 +228,10 @@ __all__ = [
     "LLAMA3_8B_PRETRAIN_CONFIG_R100_FP8_CS_V1",
     "LLAMA3_8B_PRETRAIN_CONFIG_R100_FP8_MX_V1",
     "LLAMA3_8B_PRETRAIN_CONFIG_R100_NVFP4_V1",
+    "LLAMA3_8B_PRETRAIN_CONFIG_VR200_BF16_V1",
+    "LLAMA3_8B_PRETRAIN_CONFIG_VR200_FP8_CS_V1",
+    "LLAMA3_8B_PRETRAIN_CONFIG_VR200_FP8_MX_V1",
+    "LLAMA3_8B_PRETRAIN_CONFIG_VR200_NVFP4_V1",
     # 8B SFT V1
     "LLAMA3_8B_SFT_CONFIG_GB200_BF16_V1",
     "LLAMA3_8B_SFT_CONFIG_GB200_FP8_CS_V1",
@@ -271,6 +291,9 @@ __all__ = [
     "LLAMA3_70B_PRETRAIN_CONFIG_GB300_NVFP4_V2",
     "LLAMA3_70B_PRETRAIN_CONFIG_H100_BF16_V2",
     "LLAMA3_70B_PRETRAIN_CONFIG_H100_FP8_CS_V2",
+    "LLAMA3_70B_PRETRAIN_CONFIG_VR200_BF16_V2",
+    "LLAMA3_70B_PRETRAIN_CONFIG_VR200_FP8_MX_V2",
+    "LLAMA3_70B_PRETRAIN_CONFIG_VR200_NVFP4_V2",
     # 70B SFT V1
     "LLAMA3_70B_SFT_CONFIG_GB200_BF16_V1",
     "LLAMA3_70B_SFT_CONFIG_GB200_FP8_CS_V1",
@@ -291,11 +314,13 @@ if HAVE_MEGATRON_BRIDGE:
             "llama3_8b_pretrain_config_b200",
             "llama3_8b_pretrain_config_h100",
             "llama3_8b_pretrain_config_r100",
+            "llama3_8b_pretrain_config_vr200",
             "llama3_70b_pretrain_config_gb300",
             "llama3_70b_pretrain_config_gb200",
             "llama3_70b_pretrain_config_b300",
             "llama3_70b_pretrain_config_b200",
             "llama3_70b_pretrain_config_h100",
+            "llama3_70b_pretrain_config_vr200",
             "llama3_8b_sft_config_gb200",
             "llama3_8b_sft_config_h100",
             "llama3_70b_sft_config_gb200",
@@ -311,5 +336,6 @@ if HAVE_MEGATRON_BRIDGE:
             "llama31_405b_pretrain_config_b300",
             "llama31_405b_pretrain_config_b200",
             "llama31_405b_pretrain_config_h100",
+            "llama31_405b_pretrain_config_vr200",
         ]
     )

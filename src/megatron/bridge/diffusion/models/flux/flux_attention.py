@@ -401,6 +401,7 @@ class FluxSingleAttention(SelfAttention):
     ):
         # Use RMSnorm for qk norm
         config.normalization = "RMSNorm"
+        config.qk_layernorm = True
         super().__init__(
             config=config,
             submodules=submodules,
