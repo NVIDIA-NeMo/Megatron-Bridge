@@ -934,21 +934,29 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
     # assistant mask only works if chat template has generation keyword
     template_has_generation_kwd = GENERATION_REGEX.search(tokenizer.chat_template) is not None
 
+    if not template_has_generation_kwd:
+        raise ValueError(
+            "The tokenizer's chat_template does not contain a {% generation %} block, which is required "
+            "for HF's apply_chat_template to produce assistant-only loss masks via "
+            "return_assistant_tokens_mask=True. Without it, the loss mask would silently fall back to "
+            "all-ones (loss computed on the entire conversation including system/user tokens). "
+            "To fix this, either: (1) patch the chat_template to wrap assistant content with "
+            "{% generation %}...{% endgeneration %}, or (2) use the legacy special-tokens preprocessing "
+            "path instead of use_hf_tokenizer_chat_template=True."
+        )
+
     tokenized_chat = tokenizer.apply_chat_template(
         chat,
         tools=tools,
         tokenize=True,
         return_dict=True,
-        return_assistant_tokens_mask=template_has_generation_kwd,
+        return_assistant_tokens_mask=True,
     )
 
     # Choose the last conversation as answer other history are context by finding the last masked token
     # which indicates end of context and beginning of answer
     input_ids = tokenized_chat.get("input_ids")
-    if template_has_generation_kwd:
-        mask = tokenized_chat["assistant_masks"]
-    else:
-        mask = [1] * len(input_ids)
+    mask = tokenized_chat["assistant_masks"]
 
     if 0 in mask:
         # traverse the list backward for first occurrence of masked token
