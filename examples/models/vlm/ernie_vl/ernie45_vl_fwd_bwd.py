@@ -34,6 +34,7 @@ Exit code 0 = PASS, non-zero = FAIL.
 import argparse
 import os
 
+
 # Disable torch.compile to avoid triton compatibility issues in some environments.
 # Must be set before importing torch.
 os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
@@ -52,6 +53,7 @@ def _is_rank_0() -> bool:
 
 
 def print_rank_0(msg: str):
+    """Print a message only from rank 0."""
     if _is_rank_0():
         print(msg, flush=True)
 
@@ -141,6 +143,7 @@ def run_forward_backward(
     if with_vision:
         # Read vision config and special token IDs from the model provider / HF config
         import json
+
         with open(os.path.join(hf_model_path, "config.json")) as f:
             hf_cfg = json.load(f)
 
@@ -153,13 +156,19 @@ def run_forward_backward(
         # without index-out-of-range errors in the embedding layer.
         text_cfg = hf_cfg.get("text_config", hf_cfg)
         cfg_vocab_size = text_cfg.get("vocab_size", vocab_size)
-        if image_token_id >= cfg_vocab_size or image_start_token_id >= cfg_vocab_size or image_end_token_id >= cfg_vocab_size:
+        if (
+            image_token_id >= cfg_vocab_size
+            or image_start_token_id >= cfg_vocab_size
+            or image_end_token_id >= cfg_vocab_size
+        ):
             # Use the last 3 tokens in the vocab as placeholders
             image_token_id = cfg_vocab_size - 3
             image_start_token_id = cfg_vocab_size - 2
             image_end_token_id = cfg_vocab_size - 1
-            print_rank_0(f"  Remapped special token IDs to fit vocab_size={cfg_vocab_size}: "
-                         f"image_token={image_token_id}, start={image_start_token_id}, end={image_end_token_id}")
+            print_rank_0(
+                f"  Remapped special token IDs to fit vocab_size={cfg_vocab_size}: "
+                f"image_token={image_token_id}, start={image_start_token_id}, end={image_end_token_id}"
+            )
 
             # Also update model config so get_placeholder_mask / get_rope_index use the remapped IDs
             for m in megatron_models:
@@ -184,7 +193,7 @@ def run_forward_backward(
         pixel_values = torch.randn(num_patches, patch_dim, dtype=torch.bfloat16, device="cuda")
 
         # Number of image placeholder tokens after resampler spatial merge
-        num_image_tokens = num_patches // (spatial_merge_size ** 2)  # 4 // 4 = 1
+        num_image_tokens = num_patches // (spatial_merge_size**2)  # 4 // 4 = 1
 
         # Build input_ids: [text..., image_start, <image_placeholders>, image_end, text...]
         # Ensure seq_len is large enough
@@ -212,7 +221,7 @@ def run_forward_backward(
         # mm_token_type_ids: 0=text, 1=image placeholder
         mm_token_type_ids = torch.zeros(1, actual_seq_len, dtype=torch.int32, device="cuda")
         img_start_pos = num_text_before + 1  # position of first image placeholder
-        mm_token_type_ids[0, img_start_pos:img_start_pos + num_image_tokens] = 1
+        mm_token_type_ids[0, img_start_pos : img_start_pos + num_image_tokens] = 1
 
         # Labels and loss mask
         labels = torch.randint(0, min(vocab_size, 1024), (1, actual_seq_len), device="cuda")
@@ -229,6 +238,7 @@ def run_forward_backward(
             # Use real text with tokenizer for meaningful loss measurement.
             # Labels are the next-token targets (input shifted right by 1).
             from transformers import AutoTokenizer
+
             tokenizer = AutoTokenizer.from_pretrained(hf_model_path, trust_remote_code=True)
             token_ids = tokenizer.encode(prompt, add_special_tokens=True)
             # Need at least 2 tokens for next-token prediction
@@ -363,10 +373,7 @@ def run_forward_backward(
 
     from megatron.core import parallel_state
 
-    is_last_stage = (
-        not dist.is_initialized()
-        or parallel_state.is_pipeline_last_stage()
-    )
+    is_last_stage = not dist.is_initialized() or parallel_state.is_pipeline_last_stage()
 
     if is_last_stage:
         if isinstance(output, list) and len(output) > 0:
@@ -426,8 +433,7 @@ def run_forward_backward(
         # At least some params should have gradients
         # (Not all will have gradients due to PP - only the local stage's params)
         assert params_with_grad > 0, (
-            f"No parameters have gradients! "
-            f"total_params={total_params}, params_with_grad={params_with_grad}"
+            f"No parameters have gradients! total_params={total_params}, params_with_grad={params_with_grad}"
         )
 
         # When vision is enabled, verify vision tower and resampler got gradients
@@ -441,8 +447,7 @@ def run_forward_backward(
                                 vision_params_with_grad += 1
             print_rank_0(f"  Vision params with non-zero gradient: {vision_params_with_grad}")
             assert vision_params_with_grad > 0, (
-                "Vision tower/resampler parameters have no gradients! "
-                "The vision forward path may not be exercised."
+                "Vision tower/resampler parameters have no gradients! The vision forward path may not be exercised."
             )
 
         print_rank_0("  Gradient verification passed.")
@@ -479,19 +484,24 @@ def _run(
 
 def main():
     """Parse CLI arguments and launch the forward/backward test."""
-    parser = argparse.ArgumentParser(
-        description="ERNIE 4.5 VL MoE forward/backward test"
-    )
+    parser = argparse.ArgumentParser(description="ERNIE 4.5 VL MoE forward/backward test")
     parser.add_argument("--hf-model-path", required=True, help="Path to HF toy model directory")
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--seq-len", type=int, default=16, help="Sequence length")
     parser.add_argument("--forward-only", action="store_true", help="Skip backward pass")
-    parser.add_argument("--with-vision", action="store_true",
-                        help="Include a dummy image input to exercise the vision tower and resampler")
-    parser.add_argument("--prompt", type=str, default=None,
-                        help="Use real text prompt instead of random tokens for meaningful loss measurement")
+    parser.add_argument(
+        "--with-vision",
+        action="store_true",
+        help="Include a dummy image input to exercise the vision tower and resampler",
+    )
+    parser.add_argument(
+        "--prompt",
+        type=str,
+        default=None,
+        help="Use real text prompt instead of random tokens for meaningful loss measurement",
+    )
     args = parser.parse_args()
 
     _run(

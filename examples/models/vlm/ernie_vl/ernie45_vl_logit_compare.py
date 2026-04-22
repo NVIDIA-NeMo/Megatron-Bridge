@@ -51,6 +51,7 @@ import gc
 import os
 import sys
 
+
 os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
 
 import torch
@@ -60,6 +61,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.utils.common_utils import disable_mtp_for_inference
+
 
 SIMILARITY_THRESHOLD = 0.98
 
@@ -71,6 +73,7 @@ def _is_rank_0() -> bool:
 
 
 def print_rank_0(msg: str):
+    """Print a message only from rank 0."""
     if _is_rank_0():
         print(msg, flush=True)
 
@@ -78,6 +81,7 @@ def print_rank_0(msg: str):
 # ========================================================================== #
 # Image+Text Preprocessing
 # ========================================================================== #
+
 
 def preprocess_image_text(hf_model_path: str, prompt: str, image_path: str):
     """Use the HF processor to preprocess an image+text prompt.
@@ -88,25 +92,22 @@ def preprocess_image_text(hf_model_path: str, prompt: str, image_path: str):
     Returns a dict with all tensors needed for both HF and Megatron forward.
     """
     from transformers import AutoProcessor
-    from PIL import Image
 
-    processor = AutoProcessor.from_pretrained(
-        hf_model_path, trust_remote_code=True
-    )
+    processor = AutoProcessor.from_pretrained(hf_model_path, trust_remote_code=True)
 
     # Build chat messages with image
-    messages = [{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": image_path}},
-        ]
-    }]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": image_path}},
+            ],
+        }
+    ]
 
     # Apply chat template
-    text = processor.tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
+    text = processor.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     print_rank_0(f"  Chat template text (first 200 chars): {text[:200]}...")
 
     # Process vision info (loads and resizes images)
@@ -139,6 +140,7 @@ def preprocess_image_text(hf_model_path: str, prompt: str, image_path: str):
 # ========================================================================== #
 # Phase 1: HF Model Forward
 # ========================================================================== #
+
 
 def run_hf_forward(
     hf_model_path: str,
@@ -180,6 +182,7 @@ def run_hf_forward(
     # route tensors through meta-device shape inference, which breaks for
     # data-dependent ops (torch.nonzero) used in ERNIE VL MoE routing.
     from accelerate.hooks import remove_hook_from_module
+
     for _name, _module in hf_model.named_modules():
         remove_hook_from_module(_module)
     print_rank_0("  Removed accelerate dispatch hooks from all modules.")
@@ -192,7 +195,7 @@ def run_hf_forward(
     # indexing on meta-dispatched tensors.
     _fixed_moe = 0
     for _name, _module in hf_model.named_modules():
-        if hasattr(_module, 'use_correction_bias') and _module.use_correction_bias:
+        if hasattr(_module, "use_correction_bias") and _module.use_correction_bias:
             _module.use_correction_bias = False
             _fixed_moe += 1
     if _fixed_moe:
@@ -201,19 +204,17 @@ def run_hf_forward(
     # Safety: fix inv_freq if stuck on meta device (only happens with
     # device_map="auto").  With device_map={"": device} this is a no-op.
     for name, module in hf_model.named_modules():
-        if hasattr(module, 'inv_freq') and isinstance(module.inv_freq, torch.Tensor):
-            if module.inv_freq.device.type == 'meta':
+        if hasattr(module, "inv_freq") and isinstance(module.inv_freq, torch.Tensor):
+            if module.inv_freq.device.type == "meta":
                 dim = module.inv_freq.shape[0] * 2  # inv_freq has shape [dim//2]
                 theta = 10000.0
-                module.inv_freq = 1.0 / (theta ** (
-                    torch.arange(0, dim, 2, dtype=torch.float32) / dim
-                ))
+                module.inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
                 print_rank_0(f"  Fixed meta inv_freq in {name} -> CPU, shape={module.inv_freq.shape}")
 
     if processor_output is not None:
         # Image+text VL forward
         # Register image preprocessor for GPU-side pixel normalization
-        if processor is not None and hasattr(hf_model, 'add_image_preprocess'):
+        if processor is not None and hasattr(hf_model, "add_image_preprocess"):
             hf_model.add_image_preprocess(processor)
             print_rank_0("  Image preprocessor registered on HF model")
 
@@ -250,7 +251,7 @@ def run_hf_forward(
         # 3D M-RoPE position_ids: [batch, seq_len, 3] -- for text-only, all 3 dims identical
         position_ids = (
             torch.arange(seq_len, dtype=torch.long, device=device)
-            .unsqueeze(0)   # [1, seq_len]
+            .unsqueeze(0)  # [1, seq_len]
             .unsqueeze(-1)  # [1, seq_len, 1]
             .expand(1, seq_len, 3)  # [1, seq_len, 3]
             .clone()
@@ -286,7 +287,10 @@ def run_hf_forward(
 # Phase 2: Megatron Model Forward
 # ========================================================================== #
 
+
 class SingleBatchIterator:
+    """Iterator that yields a single batch for Megatron forward scheduling."""
+
     def __init__(self, batch):
         self.batch = batch
         self._yielded = False
@@ -413,10 +417,7 @@ def run_megatron_forward(
         )
 
     # Process output on last pipeline stage
-    is_last_stage = (
-        not dist.is_initialized()
-        or parallel_state.is_pipeline_last_stage()
-    )
+    is_last_stage = not dist.is_initialized() or parallel_state.is_pipeline_last_stage()
 
     megatron_logits_cpu = None
 
@@ -433,12 +434,9 @@ def run_megatron_forward(
 
         megatron_logits = output[0, -1, :].float()  # [padded_vocab_size]
 
-        is_primary = (
-            not dist.is_initialized()
-            or (
-                parallel_state.get_tensor_model_parallel_rank() == 0
-                and parallel_state.get_expert_model_parallel_rank() == 0
-            )
+        is_primary = not dist.is_initialized() or (
+            parallel_state.get_tensor_model_parallel_rank() == 0
+            and parallel_state.get_expert_model_parallel_rank() == 0
         )
 
         if is_primary:
@@ -447,8 +445,12 @@ def run_megatron_forward(
             top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
 
             print_rank_0(f"  Megatron output shape: {output.shape}")
-            print_rank_0(f"  Megatron logits stats: mean={megatron_logits.mean():.4f}, std={megatron_logits.std():.4f}")
-            print_rank_0(f"  Megatron next token: {megatron_next_token.item()} ('{tokenizer.decode([megatron_next_token.item()])}')")
+            print_rank_0(
+                f"  Megatron logits stats: mean={megatron_logits.mean():.4f}, std={megatron_logits.std():.4f}"
+            )
+            print_rank_0(
+                f"  Megatron next token: {megatron_next_token.item()} ('{tokenizer.decode([megatron_next_token.item()])}')"
+            )
             print_rank_0(f"  Megatron Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
 
             megatron_logits_cpu = megatron_logits.cpu()
@@ -460,7 +462,10 @@ def run_megatron_forward(
 # Phase 3: Comparison
 # ========================================================================== #
 
-def compare_logits(hf_logits: torch.Tensor, megatron_logits: torch.Tensor, tokenizer, threshold: float = SIMILARITY_THRESHOLD):
+
+def compare_logits(
+    hf_logits: torch.Tensor, megatron_logits: torch.Tensor, tokenizer, threshold: float = SIMILARITY_THRESHOLD
+):
     """Compare HF and Megatron logits. Returns True if pass."""
     print_rank_0("\n=== Phase 3: Comparing Logits ===")
 
@@ -509,7 +514,9 @@ def compare_logits(hf_logits: torch.Tensor, megatron_logits: torch.Tensor, token
 # Main
 # ========================================================================== #
 
+
 def main():
+    """Run ERNIE 4.5 VL MoE logit comparison between HF and Megatron."""
     parser = argparse.ArgumentParser(description="ERNIE 4.5 VL MoE logit comparison (HF vs Megatron)")
     parser.add_argument("--hf-model-path", required=True, help="Path to HF model directory")
     parser.add_argument("--prompt", default="Hello, how are you?", help="Text prompt for comparison")
@@ -535,6 +542,7 @@ def main():
 
     # Load tokenizer
     from transformers import AutoTokenizer
+
     tokenizer = AutoTokenizer.from_pretrained(
         args.hf_model_path,
         trust_remote_code=True,
@@ -554,9 +562,7 @@ def main():
         # Image+Text mode: use processor to prepare all inputs
         # ============================================================
         print_rank_0("\n=== Preprocessing: Image+Text ===")
-        processor_output, processor = preprocess_image_text(
-            args.hf_model_path, args.prompt, args.image_path
-        )
+        processor_output, processor = preprocess_image_text(args.hf_model_path, args.prompt, args.image_path)
         input_ids = processor_output["input_ids"]
 
         # Extract vision tensors for Megatron side
@@ -572,10 +578,11 @@ def main():
         if "token_type_ids" in processor_output:
             hf_token_type_ids = processor_output["token_type_ids"]
             # Take the first seq_len values (drop the extra trailing token)
-            mm_token_type_ids = hf_token_type_ids[:, :input_ids.size(1)].to(torch.int32)
+            mm_token_type_ids = hf_token_type_ids[:, : input_ids.size(1)].to(torch.int32)
             num_img_tokens = (mm_token_type_ids == 1).sum().item()
-            print_rank_0(f"  mm_token_type_ids: {mm_token_type_ids.shape}, "
-                         f"image tokens: {num_img_tokens}/{input_ids.size(1)}")
+            print_rank_0(
+                f"  mm_token_type_ids: {mm_token_type_ids.shape}, image tokens: {num_img_tokens}/{input_ids.size(1)}"
+            )
     else:
         # ============================================================
         # Text-only mode: simple tokenization
@@ -598,7 +605,8 @@ def main():
         # Also pad mm_token_type_ids if present
         if mm_token_type_ids is not None:
             mm_padding = torch.zeros(
-                mm_token_type_ids.shape[0], pad_len,
+                mm_token_type_ids.shape[0],
+                pad_len,
                 dtype=mm_token_type_ids.dtype,
             )
             mm_token_type_ids = torch.cat([mm_token_type_ids, mm_padding], dim=1)
@@ -607,7 +615,9 @@ def main():
 
     # Phase 1: HF forward (rank 0 only)
     hf_logits = run_hf_forward(
-        args.hf_model_path, input_ids, tokenizer,
+        args.hf_model_path,
+        input_ids,
+        tokenizer,
         processor_output=processor_output,
         processor=processor,
     )

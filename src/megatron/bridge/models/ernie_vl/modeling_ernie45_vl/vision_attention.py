@@ -27,6 +27,8 @@ This approach mirrors Qwen3VLSelfAttention but with ERNIE-specific
 non-interleaved rotation.
 """
 
+from typing import Optional, Tuple, Union
+
 from megatron.core.models.common.embeddings.rope_utils import _apply_rotary_pos_emb_bshd
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.attention import (
@@ -37,8 +39,6 @@ from megatron.core.transformer.attention import (
     nvtx_range_push,
 )
 from torch import Tensor
-
-from typing import Optional, Tuple, Union
 
 
 def _apply_rotary_pos_emb_thd_absolute(
@@ -56,9 +56,7 @@ def _apply_rotary_pos_emb_thd_absolute(
         Tensor of shape [total_tokens, num_heads, head_dim] with RoPE applied.
     """
     # Unsqueeze to [total_tokens, 1, num_heads, head_dim] for bshd RoPE, then squeeze back
-    return _apply_rotary_pos_emb_bshd(
-        t[:, None], freqs, rotary_interleaved=rotary_interleaved
-    ).squeeze(1)
+    return _apply_rotary_pos_emb_bshd(t[:, None], freqs, rotary_interleaved=rotary_interleaved).squeeze(1)
 
 
 def apply_rotary_pos_emb_absolute(
@@ -88,13 +86,9 @@ def apply_rotary_pos_emb_absolute(
     t = t.float()
 
     if cu_seqlens is None:
-        result = _apply_rotary_pos_emb_bshd(
-            t, freqs, rotary_interleaved=config.rotary_interleaved
-        )
+        result = _apply_rotary_pos_emb_bshd(t, freqs, rotary_interleaved=config.rotary_interleaved)
     else:
-        result = _apply_rotary_pos_emb_thd_absolute(
-            t, cu_seqlens, freqs, rotary_interleaved=config.rotary_interleaved
-        )
+        result = _apply_rotary_pos_emb_thd_absolute(t, cu_seqlens, freqs, rotary_interleaved=config.rotary_interleaved)
 
     return result.to(orig_dtype)
 
@@ -199,11 +193,17 @@ class ErnieVLSelfAttention(SelfAttention):
 
             if q_pos_emb is not None:
                 query = apply_rotary_pos_emb_absolute(
-                    query, q_pos_emb, config=self.config, cu_seqlens=cu_seqlens_q,
+                    query,
+                    q_pos_emb,
+                    config=self.config,
+                    cu_seqlens=cu_seqlens_q,
                 )
             if k_pos_emb is not None:
                 key = apply_rotary_pos_emb_absolute(
-                    key, k_pos_emb, config=self.config, cu_seqlens=cu_seqlens_kv,
+                    key,
+                    k_pos_emb,
+                    config=self.config,
+                    cu_seqlens=cu_seqlens_kv,
                 )
         nvtx_range_pop(suffix="rotary_pos_emb")
 

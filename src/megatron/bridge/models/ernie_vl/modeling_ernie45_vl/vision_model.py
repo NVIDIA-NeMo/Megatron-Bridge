@@ -115,12 +115,7 @@ class ErnieVisionRotaryEmbedding(nn.Module):
             position indices and inverse frequencies.
         """
         if not hasattr(self, "inv_freq"):
-            inv_freq = 1.0 / (
-                self.theta
-                ** (
-                    torch.arange(0, self.dim, 2, dtype=torch.float) / self.dim
-                )
-            )
+            inv_freq = 1.0 / (self.theta ** (torch.arange(0, self.dim, 2, dtype=torch.float) / self.dim))
             self.register_buffer("inv_freq", inv_freq, persistent=False)
         seq = torch.arange(seqlen, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
         freqs = torch.outer(seq, self.inv_freq)
@@ -230,14 +225,8 @@ class ErnieVLVisionModel(VisionModule):
             intra_col = torch.arange(merge_size, device=device)
 
             # Full-resolution (H, W) positions
-            row_idx = (
-                block_rows[:, None, None, None] * merge_size
-                + intra_row[None, None, :, None]
-            )
-            col_idx = (
-                block_cols[None, :, None, None] * merge_size
-                + intra_col[None, None, None, :]
-            )
+            row_idx = block_rows[:, None, None, None] * merge_size + intra_row[None, None, :, None]
+            col_idx = block_cols[None, :, None, None] * merge_size + intra_col[None, None, None, :]
 
             row_idx = row_idx.expand(merged_h, merged_w, merge_size, merge_size).reshape(-1)
             col_idx = col_idx.expand(merged_h, merged_w, merge_size, merge_size).reshape(-1)
@@ -248,7 +237,7 @@ class ErnieVLVisionModel(VisionModule):
                 coords = coords.repeat(num_frames, 1)
 
             num_tokens = coords.shape[0]
-            pos_ids[offset: offset + num_tokens] = coords
+            pos_ids[offset : offset + num_tokens] = coords
             offset += num_tokens
 
         # Look up frequency table by position IDs: [total_tokens, 2, dim//2]
@@ -274,9 +263,7 @@ class ErnieVLVisionModel(VisionModule):
             PackedSeqParams with cu_seqlens for thd-format attention.
         """
         # Each frame is a separate sequence: seqlen = H * W
-        seqlens = torch.repeat_interleave(
-            grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]
-        )
+        seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0])
         cu_seqlens = seqlens.cumsum(dim=0)
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0).int()
 

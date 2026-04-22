@@ -32,7 +32,12 @@ import types
 from typing import Optional
 
 import torch
+from megatron.core import parallel_state
 from megatron.core.inference.contexts import BaseInferenceContext
+from megatron.core.models.common.embeddings.rotary_pos_embedding import (
+    MultimodalRotaryEmbedding,
+    get_pos_emb_on_this_cp_rank,
+)
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
@@ -43,21 +48,15 @@ from transformers.models.ernie4_5_vl_moe.modeling_ernie4_5_vl_moe import (
     Ernie4_5_VLMoeVisionTransformerPretrainedModel,
 )
 
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import (
+    clear_moe_mm_token_type_ids,
+    set_moe_mm_token_type_ids,
+)
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_layer_spec import get_ernie_vit_layer_spec
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_model import ErnieVLVisionModel
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_transformer_config import get_ernie_vision_config
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
-
-from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import (
-    set_moe_mm_token_type_ids,
-    clear_moe_mm_token_type_ids,
-)
-from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_model import ErnieVLVisionModel
-from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_layer_spec import get_ernie_vit_layer_spec
-from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_transformer_config import get_ernie_vision_config
-from megatron.core.models.common.embeddings.rotary_pos_embedding import (
-    MultimodalRotaryEmbedding,
-    get_pos_emb_on_this_cp_rank,
-)
-from megatron.core import parallel_state
 
 
 def _normalize_hf_config(hf_config):
@@ -125,6 +124,7 @@ class _MgVitTowerAdapter(torch.nn.Module):
 
     def forward(self, pixel_values, grid_thw, return_dict=True, **kwargs):
         from transformers.modeling_outputs import BaseModelOutputWithPooling
+
         hidden_states = self.mg_vision_model(pixel_values, grid_thw)
         return BaseModelOutputWithPooling(last_hidden_state=hidden_states)
 
@@ -219,9 +219,7 @@ class ErnieMultimodalRotaryEmbedding(MultimodalRotaryEmbedding):
         t_freqs = freqs[0, :, :, t_freq_indices]  # [bs, seq_len, 20]
 
         # Interleave H and W: [H0, W0, H1, W1, ..., H21, W21] -> 44 values
-        hw_interleaved = torch.stack([h_freqs, w_freqs], dim=-1).reshape(
-            bs, seq_len, hw_bands
-        )  # [bs, seq_len, 44]
+        hw_interleaved = torch.stack([h_freqs, w_freqs], dim=-1).reshape(bs, seq_len, hw_bands)  # [bs, seq_len, 44]
 
         # Concatenate HW + T
         combined_freqs = torch.cat([hw_interleaved, t_freqs], dim=-1)
@@ -230,9 +228,7 @@ class ErnieMultimodalRotaryEmbedding(MultimodalRotaryEmbedding):
         # Apply interleaved doubling (matching rotary_interleaved=True):
         # Each freq band f expands to two consecutive head dims: [f, f]
         combined_flat = combined_freqs.reshape(bs, -1, 1)
-        emb = torch.stack((combined_flat, combined_flat), dim=-1).reshape(
-            bs, seq_len, -1
-        )
+        emb = torch.stack((combined_flat, combined_flat), dim=-1).reshape(bs, seq_len, -1)
         # emb: [bs, seq_len, 128]
 
         # Reshape to match MCore expected output: [seq_len, bs, 1, head_dim]
@@ -301,7 +297,8 @@ class Ernie45VLModel(MegatronModule):
                 # Megatron-Core native ViT: TP-native attention and MLP via
                 # TransformerBlock with TE modules.
                 vision_transformer_config = get_ernie_vision_config(
-                    config.vision_config, megatron_config=config,
+                    config.vision_config,
+                    megatron_config=config,
                 )
                 vision_layer_spec = get_ernie_vit_layer_spec()
                 self.vision_model = ErnieVLVisionModel(
@@ -315,9 +312,7 @@ class Ernie45VLModel(MegatronModule):
                 self.vision_tower = _MgVitTowerAdapter(self.vision_model)
             else:
                 # HF-wrapped ViT: replicated across TP ranks.
-                self.vision_tower = Ernie4_5_VLMoeVisionTransformerPretrainedModel._from_config(
-                    config.vision_config
-                )
+                self.vision_tower = Ernie4_5_VLMoeVisionTransformerPretrainedModel._from_config(config.vision_config)
                 # Ensure HF vision tower params are tracked for TP gradient sync
                 hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)
 
@@ -385,7 +380,7 @@ class Ernie45VLModel(MegatronModule):
             # Expand to match flattened patch layout: [C * patch_size^2] = [588]
             # Each channel's mean/std is repeated patch_size^2 times
             pixel_mean = clip_mean.repeat_interleave(pixels_per_patch)  # [588]
-            pixel_std = clip_std.repeat_interleave(pixels_per_patch)    # [588]
+            pixel_std = clip_std.repeat_interleave(pixels_per_patch)  # [588]
 
             self.register_buffer("pixel_mean", pixel_mean, persistent=False)
             self.register_buffer("pixel_std", pixel_std, persistent=False)
@@ -420,7 +415,9 @@ class Ernie45VLModel(MegatronModule):
         # Rescale: divide by 255 (in float32 for precision)
         pixel_values = pixel_values.to(torch.float32) * (1.0 / 255.0)
         # Normalize: (x - mean) / std using CLIP mean/std
-        pixel_values = (pixel_values - self.pixel_mean.to(pixel_values.device)) / self.pixel_std.to(pixel_values.device)
+        pixel_values = (pixel_values - self.pixel_mean.to(pixel_values.device)) / self.pixel_std.to(
+            pixel_values.device
+        )
         # Cast to bfloat16 for the ViT
         return pixel_values.to(torch.bfloat16)
 
@@ -518,7 +515,7 @@ class Ernie45VLModel(MegatronModule):
             ]
             boundary_mask = torch.zeros_like(input_ids, dtype=torch.bool)
             for tid in boundary_token_ids:
-                boundary_mask |= (input_ids == tid)
+                boundary_mask |= input_ids == tid
             if boundary_mask.any():
                 rope_mm_token_type_ids = mm_token_type_ids.clone()
                 rope_mm_token_type_ids[boundary_mask] = 0

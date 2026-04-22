@@ -29,6 +29,7 @@ from typing import Any, Callable, List, Tuple, Union
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+
 try:
     from transformers.models.ernie4_5_vl_moe.configuration_ernie4_5_vl_moe import (
         Ernie4_5_VLMoeConfig,
@@ -40,11 +41,11 @@ except ImportError:
     Ernie4_5_VLMoeConfig = None
     Ernie4_5_VLMoeVisionConfig = None
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_decoder_layer_spec import (
     get_ernie45_vl_decoder_block_spec,
 )
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
 @dataclass
@@ -71,7 +72,9 @@ class Ernie45VLModelProvider(GPTModelProvider):
 
     # Vision configuration -- accepts either Ernie4_5_VLMoeVisionConfig (nested) or
     # DFNRopeVisionTransformerConfig (flat/auto_map) or any config-like object.
-    vision_config: Any = field(default_factory=lambda: Ernie4_5_VLMoeVisionConfig() if Ernie4_5_VLMoeVisionConfig else None)
+    vision_config: Any = field(
+        default_factory=lambda: Ernie4_5_VLMoeVisionConfig() if Ernie4_5_VLMoeVisionConfig else None
+    )
     hf_config: Any = None
 
     # Dual-pool MoE intermediate sizes: (text_ffn_size, vision_ffn_size)

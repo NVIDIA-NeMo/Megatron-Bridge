@@ -25,6 +25,7 @@ Usage:
 import argparse
 import os
 
+
 os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
 
 import torch
@@ -32,6 +33,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def main():
+    """Run HF model loss check."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--hf-model-path", required=True)
     parser.add_argument("--prompt", required=True)
@@ -55,14 +57,14 @@ def main():
     print(f"Tokenized: {len(token_ids)} tokens")
     print(f"Token IDs: {token_ids}")
 
-    device = model.device if hasattr(model, 'device') else next(model.parameters()).device
+    device = model.device if hasattr(model, "device") else next(model.parameters()).device
     input_ids = torch.tensor([token_ids], dtype=torch.long, device=device)
     seq_len = input_ids.size(1)
 
     # 3D M-RoPE position_ids: [batch, seq_len, 3] — for text-only, all 3 dims identical
     position_ids = (
         torch.arange(seq_len, dtype=torch.long, device=device)
-        .unsqueeze(0)   # [1, seq_len]
+        .unsqueeze(0)  # [1, seq_len]
         .unsqueeze(-1)  # [1, seq_len, 1]
         .expand(1, seq_len, 3)  # [1, seq_len, 3]
         .clone()
@@ -82,7 +84,7 @@ def main():
 
     # The HF model may not compute loss even when labels are passed,
     # so compute it manually from logits.
-    logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
+    logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
     # logits: [1, seq_len, vocab_size]
     # Shift: logits[:-1] predicts tokens[1:]
     shift_logits = logits[:, :-1, :].contiguous().float()
@@ -94,7 +96,9 @@ def main():
     )
 
     print(f"\nHF model loss (next-token prediction): {loss.item():.6f}")
-    print(f"ln(vocab_size) = ln({tokenizer.vocab_size}) = {torch.log(torch.tensor(float(tokenizer.vocab_size))).item():.4f}")
+    print(
+        f"ln(vocab_size) = ln({tokenizer.vocab_size}) = {torch.log(torch.tensor(float(tokenizer.vocab_size))).item():.4f}"
+    )
 
     print(f"\nLogits shape: {logits.shape}")
 
@@ -104,8 +108,10 @@ def main():
         actual_next = input_ids[0, pos + 1].item()
         decoded_predictions = [tokenizer.decode([tid]) for tid in topk_ids.tolist()]
         actual_decoded = tokenizer.decode([actual_next])
-        print(f"  Position {pos}: actual_next='{actual_decoded}'({actual_next}), "
-              f"top5={list(zip(decoded_predictions, topk_ids.tolist(), topk_vals.tolist()))}")
+        print(
+            f"  Position {pos}: actual_next='{actual_decoded}'({actual_next}), "
+            f"top5={list(zip(decoded_predictions, topk_ids.tolist(), topk_vals.tolist()))}"
+        )
 
 
 if __name__ == "__main__":
