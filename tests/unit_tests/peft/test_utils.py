@@ -745,6 +745,180 @@ class TestGroupedExpertLinearAdapter:
         )
         torch.testing.assert_close(output, expected)
 
+    def test_grouped_expert_linear_adapter_grouped_mm_falls_back_on_cpu(self):
+        """CPU inputs should not enter the grouped_mm fast path."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        with torch.no_grad():
+            adapter.linear_in.weight[0].copy_(torch.eye(2))
+            adapter.linear_out.weight[0].copy_(torch.eye(2))
+            adapter.linear_in.weight[1].copy_(2 * torch.eye(2))
+            adapter.linear_out.weight[1].copy_(torch.eye(2))
+
+        x = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]
+        )
+        with patch(
+            "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+            side_effect=AssertionError("grouped_mm should not run on CPU"),
+            create=True,
+        ):
+            output = adapter(x, [1, 2])
+
+        expected = torch.tensor(
+            [
+                [1.0, 2.0],
+                [6.0, 8.0],
+                [10.0, 12.0],
+            ]
+        )
+        torch.testing.assert_close(output, expected)
+
+    def test_grouped_expert_linear_adapter_grouped_mm_skips_zero_split_experts(self):
+        """Grouped GEMM should only include experts that actually receive tokens."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=3,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        with torch.no_grad():
+            adapter.linear_in.weight[0].copy_(torch.eye(2))
+            adapter.linear_out.weight[0].copy_(torch.eye(2))
+            adapter.linear_in.weight[1].copy_(7 * torch.eye(2))
+            adapter.linear_out.weight[1].copy_(torch.eye(2))
+            adapter.linear_in.weight[2].copy_(3 * torch.eye(2))
+            adapter.linear_out.weight[2].copy_(torch.eye(2))
+
+        x = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]
+        )
+
+        def fake_grouped_mm(inputs, weights, *, offs):
+            assert offs.dtype == torch.int32
+            chunks = []
+            start = 0
+            for weight_idx, end in enumerate(offs.tolist()):
+                chunks.append(inputs[start:end] @ weights[weight_idx])
+                start = end
+            return torch.cat(chunks, dim=0)
+
+        with (
+            patch.object(GroupedExpertLinearAdapter, "_can_use_grouped_mm", return_value=True),
+            patch(
+                "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+                side_effect=fake_grouped_mm,
+                create=True,
+            ) as mock_grouped_mm,
+        ):
+            output = adapter(x, [1, 0, 2])
+
+        expected = torch.tensor(
+            [
+                [1.0, 2.0],
+                [9.0, 12.0],
+                [15.0, 18.0],
+            ]
+        )
+        torch.testing.assert_close(output, expected)
+        assert mock_grouped_mm.call_count == 2
+        assert mock_grouped_mm.call_args_list[0].args[1].shape[0] == 2
+        assert mock_grouped_mm.call_args_list[0].kwargs["offs"].tolist() == [1, 3]
+
+    def test_grouped_expert_linear_adapter_grouped_mm_requires_rank_alignment(self):
+        """Grouped GEMM should be disabled when the LoRA rank violates kernel stride requirements."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=16,
+            out_features=32,
+            dim=12,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        fake_x = Mock(is_cuda=True, dtype=torch.bfloat16, device=torch.device("cuda"))
+
+        with patch("megatron.bridge.peft.utils.torch.cuda.get_device_capability", return_value=(8, 0)):
+            assert not adapter._can_use_grouped_mm(fake_x)
+
+    def test_grouped_expert_linear_adapter_te_grouped_mlp_prefers_te_backend_over_grouped_mm(self):
+        """TEGroupedMLP-style positional list splits should prefer the TE backend."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        x = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]
+        )
+        hidden = torch.tensor(
+            [
+                [0.5, 1.0],
+                [1.5, 2.0],
+                [2.5, 3.0],
+            ]
+        )
+        expected = torch.tensor(
+            [
+                [1.0, 1.5],
+                [2.0, 2.5],
+                [3.0, 3.5],
+            ]
+        )
+
+        with (
+            patch.object(GroupedExpertLinearAdapter, "_can_use_grouped_mm", return_value=True),
+            patch.object(GroupedExpertLinearAdapter, "_can_use_te_grouped_linear", return_value=True),
+            patch.object(
+                GroupedExpertLinearAdapter,
+                "_forward_te_grouped_linear",
+                side_effect=[hidden, expected],
+            ) as mock_te_backend,
+            patch(
+                "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+                side_effect=AssertionError("grouped_mm should not run for TEGroupedMLP"),
+                create=True,
+            ),
+        ):
+            output = adapter(x, [1, 2])
+
+        torch.testing.assert_close(output, expected)
+        assert mock_te_backend.call_count == 2
+        assert mock_te_backend.call_args_list[0].kwargs["m_splits"] == [1, 2]
+        assert mock_te_backend.call_args_list[1].kwargs["m_splits"] == [1, 2]
+
     def test_grouped_expert_linear_adapter_requires_expert_tp_group_for_gather(self):
         """Per-expert LoRA should fail clearly when expert TP is configured without initialized groups."""
         config = MockModelParallelConfig()
