@@ -98,6 +98,8 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
+
+
 # For Paged Stashing support
 try:
     from megatron.core.transformer.moe.paged_stash import PagedStashRunner
@@ -305,8 +307,9 @@ def train(
     # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
     if HAS_PAGED_STASHING and config.model.moe_expert_rank_capacity_factor is not None:
         copy_main_params = config.optimizer.reuse_grad_buf_for_mxfp8_param_ag and config.ddp.overlap_param_gather
-        forward_backward_func = PagedStashRunner(model_config, copy_main_params, model, optimizer, forward_backward_func)
-
+        forward_backward_func = PagedStashRunner(
+            model_config, copy_main_params, model, optimizer, forward_backward_func
+        )
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")

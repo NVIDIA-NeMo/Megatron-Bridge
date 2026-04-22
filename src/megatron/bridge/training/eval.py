@@ -40,6 +40,8 @@ from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
 from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
+
+
 # For Paged Stashing support
 try:
     from megatron.core.transformer.moe.paged_stash import PagedStashRunner
@@ -47,6 +49,7 @@ try:
     HAS_PAGED_STASHING = True
 except ImportError:
     HAS_PAGED_STASHING = False
+
 
 def evaluate(
     state: GlobalState,
@@ -172,8 +175,12 @@ def evaluate(
         # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
         # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
         if HAS_PAGED_STASHING and state.cfg.model.moe_expert_rank_capacity_factor is not None:
-            copy_main_params = state.cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag and state.cfg.ddp.overlap_param_gather
-            forward_backward_func = PagedStashRunner(state.cfg.model, copy_main_params, model, None, forward_backward_func)
+            copy_main_params = (
+                state.cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag and state.cfg.ddp.overlap_param_gather
+            )
+            forward_backward_func = PagedStashRunner(
+                state.cfg.model, copy_main_params, model, None, forward_backward_func
+            )
 
         iteration = 0
         while iteration < state.cfg.validation.eval_iters:
