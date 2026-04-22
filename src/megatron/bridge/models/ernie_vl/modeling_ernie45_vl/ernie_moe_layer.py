@@ -148,7 +148,8 @@ class ErnieMultiTypeMoE(MegatronModule):
         self.text_moe_layer = build_module(submodules.text_moe_layer, self.text_config)
         self.vision_moe_layer = build_module(submodules.vision_moe_layer, self.vision_config)
         self.shared_experts = build_module(
-            submodules.shared_experts, config=config,
+            submodules.shared_experts,
+            config=config,
             pg_collection=pg_collection,
             gate=False,
         )
@@ -185,8 +186,10 @@ class ErnieMultiTypeMoE(MegatronModule):
         if token_type_ids is None:
             # Ultimate fallback: all text tokens (no vision routing)
             token_type_ids = torch.zeros(
-                hidden_states.shape[1], hidden_states.shape[0],
-                dtype=torch.long, device=hidden_states.device,
+                hidden_states.shape[1],
+                hidden_states.shape[0],
+                dtype=torch.long,
+                device=hidden_states.device,
             )
 
         # hidden_states: [seq_len, batch, hidden_size]
@@ -216,7 +219,7 @@ class ErnieMultiTypeMoE(MegatronModule):
         text_indices = (~vision_mask).nonzero(as_tuple=True)[0]
         vision_indices = vision_mask.nonzero(as_tuple=True)[0]
 
-        text_hidden = flat_hidden[text_indices]    # [N_text, 1, hidden]
+        text_hidden = flat_hidden[text_indices]  # [N_text, 1, hidden]
         vision_hidden = flat_hidden[vision_indices]  # [N_vision, 1, hidden]
 
         # Route filtered tokens through their respective MoE pools.
@@ -264,9 +267,7 @@ class ErnieMultiTypeMoE(MegatronModule):
             flat_moe_output[vision_indices] = vision_output
 
         # Reshape back to [seq_len, batch, hidden] from [batch * seq_len, 1, hidden]
-        moe_output = flat_moe_output.reshape(
-            batch_size, seq_len, hidden_size
-        ).permute(1, 0, 2).contiguous()
+        moe_output = flat_moe_output.reshape(batch_size, seq_len, hidden_size).permute(1, 0, 2).contiguous()
 
         # Shared experts see ALL tokens (same as HF)
         # SharedExpertMLP.forward() returns a single tensor (not a tuple),
@@ -281,7 +282,7 @@ class ErnieMultiTypeMoE(MegatronModule):
     def set_layer_number(self, layer_number: int):
         """Set the layer number for both MoE pools."""
         self.layer_number = layer_number
-        if hasattr(self.text_moe_layer, 'router'):
+        if hasattr(self.text_moe_layer, "router"):
             self.text_moe_layer.router.set_layer_number(layer_number)
-        if hasattr(self.vision_moe_layer, 'router'):
+        if hasattr(self.vision_moe_layer, "router"):
             self.vision_moe_layer.router.set_layer_number(layer_number)

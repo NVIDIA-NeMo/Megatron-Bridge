@@ -87,16 +87,19 @@ class _PPSafeMixin:
 
 class _PPSafeAutoMapping(_PPSafeMixin, AutoMapping):
     """AutoMapping that skips export for missing parameters."""
+
     pass
 
 
 class _PPSafeReplicatedMapping(_PPSafeMixin, ReplicatedMapping):
     """ReplicatedMapping that skips export for missing parameters."""
+
     pass
 
 
 class _PPSafeGatedMLPMapping(_PPSafeMixin, GatedMLPMapping):
     """GatedMLPMapping that skips export for missing parameters."""
+
     pass
 
 
@@ -211,9 +214,7 @@ class Ernie45Bridge(MegatronModelBridge):
 
         # Shared experts
         moe_num_shared = getattr(hf_config, "moe_num_shared_experts", 2)
-        provider.moe_shared_expert_intermediate_size = (
-            provider.moe_ffn_hidden_size * moe_num_shared
-        )
+        provider.moe_shared_expert_intermediate_size = provider.moe_ffn_hidden_size * moe_num_shared
 
         # Router settings
         provider.moe_aux_loss_coeff = getattr(hf_config, "router_aux_loss_coef", 0.001)
@@ -262,24 +263,14 @@ class Ernie45Bridge(MegatronModelBridge):
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
             # Attention
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": (
-                "model.layers.*.input_layernorm.weight"
-            ),
-            "decoder.layers.*.self_attention.linear_proj.weight": (
-                "model.layers.*.self_attn.o_proj.weight"
-            ),
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": ("model.layers.*.input_layernorm.weight"),
+            "decoder.layers.*.self_attention.linear_proj.weight": ("model.layers.*.self_attn.o_proj.weight"),
             # Dense MLP layernorm (layer 0 -- fused into linear_fc1)
-            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": (
-                "model.layers.*.post_attention_layernorm.weight"
-            ),
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": ("model.layers.*.post_attention_layernorm.weight"),
             # Dense MLP down_proj (layer 0)
-            "decoder.layers.*.mlp.linear_fc2.weight": (
-                "model.layers.*.mlp.down_proj.weight"
-            ),
+            "decoder.layers.*.mlp.linear_fc2.weight": ("model.layers.*.mlp.down_proj.weight"),
             # MoE layers: pre_mlp_layernorm
-            "decoder.layers.*.pre_mlp_layernorm.weight": (
-                "model.layers.*.post_attention_layernorm.weight"
-            ),
+            "decoder.layers.*.pre_mlp_layernorm.weight": ("model.layers.*.post_attention_layernorm.weight"),
         }
 
         mapping_list = []

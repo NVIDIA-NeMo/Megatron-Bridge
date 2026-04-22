@@ -44,8 +44,9 @@ Exit code 0 = PASS, non-zero = FAIL.
 
 import argparse
 import logging
-import sys
 import os
+import sys
+
 
 os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
 
@@ -74,6 +75,7 @@ def build_hf_vit(hf_model_path: str, device: torch.device):
     from megatron.bridge.models.ernie_vl.modeling_ernie45_vl import (
         _normalize_vision_config,
     )
+
     _normalize_vision_config(vision_config, hf_config=hf_config)
 
     # Create HF ViT from config (random weights)
@@ -81,8 +83,9 @@ def build_hf_vit(hf_model_path: str, device: torch.device):
 
     # Load weights from the checkpoint
     # HF ViT weights are prefixed with "vision_model." or "model.vision_model." on disk
-    from safetensors import safe_open
     from pathlib import Path
+
+    from safetensors import safe_open
 
     model_dir = Path(hf_model_path)
     safetensors_files = list(model_dir.glob("*.safetensors"))
@@ -103,13 +106,11 @@ def build_hf_vit(hf_model_path: str, device: torch.device):
             for key in f.keys():
                 if key.startswith(vision_prefix):
                     # Strip the prefix to get the HF in-memory key
-                    local_key = key[len(vision_prefix):]
+                    local_key = key[len(vision_prefix) :]
                     vision_state_dict[local_key] = f.get_tensor(key)
 
     if not vision_state_dict:
-        raise ValueError(
-            f"No vision weights found with prefix '{vision_prefix}' in {hf_model_path}"
-        )
+        raise ValueError(f"No vision weights found with prefix '{vision_prefix}' in {hf_model_path}")
 
     # Load state dict into HF ViT
     missing, unexpected = hf_vit.load_state_dict(vision_state_dict, strict=False)
@@ -128,8 +129,8 @@ def build_mg_vit(vision_config, hf_config, device: torch.device):
 
     Returns the model on the specified device.
     """
-    from megatron.bridge.models.ernie_vl.vision_model import ErnieVLVisionModel
     from megatron.bridge.models.ernie_vl.vision_layer_spec import get_ernie_vit_layer_spec
+    from megatron.bridge.models.ernie_vl.vision_model import ErnieVLVisionModel
     from megatron.bridge.models.ernie_vl.vision_transformer_config import (
         get_ernie_vision_config,
     )
@@ -172,8 +173,8 @@ def _interleave_qkv(hf_qkv, num_heads):
 
     # Split into Q, K, V
     q_all = hf_qkv[:hidden]
-    k_all = hf_qkv[hidden:2 * hidden]
-    v_all = hf_qkv[2 * hidden:]
+    k_all = hf_qkv[hidden : 2 * hidden]
+    v_all = hf_qkv[2 * hidden :]
 
     # Reshape to per-head: [num_heads, head_dim, ...]
     q_heads = q_all.reshape(num_heads, head_dim, *q_all.shape[1:])
@@ -206,8 +207,7 @@ def transfer_weights_hf_to_mg(hf_vit, mg_vit, vision_config):
     hf_sd = hf_vit.state_dict()
     mg_sd = mg_vit.state_dict()
 
-    num_heads = getattr(vision_config, "num_heads",
-                        getattr(vision_config, "num_attention_heads", 16))
+    num_heads = getattr(vision_config, "num_heads", getattr(vision_config, "num_attention_heads", 16))
 
     # Build mapping: HF key -> MG key
     key_mapping = {}
@@ -222,55 +222,30 @@ def transfer_weights_hf_to_mg(hf_vit, mg_vit, vision_config):
     key_mapping["ln.bias"] = "decoder.final_layernorm.bias"
 
     # Per-block mappings
-    num_layers = getattr(vision_config, "depth",
-                         getattr(vision_config, "num_hidden_layers", 32))
+    num_layers = getattr(vision_config, "depth", getattr(vision_config, "num_hidden_layers", 32))
     for i in range(num_layers):
         # QKV (fused) - needs interleaving
         qkv_w_key = f"blocks.{i}.attn.qkv.weight"
         qkv_b_key = f"blocks.{i}.attn.qkv.bias"
-        key_mapping[qkv_w_key] = (
-            f"decoder.layers.{i}.self_attention.linear_qkv.weight"
-        )
-        key_mapping[qkv_b_key] = (
-            f"decoder.layers.{i}.self_attention.linear_qkv.bias"
-        )
+        key_mapping[qkv_w_key] = f"decoder.layers.{i}.self_attention.linear_qkv.weight"
+        key_mapping[qkv_b_key] = f"decoder.layers.{i}.self_attention.linear_qkv.bias"
         qkv_keys.add(qkv_w_key)
         qkv_keys.add(qkv_b_key)
         # Proj
-        key_mapping[f"blocks.{i}.attn.proj.weight"] = (
-            f"decoder.layers.{i}.self_attention.linear_proj.weight"
-        )
-        key_mapping[f"blocks.{i}.attn.proj.bias"] = (
-            f"decoder.layers.{i}.self_attention.linear_proj.bias"
-        )
+        key_mapping[f"blocks.{i}.attn.proj.weight"] = f"decoder.layers.{i}.self_attention.linear_proj.weight"
+        key_mapping[f"blocks.{i}.attn.proj.bias"] = f"decoder.layers.{i}.self_attention.linear_proj.bias"
         # Norm1 -> fused into linear_qkv
-        key_mapping[f"blocks.{i}.norm1.weight"] = (
-            f"decoder.layers.{i}.self_attention.linear_qkv.layer_norm_weight"
-        )
-        key_mapping[f"blocks.{i}.norm1.bias"] = (
-            f"decoder.layers.{i}.self_attention.linear_qkv.layer_norm_bias"
-        )
+        key_mapping[f"blocks.{i}.norm1.weight"] = f"decoder.layers.{i}.self_attention.linear_qkv.layer_norm_weight"
+        key_mapping[f"blocks.{i}.norm1.bias"] = f"decoder.layers.{i}.self_attention.linear_qkv.layer_norm_bias"
         # Norm2 -> fused into linear_fc1
-        key_mapping[f"blocks.{i}.norm2.weight"] = (
-            f"decoder.layers.{i}.mlp.linear_fc1.layer_norm_weight"
-        )
-        key_mapping[f"blocks.{i}.norm2.bias"] = (
-            f"decoder.layers.{i}.mlp.linear_fc1.layer_norm_bias"
-        )
+        key_mapping[f"blocks.{i}.norm2.weight"] = f"decoder.layers.{i}.mlp.linear_fc1.layer_norm_weight"
+        key_mapping[f"blocks.{i}.norm2.bias"] = f"decoder.layers.{i}.mlp.linear_fc1.layer_norm_bias"
         # MLP fc1
-        key_mapping[f"blocks.{i}.mlp.fc1.weight"] = (
-            f"decoder.layers.{i}.mlp.linear_fc1.weight"
-        )
-        key_mapping[f"blocks.{i}.mlp.fc1.bias"] = (
-            f"decoder.layers.{i}.mlp.linear_fc1.bias"
-        )
+        key_mapping[f"blocks.{i}.mlp.fc1.weight"] = f"decoder.layers.{i}.mlp.linear_fc1.weight"
+        key_mapping[f"blocks.{i}.mlp.fc1.bias"] = f"decoder.layers.{i}.mlp.linear_fc1.bias"
         # MLP fc2
-        key_mapping[f"blocks.{i}.mlp.fc2.weight"] = (
-            f"decoder.layers.{i}.mlp.linear_fc2.weight"
-        )
-        key_mapping[f"blocks.{i}.mlp.fc2.bias"] = (
-            f"decoder.layers.{i}.mlp.linear_fc2.bias"
-        )
+        key_mapping[f"blocks.{i}.mlp.fc2.weight"] = f"decoder.layers.{i}.mlp.linear_fc2.weight"
+        key_mapping[f"blocks.{i}.mlp.fc2.bias"] = f"decoder.layers.{i}.mlp.linear_fc2.bias"
 
     # Transfer weights
     transferred = 0
@@ -286,10 +261,7 @@ def transfer_weights_hf_to_mg(hf_vit, mg_vit, vision_config):
         mg_tensor = mg_sd[mg_key]
 
         if hf_tensor.shape != mg_tensor.shape:
-            print(
-                f"  WARNING: Shape mismatch for {hf_key} -> {mg_key}: "
-                f"{hf_tensor.shape} vs {mg_tensor.shape}"
-            )
+            print(f"  WARNING: Shape mismatch for {hf_key} -> {mg_key}: {hf_tensor.shape} vs {mg_tensor.shape}")
             continue
 
         # Apply QKV interleaving for fused QKV weight and bias
@@ -368,9 +340,7 @@ def run_mg_vit_forward(mg_vit, pixel_values, grid_thw):
 
 def compare_outputs(hf_out: torch.Tensor, mg_out: torch.Tensor, threshold: float = 0.99):
     """Compare HF and MG ViT outputs and return (passed, stats_dict)."""
-    assert hf_out.shape == mg_out.shape, (
-        f"Shape mismatch: HF={hf_out.shape} vs MG={mg_out.shape}"
-    )
+    assert hf_out.shape == mg_out.shape, f"Shape mismatch: HF={hf_out.shape} vs MG={mg_out.shape}"
 
     hf_flat = hf_out.float().flatten()
     mg_flat = mg_out.float().flatten()
@@ -385,7 +355,7 @@ def compare_outputs(hf_out: torch.Tensor, mg_out: torch.Tensor, threshold: float
 
     # Relative difference
     denom = hf_flat.abs().clamp(min=1e-8)
-    rel_diff = (abs_diff / denom)
+    rel_diff = abs_diff / denom
     max_rel_diff = rel_diff.max().item()
     mean_rel_diff = rel_diff.mean().item()
 
@@ -402,6 +372,7 @@ def compare_outputs(hf_out: torch.Tensor, mg_out: torch.Tensor, threshold: float
 
 
 def main():
+    """Run ERNIE 4.5 VL ViT alignment test."""
     parser = argparse.ArgumentParser(description="ERNIE 4.5 VL ViT alignment test")
     parser.add_argument(
         "--hf-model-path",
@@ -437,6 +408,7 @@ def main():
             rank=0,
         )
     from megatron.core import parallel_state
+
     if not parallel_state.is_initialized():
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=1,
@@ -457,9 +429,7 @@ def main():
 
     # Step 4: Generate dummy input
     print("\n=== Step 4: Generating dummy input ===")
-    pixel_values, grid_thw = generate_dummy_input(
-        vision_config, device, num_images=args.num_images
-    )
+    pixel_values, grid_thw = generate_dummy_input(vision_config, device, num_images=args.num_images)
     print(f"  pixel_values: {pixel_values.shape}, dtype={pixel_values.dtype}")
     print(f"  grid_thw: {grid_thw}")
     print(f"  total_patches: {pixel_values.shape[0]}")

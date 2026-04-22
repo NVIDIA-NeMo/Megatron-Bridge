@@ -98,9 +98,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
 from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
+from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
@@ -147,9 +147,7 @@ class _DualPoolExpertMixin:
             model_config = self._get_config(megatron_module)
             num_experts = model_config.num_moe_experts
             num_experts_per_rank = num_experts // self.ep_size
-            num_experts_per_rank = self.broadcast_obj_from_pp_rank(
-                num_experts_per_rank, "num_experts_per_rank"
-            )
+            num_experts_per_rank = self.broadcast_obj_from_pp_rank(num_experts_per_rank, "num_experts_per_rank")
 
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         local_expert_number = global_expert_number % num_experts_per_rank
@@ -190,11 +188,13 @@ class _DualPoolExpertMixin:
 
 class _DualPoolGatedMLPMapping(_DualPoolExpertMixin, GatedMLPMapping):
     """GatedMLPMapping with pool-offset-aware EP export."""
+
     pass
 
 
 class _DualPoolAutoMapping(_DualPoolExpertMixin, AutoMapping):
     """AutoMapping with pool-offset-aware EP export."""
+
     pass
 
 
@@ -514,9 +514,7 @@ class Ernie45VLBridge(MegatronModelBridge):
         # Shared experts: intermediate_size = moe_intermediate_size[0] * moe_num_shared_experts
         # e.g. 1536 * 2 = 3072
         moe_num_shared_experts = getattr(text_config, "moe_num_shared_experts", 2)
-        provider.moe_shared_expert_intermediate_size = (
-            text_config.moe_intermediate_size[0] * moe_num_shared_experts
-        )
+        provider.moe_shared_expert_intermediate_size = text_config.moe_intermediate_size[0] * moe_num_shared_experts
 
         # Determine which layers are dense vs MoE.
         # Nested config (Instruct): mlp_layer_types = ["dense", "sparse", ...]
@@ -557,8 +555,7 @@ class Ernie45VLBridge(MegatronModelBridge):
         # Token IDs -- these live on the top-level config in both formats
         provider.image_start_token_id = getattr(hf_config, "image_start_token_id", 101304)
         provider.image_end_token_id = getattr(hf_config, "image_end_token_id", 101305)
-        provider.image_token_id = getattr(hf_config, "image_token_id",
-                                          getattr(hf_config, "im_patch_id", 100295))
+        provider.image_token_id = getattr(hf_config, "image_token_id", getattr(hf_config, "im_patch_id", 100295))
         provider.video_start_token_id = getattr(hf_config, "video_start_token_id", 101306)
         provider.video_end_token_id = getattr(hf_config, "video_end_token_id", 101307)
         provider.video_token_id = getattr(hf_config, "video_token_id", 103367)
@@ -595,7 +592,7 @@ class Ernie45VLBridge(MegatronModelBridge):
         num_experts = 4
         is_flat_config = False
         use_mg_vit = False
-        if hasattr(self, 'hf_config'):
+        if hasattr(self, "hf_config"):
             text_config = self._get_text_config(self.hf_config)
             num_experts = self._get_num_experts(text_config)
             # Detect flat config (Thinking / auto_map) vs nested config (Instruct).
@@ -609,13 +606,13 @@ class Ernie45VLBridge(MegatronModelBridge):
             # Instead, detect flat config by checking whether ``text_config`` is absent
             # OR is a self-reference (points back to hf_config itself).  A genuinely
             # nested config has ``text_config`` as a distinct sub-object.
-            text_cfg_attr = getattr(self.hf_config, 'text_config', None)
+            text_cfg_attr = getattr(self.hf_config, "text_config", None)
             is_flat_config = (text_cfg_attr is None) or (text_cfg_attr is self.hf_config)
 
         # Check use_mg_vit: set externally on the bridge instance (like hf_config).
         # When True, the Megatron model uses MG-native ViT (TP-sharded weights).
         # When False (default), it uses HF-wrapped ViT (replicated weights).
-        use_mg_vit = getattr(self, 'use_mg_vit', False)
+        use_mg_vit = getattr(self, "use_mg_vit", False)
 
         # Determine on-disk vision key prefix based on config format.
         # Flat config (Thinking/auto_map): "vision_model.**"
@@ -650,9 +647,7 @@ class Ernie45VLBridge(MegatronModelBridge):
             "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": (
                 "model.layers.*.post_attention_layernorm.weight"
             ),
-            "language_model.decoder.layers.*.mlp.linear_fc2.weight": (
-                "model.layers.*.mlp.down_proj.weight"
-            ),
+            "language_model.decoder.layers.*.mlp.linear_fc2.weight": ("model.layers.*.mlp.down_proj.weight"),
             # =================================================================
             # MoE layers: pre_mlp_layernorm (separate, not fused)
             # =================================================================
@@ -726,12 +721,8 @@ class Ernie45VLBridge(MegatronModelBridge):
                     f"{vision_hf_block_prefix}.blocks.*.norm2.bias"
                 ),
                 # Final LayerNorm (post_layer_norm in TransformerBlock)
-                "vision_model.decoder.final_layernorm.weight": (
-                    f"{vision_hf_block_prefix}.ln.weight"
-                ),
-                "vision_model.decoder.final_layernorm.bias": (
-                    f"{vision_hf_block_prefix}.ln.bias"
-                ),
+                "vision_model.decoder.final_layernorm.weight": (f"{vision_hf_block_prefix}.ln.weight"),
+                "vision_model.decoder.final_layernorm.bias": (f"{vision_hf_block_prefix}.ln.bias"),
             }
             for mg_param, hf_param in vit_param_mappings.items():
                 mapping_list.append(AutoMapping(megatron_param=mg_param, hf_param=hf_param))
@@ -739,16 +730,18 @@ class Ernie45VLBridge(MegatronModelBridge):
             # Fused QKV: ConcatenatedQKVMapping handles the [Q|K|V] -> interleaved
             # GQA layout conversion, with TP-aware splitting.
             # ERNIE ViT uses fused attn.qkv.weight/bias on disk.
-            mapping_list.extend([
-                ConcatenatedQKVMapping(
-                    megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.weight",
-                    hf_param=f"{vision_hf_block_prefix}.blocks.*.attn.qkv.weight",
-                ),
-                ConcatenatedQKVMapping(
-                    megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.bias",
-                    hf_param=f"{vision_hf_block_prefix}.blocks.*.attn.qkv.bias",
-                ),
-            ])
+            mapping_list.extend(
+                [
+                    ConcatenatedQKVMapping(
+                        megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                        hf_param=f"{vision_hf_block_prefix}.blocks.*.attn.qkv.weight",
+                    ),
+                    ConcatenatedQKVMapping(
+                        megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.bias",
+                        hf_param=f"{vision_hf_block_prefix}.blocks.*.attn.qkv.bias",
+                    ),
+                ]
+            )
 
             # Patch embedding: replicated across TP ranks (not TP-sharded).
             # ERNIE ViT PatchEmbed is nn.Linear with weight only (no bias).
@@ -864,16 +857,14 @@ class Ernie45VLBridge(MegatronModelBridge):
                 # =============================================================
                 GatedMLPMapping(
                     megatron_param=(
-                        "language_model.decoder.layers.*.mlp.text_moe_layer"
-                        ".experts.local_experts.*.linear_fc1.weight"
+                        "language_model.decoder.layers.*.mlp.text_moe_layer.experts.local_experts.*.linear_fc1.weight"
                     ),
                     gate="model.layers.*.mlp.experts.*.gate_proj.weight",
                     up="model.layers.*.mlp.experts.*.up_proj.weight",
                 ),
                 AutoMapping(
                     megatron_param=(
-                        "language_model.decoder.layers.*.mlp.text_moe_layer"
-                        ".experts.local_experts.*.linear_fc2.weight"
+                        "language_model.decoder.layers.*.mlp.text_moe_layer.experts.local_experts.*.linear_fc2.weight"
                     ),
                     hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
                 ),
@@ -912,17 +903,13 @@ class Ernie45VLBridge(MegatronModelBridge):
                 # Vision router expert_bias -> last N entries
                 # =============================================================
                 _ConcatBiasMapping(
-                    megatron_param=(
-                        "language_model.decoder.layers.*.mlp.text_moe_layer.router.expert_bias"
-                    ),
+                    megatron_param=("language_model.decoder.layers.*.mlp.text_moe_layer.router.expert_bias"),
                     hf_param="model.layers.*.mlp.moe_statics.e_score_correction_bias",
                     slice_name="text",
                     num_experts=num_experts,
                 ),
                 _ConcatBiasMapping(
-                    megatron_param=(
-                        "language_model.decoder.layers.*.mlp.vision_moe_layer.router.expert_bias"
-                    ),
+                    megatron_param=("language_model.decoder.layers.*.mlp.vision_moe_layer.router.expert_bias"),
                     hf_param="model.layers.*.mlp.moe_statics.e_score_correction_bias",
                     slice_name="vision",
                     num_experts=num_experts,
@@ -931,4 +918,3 @@ class Ernie45VLBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
-

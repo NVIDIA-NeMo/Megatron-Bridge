@@ -14,4 +14,5 @@
 
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
 
+
 __all__ = ["Ernie45VLModel"]
