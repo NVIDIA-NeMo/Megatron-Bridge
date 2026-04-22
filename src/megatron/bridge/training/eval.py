@@ -139,7 +139,9 @@ def evaluate(
                 pp_size=pg_collection.pp.size(),
                 vp_size=state.cfg.model.virtual_pipeline_model_parallel_size,
             )
-        if state.cfg.model.moe_expert_rank_capacity_factor is not None and HAS_PAGED_STASHING:
+        # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
+        # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
+        if HAS_PAGED_STASHING and state.cfg.model.moe_expert_rank_capacity_factor is not None:
             copy_main_params = state.cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag and state.cfg.ddp.overlap_param_gather
             forward_backward_func = PagedStashRunner(state.cfg.model, copy_main_params, model, None, forward_backward_func)
 
