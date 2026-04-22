@@ -686,32 +686,41 @@ def training_log(
         elapsed_time = timers("interval-time").elapsed(barrier=True)
         elapsed_time_per_iteration = elapsed_time / total_iterations
 
-        num_flops = num_floating_point_operations(config, batch_size)
-        per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
+        # Calculate GPU utilization
+        num_flops = None
+        if hasattr(config.model, "kv_channels") and hasattr(config.model, "num_attention_heads"):
+            num_flops = num_floating_point_operations(config, batch_size)
+            per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
+            print_rank_0(
+                f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
+            )
 
-        throughput_message = f"Step Time : {elapsed_time_per_iteration:.2f}s Throughput: {per_gpu_tf:.1f} MODEL_TFLOP/s/GPU"
-        print_rank_0(throughput_message)
-
-        if logger_config.log_throughput_to_tensorboard:
+        # throughput
+        if num_flops is not None and logger_config.log_throughput_to_tensorboard:
             if writer:
                 writer.add_scalar("throughput/tflops/device", per_gpu_tf, iteration)
                 writer.add_scalar("throughput/tflops", per_gpu_tf * get_world_size_safe(), iteration)
-                if wandb_writer:
-                    wandb_writer.log({"throughput/tflops/device": per_gpu_tf}, iteration)
-                    wandb_writer.log({"throughput/tflops": per_gpu_tf * get_world_size_safe()}, iteration)
-                if mlflow_logger:
-                    throughput_metrics = {
+            if wandb_writer:
+                wandb_writer.log({"throughput/tflops/device": per_gpu_tf}, iteration)
+                wandb_writer.log({"throughput/tflops": per_gpu_tf * get_world_size_safe()}, iteration)
+            if mlflow_logger:
+                mlflow_logger.log_metrics(
+                    metrics={
+                        "throughput/tflops_per_device": per_gpu_tf,
+                        "throughput/tflops": per_gpu_tf * get_world_size_safe(),
+                    },
+                    step=iteration,
+                )
+            if comet_logger:
+                comet_logger.log_metrics(
+                    {
                         "throughput/tflops/device": per_gpu_tf,
                         "throughput/tflops": per_gpu_tf * get_world_size_safe(),
-                    }
-                    mlflow_logger.log_metrics(_sanitize_mlflow_metrics(throughput_metrics), step=iteration)
-                if comet_logger:
-                    throughput_metrics = {
-                        "throughput/tflops/device": per_gpu_tf,
-                        "throughput/tflops": per_gpu_tf * get_world_size_safe(),
-                    }
-                    comet_logger.log_metrics(throughput_metrics, step=iteration)
+                    },
+                    step=iteration,
+                )
 
+        # timers
         if logger_config.log_timers_to_tensorboard:
             if writer:
                 writer.add_scalar("iteration-time", elapsed_time_per_iteration, iteration)
@@ -728,7 +737,7 @@ def training_log(
             log_string += " skipped samples: {:12d} |".format(global_state.train_state.skipped_train_samples)
         log_string += " elapsed time per iteration (ms): {:.1f} |".format(elapsed_time_per_iteration * 1000.0)
 
-        if logger_config.log_throughput:
+        if num_flops is not None and logger_config.log_throughput:
             log_string += f" throughput per GPU (TFLOP/s/GPU): {per_gpu_tf:.1f} |"
 
         if energy_monitor is not None:

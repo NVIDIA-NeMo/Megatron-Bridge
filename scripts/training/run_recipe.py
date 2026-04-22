@@ -23,31 +23,31 @@ infers pretrain vs finetune mode.
 
 Usage:
     Pretrain (mock data):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_pretrain_config \\
             --dataset llm-pretrain-mock
 
     Pretrain (real data):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config \
-            --dataset llm-pretrain \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_pretrain_config \\
+            --dataset llm-pretrain \\
             'dataset.blend=[[/data/my_dataset_text_document],null]'
 
     Finetune (SQuAD, default):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_sft_config \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_sft_config \\
             --dataset llm-finetune
 
     Finetune (GSM8K):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_sft_config \
-            --dataset llm-finetune \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_sft_config \\
+            --dataset llm-finetune \\
             dataset.dataset_name=gsm8k
 
     Finetune (user-supplied JSONL):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_sft_config \
-            --dataset llm-finetune-preloaded \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_sft_config \\
+            --dataset llm-finetune-preloaded \\
             dataset.dataset_root=/data/my_finetune_data
 
     Diffusion pretrain:
@@ -63,37 +63,37 @@ Usage:
             dataset.path=/data/energon
 
     VLM with HF dataset:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe qwen3_vl_8b_peft_config \
-            --dataset vlm-hf \
-            --step_func qwen3_vl_step \
-            dataset.maker_name=cord_v2 \
-            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe qwen3_vl_8b_peft_config \\
+            --dataset vlm-hf \\
+            --step_func qwen3_vl_step \\
+            dataset.maker_name=cord_v2 \\
+            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
             checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
     VLM with Energon dataset:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe qwen3_vl_8b_peft_energon_config \
-            --dataset vlm-energon \
-            --step_func qwen3_vl_step \
-            dataset.path=/data/energon \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe qwen3_vl_8b_peft_energon_config \\
+            --dataset vlm-energon \\
+            --step_func qwen3_vl_step \\
+            dataset.path=/data/energon \\
             checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
     VLM with preloaded JSON:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe qwen3_vl_8b_peft_config \
-            --dataset vlm-preloaded \
-            --step_func qwen3_vl_step \
-            dataset.train_data_path=/data/vlm_train.json \
-            dataset.image_folder=/data/vlm_images \
-            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe qwen3_vl_8b_peft_config \\
+            --dataset vlm-preloaded \\
+            --step_func qwen3_vl_step \\
+            dataset.train_data_path=/data/vlm_train.json \\
+            dataset.image_folder=/data/vlm_images \\
+            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
             checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
     With CLI overrides (Hydra-style, works for any config field):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config \
-            --dataset llm-pretrain-mock \
-            train.train_iters=5000 \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \\
+            --recipe llama32_1b_pretrain_config \\
+            --dataset llm-pretrain-mock \\
+            train.train_iters=5000 \\
             optimizer.lr=0.0003
 
 Recipe Arguments:
@@ -108,6 +108,8 @@ import inspect
 from typing import Callable
 
 import megatron.bridge.recipes as recipes
+
+# Diffusion forward steps: use class instances so they can be passed as forward_step_func
 from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
 from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_omni.qwen3_omni_step import forward_step as qwen3_omni_forward_step
@@ -161,7 +163,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "--recipe",
         type=str,
         required=True,
-        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_finetune_config)",
+        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_sft_config, gemma3_1b_peft_config)",
     )
     parser.add_argument(
         "--dataset",
@@ -333,6 +335,7 @@ def main() -> None:
         cli_overrides=cli_overrides or None,
     )
 
+    # Ensure dataset.seq_length and model.seq_length stay in sync after CLI overrides
     if (
         hasattr(config, "model")
         and config.model is not None
