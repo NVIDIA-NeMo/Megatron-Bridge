@@ -40,7 +40,7 @@ See [conversion.sh](conversion.sh) for checkpoint conversion examples.
 ### Import HF → Megatron
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model Qwen/Qwen2.5-Omni-7B \
     --megatron-path ${WORKSPACE}/models/Qwen2.5-Omni-7B
 ```
@@ -48,7 +48,7 @@ python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model Qwen/Qwen2.5-Omni-7B \
     --megatron-path ${WORKSPACE}/models/Qwen2.5-Omni-7B/iter_0000000 \
     --hf-path ${WORKSPACE}/models/Qwen2.5-Omni-7B-hf-export
@@ -57,7 +57,7 @@ python examples/conversion/convert_checkpoints.py export \
 ### Round-trip Validation
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=2 \
+uv run python -m torch.distributed.run --nproc_per_node=2 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
     --hf-model-id Qwen/Qwen2.5-Omni-7B \
     --megatron-load-path ${WORKSPACE}/models/Qwen2.5-Omni-7B/iter_0000000 \
