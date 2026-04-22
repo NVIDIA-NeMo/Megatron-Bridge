@@ -53,6 +53,8 @@ def transformer_engine_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
         kwargs = {"use_te_op_fuser": config.use_transformer_engine_op_fuser}
     else:
         kwargs = {}
+    if "dense_grouped_gemm" in inspect.signature(get_gpt_layer_with_transformer_engine_spec).parameters:
+        kwargs["dense_grouped_gemm"] = config.dense_grouped_gemm
     return get_gpt_layer_with_transformer_engine_spec(
         num_experts=config.num_moe_experts,
         moe_grouped_gemm=config.moe_grouped_gemm,
@@ -162,6 +164,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     use_transformer_engine_full_layer_spec: bool = False
     use_transformer_engine_op_fuser: bool = False
+    dense_grouped_gemm: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = default_layer_spec
 
     hf_model_id: str | None = None
