@@ -310,12 +310,12 @@ def train(
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
-    
+
     if config.optimizer.optimizer_cuda_graph and HAS_OPTIMIZER_CUDA_GRAPH:
         optimizer.step = OptimizerCudaGraphWrapper(
             optimizer.step, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
-    
+
     # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
     # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
     if HAS_PAGED_STASHING and config.model.moe_expert_rank_capacity_factor is not None:
