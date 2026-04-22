@@ -21,9 +21,13 @@ import pytest
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 
+from megatron.bridge.utils.instantiate_utils import register_allowed_target_prefix
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+register_allowed_target_prefix("tests.")
 
 
 def pytest_configure(config):
