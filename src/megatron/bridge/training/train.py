@@ -1566,7 +1566,7 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
         del FullCudaGraphWrapper.cuda_graph["training"]
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
-    cuda_graph_helper.cleanup_cuda_graphs()
+    cuda_graph_helper.delete_cuda_graphs()
 
     # Run GC to collect the freshed object
     gc.collect()
