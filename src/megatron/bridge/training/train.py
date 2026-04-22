@@ -1581,8 +1581,12 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
     if "training" in FullCudaGraphWrapper.cuda_graph:
         del FullCudaGraphWrapper.cuda_graph["training"]
 
-    # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
-    if cuda_graph_helper is not None:
+    # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
+    # Guard with `graphs_created()` because `delete_cuda_graphs()` asserts that at least one
+    # graph was actually captured. The helper may exist but have captured nothing when the
+    # configured `cuda_graph_scope` does not exercise `create_cudagraphs()` before training
+    # exits (e.g. very short smoke runs with TE-scoped graphs).
+    if cuda_graph_helper is not None and cuda_graph_helper.graphs_created():
         cuda_graph_helper.delete_cuda_graphs()
 
     # Run GC to collect the freshed object
