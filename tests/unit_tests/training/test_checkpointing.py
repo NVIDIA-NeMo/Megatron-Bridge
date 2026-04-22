@@ -526,6 +526,8 @@ def save_checkpoint_fixtures():
     mock_cfg.logger.log_progress = False
     mock_cfg.dist = Mock()
     mock_cfg.dist.use_decentralized_pg = False
+    mock_cfg.ddp = Mock()
+    mock_cfg.ddp.use_megatron_fsdp = False
 
     mock_state.cfg = mock_cfg
 
@@ -707,6 +709,8 @@ def load_checkpoint_fixtures():
     mock_cfg.checkpoint.non_persistent_save_interval = None
     mock_cfg.dist = Mock()
     mock_cfg.dist.use_decentralized_pg = False
+    mock_cfg.ddp = Mock()
+    mock_cfg.ddp.use_megatron_fsdp = False
 
     mock_state.cfg = mock_cfg
 
