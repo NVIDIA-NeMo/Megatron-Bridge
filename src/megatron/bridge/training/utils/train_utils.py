@@ -30,7 +30,7 @@ from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
-from megatron.bridge.training.config import ConfigContainer, TrainingConfig
+from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
@@ -42,6 +42,49 @@ from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_saf
 
 if TYPE_CHECKING:
     from torch.distributed.distributed_c10d import ProcessGroup as TorchProcessGroup
+
+
+def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
+    """Enable the CUDA caching allocator trace so memory snapshots contain history.
+
+    ``torch.cuda.memory._snapshot()`` only includes allocation/free events and
+    Python stack context after ``_record_memory_history()`` has been enabled.
+    Without this call, dumped snapshots contain only the current live
+    allocations — no timeline, no call sites.
+
+    Must be invoked before model construction so every tensor allocation is
+    captured. Guarded by ``profile_ranks`` so only ranks that will dump a
+    snapshot pay the recording overhead.
+    """
+    if profiling is None or not profiling.record_memory_history:
+        return
+    if get_rank_safe() not in profiling.profile_ranks:
+        return
+
+    torch.cuda.memory._record_memory_history(
+        True,
+        # Retain up to 100k alloc/free events.
+        trace_alloc_max_entries=100_000,
+        # Record the Python stack at each event — lets memory_viz show call sites.
+        trace_alloc_record_context=True,
+    )
+
+    def _oom_observer(device: int, alloc: int, device_alloc: int, device_free: int) -> None:
+        """Dump a snapshot on OOM so we can inspect what was live at the failure."""
+        import pickle
+
+        filename = f"oom_rank-{get_rank_safe()}_{profiling.memory_snapshot_path}"
+        snapshot = torch.cuda.memory._snapshot()
+        with open(filename, "wb") as f:
+            pickle.dump(snapshot, f)
+        print_rank_0(f"[OOM] saved memory snapshot to {filename}")
+
+    torch._C._cuda_attach_out_of_memory_observer(_oom_observer)
+    print_rank_0(
+        f"Memory history recording enabled (rank {get_rank_safe()}); "
+        f"snapshots will be written to '{profiling.memory_snapshot_path}'."
+    )
+
 
 try:
     from transformer_engine.pytorch.optimizers import multi_tensor_applier, multi_tensor_l2norm
@@ -472,11 +515,8 @@ def training_log(
         if hasattr(timers, "write_to_comet"):
             timers.write_to_comet(timers_to_log, comet_logger, iteration, normalizer=total_iterations, reset=True)
 
-    if config.profiling:
-        if config.profiling.record_memory_history and get_rank_safe() in config.profiling.profile_ranks:
-            assert config.logger.tensorboard_dir is not None, (
-                "Tensorboard directory must be set when profiling memory history"
-            )
+    if config.profiling and config.profiling.record_memory_history:
+        if get_rank_safe() in config.profiling.profile_ranks:
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
 

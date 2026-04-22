@@ -756,6 +756,22 @@ class LoggerConfig(MTrainLoggerConfig):
 class ProfilingConfig(MTrainProfilingConfig):
     """Configuration settings for profiling the training process."""
 
+    profile_ranks: list[int] = field(default_factory=lambda: [0])
+    """Ranks to capture in memory snapshots / nsys / pytorch profiler.
+
+    Memory-snapshot and recording-start guards use a strict membership check,
+    so an empty list disables capture. Default ``[0]`` gives rank-0 capture
+    whenever ``record_memory_history=True`` or an nsys/pytorch profiler is
+    enabled, with no further override required.
+    """
+
+    memory_snapshot_path: str = "/nemo_run/snapshot.pickle"
+    """Path the per-rank pickle is written to (``_{rank}`` is inserted before
+    the extension). Defaults to ``/nemo_run/snapshot.pickle`` so the file lands
+    directly under the NeMo-Run experiment directory (bound at ``/nemo_run``
+    inside the container). Override for non-NeMo-Run setups.
+    """
+
     def finalize(self) -> None:
         """Validate profiling configuration."""
         assert not (self.use_pytorch_profiler and self.use_nsys_profiler), (
