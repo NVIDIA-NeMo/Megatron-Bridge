@@ -53,6 +53,8 @@ def transformer_engine_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
         kwargs = {"use_te_op_fuser": config.use_transformer_engine_op_fuser}
     else:
         kwargs = {}
+    if "dense_grouped_gemm" in inspect.signature(get_gpt_layer_with_transformer_engine_spec).parameters:
+        kwargs["dense_grouped_gemm"] = config.dense_grouped_gemm
     return get_gpt_layer_with_transformer_engine_spec(
         num_experts=config.num_moe_experts,
         moe_grouped_gemm=config.moe_grouped_gemm,
@@ -162,6 +164,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     use_transformer_engine_full_layer_spec: bool = False
     use_transformer_engine_op_fuser: bool = False
+    dense_grouped_gemm: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = default_layer_spec
 
     hf_model_id: str | None = None
@@ -358,7 +361,17 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
         if hasattr(spec, "layer_specs") and len(spec.layer_specs) == 0:
             # Get the decoder layer spec explicitly if no decoder layer in the last stage,
             # Only happens with block spec (TransformerBlockSubmodules) when using MoE.
-            spec = default_layer_spec(config)
+            # Re-derive all decoder layer specs and use the last one to get the correct
+            # layer type (dense vs MoE) for the MTP transformer layer.
+            from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_layer_specs
+
+            decoder_layer_specs = get_gpt_decoder_layer_specs(
+                config,
+                use_transformer_engine=True,
+                normalization=config.normalization,
+                qk_l2_norm=config.qk_l2_norm,
+            )
+            spec = decoder_layer_specs[-1]
         return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None
@@ -417,3 +430,45 @@ def _patch_yarn_concentration_factor():
 
 
 _patch_yarn_concentration_factor()
+
+
+def _patch_te_grouped_linear_single_grouped_weight():
+    """Guard for main/dev branch submodule compat: single_grouped_weight/bias kwargs.
+
+    MCore dev (commit 5c544844) passes ``single_grouped_weight`` and
+    ``single_grouped_bias`` to TE ``GroupedLinear.__init__`` when
+    ``is_te_min_version("2.14.0")``.  However some TE 2.14.0 builds only
+    expose a single ``single_grouped_parameter`` kwarg.  Remap so both
+    APIs work.
+
+    TODO: remove guard once TE ships the split weight/bias API in a
+    stable release and the CI container is updated.
+    """
+    try:
+        import transformer_engine.pytorch as te_pytorch
+
+        _te_gl_init_params = set(inspect.signature(te_pytorch.GroupedLinear.__init__).parameters)
+
+        # Nothing to patch if TE already accepts the split kwargs.
+        if "single_grouped_weight" in _te_gl_init_params:
+            return
+
+        # Nothing to patch if TE has neither API (older TE without the feature).
+        if "single_grouped_parameter" not in _te_gl_init_params:
+            return
+
+        _original_init = te_pytorch.GroupedLinear.__init__
+
+        def _patched_init(self, *args, **kwargs):
+            sgw = kwargs.pop("single_grouped_weight", False)
+            sgb = kwargs.pop("single_grouped_bias", False)
+            if sgw or sgb:
+                kwargs["single_grouped_parameter"] = True
+            _original_init(self, *args, **kwargs)
+
+        te_pytorch.GroupedLinear.__init__ = _patched_init
+    except ImportError:
+        pass
+
+
+_patch_te_grouped_linear_single_grouped_weight()

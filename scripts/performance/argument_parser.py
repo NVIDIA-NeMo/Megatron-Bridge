@@ -170,7 +170,7 @@ def parse_cli_args():
     parser.add_argument(
         "--domain",
         type=lower_str,
-        choices=["llm", "vlm", "qwen3vl"],
+        choices=["llm", "vlm", "qwen3vl", "diffusion"],
         help="Domain to use for experiment.",
         default="llm",
     )
@@ -607,6 +607,16 @@ def parse_cli_args():
         help="Enable VBoost which steers more power towards tensor cores. Disabled by default",
         type=bool_arg,
         required=False,
+    )
+    performance_args.add_argument(
+        "-lgc",
+        "--lock_gpu_freq",
+        help="Lock GPU graphics clock to the specified frequency in MHz via "
+        "`sudo nvidia-smi -lgc <freq>`. Runs once per node before training. "
+        "Use `nvidia-smi -rgc` to reset after the job.",
+        type=int,
+        required=False,
+        default=None,
     )
     performance_args.add_argument(
         "-en",

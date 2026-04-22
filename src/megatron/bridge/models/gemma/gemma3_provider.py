@@ -68,6 +68,7 @@ class Gemma3ModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
 
     # attention
+    qk_layernorm: bool = True
     window_size: tuple = 512  # local
     interleaved_attn_pattern: tuple = (5, 1)  # (local, global)
     attention_dropout: float = 0.0
@@ -217,8 +218,8 @@ def gemma3_layer_spec(config) -> ModuleSpec:
                 submodules=SelfAttentionSubmodules(
                     linear_qkv=TELayerNormColumnParallelLinear,
                     core_attention=Gemma3TEDotProductAttention,  # mixed gloabl/local attn
-                    q_layernorm=TENorm,
-                    k_layernorm=TENorm,
+                    q_layernorm=TENorm if config.qk_layernorm else None,
+                    k_layernorm=TENorm if config.qk_layernorm else None,
                     linear_proj=TERowParallelLinearLayerNorm,  # post attn RMSNorm
                 ),
             ),

@@ -573,6 +573,7 @@ class TrainingConfig(MTrainTrainingConfig):
             assert self.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
 
             # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
+            assert self.global_batch_size is not None, "global_batch_size must be set when using train_samples"
             self.train_iters = self.train_samples // self.global_batch_size
             print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
 
@@ -990,6 +991,9 @@ class ConfigContainer(Container):
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
         model_cfg = self.model
+        if hasattr(model_cfg, "dist_train") and getattr(model_cfg.dist_train, "use_dist_train", False) is True:
+            # use language world size to calculate data parallel size for dist train
+            world_size = model_cfg.dist_train.language_world_size
         total_model_size = (
             model_cfg.tensor_model_parallel_size
             * model_cfg.pipeline_model_parallel_size
@@ -1089,6 +1093,26 @@ class ConfigContainer(Container):
             # Set data_parallel_size on comm_overlap config if present
             if self.comm_overlap is not None:
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
+
+        # Resolve eval batch size defaults from training config
+        if self.validation.eval_global_batch_size is None:
+            assert self.train.global_batch_size is not None, (
+                "train.global_batch_size must be set when eval_global_batch_size is not explicitly configured"
+            )
+            self.validation.eval_global_batch_size = self.train.global_batch_size
+        if self.validation.eval_micro_batch_size is None:
+            assert self.train.micro_batch_size is not None, (
+                "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
+            )
+            self.validation.eval_micro_batch_size = self.train.micro_batch_size
+
+        # Eval batch size divisibility check
+        eval_dp_product = self.validation.eval_micro_batch_size * self.data_parallel_size
+        assert self.validation.eval_global_batch_size % eval_dp_product == 0, (
+            f"eval_global_batch_size ({self.validation.eval_global_batch_size}) must be divisible by "
+            f"eval_micro_batch_size * data_parallel_size ({self.validation.eval_micro_batch_size} * "
+            f"{self.data_parallel_size} = {eval_dp_product})"
+        )
 
         # Deterministic mode validations and settings
         self._validate_and_apply_deterministic_mode()
