@@ -16,17 +16,21 @@ Follow the steps below on a Slurm based login node to launch Megatron-Bridge exp
 
 ### Step 1. Clone Megatron-Bridge Repo
 
-  ```
-  git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
-  ```
+We need to clone the repo to access and run performance benchmarking experiments using Megatron-Bridge/scripts/performance/setup_experiment.py (more details in Step 2.).
 
-  Next, we need to switch to a branch that was used to build the container you want to use for your experiments.
+setup_experiment.py uses [NeMo/Run](https://github.com/NVIDIA-NeMo/Run) to launch experiments. This script generates and runs a sbatch script. The experiment is ultimately run on compute node(s) inside a container specified by the user. The experiment uses Megatron-Bridge code that comes pre-packaged with the container.
 
-  ```
-  cd Megatron-Bridge
-  git switch <branch> 
-  ```
-  Example: If using 26.04 container, then execute- `git switch r0.4.0`
+```
+git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+```
+
+Next, we need to switch to a branch that was used to build the container you want to use for your experiments.
+
+```
+cd Megatron-Bridge
+git switch <branch> 
+```
+Example: If using 26.04 container, then execute- `git switch r0.4.0`
 
 ### Step 2. Run instructions
 
