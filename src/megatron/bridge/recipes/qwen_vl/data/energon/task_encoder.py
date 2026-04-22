@@ -136,19 +136,25 @@ def process_vision(
 
 
 def _resolve_hf_mm_token_ids(hf_tokenizer):
-    """Resolve HF tokenizer ids for <image> and <video> tokens without nemo constants."""
+    """Resolve HF tokenizer ids for ``<image>`` and ``<video>`` tokens strictly."""
 
-    def _get(token_str: str, default_id: int) -> int:
+    def _get(token_str: str) -> int:
         token_attr = getattr(hf_tokenizer, f"{token_str.strip('<>')}_token_id", None)
         if token_attr is not None:
             return int(token_attr)
         try:
-            return int(hf_tokenizer.convert_tokens_to_ids(token_str))
-        except Exception:
-            return default_id
+            token_id = hf_tokenizer.convert_tokens_to_ids(token_str)
+        except Exception as exc:
+            raise ValueError(f"Failed to resolve token id for {token_str!r}") from exc
+        if token_id is None:
+            raise ValueError(f"Tokenizer returned None for {token_str!r}")
+        token_id = int(token_id)
+        if token_id < 0:
+            raise ValueError(f"Tokenizer returned invalid id {token_id} for {token_str!r}")
+        return token_id
 
-    image_id = _get("<image>", 151655)
-    video_id = _get("<video>", 151656)
+    image_id = _get("<image>")
+    video_id = _get("<video>")
     return image_id, video_id
 
 
@@ -264,12 +270,14 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         self,
         tokenizer,
         image_processor,
-        temporal_patch_size: int = 2,
-        spatial_merge_size: int = 2,
-        patch_size: int = 14,
-        max_padding_length: int = 4096,
-        min_pixels: int = 200704,
-        max_pixels: int = 1003520,
+        temporal_patch_size: int,
+        spatial_merge_size: int,
+        patch_size: int,
+        image_token_id: int,
+        video_token_id: int,
+        max_padding_length: int,
+        min_pixels: int,
+        max_pixels: int,
     ):
         super().__init__()
 
@@ -284,7 +292,12 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         self.patch_size = patch_size
 
         self.seq_len = max_padding_length
-        self.image_token_id, self.video_token_id = _resolve_hf_mm_token_ids(self.hf_tokenizer)
+        self.image_token_id = int(image_token_id)
+        self.video_token_id = int(video_token_id)
+        if self.image_token_id < 0 or self.video_token_id < 0:
+            raise ValueError(
+                f"image_token_id/video_token_id must be non-negative, got {self.image_token_id}/{self.video_token_id}"
+            )
 
     def encode_sample(self, sample: ChatMLSample):
         """
