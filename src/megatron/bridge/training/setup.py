@@ -50,6 +50,7 @@ from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
+from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -222,6 +223,10 @@ def setup(
             return model
 
         _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
+
+    # Enable CUDA allocator history tracing before any model tensors are allocated,
+    # so snapshots dumped later in training contain a full timeline + stack context.
+    start_memory_history_recording(cfg.profiling)
 
     model = _build_distributed_model(cfg, pg_collection)
 
