@@ -119,11 +119,11 @@ def run_pretrain_recipe_test(
                 setattr(config.model, attribute_name, attribute_value)
         
         if checkpoint_overrides:
-            for attribute_name, attribute_value in model_overrides.items():
+            for attribute_name, attribute_value in checkpoint_overrides.items():
                 setattr(config.checkpoint, attribute_name, attribute_value)
 
         if ddp_overrides:
-            for attribute_name, attribute_value in model_overrides.items():
+            for attribute_name, attribute_value in ddp_overrides.items():
                 setattr(config.ddp, attribute_name, attribute_value)
 
         pretrain(config, forward_step)

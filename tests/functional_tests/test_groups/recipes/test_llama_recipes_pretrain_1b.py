@@ -35,7 +35,7 @@ LLAMA_PRETRAIN_RECIPES = [
         "llama32_1b",
         {},
         {"num_layers": 2},
-        {"ckpt_format": "fsdp_dtensor", "strict_fsdp_dtensor_load": True, "async_save": True, "async_strategy": "nvrx", "use_persistent_ckpt_worker": True},
+        {"ckpt_format": "fsdp_dtensor", "strict_fsdp_dtensor_load": True, "async_save": True, "async_strategy": "nvrx", "use_persistent_ckpt_worker": True, "dist_ckpt_workers": 1},
         {"use_megatron_fsdp": True, "use_distributed_optimizer": True, "grad_reduce_in_fp32": True, "average_in_collective": True, "data_parallel_sharding_strategy": "optim_grads_params"},
     ),
 ]
