@@ -45,7 +45,7 @@ class TestLlamaRecipes:
     """Test class for LLaMA recipe functional tests."""
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize("config_func,recipe_name,parallelism_overrides,model_overrides,checkpoint_overrides,ddp__overrides", LLAMA_PRETRAIN_RECIPES)
+    @pytest.mark.parametrize("config_func,recipe_name,parallelism_overrides,model_overrides,checkpoint_overrides,ddp_overrides", LLAMA_PRETRAIN_RECIPES)
     def test_llama_pretrain_recipes(self, config_func, recipe_name, parallelism_overrides, model_overrides, checkpoint_overrides, ddp_overrides, tmp_path):
         """Functional test for LLaMA recipes with appropriate parallelism configurations."""
         run_pretrain_recipe_test(
