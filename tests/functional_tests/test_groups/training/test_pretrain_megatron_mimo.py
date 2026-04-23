@@ -206,12 +206,18 @@ def _wrap_iter(loader_iter):
         yield batch
 
 
-def _build_data_iterators(cfg, megatron_mimo_infra):
-    """Build data iterators compatible with pretrain_megatron_mimo's build_data_iterators_fn."""
+def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
+    """Build data iterators compatible with pretrain_megatron_mimo's build_data_iterators_fn.
+
+    Accepts an optional ``train_state`` so consumed-sample offsets from a restored
+    checkpoint are honored during resume. ``setup_megatron_mimo`` introspects the
+    signature and passes ``train_state`` when ``train_state.step > 0``.
+    """
     from megatron.bridge.data.megatron_mimo.loaders import build_megatron_mimo_data_loaders
     from megatron.bridge.training.state import TrainState
 
-    train_state = TrainState()
+    if train_state is None:
+        train_state = TrainState()
     train_samples = cfg.train.train_iters * cfg.train.global_batch_size
 
     train_loader, _, _ = build_megatron_mimo_data_loaders(
@@ -272,6 +278,155 @@ def _build_config(
     )
 
 
+# ── Index tracing for checkpoint-resume test ─────────────────────────────────
+
+
+_RESUME_TEST_CONSUMED_INDICES: list[int] = []
+
+
+class _IndexTaggedDataset(torch.utils.data.Dataset):
+    """Wrap a Dataset so each sample's ``input_ids[-1]`` holds its global index.
+
+    Used by the checkpoint-resume L2 test to trace which samples were consumed
+    across save/resume phases. Read ``batch["input_ids"][:, -1]`` to get the
+    indices fed into a step.
+
+    The tag goes in the *last* text position (not position 0) because positions
+    [0, _ENCODER_SEQ_LEN) hold vision placeholder tokens that MimoModel's
+    ``align_embeddings_by_token_positions`` counts against the vision encoder's
+    output (mismatch → ValueError).
+    """
+
+    def __init__(self, inner: torch.utils.data.Dataset):
+        self._inner = inner
+
+    def __len__(self) -> int:
+        return len(self._inner)
+
+    def __getitem__(self, idx):
+        sample = self._inner[idx]
+        sample["input_ids"][-1] = idx
+        return sample
+
+
+class _TraceableMockProvider(MockMegatronMIMOProvider):
+    """Test-only provider that wraps MockMegatronMIMOProvider's datasets with
+    ``_IndexTaggedDataset`` so samples carry their global index."""
+
+    def build_datasets(self, context):
+        train, valid, test = super().build_datasets(context)
+        wrap = lambda ds: _IndexTaggedDataset(ds) if ds is not None else None
+        return wrap(train), wrap(valid), wrap(test)
+
+
+def _tracing_wrap_iter(loader_iter):
+    """Like ``_wrap_iter`` but records batch sample-indices into the module-level
+    ``_RESUME_TEST_CONSUMED_INDICES`` list before yielding."""
+    for batch in _wrap_iter(loader_iter):
+        # input_ids was moved to cuda by _wrap_iter.
+        _RESUME_TEST_CONSUMED_INDICES.extend(batch["input_ids"][:, -1].cpu().tolist())
+        yield batch
+
+
+def _build_tracing_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
+    """Same as ``_build_data_iterators`` but uses the tracing iter wrapper."""
+    from megatron.bridge.data.megatron_mimo.loaders import build_megatron_mimo_data_loaders
+    from megatron.bridge.training.state import TrainState
+
+    if train_state is None:
+        train_state = TrainState()
+    train_samples = cfg.train.train_iters * cfg.train.global_batch_size
+
+    train_loader, _, _ = build_megatron_mimo_data_loaders(
+        cfg=cfg,
+        train_state=train_state,
+        megatron_mimo_provider=cfg.dataset,
+        train_samples=max(train_samples, 100),
+        valid_samples=0,
+        test_samples=0,
+    )
+    train_iter = _tracing_wrap_iter(train_loader) if train_loader is not None else None
+    return train_iter, None
+
+
+def _build_traceable_mock_provider() -> _TraceableMockProvider:
+    """Like ``_build_mock_data_provider`` but returns a provider whose datasets
+    embed each sample's global index in ``input_ids[0]``."""
+    provider = _TraceableMockProvider(
+        seq_length=_SEQ_LENGTH,
+        processor_paths={},
+        tokenizer_path="gpt2",
+        special_token_ids={"vision": _SPECIAL_TOKEN_ID},
+        encoder_seq_lengths={"vision": _ENCODER_SEQ_LEN},
+        modality_configs={"vision": {"type": "image", "width": _IMG_SIZE, "height": _IMG_SIZE}},
+    )
+    provider.drop_last = True
+    object.__setattr__(provider, "_processors", {"vision": _CLIPImageProcessor()})
+    return provider
+
+
+def _build_resume_config(
+    parallelism_config: MegatronMIMOParallelismConfig,
+    *,
+    train_iters: int,
+    save_interval: int,
+    ckpt_save_dir: str,
+    ckpt_load_dir: str | None = None,
+) -> ConfigContainer:
+    """Config builder for the checkpoint-resume L2 test.
+
+    Mirrors ``_build_config`` but wires the save/load directory into
+    ``CheckpointConfig`` and uses the traceable mock data provider.
+    """
+    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
+
+    megatron_mimo_provider = MegatronMIMOProvider(
+        language_model_spec=language_model_spec,
+        modality_submodules_spec=modality_submodules_spec,
+        special_token_ids=special_token_ids,
+        megatron_mimo_parallelism_config=parallelism_config,
+        topology={"vision": ["language"], "language": []},
+    )
+    if not hasattr(megatron_mimo_provider, "num_moe_experts"):
+        megatron_mimo_provider.num_moe_experts = None
+
+    train_cfg = TrainingConfig(
+        micro_batch_size=1,
+        global_batch_size=1,
+        train_iters=train_iters,
+    )
+    train_cfg.num_microbatches = 1
+
+    opt_config = OptimizerConfig(
+        bf16=True,
+        use_distributed_optimizer=True,
+        lr=1e-4,
+        min_lr=0.0,
+    )
+
+    ckpt_cfg = CheckpointConfig(
+        save_interval=save_interval,
+        save=ckpt_save_dir,
+        ckpt_format="torch_dist",
+        fully_parallel_save=True,  # llm pp==1 in this test
+        dist_ckpt_optim_fully_reshardable=True,
+        save_rng=False,  # MegatronMIMO RNG save produces duplicate shard keys; disable
+    )
+    if ckpt_load_dir is not None:
+        ckpt_cfg.load = ckpt_load_dir
+
+    return ConfigContainer(
+        train=train_cfg,
+        model=megatron_mimo_provider,
+        optimizer=opt_config,
+        scheduler=SchedulerConfig(start_weight_decay=0.0, end_weight_decay=0.0),
+        dataset=_build_traceable_mock_provider(),
+        logger=LoggerConfig(),
+        tokenizer=TokenizerConfig(),
+        checkpoint=ckpt_cfg,
+    )
+
+
 # ── Test class ───────────────────────────────────────────────────────────────
 
 
@@ -325,4 +480,126 @@ class TestMegatronMIMOTraining:
             cfg=cfg,
             forward_step_func=megatron_mimo_forward_step,
             build_data_iterators_fn=_build_data_iterators,
+        )
+
+    @pytest.mark.run_only_on("GPU")
+    def test_megatron_mimo_checkpoint_resume_dp1_both(self, tmp_path):
+        """Fast checkpoint-resume check (issue #11 regression guard).
+
+        Single torchrun, single process-group init. Runs two ``pretrain_megatron_mimo``
+        calls back-to-back: phase 1 trains for ``SAVE_STEPS`` iters and writes a
+        checkpoint; phase 2 loads the same checkpoint and trains to ``TOTAL_STEPS``.
+        ``_IndexTaggedDataset`` puts each sample's global index into
+        ``input_ids[0]``, and ``_tracing_wrap_iter`` records those indices as the
+        sampler yields them. Asserts:
+
+        * ``train_state.step`` goes 0 → SAVE_STEPS after phase 1, SAVE_STEPS → TOTAL_STEPS after phase 2
+        * ``train_state.consumed_train_samples`` is correctly restored
+        * Phase-1 and phase-2 consumed indices are disjoint (the resumed loader
+          skips samples already seen before the crash)
+
+        Only needs 2 GPUs and ~30–40s — much faster than the 8 GPU L3 ``dp4_both``
+        checkpoint-resume test, and catches the same class of bug every PR.
+        """
+        from megatron.bridge.training.state import GlobalState
+
+        save_steps = 3
+        total_steps = 6
+
+        initialize_distributed()
+
+        world_size = dist.get_world_size()
+        if world_size != 2:
+            pytest.skip(f"MegatronMIMO test requires exactly 2 GPUs, got {world_size}")
+
+        # Monkey-patch: report_theoretical_memory crashes on MegatronMIMO models.
+        import megatron.bridge.training.utils.train_utils as _tu
+
+        _tu.report_theoretical_memory = lambda *a, **kw: None
+
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                    rank_offset=1,
+                ),
+            },
+        )
+
+        # Use tmp_path on rank 0 and broadcast so all ranks share the same dir.
+        ckpt_dir = [str(tmp_path / "ckpt")] if dist.get_rank() == 0 else [None]
+        dist.broadcast_object_list(ckpt_dir, src=0)
+        ckpt_dir = ckpt_dir[0]
+
+        # ── Phase 1: train SAVE_STEPS iters, save checkpoint ────────────────
+        _RESUME_TEST_CONSUMED_INDICES.clear()
+        cfg_save = _build_resume_config(
+            par_cfg,
+            train_iters=save_steps,
+            save_interval=save_steps,
+            ckpt_save_dir=ckpt_dir,
+        )
+        state_save = GlobalState()
+        pretrain_megatron_mimo(
+            cfg=cfg_save,
+            forward_step_func=megatron_mimo_forward_step,
+            build_data_iterators_fn=_build_tracing_data_iterators,
+            global_state=state_save,
+        )
+        phase1_indices = sorted(set(_RESUME_TEST_CONSUMED_INDICES))
+        phase1_consumed = state_save.train_state.consumed_train_samples
+        assert state_save.train_state.step == save_steps
+        assert phase1_consumed > 0
+        dist.barrier()
+
+        # ── Phase 2: resume from checkpoint, train to TOTAL_STEPS ────────────
+        _RESUME_TEST_CONSUMED_INDICES.clear()
+        cfg_resume = _build_resume_config(
+            par_cfg,
+            train_iters=total_steps,
+            save_interval=total_steps,
+            ckpt_save_dir=ckpt_dir,
+            ckpt_load_dir=ckpt_dir,
+        )
+        # Save phase used train_iters=save_steps so the checkpoint's scheduler
+        # state doesn't match total_steps; override so the resumed scheduler uses
+        # the new values without asserting against the checkpoint.
+        cfg_resume.scheduler.override_opt_param_scheduler = True
+
+        state_resume = GlobalState()
+        pretrain_megatron_mimo(
+            cfg=cfg_resume,
+            forward_step_func=megatron_mimo_forward_step,
+            build_data_iterators_fn=_build_tracing_data_iterators,
+            global_state=state_resume,
+        )
+        phase2_indices = sorted(set(_RESUME_TEST_CONSUMED_INDICES))
+
+        # Step counter continues from the checkpoint.
+        assert state_resume.train_state.step == total_steps, (
+            f"Step continuity broken: phase 2 ended at step={state_resume.train_state.step}, expected {total_steps}"
+        )
+
+        # consumed_train_samples was restored and then incremented by the extra iters.
+        expected_consumed = phase1_consumed + (total_steps - save_steps) * cfg_resume.train.global_batch_size
+        assert state_resume.train_state.consumed_train_samples == expected_consumed, (
+            f"consumed_train_samples not restored correctly: phase 1 saved {phase1_consumed}, "
+            f"phase 2 ended at {state_resume.train_state.consumed_train_samples}, "
+            f"expected {expected_consumed}"
+        )
+
+        # The data loader honored the restored offset: phase 2's first batch picks
+        # up where phase 1 left off, so indices are disjoint.
+        overlap = set(phase1_indices) & set(phase2_indices)
+        assert not overlap, (
+            f"Issue #11 regression: resumed loader re-consumed samples {sorted(overlap)} "
+            f"(phase 1 saw {phase1_indices}, phase 2 saw {phase2_indices})"
         )
