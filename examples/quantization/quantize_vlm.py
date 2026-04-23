@@ -328,7 +328,7 @@ def main(
         mtq_config = get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_quant, weight_only)
 
         # Disable quantization for entire vision_model (all HuggingFace vision components)
-        mtq_config["quant_cfg"]["*vision_model*"] = {"enable": False}
+        mtq_config["quant_cfg"].append({"quantizer_name": "*vision_model*", "enable": False})
 
         # Define forward loop function for calibration
         def ptq_forward_loop_func(model):

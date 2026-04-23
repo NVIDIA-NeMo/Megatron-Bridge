@@ -22,6 +22,7 @@ Or for single GPU: uv run pytest tests/unit_tests/models/qwen_vl/modelling_qwen3
 import datetime
 import os
 from dataclasses import replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -526,6 +527,81 @@ class TestQwen3VLModel:
         assert not isinstance(out, dict), "PP last stage should return language logits/loss tensor, not a dict"
         assert isinstance(out, torch.Tensor)
         assert out.dim() >= 2
+
+    def test_forward_text_only_without_vision_inputs(self, monkeypatch):
+        """Text-only forward should not require vision_embeds to be materialized."""
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.reorganize_inputs",
+            lambda **_kwargs: (None, None, None),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.get_rope_index",
+            lambda *args, **kwargs: (
+                torch.zeros((3, args[4].shape[0], args[4].shape[1]), dtype=torch.long),
+                None,
+            ),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def embedding(self, input_ids, position_ids=None):
+                del position_ids
+                batch_size, seq_len = input_ids.shape
+                return torch.zeros((seq_len, batch_size, 4), dtype=torch.float32)
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=True,
+            square_merge_size=4,
+            config=SimpleNamespace(
+                vision_dp_when_cp=False,
+                sequence_parallel=False,
+                spatial_merge_size=4,
+            ),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                pp=object(),
+            ),
+            language_model=language_model,
+            image_token_id=1,
+            video_token_id=2,
+            vision_start_token_id=3,
+            use_dist_train=False,
+        )
+
+        input_ids = torch.tensor([[11, 12]], dtype=torch.long)
+
+        output = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            attention_mask=None,
+            pixel_values=None,
+            pixel_values_videos=None,
+            image_grid_thw=None,
+            video_grid_thw=None,
+        )
+
+        assert torch.equal(output, torch.ones(1))
+        assert language_model.last_kwargs is not None
+        assert language_model.last_kwargs["visual_pos_masks"] is None
+        assert language_model.last_kwargs["decoder_input"].shape == (2, 1, 4)
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
     @pytest.mark.timeout(120)
