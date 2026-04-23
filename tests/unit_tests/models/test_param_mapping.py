@@ -785,17 +785,18 @@ class TestAutoMappingWithPermute:
         mapping = AutoMapping("transpose.weight", "hf.weight", permute_dims=(1, 0))
 
         hf_weight = torch.randn(4, 8)
-        megatron_module = MockModule(transformer_config, weight_shape=(4, 4))
+        megatron_module = MockModule(transformer_config, weight_shape=(8, 4))
 
         with patch.object(mapping, "_mapping") as mock_delegate:
-            mock_delegate.hf_to_megatron.return_value = torch.randn(4, 4)
+            mock_delegate.hf_to_megatron.return_value = torch.randn(8, 4)
             with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
                 mapping.hf_to_megatron(hf_weight, megatron_module)
 
-            # On non-rank-0, permutation is skipped, original tensor passed to delegate
+            # Permutation is applied on ALL ranks so delegate mappings
+            # (e.g. ReplicatedMapping) always receive the correct shape.
             mock_delegate.hf_to_megatron.assert_called_once()
             passed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
-            assert torch.equal(passed_tensor, hf_weight)
+            assert torch.equal(passed_tensor, hf_weight.permute(1, 0).contiguous())
 
     def test_transpose_identity_permutation(self, mock_distributed_env, transformer_config):
         """Test AutoMapping with identity permutation."""
