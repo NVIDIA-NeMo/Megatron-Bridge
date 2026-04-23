@@ -100,6 +100,13 @@ from megatron.bridge.training.utils.train_utils import (
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
 
+# For Optimizer CUDA graph support
+try:
+    from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
+
+    HAS_OPTIMIZER_CUDA_GRAPH = True
+except ImportError:
+    HAS_OPTIMIZER_CUDA_GRAPH = False
 # For Paged Stashing support
 try:
     from megatron.core.transformer.moe.paged_stash import PagedStashRunner
@@ -303,6 +310,12 @@ def train(
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
+
+    if config.optimizer.optimizer_cuda_graph and HAS_OPTIMIZER_CUDA_GRAPH:
+        optimizer.step = OptimizerCudaGraphWrapper(
+            optimizer.step, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
+        )
+
     # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
     # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
     if HAS_PAGED_STASHING and config.model.moe_expert_rank_capacity_factor is not None:
@@ -1580,6 +1593,11 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
     if "training" in FullCudaGraphWrapper.cuda_graph:
         del FullCudaGraphWrapper.cuda_graph["training"]
+
+    # Explicitly delete optimizer CUDA graph
+    if HAS_OPTIMIZER_CUDA_GRAPH and OptimizerCudaGraphWrapper.cuda_graph is not None:
+        del OptimizerCudaGraphWrapper.cuda_graph
+        OptimizerCudaGraphWrapper.cuda_graph = None
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
     if cuda_graph_helper is not None:
