@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+import logging
 import math
 import os
 import time
@@ -44,6 +45,9 @@ if TYPE_CHECKING:
     from torch.distributed.distributed_c10d import ProcessGroup as TorchProcessGroup
 
 
+logger = logging.getLogger(__name__)
+
+
 def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
     """Enable the CUDA caching allocator trace so memory snapshots contain history.
 
@@ -73,12 +77,14 @@ def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
         """Dump a snapshot on OOM so we can inspect what was live at the failure."""
         import pickle
 
+        rank = get_rank_safe()
         base, ext = os.path.splitext(profiling.memory_snapshot_path)
-        filename = f"{base}_oom_rank-{get_rank_safe()}{ext}"
+        filename = f"{base}_oom_rank-{rank}{ext}"
         snapshot = torch.cuda.memory._snapshot()
         with open(filename, "wb") as f:
             pickle.dump(snapshot, f)
-        print_rank_0(f"[OOM] saved memory snapshot to {filename}")
+        # logger.info so the message reaches stderr on any profiled rank, not just rank 0.
+        logger.info(f"[OOM] rank {rank} saved memory snapshot to {filename}")
 
     torch._C._cuda_attach_out_of_memory_observer(_oom_observer)
     print_rank_0(
