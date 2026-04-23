@@ -123,7 +123,6 @@ try:
 
     HAVE_NVRX = True
 except (ImportError, ModuleNotFoundError):
-
     NVRxAsyncRequest = ABC
     HAVE_NVRX = False
 
