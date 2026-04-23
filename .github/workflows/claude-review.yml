@@ -1,6 +1,8 @@
 name: Claude Code Review
 
 on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
   issue_comment:
     types: [created]
 
@@ -11,8 +13,52 @@ permissions:
   id-token: write
 
 jobs:
-  claude-review:
-    if: github.event.issue.pull_request != null && contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+  auto-review:
+    name: Claude Review (auto)
+    # Auto-review non-draft PRs on open / reopen / ready-for-review.
+    # Subsequent commits do not re-trigger; re-request a review by commenting
+    # "/claude review" (handled by the manual-review job below).
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*)"
+            --model "claude-opus-4-6"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are doing a light code review. Keep it concise and actionable.
+
+            Focus ONLY on:
+            - Critical bugs or logic errors
+            - Typos in code, comments, or strings
+            - Missing or insufficient test coverage for changed code
+            - Outdated or inaccurate documentation affected by the changes
+
+            Do NOT comment on:
+            - Style preferences or formatting
+            - Minor naming suggestions
+            - Architectural opinions or refactoring ideas
+            - Performance unless there is a clear, measurable issue
+
+            Provide feedback using inline comments for specific code suggestions.
+            Use top-level comments for general observations.
+
+            It's perfectly acceptable to not have anything to comment on.
+            If you do not have anything to comment on, post "LGTM".
+
+  manual-review:
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null && contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_claude_review.yml@v0.88.0
     with:
       prompt: |
