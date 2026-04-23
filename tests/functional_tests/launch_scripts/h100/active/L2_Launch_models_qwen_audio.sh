@@ -13,12 +13,11 @@
 # limitations under the License.
 
 #!/bin/bash
-# L0: VLM inference (examples/inference/vlm) — coverage run
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 export CUDA_VISIBLE_DEVICES="0,1"
 
 uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/inference
+  tests/functional_tests/test_groups/models/qwen_audio
 coverage combine -q
