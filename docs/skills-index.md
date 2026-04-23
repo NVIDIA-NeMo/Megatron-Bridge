@@ -10,6 +10,7 @@ and verification steps.
 :maxdepth: 1
 
 skills/developer-guide/SKILL
+skills/test-system/SKILL
 skills/mlm-bridge-training/SKILL
 skills/recipe-recommender/SKILL
 ```

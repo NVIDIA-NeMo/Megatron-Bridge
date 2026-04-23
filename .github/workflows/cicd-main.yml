@@ -62,6 +62,9 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  container-registry-gb200: us-east4-docker.pkg.dev/nv-projdgxchipp-20260113193621/megatron-bridge
+
 jobs:
   pre-flight:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
@@ -80,11 +83,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pre-flight]
     outputs:
-      needs_more_tests: ${{ steps.configure.outputs.needs_more_tests }}
-      full_test_suite:  ${{ steps.configure.outputs.full_test_suite }}
-      expect_l0:        ${{ steps.configure.outputs.expect_l0 }}
-      expect_l1:        ${{ steps.configure.outputs.expect_l1 }}
-      expect_l2:        ${{ steps.configure.outputs.expect_l2 }}
+      needs_more_tests:  ${{ steps.configure.outputs.needs_more_tests }}
+      full_test_suite:   ${{ steps.configure.outputs.full_test_suite }}
+      expect_l0:         ${{ steps.configure.outputs.expect_l0 }}
+      expect_l1:         ${{ steps.configure.outputs.expect_l1 }}
+      expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
+      perf_scripts_only: ${{ steps.configure.outputs.perf_scripts_only }}
     steps:
       - name: Get PR info
         id: get-pr-info
@@ -110,8 +114,18 @@ jobs:
           NEEDS_MORE_TESTS=$(echo "$LABELS" | jq 'any(. == "needs-more-tests")')
           FULL_TEST_SUITE=$(echo "$LABELS"  | jq 'any(. == "full-test-suite")')
 
-          # Tests are expected on every run except docs-only and deployment
-          if [[ "$DOCS_ONLY" == "true" || "$IS_DEPLOYMENT" == "true" ]]; then
+          # Detect if every changed file lives under scripts/performance/
+          PERF_SCRIPTS_ONLY=false
+          if [[ -n "$PR_NUMBER" ]]; then
+            CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo ${{ github.repository }} --name-only 2>/dev/null) || CHANGED_FILES=""
+            if [[ -n "$CHANGED_FILES" ]]; then
+              NON_PERF=$(echo "$CHANGED_FILES" | grep -v '^scripts/performance/' || true)
+              [[ -z "$NON_PERF" ]] && PERF_SCRIPTS_ONLY=true
+            fi
+          fi
+
+          # Tests are expected on every run except docs-only, deployment, and perf-scripts-only
+          if [[ "$DOCS_ONLY" == "true" || "$IS_DEPLOYMENT" == "true" || "$PERF_SCRIPTS_ONLY" == "true" ]]; then
             RUN_TESTS=false
           else
             RUN_TESTS=true
@@ -139,24 +153,26 @@ jobs:
             EXPECT_L2=true
           fi
 
-          echo "needs_more_tests=$NEEDS_MORE_TESTS" | tee -a "$GITHUB_OUTPUT"
-          echo "full_test_suite=$FULL_TEST_SUITE"   | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l0=$EXPECT_L0"               | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l1=$EXPECT_L1"               | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l2=$EXPECT_L2"               | tee -a "$GITHUB_OUTPUT"
+          echo "needs_more_tests=$NEEDS_MORE_TESTS"   | tee -a "$GITHUB_OUTPUT"
+          echo "full_test_suite=$FULL_TEST_SUITE"     | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l0=$EXPECT_L0"                 | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l1=$EXPECT_L1"                 | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l2=$EXPECT_L2"                 | tee -a "$GITHUB_OUTPUT"
+          echo "perf_scripts_only=$PERF_SCRIPTS_ONLY" | tee -a "$GITHUB_OUTPUT"
 
           # Active row markers for step summary decision tree
-          _L0=$(    [[ "$EXPECT_L0" == "true" ]] && echo "**→**" || echo "" )
-          _L1=$(    [[ "$EXPECT_L1" == "true" ]] && echo "**→**" || echo "" )
-          _L2=$(    [[ "$EXPECT_L2" == "true" ]] && echo "**→**" || echo "" )
-          _SKIP_DOCS=$(    [[ "$DOCS_ONLY"     == "true" ]] && echo "**→**" || echo "" )
-          _SKIP_DEPLOY=$(  [[ "$IS_DEPLOYMENT" == "true" ]] && echo "**→**" || echo "" )
-          _MG=$(    [[ "$EVENT_NAME" == "merge_group"       ]] && echo "**→**" || echo "" )
-          _MAIN=$(  [[ "$REF"        == "refs/heads/main"   ]] && echo "**→**" || echo "" )
-          _SCHED=$( [[ "$EVENT_NAME" == "schedule"          ]] && echo "**→**" || echo "" )
-          _WD=$(    [[ "$EVENT_NAME" == "workflow_dispatch" ]] && echo "**→**" || echo "" )
-          _NMT=$(   [[ "$NEEDS_MORE_TESTS" == "true"        ]] && echo "**→**" || echo "" )
-          _FTS=$(   [[ "$FULL_TEST_SUITE"  == "true"        ]] && echo "**→**" || echo "" )
+          _L0=$(         [[ "$EXPECT_L0"        == "true" ]] && echo "**→**" || echo "" )
+          _L1=$(         [[ "$EXPECT_L1"        == "true" ]] && echo "**→**" || echo "" )
+          _L2=$(         [[ "$EXPECT_L2"        == "true" ]] && echo "**→**" || echo "" )
+          _SKIP_DOCS=$(  [[ "$DOCS_ONLY"        == "true" ]] && echo "**→**" || echo "" )
+          _SKIP_DEPLOY=$([[ "$IS_DEPLOYMENT"    == "true" ]] && echo "**→**" || echo "" )
+          _SKIP_PERF=$(  [[ "$PERF_SCRIPTS_ONLY" == "true" ]] && echo "**→**" || echo "" )
+          _MG=$(         [[ "$EVENT_NAME" == "merge_group"       ]] && echo "**→**" || echo "" )
+          _MAIN=$(       [[ "$REF"        == "refs/heads/main"   ]] && echo "**→**" || echo "" )
+          _SCHED=$(      [[ "$EVENT_NAME" == "schedule"          ]] && echo "**→**" || echo "" )
+          _WD=$(         [[ "$EVENT_NAME" == "workflow_dispatch" ]] && echo "**→**" || echo "" )
+          _NMT=$(        [[ "$NEEDS_MORE_TESTS" == "true"        ]] && echo "**→**" || echo "" )
+          _FTS=$(        [[ "$FULL_TEST_SUITE"  == "true"        ]] && echo "**→**" || echo "" )
 
           cat <<SUMMARY >> "$GITHUB_STEP_SUMMARY"
           ## CI Configuration
@@ -167,6 +183,7 @@ jobs:
           |---|---|
           | \`docs_only\` | \`$DOCS_ONLY\` |
           | \`is_deployment_workflow\` | \`$IS_DEPLOYMENT\` |
+          | \`perf_scripts_only\` | \`$PERF_SCRIPTS_ONLY\` |
           | \`needs_more_tests\` | \`$NEEDS_MORE_TESTS\` |
           | \`full_test_suite\` | \`$FULL_TEST_SUITE\` |
 
@@ -174,7 +191,7 @@ jobs:
 
           | | Tier | Condition |
           |---|---|---|
-          | $_L0 | **L0** | any non-docs/deployment run |
+          | $_L0 | **L0** | any non-docs/deployment/perf-scripts run |
           | $_L1 | **L1** | \`main\` / \`schedule\` / \`workflow_dispatch\` / \`merge_group\` / label _needs-more-tests_ |
           | $_L2 | **L2** | \`schedule\` / \`workflow_dispatch\` / label _full-test-suite_ |
 
@@ -186,6 +203,7 @@ jobs:
           |---|---|
           | $_SKIP_DOCS   | Docs-only change (no src files modified) |
           | $_SKIP_DEPLOY | Deployment workflow (\`deploy-release/*\` branch) |
+          | $_SKIP_PERF   | Perf-scripts-only change (all changes under \`scripts/performance/\`) |
 
           **L1/L2 active trigger**
 
@@ -242,22 +260,23 @@ jobs:
           pre-commit run --all-files --show-diff-on-failure --color=always
 
   cicd-wait-in-queue:
-    needs: [pre-flight, lint-check]
+    needs: [pre-flight, lint-check, configure]
     runs-on: ubuntu-latest
     environment: test
     if: |
       !(needs.pre-flight.outputs.is_ci_workload == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true'
-      || needs.pre-flight.outputs.docs_only == 'true')
+      || needs.pre-flight.outputs.docs_only == 'true'
+      || needs.configure.outputs.perf_scripts_only == 'true')
       && github.event_name != 'merge_group'
     steps:
       - name: Running CI tests
         run: |
           echo "Running CI tests"
 
-  cicd-container-build:
-    needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+  cicd-compute-build-matrix:
+    needs: [pre-flight, configure, cicd-wait-in-queue]
+    runs-on: ubuntu-latest
     if: |
       (
         success()
@@ -266,6 +285,46 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
+      && needs.configure.outputs.perf_scripts_only != 'true'
+    outputs:
+      matrix: ${{ steps.compute.outputs.matrix }}
+    steps:
+      - name: Compute build matrix
+        id: compute
+        env:
+          RUNNER_PREFIX: ${{ needs.pre-flight.outputs.runner_prefix }}
+          REGISTRY_AWS: ${{ needs.pre-flight.outputs.registry }}
+          REGISTRY_GCP: ${{ env.container-registry-gb200 }}
+          IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
+        run: |
+          AWS_ENTRY=$(jq -nc --arg registry "$REGISTRY_AWS" --arg runner "${RUNNER_PREFIX}" \
+            '{"cloud": "aws", "registry": $registry, "runner": $runner}')
+          if [[ "$IS_MEMBER" == "true" ]]; then
+            GCP_ENTRY=$(jq -nc --arg registry "$REGISTRY_GCP" --arg runner "nemo-ci-gcp-gpu-x2" \
+              '{"cloud": "gcp", "registry": $registry, "runner": $runner}')
+            MATRIX=$(jq -nc --argjson aws "$AWS_ENTRY" --argjson gcp "$GCP_ENTRY" \
+              '{"include": [$aws, $gcp]}')
+          else
+            MATRIX=$(jq -nc --argjson aws "$AWS_ENTRY" '{"include": [$aws]}')
+          fi
+          echo "matrix=$MATRIX" | tee -a "$GITHUB_OUTPUT"
+
+  cicd-container-build:
+    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-compute-build-matrix]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.cicd-compute-build-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    environment: ${{ contains(matrix.registry, 'azure') && 'nemo-ci' || '' }}
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+      && needs.configure.outputs.perf_scripts_only != 'true'
     steps:
       - name: Get PR info
         id: get-pr-info
@@ -357,7 +416,7 @@ jobs:
                 }
               }
             }' | jq -r '.data.repository.pullRequests.nodes[].number' | while read -r number; do
-              echo "type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:$number-buildcache,mode=max"
+              echo "type=registry,ref=${{ matrix.registry }}/megatron-bridge:$number-buildcache,mode=max"
             done)
 
           echo "LAST_PRS<<EOF" | tee -a $GITHUB_OUTPUT
@@ -380,8 +439,17 @@ jobs:
           else
             KEY="$BRANCH_SANITIZED"
           fi
-          echo "key=$KEY" >> $GITHUB_OUTPUT
-          echo "cache-to=type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
+          echo "key=$KEY" | tee -a "$GITHUB_OUTPUT"
+          echo "cache-to=type=registry,ref=${{ matrix.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Compute platform
+        id: platform
+        run: |
+          if [[ "${{ matrix.cloud }}" == "gcp" ]]; then
+            echo "platforms=linux/arm64" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "platforms=linux/amd64" | tee -a "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -389,19 +457,20 @@ jobs:
           file: ./docker/Dockerfile.ci
           push: true
           context: .
+          platforms: ${{ steps.platform.outputs.platforms }}
           build-args: |
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
           cache-from: |
-            type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
-            type=registry,ref=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:main-buildcache,mode=max
+            type=registry,ref=${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
+            type=registry,ref=${{ matrix.registry }}/megatron-bridge:main-buildcache,mode=max
             ${{ steps.cache_from.outputs.LAST_PRS }}
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |
-            ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
-            ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+            ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
+            ${{ matrix.registry }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
 
@@ -500,7 +569,7 @@ jobs:
           }
           for tier in L0 L1 L2; do
             entries=""
-            for f in tests/functional_tests/launch_scripts/active/${tier}_*.sh; do
+            for f in tests/functional_tests/launch_scripts/h100/active/${tier}_*.sh; do
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
@@ -509,7 +578,7 @@ jobs:
             echo "matrix_${tier,,}=${matrix}" | tee -a "$GITHUB_OUTPUT"
           done
           entries=""
-          for f in tests/functional_tests/launch_scripts/flaky/L*.sh; do
+          for f in tests/functional_tests/launch_scripts/h100/flaky/L*.sh; do
             [ -f "$f" ] || continue
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
@@ -658,7 +727,7 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          script_dir: flaky
+          script_dir: h100/flaky
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
@@ -666,6 +735,229 @@ jobs:
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
+
+  generate-gb200-test-matrix:
+    needs: [pre-flight, cicd-container-build]
+    runs-on: ubuntu-latest
+    outputs:
+      matrix_gb200_l0:    ${{ steps.scan.outputs.matrix_gb200_l0 }}
+      matrix_gb200_l1:    ${{ steps.scan.outputs.matrix_gb200_l1 }}
+      matrix_gb200_l2:    ${{ steps.scan.outputs.matrix_gb200_l2 }}
+      matrix_gb200_flaky: ${{ steps.scan.outputs.matrix_gb200_flaky }}
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+      && needs.pre-flight.outputs.is_member == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - id: scan
+        shell: bash
+        run: |
+          get_timeout() {
+            local f="$1"
+            local t
+            t=$(grep -m1 '^# CI_TIMEOUT=' "$f" | cut -d= -f2)
+            echo "${t:-30}"
+          }
+          for tier in L0 L1 L2; do
+            entries=""
+            for f in tests/functional_tests/launch_scripts/gb200/active/${tier}_*.sh; do
+              [ -f "$f" ] || continue
+              name=$(basename "$f" .sh)
+              timeout=$(get_timeout "$f")
+              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
+            done
+            echo "matrix_gb200_${tier,,}={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
+          done
+          entries=""
+          for f in tests/functional_tests/launch_scripts/gb200/flaky/L*.sh; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f" .sh)
+            timeout=$(get_timeout "$f")
+            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
+          done
+          echo "matrix_gb200_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
+
+  # GB200-L0: mirrors H100-L0 trigger conditions, runs on GB200 hardware
+  cicd-functional-tests-gb200-l0:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l0) }}
+    needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: nemo-ci-gcp-gpu-x2
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+      && needs.pre-flight.outputs.is_member == 'true'
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
+    name: gb200_${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script_dir: gb200/active
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: nemo-ci-gcp-gpu-x2
+
+  # GB200-L1: mirrors H100-L1 trigger conditions, runs on GB200 hardware
+  cicd-functional-tests-gb200-l1:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l1) }}
+    needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: nemo-ci-gcp-gpu-x2
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+      && needs.pre-flight.outputs.is_member == 'true'
+      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.configure.outputs.needs_more_tests == 'true' || needs.configure.outputs.full_test_suite == 'true')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
+    name: gb200_${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script_dir: gb200/active
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: nemo-ci-gcp-gpu-x2
+
+  # GB200-L2: mirrors H100-L2 trigger conditions, runs on GB200 hardware
+  cicd-functional-tests-gb200-l2:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l2) }}
+    needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: nemo-ci-gcp-gpu-x2
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+      && needs.pre-flight.outputs.is_member == 'true'
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.configure.outputs.full_test_suite == 'true')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
+    name: gb200_${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script_dir: gb200/active
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: nemo-ci-gcp-gpu-x2
+
+  cicd-functional-tests-gb200-flaky:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all' && needs.pre-flight.outputs.is_member == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_flaky) }}
+    needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    runs-on: nemo-ci-gcp-gpu-x2
+    name: gb200_${{ matrix.script }}
+    environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script_dir: gb200/flaky
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: ${{ contains(needs.pre-flight.outputs.registry, 'azure') }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: nemo-ci-gcp-gpu-x2
 
   Nemo_CICD_Test:
     needs:
@@ -676,6 +968,9 @@ jobs:
       - cicd-functional-tests-l0
       - cicd-functional-tests-l1
       - cicd-functional-tests-l2
+      - cicd-functional-tests-gb200-l0
+      - cicd-functional-tests-gb200-l1
+      - cicd-functional-tests-gb200-l2
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     permissions: write-all
@@ -687,10 +982,11 @@ jobs:
         id: result
         shell: bash -e -u -o pipefail {0}
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN:  ${{ github.token }}
           EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
+          IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
         run: |
           FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
 
@@ -712,6 +1008,11 @@ jobs:
           check_tier_skips "L0" "$EXPECT_L0"
           check_tier_skips "L1" "$EXPECT_L1"
           check_tier_skips "L2" "$EXPECT_L2"
+          if [[ "$IS_MEMBER" == "true" ]]; then
+            check_tier_skips "gb200_L0" "$EXPECT_L0"
+            check_tier_skips "gb200_L1" "$EXPECT_L1"
+            check_tier_skips "gb200_L2" "$EXPECT_L2"
+          fi
 
           if [ "${FAILED_JOBS:-0}" -gt 0 ]; then
             echo "❌ Found $FAILED_JOBS failed job(s):"
@@ -727,7 +1028,7 @@ jobs:
 
   Coverage_Fake:
     runs-on: ubuntu-latest
-    needs: [Nemo_CICD_Test, pre-flight]
+    needs: [Nemo_CICD_Test, pre-flight, configure]
     if: |
       always()
       && !cancelled()
@@ -735,6 +1036,7 @@ jobs:
       && (
         needs.pre-flight.outputs.docs_only == 'true'
         || needs.pre-flight.outputs.is_deployment_workflow == 'true'
+        || needs.configure.outputs.perf_scripts_only == 'true'
       )
     steps:
       - name: Generate fake coverage report
@@ -766,6 +1068,11 @@ jobs:
           - unit-test
           - e2e
     steps:
+      - name: Get PR info
+        id: get-pr-info
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        uses: nv-gha-runners/get-pr-info@main
+
       - name: Checkout
         uses: actions/checkout@v6
 
@@ -793,6 +1100,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true
           flags: ${{ matrix.flag }}
+          base_sha: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').base.sha }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
