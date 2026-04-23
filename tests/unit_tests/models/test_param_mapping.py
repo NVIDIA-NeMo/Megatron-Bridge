@@ -506,6 +506,22 @@ class TestGatedMLPMapping:
 class TestMappingEdgeCases:
     """Test edge cases and error handling in param mappings."""
 
+    def test_get_shard_spec_handles_replicated_tp_shards(self, mock_distributed_env):
+        mock_distributed_env(tp_size=4, tp_rank=3)
+        mapping = DirectMapping("weight", "weight")
+
+        megatron_module = torch.nn.Module()
+        megatron_module.global_dim = 8
+
+        shard_world_size, shard_rank = mapping._get_shard_spec(
+            shard_size=4,
+            megatron_module=megatron_module,
+            global_size_attr="global_dim",
+        )
+
+        assert shard_world_size == 2
+        assert shard_rank == 1
+
     def test_wildcard_pattern_validation(self):
         """Test that wildcard patterns are validated correctly."""
         # Valid patterns - should not raise
