@@ -73,7 +73,8 @@ def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
         """Dump a snapshot on OOM so we can inspect what was live at the failure."""
         import pickle
 
-        filename = f"oom_rank-{get_rank_safe()}_{profiling.memory_snapshot_path}"
+        base, ext = os.path.splitext(profiling.memory_snapshot_path)
+        filename = f"{base}_oom_rank-{get_rank_safe()}{ext}"
         snapshot = torch.cuda.memory._snapshot()
         with open(filename, "wb") as f:
             pickle.dump(snapshot, f)
