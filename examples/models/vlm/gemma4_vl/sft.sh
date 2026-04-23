@@ -20,6 +20,10 @@ WORKSPACE=${WORKSPACE:-/workspace}
 # export WANDB_API_KEY=<your_wandb_api_key>
 # export WANDB_MODE=disabled
 
+# gemma4 requires transformers>=5.5.0; the lockfile pins 5.3.0.
+# Upgrade first, then use --no-sync so uv run does not revert the upgrade.
+uv pip install -q --upgrade 'transformers>=5.5.0' mistral_common
+
 # Common configurations
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/gemma-4-26B-A4B
 MODEL_NAME=gemma4_vl_26b
@@ -36,13 +40,16 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # TP/PP combinations: "TP,PP"
+# These configs target a single 8-GPU node (DP=1 so EP must also be 1).
+# With EP=1 the 128 MoE experts are NOT sharded across GPUs, so activation
+# recompute and a frozen vision model are required to avoid OOM.
 PARALLELISM_CONFIGS=("4,2" "8,1")
 
 for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r TP PP <<< "$config"
 
     echo "Running full finetuning with TP=$TP, PP=$PP"
-    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+    uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_sft_config \
         --step_func vlm_step \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
@@ -50,7 +57,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         train.train_iters=$TRAIN_ITERS \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
         train.micro_batch_size=$MICRO_BATCH_SIZE \
-        train.eval_iters=$EVAL_ITERS \
+        validation.eval_iters=$EVAL_ITERS \
         optimizer.lr=$LR \
         optimizer.min_lr=$MIN_LR \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
@@ -61,5 +68,8 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         dataset.maker_name=make_${DATASET_NAME}_dataset \
         dataset.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
-        model.pipeline_model_parallel_size=$PP
+        model.pipeline_model_parallel_size=$PP \
+        model.expert_model_parallel_size=1 \
+        model.recompute_granularity=selective \
+        model.freeze_vision_model=True
 done

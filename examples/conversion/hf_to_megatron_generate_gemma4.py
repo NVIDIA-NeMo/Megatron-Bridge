@@ -29,8 +29,8 @@ Example (text-only):
 
 Example (VLM with image URL):
   uv run python examples/conversion/hf_to_megatron_generate_gemma4.py \\
-    --hf_model_path="google/gemma-4-26B-A4B" \\
-    --image_path="https://raw.githubusercontent.com/google-gemma/cookbook/refs/heads/main/Demos/sample-data/GoldenGate.png" \\
+    --hf_model_path="google/gemma-4-26B-A4B-it" \\
+    --image_path="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg" \\
     --prompt="What is shown in this image?" \\
     --max_new_tokens=50
 """
@@ -237,9 +237,16 @@ def main(args) -> None:
     # Pass attention_mask=None so Megatron uses its built-in causal masking.
     # Passing a 2D bool mask breaks causal masking for Gemma4.
     attention_mask = None
+    original_prompt_len = input_ids.size(1)
     generated_ids = input_ids.clone()
 
-    stop_tokens = [tokenizer.eos_token_id]
+    # Build stop token set: eos + all model-specific end-of-turn tokens.
+    # Gemma4 uses <turn|> (id 106) to signal end-of-turn; Llama uses <|eot_id|>.
+    stop_tokens = {tokenizer.eos_token_id}
+    for name in ["<turn|>", "<end_of_turn>", "<|end_of_turn|>", "<|eot_id|>"]:
+        tid = tokenizer.convert_tokens_to_ids(name)
+        if isinstance(tid, int) and tid != tokenizer.unk_token_id:
+            stop_tokens.add(tid)
     for step in range(args.max_new_tokens):
         with torch.no_grad():
             print_rank_0(f"Generation step {step}")
@@ -297,12 +304,10 @@ def main(args) -> None:
             if next_token_ids.item() in stop_tokens:
                 break
 
-    # Decode only the newly generated tokens
-    prompt_len = input_ids.size(1) - (generated_ids.size(1) - input_ids.size(1))
-    new_token_ids = generated_ids[0][input_ids.size(1) - args.max_new_tokens :]
+    # Decode only the newly generated tokens (excluding the original prompt)
     generated_text = tokenizer.decode(list(generated_ids[0]), skip_special_tokens=False)
     new_tokens_text = tokenizer.decode(
-        list(generated_ids[0][input_ids.size(1) - args.max_new_tokens:]),
+        list(generated_ids[0][original_prompt_len:]),
         skip_special_tokens=True,
     )
 

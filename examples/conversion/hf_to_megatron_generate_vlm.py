@@ -28,6 +28,7 @@ Example:
 """
 
 import argparse
+import inspect
 from typing import Optional
 
 import requests
@@ -62,6 +63,7 @@ class SingleBatchIterator:
         image_grid_thw=None,
         image_sizes=None,
         mm_token_type_ids=None,
+        image_position_ids=None,
     ):
         self.batch = dict(
             tokens=input_ids,
@@ -78,6 +80,8 @@ class SingleBatchIterator:
             self.batch["image_sizes"] = image_sizes
         if mm_token_type_ids is not None:
             self.batch["mm_token_type_ids"] = mm_token_type_ids
+        if image_position_ids is not None:
+            self.batch["image_position_ids"] = image_position_ids
         self._yielded = False
 
     def __iter__(self):
@@ -112,15 +116,13 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         "attention_mask": batch.get("attention_mask", None),
     }
 
-    # Add vision inputs if present
-    if "pixel_values" in batch:
-        forward_args["pixel_values"] = batch["pixel_values"]
-    if "image_grid_thw" in batch:
-        forward_args["image_grid_thw"] = batch["image_grid_thw"]
-    if "image_sizes" in batch:
-        forward_args["image_sizes"] = batch["image_sizes"]
-    if "mm_token_type_ids" in batch:
-        forward_args["mm_token_type_ids"] = batch["mm_token_type_ids"]
+    # Add vision inputs if present, filtered to only kwargs the model accepts
+    optional_vision_keys = ["pixel_values", "image_grid_thw", "image_sizes", "mm_token_type_ids", "image_position_ids"]
+    inner = model.module if hasattr(model, "module") else model
+    model_params = inspect.signature(inner.forward).parameters
+    for key in optional_vision_keys:
+        if key in batch and key in model_params:
+            forward_args[key] = batch[key]
 
     def loss_func(x, **kwargs):
         return x
@@ -160,46 +162,72 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         prompt: Text prompt
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, messages)
+        Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, image_position_ids, messages)
     """
     if image_path:
-        # Create messages with image and text
+        # Build messages using 'url' key so apply_chat_template can load the image itself.
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": image_path},
+                    {"type": "image", "url": image_path},
                     {"type": "text", "text": prompt},
                 ],
             }
         ]
 
-        # Process vision info
-        image_inputs, video_inputs = process_vision_info(messages)
+        # Primary path: apply_chat_template with tokenize=True returns a fully-prepared
+        # BatchFeature (input_ids, pixel_values, image_position_ids, …) in one call.
+        try:
+            inputs = processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+                add_generation_prompt=True,
+            )
+        except (ValueError, AttributeError, TypeError):
+            # Fallback for processors that only support tokenize=False:
+            # get the text string, load the image manually, then call the processor.
+            try:
+                text = processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+            except (ValueError, AttributeError):
+                # No chat template — prepend the image placeholder token.
+                image_token = getattr(processor, "image_token", None)
+                if image_token is None:
+                    image_token_id = getattr(processor, "image_token_id", None)
+                    if image_token_id is not None:
+                        image_token = processor.tokenizer.decode([image_token_id])
+                text = (image_token or "") + prompt
 
-        # Apply chat template
-        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            # Use qwen_vl_utils to load the image from URL or path.
+            qwen_messages = [
+                {"role": "user", "content": [{"type": "image", "image": image_path}, {"type": "text", "text": prompt}]}
+            ]
+            image_inputs, video_inputs = process_vision_info(qwen_messages)
+            inputs = processor(
+                text=[text],
+                images=image_inputs if image_inputs else [load_image(image_path)],
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
 
-        # Process inputs
-        inputs = processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        )
         return (
-            inputs.input_ids,
-            inputs.pixel_values,
-            getattr(inputs, "image_grid_thw", None),
-            getattr(inputs, "image_sizes", None),
-            getattr(inputs, "mm_token_type_ids", None),
+            inputs["input_ids"],
+            inputs.get("pixel_values"),
+            inputs.get("image_grid_thw"),
+            inputs.get("image_sizes"),
+            inputs.get("mm_token_type_ids"),
+            inputs.get("image_position_ids"),
             messages,
         )
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")
-        return inputs.input_ids, None, None, None, None, None
+        return inputs.input_ids, None, None, None, None, None, None
 
 
 def main(args) -> None:
@@ -303,8 +331,8 @@ def main(args) -> None:
 
     # Process inputs (text and image if provided)
     prompt = args.prompt
-    input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, _messages = process_image_inputs(
-        processor, args.image_path, prompt
+    input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, image_position_ids, _messages = (
+        process_image_inputs(processor, args.image_path, prompt)
     )
 
     # Move to GPU
@@ -317,7 +345,10 @@ def main(args) -> None:
         image_sizes = image_sizes.cuda()
     if mm_token_type_ids is not None:
         mm_token_type_ids = mm_token_type_ids.cuda()
+    if image_position_ids is not None:
+        image_position_ids = image_position_ids.cuda()
 
+    input_len = input_ids.size(1)  # track prompt length so we only decode new tokens
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
     )
@@ -336,7 +367,8 @@ def main(args) -> None:
             # The Megatron VL model only processes vision features when pixel_values is not None,
             # so we need to provide them throughout the generation process
             iterator = SingleBatchIterator(
-                input_ids, position_ids, attention_mask, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids
+                input_ids, position_ids, attention_mask, pixel_values, image_grid_thw, image_sizes,
+                mm_token_type_ids, image_position_ids,
             )
 
             output = fwd_bwd_function(
@@ -395,8 +427,9 @@ def main(args) -> None:
             if next_token_ids.item() in stop_tokens:
                 break
 
-    # Decode the generated sequence
-    generated_text = tokenizer.decode(list(generated_ids[0]))
+    # Decode only the newly generated tokens (skip the prompt including image tokens)
+    new_token_ids = generated_ids[0][input_len:].tolist()
+    generated_text = tokenizer.decode(new_token_ids, skip_special_tokens=True)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")
