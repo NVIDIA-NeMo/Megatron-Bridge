@@ -36,6 +36,8 @@ def run_pretrain_recipe_test(
     pipeline_model_parallel_size: Optional[int] = None,
     expert_model_parallel_size: Optional[int] = None,
     model_overrides: Optional[dict] = None,
+    checkpoint_overrides: Optional[dict] = None,
+    ddp_overrides: Optional[dict] = None,
 ):
     """
     Common test implementation for pretrain recipe configurations.
@@ -115,6 +117,14 @@ def run_pretrain_recipe_test(
         if model_overrides:
             for attribute_name, attribute_value in model_overrides.items():
                 setattr(config.model, attribute_name, attribute_value)
+        
+        if checkpoint_overrides:
+            for attribute_name, attribute_value in model_overrides.items():
+                setattr(config.checkpoint, attribute_name, attribute_value)
+
+        if ddp_overrides:
+            for attribute_name, attribute_value in model_overrides.items():
+                setattr(config.ddp, attribute_name, attribute_value)
 
         pretrain(config, forward_step)
 
