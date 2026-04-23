@@ -26,6 +26,7 @@ Run with:
 
 import pytest
 
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.qwen_vl.qwen35_vl import qwen35_vl_27b_sft_config
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
@@ -106,6 +107,19 @@ QWEN35_VL_SFT_RECOMPUTE = [
             "recompute_method": "uniform",
             "recompute_num_layers": 1,
         },
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# Scenario 5: SFT — Qwen3-VL-specific forward step (``qwen3_vl_step``)
+# ---------------------------------------------------------------------------
+
+QWEN35_VL_SFT_QWEN3_VL_STEP = [
+    (
+        qwen35_vl_27b_sft_config,
+        "qwen35_vl_27b_sft_qwen3_vl_step",
+        _TP2_PP1,
+        _TINY_MODEL,
     ),
 ]
 
@@ -202,5 +216,29 @@ class TestQwen35VLFinetuneRecipes:
             recipe_name,
             tmp_path,
             model_overrides=model_overrides,
+            **parallelism_overrides,
+        )
+
+    # -----------------------------------------------------------------------
+    # Qwen3-VL-specific forward step
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "config_func,recipe_name,parallelism_overrides,model_overrides",
+        QWEN35_VL_SFT_QWEN3_VL_STEP,
+    )
+    def test_sft_with_qwen3_vl_step(self, config_func, recipe_name, parallelism_overrides, model_overrides, tmp_path):
+        """SFT routed through ``qwen3_vl_step.forward_step`` instead of the generic VLM step.
+
+        Exercises the Qwen3-VL-specific forward/step path (visual inputs handling,
+        batch padding, Qwen3-VL-style packed-seq params).
+        """
+        run_pretrain_vl_recipe_test(
+            config_func,
+            recipe_name,
+            tmp_path,
+            model_overrides=model_overrides,
+            forward_step_func=qwen3_vl_forward_step,
             **parallelism_overrides,
         )

@@ -27,6 +27,7 @@ Run with:
 
 import pytest
 
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.qwen_vl.qwen3_vl import qwen3_vl_8b_sft_config
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
@@ -85,6 +86,18 @@ QWEN3_VL_FINETUNE_PACKED_RECIPES = [
     ),
 ]
 
+# Variants that route through the Qwen3-VL-specific forward step (``qwen3_vl_step``).
+# Covers the step function used by the examples / ``run_recipe.py --step_func qwen3_vl_step``,
+# which is otherwise only exercised by the DistTrain smoke test that requires 8 GPUs.
+QWEN3_VL_FINETUNE_QWEN3_VL_STEP_RECIPES = [
+    (
+        qwen3_vl_8b_sft_config,
+        "qwen3_vl_8b_sft_qwen3_vl_step",
+        {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
+        {"num_layers": 4, "deepstack_visual_indexes": [0, 1, 2]},
+    ),
+]
+
 
 class TestQwen3VLFinetuneRecipes:
     """Test class for Qwen3-VL finetune recipe functional tests."""
@@ -139,5 +152,32 @@ class TestQwen3VLFinetuneRecipes:
             tmp_path,
             model_overrides=model_overrides,
             dataset_overrides=dataset_overrides,
+            **parallelism_overrides,
+        )
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "config_func,recipe_name,parallelism_overrides,model_overrides",
+        QWEN3_VL_FINETUNE_QWEN3_VL_STEP_RECIPES,
+    )
+    def test_qwen3_vl_finetune_with_qwen3_vl_step(
+        self,
+        config_func,
+        recipe_name,
+        parallelism_overrides,
+        model_overrides,
+        tmp_path,
+    ):
+        """Functional test for Qwen3-VL finetune recipes using ``qwen3_vl_step.forward_step``.
+
+        Exercises the Qwen3-VL-specific forward/step path (not the generic VLM step),
+        which handles Qwen3-VL visual inputs, deepstack indexing, and batch padding.
+        """
+        run_pretrain_vl_recipe_test(
+            config_func,
+            recipe_name,
+            tmp_path,
+            model_overrides=model_overrides,
+            forward_step_func=qwen3_vl_forward_step,
             **parallelism_overrides,
         )
