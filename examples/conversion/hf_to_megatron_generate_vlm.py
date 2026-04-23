@@ -64,7 +64,6 @@ class SingleBatchIterator:
         image_grid_thw=None,
         image_sizes=None,
         mm_token_type_ids=None,
-        image_position_ids=None,
     ):
         self.batch = dict(
             tokens=input_ids,
@@ -79,8 +78,6 @@ class SingleBatchIterator:
             self.batch["image_sizes"] = image_sizes
         if mm_token_type_ids is not None:
             self.batch["mm_token_type_ids"] = mm_token_type_ids
-        if image_position_ids is not None:
-            self.batch["image_position_ids"] = image_position_ids
         self._yielded = False
 
     def __iter__(self):
