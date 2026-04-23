@@ -30,15 +30,12 @@ uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 \
   tests/functional_tests/test_groups/recipes/test_qwen_vl_recipes_finetune.py \
 
 # Test Qwen3-VL finetune recipes
-# `qwen3_vl_step`-based tests run in the L1 active script
-# (L1_Launch_recipes_qwen3_vl_step.sh) and are excluded here to avoid duplication.
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 \
   -m coverage run --data-file=/opt/Megatron-Bridge/.coverage \
   --source=/opt/Megatron-Bridge/ --parallel-mode \
   -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x \
   -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/recipes/test_qwen3_vl_recipes_finetune.py \
-  -k "not qwen3_vl_step"
+  tests/functional_tests/test_groups/recipes/test_qwen3_vl_recipes_finetune.py
 
 # Test Qwen3-VL pretrain mock recipes
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 \
@@ -49,15 +46,12 @@ uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 \
   tests/functional_tests/test_groups/recipes/test_qwen3_vl_recipes_pretrain.py
 
 # Test Qwen3.5-VL finetune recipes
-# `qwen3_vl_step`-based tests run in the L1 active script
-# (L1_Launch_recipes_qwen3_vl_step.sh) and are excluded here to avoid duplication.
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 \
   -m coverage run --data-file=/opt/Megatron-Bridge/.coverage \
   --source=/opt/Megatron-Bridge/ --parallel-mode \
   -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x \
   -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/recipes/test_qwen35_vl_recipes_finetune.py \
-  -k "not qwen3_vl_step"
+  tests/functional_tests/test_groups/recipes/test_qwen35_vl_recipes_finetune.py
 
 # Test Qwen3.5-VL pretrain mock recipes
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 \
