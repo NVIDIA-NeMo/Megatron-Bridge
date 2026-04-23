@@ -51,7 +51,9 @@ class Qwen3OmniBridge(MegatronModelBridge):
         dtype_config = thinker_config if hasattr(thinker_config, "torch_dtype") else hf_config
         model_dtype = self.dtype_from_hf(dtype_config, default=torch.float32)
 
-        rope_scaling = getattr(text_config, "rope_scaling", None) or getattr(text_config, "rope_parameters", None) or {}
+        rope_scaling = (
+            getattr(text_config, "rope_scaling", None) or getattr(text_config, "rope_parameters", None) or {}
+        )
         vision_config = thinker_config.vision_config
 
         provider = Qwen3OmniModelProvider(

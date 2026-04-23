@@ -59,7 +59,11 @@ def test_convert_dataframe_writes_jsonl_and_media(tmp_path):
                 "audios": np.array([np.linspace(-0.5, 0.5, 1600, dtype=np.float32)], dtype=object),
                 "ability": "multimodal",
                 "reward_model": {"ground_truth": "A person speaks.", "style": "rule"},
-                "extra_info": {"answer": "A person speaks.", "index": 7, "question": "<image> <audio> What happens next?"},
+                "extra_info": {
+                    "answer": "A person speaks.",
+                    "index": 7,
+                    "question": "<image> <audio> What happens next?",
+                },
             }
         ]
     )

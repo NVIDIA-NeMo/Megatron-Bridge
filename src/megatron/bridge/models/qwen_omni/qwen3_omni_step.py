@@ -34,6 +34,7 @@ from megatron.bridge.training.utils.padding_utils import (
 )
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
+
 if TYPE_CHECKING:
     from megatron.bridge.training.config import ConfigContainer
     from megatron.bridge.training.state import GlobalState

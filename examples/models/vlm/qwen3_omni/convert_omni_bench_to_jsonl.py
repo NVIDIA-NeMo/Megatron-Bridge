@@ -192,11 +192,7 @@ def convert_dataframe(
             prompt_text = prompt_entry.get("content") if isinstance(prompt_entry, dict) else str(prompt_entry)
             prompt_text = str(prompt_text or row.get("extra_info", {}).get("question", ""))
 
-            answer = (
-                row.get("reward_model", {}).get("ground_truth")
-                or row.get("extra_info", {}).get("answer")
-                or ""
-            )
+            answer = row.get("reward_model", {}).get("ground_truth") or row.get("extra_info", {}).get("answer") or ""
 
             image_paths: list[str] = []
             for image_idx, image_item in enumerate(_as_list(row.get("images"))):

@@ -21,8 +21,10 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core import parallel_state
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_local_spec
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_layer_local_spec,
+    get_gpt_layer_with_transformer_engine_spec,
+)
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
@@ -220,19 +222,21 @@ def test_qwen3_omni_toy_training_step():
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
     input_ids = torch.tensor(
-        [[
-            VISION_START_TOKEN_ID,
-            IMAGE_TOKEN_ID,
-            IMAGE_TOKEN_ID,
-            IMAGE_TOKEN_ID,
-            IMAGE_TOKEN_ID,
-            AUDIO_START_TOKEN_ID,
-            AUDIO_TOKEN_ID,
-            AUDIO_TOKEN_ID,
-            31,
-            32,
-            33,
-        ]],
+        [
+            [
+                VISION_START_TOKEN_ID,
+                IMAGE_TOKEN_ID,
+                IMAGE_TOKEN_ID,
+                IMAGE_TOKEN_ID,
+                IMAGE_TOKEN_ID,
+                AUDIO_START_TOKEN_ID,
+                AUDIO_TOKEN_ID,
+                AUDIO_TOKEN_ID,
+                31,
+                32,
+                33,
+            ]
+        ],
         device=device,
     )
     labels = torch.randint(0, 1000, input_ids.shape, device=device)
@@ -255,9 +259,7 @@ def test_qwen3_omni_toy_training_step():
     assert torch.isfinite(loss), f"Expected finite loss, got {loss}"
     loss.backward()
 
-    grads = [
-        param.grad for name, param in model.named_parameters() if param.requires_grad and param.grad is not None
-    ]
+    grads = [param.grad for name, param in model.named_parameters() if param.requires_grad and param.grad is not None]
     assert grads, "Expected at least one trainable parameter to receive gradients"
     assert any(torch.isfinite(grad).all() for grad in grads), "Expected finite gradients after backward"
 

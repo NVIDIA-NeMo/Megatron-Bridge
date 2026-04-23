@@ -25,6 +25,7 @@ from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMCon
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 
+
 if TYPE_CHECKING:
     from megatron.bridge.training.config import ConfigContainer
 

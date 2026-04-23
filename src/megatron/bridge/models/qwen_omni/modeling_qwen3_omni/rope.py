@@ -205,7 +205,10 @@ def get_rope_index(
                         st_idx, video_idx, spatial_merge_size, t_index, grid_hs, grid_ws
                     )
                     video_data_index, audio_data_index = 0, 0
-                    while video_data_index < video_llm_pos_ids.shape[-1] and audio_data_index < audio_llm_pos_ids.shape[-1]:
+                    while (
+                        video_data_index < video_llm_pos_ids.shape[-1]
+                        and audio_data_index < audio_llm_pos_ids.shape[-1]
+                    ):
                         if video_llm_pos_ids[0][video_data_index] <= audio_llm_pos_ids[0][audio_data_index]:
                             llm_pos_ids_list.append(video_llm_pos_ids[:, video_data_index : video_data_index + 1])
                             video_data_index += 1

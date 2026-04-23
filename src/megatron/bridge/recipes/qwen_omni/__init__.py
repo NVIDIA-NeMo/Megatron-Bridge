@@ -15,4 +15,3 @@
 """Qwen3-Omni recipe exports."""
 
 from megatron.bridge.recipes.qwen_omni.qwen3_omni import *
-

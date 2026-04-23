@@ -23,6 +23,8 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
 )
 from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
     Qwen3OmniMoeAudioEncoder as Qwen3OmniMoeAudioEncoderHF,
+)
+from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
     Qwen3OmniMoeVisionEncoder as Qwen3OmniMoeVisionEncoderHF,
 )
 
@@ -173,7 +175,9 @@ class Qwen3OmniThinkerModel(MegatronModule):
             _patch_get_input_embeddings(self.visual, "patch_embed")
             _patch_get_input_embeddings(self.audio_model, "conv_out")
 
-            _configure_multimodal_attn_impl(getattr(self.visual, "config", self.thinker_transformer_config.vision_config), multimodal_attn_impl)
+            _configure_multimodal_attn_impl(
+                getattr(self.visual, "config", self.thinker_transformer_config.vision_config), multimodal_attn_impl
+            )
             _configure_multimodal_attn_impl(
                 getattr(self.audio_model, "config", self.thinker_transformer_config.audio_config), multimodal_attn_impl
             )
@@ -267,7 +271,9 @@ class Qwen3OmniThinkerModel(MegatronModule):
         image_grid_thw: torch.LongTensor,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         target_dtype = getattr(self.visual, "dtype", pixel_values.dtype)
-        image_embeds, image_embeds_multiscale = self.visual(pixel_values.to(dtype=target_dtype), grid_thw=image_grid_thw)
+        image_embeds, image_embeds_multiscale = self.visual(
+            pixel_values.to(dtype=target_dtype), grid_thw=image_grid_thw
+        )
         return image_embeds, list(image_embeds_multiscale)
 
     def get_video_features(
@@ -310,7 +316,9 @@ class Qwen3OmniThinkerModel(MegatronModule):
 
         trimmed_embeds = []
         start = 0
-        for produced_len, expected_len in zip(produced_output_lengths.tolist(), expected_audio_token_counts.tolist(), strict=True):
+        for produced_len, expected_len in zip(
+            produced_output_lengths.tolist(), expected_audio_token_counts.tolist(), strict=True
+        ):
             end = start + int(produced_len)
             if expected_len > produced_len:
                 raise ValueError(
@@ -319,7 +327,9 @@ class Qwen3OmniThinkerModel(MegatronModule):
             trimmed_embeds.append(audio_embeds[start : start + int(expected_len)])
             start = end
 
-        return torch.cat(trimmed_embeds, dim=0) if trimmed_embeds else audio_embeds.new_zeros((0, audio_embeds.shape[-1]))
+        return (
+            torch.cat(trimmed_embeds, dim=0) if trimmed_embeds else audio_embeds.new_zeros((0, audio_embeds.shape[-1]))
+        )
 
     def forward(
         self,
@@ -356,7 +366,8 @@ class Qwen3OmniThinkerModel(MegatronModule):
 
         if position_ids is None:
             has_multimodal_inputs = any(
-                value is not None for value in (pixel_values, pixel_values_videos, input_features, audio_feature_lengths)
+                value is not None
+                for value in (pixel_values, pixel_values_videos, input_features, audio_feature_lengths)
             )
             if not has_multimodal_inputs:
                 position_ids = _build_text_only_mrope_position_ids(input_ids)
@@ -396,7 +407,10 @@ class Qwen3OmniThinkerModel(MegatronModule):
                         raise ValueError("image_grid_thw is required when pixel_values is provided")
                     image_embeds, image_embeds_multiscale = self.get_image_features(pixel_values, image_grid_thw)
                     image_embeds = image_embeds.to(inputs_embeds_bsh.device, inputs_embeds_bsh.dtype)
-                    image_embeds_multiscale = [embed.to(inputs_embeds_bsh.device, inputs_embeds_bsh.dtype) for embed in image_embeds_multiscale]
+                    image_embeds_multiscale = [
+                        embed.to(inputs_embeds_bsh.device, inputs_embeds_bsh.dtype)
+                        for embed in image_embeds_multiscale
+                    ]
                     image_embeds, image_embeds_multiscale = _trim_feature_sequence(
                         image_embeds,
                         image_embeds_multiscale,
@@ -409,9 +423,14 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 if pixel_values_videos is not None:
                     if video_grid_thw is None:
                         raise ValueError("video_grid_thw is required when pixel_values_videos is provided")
-                    video_embeds, video_embeds_multiscale = self.get_video_features(pixel_values_videos, video_grid_thw)
+                    video_embeds, video_embeds_multiscale = self.get_video_features(
+                        pixel_values_videos, video_grid_thw
+                    )
                     video_embeds = video_embeds.to(inputs_embeds_bsh.device, inputs_embeds_bsh.dtype)
-                    video_embeds_multiscale = [embed.to(inputs_embeds_bsh.device, inputs_embeds_bsh.dtype) for embed in video_embeds_multiscale]
+                    video_embeds_multiscale = [
+                        embed.to(inputs_embeds_bsh.device, inputs_embeds_bsh.dtype)
+                        for embed in video_embeds_multiscale
+                    ]
                     video_embeds, video_embeds_multiscale = _trim_feature_sequence(
                         video_embeds,
                         video_embeds_multiscale,
@@ -429,12 +448,16 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 )
 
                 if image_embeds is not None:
-                    inputs_embeds_bsh.masked_scatter_(image_mask.unsqueeze(-1).expand_as(inputs_embeds_bsh), image_embeds)
+                    inputs_embeds_bsh.masked_scatter_(
+                        image_mask.unsqueeze(-1).expand_as(inputs_embeds_bsh), image_embeds
+                    )
                     visual_pos_masks = image_mask
                     deepstack_visual_embeds = image_embeds_multiscale
 
                 if video_embeds is not None:
-                    inputs_embeds_bsh.masked_scatter_(video_mask.unsqueeze(-1).expand_as(inputs_embeds_bsh), video_embeds)
+                    inputs_embeds_bsh.masked_scatter_(
+                        video_mask.unsqueeze(-1).expand_as(inputs_embeds_bsh), video_embeds
+                    )
                     if deepstack_visual_embeds is None:
                         visual_pos_masks = video_mask
                         deepstack_visual_embeds = video_embeds_multiscale
@@ -447,7 +470,9 @@ class Qwen3OmniThinkerModel(MegatronModule):
                         for image_embed, video_embed in zip(
                             deepstack_visual_embeds, video_embeds_multiscale, strict=True
                         ):
-                            embed_joint = image_embed.new_zeros((int(visual_pos_masks.sum().item()), image_embed.shape[-1]))
+                            embed_joint = image_embed.new_zeros(
+                                (int(visual_pos_masks.sum().item()), image_embed.shape[-1])
+                            )
                             embed_joint[image_mask_joint] = image_embed
                             embed_joint[video_mask_joint] = video_embed
                             joint_embeds.append(embed_joint)

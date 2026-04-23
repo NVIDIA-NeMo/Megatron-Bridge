@@ -121,7 +121,10 @@ class TestQwen3OmniBridge:
                 mapping_names.append(str(getattr(mapping, "megatron_param")))
 
         assert any("thinker.language_model.embedding.word_embeddings.weight" in name for name in mapping_names)
-        assert any("thinker.language_model.decoder.layers.*.self_attention.linear_qkv.weight" in name for name in mapping_names)
+        assert any(
+            "thinker.language_model.decoder.layers.*.self_attention.linear_qkv.weight" in name
+            for name in mapping_names
+        )
         assert any("thinker.language_model.decoder.layers.*.mlp.router.weight" in name for name in mapping_names)
 
     def test_provider_bridge_rejects_audio_output_stack(self, mock_hf_pretrained):

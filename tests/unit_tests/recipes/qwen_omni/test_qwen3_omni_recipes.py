@@ -65,7 +65,9 @@ if "megatron.bridge.recipes.utils.optimizer_utils" not in sys.modules:
     def _fake_distributed_fused_adam_with_cosine_annealing(**kwargs):
         return SimpleNamespace(lr=kwargs["max_lr"]), SimpleNamespace()
 
-    fake_optimizer_utils.distributed_fused_adam_with_cosine_annealing = _fake_distributed_fused_adam_with_cosine_annealing
+    fake_optimizer_utils.distributed_fused_adam_with_cosine_annealing = (
+        _fake_distributed_fused_adam_with_cosine_annealing
+    )
     sys.modules["megatron.bridge.recipes.utils.optimizer_utils"] = fake_optimizer_utils
 
 if "megatron.bridge.data.vlm_datasets.preloaded_provider" not in sys.modules:

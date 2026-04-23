@@ -125,12 +125,12 @@ from megatron.bridge.models.qwen_audio import (
     Qwen2AudioModelProvider,
 )
 from megatron.bridge.models.qwen_omni import (
-    Qwen25OmniBridge,
-    Qwen25OmniModel,
-    Qwen25OmniModelProvider,
     Qwen3OmniBridge,
     Qwen3OmniModel,
     Qwen3OmniModelProvider,
+    Qwen25OmniBridge,
+    Qwen25OmniModel,
+    Qwen25OmniModelProvider,
 )
 from megatron.bridge.models.qwen_vl import (
     Qwen25VLBridge,

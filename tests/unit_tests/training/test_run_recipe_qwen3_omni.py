@@ -26,9 +26,7 @@ from unittest.mock import Mock
 def _load_run_recipe_module():
     """Load run_recipe.py with lightweight stub modules for local unit testing."""
 
-    script_path = (
-        Path(__file__).resolve().parents[3] / "scripts" / "training" / "run_recipe.py"
-    )
+    script_path = Path(__file__).resolve().parents[3] / "scripts" / "training" / "run_recipe.py"
     module_name = "test_run_recipe_qwen3_omni_module"
 
     recipe_config = object()
