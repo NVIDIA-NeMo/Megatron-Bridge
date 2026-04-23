@@ -383,6 +383,7 @@ class Qwen3VLModel(MegatronModule):
         vision_grid_thw = None
         vision_data = None
         vision_mask = None
+        vision_embeds = None
         deepstack_feature_lists = None
 
         # position ids is computed within the model
