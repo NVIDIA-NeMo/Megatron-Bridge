@@ -93,6 +93,16 @@ class TestPerfConfigIntegration:
         assert cfg.model is not None
         assert cfg.comm_overlap is not None
 
+    def test_qwen3_next_80b_a3b_perf_config_instantiation(self):
+        """Test that Qwen3 Next 80B A3B perf configs can be instantiated correctly."""
+        from configs.qwen.qwen3_llm_pretrain import qwen3_next_80b_a3b_pretrain_config_h100
+
+        cfg = qwen3_next_80b_a3b_pretrain_config_h100(precision="bf16", mock=True)
+
+        assert cfg is not None
+        assert cfg.model is not None
+        assert cfg.comm_overlap is not None
+
     def test_nemotronh_56b_perf_config_instantiation(self):
         """Test that NemotronH 56B perf configs can be instantiated correctly."""
         from configs.nemotronh.nemotronh_llm_pretrain import nemotronh_56b_pretrain_config_h100
@@ -102,6 +112,28 @@ class TestPerfConfigIntegration:
         assert cfg is not None
         assert cfg.model is not None
         assert cfg.mixed_precision is not None
+
+    def test_nemotron_3_super_perf_config_instantiation(self):
+        """Test that Nemotron 3 Super perf configs can be instantiated correctly."""
+        from configs.nemotronh.nemotron_3_llm_pretrain import nemotron_3_super_pretrain_config_gb300
+
+        cfg = nemotron_3_super_pretrain_config_gb300(precision="bf16", mock=True)
+
+        assert cfg is not None
+        assert cfg.model is not None
+        assert cfg.mixed_precision is not None
+
+    def test_nemotron_3_super_perf_config_nvfp4(self):
+        """Test that Nemotron 3 Super NVFP4 perf config uses the NT3-Super-specific recipe."""
+        from configs.nemotronh.nemotron_3_llm_pretrain import nemotron_3_super_pretrain_config_gb300
+
+        cfg = nemotron_3_super_pretrain_config_gb300(precision="nvfp4", mock=True)
+
+        assert cfg is not None
+        assert cfg.model is not None
+        assert cfg.mixed_precision is not None
+        assert cfg.mixed_precision.first_last_layers_bf16 is True
+        assert cfg.mixed_precision.num_layers_at_end_in_bf16 == 14
 
     def test_gpt_oss_120b_perf_config_instantiation(self):
         """Test that GPT-OSS 120B perf configs can be instantiated correctly."""

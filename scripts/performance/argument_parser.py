@@ -170,7 +170,7 @@ def parse_cli_args():
     parser.add_argument(
         "--domain",
         type=lower_str,
-        choices=["llm", "vlm", "qwen3vl"],
+        choices=["llm", "vlm", "qwen3vl", "diffusion"],
         help="Domain to use for experiment.",
         default="llm",
     )
@@ -257,7 +257,9 @@ def parse_cli_args():
     parser.add_argument(
         "-d",
         "--dryrun",
-        help="If true, prints sbatch script to terminal without launching experiment.",
+        help="Dry-run mode. In setup_experiment.py: prints the sbatch script without launching. "
+        "In run_script.py / run_recipe.py: builds the full ConfigContainer with all overrides, "
+        "saves it to --save_config_filepath (default: ConfigContainer.yaml), and exits without training.",
         required=False,
         action="store_true",
     )
@@ -333,11 +335,17 @@ def parse_cli_args():
         "--tokenizer_model", type=str, help="Path to tokenizer model (automatically provided by launcher)"
     )
     tokenizer_args.add_argument("--vocab_size", type=int, default=32000, help="Vocabulary size for NullTokenizer")
-    tokenizer_args.add_argument(
+    hf_mode = tokenizer_args.add_mutually_exclusive_group()
+    hf_mode.add_argument(
         "-hf",
         "--hf_token",
         type=str,
         help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
+    )
+    hf_mode.add_argument(
+        "--offline",
+        action="store_true",
+        help="Enable offline HuggingFace Hub mode by setting HF_HUB_OFFLINE=1.",
     )
 
     # Parallelism
@@ -476,6 +484,15 @@ def parse_cli_args():
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
         required=False,
     )
+    slurm_args.add_argument(
+        "--packager",
+        type=str,
+        choices=["git", "none"],
+        default="git",
+        help="How code is packaged for the job. 'git' snapshots the repo at submission time (default). "
+        "'none' skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.",
+        required=False,
+    )
 
     # DGXCloud
     dgxc_args = parser.add_argument_group("DGXCloud arguments")
@@ -590,6 +607,16 @@ def parse_cli_args():
         help="Enable VBoost which steers more power towards tensor cores. Disabled by default",
         type=bool_arg,
         required=False,
+    )
+    performance_args.add_argument(
+        "-lgc",
+        "--lock_gpu_freq",
+        help="Lock GPU graphics clock to the specified frequency in MHz via "
+        "`sudo nvidia-smi -lgc <freq>`. Runs once per node before training. "
+        "Use `nvidia-smi -rgc` to reset after the job.",
+        type=int,
+        required=False,
+        default=None,
     )
     performance_args.add_argument(
         "-en",
@@ -712,6 +739,14 @@ def parse_cli_args():
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
     )
+    performance_args.add_argument(
+        "--moe_flex_dispatcher_backend",
+        type=lambda x: None if x == "None" else x,
+        help="MoE flex dispatcher backend. Options- deepep, hybridep, None. If None, will use alltoall dispatcher.",
+        choices=["deepep", "hybridep", None],
+        required=False,
+        default=-1,
+    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")
@@ -759,6 +794,12 @@ def parse_cli_args():
         default=None,
     )
     logging_args.add_argument("--save_config_filepath", type=str, help="Path to save the task configuration file")
+    logging_args.add_argument(
+        "--dump_env",
+        action="store_true",
+        help="Write environment variables to /nemo_run/env_<SLURM_JOB_ID>.log on rank 0. "
+        "Useful for post-run debugging of NCCL, CUDA, and SLURM settings.",
+    )
 
     # Config variant selection
     config_variant_args = parser.add_argument_group("Config variant arguments")

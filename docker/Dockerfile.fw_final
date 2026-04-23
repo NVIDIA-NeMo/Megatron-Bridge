@@ -61,8 +61,8 @@ RUN pushd /opt/NeMo && \
     popd
 
 # Sync environment
-COPY docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
-COPY docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
+COPY --chmod=644 docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
+COPY --chmod=644 docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
 RUN \
     cd /opt/NeMo-FW && \
     uv sync --no-cache-dir --all-groups --inexact && \
@@ -88,7 +88,12 @@ RUN pip install nvidia-cudnn-frontend==1.17.0 \
     "protobuf==6.33.5" \
     "xgrammar>=0.1.32" \
     "tornado==6.5.5" \
-    "black==26.3.1"
+    "black==26.3.1" \
+    "onnx==1.21.0"
+
+# Remove PyTorch's bundled third-party onnx source tree (build artifact, not used at runtime).
+# The actual onnx Python package is managed above via pip/uv; this stale copy triggers CVE scanners.
+RUN rm -rf /opt/pytorch/pytorch/third_party/onnx
 
 # Patch jackson-core CVE inside Ray's bundled fat-jar (cannot upgrade Ray itself)
 RUN JACKSON_VERSION=2.18.6 && \
@@ -116,6 +121,24 @@ RUN JACKSON_VERSION=2.18.6 && \
     done && \
     rm -rf "${TMPDIR}"
 
+# Patch wandb-core: bump google.golang.org/grpc from 1.79.2 to 1.79.3 (CVE fix)
+ARG TARGETARCH
+RUN GRPC_VERSION=1.79.3 && \
+    GO_VERSION=1.26.1 && \
+    WANDB_VERSION=$(python3 -c "import wandb; print(wandb.__version__)") && \
+    WANDB_CORE_BIN=/opt/venv/lib/python3.12/site-packages/wandb/bin/wandb-core && \
+    curl -fsSL "https://dl.google.com/go/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" | tar -C /tmp -xz && \
+    export PATH="/tmp/go/bin:$PATH" && \
+    export GOPATH=/tmp/gopath && \
+    git clone --depth 1 --branch "v${WANDB_VERSION}" https://github.com/wandb/wandb.git /tmp/wandb-src && \
+    cd /tmp/wandb-src/core && \
+    go get google.golang.org/grpc@v${GRPC_VERSION} && \
+    go mod tidy && \
+    go mod vendor && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" \
+        -o "${WANDB_CORE_BIN}" ./cmd/wandb-core/ && \
+    rm -rf /tmp/wandb-src /tmp/go /tmp/gopath
+
 ##############################################################################
 ##
 ## Finalize FW container
@@ -131,11 +154,11 @@ ARG NVIDIA_BUILD_REF
 LABEL com.nvidia.build.ref="${NVIDIA_BUILD_REF}"
 ARG RC_DATE=00.00
 ARG TARGETARCH
-COPY docker/common/README.md README.md
+COPY --chmod=644 docker/common/README.md README.md
 
 # NOTICES.txt file points to where the OSS source code is archived
 RUN echo "This distribution includes open source which is archived at the following URL: https://opensource.nvidia.com/oss/teams/nvidia/nemo/${RC_DATE}:linux-${TARGETARCH}/index.html" > NOTICES.txt && \
     echo "For further inquiries or assistance, contact us at oss-requests@nvidia.com" >> NOTICES.txt
 
 # Force legacy CPU offload path until llama OOMs with new path are fixed
-ENV NVTE_CPU_OFFLOAD_V1="1"
+# ENV NVTE_CPU_OFFLOAD_V1="1"

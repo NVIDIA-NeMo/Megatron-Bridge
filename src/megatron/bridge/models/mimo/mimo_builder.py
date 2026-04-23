@@ -1,8 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import torch.distributed as dist
 
@@ -15,7 +14,7 @@ if TYPE_CHECKING:
 
 def build_hypercomm_grids(
     mimo_parallelism_config: MimoParallelismConfig,
-) -> Dict[str, HyperCommGrid]:
+) -> Dict[str, "HyperCommGrid"]:
     """Create HyperCommGrid objects per module from MIMO parallelism config.
 
     Creates grids on ALL ranks (required for consistent collective calls),
@@ -47,20 +46,18 @@ def build_hypercomm_grids(
         # Create all standard process groups
         for dim in ("tp", "cp", "ep", "pp", "dp"):
             _ = grid.create_pg([dim])
-        # Create dp_cp composite group for gradient reduction
         _ = grid.create_pg(["dp", "cp"])
+        _ = grid.create_pg(["tp", "pp"])
+        _ = grid.create_pg(["tp", "ep", "pp"])
+        _ = grid.create_pg(["dp", "ep"])
+        _ = grid.create_pg(["tp", "cp", "ep", "pp", "dp"])
 
         grids[module_name] = grid
 
     return grids
 
 
-def _default_topology(mimo_parallelism_config: MimoParallelismConfig) -> Dict[str, List[str]]:
-    """Infer a default multi-encoder -> LLM topology."""
-    return {name: ["llm"] for name in mimo_parallelism_config.module_names if name != "llm"} | {"llm": []}
-
-
-def create_embedding_and_position_groups(
+def populate_embedding_and_position_groups(
     pp_group: dist.ProcessGroup,
 ) -> Tuple[Optional[dist.ProcessGroup], Optional[dist.ProcessGroup]]:
     """Create embedding-related process groups from PP group ranks.
@@ -71,10 +68,6 @@ def create_embedding_and_position_groups(
 
     IMPORTANT: This calls dist.new_group which is a collective operation.
     Must be called on all ranks that could participate.
-
-    Note: VPP (virtual_pipeline_model_parallel_size > 1) is not supported.
-    With VPP, pp_ranks[0]/pp_ranks[-1] do not reliably identify the stages
-    that own embeddings. The caller is responsible for asserting VPP is disabled.
 
     Args:
         pp_group: The pipeline parallel process group.
@@ -100,13 +93,17 @@ def create_embedding_and_position_groups(
     return pos_embd_pg, embd_pg
 
 
-def is_current_rank_in_grid(grid: "HyperCommGrid") -> bool:
-    """Check if the current rank participates in this grid.
+def is_pp_first_stage(pp_group: Optional[dist.ProcessGroup]) -> bool:
+    """Check if current rank is first stage in pipeline."""
+    if pp_group is None:
+        return True
+    pp_ranks = sorted(dist.get_process_group_ranks(pp_group))
+    return dist.get_rank() == pp_ranks[0]
 
-    Args:
-        grid: A HyperCommGrid instance.
 
-    Returns:
-        True if dist.get_rank() is within the grid's rank range.
-    """
-    return grid.rank_offset <= dist.get_rank() < (grid.rank_offset + grid.size)
+def is_pp_last_stage(pp_group: Optional[dist.ProcessGroup]) -> bool:
+    """Check if current rank is last stage in pipeline."""
+    if pp_group is None:
+        return True
+    pp_ranks = sorted(dist.get_process_group_ranks(pp_group))
+    return dist.get_rank() == pp_ranks[-1]

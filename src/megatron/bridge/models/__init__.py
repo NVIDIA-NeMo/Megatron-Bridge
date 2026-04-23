@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # Import model providers for easy access
+from megatron.bridge.models.bailing import (
+    BailingMoeV2Bridge,
+)
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -53,6 +56,9 @@ from megatron.bridge.models.gemma_vl import (
 from megatron.bridge.models.glm import (
     GLM45Bridge,
 )
+from megatron.bridge.models.glm_moe_dsa import (
+    GLM5Bridge,
+)
 from megatron.bridge.models.glm_vl import (
     GLM45VBridge,
     GLM45VModelProvider,
@@ -61,6 +67,14 @@ from megatron.bridge.models.gpt_oss import (
     GPTOSSBridge,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.kimi import (
+    KimiK2Bridge,
+)
+from megatron.bridge.models.kimi_vl import (
+    KimiK25VLBridge,
+    KimiK25VLModel,
+    KimiK25VLModelProvider,
+)
 from megatron.bridge.models.llama import (
     LlamaBridge,
 )
@@ -99,6 +113,11 @@ from megatron.bridge.models.nemotronh import (
 from megatron.bridge.models.olmoe import (
     OlMoEBridge,
     OlMoEModelProvider,
+)
+from megatron.bridge.models.qwen3_asr import (
+    Qwen3ASRBridge,
+    Qwen3ASRModel,
+    Qwen3ASRModelProvider,
 )
 from megatron.bridge.models.qwen_audio import (
     Qwen2AudioBridge,
@@ -144,6 +163,7 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "BailingMoeV2Bridge",
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
@@ -162,11 +182,16 @@ __all__ = [
     "Gemma2ModelProvider9B",
     "Gemma2ModelProvider27B",
     "GLM45Bridge",
+    "GLM5Bridge",
     "GLM45VBridge",
     "GLM45VModelProvider",
     "GPTModelProvider",
     "GPTOSSBridge",
     "T5ModelProvider",
+    "KimiK2Bridge",
+    "KimiK25VLModel",
+    "KimiK25VLBridge",
+    "KimiK25VLModelProvider",
     "LlamaBridge",
     "LlamaNemotronHeterogeneousProvider",
     "LlamaNemotronBridge",
@@ -210,6 +235,10 @@ __all__ = [
     "NemotronVLModel",
     "NemotronVLBridge",
     "NemotronNano12Bv2VLModelProvider",
+    # ASR Models
+    "Qwen3ASRBridge",
+    "Qwen3ASRModel",
+    "Qwen3ASRModelProvider",
     # Omni Models
     "Qwen25OmniModel",
     "Qwen25OmniBridge",

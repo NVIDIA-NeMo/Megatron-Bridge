@@ -98,6 +98,9 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     """
     Megatron Bridge for MiniMax-M2 MoE Causal LM.
 
+    Also supports MiniMax-M2.5 and MiniMax-M2.7, which share the same
+    ``model_type`` (``minimax_m2``) and ``MiniMaxM2ForCausalLM`` architecture.
+
     MiniMax-M2 is a sparse MoE model (256 experts, top-8 routing with sigmoid
     scoring and expert bias correction). Use the native transformers >= 5.0
     implementation (no ``trust_remote_code`` required).
@@ -147,16 +150,16 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             provider.rotary_percent = rotary_dim / head_dim
 
         # Full-dimension QK norm via custom layer spec (see minimax_m2_provider.py).
-        # qk_layernorm stays False to avoid the default per-head TENorm; our custom
-        # spec injects FullDimQNorm/FullDimKNorm directly into SelfAttention.
-        provider.qk_layernorm = False
+        # qk_layernorm=True so mcore creates QK norms; the spec overrides the default
+        # TENorm with FullDimQNorm/FullDimKNorm for full-dimension normalization.
+        provider.qk_layernorm = True
         provider.transformer_layer_spec = minimax_m2_layer_spec
 
         # MoE settings — sigmoid routing with expert bias (same pattern as DeepSeek V3)
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = False
         provider.moe_router_load_balancing_type = "aux_loss"
-        provider.moe_aux_loss_coeff = 1e-3
+        provider.moe_aux_loss_coeff = getattr(hf_config, "router_aux_loss_coef", 1e-3)
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_permute_fusion = True
         provider.moe_router_score_function = "sigmoid"

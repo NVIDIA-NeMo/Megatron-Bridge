@@ -20,12 +20,22 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
-from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
-from megatron.core.energy_monitor import EnergyMonitor
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.utils.tensorboard.writer import SummaryWriter
+
+
+# TODO: Remove try/except guards once these land in mcore dev.
+try:
+    from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
+except ImportError:
+    get_async_strategy = None  # type: ignore[assignment]
+
+try:
+    from megatron.core.energy_monitor import EnergyMonitor
+except ImportError:
+    EnergyMonitor = None  # type: ignore[assignment]
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
@@ -63,10 +73,10 @@ class TrainState(Stateful):
             their corresponding tensor representations.
         """
         return {
-            "step": torch.tensor(self.step, dtype=torch.int32),
-            "consumed_train_samples": torch.tensor(self.consumed_train_samples, dtype=torch.int32),
-            "skipped_train_samples": torch.tensor(self.skipped_train_samples, dtype=torch.int32),
-            "consumed_valid_samples": torch.tensor(self.consumed_valid_samples, dtype=torch.int32),
+            "step": torch.tensor(self.step, dtype=torch.int64),
+            "consumed_train_samples": torch.tensor(self.consumed_train_samples, dtype=torch.int64),
+            "skipped_train_samples": torch.tensor(self.skipped_train_samples, dtype=torch.int64),
+            "consumed_valid_samples": torch.tensor(self.consumed_valid_samples, dtype=torch.int64),
             "floating_point_operations_so_far": torch.tensor(
                 self.floating_point_operations_so_far, dtype=torch.float64
             ),
@@ -134,10 +144,10 @@ class GlobalState:
         self.start_time: float = time.time()
         self._ft_state: Optional[FaultToleranceState] = None
         self._straggler_timer: Optional[StragglerDetector] = None
-        self._async_calls_queue: Optional[AsyncCallsQueue] = None
+        self._async_calls_queue: Optional[Any] = None
         self._nvrx_straggler_manager: Optional[NVRxStragglerDetectionManager] = None
         self._nvrx_straggler_created: bool = False
-        self._energy_monitor: Optional[EnergyMonitor] = None
+        self._energy_monitor: Optional[Any] = None
         self._energy_monitor_created: bool = False
 
     @property
@@ -395,10 +405,36 @@ class GlobalState:
             and self.cfg.checkpoint.save is not None
             and self.cfg.checkpoint.async_save
         ):
-            self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+            if get_async_strategy is not None:
+                # mcore main path: get_async_strategy selects nvrx vs mcore backend
+                async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
+                async_calls_queue_cls = async_modules["AsyncCallsQueue"]
+                get_write_results_queue_fn = async_modules["get_write_results_queue"]
+            else:
+                # mcore dev path: nvrx modules merged into core, no strategy selector
+                from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
+                from megatron.core.dist_checkpointing.strategies.filesystem_async import (
+                    get_write_results_queue,
+                )
+
+                async_strategy = None
+                async_calls_queue_cls = AsyncCallsQueue
+                get_write_results_queue_fn = get_write_results_queue
+
+            self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+
+            if self.cfg.checkpoint.use_persistent_ckpt_worker:
+                warmup_kwargs = {
+                    "cpu_priority": self.cfg.checkpoint.async_ckpt_cpu_priority,
+                    "io_priority": self.cfg.checkpoint.async_ckpt_io_priority,
+                }
+                if async_strategy == "mcore":
+                    warmup_kwargs["mp_mode"] = "spawn"
+                self._async_calls_queue.warmup_persistent_caller(get_rank_safe(), **warmup_kwargs)
+                get_write_results_queue_fn(self.cfg.checkpoint.async_write_results_mp_mode)
 
     @property
-    def async_calls_queue(self) -> Optional[AsyncCallsQueue]:
+    def async_calls_queue(self) -> Optional[Any]:
         """The AsyncCallsQueue instance for handling asynchronous checkpoint saves."""
         return self._async_calls_queue
 
@@ -416,13 +452,14 @@ class GlobalState:
         return self._nvrx_straggler_manager
 
     @property
-    def energy_monitor(self) -> Optional[EnergyMonitor]:
+    def energy_monitor(self) -> Optional[Any]:
         """The EnergyMonitor instance for tracking energy consumption."""
         if (
             not self._energy_monitor_created
             and self._energy_monitor is None
             and self.cfg is not None
             and self.cfg.logger.log_energy
+            and EnergyMonitor is not None
         ):
             self._energy_monitor = EnergyMonitor()
             self._energy_monitor_created = True

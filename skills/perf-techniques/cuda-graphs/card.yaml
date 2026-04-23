@@ -232,8 +232,8 @@ failure_modes:
     likely_cause: invalid impl and scope pairing or unsupported scope mix
   - name: full_recompute_with_te_scoped
     symptom: "AssertionError: full recompute is only supported with full iteration CUDA graph"
-    likely_cause: recompute_granularity=full with transformer_engine impl
-    fix: set recompute_granularity=null, recompute_method=null, recompute_num_layers=null
+    likely_cause: recompute_granularity=full with any TE-scoped graph (attn, mlp, moe_router, etc.). Common on FP8 CS configs that default to cuda_graph_impl=transformer_engine + scope=mlp.
+    fix: use recompute_granularity=selective with recompute_modules, or disable CUDA graphs (cuda_graph_impl=none), or switch to cuda_graph_impl=local + cuda_graph_scope=full_iteration. See skills/perf-techniques/activation-recompute/SKILL.md.
   - name: packed_sequences_with_te_scoped
     symptom: "AssertionError: CUDA graph accepts only Tensor inputs. packed_seq_params excluded"
     likely_cause: packed_sequence=True passes a non-Tensor packed_seq_params input into TE-scoped capture

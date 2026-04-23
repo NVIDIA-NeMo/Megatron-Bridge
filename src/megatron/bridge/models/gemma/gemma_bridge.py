@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.core.activations import fast_gelu
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer.enums import AttnBackend
 from transformers import GemmaForCausalLM
@@ -62,7 +61,7 @@ class GemmaBridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
 
         provider.normalization = "RMSNorm"
-        provider.activation_func = fast_gelu
+        provider.activation_func = self.hf_to_megatron_activation("gelu")
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
         provider.attention_dropout = 0.0

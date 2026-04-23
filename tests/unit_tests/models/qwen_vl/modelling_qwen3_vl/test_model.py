@@ -21,6 +21,8 @@ Or for single GPU: uv run pytest tests/unit_tests/models/qwen_vl/modelling_qwen3
 
 import datetime
 import os
+from dataclasses import replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -36,6 +38,7 @@ from transformers import AutoProcessor, Qwen3VLMoeConfig
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.qwen3_vl_provider import DistTrainConfig
 
 
 @pytest.fixture(scope="module")
@@ -405,3 +408,298 @@ class TestQwen3VLModel:
         # This should set the input tensor on the language model instead
         model_no_pre.set_input_tensor([test_tensor])
         # No assertion here as it sets internal state
+
+    @staticmethod
+    def _attach_dist_train(language_transformer_config, vision_to_llm_dp_ratio: int = 1) -> None:
+        """Enable dist-train flags on language config (Qwen3VLModel reads via getattr)."""
+        language_transformer_config.dist_train = DistTrainConfig(
+            use_dist_train=True,
+            vision_to_llm_dp_ratio=vision_to_llm_dp_ratio,
+        )
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
+    @pytest.mark.timeout(120)
+    def test_forward_dist_train_encoder_only(self, hf_config, processor, random_image):
+        """use_dist_train=True, add_encoder=True, add_decoder=False: forward returns vision_module payload."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        vision_transformer_config = self.get_vision_transformer_config(hf_config)
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        self._attach_dist_train(language_transformer_config, vision_to_llm_dp_ratio=1)
+        language_model_layer_spec = self.get_language_model_layer_spec()
+
+        model = Qwen3VLModel(
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            vision_transformer_config=vision_transformer_config,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=False,
+            pg_collection=pg_collection,
+        )
+        assert model.use_dist_train is True
+        assert model.add_encoder is True and model.add_decoder is False
+
+        model.cuda()
+        batch = self.get_data_batch(processor, random_image)
+
+        with torch.inference_mode():
+            out = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                pixel_values=batch["pixel_values"],
+                image_grid_thw=batch["image_grid_thw"],
+                pixel_values_videos=batch["pixel_values_videos"],
+                video_grid_thw=batch["video_grid_thw"],
+            )
+
+        assert isinstance(out, dict)
+        assert "vision_module" in out
+        vm = out["vision_module"]
+        assert vm.dim() == 3
+        assert vm.shape[0] == 1
+        assert vm.shape[2] == language_transformer_config.hidden_size
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
+    @pytest.mark.timeout(180)
+    def test_forward_dist_train_decoder_only(self, hf_config, processor, random_image):
+        """use_dist_train=True, add_encoder=False, add_decoder=True: consume vision_module then run language stack."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        vision_transformer_config = self.get_vision_transformer_config(hf_config)
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        self._attach_dist_train(language_transformer_config, vision_to_llm_dp_ratio=1)
+        language_model_layer_spec = self.get_language_model_layer_spec()
+
+        encoder = Qwen3VLModel(
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            vision_transformer_config=vision_transformer_config,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=False,
+            pg_collection=pg_collection,
+        )
+        decoder = Qwen3VLModel(
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            vision_transformer_config=vision_transformer_config,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=False,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+        assert decoder.use_dist_train is True
+        assert decoder.add_encoder is False and decoder.add_decoder is True
+
+        encoder.cuda()
+        decoder.cuda()
+        batch = self.get_data_batch(processor, random_image)
+
+        with torch.inference_mode():
+            enc_out = encoder(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                pixel_values=batch["pixel_values"],
+                image_grid_thw=batch["image_grid_thw"],
+                pixel_values_videos=batch["pixel_values_videos"],
+                video_grid_thw=batch["video_grid_thw"],
+            )
+            vision_payload = enc_out["vision_module"].detach()
+            decoder.set_input_tensor([{"vision_module": vision_payload}])
+            out = decoder(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                pixel_values=batch["pixel_values"],
+                image_grid_thw=batch["image_grid_thw"],
+                pixel_values_videos=batch["pixel_values_videos"],
+                video_grid_thw=batch["video_grid_thw"],
+            )
+
+        assert not isinstance(out, dict), "PP last stage should return language logits/loss tensor, not a dict"
+        assert isinstance(out, torch.Tensor)
+        assert out.dim() >= 2
+
+    def test_forward_text_only_without_vision_inputs(self, monkeypatch):
+        """Text-only forward should not require vision_embeds to be materialized."""
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.reorganize_inputs",
+            lambda **_kwargs: (None, None, None),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.get_rope_index",
+            lambda *args, **kwargs: (
+                torch.zeros((3, args[4].shape[0], args[4].shape[1]), dtype=torch.long),
+                None,
+            ),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def embedding(self, input_ids, position_ids=None):
+                del position_ids
+                batch_size, seq_len = input_ids.shape
+                return torch.zeros((seq_len, batch_size, 4), dtype=torch.float32)
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=True,
+            square_merge_size=4,
+            config=SimpleNamespace(
+                vision_dp_when_cp=False,
+                sequence_parallel=False,
+                spatial_merge_size=4,
+            ),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                pp=object(),
+            ),
+            language_model=language_model,
+            image_token_id=1,
+            video_token_id=2,
+            vision_start_token_id=3,
+            use_dist_train=False,
+        )
+
+        input_ids = torch.tensor([[11, 12]], dtype=torch.long)
+
+        output = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            attention_mask=None,
+            pixel_values=None,
+            pixel_values_videos=None,
+            image_grid_thw=None,
+            video_grid_thw=None,
+        )
+
+        assert torch.equal(output, torch.ones(1))
+        assert language_model.last_kwargs is not None
+        assert language_model.last_kwargs["visual_pos_masks"] is None
+        assert language_model.last_kwargs["decoder_input"].shape == (2, 1, 4)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
+    @pytest.mark.timeout(120)
+    def test_forward_non_dist_train(self, hf_config, processor, random_image):
+        """use_dist_train=False, add_encoder=True, add_decoder=True: multimodal forward with both encoder and decoder."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        vision_transformer_config = self.get_vision_transformer_config(hf_config)
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        language_model_layer_spec = self.get_language_model_layer_spec()
+
+        model = Qwen3VLModel(
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            vision_transformer_config=vision_transformer_config,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+        assert model.use_dist_train is False
+        assert model.add_encoder is True and model.add_decoder is True
+
+        model.cuda()
+        batch = self.get_data_batch(processor, random_image)
+
+        with torch.inference_mode():
+            out = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                pixel_values=batch["pixel_values"],
+                image_grid_thw=batch["image_grid_thw"],
+                pixel_values_videos=batch["pixel_values_videos"],
+                video_grid_thw=batch["video_grid_thw"],
+            )
+
+        assert isinstance(out, torch.Tensor)
+        assert out.dim() >= 2
+
+    @pytest.mark.timeout(50)
+    def test_cuda_graph_helper_not_exposed_when_llm_cuda_graph_disabled(self, hf_config):
+        """CUDA graph helper fields stay on language_model when cuda_graph_impl is none."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        language_transformer_config = replace(
+            self.get_language_transformer_config(hf_config),
+            cuda_graph_impl="none",
+        )
+        assert getattr(language_transformer_config, "cuda_graph_impl", None) == "none"
+
+        model = Qwen3VLModel(
+            vision_transformer_config=self.get_vision_transformer_config(hf_config),
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=self.get_language_model_layer_spec(),
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+
+        assert "decoder" not in model.__dict__
+        assert not hasattr(model, "rotary_pos_emb")
+        assert getattr(model.language_model.config, "cuda_graph_impl", None) == "none"
+
+    @pytest.mark.timeout(50)
+    def test_cuda_graph_helper_exposed_when_llm_cuda_graph_enabled(self, hf_config):
+        """Root VLM mirrors LM decoder / RoPE for CUDA graph helper when cuda_graph_impl is enabled."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        language_transformer_config = replace(
+            self.get_language_transformer_config(hf_config),
+            cuda_graph_impl="transformer_engine",
+            variable_seq_lengths=False,
+            use_te_rng_tracker=True,
+        )
+
+        model = Qwen3VLModel(
+            vision_transformer_config=self.get_vision_transformer_config(hf_config),
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=self.get_language_model_layer_spec(),
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+
+        assert getattr(language_transformer_config, "cuda_graph_impl", None) == "transformer_engine"
+        assert model.language_model.config.variable_seq_lengths is False
+        assert hasattr(model, "decoder")
+        assert model.decoder is model.language_model.decoder
+        assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
+        assert model.position_embedding_type == model.language_model.position_embedding_type

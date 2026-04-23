@@ -188,6 +188,8 @@ class PerfEnvPlugin(Plugin):
             in order to not block DP level communication overlap.
         enable_vboost (bool): Whether to steer more power towards tensor cores via
             `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
+        lock_gpu_freq (int | None): Lock GPU graphics clock to the specified frequency in MHz via
+            `sudo nvidia-smi -lgc <freq>`. Runs once per node before training. None to disable.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
         tp_size (int): Tensor parallelism size. Default is 1.
@@ -200,6 +202,7 @@ class PerfEnvPlugin(Plugin):
 
     enable_layernorm_sm_margin: bool = True
     enable_vboost: bool = False
+    lock_gpu_freq: int | None = None
     enable_manual_gc: bool = True
     manual_gc_interval: int = 100
     tp_size: int | None = None
@@ -263,19 +266,32 @@ class PerfEnvPlugin(Plugin):
             model_family_name in ["llama"]
             and model_recipe_name in ["llama31_405b"]
             and train_task == "pretrain"
-            and gpu in ["gb200"]
+            and gpu in ["gb200", "gb300"]
         ):
             if compute_dtype in ["fp8_cs", "fp8_mx"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+                executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         elif (
             model_family_name in ["deepseek"]
             and model_recipe_name in ["deepseek_v3"]
             and train_task == "pretrain"
-            and gpu in ["h100", "gb200"]
+            and gpu in ["h100", "gb200", "b200"]
         ):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-            if gpu in ["gb200"]:
+            if gpu in ["gb200", "b200"]:
                 executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
+        elif (
+            model_family_name in ["qwen"]
+            and model_recipe_name in ["qwen3_next_80b_a3b"]
+            and train_task == "pretrain"
+            and gpu in ["h100"]
+            and compute_dtype == "fp8_cs"
+        ):
+            # NCCL 2.29.7 increases memory pressure on H100, causing allocator
+            # fragmentation OOM. expandable_segments lets the allocator reclaim
+            # fragmented physical memory and avoids the OOM without disabling
+            # any NCCL algorithms.
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
@@ -285,7 +301,6 @@ class PerfEnvPlugin(Plugin):
                     if gpu in ["gb300", "h100"]:
                         executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                         executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
-
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
@@ -352,6 +367,9 @@ class PerfEnvPlugin(Plugin):
                 executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
                 executor.env_vars["USE_MNNVL"] = "1"
                 executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(ep_size)
+            # Workaround for unfused combine performance regression in DeepEP hybrid-ep.
+            # Remove after https://github.com/NVIDIA/Megatron-LM/pull/4089 lands.
+            executor.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] = "128"
 
     def _set_nccl_pp_comm_chunksize(
         self,
@@ -418,6 +436,48 @@ class PerfEnvPlugin(Plugin):
                 else vboost_cmd
             )
 
+    def _set_lock_gpu_freq(
+        self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", lock_gpu_freq: int | None
+    ):
+        """Lock GPU graphics clocks to a fixed frequency before training.
+
+        Used for silicon simulation correlation studies where a fixed GPU
+        clock frequency is required to match simulation assumptions.
+        """
+
+        def get_lock_gpu_freq_srun_cmd(job_dir, freq_mhz):
+            import shlex
+
+            lock_freq_cmd = "\n".join(
+                [
+                    "",
+                    "# Command 0: lock GPU graphics clock",
+                    " ".join(
+                        [
+                            "srun",
+                            "--ntasks-per-node=1",
+                            "--output",
+                            os.path.join(job_dir, "lock_gpu_freq.out"),
+                            "--error",
+                            os.path.join(job_dir, "lock_gpu_freq.err"),
+                            "bash -c",
+                            shlex.quote(f"sudo nvidia-smi -lgc {freq_mhz}"),
+                        ]
+                    ),
+                    "",
+                ]
+            )
+
+            return lock_freq_cmd
+
+        if lock_gpu_freq is not None and isinstance(executor, SlurmExecutor):
+            lock_freq_cmd = get_lock_gpu_freq_srun_cmd(executor.tunnel.job_dir, lock_gpu_freq)
+            executor.setup_lines = (
+                executor.setup_lines + lock_freq_cmd
+                if (executor.setup_lines and len(executor.setup_lines) > 0)
+                else lock_freq_cmd
+            )
+
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
         workload_base_config = get_workload_base_config(
@@ -466,14 +526,12 @@ class PerfEnvPlugin(Plugin):
         )
 
         # Set the chunk size of P2P communications
-        nccl_pp_comm_chunksize = (
-            2097152
-            if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain"
-            else None
-        )
-        nccl_pp_comm_chunksize = (
-            2097152 if self.model_family_name in ["llama"] and self.train_task in ["sft"] else None
-        )
+        if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain":
+            nccl_pp_comm_chunksize = 2097152
+        elif self.model_family_name in ["llama"] and self.train_task in ["sft"]:
+            nccl_pp_comm_chunksize = 2097152
+        else:
+            nccl_pp_comm_chunksize = None
         self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
 
         # Configure manual garbage collection
@@ -481,6 +539,9 @@ class PerfEnvPlugin(Plugin):
 
         # Improve perf by steering power to tensor cores, may not work on all systems
         self._set_vboost(task, executor, self.enable_vboost)
+
+        # Lock GPU graphics clock frequency for stable performance measurements
+        self._set_lock_gpu_freq(task, executor, self.lock_gpu_freq)
 
         # Set model-specific environment variables
         self._set_model_specific_environment_variables(
