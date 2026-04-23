@@ -19,7 +19,6 @@ import sys
 import tempfile
 import types
 from pathlib import Path
-from unittest import mock
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -3502,6 +3501,7 @@ class TestLayerWiseOptimizerCheckpointing:
 class TestNVRxImport:
     def test_import_without_nvxr(self):
         """Make sure HAVE_NVRX is False when nvrx is not installed."""
+
         class FailingModule(types.ModuleType):
             def __getattr__(self, name):
                 raise ImportError("Mocked missing NVRx")

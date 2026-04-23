@@ -35,8 +35,21 @@ LLAMA_PRETRAIN_RECIPES = [
         "llama32_1b",
         {},
         {"num_layers": 2},
-        {"ckpt_format": "fsdp_dtensor", "strict_fsdp_dtensor_load": True, "async_save": True, "async_strategy": "nvrx", "use_persistent_ckpt_worker": True, "dist_ckpt_workers": 1},
-        {"use_megatron_fsdp": True, "use_distributed_optimizer": True, "grad_reduce_in_fp32": True, "average_in_collective": True, "data_parallel_sharding_strategy": "optim_grads_params"},
+        {
+            "ckpt_format": "fsdp_dtensor",
+            "strict_fsdp_dtensor_load": True,
+            "async_save": True,
+            "async_strategy": "nvrx",
+            "use_persistent_ckpt_worker": True,
+            "dist_ckpt_workers": 1,
+        },
+        {
+            "use_megatron_fsdp": True,
+            "use_distributed_optimizer": True,
+            "grad_reduce_in_fp32": True,
+            "average_in_collective": True,
+            "data_parallel_sharding_strategy": "optim_grads_params",
+        },
     ),
 ]
 
@@ -45,8 +58,20 @@ class TestLlamaRecipes:
     """Test class for LLaMA recipe functional tests."""
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize("config_func,recipe_name,parallelism_overrides,model_overrides,checkpoint_overrides,ddp_overrides", LLAMA_PRETRAIN_RECIPES)
-    def test_llama_pretrain_recipes(self, config_func, recipe_name, parallelism_overrides, model_overrides, checkpoint_overrides, ddp_overrides, tmp_path):
+    @pytest.mark.parametrize(
+        "config_func,recipe_name,parallelism_overrides,model_overrides,checkpoint_overrides,ddp_overrides",
+        LLAMA_PRETRAIN_RECIPES,
+    )
+    def test_llama_pretrain_recipes(
+        self,
+        config_func,
+        recipe_name,
+        parallelism_overrides,
+        model_overrides,
+        checkpoint_overrides,
+        ddp_overrides,
+        tmp_path,
+    ):
         """Functional test for LLaMA recipes with appropriate parallelism configurations."""
         run_pretrain_recipe_test(
             config_func,
