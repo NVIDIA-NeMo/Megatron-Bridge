@@ -230,12 +230,12 @@ def report_theoretical_memory(
         verbose (bool, optional): If True, passes verbosity flag to helper functions.
                                 Defaults to False.
     """
-    # Skip for OmniModal: OmniModalProvider is not a TransformerConfig, so it lacks
+    # Skip for MegatronMIMO: MegatronMIMOProvider is not a TransformerConfig, so it lacks
     # kv_channels/num_attention_heads/etc. needed for the calculation.
     # (Other providers like GPTModelProvider inherit TransformerConfig and work fine.)
-    from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 
-    if isinstance(config.model, OmniModalProvider):
+    if isinstance(config.model, MegatronMIMOProvider):
         return
 
     weight_and_optimizer_memory = compute_weight_and_optimizer_memory(config, verbose=verbose) / NUM_BYTES_IN_MEGABYTE

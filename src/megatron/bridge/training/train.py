@@ -1209,7 +1209,7 @@ def save_checkpoint_and_time(
         non_persistent_ckpt: Flag indicating if this is a non-persistent
                              (local) checkpoint. Defaults to False.
         train_data_iterator: Optional training data iterator to save its state.
-        pg_collection: Optional process group collection for OmniModal topologies.
+        pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
     """
     timers = state.timers
@@ -1299,7 +1299,7 @@ def checkpoint_and_decide_exit(
         num_floating_point_operations_so_far: Cumulative TFLOPs up to this point.
         checkpoint_manager: The checkpoint manager for save operations.
         train_data_iterator: Optional training data iterator to save its state.
-        pg_collection: Optional process group collection for OmniModal topologies.
+        pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
 
     Returns:

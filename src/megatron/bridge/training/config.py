@@ -48,7 +48,7 @@ from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
-from megatron.bridge.models.omni_modal.omni_modal_provider import OmniModalProvider
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -964,7 +964,12 @@ class ConfigContainer(Container):
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
     model: (
-        GPTModelProvider | T5ModelProvider | MambaModelProvider | OmniModalProvider | GPTModelConfig | MambaModelConfig
+        GPTModelProvider
+        | T5ModelProvider
+        | MambaModelProvider
+        | MegatronMIMOProvider
+        | GPTModelConfig
+        | MambaModelConfig
     )
     optimizer: OptimizerConfig
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
@@ -1603,34 +1608,34 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     cfg.validate()
 
 
-def omni_modal_runtime_config_update(cfg: ConfigContainer) -> None:
-    """OmniModal-equivalent of ``runtime_config_update``.
+def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
+    """MegatronMIMO-equivalent of ``runtime_config_update``.
 
     The standard ``runtime_config_update`` cannot be used directly because it
     accesses ``cfg.model`` attributes (``bf16``, ``tensor_model_parallel_size``,
-    ``cuda_graph_impl``, …) that do not exist on ``OmniModalProvider``.
+    ``cuda_graph_impl``, …) that do not exist on ``MegatronMIMOProvider``.
 
     This function cherry-picks the safe, model-agnostic parts:
 
-    Keeps (safe for OmniModal):
-    - ``data_parallel_size = 1`` (OmniModal-specific hard-code)
+    Keeps (safe for MegatronMIMO):
+    - ``data_parallel_size = 1`` (MegatronMIMO-specific hard-code)
     - Sub-config finalization (optimizer, ddp, logger, train, scheduler, checkpoint)
     - Distributed optimizer sync validation
     - Deterministic mode validation
 
     Skips (would crash or is N/A):
     - Mixed precision resolution (per-module, not container-level)
-    - Communication overlap setup (not supported for OmniModal)
+    - Communication overlap setup (not supported for MegatronMIMO)
     - Model-level validations (FSDP, CUDA graphs, TE RNG tracker sync, etc.)
 
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
-    # OmniModal: data_parallel_size is always 1 from the training loop's perspective.
+    # MegatronMIMO: data_parallel_size is always 1 from the training loop's perspective.
     cfg.data_parallel_size = 1
 
     # Finalize sub-configs that don't depend on model construction order.
     # NOTE: cfg.model.finalize() is NOT called here — it validates parallelism
-    # config and is called inside setup_omni_modal() right before build_infra().
+    # config and is called inside setup_megatron_mimo() right before build_infra().
     if hasattr(cfg.optimizer, "finalize"):
         cfg.optimizer.finalize()
     if hasattr(cfg.ddp, "finalize"):
