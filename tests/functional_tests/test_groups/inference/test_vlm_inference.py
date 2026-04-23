@@ -32,7 +32,7 @@ class TestVLMInferenceScript:
 
     @pytest.mark.run_only_on("GPU")
     def test_vlm_inference_megatron_checkpoint(self):
-        ckpt_path = "/home/TestData/megatron_bridge/checkpoints/qwen25-vl-3b"
+        ckpt_path = "/home/TestData/megatron_bridge/checkpoints/qwen25-vl-3b"  # pragma: allowlist secret
         cmd = [
             "python",
             "-m",
@@ -61,7 +61,7 @@ class TestVLMInferenceScript:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=Path(__file__).parent.parent.parent.parent,
+                cwd=Path(__file__).parent.parent.parent.parent.parent,
                 timeout=3600,
             )
 

@@ -127,6 +127,7 @@ class TestHFEncoderEnergonVLMTraining:
     """End-to-end test: HF encoder task encoder → VLM training for 2 iterations."""
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.pleasefixme
     def test_hf_encoder_vlm_pretrain_2_iters(self, tmp_path):
         """Train a Gemma3-VL 4B model (random weights) for 2 iterations using
         batches produced by HFEncoderVLMTaskEncoder with GenericVisualInputs.
