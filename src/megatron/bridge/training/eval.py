@@ -78,10 +78,10 @@ def evaluate(
         non_loss_data_func (Optional[Callable], optional): Function to compute non-loss data. Defaults to None.
         p2p_communicator (Optional[Union[P2PCommunicator, MultiModulePipelineCommunicator]], optional):
             Custom communicator for pipeline parallelism. If None, creates a default P2PCommunicator.
-            For MIMO models, pass a MultiModulePipelineCommunicator. Defaults to None.
+            For MegatronMIMO models, pass a MultiModulePipelineCommunicator. Defaults to None.
         pg_collection (Optional[Union[ProcessGroupCollection, MultiModuleProcessGroupCollection]], optional):
             Custom process group collection. If None, extracts from model via get_pg_collection().
-            For MIMO models, pass a MultiModuleProcessGroupCollection. Defaults to None.
+            For MegatronMIMO models, pass a MultiModuleProcessGroupCollection. Defaults to None.
         callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
         is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
             Controls which callback events are fired (on_test_* vs on_eval_*).
@@ -124,14 +124,14 @@ def evaluate(
     eval_micro_batch_size = state.cfg.validation.eval_micro_batch_size
     eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * state.cfg.data_parallel_size)
 
-    # Determine if this is a multimodule evaluation (MIMO)
+    # Determine if this is a multimodule evaluation (MegatronMIMO)
     is_multimodule = isinstance(pg_collection, MultiModuleProcessGroupCollection) or isinstance(
         p2p_communicator, MultiModulePipelineCommunicator
     )
 
     if is_multimodule and not isinstance(p2p_communicator, MultiModulePipelineCommunicator):
         raise ValueError(
-            "Multimodule (MIMO) evaluation requires an explicit MultiModulePipelineCommunicator as p2p_communicator."
+            "Multimodule (MegatronMIMO) evaluation requires an explicit MultiModulePipelineCommunicator as p2p_communicator."
         )
 
     if not state.cfg.dist.use_decentralized_pg:
