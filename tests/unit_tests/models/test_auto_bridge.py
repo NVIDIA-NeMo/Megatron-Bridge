@@ -405,6 +405,66 @@ class TestAutoBridge:
         with pytest.raises(ValueError, match="Model architecture not supported by AutoBridge"):
             AutoBridge.from_hf_config(config)
 
+    def test_from_hf_config_to_megatron_provider(self):
+        """Test from_hf_config followed by to_megatron_provider uses _ConfigOnlyPretrainedShim.
+
+        Regression test for GitHub issue #1560:
+        AutoBridge.from_hf_config() stores a PretrainedConfig, but provider_bridge()
+        expected PreTrainedCausalLM. Fix PR #1672 introduced _ConfigOnlyPretrainedShim
+        to bridge this gap.
+        """
+        from megatron.bridge.models.hf.causal_lm import _ConfigOnlyPretrainedShim
+
+        # Create a config (not a full model)
+        config = Mock(spec=PretrainedConfig)
+        config.architectures = ["LlamaForCausalLM"]
+        config.name_or_path = "meta-llama/Llama-3.2-1B"
+        config.to_dict = Mock(return_value={"vocab_size": 32000})
+
+        # Mock model bridge
+        mock_model_bridge = Mock()
+        mock_provider = Mock(spec=GPTModelProvider)
+        mock_provider.hf_model_id = None
+        mock_model_bridge.provider_bridge.return_value = mock_provider
+
+        with patch.object(AutoBridge, "_validate_config"):
+            bridge = AutoBridge.from_hf_config(config)
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            # Key assertion: calling to_megatron_provider with load_weights=False should work
+            # and pass a _ConfigOnlyPretrainedShim (not the raw config) to provider_bridge
+            provider = bridge.to_megatron_provider(load_weights=False)
+
+            assert provider == mock_provider
+            mock_model_bridge.provider_bridge.assert_called_once()
+
+            # Verify the argument passed to provider_bridge is a shim, not raw config
+            call_arg = mock_model_bridge.provider_bridge.call_args[0][0]
+            assert isinstance(call_arg, _ConfigOnlyPretrainedShim)
+            assert call_arg.config == config
+
+    def test_from_hf_config_to_megatron_provider_load_weights_error(self):
+        """Test from_hf_config + to_megatron_provider raises error when load_weights=True without hf_path.
+
+        When using from_hf_config (config-only, no weights), calling to_megatron_provider
+        with load_weights=True should raise a clear error unless hf_path is provided.
+        """
+        config = Mock(spec=PretrainedConfig)
+        config.architectures = ["LlamaForCausalLM"]
+        config.name_or_path = "meta-llama/Llama-3.2-1B"
+
+        mock_model_bridge = Mock()
+        mock_provider = Mock(spec=GPTModelProvider)
+        mock_model_bridge.provider_bridge.return_value = mock_provider
+
+        with patch.object(AutoBridge, "_validate_config"):
+            bridge = AutoBridge.from_hf_config(config)
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            # Should raise error: config-only bridge can't load weights without hf_path
+            with pytest.raises(ValueError, match="does not include weights"):
+                bridge.to_megatron_provider(load_weights=True)
+
     def test_from_auto_config_happy_path(self, tmp_path):
         """from_auto_config synthesizes config and tags bridge with source model id."""
         ckpt_dir = tmp_path / "ckpt"
