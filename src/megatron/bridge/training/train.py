@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import gc
+import inspect
 import os
 import sys
 import time
@@ -97,6 +98,15 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
+
+
+# For Paged Stashing support
+try:
+    from megatron.core.transformer.moe.paged_stash import PagedStashRunner
+
+    HAS_PAGED_STASHING = True
+except ImportError:
+    HAS_PAGED_STASHING = False
 
 
 def train(
@@ -245,14 +255,16 @@ def train(
     # Capture CUDA Graphs.
     cuda_graph_helper = None
     if model_config.cuda_graph_impl == "transformer_engine":
-        cuda_graph_helper = TECudaGraphHelper(
+        _te_cg_kwargs: dict[str, Any] = dict(
             model=model,
             config=model_config,
             seq_length=config.model.seq_length,
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
-            pg_collection=pg_collection,
         )
+        if "pg_collection" in inspect.signature(TECudaGraphHelper.__init__).parameters:
+            _te_cg_kwargs["pg_collection"] = pg_collection
+        cuda_graph_helper = TECudaGraphHelper(**_te_cg_kwargs)
     # Capture Vision Encoder CUDA Graphs (separate from language model).
     # Check if vision encoder has CUDA graph enabled
     vision_cuda_graph_helper = None
@@ -265,14 +277,16 @@ def train(
                 vision_model_config = unwrapped.vision_model.config
                 if vision_model_config.cuda_graph_impl == "transformer_engine":
                     vision_seq_length = get_vision_cuda_graph_seq_length(vision_model_config)
-                    vision_cuda_graph_helper = VisionTECudaGraphHelper(
+                    _vision_cg_kwargs: dict[str, Any] = dict(
                         model=model,
                         vision_config=vision_model_config,
                         vision_seq_length=vision_seq_length,
                         micro_batch_size=config.train.micro_batch_size,
                         num_microbatches=get_num_microbatches(),
-                        pg_collection=pg_collection,
                     )
+                    if "pg_collection" in inspect.signature(VisionTECudaGraphHelper.__init__).parameters:
+                        _vision_cg_kwargs["pg_collection"] = pg_collection
+                    vision_cuda_graph_helper = VisionTECudaGraphHelper(**_vision_cg_kwargs)
                     print_rank_0(f"Vision encoder CUDA graph enabled with seq_length={vision_seq_length}")
                 break
     # Track train step elapsed time for throughput logging
@@ -288,6 +302,13 @@ def train(
     if config.model.cuda_graph_impl == "local" and CudaGraphScope.full_iteration in config.model.cuda_graph_scope:
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
+        )
+    # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
+    # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
+    if HAS_PAGED_STASHING and config.model.moe_expert_rank_capacity_factor is not None:
+        copy_main_params = config.optimizer.reuse_grad_buf_for_mxfp8_param_ag and config.ddp.overlap_param_gather
+        forward_backward_func = PagedStashRunner(
+            model_config, copy_main_params, model, optimizer, forward_backward_func
         )
 
     start_iteration = global_state.train_state.step
@@ -1562,11 +1583,7 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
     if cuda_graph_helper is not None:
-        for layers in cuda_graph_helper.callables_per_chunk:
-            for layer in layers:
-                for cuda_graph in layer.cuda_graphs:
-                    del cuda_graph
-                del layer.cuda_graphs
+        cuda_graph_helper.delete_cuda_graphs()
 
     # Run GC to collect the freshed object
     gc.collect()

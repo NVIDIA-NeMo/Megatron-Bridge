@@ -43,7 +43,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model meta-llama/Meta-Llama-3.1-8B \
   --megatron-path /checkpoints/llama31_8b_megatron
 ```
@@ -66,7 +66,7 @@ bridge.export_ckpt(
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path meta-llama/Meta-Llama-3.1-8B \
   --megatron_model_path /checkpoints/llama31_8b_megatron \
   --prompt "What is artificial intelligence?" \
