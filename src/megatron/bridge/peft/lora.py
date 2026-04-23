@@ -325,6 +325,9 @@ class LoRAMerge(PEFT):
         """
         Merges the LoRA adapter with the base model weights.
 
+        Supports both LoRALinear (parallel linear layers, grouped expert layers) and
+        LoRATopKRouter (MoE router gating weights).
+
         Args:
             m (nn.Module): The module to apply LoRA merge to.
             name (str, optional): Name of the module to merge. Defaults to None.
@@ -334,8 +337,13 @@ class LoRAMerge(PEFT):
             nn.Module: The modified module with the LoRA adapter merged into the base model weights.
         """
 
+        if isinstance(module, LoRATopKRouter):
+            return self._merge_router(module, name, prefix)
         if not isinstance(module, LoRALinear):
             return module
+        return self._merge_linear(module, name, prefix)
+
+    def _merge_linear(self, module: LoRALinear, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         logging.info(f"merging {(prefix if prefix else '') + '.' + (name if name else '')}")
 
         if hasattr(module.to_wrap, "weight"):
@@ -359,4 +367,25 @@ class LoRAMerge(PEFT):
                     module.adapter.dim,
                 )
                 getattr(module.to_wrap, f"weight{i}").data = merged_weight
+        return module
+
+    def _merge_router(
+        self, module: LoRATopKRouter, name: Optional[str] = None, prefix: Optional[str] = None
+    ) -> nn.Module:
+        """Merge LoRA adapter into a TopKRouter's gating weight.
+
+        The router weight is replicated (not TP-sharded), so we compute the
+        delta directly: W' = W + (alpha/dim) * linear_out @ linear_in.
+
+        Inspired by the merge pattern in ModelScope's mcore-bridge LoraParallelLinear.
+        Source: https://github.com/modelscope/mcore-bridge
+        """
+        logging.info(f"merging router {(prefix if prefix else '') + '.' + (name if name else '')}")
+        base_weight = module.to_wrap.weight
+        base_device = base_weight.device
+        adapter = module.adapter
+        lora_delta = (adapter.alpha / adapter.dim) * (
+            adapter.linear_out.weight.to(base_device) @ adapter.linear_in.weight.to(base_device)
+        )
+        base_weight.data += lora_delta
         return module

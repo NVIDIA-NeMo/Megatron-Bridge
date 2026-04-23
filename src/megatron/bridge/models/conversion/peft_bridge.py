@@ -45,6 +45,8 @@ from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attrib
 
 
 if TYPE_CHECKING:
+    from megatron.core.transformer.transformer_config import TransformerConfig
+
     from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
     from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronWeightTuple, WeightConversionTask
     from megatron.bridge.peft.base import PEFT
@@ -1162,6 +1164,293 @@ class MegatronPeftBridge:
 
 
 _HF_LORA_SUFFIXES = (".lora_A.weight", ".lora_B.weight")
+
+# QKV projection keys in HF format
+_QKV_PROJ_KEYS = ("q_proj", "k_proj", "v_proj")
+
+# Gate/Up projection keys in HF format
+_GATE_UP_PROJ_KEYS = ("gate_proj", "up_proj")
+
+
+def convert_hf_lora_to_megatron(
+    hf_adapter_weights: Dict[str, torch.Tensor],
+    model_config: "TransformerConfig",
+) -> Dict[str, torch.Tensor]:
+    """Convert HF PEFT LoRA adapter weights to Megatron Bridge LoRA format.
+
+    Handles the key transformations needed when loading HF LoRA checkpoints:
+    - Separate q/k/v LoRA adapters → fused linear_qkv LoRA adapter
+    - Separate gate/up LoRA adapters → fused linear_fc1 LoRA adapter
+    - Per-expert LoRA weights → packed grouped expert format
+    - o_proj → linear_proj, down_proj → linear_fc2
+
+    This conversion logic is inspired by the weight bridge in ModelScope's mcore-bridge.
+    Source: https://github.com/modelscope/mcore-bridge (``GPTBridge._set_attn_state``,
+    ``GPTBridge._set_mlp_state`` in ``src/mcore_bridge/bridge/gpt_bridge.py``).
+
+    Args:
+        hf_adapter_weights: Dictionary of HF PEFT adapter weights keyed by HF parameter name
+            (e.g. ``model.layers.0.self_attn.q_proj.lora_A.weight``).
+        model_config: Megatron TransformerConfig providing model dimensions
+            (num_attention_heads, num_query_groups, kv_channels, hidden_size, etc.).
+
+    Returns:
+        Dictionary of Megatron-format adapter weights keyed by Megatron parameter name
+        (e.g. ``decoder.layers.0.self_attention.linear_qkv.adapter.linear_in.weight``).
+    """
+
+    megatron_weights: Dict[str, torch.Tensor] = {}
+    layer_groups = _group_hf_lora_by_layer(hf_adapter_weights)
+
+    for layer_prefix, layer_weights in layer_groups.items():
+        megatron_layer_prefix = _hf_layer_prefix_to_megatron(layer_prefix)
+
+        # Fuse QKV LoRA
+        qkv_fused = _fuse_qkv_lora(layer_weights, model_config)
+        if qkv_fused:
+            for key, tensor in qkv_fused.items():
+                megatron_weights[f"{megatron_layer_prefix}.self_attention.{key}"] = tensor
+
+        # Fuse gate+up → linear_fc1 LoRA
+        fc1_fused = _fuse_gate_up_lora(layer_weights)
+        if fc1_fused:
+            for key, tensor in fc1_fused.items():
+                megatron_weights[f"{megatron_layer_prefix}.mlp.{key}"] = tensor
+
+        # Direct mappings: o_proj → linear_proj, down_proj → linear_fc2
+        _map_direct_lora(layer_weights, megatron_layer_prefix, megatron_weights)
+
+        # Expert LoRA: per-expert gate/up/down → grouped expert format
+        expert_weights = _fuse_expert_lora(layer_weights, model_config)
+        for key, tensor in expert_weights.items():
+            megatron_weights[f"{megatron_layer_prefix}.mlp.experts.{key}"] = tensor
+
+        # Router LoRA (TopKRouter)
+        _map_router_lora(layer_weights, megatron_layer_prefix, megatron_weights)
+
+    return megatron_weights
+
+
+def _group_hf_lora_by_layer(
+    hf_weights: Dict[str, torch.Tensor],
+) -> Dict[str, Dict[str, torch.Tensor]]:
+    """Group HF adapter weights by transformer layer prefix.
+
+    Example: ``model.layers.0.self_attn.q_proj.lora_A.weight`` → layer prefix ``model.layers.0``.
+    """
+    import re
+
+    groups: Dict[str, Dict[str, torch.Tensor]] = defaultdict(dict)
+    layer_pattern = re.compile(r"((?:model|base_model\.model)\.layers\.\d+)\.(.*)")
+
+    for name, tensor in hf_weights.items():
+        m = layer_pattern.match(name)
+        if m:
+            layer_prefix, remainder = m.group(1), m.group(2)
+            groups[layer_prefix][remainder] = tensor
+        else:
+            groups["_global"][name] = tensor
+
+    return dict(groups)
+
+
+def _hf_layer_prefix_to_megatron(hf_prefix: str) -> str:
+    """Convert ``model.layers.N`` to ``decoder.layers.N``."""
+    import re
+
+    m = re.search(r"layers\.(\d+)", hf_prefix)
+    if m:
+        return f"decoder.layers.{m.group(1)}"
+    return hf_prefix
+
+
+def _fuse_qkv_lora(
+    layer_weights: Dict[str, torch.Tensor],
+    model_config: "TransformerConfig",
+) -> Dict[str, torch.Tensor]:
+    """Fuse separate Q/K/V LoRA adapters into a single linear_qkv adapter.
+
+    In HF format, QKV have separate LoRA adapters. In Megatron, the QKV projection
+    is a single fused linear_qkv, so we need to:
+    - lora_A: Verify Q/K/V lora_A are identical (shared input projection)
+    - lora_B: Interleave Q/K/V lora_B in Megatron's grouped-head layout
+
+    Based on ``GPTBridge._set_attn_state`` from ModelScope's mcore-bridge.
+    Source: https://github.com/modelscope/mcore-bridge
+    """
+    q_lora_a_key = "self_attn.q_proj.lora_A.weight"
+    k_lora_a_key = "self_attn.k_proj.lora_A.weight"
+    v_lora_a_key = "self_attn.v_proj.lora_A.weight"
+
+    if not all(k in layer_weights for k in (q_lora_a_key, k_lora_a_key, v_lora_a_key)):
+        return {}
+
+    q_lora_a = layer_weights[q_lora_a_key]
+    k_lora_a = layer_weights[k_lora_a_key]
+    v_lora_a = layer_weights[v_lora_a_key]
+
+    if not (torch.equal(q_lora_a, k_lora_a) and torch.equal(q_lora_a, v_lora_a)):
+        raise ValueError(
+            "QKV LoRA fusion requires identical lora_A weights for Q, K, and V projections. "
+            "Found differing lora_A weights — cannot fuse into a single linear_qkv adapter."
+        )
+
+    q_lora_b = layer_weights["self_attn.q_proj.lora_B.weight"]
+    k_lora_b = layer_weights["self_attn.k_proj.lora_B.weight"]
+    v_lora_b = layer_weights["self_attn.v_proj.lora_B.weight"]
+
+    num_query_groups = model_config.num_query_groups or model_config.num_attention_heads
+    fused_lora_b = torch.cat(
+        [
+            q_lora_b.reshape(num_query_groups, -1, q_lora_b.shape[-1]),
+            k_lora_b.reshape(num_query_groups, -1, k_lora_b.shape[-1]),
+            v_lora_b.reshape(num_query_groups, -1, v_lora_b.shape[-1]),
+        ],
+        dim=1,
+    ).reshape(-1, q_lora_b.shape[-1])
+
+    return {
+        "linear_qkv.adapter.linear_in.weight": q_lora_a,
+        "linear_qkv.adapter.linear_out.weight": fused_lora_b,
+    }
+
+
+def _fuse_gate_up_lora(
+    layer_weights: Dict[str, torch.Tensor],
+) -> Dict[str, torch.Tensor]:
+    """Fuse separate gate/up LoRA adapters into a single linear_fc1 adapter.
+
+    Megatron's linear_fc1 is a fused gate+up projection for SwiGLU MLPs.
+    The lora_B output dimension is interleaved: [gate_shard, up_shard] per TP shard.
+
+    Based on ``GPTBridge._set_mlp_state`` from ModelScope's mcore-bridge.
+    Source: https://github.com/modelscope/mcore-bridge
+    """
+    gate_lora_a_key = "mlp.gate_proj.lora_A.weight"
+    up_lora_a_key = "mlp.up_proj.lora_A.weight"
+
+    if not all(k in layer_weights for k in (gate_lora_a_key, up_lora_a_key)):
+        return {}
+
+    gate_lora_a = layer_weights[gate_lora_a_key]
+    up_lora_a = layer_weights[up_lora_a_key]
+
+    if not torch.equal(gate_lora_a, up_lora_a):
+        raise ValueError(
+            "Gate/Up LoRA fusion requires identical lora_A weights. "
+            "Found differing lora_A weights — cannot fuse into a single linear_fc1 adapter."
+        )
+
+    gate_lora_b = layer_weights["mlp.gate_proj.lora_B.weight"]
+    up_lora_b = layer_weights["mlp.up_proj.lora_B.weight"]
+
+    # Megatron fc1 layout: [gate, up] stacked along dim 0
+    fused_lora_b = torch.cat([gate_lora_b, up_lora_b], dim=0)
+
+    return {
+        "linear_fc1.adapter.linear_in.weight": gate_lora_a,
+        "linear_fc1.adapter.linear_out.weight": fused_lora_b,
+    }
+
+
+def _map_direct_lora(
+    layer_weights: Dict[str, torch.Tensor],
+    megatron_prefix: str,
+    output: Dict[str, torch.Tensor],
+) -> None:
+    """Map HF LoRA weights that have a 1:1 correspondence with Megatron layers."""
+    direct_mappings = {
+        "self_attn.o_proj.lora_A.weight": "self_attention.linear_proj.adapter.linear_in.weight",
+        "self_attn.o_proj.lora_B.weight": "self_attention.linear_proj.adapter.linear_out.weight",
+        "mlp.down_proj.lora_A.weight": "mlp.linear_fc2.adapter.linear_in.weight",
+        "mlp.down_proj.lora_B.weight": "mlp.linear_fc2.adapter.linear_out.weight",
+    }
+    for hf_key, mg_key in direct_mappings.items():
+        if hf_key in layer_weights:
+            output[f"{megatron_prefix}.{mg_key}"] = layer_weights[hf_key]
+
+
+def _fuse_expert_lora(
+    layer_weights: Dict[str, torch.Tensor],
+    model_config: "TransformerConfig",
+) -> Dict[str, torch.Tensor]:
+    """Fuse per-expert HF LoRA weights into Megatron's grouped expert format.
+
+    HF format uses ``mlp.experts.N.gate_proj.lora_A.weight`` per expert.
+    Megatron uses grouped linear layers where expert weights are stacked.
+
+    Based on expert LoRA handling in ModelScope's mcore-bridge ``GPTBridge._set_mlp_state``.
+    Source: https://github.com/modelscope/mcore-bridge
+    """
+    import re
+
+    result: Dict[str, torch.Tensor] = {}
+
+    expert_gate_pattern = re.compile(r"mlp\.experts\.(\d+)\.gate_proj\.lora_(A|B)\.weight")
+    expert_up_pattern = re.compile(r"mlp\.experts\.(\d+)\.up_proj\.lora_(A|B)\.weight")
+    expert_down_pattern = re.compile(r"mlp\.experts\.(\d+)\.down_proj\.lora_(A|B)\.weight")
+
+    # Collect expert indices
+    expert_indices = set()
+    for key in layer_weights:
+        m = expert_gate_pattern.match(key) or expert_up_pattern.match(key) or expert_down_pattern.match(key)
+        if m:
+            expert_indices.add(int(m.group(1)))
+
+    if not expert_indices:
+        return result
+
+    num_experts = max(expert_indices) + 1
+
+    # FC1 (gate+up) expert LoRA
+    gate_a_keys = [f"mlp.experts.{i}.gate_proj.lora_A.weight" for i in range(num_experts)]
+    if all(k in layer_weights for k in gate_a_keys):
+        up_a_keys = [f"mlp.experts.{i}.up_proj.lora_A.weight" for i in range(num_experts)]
+        gate_b_keys = [f"mlp.experts.{i}.gate_proj.lora_B.weight" for i in range(num_experts)]
+        up_b_keys = [f"mlp.experts.{i}.up_proj.lora_B.weight" for i in range(num_experts)]
+
+        if all(k in layer_weights for k in up_a_keys + gate_b_keys + up_b_keys):
+            stacked_a = torch.stack([layer_weights[k] for k in gate_a_keys])
+            fused_b_per_expert = []
+            for i in range(num_experts):
+                gate_b = layer_weights[gate_b_keys[i]]
+                up_b = layer_weights[up_b_keys[i]]
+                fused_b_per_expert.append(torch.cat([gate_b, up_b], dim=0))
+            stacked_b = torch.stack(fused_b_per_expert)
+
+            result["linear_fc1.adapter.linear_in.weight"] = stacked_a
+            result["linear_fc1.adapter.linear_out.weight"] = stacked_b
+
+    # FC2 (down) expert LoRA
+    down_a_keys = [f"mlp.experts.{i}.down_proj.lora_A.weight" for i in range(num_experts)]
+    if all(k in layer_weights for k in down_a_keys):
+        down_b_keys = [f"mlp.experts.{i}.down_proj.lora_B.weight" for i in range(num_experts)]
+        if all(k in layer_weights for k in down_b_keys):
+            stacked_a = torch.stack([layer_weights[k] for k in down_a_keys])
+            stacked_b = torch.stack([layer_weights[k] for k in down_b_keys])
+            result["linear_fc2.adapter.linear_in.weight"] = stacked_a
+            result["linear_fc2.adapter.linear_out.weight"] = stacked_b
+
+    return result
+
+
+def _map_router_lora(
+    layer_weights: Dict[str, torch.Tensor],
+    megatron_prefix: str,
+    output: Dict[str, torch.Tensor],
+) -> None:
+    """Map HF router (gate) LoRA weights to Megatron TopKRouter format.
+
+    Based on TopKRouter LoRA handling in ModelScope's mcore-bridge ``LoraParallelLinear``.
+    Source: https://github.com/modelscope/mcore-bridge
+    """
+    router_mappings = {
+        "mlp.gate.lora_A.weight": "mlp.router.adapter.linear_in.weight",
+        "mlp.gate.lora_B.weight": "mlp.router.adapter.linear_out.weight",
+    }
+    for hf_key, mg_key in router_mappings.items():
+        if hf_key in layer_weights:
+            output[f"{megatron_prefix}.{mg_key}"] = layer_weights[hf_key]
 
 
 def infer_target_modules_from_adapter_weights(adapter_weight_names: Iterable[str]) -> List[str]:

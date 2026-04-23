@@ -63,14 +63,50 @@ class LoRALinear(AdapterWrapper):
 
 
 class LoRATopKRouter(AdapterWrapper):
-    """Adapter wrapper that applies LoRA to router gating logits."""
+    """Adapter wrapper that applies LoRA to router gating logits.
+
+    Supports merge/unmerge for inference: the LoRA delta can be folded into
+    the router's gating weight so the adapter forward path is skipped.
+
+    The merge/unmerge pattern is inspired by ModelScope's mcore-bridge
+    ``LoraParallelLinear`` which supports in-place merge/unmerge for all
+    parallel linear types including ``TopKRouter``.
+    Source: https://github.com/modelscope/mcore-bridge
+    (``src/mcore_bridge/tuners/lora.py``, ``merge`` / ``unmerge`` methods)
+    """
+
+    def __init__(self, to_wrap: nn.Module, adapter: nn.Module) -> None:
+        super().__init__(to_wrap, adapter)
+        self._merged = False
+
+    @torch.no_grad()
+    def merge_adapter(self) -> None:
+        """Merge the LoRA delta into the router's gating weight for inference."""
+        if self._merged:
+            return
+        adapter = self.adapter
+        scale = adapter.alpha / adapter.dim
+        delta = scale * (adapter.linear_out.weight @ adapter.linear_in.weight)
+        self.to_wrap.weight.data += delta.to(self.to_wrap.weight.device, dtype=self.to_wrap.weight.dtype)
+        self._merged = True
+
+    @torch.no_grad()
+    def unmerge_adapter(self) -> None:
+        """Remove the previously merged LoRA delta from the router's gating weight."""
+        if not self._merged:
+            return
+        adapter = self.adapter
+        scale = adapter.alpha / adapter.dim
+        delta = scale * (adapter.linear_out.weight @ adapter.linear_in.weight)
+        self.to_wrap.weight.data -= delta.to(self.to_wrap.weight.device, dtype=self.to_wrap.weight.dtype)
+        self._merged = False
 
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any):
         """Forward pass that adds LoRA delta to router logits before routing."""
         self.to_wrap._maintain_float32_expert_bias()
         jittered_input = self.to_wrap.apply_input_jitter(x)
         logits = self.to_wrap.gating(jittered_input)
-        if self._adapter_enabled:
+        if self._adapter_enabled and not self._merged:
             adapter_output = self.adapter(jittered_input.contiguous())
             logits = logits + adapter_output.to(dtype=logits.dtype)
         if self.to_wrap.config.moe_router_force_load_balancing:
