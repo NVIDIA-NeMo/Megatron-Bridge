@@ -1,3 +1,5 @@
 [submodule "3rdparty/Megatron-LM"]
 	path = 3rdparty/Megatron-LM
-	url = ssh://git@gitlab-master.nvidia.com:12051/smohsenitahe/megatron-lm.git
+	url = https://github.com/NVIDIA/Megatron-LM.git
+	branch = nano-v3-vl
+	shallow = true
