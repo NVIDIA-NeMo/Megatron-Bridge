@@ -13,11 +13,8 @@
 # limitations under the License.
 """Unit tests for megatron.bridge.training.checkpointing module."""
 
-import importlib
 import os
-import sys
 import tempfile
-import types
 from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
