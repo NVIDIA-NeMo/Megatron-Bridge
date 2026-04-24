@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Tuple
+import logging
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -16,15 +17,22 @@ if TYPE_CHECKING:
     from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
 
 
-def _find_rank_module(
+logger = logging.getLogger(__name__)
+
+
+def _find_rank_modules(
     grids: Dict[str, "HyperCommGrid"],
-) -> Tuple["HyperCommGrid | None", "str | None"]:
-    """Find which module grid the current rank belongs to."""
+) -> Dict[str, "HyperCommGrid"]:
+    """Return every module grid the current rank belongs to.
+
+    In non-colocated deployments (disjoint rank ranges) this returns at most
+    one entry. In colocated deployments (all grids share the same
+    ``(rank_offset, size)``) every module grid is returned.
+    """
     current_rank = dist.get_rank()
-    for module_name, grid in grids.items():
-        if grid.rank_offset <= current_rank < (grid.rank_offset + grid.size):
-            return grid, module_name
-    return None, None
+    return {
+        name: grid for name, grid in grids.items() if grid.rank_offset <= current_rank < (grid.rank_offset + grid.size)
+    }
 
 
 def _needs_data_for_module(grid: "HyperCommGrid", module_name: str) -> bool:
@@ -44,12 +52,12 @@ def _needs_data_for_module(grid: "HyperCommGrid", module_name: str) -> bool:
 def get_megatron_mimo_dp_info(
     megatron_mimo_cfg: "MegatronMIMOParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
+    module_name: Optional[str] = None,
 ) -> Tuple[int, int, bool, str]:
     """Get **module-local** DP rank, size, data-loading flag, and module name.
 
-    Returns the DP settings for the module that the current rank participates
-    in.  These are used by :func:`slice_batch_for_megatron_mimo` to sub-shard a global
-    micro-batch into per-module DP shards.
+    These values feed :func:`slice_batch_for_megatron_mimo`, which sub-shards a
+    global micro-batch into per-module DP shards.
 
     .. note::
         Do **not** use these values to construct a ``DistributedSampler``.
@@ -60,18 +68,43 @@ def get_megatron_mimo_dp_info(
     Args:
         megatron_mimo_cfg: MegatronMIMO parallelism configuration.
         grids: Module name to HyperCommGrid mapping from build_hypercomm_grids().
+        module_name: Explicit module to query. Required when the current rank
+            participates in multiple modules (colocated mode) because a rank's
+            encoder-DP and LLM-DP generally differ. If omitted and the rank
+            serves multiple modules, defaults to the language module and emits
+            a warning.
 
     Returns:
         Tuple of (dp_rank, dp_size, needs_data, loader_module).
     """
-    my_grid, my_module = _find_rank_module(grids)
-    if my_grid is None or my_module is None:
+    rank_modules = _find_rank_modules(grids)
+    if not rank_modules:
         return 0, 1, False, MIMO_LANGUAGE_MODULE_KEY
 
-    dp_rank = my_grid.get_pg(["dp"]).rank()
-    dp_size = my_grid.get_pg(["dp"]).size()
-    needs_data = _needs_data_for_module(my_grid, my_module)
-    return dp_rank, dp_size, needs_data, my_module
+    if module_name is not None:
+        grid = rank_modules.get(module_name)
+        if grid is None:
+            return 0, 1, False, module_name
+        selected_name = module_name
+    elif len(rank_modules) == 1:
+        selected_name, grid = next(iter(rank_modules.items()))
+    else:
+        selected_name = (
+            MIMO_LANGUAGE_MODULE_KEY if MIMO_LANGUAGE_MODULE_KEY in rank_modules else next(iter(rank_modules))
+        )
+        grid = rank_modules[selected_name]
+        logger.warning(
+            "get_megatron_mimo_dp_info called without module_name on a rank serving "
+            "multiple modules (%s). Defaulting to '%s'. Pass module_name explicitly "
+            "to disambiguate in colocated mode.",
+            sorted(rank_modules),
+            selected_name,
+        )
+
+    dp_rank = grid.get_pg(["dp"]).rank()
+    dp_size = grid.get_pg(["dp"]).size()
+    needs_data = _needs_data_for_module(grid, selected_name)
+    return dp_rank, dp_size, needs_data, selected_name
 
 
 def get_megatron_mimo_sampling_info(
@@ -90,6 +123,11 @@ def get_megatron_mimo_sampling_info(
     disabling DP sharding at the sampler level.  Per-module DP sharding is
     deferred to :func:`slice_batch_for_megatron_mimo`.
 
+    In colocated deployments a rank belongs to multiple module grids. We say
+    the rank needs data if **any** of its modules needs data — missing a
+    needed-by-LLM batch because the rank was only checked against the encoder
+    grid would cause silent no-op training.
+
     Args:
         megatron_mimo_cfg: MegatronMIMO parallelism configuration.
         grids: Module name to HyperCommGrid mapping.
@@ -97,11 +135,11 @@ def get_megatron_mimo_sampling_info(
     Returns:
         Tuple of (sampler_dp_rank, sampler_dp_size, needs_data).
     """
-    my_grid, my_module = _find_rank_module(grids)
-    if my_grid is None or my_module is None:
+    rank_modules = _find_rank_modules(grids)
+    if not rank_modules:
         return 0, 1, False
 
-    needs_data = _needs_data_for_module(my_grid, my_module)
+    needs_data = any(_needs_data_for_module(grid, name) for name, grid in rank_modules.items())
     # All data-loading ranks use the same sampler settings so they load
     # identical global micro-batches.  Module-local DP slicing happens later
     # in forward_step via slice_batch_for_megatron_mimo.

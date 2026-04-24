@@ -4,8 +4,14 @@
 import pytest
 import torch
 import torch.distributed as dist
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
-from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_dp_info, slice_batch_for_megatron_mimo
+from megatron.bridge.data.megatron_mimo.dp_utils import (
+    _find_rank_modules,
+    get_megatron_mimo_dp_info,
+    get_megatron_mimo_sampling_info,
+    slice_batch_for_megatron_mimo,
+)
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
@@ -132,6 +138,122 @@ def test_get_megatron_mimo_dp_info_non_participating_rank(monkeypatch):
 
     assert needs_data is False
     assert loader_module == "language"  # Default to LLM
+
+
+# ---------------------------------------------------------------------------
+# Tests: multi-module rank membership (colocated mode)
+# ---------------------------------------------------------------------------
+
+
+def _make_colocated_grids(vision_dp: int = 8, llm_dp: int = 2, llm_tp: int = 4) -> dict:
+    """Build fake grids for a colocated 8-GPU setup with a fan-in layout.
+
+    Both grids span ranks [0, 8). Encoder has DP=8/TP=1, LLM has DP=llm_dp/TP=llm_tp.
+    Process-group ranks/sizes on the fake grids are set to what rank 0 would see.
+    """
+    return {
+        "vision": FakeGrid(0, 8, dp_rank=0, dp_size=vision_dp, pp_rank=0, pp_size=1),
+        "language": FakeGrid(0, 8, dp_rank=0, dp_size=llm_dp, pp_rank=0, pp_size=1),
+    }
+
+
+def _make_colocated_cfg(vision_dp: int = 8, llm_dp: int = 2, llm_tp: int = 4) -> MegatronMIMOParallelismConfig:
+    """Build a colocated parallelism config matching _make_colocated_grids."""
+    return MegatronMIMOParallelismConfig(
+        module_parallelisms={
+            "vision": ModuleParallelismConfig(
+                tensor_model_parallel_size=1, data_parallel_size=vision_dp, rank_offset=0
+            ),
+            "language": ModuleParallelismConfig(
+                tensor_model_parallel_size=llm_tp, data_parallel_size=llm_dp, rank_offset=0
+            ),
+        }
+    )
+
+
+def test_find_rank_modules_non_colocated_returns_single(monkeypatch):
+    """Non-colocated: a rank belongs to exactly one module grid."""
+    monkeypatch.setattr(dist, "get_rank", lambda: 0)
+    grids = {
+        "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=2),
+        "language": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
+    }
+    result = _find_rank_modules(grids)
+    assert list(result.keys()) == ["vision"]
+
+
+def test_find_rank_modules_colocated_returns_all(monkeypatch):
+    """Colocated: a rank belongs to every module grid."""
+    monkeypatch.setattr(dist, "get_rank", lambda: 3)
+    grids = _make_colocated_grids()
+    result = _find_rank_modules(grids)
+    assert set(result.keys()) == {"vision", "language"}
+
+
+def test_find_rank_modules_non_participating(monkeypatch):
+    """A rank outside every grid returns an empty dict."""
+    monkeypatch.setattr(dist, "get_rank", lambda: 99)
+    grids = _make_colocated_grids()
+    assert _find_rank_modules(grids) == {}
+
+
+def test_get_megatron_mimo_sampling_info_colocated_needs_data_union(monkeypatch):
+    """Colocated: needs_data is True if ANY served module needs data on this rank.
+
+    Previously, `_find_rank_module` returned whichever grid appeared first in the
+    dict and could report needs_data=False on a rank where the other module
+    actually needs data — a silent no-op training bug waiting to happen.
+    """
+    monkeypatch.setattr(dist, "get_rank", lambda: 0)
+    cfg = _make_colocated_cfg()
+    # Encoder at PP=1 stage != 0 (would report False), LLM at PP stage 0 (True).
+    # Iteration order puts vision first; the pre-fix code would have returned False.
+    grids = {
+        "vision": FakeGrid(0, 8, dp_rank=0, dp_size=8, pp_rank=1, pp_size=2),
+        "language": FakeGrid(0, 8, dp_rank=0, dp_size=2, pp_rank=0, pp_size=2),
+    }
+    _, _, needs_data = get_megatron_mimo_sampling_info(cfg, grids)
+    assert needs_data is True
+
+
+def test_get_megatron_mimo_dp_info_colocated_by_module_name(monkeypatch):
+    """Colocated: explicit module_name selects that module's DP geometry."""
+    monkeypatch.setattr(dist, "get_rank", lambda: 0)
+    cfg = _make_colocated_cfg()
+    grids = _make_colocated_grids()
+
+    vision_dp_rank, vision_dp_size, _, vision_name = get_megatron_mimo_dp_info(cfg, grids, module_name="vision")
+    assert vision_name == "vision"
+    assert vision_dp_size == 8  # encoder is fully DP-parallel
+
+    llm_dp_rank, llm_dp_size, _, llm_name = get_megatron_mimo_dp_info(cfg, grids, module_name="language")
+    assert llm_name == "language"
+    assert llm_dp_size == 2  # LLM is TP4/DP2
+
+
+def test_get_megatron_mimo_dp_info_colocated_module_name_not_on_rank(monkeypatch):
+    """Explicit module_name for a module this rank doesn't serve returns the
+    non-participating sentinel with the requested module name."""
+    monkeypatch.setattr(dist, "get_rank", lambda: 99)
+    cfg = _make_colocated_cfg()
+    grids = _make_colocated_grids()
+
+    dp_rank, dp_size, needs_data, name = get_megatron_mimo_dp_info(cfg, grids, module_name="vision")
+    assert (dp_rank, dp_size, needs_data, name) == (0, 1, False, MIMO_LANGUAGE_MODULE_KEY)
+
+
+def test_get_megatron_mimo_dp_info_colocated_no_module_name_defaults_to_language(monkeypatch, caplog):
+    """Colocated: omitting module_name falls back to the language module and logs a warning."""
+    monkeypatch.setattr(dist, "get_rank", lambda: 0)
+    cfg = _make_colocated_cfg()
+    grids = _make_colocated_grids()
+
+    with caplog.at_level("WARNING", logger="megatron.bridge.data.megatron_mimo.dp_utils"):
+        _, dp_size, _, name = get_megatron_mimo_dp_info(cfg, grids)
+
+    assert name == MIMO_LANGUAGE_MODULE_KEY
+    assert dp_size == 2  # LLM DP
+    assert any("multiple modules" in record.message for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------
