@@ -113,10 +113,9 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
     BASE_QWEN3_235B_A22B_CONFIG,
     num_gpus=64,
     pipeline_model_parallel_size=8,
-    virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=8,
     global_batch_size=1024,
-    moe_a2a_overlap=False,
+    moe_a2a_overlap=True,
     moe_flex_dispatcher_backend="hybridep",
 )
 
@@ -125,10 +124,9 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_CS_V1 = replace(
     BASE_QWEN3_235B_A22B_CONFIG,
     num_gpus=64,
     pipeline_model_parallel_size=8,
-    virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=8,
     global_batch_size=1024,
-    moe_a2a_overlap=False,
+    moe_a2a_overlap=True,
     moe_flex_dispatcher_backend="hybridep",
 )
 
@@ -144,7 +142,8 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=8,
     global_batch_size=1024,
-    moe_a2a_overlap=False,
+    moe_a2a_overlap=True,
+    moe_flex_dispatcher_backend="hybridep",
 )
 
 
@@ -154,7 +153,8 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_CS_V1 = replace(
     pipeline_model_parallel_size=8,
     expert_model_parallel_size=8,
     global_batch_size=1024,
-    moe_a2a_overlap=False,
+    moe_a2a_overlap=True,
+    moe_flex_dispatcher_backend="hybridep",
 )
 
 
