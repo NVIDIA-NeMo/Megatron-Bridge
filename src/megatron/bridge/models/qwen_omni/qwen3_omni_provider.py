@@ -28,12 +28,12 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
     Qwen3OmniMoeThinkerConfig,
 )
 
-from megatron.bridge.models.qwen import Qwen3MoEModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
 
 
 @dataclass
-class Qwen3OmniModelProvider(Qwen3MoEModelProvider):
+class Qwen3OmniModelProvider(GPTModelProvider):
     """Provider for Qwen3-Omni.
 
     The current implementation focuses on thinker-side multimodal training and
@@ -45,6 +45,19 @@ class Qwen3OmniModelProvider(Qwen3MoEModelProvider):
     code2wav_config: Qwen3OmniMoeCode2WavConfig | None = None
 
     pretrained_model_name: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
+
+    normalization: str = "RMSNorm"
+    gated_linear_unit: bool = True
+    add_bias_linear: bool = False
+    add_qkv_bias: bool = False
+    hidden_dropout: float = 0.0
+    qk_layernorm: bool = True
+    moe_grouped_gemm: bool = True
+    moe_router_load_balancing_type: str = "aux_loss"
+    moe_aux_loss_coeff: float = 1e-3
+    moe_router_pre_softmax: bool = False
+    moe_token_dispatcher_type: str = "alltoall"
+    moe_permute_fusion: bool = True
 
     image_token_id: int = 151655
     video_token_id: int = 151656
