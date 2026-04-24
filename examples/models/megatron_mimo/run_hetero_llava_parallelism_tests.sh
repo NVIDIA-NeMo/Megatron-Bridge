@@ -38,7 +38,7 @@ UV_CACHE_DIR=${UV_CACHE_DIR:-/workspace/uv_cache/}
 HF_VISION_MODEL=${HF_VISION_MODEL:-"openai/clip-vit-large-patch14-336"}
 HF_LLM_MODEL=${HF_LLM_MODEL:-"lmsys/vicuna-7b-v1.5"}
 MEGATRON_VOCAB_SIZE=${MEGATRON_VOCAB_SIZE:-32256}
-CHECKPOINT_BASE_DIR=${CHECKPOINT_BASE_DIR:-/tmp/megatron_mimo_checkpoints}
+CHECKPOINT_BASE_DIR=${CHECKPOINT_BASE_DIR:-/workspace/megatron_mimo_checkpoints}
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -81,8 +81,8 @@ declare -a CONFIGS_8GPU=(
     "tp2_pp2_llm_tp2_dp2_vision|2|2|1|0|2|1|2|4|4"
     "tp2_dp2_llm_dp4_vision|2|1|2|0|1|1|4|4|4"
     # Asymmetric configs
-    "asymmetric_2_6|1|2|1|0|2|1|3|2|3"
-    "asymmetric_2_6|2|1|1|0|2|1|3|2|3"
+    "asymmetric_2_6_pp2|1|2|1|0|2|1|3|2|3"
+    "asymmetric_2_6_tp2|2|1|1|0|2|1|3|2|3"
 )
 
 declare -a CONFIGS_4GPU=(

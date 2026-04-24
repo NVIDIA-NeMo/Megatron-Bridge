@@ -75,6 +75,7 @@ def _make_vision_config() -> TransformerConfig:
     cfg.apply_rope_fusion = False
     # CLIP uses "quick_gelu", not standard gelu
     cfg.activation_func = lambda x: x * torch.sigmoid(1.702 * x)
+    cfg.calculate_per_token_loss = True
     cfg.calculate_per_token_loss = False
 
     return cfg
@@ -120,7 +121,7 @@ def _make_language_config() -> TransformerConfig:
     cfg.bf16 = True
     cfg.cross_entropy_loss_fusion = True
     cfg.variable_seq_lengths = True
-    cfg.calculate_per_token_loss = False
+    cfg.calculate_per_token_loss = True
 
     return cfg
 
@@ -132,7 +133,7 @@ def _make_projection_config(hidden_size: int = 4096) -> TransformerConfig:
     cfg.bias_activation_fusion = True
     cfg.add_bias_linear = True
     cfg.activation_func = torch.nn.functional.gelu
-    cfg.calculate_per_token_loss = False
+    cfg.calculate_per_token_loss = True
 
     return cfg
 
