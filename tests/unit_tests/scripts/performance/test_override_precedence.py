@@ -99,6 +99,23 @@ def _apply(recipe, cli_overrides=None, args_overrides=None, run_post=True, num_g
 # ---------------------------------------------------------------------------
 
 
+class TestRecipeDefault:
+    def test_recipe_default_disables_recompute(self):
+        """DSv3 recipe default must be 'no recompute' (granularity=None).
+
+        Rationale: MCore's transformer_config post-init fills
+        recompute_modules=None with ['core_attn'] when granularity is set.
+        Leaving granularity='selective' with modules=None would therefore
+        silently turn on core_attn recompute across all layers for any run
+        that doesn't explicitly configure recompute — defeating #3470's
+        stated 'no recompute default' intent."""
+        from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config
+
+        cfg = deepseek_v3_pretrain_config()
+        assert cfg.model.recompute_granularity is None
+        assert cfg.model.recompute_num_layers is None
+
+
 class TestRecomputePrecedence:
     def test_A_workload_default_survives_when_nothing_else_set(self):
         """Workload base for GB200 NVFP4 V1 has recompute_modules=['mlp']. With
