@@ -16,6 +16,9 @@ from .deepseek_v3 import (
     deepseek_v3_pretrain_config_32nodes,
 )
 
+# DeepSeek V3 — Mamba/Hybrid backbone variant
+from .deepseek_v3_mamba import deepseek_v3_mamba_pretrain_config
+
 
 __all__ = [
     # DeepSeek V2/V2-Lite
@@ -24,4 +27,6 @@ __all__ = [
     # DeepSeek V3
     "deepseek_v3_pretrain_config",
     "deepseek_v3_pretrain_config_32nodes",
+    # DeepSeek V3 (Mamba)
+    "deepseek_v3_mamba_pretrain_config",
 ]
