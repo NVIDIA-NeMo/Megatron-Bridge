@@ -1,20 +1,8 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 
-from megatron.bridge.models.mimo.llava_provider import LlavaMimoProvider
-from megatron.bridge.models.mimo.mimo_config import (
-    MimoParallelismConfig,
-    ModuleParallelismConfig,
-)
-from megatron.bridge.models.mimo.mimo_provider import (
-    MimoModelInfra,
-    MimoModelProvider,
-)
+from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
 
 
 __all__ = [
-    "LlavaMimoProvider",
-    "MimoModelInfra",
-    "MimoModelProvider",
-    "MimoParallelismConfig",
-    "ModuleParallelismConfig",
+    "MimoBridge",
 ]

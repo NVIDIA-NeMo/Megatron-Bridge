@@ -33,7 +33,7 @@ The preprocessing script reads the CSV caption file and creates a sidecar `.json
 
 ```bash
 cd ${MBRIDGE_PATH}
-python examples/diffusion/recipes/wan/prepare_dataset/openvid1M_dataset/openvid1M_preprocess.py \
+uv run python examples/diffusion/recipes/wan/prepare_dataset/openvid1M_dataset/openvid1M_preprocess.py \
   --csv_path ${PROCESSED_DATA_PATH}/OpenVidHD.csv \
   --video_dir ${PROCESSED_DATA_PATH}/OpenVidHD_part_1
 ```
@@ -48,7 +48,7 @@ Run the dataset preparation script using `torchrun` with 8 GPUs:
 DATASET_SRC=${PROCESSED_DATA_PATH}/OpenVidHD_part_1
 DATASET_PATH=${PROCESSED_DATA_PATH}/prepared_dataset_wds
 
-torchrun --nproc_per_node=8 \
+uv run python -m torch.distributed.run --nproc_per_node=8 \
   examples/diffusion/recipes/wan/prepare_dataset/prepare_dataset_wan.py \
   --video_folder "${DATASET_SRC}" \
   --output_dir "${DATASET_PATH}" \
@@ -72,8 +72,8 @@ DATASET_PATH=${PROCESSED_DATA_PATH}/prepared_dataset_wds
 CHECKPOINT_DIR=<path/to/save/checkpoints>
 EXP_NAME=<experiment_name>
 
-NVTE_FUSED_ATTN=1 torchrun --nproc_per_node=8 scripts/training/run_recipe.py \
-    --recipe wan_1_3B_pretrain_config \
+NVTE_FUSED_ATTN=1 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+    --recipe wan_1_3b_pretrain_config \
     --step_func wan_step \
     model.tensor_model_parallel_size=1 \
     model.pipeline_model_parallel_size=1 \

@@ -194,6 +194,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
             vp_stage=vp_stage,
         )
         _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
+        mtp_spec = mtp_block_spec(self, vp_stage=vp_stage)
+        _patch_standard_attention_specs(mtp_spec, Qwen3VLSelfAttention)
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -202,7 +204,7 @@ class Qwen35VLModelProvider(GPTModelProvider):
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
-            mtp_block_spec=mtp_block_spec(self, vp_stage=vp_stage),
+            mtp_block_spec=mtp_spec,
             vp_stage=vp_stage,
         )
 
@@ -382,6 +384,8 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         # Selectively patch only the standard (full) attention layer specs
         # with Qwen3VLSelfAttention for mRoPE support. GDN layers are left as-is.
         _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
+        mtp_spec = mtp_block_spec(self, vp_stage=vp_stage)
+        _patch_standard_attention_specs(mtp_spec, Qwen3VLSelfAttention)
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -390,7 +394,7 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
-            mtp_block_spec=mtp_block_spec(self, vp_stage=vp_stage),
+            mtp_block_spec=mtp_spec,
             vp_stage=vp_stage,
         )
 
@@ -410,10 +414,13 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
 
 
 def _patch_standard_attention_specs(
-    block_spec: TransformerBlockSubmodules,
+    block_spec: Optional[TransformerBlockSubmodules | ModuleSpec],
     attention_cls,
 ) -> None:
-    """Selectively replace the self_attention module on standard attention layer specs.
+    """Selectively replace standard self-attention specs with ``attention_cls``.
+
+    This handles both the main decoder block spec and the nested TransformerLayer
+    spec stored inside MTP block specs.
 
     In a hybrid block spec, each layer spec has a different self_attention submodule:
     - Standard attention layers have a ``SelfAttention``-like module.
@@ -428,11 +435,31 @@ def _patch_standard_attention_specs(
     """
     from megatron.core.transformer.attention import SelfAttention
 
-    for layer_spec in block_spec.layer_specs:
-        attn_spec = layer_spec.submodules.self_attention
-        # Standard attention specs use SelfAttention (or a subclass) as the module
-        # and have linear_qkv in their submodules. GDN specs use GatedDeltaNet.
-        if attn_spec.module is SelfAttention or (
-            isinstance(attn_spec.module, type) and issubclass(attn_spec.module, SelfAttention)
-        ):
-            attn_spec.module = attention_cls
+    if block_spec is None:
+        return
+
+    if hasattr(block_spec, "layer_specs"):
+        for layer_spec in block_spec.layer_specs:
+            _patch_standard_attention_specs(layer_spec, attention_cls)
+        return
+
+    if not isinstance(block_spec, ModuleSpec):
+        return
+
+    submodules = getattr(block_spec, "submodules", None)
+    if submodules is None:
+        return
+
+    if hasattr(submodules, "mtp_model_layer"):
+        _patch_standard_attention_specs(submodules.mtp_model_layer, attention_cls)
+
+    if not hasattr(submodules, "self_attention"):
+        return
+
+    attn_spec = submodules.self_attention
+    # Standard attention specs use SelfAttention (or a subclass) as the module.
+    # and have linear_qkv in their submodules. GDN specs use GatedDeltaNet.
+    if attn_spec.module is SelfAttention or (
+        isinstance(attn_spec.module, type) and issubclass(attn_spec.module, SelfAttention)
+    ):
+        attn_spec.module = attention_cls

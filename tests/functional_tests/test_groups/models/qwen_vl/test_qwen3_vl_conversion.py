@@ -428,10 +428,16 @@ class TestQwen3VLMoEConversion:
         )
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize("tp,pp", [(2, 1)])
-    def test_moe_conversion(self, qwen3_vl_moe_toy_model_path, tmp_path, tp, pp):
-        """Test MoE model conversion."""
-        test_output_dir = tmp_path / "qwen3_vl_moe_test"
+    @pytest.mark.parametrize(
+        "tp,pp,etp,test_name",
+        [
+            (2, 1, 1, "MoE_TP"),
+            (2, 1, 2, "MoE_ETP"),
+        ],
+    )
+    def test_moe_conversion(self, qwen3_vl_moe_toy_model_path, tmp_path, tp, pp, etp, test_name):
+        """Test MoE model conversion with TP and ETP configurations."""
+        test_output_dir = tmp_path / f"qwen3_vl_moe_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
         cmd = [
@@ -455,6 +461,8 @@ class TestQwen3VLMoEConversion:
             str(tp),
             "--pp",
             str(pp),
+            "--etp",
+            str(etp),
         ]
 
         result = subprocess.run(
@@ -464,7 +472,7 @@ class TestQwen3VLMoEConversion:
         if result.returncode != 0:
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
-            assert False, f"MoE conversion failed with return code {result.returncode}"
+            assert False, f"MoE {test_name} conversion failed with return code {result.returncode}"
 
         model_name = Path(qwen3_vl_moe_toy_model_path).name
         converted_model_dir = test_output_dir / model_name

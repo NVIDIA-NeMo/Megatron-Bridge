@@ -66,7 +66,7 @@ cd ${DFM_PATH}
 ### 1.3B configuration
 
 ```bash
-NVTE_FUSED_ATTN=1 torchrun --nproc_per_node=8 examples/diffusion/recipes/wan/pretrain_wan.py \
+NVTE_FUSED_ATTN=1 uv run python -m torch.distributed.run --nproc_per_node=8 examples/diffusion/recipes/wan/pretrain_wan.py \
   --training-mode pretrain \
   model.tensor_model_parallel_size=1 \
   model.pipeline_model_parallel_size=1 \
@@ -102,7 +102,7 @@ NVTE_FUSED_ATTN=1 torchrun --nproc_per_node=8 examples/diffusion/recipes/wan/pre
 ### 14B configuration
 
 ```bash
-NVTE_FUSED_ATTN=1 torchrun --nproc_per_node=8 examples/diffusion/recipes/wan/pretrain_wan.py \
+NVTE_FUSED_ATTN=1 uv run python -m torch.distributed.run --nproc_per_node=8 examples/diffusion/recipes/wan/pretrain_wan.py \
   --training-mode pretrain \
   model.tensor_model_parallel_size=2 \
   model.pipeline_model_parallel_size=1 \
@@ -153,7 +153,7 @@ T5_DIR="/lustre/fsw/coreai_dlalgo_genai/huvu/data/nemo_vfm/wan_checkpoints/t5"
 VAE_DIR="/lustre/fsw/coreai_dlalgo_genai/huvu/data/nemo_vfm/wan_checkpoints/vae"
 CKPT_DIR="/lustre/fsw/coreai_dlalgo_genai/huvu/data/nemo_vfm/datasets/shared_checkpoints/megatron_checkpoint_1.3B"
 
-NVTE_FUSED_ATTN=1 torchrun --nproc_per_node=1 examples/diffusion/recipes/wan/inference_wan.py  \
+NVTE_FUSED_ATTN=1 uv run python -m torch.distributed.run --nproc_per_node=1 examples/diffusion/recipes/wan/inference_wan.py  \
   --task t2v-1.3B \
   --sizes 480*832 \
   --checkpoint_dir "${CKPT_DIR}" \

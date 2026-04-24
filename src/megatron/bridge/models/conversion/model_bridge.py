@@ -52,7 +52,11 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
 )
-from megatron.bridge.models.conversion.peft_bridge import AdapterWeightConversionTask, MegatronPeftBridge
+from megatron.bridge.models.conversion.peft_bridge import (
+    AdapterWeight,
+    AdapterWeightConversionTask,
+    MegatronPeftBridge,
+)
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_theta_from_hf,
 )
@@ -286,6 +290,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     # Additional file patterns to automatically copy during HF export (e.g., ["*reasoning_parser.py"])
     # Set this in bridge subclasses to include model-specific files beyond standard artifacts
     ADDITIONAL_FILE_PATTERNS = None
+
+    # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
+    # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
+    hf_config = None
 
     # Common bidirectional config field name mapping: (hf_name, megatron_name)
     # Some mappings may not be used by all models - that's fine, unused fields are skipped
@@ -908,6 +916,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         _hf_import_cache: Dict[str, torch.Tensor] = {}
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
+            if task is None:
+                continue
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
@@ -1028,6 +1038,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
 
         for task in conversion_tasks:
+            if task is None:
+                continue
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
@@ -1113,6 +1125,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
         if merge_adapter_weights:
             adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
+        materialized_adapter_weights_cache: Dict[str, List[AdapterWeight]] = {}
 
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrap_model(megatron_model)[0]
@@ -1137,9 +1150,25 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 megatron_module = None
 
             converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, megatron_module)
+            adapter_tasks = None
+            task_global_base_prefix = None
+            if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
+                task_global_base_prefix, _, _ = task.global_param_name.partition(".to_wrap.weight")
+                adapter_tasks = adapter_tasks_by_base.get(task_global_base_prefix)
 
             # --- Grouped export path: accumulate per-expert weights, yield when complete ---
             if getattr(task.mapping, "is_grouped_export", False):
+                if merge_adapter_weights and adapter_tasks:
+                    adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
+                    if adapter_weights is None:
+                        adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                        materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
+                    converted_weights_dict = self._merge_grouped_export_adapter_weights(
+                        task,
+                        converted_weights_dict,
+                        adapter_weights,
+                        model_config.num_moe_experts,
+                    )
                 merged_result = self._accumulate_grouped_export(
                     task, converted_weights_dict, model_config, _grouped_buffers, hf_state_dict
                 )
@@ -1156,12 +1185,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             )  # dict will be none except for one expert;
             # All ranks get the full tensor
 
-            adapter_tasks = None
-            if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
-                task_global_base_prefix, _, _ = task.global_param_name.partition(".to_wrap.weight")
-                adapter_tasks = adapter_tasks_by_base.get(task_global_base_prefix)
             if merge_adapter_weights and adapter_tasks:
-                adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
+                if adapter_weights is None:
+                    adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                    materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
                 # Merge LoRA adapter weights back into the base tensor for HF export
                 converted_weights_dict = self._merge_lora_adapter_weights(
                     megatron_model,

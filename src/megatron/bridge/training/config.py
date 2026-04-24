@@ -48,7 +48,7 @@ from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
-from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -573,6 +573,7 @@ class TrainingConfig(MTrainTrainingConfig):
             assert self.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
 
             # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
+            assert self.global_batch_size is not None, "global_batch_size must be set when using train_samples"
             self.train_iters = self.train_samples // self.global_batch_size
             print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
 
@@ -623,6 +624,9 @@ class CheckpointConfig(MTrainCheckpointConfig):
 
     Example: ``'mypackage.checkpoint.MyCheckpointManager'``
     """
+
+    dist_ckpt_workers: int = 1
+    """Specifies the number of distributed checkpoint workers for asynchronous saving."""
 
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
@@ -754,6 +758,22 @@ class LoggerConfig(MTrainLoggerConfig):
 @dataclass(kw_only=True)
 class ProfilingConfig(MTrainProfilingConfig):
     """Configuration settings for profiling the training process."""
+
+    profile_ranks: list[int] = field(default_factory=lambda: [0])
+    """Ranks to capture in memory snapshots / nsys / pytorch profiler.
+
+    Memory-snapshot and recording-start guards use a strict membership check,
+    so an empty list disables capture. Default ``[0]`` gives rank-0 capture
+    whenever ``record_memory_history=True`` or an nsys/pytorch profiler is
+    enabled, with no further override required.
+    """
+
+    memory_snapshot_path: str = "/nemo_run/snapshot.pickle"
+    """Path the per-rank pickle is written to (``_{rank}`` is inserted before
+    the extension). Defaults to ``/nemo_run/snapshot.pickle`` so the file lands
+    directly under the NeMo-Run experiment directory (bound at ``/nemo_run``
+    inside the container). Override for non-NeMo-Run setups.
+    """
 
     def finalize(self) -> None:
         """Validate profiling configuration."""
@@ -963,7 +983,12 @@ class ConfigContainer(Container):
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
     model: (
-        GPTModelProvider | T5ModelProvider | MambaModelProvider | MimoModelProvider | GPTModelConfig | MambaModelConfig
+        GPTModelProvider
+        | T5ModelProvider
+        | MambaModelProvider
+        | MegatronMIMOProvider
+        | GPTModelConfig
+        | MambaModelConfig
     )
     optimizer: OptimizerConfig
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
@@ -990,6 +1015,9 @@ class ConfigContainer(Container):
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
         model_cfg = self.model
+        if hasattr(model_cfg, "dist_train") and getattr(model_cfg.dist_train, "use_dist_train", False) is True:
+            # use language world size to calculate data parallel size for dist train
+            world_size = model_cfg.dist_train.language_world_size
         total_model_size = (
             model_cfg.tensor_model_parallel_size
             * model_cfg.pipeline_model_parallel_size
@@ -1090,6 +1118,26 @@ class ConfigContainer(Container):
             if self.comm_overlap is not None:
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
 
+        # Resolve eval batch size defaults from training config
+        if self.validation.eval_global_batch_size is None:
+            assert self.train.global_batch_size is not None, (
+                "train.global_batch_size must be set when eval_global_batch_size is not explicitly configured"
+            )
+            self.validation.eval_global_batch_size = self.train.global_batch_size
+        if self.validation.eval_micro_batch_size is None:
+            assert self.train.micro_batch_size is not None, (
+                "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
+            )
+            self.validation.eval_micro_batch_size = self.train.micro_batch_size
+
+        # Eval batch size divisibility check
+        eval_dp_product = self.validation.eval_micro_batch_size * self.data_parallel_size
+        assert self.validation.eval_global_batch_size % eval_dp_product == 0, (
+            f"eval_global_batch_size ({self.validation.eval_global_batch_size}) must be divisible by "
+            f"eval_micro_batch_size * data_parallel_size ({self.validation.eval_micro_batch_size} * "
+            f"{self.data_parallel_size} = {eval_dp_product})"
+        )
+
         # Deterministic mode validations and settings
         self._validate_and_apply_deterministic_mode()
 
@@ -1154,8 +1202,8 @@ class ConfigContainer(Container):
 
         # Enforce async_save format restriction
         if self.checkpoint.async_save:
-            assert self.checkpoint.ckpt_format == "torch_dist", (
-                "async_save is only supported with ckpt_format='torch_dist'"
+            assert self.checkpoint.ckpt_format in ["torch_dist", "fsdp_dtensor"], (
+                "async_save is only supported with ckpt_format='torch_dist','fsdp_dtensor'"
             )
 
         # Set defaults for tensor inspect callback
@@ -1579,34 +1627,34 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     cfg.validate()
 
 
-def mimo_runtime_config_update(cfg: ConfigContainer) -> None:
-    """MIMO-equivalent of ``runtime_config_update``.
+def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
+    """MegatronMIMO-equivalent of ``runtime_config_update``.
 
     The standard ``runtime_config_update`` cannot be used directly because it
     accesses ``cfg.model`` attributes (``bf16``, ``tensor_model_parallel_size``,
-    ``cuda_graph_impl``, …) that do not exist on ``MimoModelProvider``.
+    ``cuda_graph_impl``, …) that do not exist on ``MegatronMIMOProvider``.
 
     This function cherry-picks the safe, model-agnostic parts:
 
-    Keeps (safe for MIMO):
-    - ``data_parallel_size = 1`` (MIMO-specific hard-code)
+    Keeps (safe for MegatronMIMO):
+    - ``data_parallel_size = 1`` (MegatronMIMO-specific hard-code)
     - Sub-config finalization (optimizer, ddp, logger, train, scheduler, checkpoint)
     - Distributed optimizer sync validation
     - Deterministic mode validation
 
     Skips (would crash or is N/A):
     - Mixed precision resolution (per-module, not container-level)
-    - Communication overlap setup (not supported for MIMO)
+    - Communication overlap setup (not supported for MegatronMIMO)
     - Model-level validations (FSDP, CUDA graphs, TE RNG tracker sync, etc.)
 
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
-    # MIMO: data_parallel_size is always 1 from the training loop's perspective.
+    # MegatronMIMO: data_parallel_size is always 1 from the training loop's perspective.
     cfg.data_parallel_size = 1
 
     # Finalize sub-configs that don't depend on model construction order.
     # NOTE: cfg.model.finalize() is NOT called here — it validates parallelism
-    # config and is called inside setup_mimo() right before build_infra().
+    # config and is called inside setup_megatron_mimo() right before build_infra().
     if hasattr(cfg.optimizer, "finalize"):
         cfg.optimizer.finalize()
     if hasattr(cfg.ddp, "finalize"):

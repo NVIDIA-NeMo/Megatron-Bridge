@@ -12,46 +12,44 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
 ## Setup Instructions
 
-### Step 1. Virtual Environment
+Follow the steps below on a Slurm based login node to launch Megatron-Bridge experiments.
 
-- Create a virtual env at your preferred location on login node on a Slurm cluster and install the NeMo-Run package-
+### Step 1. Clone Megatron-Bridge Repo
 
-  ```
-  pip install git+https://github.com/NVIDIA-NeMo/Run.git
-  ```
+We need to clone the repo to access and run performance benchmarking experiments using `Megatron-Bridge/scripts/performance/setup_experiment.py` (more details in Step 2.).
 
-- The YAML config files are resolved on compute node inside the container.
+`setup_experiment.py` uses [NeMo/Run](https://github.com/NVIDIA-NeMo/Run) to launch experiments. This script generates and runs a sbatch script. The experiment is ultimately run on compute node(s) inside a container specified by the user. The experiment uses Megatron-Bridge code that comes pre-packaged with the container.
 
-### Step 2. Clone the Repo and Pick the corresponding release branch to the container
+```
+git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+```
 
-  ```
-  git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
-  git switch <branch> 
-  Example: If using 25.11 Container ```git switch r0.2.0
-  ```
-  
-  To find out which branch is used to build the container, refer <https://docs.nvidia.com/nemo-framework/user-guide/latest/softwarecomponentversions.html>
+Next, we need to switch to a branch that was used to build the container you want to use for your experiments.
 
-  Why? This is required because when running a job the version of Megatron-Bridge in the setup and the one built into the container should match.
+```
+cd Megatron-Bridge
+git switch <branch> 
+```
+Example: If using 26.04 container, then execute- `git switch r0.4.0`
 
-### Step 3. Run instructions
+### Step 2. Run instructions
 
 #### <ins>Examples</ins>
 
 The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
-`python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
+`uv run python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
 
 You can also create a bash file to define the experiment arguments and launch it. For e.g. The bash file will look as follows-
 
 ```
-CONTAINER="nvcr.io/nvidia/nemo:25.11.01"
+CONTAINER="nvcr.io/nvidia/nemo:26.04"
 MBRIDGE_PATH="</path/to/mbridge>"
 
 JOB_NAME="dsv3_gb300"
 RESULTS_DIR="${MBRIDGE_PATH}/results/${JOB_NAME}"
 
-python scripts/performance/setup_experiment.py 
+uv run python scripts/performance/setup_experiment.py \
   --account <slurm_account> \
   -i ${CONTAINER} \
   --partition <slurm_partition> \
@@ -82,7 +80,7 @@ python scripts/performance/setup_experiment.py
 ##### Container Image
 
 - `-i/--container_image`: NeMo container image to launch. For release container XX.YY use nvcr.io/nvidia/nemo:XX.YY.
-  For 25.09, use nvcr.io/nvidia/nemo:25.09. For the complete list of NGC containers refer <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags>.
+  For 26.04, use nvcr.io/nvidia/nemo:26.04. For the complete list of NGC containers refer <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags>.
   Defaults to `nvcr.io/nvidia/nemo:dev`.
 
 ##### General arguments
@@ -216,6 +214,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 - `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`).
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
+- `-lgc/--lock_gpu_freq`: Lock GPU graphics clock to a fixed frequency in MHz (e.g. `1200`). Used for silicon simulation correlation studies. Disabled by default.
 - `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
 - `-pyp/--pytorch_profiler`: Enable PyTorch profiler. Pass `true` or `false`. Disabled by default.
 - `--profiling_start_step`: Defines start step for profiling. Default `10`.
