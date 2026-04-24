@@ -625,6 +625,9 @@ class CheckpointConfig(MTrainCheckpointConfig):
     Example: ``'mypackage.checkpoint.MyCheckpointManager'``
     """
 
+    dist_ckpt_workers: int = 1
+    """Specifies the number of distributed checkpoint workers for asynchronous saving."""
+
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
         if self.pretrained_checkpoint is not None:
