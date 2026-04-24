@@ -19,7 +19,7 @@ Usage examples:
 
   # Import HF model to Megatron-FSDP DTensor checkpoint
   uv run python -m torch.distributed.run --nproc_per_node=8 \
-  examples/conversion/fsdp/convert_checkpoints_fsdp.py import \
+  examples/conversion/mfsdp/convert_checkpoints_fsdp.py import \
   --hf-model Qwen/Qwen2.5-7B-Instruct \
   --megatron-path ./checkpoints/qwen25_7b_fsdp_dtensor \
   --tp 2 --cp 1 --ep 1 \
@@ -27,7 +27,7 @@ Usage examples:
 
   # Export Megatron checkpoint to HuggingFace
   uv run python -m torch.distributed.run --nproc_per_node=8 \
-  examples/conversion/fsdp/convert_checkpoints_fsdp.py export \
+  examples/conversion/mfsdp/convert_checkpoints_fsdp.py export \
   --hf-model Qwen/Qwen2.5-7B-Instruct \
   --megatron-path ./checkpoints/qwen25_7b_fsdp_dtensor \
   --hf-path exports/qwen25_7b_hf \

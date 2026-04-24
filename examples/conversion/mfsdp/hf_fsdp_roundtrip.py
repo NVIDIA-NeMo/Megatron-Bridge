@@ -20,7 +20,7 @@ Note: Megatron-FSDP currently supports tensor parallelism (TP), context parallel
 and expert parallelism (EP). Pipeline parallelism (PP) is not supported.
 
 Usage examples:
-    uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/fsdp/hf_fsdp_roundtrip.py --hf-model-id Qwen/Qwen2.5-Math-7B --tp 2 --cp 1 --ep 1
+    uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/mfsdp/hf_fsdp_roundtrip.py --hf-model-id Qwen/Qwen2.5-Math-7B --tp 2 --cp 1 --ep 1
 """
 
 from __future__ import annotations

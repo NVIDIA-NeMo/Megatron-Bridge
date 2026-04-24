@@ -127,7 +127,7 @@ class TestHFFSDPConversion:
             "torch.distributed.run",
             f"--nproc_per_node={nproc}",
             "--nnodes=1",
-            "examples/conversion/fsdp/hf_fsdp_roundtrip.py",
+            "examples/conversion/mfsdp/hf_fsdp_roundtrip.py",
             "--hf-model-id",
             qwen3_moe_toy_model_path,
             "--output-dir",

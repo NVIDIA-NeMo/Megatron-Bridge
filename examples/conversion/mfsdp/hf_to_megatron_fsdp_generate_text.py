@@ -17,7 +17,7 @@
 Text generation using HuggingFace models converted to Megatron-FSDP format.
 
 Usage examples:
-    uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/fsdp/hf_to_megatron_fsdp_generate_text.py --trust-remote-code --hf-model-id Qwen/Qwen2.5-Math-7B --ep 1 --tp 2 --cp 1
+    uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/mfsdp/hf_to_megatron_fsdp_generate_text.py --trust-remote-code --hf-model-id Qwen/Qwen2.5-Math-7B --ep 1 --tp 2 --cp 1
 """
 
 from __future__ import annotations
