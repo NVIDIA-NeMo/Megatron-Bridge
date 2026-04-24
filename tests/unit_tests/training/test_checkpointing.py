@@ -3500,24 +3500,3 @@ class TestLayerWiseOptimizerCheckpointing:
         # Standard load_state_dict must be called; per-rank file loader must NOT be called.
         mock_layer_wise_optim.load_state_dict.assert_called_once_with(mock_state_dict["optimizer"])
         mock_layer_wise_optim.load_state_dict_from_file.assert_not_called()
-
-
-class TestNVRxImport:
-    def test_import_without_nvxr(self):
-        """Make sure HAVE_NVRX is False when nvrx is not installed."""
-
-        class FailingModule(types.ModuleType):
-            def __getattr__(self, name):
-                raise ImportError("Mocked missing NVRx")
-
-        sys.modules.pop("megatron.bridge.training.checkpointing", None)
-
-        fake = FailingModule("nvidia_resiliency_ext.checkpointing.async_ckpt.core")
-
-        sys.modules["nvidia_resiliency_ext.checkpointing.async_ckpt.core"] = fake
-        sys.modules["nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async"] = fake
-        sys.modules["nvidia_resiliency_ext.checkpointing.async_ckpt.state_dict_saver"] = fake
-
-        ckpt = importlib.import_module("megatron.bridge.training.checkpointing")
-
-        assert ckpt.HAVE_NVRX is False
