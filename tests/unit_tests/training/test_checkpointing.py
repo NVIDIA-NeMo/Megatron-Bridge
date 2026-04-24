@@ -529,6 +529,8 @@ def save_checkpoint_fixtures():
     mock_cfg.logger.log_progress = False
     mock_cfg.dist = Mock()
     mock_cfg.dist.use_decentralized_pg = False
+    mock_cfg.ddp = Mock()
+    mock_cfg.ddp.use_megatron_fsdp = False
 
     mock_state.cfg = mock_cfg
 
@@ -710,6 +712,8 @@ def load_checkpoint_fixtures():
     mock_cfg.checkpoint.non_persistent_save_interval = None
     mock_cfg.dist = Mock()
     mock_cfg.dist.use_decentralized_pg = False
+    mock_cfg.ddp = Mock()
+    mock_cfg.ddp.use_megatron_fsdp = False
 
     mock_state.cfg = mock_cfg
 
@@ -3378,9 +3382,9 @@ class TestLayerWiseOptimizerCheckpointing:
         # Set save_rng=False so the test doesn't attempt to restore RNG state from the
         # minimal mock state_dict (which has no rng_state key and would hit sys.exit()).
         load_checkpoint_fixtures["mock_cfg"].checkpoint.save_rng = False
-        # Ensure _is_mimo is False so the optimizer load path is not skipped.
-        # Mock() auto-creates attributes, making hasattr(..., "mimo_parallelism_config") True.
-        del load_checkpoint_fixtures["mock_cfg"].model.mimo_parallelism_config
+        # Ensure _is_megatron_mimo is False so the optimizer load path is not skipped.
+        # Mock() auto-creates attributes, making hasattr(..., "megatron_mimo_parallelism_config") True.
+        del load_checkpoint_fixtures["mock_cfg"].model.megatron_mimo_parallelism_config
 
         load_checkpoint(
             load_checkpoint_fixtures["mock_state"],
@@ -3482,8 +3486,8 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_load_base.return_value = (mock_state_dict, "/ckpts/iter_0001000", False, CheckpointType.GLOBAL)
 
         load_checkpoint_fixtures["mock_cfg"].checkpoint.load = "/ckpts"
-        # Ensure _is_mimo is False so the optimizer load path is not skipped.
-        del load_checkpoint_fixtures["mock_cfg"].model.mimo_parallelism_config
+        # Ensure _is_megatron_mimo is False so the optimizer load path is not skipped.
+        del load_checkpoint_fixtures["mock_cfg"].model.megatron_mimo_parallelism_config
 
         load_checkpoint(
             load_checkpoint_fixtures["mock_state"],
