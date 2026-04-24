@@ -401,11 +401,19 @@ def _build_parallelism_config() -> MegatronMIMOParallelismConfig:
 # Data pipeline
 # ---------------------------------------------------------------------------
 
+from megatron.bridge.data.megatron_mimo.dataset import MegatronMIMODataset
 from megatron.bridge.data.megatron_mimo.hf_provider import HFMegatronMIMODatasetProvider
 
 
 def _llava_preprocess(example, dataset_root):
-    """Convert LLaVA conversations format to plain text and resolve image paths."""
+    """Convert LLaVA conversations format to plain text and resolve image paths.
+
+    Emits the full conversation (human + gpt turns) as ``text`` so the LM
+    conditions on the human prompt during training. Loss masking to the
+    assistant-answer tokens is applied by ``_AnswerMaskedMimoDataset``,
+    matching HF LLaVA's ``preprocess_plain`` and the Megatron-LM
+    examples/mimo task encoders.
+    """
     conversations = example.get("conversations", [])
     text_parts = [turn.get("value", "") for turn in conversations]
     example["text"] = " ".join(text_parts).replace("<image>", "").strip()
@@ -415,9 +423,96 @@ def _llava_preprocess(example, dataset_root):
     return example
 
 
+def _find_token_span(
+    seq: torch.Tensor, pattern: torch.Tensor, start_idx: int = 0, allow_first_mismatch: bool = False
+) -> tuple[int, int]:
+    """Return (start, end) of the first occurrence of ``pattern`` in ``seq``.
+
+    Mirrors ``_find_pattern_indices`` in Megatron-LM examples/mimo task encoders.
+    ``allow_first_mismatch`` handles SentencePiece boundary differences when the
+    answer is tokenized standalone vs. embedded in the full prompt.
+    Returns (-1, -1) if not found.
+    """
+    n, p = seq.size(0), pattern.size(0)
+    if p == 0 or p > n:
+        return -1, -1
+    for i in range(start_idx, n - p + 1):
+        match = seq[i : i + p] == pattern
+        if torch.all(match) or (allow_first_mismatch and torch.all(match[1:])):
+            return i, i + p
+    return -1, -1
+
+
+class _AnswerMaskedMimoDataset(MegatronMIMODataset):
+    """MegatronMIMODataset variant that masks loss to assistant-answer tokens only.
+
+    The base class sets ``loss_mask=1`` for every non-placeholder, non-pad
+    position, which trains the LM on the human instruction as well as the
+    caption. For LLaVA-Pretrain loss must be computed on the assistant ("gpt")
+    turn only — the HF LLaVA ``preprocess_plain`` contract, also implemented
+    by the Megatron-LM examples/mimo task encoders.
+    """
+
+    def __getitem__(self, idx):
+        item = super().__getitem__(idx)
+
+        raw = self.examples[idx]  # HF datasets return a fresh dict per access
+        answers = [t.get("value", "") for t in raw.get("conversations", []) if t.get("from") == "gpt"]
+        if not any(a.strip() for a in answers):
+            return item
+
+        input_ids = item["input_ids"]
+        labels = torch.full_like(input_ids, -100)
+        search_idx = 0
+        for ans in answers:
+            ans = ans.replace("<image>", "").strip()
+            if not ans:
+                continue
+            ans_ids = self.tokenizer(ans, add_special_tokens=False, return_tensors="pt")["input_ids"].squeeze(0)
+            if ans_ids.numel() == 0:
+                continue
+            s, e = _find_token_span(input_ids, ans_ids, start_idx=search_idx, allow_first_mismatch=True)
+            if s < 0:
+                # Answer span not found (e.g. truncated); skip this answer.
+                continue
+            # labels[i] predicts input_ids[i+1]; answer tokens at input_ids[s:e]
+            # are predicted at positions [s-1, e-1).
+            lo, hi = max(0, s - 1), e - 1
+            if hi > lo:
+                labels[lo:hi] = input_ids[lo + 1 : hi + 1]
+            search_idx = e
+
+        item["labels"] = labels
+        item["loss_mask"] = (labels != -100).to(item["loss_mask"].dtype)
+        return item
+
+
+class _AnswerMaskedHFMimoProvider(HFMegatronMIMODatasetProvider):
+    """HFMegatronMIMODatasetProvider that builds ``_AnswerMaskedMimoDataset`` instances."""
+
+    def _build_split_dataset(self, split, target_samples, processors, tokenizer):
+        if target_samples <= 0:
+            return None
+        hf_dataset = self._load_hf_dataset(split)
+        if hf_dataset is None:
+            return None
+        return _AnswerMaskedMimoDataset(
+            examples=hf_dataset,
+            processors=processors,
+            tokenizer=tokenizer,
+            seq_length=self.seq_length,
+            special_token_ids=self.special_token_ids,
+            encoder_seq_lengths=self.encoder_seq_lengths,
+            modality_columns=self.modality_columns,
+            text_column=self.text_column,
+            max_samples=target_samples,
+            preprocess_fn=self.preprocess_fn,
+        )
+
+
 def _build_hf_data_provider(dataset_root: str) -> HFMegatronMIMODatasetProvider:
     """Build an HFMegatronMIMODatasetProvider for liuhaotian/LLaVA-Pretrain."""
-    provider = HFMegatronMIMODatasetProvider(
+    provider = _AnswerMaskedHFMimoProvider(
         seq_length=MAX_SEQ_LENGTH,
         hf_dataset_path=dataset_root,
         hf_data_files="blip_laion_cc_sbu_558k.json",
