@@ -42,6 +42,15 @@ from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
 from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
 
 
+# For Paged Stashing support
+try:
+    from megatron.core.transformer.moe.paged_stash import PagedStashRunner
+
+    HAS_PAGED_STASHING = True
+except ImportError:
+    HAS_PAGED_STASHING = False
+
+
 def evaluate(
     state: GlobalState,
     forward_step_func: ForwardStepCallable,
@@ -69,10 +78,10 @@ def evaluate(
         non_loss_data_func (Optional[Callable], optional): Function to compute non-loss data. Defaults to None.
         p2p_communicator (Optional[Union[P2PCommunicator, MultiModulePipelineCommunicator]], optional):
             Custom communicator for pipeline parallelism. If None, creates a default P2PCommunicator.
-            For MIMO models, pass a MultiModulePipelineCommunicator. Defaults to None.
+            For MegatronMIMO models, pass a MultiModulePipelineCommunicator. Defaults to None.
         pg_collection (Optional[Union[ProcessGroupCollection, MultiModuleProcessGroupCollection]], optional):
             Custom process group collection. If None, extracts from model via get_pg_collection().
-            For MIMO models, pass a MultiModuleProcessGroupCollection. Defaults to None.
+            For MegatronMIMO models, pass a MultiModuleProcessGroupCollection. Defaults to None.
         callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
         is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
             Controls which callback events are fired (on_test_* vs on_eval_*).
@@ -115,14 +124,14 @@ def evaluate(
     eval_micro_batch_size = state.cfg.validation.eval_micro_batch_size
     eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * state.cfg.data_parallel_size)
 
-    # Determine if this is a multimodule evaluation (MIMO)
+    # Determine if this is a multimodule evaluation (MegatronMIMO)
     is_multimodule = isinstance(pg_collection, MultiModuleProcessGroupCollection) or isinstance(
         p2p_communicator, MultiModulePipelineCommunicator
     )
 
     if is_multimodule and not isinstance(p2p_communicator, MultiModulePipelineCommunicator):
         raise ValueError(
-            "Multimodule (MIMO) evaluation requires an explicit MultiModulePipelineCommunicator as p2p_communicator."
+            "Multimodule (MegatronMIMO) evaluation requires an explicit MultiModulePipelineCommunicator as p2p_communicator."
         )
 
     if not state.cfg.dist.use_decentralized_pg:
@@ -162,6 +171,15 @@ def evaluate(
             forward_backward_func = get_forward_backward_func(
                 pp_size=pg_collection.pp.size(),
                 vp_size=state.cfg.model.virtual_pipeline_model_parallel_size,
+            )
+        # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
+        # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
+        if HAS_PAGED_STASHING and state.cfg.model.moe_expert_rank_capacity_factor is not None:
+            copy_main_params = (
+                state.cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag and state.cfg.ddp.overlap_param_gather
+            )
+            forward_backward_func = PagedStashRunner(
+                state.cfg.model, copy_main_params, model, None, forward_backward_func
             )
 
         iteration = 0

@@ -695,6 +695,11 @@ def preprocess_packed_seqs(
     """
     batch_size = input_ids.shape[0]
 
+    # Ensure boolean dtype for correct advanced indexing (bool → mask select,
+    # int → fancy index which silently corrupts data when values are 0/1).
+    if attention_mask.dtype != torch.bool:
+        attention_mask = attention_mask.bool()
+
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     if pg_collection is not None:
         tp_size = pg_collection.tp.size()

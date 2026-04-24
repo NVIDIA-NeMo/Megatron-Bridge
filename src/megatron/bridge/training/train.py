@@ -100,6 +100,15 @@ from megatron.bridge.training.utils.train_utils import (
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
 
+# For Paged Stashing support
+try:
+    from megatron.core.transformer.moe.paged_stash import PagedStashRunner
+
+    HAS_PAGED_STASHING = True
+except ImportError:
+    HAS_PAGED_STASHING = False
+
+
 def train(
     forward_step_func: ForwardStepCallable,
     model: list[MegatronModule],
@@ -293,6 +302,13 @@ def train(
     if config.model.cuda_graph_impl == "local" and CudaGraphScope.full_iteration in config.model.cuda_graph_scope:
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
+        )
+    # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
+    # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
+    if HAS_PAGED_STASHING and config.model.moe_expert_rank_capacity_factor is not None:
+        copy_main_params = config.optimizer.reuse_grad_buf_for_mxfp8_param_ag and config.ddp.overlap_param_gather
+        forward_backward_func = PagedStashRunner(
+            model_config, copy_main_params, model, optimizer, forward_backward_func
         )
 
     start_iteration = global_state.train_state.step
@@ -1193,7 +1209,7 @@ def save_checkpoint_and_time(
         non_persistent_ckpt: Flag indicating if this is a non-persistent
                              (local) checkpoint. Defaults to False.
         train_data_iterator: Optional training data iterator to save its state.
-        pg_collection: Optional process group collection for MiMo topologies.
+        pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
     """
     timers = state.timers
@@ -1283,7 +1299,7 @@ def checkpoint_and_decide_exit(
         num_floating_point_operations_so_far: Cumulative TFLOPs up to this point.
         checkpoint_manager: The checkpoint manager for save operations.
         train_data_iterator: Optional training data iterator to save its state.
-        pg_collection: Optional process group collection for MiMo topologies.
+        pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
 
     Returns:
@@ -1565,13 +1581,12 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
     if "training" in FullCudaGraphWrapper.cuda_graph:
         del FullCudaGraphWrapper.cuda_graph["training"]
 
-    # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
-    if cuda_graph_helper is not None:
-        for layers in cuda_graph_helper.callables_per_chunk:
-            for layer in layers:
-                for cuda_graph in layer.cuda_graphs:
-                    del cuda_graph
-                del layer.cuda_graphs
+    # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
+    # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper
+    # may finish its capture phase without actually producing any graphs, in which case
+    # delete_cuda_graphs() asserts. Mirrors the guard in upstream mcore training.py.
+    if cuda_graph_helper is not None and cuda_graph_helper.graphs_created():
+        cuda_graph_helper.delete_cuda_graphs()
 
     # Run GC to collect the freshed object
     gc.collect()
