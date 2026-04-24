@@ -766,28 +766,28 @@ class TestPretrainMegatronMIMOPassesBuildFn:
 
 
 # ---------------------------------------------------------------------------
-# Tests: non-colocated PG guard in get_active_module_pg
+# Tests: get_active_module_pg canonical-pg selection
 # ---------------------------------------------------------------------------
 
 
-class TestActiveModulePgGuard:
-    """Verify get_active_module_pg fails fast when PG topology is invalid."""
+class TestActiveModulePg:
+    """Verify get_active_module_pg canonical pg selection across modes."""
 
     def test_rejects_zero_active_pgs(self):
         from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
 
         infra = SimpleNamespace(pg_collections={})
-        with pytest.raises(AssertionError, match="exactly one active ProcessGroupCollection"):
+        with pytest.raises(AssertionError, match="every rank to participate"):
             get_active_module_pg(infra)
 
-    def test_rejects_multiple_active_pgs(self):
+    def test_rejects_zero_active_pgs_all_none(self):
         from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
 
-        infra = SimpleNamespace(pg_collections={"language": Mock(), "vision": Mock()})
-        with pytest.raises(AssertionError, match="exactly one active ProcessGroupCollection"):
+        infra = SimpleNamespace(pg_collections={"language": None, "vision": None})
+        with pytest.raises(AssertionError, match="every rank to participate"):
             get_active_module_pg(infra)
 
-    def test_returns_single_active_pg(self):
+    def test_returns_single_active_pg_non_colocated(self):
         from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
 
         pg = Mock()
@@ -795,6 +795,53 @@ class TestActiveModulePgGuard:
         name, result_pg = get_active_module_pg(infra)
         assert name == "language"
         assert result_pg is pg
+
+    def test_colocated_defaults_to_language(self):
+        """Colocated: multiple active modules → language module is the canonical pg."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
+
+        lang_pg, vision_pg = Mock(), Mock()
+        infra = SimpleNamespace(pg_collections={"language": lang_pg, "vision": vision_pg})
+        name, result_pg = get_active_module_pg(infra)
+        assert name == "language"
+        assert result_pg is lang_pg
+
+    def test_colocated_without_language_falls_back_to_first(self):
+        """Colocated with no 'language' key: fall back to the first active entry."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
+
+        vision_pg, audio_pg = Mock(), Mock()
+        infra = SimpleNamespace(pg_collections={"vision": vision_pg, "audio": audio_pg})
+        name, result_pg = get_active_module_pg(infra)
+        assert name == "vision"  # dict-insertion-ordered first entry
+        assert result_pg is vision_pg
+
+    def test_explicit_module_name_selects_that_module(self):
+        """Explicit module_name overrides the default selection."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
+
+        lang_pg, vision_pg = Mock(), Mock()
+        infra = SimpleNamespace(pg_collections={"language": lang_pg, "vision": vision_pg})
+        name, result_pg = get_active_module_pg(infra, module_name="vision")
+        assert name == "vision"
+        assert result_pg is vision_pg
+
+    def test_explicit_module_name_not_active_raises(self):
+        """Explicit module_name that isn't active on this rank raises KeyError."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
+
+        infra = SimpleNamespace(pg_collections={"language": Mock(), "vision": None})
+        with pytest.raises(KeyError, match="'vision' is not active"):
+            get_active_module_pg(infra, module_name="vision")
+
+    def test_active_module_pgs_returns_all_active(self):
+        """Plural helper returns every active module's pg as a dict."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pgs
+
+        lang_pg, vision_pg = Mock(), Mock()
+        infra = SimpleNamespace(pg_collections={"language": lang_pg, "vision": vision_pg, "audio": None})
+        result = get_active_module_pgs(infra)
+        assert result == {"language": lang_pg, "vision": vision_pg}
 
 
 # ---------------------------------------------------------------------------

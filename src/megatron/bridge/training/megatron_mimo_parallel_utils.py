@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import torch.distributed as dist
 from megatron.core.distributed.finalize_model_grads import finalize_model_grads as _finalize_model_grads
@@ -73,21 +73,55 @@ def is_current_rank_in_grid(grid: "HyperCommGrid") -> bool:
     return grid.rank_offset <= current_rank < (grid.rank_offset + grid.size)
 
 
-def get_active_module_pg(megatron_mimo_infra: MegatronMIMOInfra) -> tuple[str, "ProcessGroupCollection"]:
-    """Return the (module_name, pg_collection) for the single active module on this rank.
+def get_active_module_pgs(megatron_mimo_infra: MegatronMIMOInfra) -> Dict[str, "ProcessGroupCollection"]:
+    """Return every active (module_name → pg_collection) on this rank.
 
-    Non-colocated MegatronMIMO assigns each rank to exactly one module.  This helper
-    extracts that module's name and ``ProcessGroupCollection``.
+    Non-colocated deployments put each rank in a single module → returns a
+    one-entry dict. Colocated deployments put every rank in every module →
+    returns multiple entries.
+    """
+    return {name: pg for name, pg in megatron_mimo_infra.pg_collections.items() if pg is not None}
+
+
+def get_active_module_pg(
+    megatron_mimo_infra: MegatronMIMOInfra,
+    module_name: Optional[str] = None,
+) -> tuple[str, "ProcessGroupCollection"]:
+    """Return a single (module_name, pg_collection) for this rank.
+
+    Used by callers that need **one** pg_collection to plumb through legacy
+    code paths — most importantly the ``mpu.*`` global bridging in
+    ``setup_megatron_mimo`` (mcore internals read these globals during
+    ``sharded_state_dict`` and other utilities).
+
+    Selection rule:
+      * If ``module_name`` is provided, return that module's pg (error if not
+        active on this rank).
+      * Otherwise, if exactly one module is active (non-colocated), return it.
+      * Otherwise (colocated — multiple modules active), default to the
+        language module if it's active, else the first module. This picks a
+        canonical pg for the globals; per-module operations should iterate
+        :func:`get_active_module_pgs` instead.
 
     Raises:
-        AssertionError: If more or fewer than one module is active on this rank.
+        AssertionError: If no module is active on this rank (stub rank — invalid).
+        KeyError: If ``module_name`` is provided but not active on this rank.
     """
-    active = [(name, pg) for name, pg in megatron_mimo_infra.pg_collections.items() if pg is not None]
-    assert len(active) == 1, (
-        f"Non-colocated MegatronMIMO requires exactly one active ProcessGroupCollection per rank, "
-        f"got {len(active)}. Colocated MegatronMIMO is not supported by this code path."
-    )
-    return active[0]
+    active = get_active_module_pgs(megatron_mimo_infra)
+    assert active, "MegatronMIMO requires every rank to participate in at least one module; none found."
+
+    if module_name is not None:
+        if module_name not in active:
+            raise KeyError(f"Module '{module_name}' is not active on this rank. Active modules: {sorted(active)}")
+        return module_name, active[module_name]
+
+    if len(active) == 1:
+        return next(iter(active.items()))
+
+    # Colocated: prefer language module as canonical; fall back to first entry.
+    if MIMO_LANGUAGE_MODULE_KEY in active:
+        return MIMO_LANGUAGE_MODULE_KEY, active[MIMO_LANGUAGE_MODULE_KEY]
+    return next(iter(active.items()))
 
 
 def get_module_to_grid_tuple(

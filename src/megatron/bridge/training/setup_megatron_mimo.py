@@ -316,7 +316,10 @@ def setup_megatron_mimo(
     # Configure model config hooks (mirrors standard path's _update_model_config_funcs in setup.py).
     _update_megatron_mimo_model_config_funcs(model, optimizer, megatron_mimo_infra, module_to_grid_tuple)
 
-    # Select rank-local PG collection for non-colocated MegatronMIMO.
+    # Select the rank-local canonical PG collection.
+    # Non-colocated: the single module this rank serves.
+    # Colocated: the language module's pg_collection (every rank serves every
+    # module; the LLM is the "primary" for checkpoint bridging).
     active_module_name, local_pg_collection = get_active_module_pg(megatron_mimo_infra)
 
     # Initialize checkpoint manager (owns checkpointing_context internally).
@@ -325,9 +328,13 @@ def setup_megatron_mimo(
     # Bridge MegatronMIMO's per-module process groups into Megatron's global parallel
     # state.  MegatronMIMO intentionally skips global MPU init (see
     # MegatronMIMOProvider.initialize_model_parallel), but checkpoint save/load
-    # paths (sharded_state_dict, ensure_metadata_has_dp_cp_group) rely on the
-    # globals.  For non-colocated MegatronMIMO every rank is active in exactly one
-    # module, so we can safely set the globals from that module's collection.
+    # paths (sharded_state_dict, ensure_metadata_has_dp_cp_group, mcore
+    # utilities that call ``parallel_state.get_*_parallel_group()``) read the
+    # globals.  For non-colocated this is the one module this rank serves; for
+    # colocated it's the language module (see get_active_module_pg). Per-module
+    # operations inside the model go through each submodule's own
+    # pg_collection, not these globals, so the canonical-pick here doesn't
+    # affect encoder correctness.
     from megatron.core import parallel_state as mpu
 
     mpu._TENSOR_MODEL_PARALLEL_GROUP = local_pg_collection.tp
