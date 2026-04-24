@@ -10,13 +10,13 @@ GPU=${GPU:-"h100"}
 if [ "$GPU" = "h100" ]; then
     CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-26.02.sqsh"
     ACCOUNT="coreai_dlalgo_nemorl"
-    PARTITION="batch"
+    PARTITION="h100"
     NUM_GPUS=512
     GPUS_PER_NODE=8
 elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
     CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-26.02.sqsh"
     ACCOUNT="coreai_dlalgo_llm"
-    PARTITION="batch"
+    PARTITION="gb200"
     NUM_GPUS=128
     GPUS_PER_NODE=4
     if [ "$GPU" = "gb200" ]; then
@@ -61,6 +61,7 @@ elif [ "$BACKEND" = "fused" ]; then
     export NVTE_FUSED_ATTN=1
     export NVTE_UNFUSED_ATTN=0
     export NVTE_FLASH_ATTN=0
+    export RECOMPUTE_ARGS="+model.recompute_granularity=full +model.recompute_method=block +model.recompute_num_layers=1"
     export additional_args="model.attention_backend=fused"
 elif [ "$BACKEND" = "local" ]; then
     export NVTE_FUSED_ATTN=0
@@ -95,7 +96,6 @@ python scripts/performance/setup_experiment.py \
     -gn $GPUS_PER_NODE \
     --container_image $CONTAINER \
     --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
-    -ce "TRITON_PTXAS_PATH=/usr/local/cuda-13.0/bin/ptxas,PYTORCH_ALLOC_CONF=expandable_segments:True" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
