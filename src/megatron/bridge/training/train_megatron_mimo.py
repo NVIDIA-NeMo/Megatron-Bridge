@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Tupl
 
 import torch
 import torch.distributed as dist
-from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY, ModuleLayout
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
 
@@ -100,6 +100,29 @@ def train_step_megatron_mimo(
 
     # Zero gradients for all modules
     zero_grad_buffer_for_multimodule(module_to_grid_tuple)
+
+    # Schedule dispatch: the colocated path with LLM PP>1 needs the three-phase
+    # schedule (encoder full-batch forward → LLM 1F1B pipeline → encoder
+    # backward) to avoid deadlocking encoder collectives inside the pipeline
+    # staggering. Other cases — non-colocated (any PP layout) and colocated
+    # with LLM PP=1 — use the standard schedule; colocated PP=1 works because
+    # MimoModel._forward_all_modules runs encoder+communicate+LLM in a single
+    # forward on every rank, which is what the standard schedule expects.
+    megatron_mimo_model = unwrap_megatron_mimo_model(model)
+    is_colocated = megatron_mimo_model.role.mode is ModuleLayout.COLOCATED
+    needs_three_phase = is_colocated and megatron_mimo_model.lm_has_pp
+    if needs_three_phase:
+        # Three-phase schedule integration is deferred. See
+        # colocated_forward_backward_with_pp in the submodule and the
+        # "Known limitations" section of playground/colocated_mode_plan.md
+        # for the scope of work still needed (iterator shape, loss func,
+        # p2p_communicator plumbing).
+        raise NotImplementedError(
+            "Colocated MegatronMIMO with LLM PP>1 requires the three-phase schedule "
+            "(colocated_forward_backward_with_pp) which is not yet wired into MB's "
+            "train_step. Use LLM PP=1 in colocated mode, or non-colocated mode for PP>1, "
+            "until the three-phase integration lands."
+        )
 
     # Run forward-backward schedule
     timers("forward-backward", log_level=1).start(barrier=False)

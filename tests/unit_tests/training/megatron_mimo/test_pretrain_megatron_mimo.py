@@ -262,3 +262,89 @@ def test_setup_megatron_mimo_asserts_when_constructor_fields_missing(
         mock_state.cfg = cfg
         with pytest.raises(AssertionError, match="module_to_grid_map must be set"):
             setup_megatron_mimo(state=mock_state)
+
+
+# ---------------------------------------------------------------------------
+# Tests: train_step_megatron_mimo schedule dispatch
+# ---------------------------------------------------------------------------
+
+
+def _make_mimo_model_stub(mode, lm_has_pp: bool):
+    """Build a minimal MimoModel-like stub for dispatch tests."""
+    from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+
+    stub = MagicMock()
+    stub.role.mode = mode
+    stub.lm_has_pp = lm_has_pp
+    stub.role.has_language_module = True
+    stub.role.is_last_stage.return_value = False
+    # Make MIMO_LANGUAGE_MODULE_KEY resolvable for post-schedule loss code paths
+    _ = MIMO_LANGUAGE_MODULE_KEY  # suppress unused warning
+    return stub
+
+
+def _make_minimal_train_step_kwargs():
+    """Minimal kwargs for train_step_megatron_mimo; values only need to reach the dispatch."""
+    return dict(
+        forward_step_func=MagicMock(),
+        data_iterator=iter([]),
+        model=MagicMock(),
+        optimizer=MagicMock(),
+        schedulers={},
+        global_state=MagicMock(),
+        multimodule_communicator=MagicMock(),
+        multimodule_pg_collection=MagicMock(),
+        infra=SimpleNamespace(pg_collections={"language": MagicMock()}),
+        module_to_grid_tuple=[],
+        num_microbatches=1,
+        seq_length=4,
+        micro_batch_size=1,
+    )
+
+
+def test_train_step_raises_for_colocated_with_llm_pp_gt_one():
+    """Colocated + LLM PP>1 must raise NotImplementedError until the three-phase schedule is wired."""
+    from megatron.core.models.mimo.config.role import ModuleLayout
+
+    from megatron.bridge.training.train_megatron_mimo import train_step_megatron_mimo
+
+    stub = _make_mimo_model_stub(mode=ModuleLayout.COLOCATED, lm_has_pp=True)
+    with patch("megatron.bridge.training.train_megatron_mimo.unwrap_megatron_mimo_model", return_value=stub):
+        with pytest.raises(NotImplementedError, match="three-phase schedule"):
+            train_step_megatron_mimo(**_make_minimal_train_step_kwargs())
+
+
+@pytest.mark.parametrize(
+    "mode_name, lm_has_pp",
+    [
+        ("COLOCATED", False),  # colocated + LLM PP=1: standard schedule
+        ("NON_COLOCATED", False),  # non-colocated + LLM PP=1
+        (
+            "NON_COLOCATED",
+            True,
+        ),  # non-colocated + LLM PP>1: standard schedule (MultiModulePipelineCommunicator handles it)
+    ],
+    ids=["colocated_pp1", "non_colocated_pp1", "non_colocated_pp_gt1"],
+)
+def test_train_step_non_three_phase_cases_dispatch_to_standard_schedule(mode_name, lm_has_pp):
+    """Every mode that isn't colocated-PP>1 should reach forward_backward_pipelining_without_interleaving."""
+    from megatron.core.models.mimo.config.role import ModuleLayout
+
+    from megatron.bridge.training.train_megatron_mimo import train_step_megatron_mimo
+
+    stub = _make_mimo_model_stub(mode=getattr(ModuleLayout, mode_name), lm_has_pp=lm_has_pp)
+    # Use a sentinel exception thrown from the mocked schedule as the "got past the
+    # dispatch" marker. This avoids exercising downstream code paths (loss
+    # aggregation, torch.distributed calls) that aren't the subject under test.
+    sentinel = RuntimeError("DISPATCH_REACHED_STANDARD_SCHEDULE")
+    with (
+        patch("megatron.bridge.training.train_megatron_mimo.unwrap_megatron_mimo_model", return_value=stub),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.forward_backward_pipelining_without_interleaving",
+            side_effect=sentinel,
+        ) as mock_fb,
+        patch("megatron.bridge.training.train_megatron_mimo.zero_grad_buffer_for_multimodule"),
+    ):
+        with pytest.raises(RuntimeError, match="DISPATCH_REACHED_STANDARD_SCHEDULE"):
+            train_step_megatron_mimo(**_make_minimal_train_step_kwargs())
+        assert mock_fb.called, f"standard schedule not called for mode={mode_name}, lm_has_pp={lm_has_pp}"
