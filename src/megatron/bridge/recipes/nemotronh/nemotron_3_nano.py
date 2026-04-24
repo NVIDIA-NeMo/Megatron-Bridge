@@ -40,8 +40,9 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
     # Model Configuration (MoE)
     cfg.model = MambaModelProvider(
         # Architecture (Nemotron 3 Nano 30B-A3B)
-        hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
-        num_layers=52,
+        # hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
+        hybrid_layer_pattern="MEMEM*EM",
+        num_layers=8,
         hidden_size=2688,
         mamba_num_heads=64,
         kv_channels=128,

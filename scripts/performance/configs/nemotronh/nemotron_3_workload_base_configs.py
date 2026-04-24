@@ -29,11 +29,11 @@ from utils.utils import WorkloadBaseConfig
 
 
 BASE_NEMOTRON_3_NANO_CONFIG = WorkloadBaseConfig(
-    num_gpus=8,
-    global_batch_size=512,
+    num_gpus=4,
+    global_batch_size=8,
     tensor_model_parallel_size=1,
     expert_tensor_parallel_size=1,
-    expert_model_parallel_size=8,
+    expert_model_parallel_size=4,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "mamba", "moe_router", "moe_preprocess"],

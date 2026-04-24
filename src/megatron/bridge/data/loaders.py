@@ -131,11 +131,7 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         eval_iters = 0
     test_iters = cfg.validation.eval_iters
 
-    eval_gbs = (
-        cfg.validation.eval_global_batch_size
-        if cfg.validation.eval_global_batch_size is not None
-        else cfg.train.global_batch_size
-    )
+    eval_gbs = cfg.train.global_batch_size
     return (
         train_samples,
         eval_iters * eval_gbs,
@@ -255,16 +251,8 @@ def build_train_valid_test_data_loaders(
         data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
     )
-    eval_gbs = (
-        cfg.validation.eval_global_batch_size
-        if cfg.validation.eval_global_batch_size is not None
-        else cfg.train.global_batch_size
-    )
-    eval_mbs = (
-        cfg.validation.eval_micro_batch_size
-        if cfg.validation.eval_micro_batch_size is not None
-        else cfg.train.micro_batch_size
-    )
+    eval_gbs = cfg.train.global_batch_size
+    eval_mbs = cfg.train.micro_batch_size
     if cfg.validation.skip_train and cfg.validation.eval_iters > 0:
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,

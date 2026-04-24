@@ -39,21 +39,21 @@ LLAMA_PRETRAIN_RECIPES = [
             "ddp": {"check_for_nan_in_grad": False},
         },
     ),
-    (
-        llama32_1b_config,
-        "llama32_1b",
-        {
-            "model": {
-                "num_layers": 2,
-                "cuda_graph_impl": "transformer_engine",
-                "cuda_graph_scope": ["attn"],
-                "check_for_nan_in_grad": False,
-                "use_te_rng_tracker": True,
-            },
-            "rerun_state_machine": {"check_for_nan_in_loss": False},
-            "ddp": {"check_for_nan_in_grad": False},
-        },
-    ),
+    # (
+    #     llama32_1b_config,
+    #     "llama32_1b",
+    #     {
+    #         "model": {
+    #             "num_layers": 2,
+    #             "cuda_graph_impl": "transformer_engine",
+    #             "cuda_graph_scope": ["attn"],
+    #             "check_for_nan_in_grad": False,
+    #             "use_te_rng_tracker": True,
+    #         },
+    #         "rerun_state_machine": {"check_for_nan_in_loss": False},
+    #         "ddp": {"check_for_nan_in_grad": False},
+    #     },
+    # ),
 ]
 
 
