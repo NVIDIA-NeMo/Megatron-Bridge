@@ -76,7 +76,6 @@ def _make_vision_config() -> TransformerConfig:
     # CLIP uses "quick_gelu", not standard gelu
     cfg.activation_func = lambda x: x * torch.sigmoid(1.702 * x)
     cfg.calculate_per_token_loss = True
-    cfg.calculate_per_token_loss = False
 
     return cfg
 
