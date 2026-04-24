@@ -116,14 +116,22 @@ def run_pretrain_recipe_test(
         # Apply any model-specific overrides provided by the caller
         if model_overrides:
             for attribute_name, attribute_value in model_overrides.items():
+                if not hasattr(config.model, attribute_name):
+                    raise ValueError(f"Attempted to test a foreign attribute ({attribute_name}) in {config.model}.")
                 setattr(config.model, attribute_name, attribute_value)
 
         if checkpoint_overrides:
             for attribute_name, attribute_value in checkpoint_overrides.items():
+                if not hasattr(config.checkpoint, attribute_name):
+                    raise ValueError(
+                        f"Attempted to test a foreign attribute ({attribute_name}) in {config.checkpoint}."
+                    )
                 setattr(config.checkpoint, attribute_name, attribute_value)
 
         if ddp_overrides:
             for attribute_name, attribute_value in ddp_overrides.items():
+                if not hasattr(config.ddp, attribute_name):
+                    raise ValueError(f"Attempted to test a foreign attribute ({attribute_name}) in {config.ddp}.")
                 setattr(config.ddp, attribute_name, attribute_value)
 
         pretrain(config, forward_step)
@@ -179,8 +187,11 @@ def run_pretrain_recipe_perf_test(
     # Apply any model-specific overrides provided by the caller
     if config_overrides:
         for obj_name, overrides_dict in config_overrides.items():
+            config_obj = getattr(config, obj_name)
             for key, value in overrides_dict.items():
-                setattr(getattr(config, obj_name), key, value)
+                if not hasattr(config_obj, key):
+                    raise ValueError(f"Attempted to test a foreign attribute ({key}) in {config_obj}.")
+                setattr(config_obj, key, value)
 
     pretrain(config, forward_step)
 
@@ -288,11 +299,15 @@ def run_pretrain_vl_recipe_test(
         # Apply any model-specific overrides provided by the caller
         if model_overrides:
             for attribute_name, attribute_value in model_overrides.items():
+                if not hasattr(config.model, attribute_name):
+                    raise ValueError(f"Attempted to test a foreign attribute ({attribute_name}) in {config.model}.")
                 setattr(config.model, attribute_name, attribute_value)
 
         # Apply any dataset-specific overrides provided by the caller
         if dataset_overrides:
             for attribute_name, attribute_value in dataset_overrides.items():
+                if not hasattr(config.dataset, attribute_name):
+                    raise ValueError(f"Attempted to test a foreign attribute ({attribute_name}) in {config.dataset}.")
                 setattr(config.dataset, attribute_name, attribute_value)
 
         if hasattr(config.dataset, "pack_sequences_in_batch") and config.dataset.pack_sequences_in_batch:
