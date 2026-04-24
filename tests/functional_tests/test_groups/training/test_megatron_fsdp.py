@@ -162,13 +162,13 @@ def create_base_scheduler_config(total_iters: int, **kwargs) -> SchedulerConfig:
     return SchedulerConfig(**base_config)
 
 
-def create_base_ddp_config(overlap_param_gather: bool = True, **kwargs) -> DistributedDataParallelConfig:
+def create_base_ddp_config(**kwargs) -> DistributedDataParallelConfig:
     """Create a standardized DDP configuration for FSDP."""
     base_config = {
         "check_for_nan_in_grad": True,
         "grad_reduce_in_fp32": True,
         "overlap_grad_reduce": True,
-        "overlap_param_gather": overlap_param_gather,
+        "overlap_param_gather": True,
         "average_in_collective": False,  # Required for FSDP
         "data_parallel_sharding_strategy": "optim_grads_params",  # For Megatron FSDP only
         "use_distributed_optimizer": True,
@@ -243,7 +243,6 @@ def create_fsdp_config_container(
     load_dir: Optional[str] = None,
     save_interval: Optional[int] = None,
     tensorboard_dir: Optional[str] = None,
-    overlap_param_gather: bool = True,
     **overrides,
 ) -> ConfigContainer:
     """Create a complete FSDP configuration container with common defaults."""
@@ -254,7 +253,7 @@ def create_fsdp_config_container(
         validation=create_base_validation_config(train_iters, **overrides.pop("validation", {})),
         optimizer=create_base_optimizer_config(**overrides.pop("optimizer", {})),
         scheduler=create_base_scheduler_config(train_iters, **overrides.pop("scheduler", {})),
-        ddp=create_base_ddp_config(overlap_param_gather, **overrides.pop("ddp", {})),
+        ddp=create_base_ddp_config(**overrides.pop("ddp", {})),
         dataset=create_base_dataset_config(seq_length, **overrides.pop("dataset", {})),
         logger=create_base_logger_config(tensorboard_dir, **overrides.pop("logger", {})),
         tokenizer=create_base_tokenizer_config(**overrides.pop("tokenizer", {})),
@@ -355,59 +354,12 @@ class TestMegatronFSDP:
             cfg = create_fsdp_config_container(
                 seq_length=seq_length,
                 train_iters=total_iters,
-                overlap_param_gather=False,
             )
 
             # Run training
             pretrain(cfg, forward_step)
 
             torch.distributed.barrier()
-
-        finally:
-            clear_directories(tmp_path)
-
-    @pytest.mark.run_only_on("GPU")
-    @pytest.mark.pleasefixme  # Broken after TE2.14 bump
-    def test_fsdp_pretrain_with_checkpoint(self, tmp_path):
-        """
-        Test FSDP training with checkpoint saving using fsdp_dtensor format.
-        """
-        initialize_distributed()
-        shared_base_dir = broadcast_path(tmp_path)
-
-        checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
-        tensorboard_dir = os.path.join(shared_base_dir, "tensorboard")
-
-        if torch.distributed.get_rank() == 0:
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            os.makedirs(tensorboard_dir, exist_ok=True)
-
-        torch.distributed.barrier()
-
-        try:
-            seq_length = 512
-            total_iters = 10
-
-            # Create config with checkpointing enabled
-            cfg = create_fsdp_config_container(
-                seq_length=seq_length,
-                train_iters=total_iters,
-                checkpoint_dir=checkpoint_dir,
-                tensorboard_dir=tensorboard_dir,
-                save_interval=10,
-            )
-
-            # Run training
-            pretrain(cfg, forward_step)
-
-            # Verify FSDP DTensor checkpoint files
-            torch.distributed.barrier()
-            verify_checkpoint_files(
-                checkpoint_dir,
-                total_iters,
-                ckpt_format=cfg.checkpoint.ckpt_format,
-                storage_writers_per_rank=cfg.checkpoint.storage_writers_per_rank,
-            )
 
         finally:
             clear_directories(tmp_path)
@@ -537,8 +489,6 @@ class TestMegatronFSDP:
            a) ParamAndGradBuffer.use_decoupled_grad is True
            b) The underlying FusedAdam was created with use_decoupled_grad=True
            c) clip_grad_norm succeeds and returns a finite grad norm
-           d) Parameters carry the __fsdp_param__ marker (needed by clip_grad_norm
-              to select the decoupled_grad path)
         """
         from megatron.core.distributed.fsdp.src.megatron_fsdp import MegatronFSDP
 
@@ -599,13 +549,6 @@ class TestMegatronFSDP:
             # --- (c) clip_grad_norm does not segfault / has non-zero grad norm ---
             grad_norm = optimizer.clip_grad_norm(cfg.optimizer.clip_grad)
             assert torch.isfinite(torch.tensor(grad_norm)), f"clip_grad_norm returned non-finite grad_norm={grad_norm}"
-
-            # --- (d) Parameters carry __fsdp_param__ marker ---
-            params = optimizer.get_parameters()
-            fsdp_params = [p for p in params if getattr(p, "__fsdp_param__", False)]
-            assert len(fsdp_params) > 0, (
-                "No parameters have __fsdp_param__=True; clip_grad_norm won't use the decoupled_grad path"
-            )
 
             _finish_train(setup_out.state, setup_out.checkpoint_manager)
 

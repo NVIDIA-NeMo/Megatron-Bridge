@@ -1077,10 +1077,13 @@ class ConfigContainer(Container):
         self.ddp.use_megatron_fsdp = True
 
         # Megatron-FSDP always uses a distributed optimizer.
+        if not self.ddp.use_distributed_optimizer or not self.optimizer.use_distributed_optimizer:
+            print_rank_0("use_distributed_optimizer=True is required for Megatron-FSDP. Activating...")
         self.ddp.use_distributed_optimizer = True
         self.optimizer.use_distributed_optimizer = True
 
         if self.optimizer.use_precision_aware_optimizer:
+            print_rank_0("Megatron-FSDP installs gradients in `param.decoupled_grad` when using FusedAdam.")
             # Megatron-FSDP uses a decoupled gradient for FusedAdam.
             # Aligned with FusedAdam(use_decoupled_grad=True) and
             # clip_grad_norm(use_decoupled_grad=True)!
