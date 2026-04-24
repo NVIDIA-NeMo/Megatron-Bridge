@@ -35,6 +35,7 @@ from megatron.bridge.training.utils.train_utils import (
     report_memory,
     report_runtime,
     report_throughput,
+    start_memory_history_recording,
     training_log,
 )
 
@@ -3090,3 +3091,95 @@ class TestCalcParamsL2Norm:
         # Both layers contribute: sqrt(25 + 25) = sqrt(50)
         expected_norm = math.sqrt(50)
         assert result == pytest.approx(expected_norm, rel=1e-5)
+
+
+class TestStartMemoryHistoryRecording:
+    """Tests for start_memory_history_recording.
+
+    Verifies the four guard paths (None config, disabled flag, rank not in
+    profile_ranks, happy path) and that the happy path wires up the CUDA
+    allocator trace + OOM observer as expected.
+    """
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_no_config_is_noop(self, mock_attach, mock_record):
+        start_memory_history_recording(None)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_disabled_flag_is_noop(self, mock_attach, mock_record):
+        profiling = mock.Mock()
+        profiling.record_memory_history = False
+        profiling.profile_ranks = [0]
+
+        start_memory_history_recording(profiling)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=3)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_rank_not_in_profile_ranks_is_noop(self, mock_attach, mock_record, _mock_rank):
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0, 7]
+
+        start_memory_history_recording(profiling)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=0)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_happy_path_enables_recording_and_attaches_observer(self, mock_attach, mock_record, _mock_rank):
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0]
+        profiling.memory_snapshot_path = "/nemo_run/snapshot.pickle"
+
+        start_memory_history_recording(profiling)
+
+        # Recording enabled with MLM-compatible settings
+        mock_record.assert_called_once()
+        _pos, kwargs = mock_record.call_args
+        assert _pos[0] is True
+        assert kwargs["trace_alloc_max_entries"] == 100_000
+        assert kwargs["trace_alloc_record_context"] is True
+
+        # OOM observer was attached
+        mock_attach.assert_called_once()
+        oom_cb = mock_attach.call_args.args[0]
+        assert callable(oom_cb)
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=0)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._snapshot", return_value={"x": 1})
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_oom_observer_writes_rank_tagged_path(self, mock_attach, mock_record, mock_snapshot, _mock_rank, tmp_path):
+        """OOM observer must inject the rank tag via splitext, not as a prefix,
+        so absolute memory_snapshot_path values stay absolute."""
+        snapshot_dir = tmp_path / "run"
+        snapshot_dir.mkdir()
+        snapshot_path = str(snapshot_dir / "snapshot.pickle")
+
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0]
+        profiling.memory_snapshot_path = snapshot_path
+
+        start_memory_history_recording(profiling)
+        oom_cb = mock_attach.call_args.args[0]
+
+        # Fire the observer as torch would (device, alloc, device_alloc, device_free).
+        oom_cb(0, 0, 0, 0)
+
+        expected = snapshot_dir / "snapshot_oom_rank-0.pickle"
+        assert expected.exists(), f"OOM observer should have written {expected}"
+        # The snapshot content is the mocked dict, pickled.
+        import pickle
+
+        with expected.open("rb") as f:
+            assert pickle.load(f) == {"x": 1}
