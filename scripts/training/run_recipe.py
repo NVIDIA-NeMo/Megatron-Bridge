@@ -252,6 +252,7 @@ def load_recipe(
 
     config_builder = getattr(recipes, recipe_name)
 
+    # Inspect the recipe's signature to determine which arguments it accepts
     try:
         sig = inspect.signature(config_builder)
         params = sig.parameters
@@ -262,11 +263,13 @@ def load_recipe(
         accepts_seq_length = "seq_length" in params or has_var_keyword
         accepts_hf_path = "hf_path" in params or has_var_keyword
     except (ValueError, TypeError):
-        accepts_peft = True
-        accepts_packed_sequence = False
-        accepts_seq_length = False
-        accepts_hf_path = False
+        # If signature inspection fails, fallback conservatively
+        accepts_peft = True  # peft is widely supported, try passing it
+        accepts_packed_sequence = False  # new parameter, don't pass if unsure
+        accepts_seq_length = False  # new parameter, don't pass if unsure
+        accepts_hf_path = False  # model-specific, don't pass if unsure
 
+    # Build kwargs dynamically based on what the recipe accepts
     kwargs = {}
     if accepts_peft:
         kwargs["peft"] = peft_scheme
@@ -280,6 +283,7 @@ def load_recipe(
     try:
         return config_builder(**kwargs)
     except TypeError:
+        # Fallback if the kwargs are not accepted despite signature inspection
         return config_builder()
 
 
