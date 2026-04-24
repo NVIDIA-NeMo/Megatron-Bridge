@@ -960,9 +960,6 @@ class InProcessRestartConfig:
 class TokenizerConfig(MTrainTokenizerConfig):
     """Configuration settings for tokenizers."""
 
-    special_tokens: Optional[list[str]] = None
-    """List of special tokens. For TikToken, needs to have ["<unk>", "<s>", "</s>"]."""
-
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
     """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
 
