@@ -14,31 +14,20 @@
 
 """Megatron-side mirror of DeepSeek-V4-Flash.
 
-Parameter names follow Megatron conventions, with two V4-specific sub-modules
-introduced:
+This is a pure-parameter reference used for verifying that the bridge's
+`mapping_registry()` emits keys that a real Megatron V4 model can absorb.
+Conventions that differ from `reference.py`:
 
-* **CSA** — Compressed Sparse Attention. Full V4 attention block: low-rank Q
-  (linear_q_down_proj / q_layernorm / linear_q_up_proj), single KV projection
-  (linear_kv_proj / kv_layernorm), per-layer Compressor + Indexer (extending
-  mcore's DSA pattern), and the grouped low-rank O delegated to HCA.
-* **HCA** — Head-grouped Compressed Attention. The V4-specific grouped
-  low-rank O projection (`linear_o_down_proj` of shape
-  `[n_heads·head_dim/n_groups, n_groups·o_lora_rank]`, then `linear_o_up_proj`).
-  Isolated so alternative O variants can be slotted in without touching CSA.
-
-Block-level HC (hc_attn, hc_ffn) uses mcore's `HyperConnectionModule` parameter
-layout (fused `mapping_proj.weight [n²+2n, n·C]` + `bias` + three scalar alphas)
-so a real Megatron training run can drop in `mcore.HyperConnectionModule`
-directly. The head-level HC (`hc_head_*`) stays as raw parameters: the inference
-head uses a smaller (n-row) form that mcore's HC module does not cover.
-
-This mirror is a pure `nn.Module` container — forward is deferred; it exists to
-validate parameter-name, shape, and dtype parity via the bridge mapping.
+* All parameters are BF16 — `.scale` sidecars are absent. The bridge's
+  ``maybe_modify_loaded_hf_weight`` dequantizes FP8/FP4 to BF16 on load.
+* MoE expert FCs are fused gate+up (`linear_fc1.weight [2·inter, hidden]`)
+  and stored per-expert under indexed names `linear_fc1.weight0, weight1, …`
+  so they line up with the bridge's wildcard `linear_fc1.weight*` pattern.
+* Block HC uses mcore `HyperConnectionModule`-compatible layout
+  (`mapping_proj.weight [n²+2n, n·C]`, `bias [n²+2n]`, `alpha [3]`).
 """
 
 from __future__ import annotations
-
-from typing import Optional
 
 import torch
 from torch import nn
@@ -54,27 +43,28 @@ from megatron.bridge.models.deepseek_v4.modeling_deepseek_v4.reference import (
 # ---------------------------------------------------------------------------
 
 
-class _Linear(nn.Module):
-    """Mirror `reference.Linear`: `.weight` + optional `.scale` (FP8 block)."""
+class _BF16Linear(nn.Module):
+    """BF16 Linear weight holder. No `.scale` — BF16 everywhere after dequant."""
 
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        *,
-        dtype: Optional[torch.dtype] = None,
-        emit_scale: bool = True,
-        block_size: int = 128,
-    ) -> None:
+    def __init__(self, in_features: int, out_features: int, *, dtype: torch.dtype = torch.bfloat16) -> None:
         super().__init__()
-        dtype = dtype or torch.bfloat16
         self.weight = nn.Parameter(torch.empty(out_features, in_features, dtype=dtype))
-        if emit_scale:
-            scale_rows = (out_features + block_size - 1) // block_size
-            scale_cols = (in_features + block_size - 1) // block_size
-            self.scale = nn.Parameter(torch.empty(scale_rows, scale_cols, dtype=torch.float32))
-        else:
-            self.register_parameter("scale", None)
+
+
+class _IndexedBF16Linear(nn.Module):
+    """Per-expert indexed Linears. State_dict keys are `weight0`, `weight1`, …
+
+    Matches the bridge's wildcard pattern
+    `decoder.layers.*.mlp.experts.linear_fc1.weight*`.
+    """
+
+    def __init__(self, num_experts: int, in_features: int, out_features: int) -> None:
+        super().__init__()
+        for i in range(num_experts):
+            self.register_parameter(
+                f"weight{i}",
+                nn.Parameter(torch.empty(out_features, in_features, dtype=torch.bfloat16)),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -83,31 +73,19 @@ class _Linear(nn.Module):
 
 
 class _MegatronHC(nn.Module):
-    """Param-for-param compatible with `mcore.HyperConnectionModule`.
+    """mcore `HyperConnectionModule`-compatible layout.
 
-    * `mapping_proj.weight [n²+2n, n·C]` — the fused H_pre/H_post/H_res logits
-      projection. Matches HF's `hc_attn_fn` / `hc_ffn_fn` when n = hc_mult.
-    * `bias [n²+2n]`                     — static biases; matches HF's
-      `hc_attn_base` / `hc_ffn_base`.
-    * `alpha_pre / alpha_post / alpha_res [1]` — three learnable gates; together
-      they correspond to HF's `hc_*_scale [3]` in a fixed order.
+    `alpha` is a single [3] tensor ( `(pre, post, res)` ). Forward code that
+    uses real mcore `HyperConnectionModule` splits `alpha` at construction
+    time: `alpha[0:1]`, `alpha[1:2]`, `alpha[2:3]`.
     """
 
     def __init__(self, n: int, hidden_size: int) -> None:
         super().__init__()
         mix = n * n + 2 * n
         self.mapping_proj = nn.Linear(n * hidden_size, mix, bias=False)
-        self.alpha_pre = nn.Parameter(torch.empty(1, dtype=torch.float32))
-        self.alpha_post = nn.Parameter(torch.empty(1, dtype=torch.float32))
-        self.alpha_res = nn.Parameter(torch.empty(1, dtype=torch.float32))
+        self.alpha = nn.Parameter(torch.empty(3, dtype=torch.float32))
         self.bias = nn.Parameter(torch.empty(mix, dtype=torch.float32))
-
-    def _reset(self) -> None:  # pragma: no cover - placeholder for real init
-        self.mapping_proj.weight.data.zero_()
-        self.bias.data.zero_()
-        self.alpha_pre.data.zero_()
-        self.alpha_post.data.zero_()
-        self.alpha_res.data.zero_()
 
 
 # ---------------------------------------------------------------------------
@@ -116,83 +94,58 @@ class _MegatronHC(nn.Module):
 
 
 class HeadGroupedCompressedAttention(nn.Module):
-    """V4 grouped low-rank O-projection.
-
-    Given `n_heads` heads split across `n_groups`, each group owns an
-    `o_lora_rank`-sized latent dimension. Export shapes match the HF
-    inference checkpoint verbatim:
-
-    * `linear_o_down_proj.weight`  [n_groups · o_lora_rank, n_heads·head_dim / n_groups]
-    * `linear_o_up_proj.weight`    [hidden_size, n_groups · o_lora_rank]
-
-    Forward is intentionally omitted here — see notes at the module level.
-    """
+    """V4 grouped low-rank O-projection."""
 
     def __init__(self, args: DeepSeekV4ModelArgs) -> None:
         super().__init__()
-        self.n_groups = args.o_groups
-        self.o_lora_rank = args.o_lora_rank
-        self.n_heads = args.n_heads
-        self.head_dim = args.head_dim
-        self.linear_o_down_proj = _Linear(
-            self.n_heads * self.head_dim // self.n_groups,
-            self.n_groups * self.o_lora_rank,
-            dtype=torch.bfloat16,
-            emit_scale=True,
+        self.linear_o_down_proj = _BF16Linear(
+            args.n_heads * args.head_dim // args.o_groups,
+            args.o_groups * args.o_lora_rank,
         )
-        self.linear_o_up_proj = _Linear(
-            self.n_groups * self.o_lora_rank,
-            args.dim,
-            emit_scale=True,
-        )
+        self.linear_o_up_proj = _BF16Linear(args.o_groups * args.o_lora_rank, args.dim)
 
 
 # ---------------------------------------------------------------------------
-# CSA — Compressed Sparse Attention (V4 full attention block)
+# CSA — Compressed Sparse Attention
 # ---------------------------------------------------------------------------
 
 
 class _Compressor(nn.Module):
-    """KV Compressor: wkv/wgate/ape/norm. BF16 params; no `.scale`."""
+    """wkv / wgate / ape / norm. Already BF16 in the real checkpoint."""
 
     def __init__(self, args: DeepSeekV4ModelArgs, compress_ratio: int, head_dim: int) -> None:
         super().__init__()
         overlap = compress_ratio == 4
         coff = 1 + overlap
         self.ape = nn.Parameter(torch.empty(compress_ratio, coff * head_dim, dtype=torch.float32))
-        self.wkv = _Linear(args.dim, coff * head_dim, dtype=torch.float32, emit_scale=False)
-        self.wgate = _Linear(args.dim, coff * head_dim, dtype=torch.float32, emit_scale=False)
+        self.wkv = _BF16Linear(args.dim, coff * head_dim, dtype=torch.float32)
+        self.wgate = _BF16Linear(args.dim, coff * head_dim, dtype=torch.float32)
         self.norm = RMSNorm(head_dim, args.norm_eps)
 
 
 class _Indexer(nn.Module):
-    """Top-k sparse-attention indexer. Present when compress_ratio == 4."""
+    """Top-k sparse-attention indexer (compress_ratio == 4 only)."""
 
     def __init__(self, args: DeepSeekV4ModelArgs, compress_ratio: int) -> None:
         super().__init__()
-        self.linear_q_up_proj = _Linear(args.q_lora_rank, args.index_n_heads * args.index_head_dim, emit_scale=True)
-        self.weights_proj = _Linear(args.dim, args.index_n_heads, dtype=torch.bfloat16, emit_scale=False)
+        self.linear_q_up_proj = _BF16Linear(args.q_lora_rank, args.index_n_heads * args.index_head_dim)
+        self.weights_proj = _BF16Linear(args.dim, args.index_n_heads)
         self.compressor = _Compressor(args, compress_ratio, args.index_head_dim)
 
 
 class CompressedSparseAttention(nn.Module):
-    """V4 attention block: low-rank Q + single KV + HCA O + optional
-    Compressor/Indexer. Extends mcore DSA (indexer/sparse_attn) with a learned
-    Compressor over KV so sparse-attention can attend to compressed slots."""
+    """V4 attention block: low-rank Q + single KV + HCA O + optional Compressor / Indexer."""
 
     def __init__(self, layer_id: int, args: DeepSeekV4ModelArgs) -> None:
         super().__init__()
-        self.layer_id = layer_id
         compress_ratio = args.compress_ratios[layer_id]
 
         self.attn_sink = nn.Parameter(torch.empty(args.n_heads, dtype=torch.float32))
-        self.linear_q_down_proj = _Linear(args.dim, args.q_lora_rank, emit_scale=True)
+        self.linear_q_down_proj = _BF16Linear(args.dim, args.q_lora_rank)
         self.q_layernorm = RMSNorm(args.q_lora_rank, args.norm_eps)
-        self.linear_q_up_proj = _Linear(args.q_lora_rank, args.n_heads * args.head_dim, emit_scale=True)
-        self.linear_kv_proj = _Linear(args.dim, args.head_dim, emit_scale=True)
+        self.linear_q_up_proj = _BF16Linear(args.q_lora_rank, args.n_heads * args.head_dim)
+        self.linear_kv_proj = _BF16Linear(args.dim, args.head_dim)
         self.kv_layernorm = RMSNorm(args.head_dim, args.norm_eps)
-
-        # HCA: grouped low-rank O-projection.
         self.o_head_grouped = HeadGroupedCompressedAttention(args)
 
         if compress_ratio:
@@ -202,7 +155,7 @@ class CompressedSparseAttention(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# MoE — Router (hash / score) + Experts
+# MoE — Router (hash / score) + fused experts
 # ---------------------------------------------------------------------------
 
 
@@ -222,22 +175,28 @@ class _Router(nn.Module):
             self.register_parameter("tid2eid", None)
 
 
-class _Expert(nn.Module):
-    def __init__(self, dim: int, inter_dim: int, *, emit_scale: bool) -> None:
+class _RoutedExperts(nn.Module):
+    """Per-expert indexed fused `linear_fc1` (gate + up) and `linear_fc2`."""
+
+    def __init__(self, args: DeepSeekV4ModelArgs) -> None:
         super().__init__()
-        self.linear_fc1_gate = _Linear(dim, inter_dim, emit_scale=emit_scale)
-        self.linear_fc1_up = _Linear(dim, inter_dim, emit_scale=emit_scale)
-        self.linear_fc2 = _Linear(inter_dim, dim, emit_scale=emit_scale)
+        self.linear_fc1 = _IndexedBF16Linear(args.n_routed_experts, args.dim, 2 * args.moe_inter_dim)
+        self.linear_fc2 = _IndexedBF16Linear(args.n_routed_experts, args.moe_inter_dim, args.dim)
+
+
+class _SharedExpert(nn.Module):
+    def __init__(self, args: DeepSeekV4ModelArgs) -> None:
+        super().__init__()
+        self.linear_fc1 = _BF16Linear(args.dim, 2 * args.moe_inter_dim)
+        self.linear_fc2 = _BF16Linear(args.moe_inter_dim, args.dim)
 
 
 class _MoE(nn.Module):
     def __init__(self, layer_id: int, args: DeepSeekV4ModelArgs) -> None:
         super().__init__()
         self.router = _Router(layer_id, args)
-        self.experts = nn.ModuleList(
-            [_Expert(args.dim, args.moe_inter_dim, emit_scale=True) for _ in range(args.n_routed_experts)]
-        )
-        self.shared_experts = _Expert(args.dim, args.moe_inter_dim, emit_scale=True)
+        self.experts = _RoutedExperts(args)
+        self.shared_experts = _SharedExpert(args)
 
 
 # ---------------------------------------------------------------------------
@@ -260,8 +219,8 @@ class _MTPLayer(nn.Module):
     def __init__(self, layer_id: int, args: DeepSeekV4ModelArgs) -> None:
         super().__init__()
         self.mtp_model_layer = _TransformerBlock(layer_id, args)
-        self.e_proj = _Linear(args.dim, args.dim, emit_scale=True)
-        self.h_proj = _Linear(args.dim, args.dim, emit_scale=True)
+        self.e_proj = _BF16Linear(args.dim, args.dim)
+        self.h_proj = _BF16Linear(args.dim, args.dim)
         self.enorm = RMSNorm(args.dim, args.norm_eps)
         self.hnorm = RMSNorm(args.dim, args.norm_eps)
         self.final_layernorm = RMSNorm(args.dim, args.norm_eps)
@@ -309,7 +268,7 @@ class _MTPStack(nn.Module):
 
 
 class DeepSeekV4MegatronModel(nn.Module):
-    """Megatron-style layout; `state_dict()` keys are the bridge's target set."""
+    """Megatron-convention parameter container for V4 (BF16 only)."""
 
     def __init__(self, args: DeepSeekV4ModelArgs) -> None:
         super().__init__()

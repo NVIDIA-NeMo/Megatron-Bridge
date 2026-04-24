@@ -12,414 +12,407 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DeepSeek-V4-Flash weight mapping.
+"""Megatron Bridge for DeepSeek-V4-Flash.
 
-The HF checkpoint ships in inference format (keys like `layers.0.attn.wq_a.weight`).
-On the Megatron side we target:
+Follows the standard `@MegatronModelBridge.register_bridge` convention.
 
-* HC:  block-level `hc_attn` / `hc_ffn` matching `mcore.HyperConnectionModule`:
-       `mapping_proj.weight [n²+2n, n·C]` + `bias [n²+2n]` + three scalar
-       `alpha_pre / alpha_post / alpha_res [1]`.
-       Head-level `hc_head_*` stays raw (the inference head uses an n-row
-       variant that mcore's HC module does not cover).
-* CSA: `self_attention.*` — Compressed Sparse Attention block (low-rank Q,
-       single KV, grouped HCA O, optional Compressor + Indexer).
-* HCA: `self_attention.o_head_grouped.linear_o_{down,up}_proj.*`.
-* MoE: `mlp.*`.
-* MTP: `mtp.layers.N.*` with `mtp_model_layer.*` for the inner block.
+Caveats specific to DeepSeek-V4-Flash:
 
-Some mappings are 1-to-1 renames. A few are structural:
+* The published HF checkpoint ships in *inference format* — keys have no
+  `model.` prefix and use `attn`/`ffn` instead of `self_attn`/`mlp`. There is
+  no `modeling_deepseek.py` in the repo and no `auto_map`. The `AutoBridge`
+  dispatch here keys off the class name string `DeepseekV4ForCausalLM` from
+  `config.architectures`, which still matches even though the class is not
+  importable from `transformers`.
 
-* HF `hc_*_scale [3]` fans out to 3 separate scalar params on the mcore side.
-* HF `hc_*_fn`  → `mapping_proj.weight`;  HF `hc_*_base` → `bias` — same shape.
+* Block-level Hyper-Connection parameters map to mcore
+  `HyperConnectionModule`-compatible names (`hc_attn`, `hc_ffn`) with a fused
+  `mapping_proj.weight`, `bias`, and a single `alpha [3]` tensor. Forward code
+  that instantiates the real mcore module splits `alpha` into three scalar
+  parameters at construction time.
 
-Export (`megatron → hf`) is the inverse: the three alphas are stacked into a
-length-3 tensor. Roundtrip preserves identity.
+* Head-level HC (`hc_head_fn / base / scale`) has no mcore analog — the
+  inference head uses a smaller n-row form. It is carried through as raw
+  parameters under `decoder.hc_head_*` and `mtp.layers.*.hc_head_*`.
+
+* V4 introduces **CSA** (full attention: low-rank Q, single KV, grouped HCA O,
+  optional Compressor + Indexer) under `self_attention.*` and **HCA**
+  (grouped low-rank O under `self_attention.o_head_grouped.*`). Hash-routed
+  MoE layers carry `mlp.router.tid2eid` instead of `mlp.router.bias`.
+
+* FP8/FP4 quantized weights are dequantized to BF16 on load via
+  :meth:`maybe_modify_loaded_hf_weight`; the corresponding `.scale` sidecar
+  keys are absorbed there and never appear in the mapping registry.
 """
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass
-from typing import Dict, Iterator, List
+import logging
+from typing import Mapping, Union
 
 import torch
+from megatron.core.models.gpt.gpt_model import GPTModel
 
-from megatron.bridge.models.deepseek_v4.modeling_deepseek_v4.reference import DeepSeekV4ModelArgs
-
-
-# ============================================================================
-# Rename tables (1-to-1 static keys within each sub-tree)
-# ============================================================================
-
-# Attention sub-tree — HF `attn.*` → Megatron `self_attention.*`.
-_ATTN_RENAMES: Dict[str, str] = {
-    "attn.attn_sink": "self_attention.attn_sink",
-    "attn.wq_a.weight": "self_attention.linear_q_down_proj.weight",
-    "attn.wq_a.scale": "self_attention.linear_q_down_proj.scale",
-    "attn.wq_b.weight": "self_attention.linear_q_up_proj.weight",
-    "attn.wq_b.scale": "self_attention.linear_q_up_proj.scale",
-    "attn.q_norm.weight": "self_attention.q_layernorm.weight",
-    "attn.wkv.weight": "self_attention.linear_kv_proj.weight",
-    "attn.wkv.scale": "self_attention.linear_kv_proj.scale",
-    "attn.kv_norm.weight": "self_attention.kv_layernorm.weight",
-    # HCA: grouped low-rank O-projection.
-    "attn.wo_a.weight": "self_attention.o_head_grouped.linear_o_down_proj.weight",
-    "attn.wo_a.scale": "self_attention.o_head_grouped.linear_o_down_proj.scale",
-    "attn.wo_b.weight": "self_attention.o_head_grouped.linear_o_up_proj.weight",
-    "attn.wo_b.scale": "self_attention.o_head_grouped.linear_o_up_proj.scale",
-    # CSA optional — Compressor (compress_ratio != 0)
-    "attn.compressor.ape": "self_attention.compressor.ape",
-    "attn.compressor.wkv.weight": "self_attention.compressor.wkv.weight",
-    "attn.compressor.wgate.weight": "self_attention.compressor.wgate.weight",
-    "attn.compressor.norm.weight": "self_attention.compressor.norm.weight",
-    # CSA optional — Indexer (compress_ratio == 4), extends mcore DSA indexer.
-    "attn.indexer.wq_b.weight": "self_attention.indexer.linear_q_up_proj.weight",
-    "attn.indexer.wq_b.scale": "self_attention.indexer.linear_q_up_proj.scale",
-    "attn.indexer.weights_proj.weight": "self_attention.indexer.weights_proj.weight",
-    "attn.indexer.compressor.ape": "self_attention.indexer.compressor.ape",
-    "attn.indexer.compressor.wkv.weight": "self_attention.indexer.compressor.wkv.weight",
-    "attn.indexer.compressor.wgate.weight": "self_attention.indexer.compressor.wgate.weight",
-    "attn.indexer.compressor.norm.weight": "self_attention.indexer.compressor.norm.weight",
-}
-
-_MOE_FIXED_RENAMES: Dict[str, str] = {
-    "ffn.gate.weight": "mlp.router.weight",
-    "ffn.gate.bias": "mlp.router.bias",
-    "ffn.gate.tid2eid": "mlp.router.tid2eid",
-    "ffn.shared_experts.w1.weight": "mlp.shared_experts.linear_fc1_gate.weight",
-    "ffn.shared_experts.w1.scale": "mlp.shared_experts.linear_fc1_gate.scale",
-    "ffn.shared_experts.w3.weight": "mlp.shared_experts.linear_fc1_up.weight",
-    "ffn.shared_experts.w3.scale": "mlp.shared_experts.linear_fc1_up.scale",
-    "ffn.shared_experts.w2.weight": "mlp.shared_experts.linear_fc2.weight",
-    "ffn.shared_experts.w2.scale": "mlp.shared_experts.linear_fc2.scale",
-}
-
-_EXPERT_W_TO_MEGATRON = {"w1": "linear_fc1_gate", "w2": "linear_fc2", "w3": "linear_fc1_up"}
-_EXPERT_RE = re.compile(r"^ffn\.experts\.(\d+)\.(w[123])\.(weight|scale)$")
-
-# Per-block HC: the fn / base rename to mapping_proj.weight / bias. The `scale`
-# fan-out is handled separately (not a 1-to-1 rename).
-_HC_BLOCK_SIMPLE_RENAMES: Dict[str, str] = {
-    "hc_attn_fn": "hc_attn.mapping_proj.weight",
-    "hc_attn_base": "hc_attn.bias",
-    "hc_ffn_fn": "hc_ffn.mapping_proj.weight",
-    "hc_ffn_base": "hc_ffn.bias",
-}
-
-# HF `hc_*_scale [3]` -> ordered list of 3 mcore scalar params.
-_HC_SCALE_FANOUT: Dict[str, List[str]] = {
-    "hc_attn_scale": ["hc_attn.alpha_pre", "hc_attn.alpha_post", "hc_attn.alpha_res"],
-    "hc_ffn_scale": ["hc_ffn.alpha_pre", "hc_ffn.alpha_post", "hc_ffn.alpha_res"],
-}
-
-_LAYER_FIXED_RENAMES: Dict[str, str] = {
-    "attn_norm.weight": "input_layernorm.weight",
-    "ffn_norm.weight": "pre_mlp_layernorm.weight",
-    **_HC_BLOCK_SIMPLE_RENAMES,
-}
-
-_MTP_FIXED_RENAMES: Dict[str, str] = {
-    "e_proj.weight": "e_proj.weight",
-    "e_proj.scale": "e_proj.scale",
-    "h_proj.weight": "h_proj.weight",
-    "h_proj.scale": "h_proj.scale",
-    "enorm.weight": "enorm.weight",
-    "hnorm.weight": "hnorm.weight",
-    "norm.weight": "final_layernorm.weight",
-    "hc_head_fn": "hc_head_fn",
-    "hc_head_base": "hc_head_base",
-    "hc_head_scale": "hc_head_scale",
-}
-
-_ROOT_RENAMES: Dict[str, str] = {
-    "embed.weight": "embedding.word_embeddings.weight",
-    "norm.weight": "decoder.final_layernorm.weight",
-    "head.weight": "output_layer.weight",
-    "hc_head_fn": "decoder.hc_head_fn",
-    "hc_head_base": "decoder.hc_head_base",
-    "hc_head_scale": "decoder.hc_head_scale",
-}
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
-_LAYER_RE = re.compile(r"^layers\.(\d+)\.(.+)$")
-_MTP_RE = re.compile(r"^mtp\.(\d+)\.(.+)$")
+logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# Public API — import / export a state_dict.
-#
-# The mapping is not a pure rename: HC scale fans 1→3. We therefore operate on
-# whole state_dicts (not single keys) so the structural ops live in one place.
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Dequantization helpers (block-scaled FP8 E4M3 as used by DSV4-Flash)
+# ---------------------------------------------------------------------------
+
+_FP8_BLOCK = 128  # per config.quantization_config.weight_block_size = [128, 128]
 
 
-@dataclass(frozen=True)
-class TranslationEntry:
-    """One row of the HF ↔ Megatron name translation table.
+def _dequantize_block_scaled_fp8(
+    weight: torch.Tensor, scale: torch.Tensor, *, block_size: int = _FP8_BLOCK
+) -> torch.Tensor:
+    """Dequantize FP8 E4M3 block-scaled weights to BF16.
 
-    `kind` is `"rename"` for 1-to-1 mappings and `"hc_scale_split"` when the
-    same HF key fans out to multiple Megatron params (the 3 alphas).
+    `weight`: [O, I] in `float8_e4m3fn`.
+    `scale` : [ceil(O/B), ceil(I/B)] in float32 or float8_e8m0fnu (ue8m0).
+
+    Returns a BF16 tensor of shape [O, I]. Scale is broadcast over `block_size`
+    along both dimensions (the `.to(bf16)` before the multiply keeps the
+    product in BF16 and avoids FP32 intermediates that blow memory up).
+    """
+    out_dim, in_dim = weight.shape
+    w_f32 = weight.to(torch.float32)
+    s_f32 = scale.to(torch.float32)
+    # Expand scale to per-element via repeat_interleave along each dim; clip to
+    # the matrix size in case the last block is partial.
+    s_expanded = s_f32.repeat_interleave(block_size, dim=0)[:out_dim].repeat_interleave(block_size, dim=1)[:, :in_dim]
+    return (w_f32 * s_expanded).to(torch.bfloat16)
+
+
+# ---------------------------------------------------------------------------
+# Bridge
+# ---------------------------------------------------------------------------
+
+
+@MegatronModelBridge.register_bridge(
+    source="DeepseekV4ForCausalLM",
+    target=GPTModel,
+    provider=MLAModelProvider,
+    model_type="deepseek_v4",
+)
+class DeepSeekV4Bridge(MegatronModelBridge):
+    """Megatron Bridge for DeepSeek-V4-Flash.
+
+    Target is registered as `GPTModel` with `MLAModelProvider` for dispatch
+    bookkeeping; the actual V4 Megatron model will subclass from there once
+    HC/CSA/HCA forward paths are wired up.
     """
 
-    hf: str
-    megatron: str
-    kind: str = "rename"  # "rename" | "hc_scale_split" | "hc_scale_join"
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
+        """Configure MLAModelProvider with V4-specific attributes."""
+        provider = super().provider_bridge(hf_pretrained)
+        hf_config = hf_pretrained.config
+
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_bias_linear = False
+        provider.share_embeddings_and_output_weights = False
+        provider.qk_layernorm = True
+        provider.multi_latent_attention = True
+
+        # V4 attention specifics — no kv_lora_rank (single KV proj), grouped O.
+        provider.q_lora_rank = hf_config.q_lora_rank
+        provider.qk_head_dim = hf_config.head_dim - hf_config.qk_rope_head_dim
+        provider.qk_pos_emb_head_dim = hf_config.qk_rope_head_dim
+        provider.v_head_dim = hf_config.head_dim
+        # These do not exist on MLATransformerConfig — stashed as attrs for the
+        # future V4-aware provider to consume.
+        provider.o_groups = hf_config.o_groups
+        provider.o_lora_rank = hf_config.o_lora_rank
+        provider.window_size = hf_config.sliding_window
+        provider.compress_ratios = tuple(hf_config.compress_ratios)
+        provider.index_n_heads = hf_config.index_n_heads
+        provider.index_head_dim = hf_config.index_head_dim
+        provider.index_topk = hf_config.index_topk
+
+        # MoE + routing
+        provider.moe_grouped_gemm = True
+        provider.moe_router_pre_softmax = False  # sqrtsoftplus handled in forward
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_router_load_balancing_type = "none"
+        provider.moe_shared_expert_overlap = True
+        provider.moe_router_score_function = "sqrtsoftplus"  # V4-specific; may need provider ext
+        provider.moe_router_enable_expert_bias = True
+        provider.moe_router_dtype = "fp32"
+        provider.moe_aux_loss_coeff = 0.0
+        provider.n_hash_layers = hf_config.num_hash_layers
+        provider.hc_mult = hf_config.hc_mult
+        provider.hc_sinkhorn_iters = hf_config.hc_sinkhorn_iters
+        provider.hc_eps = hf_config.hc_eps
+        provider.swiglu_limit = hf_config.swiglu_limit
+        provider.routed_scaling_factor = hf_config.routed_scaling_factor
+
+        provider.moe_ffn_hidden_size = hf_config.moe_intermediate_size
+        provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
+
+        # All V4 layers are MoE (no dense replace) — no moe_layer_freq needed.
+        provider.mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or None
+
+        provider.apply_rope_fusion = False
+        provider.hidden_dropout = 0.0
+        provider.attention_softmax_in_fp32 = False
+        provider.make_vocab_size_divisible_by = 1280
+
+        return provider
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        """Enumerate all HF↔Megatron weight name mappings for DeepSeek-V4-Flash."""
+        hf_config = self.hf_config
+        num_transformer_layers = hf_config.num_hidden_layers
+        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
+        num_experts = hf_config.n_routed_experts
+        num_hash_layers = getattr(hf_config, "num_hash_layers", 0)
+
+        mapping_list: list = []
+
+        # ------------------------------------------------------------------
+        # Root
+        # ------------------------------------------------------------------
+        mapping_list.extend(
+            [
+                AutoMapping(megatron_param="embedding.word_embeddings.weight", hf_param="embed.weight"),
+                AutoMapping(megatron_param="decoder.final_layernorm.weight", hf_param="norm.weight"),
+                AutoMapping(megatron_param="output_layer.weight", hf_param="head.weight"),
+                AutoMapping(megatron_param="decoder.hc_head_fn", hf_param="hc_head_fn"),
+                AutoMapping(megatron_param="decoder.hc_head_base", hf_param="hc_head_base"),
+                AutoMapping(megatron_param="decoder.hc_head_scale", hf_param="hc_head_scale"),
+            ]
+        )
+
+        # ------------------------------------------------------------------
+        # Per-layer mappings — wildcarded
+        # ------------------------------------------------------------------
+        mapping_list.extend(_layer_mappings(num_experts=num_experts))
+
+        # ------------------------------------------------------------------
+        # MTP layers — explicit, same pattern but different prefix.
+        # ------------------------------------------------------------------
+        for mtp_layer in range(num_mtp_layers):
+            hf_idx = num_transformer_layers + mtp_layer
+            mapping_list.extend(_mtp_layer_mappings(mtp_layer, hf_idx, num_experts))
+
+        # Cache which layers are hash-routed so maybe_modify_loaded_hf_weight can
+        # route `gate.tid2eid` vs `gate.bias` correctly.
+        self._num_hash_layers = num_hash_layers
+
+        return MegatronMappingRegistry(*mapping_list)
+
+    # ------------------------------------------------------------------
+    # Weight-modification hooks
+    # ------------------------------------------------------------------
+
+    def maybe_modify_loaded_hf_weight(
+        self,
+        hf_param: Union[str, dict[str, str]],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Union[torch.Tensor, dict[str, torch.Tensor]]:
+        """Dequantize FP8/FP4 weights to BF16 using `.scale` sidecars.
+
+        The real DSV4-Flash checkpoint stores:
+          * attention / shared_experts: `float8_e4m3fn` with a float32
+            `.scale` block tensor (128×128 blocks).
+          * routed experts: FP4 packed as `int8` with a `float8_e8m0fnu`
+            `.scale` block tensor.
+
+        We dequantize everything to BF16 here so that downstream conversion
+        sees plain BF16 tensors and the Megatron side never carries `.scale`.
+        """
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+        if isinstance(hf_weights, dict):
+            return {
+                key: self._dequantize_one(tensor, hf_param[key], hf_state_dict) for key, tensor in hf_weights.items()
+            }
+        return self._dequantize_one(hf_weights, hf_param, hf_state_dict)
+
+    @staticmethod
+    def _dequantize_one(
+        weight: torch.Tensor,
+        param_name: str,
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Dequantize a single tensor if it has a `.scale` sidecar."""
+        if not param_name.endswith(".weight"):
+            return weight
+
+        scale_key = param_name[: -len(".weight")] + ".scale"
+        if scale_key not in hf_state_dict:
+            return weight
+
+        scale = hf_state_dict[scale_key]
+
+        # FP8 E4M3 block-scaled
+        if weight.dtype == torch.float8_e4m3fn:
+            return _dequantize_block_scaled_fp8(weight, scale)
+
+        # FP4 packed experts (int8, two fp4 vals per byte). Expansion/dequant
+        # via DS's reference FP4_TABLE is implemented in `_fp4_to_bf16`.
+        if weight.dtype == torch.int8:
+            return _fp4_to_bf16(weight, scale)
+
+        return weight
 
 
-def import_hf_state_dict(hf_sd: Dict[str, torch.Tensor], args: DeepSeekV4ModelArgs) -> Dict[str, torch.Tensor]:
-    """Translate an HF-format state_dict into the Megatron-mirror layout."""
-    out: Dict[str, torch.Tensor] = {}
-    for hf_key, tensor in hf_sd.items():
-        _translate_and_place(hf_key, tensor, out)
-    _sanity_check_count(hf_sd, out, args, direction="hf->mg")
-    return out
+# ---------------------------------------------------------------------------
+# Mapping-list builders
+# ---------------------------------------------------------------------------
+
+# Block-relative name pairs (Megatron-side → HF-side) that are 1:1 renames.
+_SIMPLE_BLOCK_MAPPINGS: dict[str, str] = {
+    # Norms + HC
+    "input_layernorm.weight": "attn_norm.weight",
+    "pre_mlp_layernorm.weight": "ffn_norm.weight",
+    "hc_attn.mapping_proj.weight": "hc_attn_fn",
+    "hc_attn.bias": "hc_attn_base",
+    "hc_attn.alpha": "hc_attn_scale",
+    "hc_ffn.mapping_proj.weight": "hc_ffn_fn",
+    "hc_ffn.bias": "hc_ffn_base",
+    "hc_ffn.alpha": "hc_ffn_scale",
+    # Attention — CSA
+    "self_attention.attn_sink": "attn.attn_sink",
+    "self_attention.linear_q_down_proj.weight": "attn.wq_a.weight",
+    "self_attention.linear_q_up_proj.weight": "attn.wq_b.weight",
+    "self_attention.q_layernorm.weight": "attn.q_norm.weight",
+    "self_attention.linear_kv_proj.weight": "attn.wkv.weight",
+    "self_attention.kv_layernorm.weight": "attn.kv_norm.weight",
+    # Attention — HCA (grouped low-rank O)
+    "self_attention.o_head_grouped.linear_o_down_proj.weight": "attn.wo_a.weight",
+    "self_attention.o_head_grouped.linear_o_up_proj.weight": "attn.wo_b.weight",
+    # Attention — per-layer Compressor (gated by compress_ratios!=0)
+    "self_attention.compressor.ape": "attn.compressor.ape",
+    "self_attention.compressor.wkv.weight": "attn.compressor.wkv.weight",
+    "self_attention.compressor.wgate.weight": "attn.compressor.wgate.weight",
+    "self_attention.compressor.norm.weight": "attn.compressor.norm.weight",
+    # Attention — per-layer Indexer (gated by compress_ratios==4)
+    "self_attention.indexer.linear_q_up_proj.weight": "attn.indexer.wq_b.weight",
+    "self_attention.indexer.weights_proj.weight": "attn.indexer.weights_proj.weight",
+    "self_attention.indexer.compressor.ape": "attn.indexer.compressor.ape",
+    "self_attention.indexer.compressor.wkv.weight": "attn.indexer.compressor.wkv.weight",
+    "self_attention.indexer.compressor.wgate.weight": "attn.indexer.compressor.wgate.weight",
+    "self_attention.indexer.compressor.norm.weight": "attn.indexer.compressor.norm.weight",
+    # MoE — router + shared expert down-projection
+    "mlp.router.weight": "ffn.gate.weight",
+    "mlp.router.bias": "ffn.gate.bias",
+    "mlp.router.tid2eid": "ffn.gate.tid2eid",
+    "mlp.experts.linear_fc2.weight*": "ffn.experts.*.w2.weight",
+    "mlp.shared_experts.linear_fc2.weight": "ffn.shared_experts.w2.weight",
+}
 
 
-def export_hf_state_dict(mg_sd: Dict[str, torch.Tensor], args: DeepSeekV4ModelArgs) -> Dict[str, torch.Tensor]:
-    """Inverse — produce an HF-format state_dict from a Megatron-mirror one."""
-    out: Dict[str, torch.Tensor] = {}
-    # Pre-build a set of mcore keys we'll need to JOIN back into hc_*_scale.
-    for hf_key in _enumerate_hf_keys(args):
-        _export_one(hf_key, mg_sd, out)
-    _sanity_check_count(mg_sd, out, args, direction="mg->hf")
-    return out
+def _layer_mappings(*, num_experts: int) -> list:
+    """Return the wildcarded per-transformer-layer mapping list."""
+    mappings: list = []
+    for mg_rel, hf_rel in _SIMPLE_BLOCK_MAPPINGS.items():
+        mappings.append(
+            AutoMapping(
+                megatron_param=f"decoder.layers.*.{mg_rel}",
+                hf_param=f"layers.*.{hf_rel}",
+            )
+        )
+    # Gated-MLP fusions: Megatron's single linear_fc1 ↔ HF's separate w1/w3.
+    mappings.extend(
+        [
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                gate="layers.*.ffn.experts.*.w1.weight",
+                up="layers.*.ffn.experts.*.w3.weight",
+            ),
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                gate="layers.*.ffn.shared_experts.w1.weight",
+                up="layers.*.ffn.shared_experts.w3.weight",
+            ),
+        ]
+    )
+    return mappings
 
 
-# --- implementation details -------------------------------------------------
+def _mtp_layer_mappings(mtp_layer: int, hf_idx: int, num_experts: int) -> list:
+    """Return the explicit mapping list for a single MTP layer."""
+    prefix_mg = f"mtp.layers.{mtp_layer}"
+    inner_mg = f"{prefix_mg}.mtp_model_layer"
+    prefix_hf = f"mtp.{mtp_layer}"
+
+    mappings: list = [
+        # MTP extras (not present in regular layers).
+        AutoMapping(megatron_param=f"{prefix_mg}.e_proj.weight", hf_param=f"{prefix_hf}.e_proj.weight"),
+        AutoMapping(megatron_param=f"{prefix_mg}.h_proj.weight", hf_param=f"{prefix_hf}.h_proj.weight"),
+        AutoMapping(megatron_param=f"{prefix_mg}.enorm.weight", hf_param=f"{prefix_hf}.enorm.weight"),
+        AutoMapping(megatron_param=f"{prefix_mg}.hnorm.weight", hf_param=f"{prefix_hf}.hnorm.weight"),
+        AutoMapping(megatron_param=f"{prefix_mg}.final_layernorm.weight", hf_param=f"{prefix_hf}.norm.weight"),
+        AutoMapping(megatron_param=f"{prefix_mg}.hc_head_fn", hf_param=f"{prefix_hf}.hc_head_fn"),
+        AutoMapping(megatron_param=f"{prefix_mg}.hc_head_base", hf_param=f"{prefix_hf}.hc_head_base"),
+        AutoMapping(megatron_param=f"{prefix_mg}.hc_head_scale", hf_param=f"{prefix_hf}.hc_head_scale"),
+    ]
+
+    # Same block pattern as transformer layers — but with explicit indices.
+    for mg_rel, hf_rel in _SIMPLE_BLOCK_MAPPINGS.items():
+        mappings.append(
+            AutoMapping(
+                megatron_param=f"{inner_mg}.{mg_rel}",
+                hf_param=f"{prefix_hf}.{hf_rel}",
+            )
+        )
+
+    mappings.extend(
+        [
+            GatedMLPMapping(
+                megatron_param=f"{inner_mg}.mlp.experts.linear_fc1.weight*",
+                gate=f"{prefix_hf}.ffn.experts.*.w1.weight",
+                up=f"{prefix_hf}.ffn.experts.*.w3.weight",
+            ),
+            GatedMLPMapping(
+                megatron_param=f"{inner_mg}.mlp.shared_experts.linear_fc1.weight",
+                gate=f"{prefix_hf}.ffn.shared_experts.w1.weight",
+                up=f"{prefix_hf}.ffn.shared_experts.w3.weight",
+            ),
+        ]
+    )
+    return mappings
 
 
-def _translate_and_place(hf_key: str, tensor: torch.Tensor, out: Dict[str, torch.Tensor]) -> None:
-    if hf_key in _ROOT_RENAMES:
-        out[_ROOT_RENAMES[hf_key]] = tensor
-        return
-
-    m = _LAYER_RE.match(hf_key)
-    if m is not None:
-        layer_idx, suffix = m.group(1), m.group(2)
-        prefix = f"decoder.layers.{layer_idx}"
-        for mg_suffix, piece in _translate_block_key(suffix, tensor, is_mtp=False):
-            out[f"{prefix}.{mg_suffix}"] = piece
-        return
-
-    m = _MTP_RE.match(hf_key)
-    if m is not None:
-        mtp_idx, suffix = m.group(1), m.group(2)
-        prefix = f"mtp.layers.{mtp_idx}"
-        for mg_suffix, piece in _translate_block_key(suffix, tensor, is_mtp=True):
-            out[f"{prefix}.{mg_suffix}"] = piece
-        return
-
-    raise KeyError(f"Unrecognized DeepSeek-V4 HF key: {hf_key!r}")
+# ---------------------------------------------------------------------------
+# FP4 dequant (reference, not fused)
+# ---------------------------------------------------------------------------
 
 
-def _translate_block_key(suffix: str, tensor: torch.Tensor, *, is_mtp: bool) -> Iterator[tuple[str, torch.Tensor]]:
-    """Yield (megatron-suffix, tensor) pairs for a single HF block-relative key.
+_FP4_TABLE = torch.tensor(
+    [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0],
+    dtype=torch.float32,
+)
 
-    Fanout: `hc_*_scale [3]` → three `(mcore_name, scalar)` pairs.
+_FP4_BLOCK = 32  # per inference/convert.py
+
+
+def _fp4_to_bf16(weight: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    """Unpack FP4 (two nibbles per int8) to BF16 using DS's FP4_TABLE + ue8m0 scale.
+
+    See `inference/convert.py:cast_e2m1fn_to_e4m3fn` for the intended layout:
+    `weight: [O, I/2]` int8 with two FP4 values per byte; `scale: [O, I/32]`
+    in float8_e8m0fnu. We expand to [O, I] and multiply by scale per
+    32-wide block.
     """
-    if is_mtp and suffix in _MTP_FIXED_RENAMES:
-        yield _MTP_FIXED_RENAMES[suffix], tensor
-        return
-
-    for mg_suffix, piece in _translate_inner(suffix, tensor):
-        yield (f"mtp_model_layer.{mg_suffix}" if is_mtp else mg_suffix, piece)
-
-
-def _translate_inner(suffix: str, tensor: torch.Tensor) -> Iterator[tuple[str, torch.Tensor]]:
-    if suffix in _LAYER_FIXED_RENAMES:
-        yield _LAYER_FIXED_RENAMES[suffix], tensor
-        return
-    if suffix in _ATTN_RENAMES:
-        yield _ATTN_RENAMES[suffix], tensor
-        return
-    if suffix in _MOE_FIXED_RENAMES:
-        yield _MOE_FIXED_RENAMES[suffix], tensor
-        return
-    if suffix in _HC_SCALE_FANOUT:
-        names = _HC_SCALE_FANOUT[suffix]
-        # Split tensor [3] into three scalar params of shape [1].
-        if tensor.shape != (3,):
-            raise ValueError(f"Expected HF {suffix} to be shape (3,), got {tuple(tensor.shape)}")
-        for i, mg_name in enumerate(names):
-            yield mg_name, tensor[i : i + 1].clone()
-        return
-    m = _EXPERT_RE.match(suffix)
-    if m is not None:
-        idx, w, t = m.group(1), m.group(2), m.group(3)
-        yield f"mlp.experts.{idx}.{_EXPERT_W_TO_MEGATRON[w]}.{t}", tensor
-        return
-    raise KeyError(f"Unrecognized DeepSeek-V4 block-relative key: {suffix!r}")
-
-
-def _export_one(hf_key: str, mg_sd: Dict[str, torch.Tensor], out: Dict[str, torch.Tensor]) -> None:
-    # Find the *set* of mcore keys that map to this HF key (1, or 3 for scale).
-    mg_names = _hf_key_to_megatron_keys(hf_key)
-    if len(mg_names) == 1:
-        out[hf_key] = mg_sd[mg_names[0]]
-    else:
-        # hc_*_scale: concatenate three [1] tensors into [3].
-        pieces = [mg_sd[name] for name in mg_names]
-        out[hf_key] = torch.cat(pieces, dim=0)
-
-
-def _hf_key_to_megatron_keys(hf_key: str) -> List[str]:
-    if hf_key in _ROOT_RENAMES:
-        return [_ROOT_RENAMES[hf_key]]
-    m = _LAYER_RE.match(hf_key)
-    if m is not None:
-        layer_idx, suffix = m.group(1), m.group(2)
-        prefix = f"decoder.layers.{layer_idx}"
-        return [f"{prefix}.{s}" for s in _inner_mcore_suffixes(suffix, is_mtp=False)]
-    m = _MTP_RE.match(hf_key)
-    if m is not None:
-        mtp_idx, suffix = m.group(1), m.group(2)
-        prefix = f"mtp.layers.{mtp_idx}"
-        return [f"{prefix}.{s}" for s in _inner_mcore_suffixes(suffix, is_mtp=True)]
-    raise KeyError(f"Unrecognized DeepSeek-V4 HF key: {hf_key!r}")
-
-
-def _inner_mcore_suffixes(suffix: str, *, is_mtp: bool) -> List[str]:
-    if is_mtp and suffix in _MTP_FIXED_RENAMES:
-        return [_MTP_FIXED_RENAMES[suffix]]
-    base = _inner_mcore_block_suffixes(suffix)
-    return [f"mtp_model_layer.{s}" if is_mtp else s for s in base]
-
-
-def _inner_mcore_block_suffixes(suffix: str) -> List[str]:
-    if suffix in _LAYER_FIXED_RENAMES:
-        return [_LAYER_FIXED_RENAMES[suffix]]
-    if suffix in _ATTN_RENAMES:
-        return [_ATTN_RENAMES[suffix]]
-    if suffix in _MOE_FIXED_RENAMES:
-        return [_MOE_FIXED_RENAMES[suffix]]
-    if suffix in _HC_SCALE_FANOUT:
-        return list(_HC_SCALE_FANOUT[suffix])
-    m = _EXPERT_RE.match(suffix)
-    if m is not None:
-        idx, w, t = m.group(1), m.group(2), m.group(3)
-        return [f"mlp.experts.{idx}.{_EXPERT_W_TO_MEGATRON[w]}.{t}"]
-    raise KeyError(f"Unrecognized DeepSeek-V4 block-relative key: {suffix!r}")
-
-
-# ============================================================================
-# Enumeration (used by tests; cheap to call)
-# ============================================================================
-
-
-def _enumerate_hf_keys(args: DeepSeekV4ModelArgs) -> Iterator[str]:
-    yield "embed.weight"
-    yield "norm.weight"
-    yield "head.weight"
-    yield "hc_head_fn"
-    yield "hc_head_base"
-    yield "hc_head_scale"
-    for layer_idx in range(args.n_layers):
-        for key in _enumerate_block_keys(layer_idx, args):
-            yield f"layers.{layer_idx}.{key}"
-    for i in range(args.n_mtp_layers):
-        layer_id = args.n_layers + i
-        for key in _enumerate_block_keys(layer_id, args):
-            yield f"mtp.{i}.{key}"
-        yield from (f"mtp.{i}.{k}" for k in _MTP_FIXED_RENAMES)
-
-
-def _enumerate_block_keys(layer_id: int, args: DeepSeekV4ModelArgs) -> Iterator[str]:
-    yield "attn_norm.weight"
-    yield "ffn_norm.weight"
-    yield "hc_attn_fn"
-    yield "hc_attn_base"
-    yield "hc_attn_scale"
-    yield "hc_ffn_fn"
-    yield "hc_ffn_base"
-    yield "hc_ffn_scale"
-    yield "attn.attn_sink"
-    yield "attn.wq_a.weight"
-    yield "attn.wq_a.scale"
-    yield "attn.wq_b.weight"
-    yield "attn.wq_b.scale"
-    yield "attn.q_norm.weight"
-    yield "attn.wkv.weight"
-    yield "attn.wkv.scale"
-    yield "attn.kv_norm.weight"
-    yield "attn.wo_a.weight"
-    yield "attn.wo_a.scale"
-    yield "attn.wo_b.weight"
-    yield "attn.wo_b.scale"
-    compress_ratio = args.compress_ratios[layer_id]
-    if compress_ratio:
-        yield "attn.compressor.ape"
-        yield "attn.compressor.wkv.weight"
-        yield "attn.compressor.wgate.weight"
-        yield "attn.compressor.norm.weight"
-        if compress_ratio == 4:
-            yield "attn.indexer.wq_b.weight"
-            yield "attn.indexer.wq_b.scale"
-            yield "attn.indexer.weights_proj.weight"
-            yield "attn.indexer.compressor.ape"
-            yield "attn.indexer.compressor.wkv.weight"
-            yield "attn.indexer.compressor.wgate.weight"
-            yield "attn.indexer.compressor.norm.weight"
-    yield "ffn.gate.weight"
-    if layer_id < args.n_hash_layers:
-        yield "ffn.gate.tid2eid"
-    else:
-        yield "ffn.gate.bias"
-    for i in range(args.n_routed_experts):
-        for w in ("w1", "w2", "w3"):
-            yield f"ffn.experts.{i}.{w}.weight"
-            yield f"ffn.experts.{i}.{w}.scale"
-    for w in ("w1", "w2", "w3"):
-        yield f"ffn.shared_experts.{w}.weight"
-        yield f"ffn.shared_experts.{w}.scale"
-
-
-def _sanity_check_count(
-    inputs: Dict[str, torch.Tensor],
-    outputs: Dict[str, torch.Tensor],
-    args: DeepSeekV4ModelArgs,
-    *,
-    direction: str,
-) -> None:
-    # On HF->Mg, 3 HF scale params per HC-block expand to 3+3=6 mcore alphas,
-    # plus 2 for fn/base renames (unchanged count for those). Net: +2 per HC
-    # group per block. Track it precisely.
-    expected_mg = _expected_megatron_key_count(args)
-    expected_hf = sum(1 for _ in _enumerate_hf_keys(args))
-    if direction == "hf->mg":
-        if len(outputs) != expected_mg:
-            raise AssertionError(f"hf->mg produced {len(outputs)} keys, expected {expected_mg}")
-    else:
-        if len(outputs) != expected_hf:
-            raise AssertionError(f"mg->hf produced {len(outputs)} keys, expected {expected_hf}")
-
-
-def _expected_megatron_key_count(args: DeepSeekV4ModelArgs) -> int:
-    n_hf = sum(1 for _ in _enumerate_hf_keys(args))
-    # Each block has 2 HC scales (attn, ffn) that fan 1→3, so +2 keys per scale.
-    blocks = args.n_layers + args.n_mtp_layers
-    hc_scale_fanout_extra = 2 * 2 * blocks  # 2 scales * (3-1 extra) = 4 extra per block
-    return n_hf + hc_scale_fanout_extra
-
-
-# ============================================================================
-# Backward-compat helpers (used by earlier verification scripts)
-# ============================================================================
-
-
-def translate_hf_to_megatron(hf_key: str) -> str:
-    """Single-key rename — returns the *first* mcore key for 1→N fanouts."""
-    return _hf_key_to_megatron_keys(hf_key)[0]
-
-
-def build_translation_table(args: DeepSeekV4ModelArgs):
-    """Flat list of HF-key / megatron-key pairs (multi-entry for fanouts)."""
-    entries: List[TranslationEntry] = []
-    for hf_key in _enumerate_hf_keys(args):
-        mg_keys = _hf_key_to_megatron_keys(hf_key)
-        if len(mg_keys) == 1:
-            entries.append(TranslationEntry(hf=hf_key, megatron=mg_keys[0]))
-        else:
-            for mg in mg_keys:
-                entries.append(TranslationEntry(hf=hf_key, megatron=mg, kind="hc_scale_split"))
-    return entries
+    if weight.ndim != 2:
+        raise ValueError(f"Expected 2D FP4 weight, got shape {tuple(weight.shape)}")
+    out_dim, packed_in = weight.shape
+    in_dim = packed_in * 2
+    w_u8 = weight.view(torch.uint8)
+    low = w_u8 & 0x0F
+    high = (w_u8 >> 4) & 0x0F
+    table = _FP4_TABLE.to(weight.device)
+    w = torch.stack([table[low.long()], table[high.long()]], dim=-1).flatten(1)
+    # scale is per (out, in/block) — expand to per-element along in_dim.
+    s_bf16 = scale.to(torch.bfloat16)
+    s_exp = s_bf16.repeat_interleave(_FP4_BLOCK, dim=1)[:, :in_dim]
+    return (w.to(torch.bfloat16) * s_exp).to(torch.bfloat16)

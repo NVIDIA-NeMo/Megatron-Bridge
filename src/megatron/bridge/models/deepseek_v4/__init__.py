@@ -12,4 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.deepseek_v4 import deepseek_v4_bridge  # noqa: F401
+from megatron.bridge.models.deepseek_v4.deepseek_v4_bridge import DeepSeekV4Bridge
+
+
+__all__ = ["DeepSeekV4Bridge"]
