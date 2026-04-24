@@ -23,26 +23,26 @@ from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_trans
 from megatron.core.transformer.mlp import MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
-from whisper.whisper_layer_specs import get_whisper_layer_with_transformer_engine_spec
-from whisper.whisper_model import WhisperEncoder
 
 # Shared LLaVA (Vicuna-7B + CLIP ViT-L/14) configs and checkpoint helpers.
 from megatron_mimo_training_llava import (
+    _ENCODER_SEQ_LEN,
+    _IMG_SIZE,
+    _PATCH_DIM,
     CLIP_OUTPUT_DIM,
     IMAGE_SPECIAL_TOKEN_ID,
     MAX_SEQ_LENGTH,
     VOCAB_SIZE,
     CLIPViTNoCLS,
     _build_config,
-    _ENCODER_SEQ_LEN,
-    _IMG_SIZE,
     _load_tp_rank_weights,
     _make_language_config,
     _make_projection_config,
     _make_vision_config,
-    _PATCH_DIM,
     _str2bool,
 )
+from whisper.whisper_layer_specs import get_whisper_layer_with_transformer_engine_spec
+from whisper.whisper_model import WhisperEncoder
 
 
 # ---------------------------------------------------------------------------
