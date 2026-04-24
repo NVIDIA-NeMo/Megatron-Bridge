@@ -41,7 +41,6 @@ LLAMA_PRETRAIN_RECIPES = [
             "async_save": True,
             "async_strategy": "nvrx",
             "use_persistent_ckpt_worker": True,
-            "dist_ckpt_workers": 1,
         },
         {
             "use_megatron_fsdp": True,
