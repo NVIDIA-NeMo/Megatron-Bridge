@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 
-SCRIPTS_PERF_PATH = Path(__file__).parents[4] / "scripts" / "performance"
+SCRIPTS_PERF_PATH = Path(__file__).parents[3] / "scripts" / "performance"
 sys.path.insert(0, str(SCRIPTS_PERF_PATH))
 
 
