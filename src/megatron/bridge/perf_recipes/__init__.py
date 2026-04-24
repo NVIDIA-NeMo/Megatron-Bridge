@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Kimi K2 models
-from .kimi_k2 import kimi_k2_pretrain_config
+"""Flat performance benchmark recipes for throughput measurement.
 
-
-__all__ = [
-    # Kimi K2
-    "kimi_k2_pretrain_config",
-]
+Each sub-package corresponds to one model family.  Every recipe function is
+self-contained: it calls a library recipe, overrides parallelism / precision,
+calls ``_benchmark_common()``, and returns a ``ConfigContainer``.
+"""

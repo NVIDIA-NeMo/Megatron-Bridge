@@ -27,34 +27,6 @@ from .gpt_oss import (
     gpt_oss_120b_sft_config,
 )
 
-# GPT-OSS perf recipes
-from .gpt_oss_perf import (
-    gpt_oss_120b_pretrain_64gpu_b200_bf16_config,
-    gpt_oss_120b_pretrain_64gpu_b300_bf16_config,
-    gpt_oss_120b_pretrain_64gpu_gb200_bf16_config,
-    # V1
-    gpt_oss_120b_pretrain_64gpu_gb300_bf16_config,
-    gpt_oss_120b_pretrain_64gpu_h100_bf16_config,
-    gpt_oss_120b_pretrain_v2_64gpu_b200_bf16_config,
-    gpt_oss_120b_pretrain_v2_64gpu_b300_bf16_config,
-    gpt_oss_120b_pretrain_v2_64gpu_gb200_bf16_config,
-    # V2
-    gpt_oss_120b_pretrain_v2_64gpu_gb300_bf16_config,
-    gpt_oss_120b_pretrain_v2_64gpu_h100_bf16_config,
-    # FP8-MX aliases (V1)
-    gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config,
-    gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config,
-    gpt_oss_120b_pretrain_64gpu_b300_fp8mx_config,
-    gpt_oss_120b_pretrain_64gpu_b200_fp8mx_config,
-    gpt_oss_120b_pretrain_64gpu_h100_fp8mx_config,
-    # FP8-MX aliases (V2)
-    gpt_oss_120b_pretrain_v2_64gpu_gb300_fp8mx_config,
-    gpt_oss_120b_pretrain_v2_64gpu_gb200_fp8mx_config,
-    gpt_oss_120b_pretrain_v2_64gpu_b300_fp8mx_config,
-    gpt_oss_120b_pretrain_v2_64gpu_b200_fp8mx_config,
-    gpt_oss_120b_pretrain_v2_64gpu_h100_fp8mx_config,
-)
-
 
 __all__ = [
     "gpt_oss_20b_pretrain_config",
@@ -69,28 +41,4 @@ __all__ = [
     "gpt_oss_20b_pretrain_mxfp8_config",
     "gpt_oss_20b_sft_mxfp8_config",
     "gpt_oss_20b_peft_mxfp8_config",
-    # GPT-OSS perf recipes — V1
-    "gpt_oss_120b_pretrain_64gpu_gb300_bf16_config",
-    "gpt_oss_120b_pretrain_64gpu_gb200_bf16_config",
-    "gpt_oss_120b_pretrain_64gpu_b300_bf16_config",
-    "gpt_oss_120b_pretrain_64gpu_b200_bf16_config",
-    "gpt_oss_120b_pretrain_64gpu_h100_bf16_config",
-    # GPT-OSS perf recipes — V2
-    "gpt_oss_120b_pretrain_v2_64gpu_gb300_bf16_config",
-    "gpt_oss_120b_pretrain_v2_64gpu_gb200_bf16_config",
-    "gpt_oss_120b_pretrain_v2_64gpu_b300_bf16_config",
-    "gpt_oss_120b_pretrain_v2_64gpu_b200_bf16_config",
-    "gpt_oss_120b_pretrain_v2_64gpu_h100_bf16_config",
-    # GPT-OSS perf recipes — FP8-MX aliases (V1)
-    "gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config",
-    "gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config",
-    "gpt_oss_120b_pretrain_64gpu_b300_fp8mx_config",
-    "gpt_oss_120b_pretrain_64gpu_b200_fp8mx_config",
-    "gpt_oss_120b_pretrain_64gpu_h100_fp8mx_config",
-    # GPT-OSS perf recipes — FP8-MX aliases (V2)
-    "gpt_oss_120b_pretrain_v2_64gpu_gb300_fp8mx_config",
-    "gpt_oss_120b_pretrain_v2_64gpu_gb200_fp8mx_config",
-    "gpt_oss_120b_pretrain_v2_64gpu_b300_fp8mx_config",
-    "gpt_oss_120b_pretrain_v2_64gpu_b200_fp8mx_config",
-    "gpt_oss_120b_pretrain_v2_64gpu_h100_fp8mx_config",
 ]

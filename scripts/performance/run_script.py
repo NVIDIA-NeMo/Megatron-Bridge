@@ -61,8 +61,8 @@ def _dump_env_rank0() -> None:
         logger.warning(f"Failed to write environment dump to {env_path}: {e}")
 
 
-def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision, config_variant="v1"):
-    """Load a flat perf recipe from megatron.bridge.recipes by convention name."""
+def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision):
+    """Load a flat perf recipe from megatron.bridge.perf_recipes by convention name."""
     import importlib
 
     precision_map = {
@@ -74,8 +74,7 @@ def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision, c
     }
     prec = precision_map.get(precision.lower(), precision.lower().replace("_", ""))
 
-    v2_prefix = "_v2" if config_variant == "v2" else ""
-    name = f"{model_recipe_name}_{task}{v2_prefix}_{num_gpus}gpu_{gpu}_{prec}_config"
+    name = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{prec}_config"
 
     family_map = {
         "llama3_8b": "llama",
@@ -91,6 +90,10 @@ def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision, c
         "gpt_oss_120b": "gpt_oss",
         "qwen3_vl_235b_a22b": "qwen_vl",
         "qwen3_vl_30b_a3b": "qwen_vl",
+        "qwen35_vl_35b_a3b": "qwen_vl",
+        "qwen35_vl_122b_a10b": "qwen_vl",
+        "qwen35_vl_397b_a17b": "qwen_vl",
+        "wan_14b": "wan",
     }
 
     family = family_map.get(model_recipe_name)
@@ -99,10 +102,10 @@ def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision, c
             f"Unknown model_recipe_name {model_recipe_name!r}. Add it to family_map in get_perf_recipe_by_name."
         )
 
-    mod = importlib.import_module(f"megatron.bridge.recipes.{family}")
+    mod = importlib.import_module(f"megatron.bridge.perf_recipes.{family}")
     recipe_fn = getattr(mod, name, None)
     if recipe_fn is None:
-        raise ValueError(f"No perf recipe {name!r} found in megatron.bridge.recipes.{family}.")
+        raise ValueError(f"No perf recipe {name!r} found in megatron.bridge.perf_recipes.{family}.")
     return recipe_fn()
 
 
@@ -122,7 +125,6 @@ def main():
         num_gpus=args.num_gpus,
         gpu=args.gpu,
         precision=args.compute_dtype,
-        config_variant=args.config_variant,
     )
 
     recipe = set_cli_overrides(recipe, cli_overrides)
