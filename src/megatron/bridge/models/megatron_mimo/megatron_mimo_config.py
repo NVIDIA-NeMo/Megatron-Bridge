@@ -61,8 +61,19 @@ class ModuleParallelismConfig:
 class MegatronMIMOParallelismConfig:
     """Configuration for multi-module (MegatronMIMO) heterogeneous parallelism.
 
-    Note: Phase 1 only supports heterogeneous deployment where each module
-    can have different parallelism configurations and rank offsets.
+    Supports two module-placement modes — auto-detected from module rank ranges:
+
+    * Non-colocated: each module occupies a disjoint rank range (different
+      ``rank_offset`` / ``total_ranks``). Encoder and LLM run on separate
+      physical ranks; cross-module communication uses the multi-module
+      pipeline communicator.
+    * Colocated: every module spans the same rank range (identical
+      ``rank_offset`` AND identical ``total_ranks``), each with its own
+      TP/DP layout. MCore's ``ColocatedBridgeCommunicator`` handles the
+      encoder→LLM activation reshape.
+
+    Partial overlap — modules whose ranges neither fully match nor are fully
+    disjoint — is rejected because neither mode applies.
 
     The language module must be named MIMO_LANGUAGE_MODULE_KEY ("language") in module_parallelisms.
     """
@@ -83,20 +94,48 @@ class MegatronMIMOParallelismConfig:
         ranges = [p.rank_offset + p.total_ranks for p in self.module_parallelisms.values()]
         return max(ranges) if ranges else 0
 
-    def _validate_heterogeneous(self) -> None:
-        """Validate heterogeneous deployment: no overlapping rank ranges."""
-        ranges = []
-        for name, parallelism in self.module_parallelisms.items():
-            if parallelism.data_parallel_size is None:
-                raise ValueError("data_parallel_size must be set for heterogeneous deployment.")
-            ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks, name))
+    def _validate_module_placement(self) -> None:
+        """Validate module placement against the two supported modes.
 
-        ranges.sort(key=lambda x: x[0])
+        Accepts either:
+          * Colocated — every module range identical (same ``rank_offset``
+            AND ``total_ranks``).
+          * Non-colocated — every module range pairwise disjoint.
+
+        Rejects any other layout (partial overlap or containment — e.g. an
+        LLM spanning all ranks while two encoders occupy disjoint halves).
+        Such "hybrid" layouts are a legitimate pattern but not yet
+        supported: MCore's ``RankRole.build`` collapses placement to a
+        single mode enum and ``MimoModel.forward`` dispatches on that enum,
+        so a rank in both an encoder grid and the LLM grid would run only
+        one module per step. Supporting hybrid placement would require
+        per-pair mode detection on the MCore side. Until then we fail
+        fast here so configurations are unambiguous.
+        """
+        for parallelism in self.module_parallelisms.values():
+            if parallelism.data_parallel_size is None:
+                raise ValueError("data_parallel_size must be set for module placement.")
+
+        placement_tuples = [(p.rank_offset, p.total_ranks) for p in self.module_parallelisms.values()]
+        if len(set(placement_tuples)) == 1:
+            # All modules share the same rank range → colocated. Valid.
+            return
+
+        # Non-colocated: every pair of ranges must be disjoint.
+        ranges = sorted(
+            (p.rank_offset, p.rank_offset + p.total_ranks, name) for name, p in self.module_parallelisms.items()
+        )
         for idx in range(1, len(ranges)):
-            prev_end = ranges[idx - 1][1]
-            cur_start = ranges[idx][0]
+            prev_start, prev_end, prev_name = ranges[idx - 1]
+            cur_start, cur_end, cur_name = ranges[idx]
             if cur_start < prev_end:
-                raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
+                raise ValueError(
+                    f"Module rank ranges must be either all identical (colocated) "
+                    f"or all pairwise disjoint (non-colocated). Got partial overlap "
+                    f"(hybrid placement — valid pattern, not yet supported): "
+                    f"'{prev_name}' = [{prev_start}, {prev_end}), "
+                    f"'{cur_name}' = [{cur_start}, {cur_end})."
+                )
 
     def _validate_parallelism_constraints(self) -> None:
         """Validate parallelism constraints for cross-module communication.
@@ -164,7 +203,7 @@ class MegatronMIMOParallelismConfig:
         for parallelism in self.module_parallelisms.values():
             parallelism.finalize(None)
 
-        self._validate_heterogeneous()
+        self._validate_module_placement()
         self._validate_parallelism_constraints()
 
         expected = self.total_world_size

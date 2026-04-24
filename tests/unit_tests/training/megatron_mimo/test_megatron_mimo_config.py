@@ -47,3 +47,38 @@ def test_megatron_mimo_heterogeneous_valid_contiguous():
     # No gaps, no overlap, encoder DP >= LLM DP - should pass
     megatron_mimo_parallelism_config.finalize(world_size=6)
     assert megatron_mimo_parallelism_config.total_world_size == 6
+
+
+def test_megatron_mimo_colocated_same_offset_same_size_accepted():
+    """Colocated: modules share identical rank range (same offset AND same total_ranks)."""
+    module_parallelisms = {
+        "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=8, rank_offset=0),
+        "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=8, rank_offset=0),
+    }
+    cfg = MegatronMIMOParallelismConfig(module_parallelisms=module_parallelisms)
+    cfg.finalize(world_size=8)
+    assert cfg.total_world_size == 8
+
+
+def test_megatron_mimo_colocated_different_tp_dp_accepted():
+    """Colocated with different (TP, DP) layouts per module — the fan-in case
+    that colocated mode is designed for. Both modules occupy ranks [0, 8);
+    encoder has (TP=1, DP=8) and language has (TP=4, DP=2)."""
+    module_parallelisms = {
+        "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=8, rank_offset=0),
+        "language": ModuleParallelismConfig(tensor_model_parallel_size=4, data_parallel_size=2, rank_offset=0),
+    }
+    cfg = MegatronMIMOParallelismConfig(module_parallelisms=module_parallelisms)
+    cfg.finalize(world_size=8)
+    assert cfg.total_world_size == 8
+
+
+def test_megatron_mimo_rejects_partial_overlap_same_offset_different_size():
+    """Same rank_offset but different total_ranks is neither colocated nor disjoint."""
+    module_parallelisms = {
+        "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=8, rank_offset=0),
+        "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=0),
+    }
+    cfg = MegatronMIMOParallelismConfig(module_parallelisms=module_parallelisms)
+    with pytest.raises(ValueError, match="partial overlap"):
+        cfg.finalize(world_size=8)
