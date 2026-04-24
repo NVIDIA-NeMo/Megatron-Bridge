@@ -319,6 +319,21 @@ def _compute_forward_only_loss(forward_step_func, model, data_iterator, state, p
     return {}
 
 
+def _get_inner_optimizer(megatron_optimizer):
+    """Unwrap ChainedOptimizer / DistributedOptimizer to reach the raw torch optimizer."""
+    from megatron.core.optimizer.optimizer import ChainedOptimizer
+
+    opt = megatron_optimizer
+    if isinstance(opt, ChainedOptimizer):
+        opt = opt.chained_optimizers[0]
+    while hasattr(opt, "optimizer") and not isinstance(opt.optimizer, type(opt)):
+        inner = opt.optimizer
+        if inner is opt:
+            break
+        opt = inner
+    return opt
+
+
 class TestMegatronFSDP:
     """
     Test end to end training with Megatron FSDP and fsdp_dtensor checkpoint functionality.
@@ -510,3 +525,89 @@ class TestMegatronFSDP:
 
         finally:
             clear_directories(shared_base_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_fsdp_precision_aware_optimizer_decoupled_grad_consistency(self, tmp_path):
+        """Verify that MFSDP + precision-aware optimizer keeps decoupled_grad
+        consistent across ParamAndGradBuffer, FusedAdam, and clip_grad_norm.
+
+        1. Build a 1-GPU MFSDP model with use_precision_aware_optimizer=True.
+        2. Run a single training iteration (forward + backward + optimizer step).
+        3. Assert:
+           a) ParamAndGradBuffer.use_decoupled_grad is True
+           b) The underlying FusedAdam was created with use_decoupled_grad=True
+           c) clip_grad_norm succeeds and returns a finite grad norm
+           d) Parameters carry the __fsdp_param__ marker (needed by clip_grad_norm
+              to select the decoupled_grad path)
+        """
+        from megatron.core.distributed.fsdp.src.megatron_fsdp import MegatronFSDP
+
+        from megatron.bridge.data.utils import get_dataset_provider
+        from megatron.bridge.training.setup import setup
+
+        initialize_distributed()
+
+        torch.distributed.barrier()
+
+        try:
+            seq_length = 512
+            train_iters = 1
+
+            cfg = create_fsdp_config_container(
+                seq_length=seq_length,
+                train_iters=train_iters,
+                optimizer={"use_precision_aware_optimizer": True},
+            )
+            runtime_config_update(cfg)
+
+            state = GlobalState()
+            state.cfg = cfg
+            setup_out = setup(state, get_dataset_provider(cfg.dataset))
+
+            model_list = setup_out.model
+            optimizer = setup_out.optimizer
+
+            # --- Run one training iteration ---
+            run_training(
+                forward_step,
+                model_list,
+                optimizer,
+                setup_out.scheduler,
+                setup_out.train_data_iterator,
+                setup_out.valid_data_iterator,
+                setup_out.state,
+                setup_out.checkpoint_manager,
+                setup_out.pg_collection,
+            )
+
+            # --- (a) MFSDP ParamAndGradBuffer has use_decoupled_grad=True ---
+            mfsdp_model = model_list[0].module
+            assert isinstance(mfsdp_model, MegatronFSDP), f"Expected MegatronFSDP, got {type(mfsdp_model)}"
+            pgb = mfsdp_model.param_and_grad_buffer
+            assert pgb.use_decoupled_grad is True, (
+                "ParamAndGradBuffer.use_decoupled_grad should be True when use_precision_aware_optimizer is enabled"
+            )
+
+            # --- (b) Underlying FusedAdam has use_decoupled_grad=True ---
+            inner_opt = _get_inner_optimizer(optimizer)
+            assert getattr(inner_opt, "use_decoupled_grad", False), (
+                f"FusedAdam.use_decoupled_grad should be True, "
+                f"got {getattr(inner_opt, 'use_decoupled_grad', 'MISSING')} "
+                f"on {type(inner_opt).__name__}"
+            )
+
+            # --- (c) clip_grad_norm does not segfault / has non-zero grad norm ---
+            grad_norm = optimizer.clip_grad_norm(cfg.optimizer.clip_grad)
+            assert torch.isfinite(torch.tensor(grad_norm)), f"clip_grad_norm returned non-finite grad_norm={grad_norm}"
+
+            # --- (d) Parameters carry __fsdp_param__ marker ---
+            params = optimizer.get_parameters()
+            fsdp_params = [p for p in params if getattr(p, "__fsdp_param__", False)]
+            assert len(fsdp_params) > 0, (
+                "No parameters have __fsdp_param__=True; clip_grad_norm won't use the decoupled_grad path"
+            )
+
+            _finish_train(setup_out.state, setup_out.checkpoint_manager)
+
+        finally:
+            clear_directories(tmp_path)
