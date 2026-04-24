@@ -352,7 +352,6 @@ class TestMegatronFSDP:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.pleasefixme  # Broken after TE2.14 bump
     def test_fsdp_pretrain_with_checkpoint(self, tmp_path):
         """
         Test FSDP training with checkpoint saving using fsdp_dtensor format.
