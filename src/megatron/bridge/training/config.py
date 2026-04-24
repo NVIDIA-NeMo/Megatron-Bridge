@@ -960,14 +960,8 @@ class InProcessRestartConfig:
 class TokenizerConfig(MTrainTokenizerConfig):
     """Configuration settings for tokenizers."""
 
-    metadata_path: Optional[Union[str | dict]] = None
-    """Path to the tokenizer metadata file."""
-
     special_tokens: Optional[list[str]] = None
     """List of special tokens. For TikToken, needs to have ["<unk>", "<s>", "</s>"]."""
-
-    chat_template: Optional[str] = None
-    """Custom chat template in jinja format for conversation formatting."""
 
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
     """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
@@ -1007,14 +1001,6 @@ class TokenizerConfig(MTrainTokenizerConfig):
 
     def __post_init__(self) -> None:
         """Sync with MCore values"""
-        self.tokenizer_metadata = self.metadata_path
-        if self.metadata_path:
-            warn_rank_0(
-                "`metadata_path` is deprecated and will be removed soon. "
-                "Please, use `tokenizer_metadata` instead."
-            )
-        self.tokenizer_special_tokens = self.spcial_tokens
-
         # HuggingFace tokenizer kwargs
         self.tokenizer_hf_no_use_fast = not self.hf_tokenizer_kwargs.get("use_fast", True)
         self.tokenizer_hf_no_include_special_tokens = not self.hf_tokenizer_kwargs.get("include_special_tokens", True)
