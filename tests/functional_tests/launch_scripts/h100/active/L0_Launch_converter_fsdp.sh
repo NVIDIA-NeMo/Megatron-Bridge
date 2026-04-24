@@ -13,19 +13,7 @@
 # limitations under the License.
 
 #!/bin/bash
-# L0 launcher for HuggingFace <-> Megatron-FSDP weight conversion roundtrip.
-#
-# Scope: Only exercises TP=1 parametrizations on a tiny Qwen3 MoE toy model.
-# TP>1 cases depend on Megatron-LM commit 8cbc45b6e
-# ("[M-FSDP] Fix Tensor Parallel mode detection", PR #3191, merged 2026-04-07).
-# That fix is already included in the pinned 3rdparty/Megatron-LM submodule,
-# but the TP code path is sensitive to MLM version drift, so TP>1 coverage
-# lives in the offline validation matrix under docs/mfsdp-rl-v2/ rather than
-# this CI test.
-#
-# Minimum required Megatron-LM: must contain commit 8cbc45b6e (PR #3191).
-
-set -xeuo pipefail
+set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 export CUDA_VISIBLE_DEVICES="0,1"
 
