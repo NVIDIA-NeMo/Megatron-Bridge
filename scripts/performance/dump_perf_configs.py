@@ -209,10 +209,10 @@ def load_new_recipe(family: str, recipe: str, task: str, num_gpus: int, gpu: str
     prec = precision_map.get(precision.lower(), precision.lower())
     fn_name = f"{recipe}_{task}_{num_gpus}gpu_{gpu}_{prec}_config"
 
-    mod = importlib.import_module(f"megatron.bridge.recipes.{family}")
+    mod = importlib.import_module(f"megatron.bridge.perf_recipes.{family}")
     fn = getattr(mod, fn_name, None)
     if fn is None:
-        raise ValueError(f"Recipe function {fn_name!r} not found in megatron.bridge.recipes.{family}")
+        raise ValueError(f"Recipe function {fn_name!r} not found in megatron.bridge.perf_recipes.{family}")
     return fn()
 
 
@@ -242,6 +242,7 @@ def dump_configs(mode: str, out_dir: Path):
 
 
 def main():
+    """CLI entry-point: dump perf recipe configs for comparison."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--mode",

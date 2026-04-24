@@ -497,67 +497,12 @@ def llama31_405b_pretrain_128gpu_b200_nvfp4_config() -> ConfigContainer:
 
 
 # =============================================================================
-# Llama3.1 405B pretrain — 1024 GPU, H100
+# Llama3.1 405B pretrain — 256 GPU, GB300
 # =============================================================================
 
 
-def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain: 1024× H100, BF16, TP=8 PP=8 CP=2."""
-    cfg = llama31_405b_pretrain_config()
-    cfg.mixed_precision = _perf_precision("bf16")
-    cfg.tokenizer.vocab_size = 128256
-    cfg.model.should_pad_vocab = True
-    cfg.model.seq_length = 8192
-    cfg.dataset.seq_length = 8192
-
-    cfg.model.tensor_model_parallel_size = 8
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.context_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 8
-    cfg.model.sequence_parallel = True
-    cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 1
-
-    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
-
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-
-    _benchmark_common(cfg)
-    return cfg
-
-
-def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain: 1024× H100, FP8 current-scaling, TP=8 PP=8 CP=2."""
-    cfg = llama31_405b_pretrain_config()
-    cfg.mixed_precision = _perf_precision("fp8_cs")
-    cfg.tokenizer.vocab_size = 128256
-    cfg.model.should_pad_vocab = True
-    cfg.model.seq_length = 8192
-    cfg.dataset.seq_length = 8192
-
-    cfg.model.tensor_model_parallel_size = 8
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.context_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 8
-    cfg.model.sequence_parallel = True
-    cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 1
-
-    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192
-
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-
-    _benchmark_common(cfg)
-    return cfg
-
-
-# =============================================================================
-# Llama3.1 405B pretrain V2 — 256 GPU, GB300
-# =============================================================================
-
-
-def llama31_405b_pretrain_v2_256gpu_gb300_bf16_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain V2: 256× GB300, BF16, FSDP."""
+def llama31_405b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256× GB300, BF16, FSDP."""
     cfg = llama31_405b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.tokenizer.vocab_size = 128256
@@ -592,8 +537,8 @@ def llama31_405b_pretrain_v2_256gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_pretrain_v2_256gpu_gb300_fp8cs_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain V2: 256× GB300, FP8 current-scaling, TP=4 PP=8."""
+def llama31_405b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256× GB300, FP8 current-scaling, TP=4 PP=8."""
     cfg = llama31_405b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.tokenizer.vocab_size = 128256
@@ -615,8 +560,8 @@ def llama31_405b_pretrain_v2_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_pretrain_v2_256gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain V2: 256× GB300, MXFP8, TP=2 PP=8 CP=2."""
+def llama31_405b_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256× GB300, MXFP8, TP=2 PP=8 CP=2."""
     cfg = llama31_405b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.tokenizer.vocab_size = 128256
@@ -638,8 +583,8 @@ def llama31_405b_pretrain_v2_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_pretrain_v2_256gpu_gb300_nvfp4_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain V2: 256× GB300, NVFP4, TP=4 PP=8."""
+def llama31_405b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256× GB300, NVFP4, TP=4 PP=8."""
     cfg = llama31_405b_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.tokenizer.vocab_size = 128256
@@ -666,12 +611,12 @@ def llama31_405b_pretrain_v2_256gpu_gb300_nvfp4_config() -> ConfigContainer:
 
 
 # =============================================================================
-# Llama3.1 405B pretrain V2 — 256 GPU, GB200
+# Llama3.1 405B pretrain — 256 GPU, GB200
 # =============================================================================
 
 
-def llama31_405b_pretrain_v2_256gpu_gb200_bf16_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain V2: 256× GB200, BF16, TP=4 PP=16."""
+def llama31_405b_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256× GB200, BF16, TP=4 PP=16."""
     cfg = llama31_405b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.tokenizer.vocab_size = 128256
@@ -693,8 +638,8 @@ def llama31_405b_pretrain_v2_256gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_pretrain_v2_256gpu_gb200_fp8cs_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain V2: 256× GB200, FP8 current-scaling, TP=4 PP=16."""
+def llama31_405b_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256× GB200, FP8 current-scaling, TP=4 PP=16."""
     cfg = llama31_405b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.tokenizer.vocab_size = 128256
@@ -716,8 +661,8 @@ def llama31_405b_pretrain_v2_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_pretrain_v2_256gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain V2: 256× GB200, MXFP8, TP=4 PP=16."""
+def llama31_405b_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256× GB200, MXFP8, TP=4 PP=16."""
     cfg = llama31_405b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.tokenizer.vocab_size = 128256
@@ -739,8 +684,8 @@ def llama31_405b_pretrain_v2_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_pretrain_v2_256gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain V2: 256× GB200, NVFP4, TP=4 PP=16."""
+def llama31_405b_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256× GB200, NVFP4, TP=4 PP=16."""
     cfg = llama31_405b_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.tokenizer.vocab_size = 128256
@@ -767,12 +712,12 @@ def llama31_405b_pretrain_v2_256gpu_gb200_nvfp4_config() -> ConfigContainer:
 
 
 # =============================================================================
-# Llama3.1 405B pretrain V2 — 1024 GPU, H100
+# Llama3.1 405B pretrain — 1024 GPU, H100
 # =============================================================================
 
 
-def llama31_405b_pretrain_v2_1024gpu_h100_bf16_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain V2: 1024× H100, BF16, TP=8 PP=8 CP=2."""
+def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 1024× H100, BF16, TP=8 PP=8 CP=2."""
     cfg = llama31_405b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.tokenizer.vocab_size = 128256
@@ -794,8 +739,8 @@ def llama31_405b_pretrain_v2_1024gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_pretrain_v2_1024gpu_h100_fp8cs_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain V2: 1024× H100, FP8 current-scaling, TP=8 PP=8 CP=2."""
+def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 1024× H100, FP8 current-scaling, TP=8 PP=8 CP=2."""
     cfg = llama31_405b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.tokenizer.vocab_size = 128256
@@ -825,7 +770,3 @@ llama31_405b_pretrain_512gpu_h100_bf16_config = llama31_405b_pretrain_1024gpu_h1
 llama31_405b_pretrain_512gpu_h100_fp8cs_config = llama31_405b_pretrain_1024gpu_h100_fp8cs_config
 llama31_405b_pretrain_256gpu_b200_bf16_config = llama31_405b_pretrain_128gpu_b200_bf16_config
 llama31_405b_pretrain_256gpu_b200_fp8cs_config = llama31_405b_pretrain_128gpu_b200_fp8cs_config
-llama31_405b_pretrain_256gpu_gb200_bf16_config = llama31_405b_pretrain_128gpu_gb200_bf16_config
-llama31_405b_pretrain_256gpu_gb200_fp8cs_config = llama31_405b_pretrain_128gpu_gb200_fp8cs_config
-llama31_405b_pretrain_256gpu_gb300_bf16_config = llama31_405b_pretrain_128gpu_gb300_bf16_config
-llama31_405b_pretrain_256gpu_gb300_fp8cs_config = llama31_405b_pretrain_128gpu_gb300_fp8cs_config
