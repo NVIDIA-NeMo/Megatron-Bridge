@@ -65,36 +65,6 @@ def mock_text_config_moe():
     return config
 
 
-@pytest.fixture
-def mock_text_config_dense():
-    """Mock text config for Gemma 4 2B (dense e2b model)."""
-    config = Mock(spec=[])
-    config.num_hidden_layers = 35
-    config.hidden_size = 2048
-    config.intermediate_size = 6144
-    config.num_attention_heads = 8
-    config.num_key_value_heads = 4
-    config.head_dim = 256
-    config.global_head_dim = 512
-    config.num_global_key_value_heads = 2
-    config.initializer_range = 0.02
-    config.rms_norm_eps = 1e-6
-    config.vocab_size = 262144
-    config.max_position_embeddings = 131072
-    config.sliding_window = 1024
-    config.rope_theta = 1000000.0
-    config.query_pre_attn_scalar = 1.0
-    config.rope_scaling = None
-    config.rope_local_base_freq = 10000.0
-    config.rope_parameters = {"rope_local_base_freq": 10000.0}
-    config.hidden_act = "gelu_pytorch_tanh"
-    config.torch_dtype = "bfloat16"
-    # Dense (no MoE)
-    config.enable_moe_block = False
-    config.use_double_wide_mlp = False
-    config.layer_types = ["sliding_attention"] * 5 + ["full_attention"]
-    config.final_logit_softcapping = 30.0
-    return config
 
 
 @pytest.fixture
@@ -124,30 +94,9 @@ def mock_hf_config_moe(mock_text_config_moe, mock_vision_config):
 
 
 @pytest.fixture
-def mock_hf_config_dense(mock_text_config_dense, mock_vision_config):
-    config = Mock()
-    config.text_config = mock_text_config_dense
-    config.vision_config = mock_vision_config
-    config.vision_soft_tokens_per_image = 280
-    config.bos_token_id = 2
-    config.eos_token_id = 1
-    config.image_token_id = 258_880
-    config.video_token_id = 258_884
-    return config
-
-
-@pytest.fixture
 def mock_hf_pretrained_moe(mock_hf_config_moe):
     pretrained = Mock(spec=PreTrainedVLM)
     pretrained.config = mock_hf_config_moe
-    pretrained.generation_config = GenerationConfig()
-    return pretrained
-
-
-@pytest.fixture
-def mock_hf_pretrained_dense(mock_hf_config_dense):
-    pretrained = Mock(spec=PreTrainedVLM)
-    pretrained.config = mock_hf_config_dense
     pretrained.generation_config = GenerationConfig()
     return pretrained
 
@@ -239,37 +188,23 @@ class TestGemma4VLBridgeProviderBridgeMoE:
 
 
 # ---------------------------------------------------------------------------
-# provider_bridge — Dense model
+# provider_bridge — dense model rejected
 # ---------------------------------------------------------------------------
 
 
-class TestGemma4VLBridgeProviderBridgeDense:
-    def test_returns_provider(self, bridge, mock_hf_pretrained_dense):
-        provider = bridge.provider_bridge(mock_hf_pretrained_dense)
-        assert isinstance(provider, Gemma4VLModelProvider)
-
-    def test_no_moe_experts(self, bridge, mock_hf_pretrained_dense):
-        provider = bridge.provider_bridge(mock_hf_pretrained_dense)
-        assert provider.num_moe_experts is None
-
-    def test_dense_ffn_hidden_size(self, bridge, mock_hf_pretrained_dense):
-        provider = bridge.provider_bridge(mock_hf_pretrained_dense)
-        assert provider.ffn_hidden_size == 6144
-
-    def test_moe_layer_freq_all_zeros(self, bridge, mock_hf_pretrained_dense):
-        provider = bridge.provider_bridge(mock_hf_pretrained_dense)
-        # All-zero list: no MoE layers
-        assert isinstance(provider.moe_layer_freq, list)
-        assert all(f == 0 for f in provider.moe_layer_freq)
-        assert len(provider.moe_layer_freq) == 35
-
-    def test_is_moe_model_false(self, bridge, mock_hf_pretrained_dense):
-        bridge.hf_config = mock_hf_pretrained_dense.config
-        assert bridge._is_moe_model() is False
-
-    def test_is_moe_model_true(self, bridge, mock_hf_pretrained_moe):
-        bridge.hf_config = mock_hf_pretrained_moe.config
-        assert bridge._is_moe_model() is True
+class TestGemma4VLBridgeProviderBridgeDenseRejected:
+    def test_raises_for_dense_model(self, bridge):
+        """provider_bridge must raise ValueError for non-MoE (dense) models."""
+        dense_text_config = Mock(spec=[])
+        dense_text_config.enable_moe_block = False
+        hf_config = Mock()
+        hf_config.text_config = dense_text_config
+        hf_config.vision_config = Mock()
+        hf_config._name_or_path = "google/gemma-4-e2b-it"
+        pretrained = Mock(spec=PreTrainedVLM)
+        pretrained.config = hf_config
+        with pytest.raises(ValueError, match="enable_moe_block=False"):
+            bridge.provider_bridge(pretrained)
 
 
 # ---------------------------------------------------------------------------

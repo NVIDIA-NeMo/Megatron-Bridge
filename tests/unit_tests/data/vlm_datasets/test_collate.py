@@ -308,3 +308,99 @@ def test_kimi_k25_vl_collate_fn_multi_sample_batch():
     assert batch["input_ids"].shape[0] == 2
     # All sequences must have the same length after collation
     assert batch["input_ids"].shape[1] == batch["labels"].shape[1]
+
+
+# ---------------------------------------------------------------------------
+# Gemma4 collate — registration and image_position_ids passthrough
+# ---------------------------------------------------------------------------
+
+
+def test_gemma4_processor_registered_in_collate_fns():
+    """Gemma4Processor must be registered in COLLATE_FNS."""
+    assert "Gemma4Processor" in collate.COLLATE_FNS
+
+
+def test_gemma4_vl_collate_fn_is_ministral3_alias():
+    """gemma4_vl_collate_fn is an alias for ministral3_collate_fn."""
+    assert collate.gemma4_vl_collate_fn is collate.ministral3_collate_fn
+
+
+def test_gemma4_registered_fn_matches_alias():
+    """The registered function for Gemma4Processor equals the alias."""
+    assert collate.COLLATE_FNS["Gemma4Processor"] is collate.gemma4_vl_collate_fn
+
+
+class _Gemma4ProcessorBase:
+    """Minimal Gemma4Processor stub for ministral3_collate_fn tests.
+
+    create_multiturn_loss_mask_by_search calls tokenizer(text, add_special_tokens=False)
+    so _Tok must be callable.
+    """
+    chat_template = "dummy"
+
+    class _Tok:
+        pad_token_id = 0
+        pad_token = "<pad>"
+        added_tokens_decoder = {}
+        eos_token = "<eos>"
+
+        def __call__(self, text, add_special_tokens=True, **kwargs):
+            # Return minimal tokenized output: each word → one token id
+            ids = list(range(1, len(text.split()) + 1))
+            return {"input_ids": ids if ids else [1]}
+
+    def __init__(self, include_position_ids=True):
+        self.tokenizer = self._Tok()
+        self._include_position_ids = include_position_ids
+
+    def apply_chat_template(self, conversations, tokenize=False, **kwargs):
+        if not tokenize:
+            return "dummy text"
+        seq_len = 8
+        batch_size = len(conversations)
+        result = {
+            "input_ids": torch.ones(batch_size, seq_len, dtype=torch.long),
+            "pixel_values": torch.randn(batch_size, 3, 224, 224),
+        }
+        if self._include_position_ids:
+            result["image_position_ids"] = torch.zeros(batch_size, 196, 2, dtype=torch.long)
+        return result
+
+
+def test_ministral3_collate_wraps_image_position_ids_in_visual_inputs():
+    """image_position_ids returned by processor ends up inside GenericVisualInputs."""
+    proc = _Gemma4ProcessorBase(include_position_ids=True)
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "describe"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+            ]
+        }
+    ]
+    batch = collate.ministral3_collate_fn(examples, proc)
+
+    assert "visual_inputs" in batch
+    vi = batch["visual_inputs"]
+    assert vi is not None
+    assert hasattr(vi, "image_position_ids")
+    assert vi.image_position_ids is not None
+
+
+def test_ministral3_collate_no_image_position_ids_excluded():
+    """When processor returns no image_position_ids, the field stays None in visual_inputs."""
+    proc = _Gemma4ProcessorBase(include_position_ids=False)
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "hi"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+            ]
+        }
+    ]
+    batch = collate.ministral3_collate_fn(examples, proc)
+
+    assert "visual_inputs" in batch
+    vi = batch["visual_inputs"]
+    assert vi is not None
+    assert vi.image_position_ids is None

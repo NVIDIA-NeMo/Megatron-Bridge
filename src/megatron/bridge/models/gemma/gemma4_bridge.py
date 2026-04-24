@@ -31,21 +31,9 @@ Supported models
 
 NOT supported
 -------------
-- Dense Gemma 4 models (``enable_moe_block=False``, e.g. a hypothetical text-only e2b).
-  The currently available dense model is ``google/gemma-4-e2b-it``, which is a VLM and
-  is handled by ``gemma4_vl_bridge.py`` instead.
-
-  Dense Gemma 4 models introduce two architectural features that are disabled (but present)
-  in the MoE variant (26B-A4B has hidden_size_per_layer_input=0, use_double_wide_mlp=False):
-  1. ``use_double_wide_mlp``: the last ``num_kv_shared_layers`` layers have 2× FFN hidden size.
-     Supporting this requires per-layer ``ffn_hidden_size`` in MCore.
-  2. **Per-Layer Embeddings (PLE)**: a second low-dimensional embedding pathway injected
-     into every decoder layer after the FFN.  See ``gemma4_vl_bridge.py`` for details on
-     what PLE does and what needs to be implemented in MCore to support it.
-
-  To support dense Gemma 4 CausalLM, this bridge would need the same MoE/dense branching
-  that ``gemma4_vl_bridge.py`` already has, plus full MCore implementations of PLE and
-  variable-width FFN.
+- Dense Gemma 4 models (``enable_moe_block=False``, e.g. ``google/gemma-4-e2b-it``).
+  ``gemma4_vl_bridge.py`` raises ``ValueError`` for non-MoE models.  Dense support
+  requires per-layer ``ffn_hidden_size`` and Per-Layer Embeddings (PLE) in MCore.
 """
 
 import math
