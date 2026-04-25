@@ -17,6 +17,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import (
@@ -745,6 +746,19 @@ def llama3_70b_pretrain_config() -> ConfigContainer:
     return cfg
 
 
+def llama3_70b_pretrain_deterministic_config() -> ConfigContainer:
+    """Return a deterministic pre-training config for Llama 3 70B.
+
+    Wraps :func:`llama3_70b_pretrain_config` and applies
+    :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
+    Bit-exact reproducibility also requires the executor-side env vars set by
+    ``PerfEnvPlugin(deterministic=True)``.
+    """
+    cfg = llama3_70b_pretrain_config()
+    apply_determinism_overrides(cfg)
+    return cfg
+
+
 def llama3_70b_16k_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Llama 3 70B 16K.
 
@@ -1192,6 +1206,19 @@ def llama31_405b_pretrain_config() -> ConfigContainer:
 
     cfg.mixed_precision = bf16_mixed()
 
+    return cfg
+
+
+def llama31_405b_pretrain_deterministic_config() -> ConfigContainer:
+    """Return a deterministic pre-training config for Llama 3.1 405B.
+
+    Wraps :func:`llama31_405b_pretrain_config` and applies
+    :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
+    Bit-exact reproducibility also requires the executor-side env vars set by
+    ``PerfEnvPlugin(deterministic=True)``.
+    """
+    cfg = llama31_405b_pretrain_config()
+    apply_determinism_overrides(cfg)
     return cfg
 
 

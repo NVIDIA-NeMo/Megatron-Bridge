@@ -217,6 +217,14 @@ class PerfEnvPlugin(Plugin):
     compute_dtype: str
     train_task: str
     config_variant: str = "v1"
+    deterministic: bool = False
+
+    def _set_determinism_env_vars(self, executor: "run.Executor") -> None:
+        """Set env vars required for bit-exact reproducibility."""
+        executor.env_vars["NCCL_ALGO"] = "Ring"
+        executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
+        executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        logger.info("Deterministic mode enabled: NCCL_ALGO=Ring, NVTE_ALLOW_NONDETERMINISTIC_ALGO=0")
 
     def _set_num_cuda_device_max_connections(
         self,
@@ -557,6 +565,9 @@ class PerfEnvPlugin(Plugin):
         # Set NVFP4-specific environment variables
         if self.compute_dtype == "nvfp4":
             executor.env_vars["NVTE_USE_FAST_MATH"] = "1"
+
+        if self.deterministic:
+            self._set_determinism_env_vars(executor)
 
 
 @dataclass
