@@ -1,3 +1,4 @@
 [submodule "3rdparty/Megatron-LM"]
 	path = 3rdparty/Megatron-LM
-	url = https://github.com/NVIDIA/Megatron-LM.git
+	url = git@github.com:shifangx/Megatron-LM.git
+	branch = shifang/step3p5_0425
