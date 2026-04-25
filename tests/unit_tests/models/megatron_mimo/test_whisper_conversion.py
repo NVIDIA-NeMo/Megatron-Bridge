@@ -125,6 +125,16 @@ class TestQKVInterleaveIndices:
         inverse[idx] = torch.arange(idx.numel())
         assert torch.equal(fused[inverse], torch.cat([q, k, v], dim=0))
 
+    def test_indices_have_integer_dtype(self, converter):
+        """Index tensor must be integer-typed so it can be used to index another tensor."""
+        idx = converter._build_qkv_interleave_indices(8, 4)
+        assert idx.dtype == torch.int64
+
+    def test_num_heads_one_produces_concatenated_layout(self, converter):
+        """With a single head the layout collapses to [Q, K, V] of full hidden_dim."""
+        idx = converter._build_qkv_interleave_indices(hidden_dim=4, num_heads=1)
+        assert torch.equal(idx, torch.arange(12))
+
 
 @pytest.mark.unit
 class TestGetTpConcatDim:
@@ -431,6 +441,23 @@ class TestEndToEndConversion:
         for key, tensor in out.items():
             assert tensor.dtype == torch.float32, f"{key} dtype is {tensor.dtype}, expected float32"
 
+    def test_unmapped_encoder_key_emits_warning_and_is_skipped(self, converter, tmp_path, capsys):
+        """Encoder-prefixed keys with no mapping branch hit the [WARN] path and don't leak into output."""
+
+        def add_unmapped(sd):
+            # Outer chain has no clause for this top-level encoder key.
+            sd["encoder.unknown.weight"] = torch.randn(self.HIDDEN_DIM)
+            # Hits the encoder.layers.* branch but no inner suffix matches.
+            sd["encoder.layers.0.self_attn.unmapped_field"] = torch.randn(self.HIDDEN_DIM)
+
+        self._convert(converter, tmp_path, mutate_state_dict=add_unmapped)
+        out = self._load_shard(tmp_path, 0)
+        assert "encoder.unknown.weight" not in out
+        # No remapped name for the unmapped suffix should appear under decoder.layers.0.*.
+        assert not any(k.endswith("unmapped_field") for k in out)
+        captured = capsys.readouterr()
+        assert "skipping unmapped key" in captured.out
+
     def test_decoder_filter_skips_multiple_decoder_keys(self, converter, tmp_path):
         """Anything not under encoder.* must not leak into the converted checkpoint."""
 
@@ -623,6 +650,78 @@ class TestLoadMegatronWhisperWeights:
         model = _RecordingModel(missing=["foo._extra_state", "bar._extra_state"])
         converter.load_megatron_whisper_weights(model, str(tmp_path), tp_rank=0, tp_size=1)
 
+    def test_stray_files_in_ckpt_dir_are_ignored(self, converter, tmp_path):
+        """Non-tp_rank entries (metadata files, other dirs, decoy filenames) must be filtered out."""
+        _run_conversion(converter, tmp_path, tp_size=1)
+        (tmp_path / "metadata.json").write_text("{}")
+        (tmp_path / "other_dir").mkdir()
+        # File named like a tp_rank dir but is a plain file — must be rejected by the isdir filter.
+        (tmp_path / "tp_rank_99_decoy").write_text("decoy")
+
+        model = _RecordingModel()
+        converter.load_megatron_whisper_weights(model, str(tmp_path), tp_rank=0, tp_size=1)
+        assert model.received is not None
+
+    def test_reconcile_ckpt_tp1_into_model_tp2_splits(self, converter, tmp_path):
+        """The grow direction: TP=1 ckpt loaded into TP=2 model produces shards equal to native TP=2."""
+        ref_dir = tmp_path / "ref_tp2"
+        ckpt_dir = tmp_path / "ckpt_tp1"
+        _run_conversion(converter, ref_dir, tp_size=2)
+        _run_conversion(converter, ckpt_dir, tp_size=1)
+
+        for tp_rank in range(2):
+            model = _RecordingModel()
+            converter.load_megatron_whisper_weights(model, str(ckpt_dir), tp_rank=tp_rank, tp_size=2)
+            ref = torch.load(
+                ref_dir / f"tp_rank_{tp_rank:02d}" / "model_weights.pt",
+                map_location="cpu",
+                weights_only=True,
+            )
+            ref_dict = {k: v for k, v in ref["model"].items() if v is not None}
+            for key, ref_tensor in ref_dict.items():
+                assert torch.equal(model.received[key], ref_tensor), (
+                    f"split rank {tp_rank} {key} differs from native TP=2"
+                )
+
+    def test_tp_rank_out_of_range_raises_file_not_found(self, converter, tmp_path):
+        _run_conversion(converter, tmp_path, tp_size=2)
+        with pytest.raises(FileNotFoundError):
+            converter.load_megatron_whisper_weights(_RecordingModel(), str(tmp_path), tp_rank=5, tp_size=2)
+
+    def test_path_like_ckpt_dir_accepted(self, converter, tmp_path):
+        """Loader accepts pathlib.Path for ckpt_dir, not just str."""
+        _run_conversion(converter, tmp_path, tp_size=1)
+        model = _RecordingModel()
+        converter.load_megatron_whisper_weights(model, tmp_path, tp_rank=0, tp_size=1)
+        assert model.received is not None
+
+    def test_saved_file_without_model_key_raises(self, converter, tmp_path):
+        """A saved file missing the top-level 'model' wrapper fails clearly."""
+        (tmp_path / "tp_rank_00").mkdir()
+        torch.save({"not_model": {"a": torch.zeros(1)}}, tmp_path / "tp_rank_00" / "model_weights.pt")
+        with pytest.raises(KeyError):
+            converter.load_megatron_whisper_weights(_RecordingModel(), str(tmp_path), tp_rank=0, tp_size=1)
+
+
+@pytest.mark.unit
+class TestSavedFileStructuralInvariants:
+    """Schema/layout guarantees of the per-rank `model_weights.pt` files."""
+
+    def test_top_level_model_key_wrapper(self, converter, tmp_path):
+        _run_conversion(converter, tmp_path, tp_size=1)
+        saved = torch.load(tmp_path / "tp_rank_00" / "model_weights.pt", map_location="cpu", weights_only=True)
+        assert "model" in saved
+        assert isinstance(saved["model"], dict)
+
+    def test_one_directory_per_tp_rank(self, converter, tmp_path):
+        """Convert at TP=N produces exactly N tp_rank_NN directories, each with model_weights.pt."""
+        tp_size = 3
+        _run_conversion(converter, tmp_path, tp_size=tp_size)
+        rank_dirs = sorted(d.name for d in tmp_path.iterdir() if d.is_dir())
+        assert rank_dirs == [f"tp_rank_{i:02d}" for i in range(tp_size)]
+        for name in rank_dirs:
+            assert (tmp_path / name / "model_weights.pt").is_file()
+
 
 @pytest.mark.unit
 class TestVerifyConversionShapeChecker:
@@ -679,3 +778,17 @@ class TestVerifyConversionShapeChecker:
         with patch.object(converter, "WhisperModel") as mock_cls:
             mock_cls.from_pretrained.return_value = mock_hf
             assert converter.verify_conversion(str(tmp_path), tensor_parallel_size=2) is False
+
+    def test_tp_size_mismatch_fails(self, converter, tmp_path):
+        """A ckpt saved at TP=2 verified with TP=1 has shard-sized tensors vs unsharded expectations."""
+        mock_hf = self._convert_with_mock(converter, tmp_path, tp_size=2)
+        with patch.object(converter, "WhisperModel") as mock_cls:
+            mock_cls.from_pretrained.return_value = mock_hf
+            assert converter.verify_conversion(str(tmp_path), tensor_parallel_size=1) is False
+
+    def test_path_like_output_path_accepted(self, converter, tmp_path):
+        mock_hf = self._convert_with_mock(converter, tmp_path, tp_size=1)
+        with patch.object(converter, "WhisperModel") as mock_cls:
+            mock_cls.from_pretrained.return_value = mock_hf
+            # Pass tmp_path (Path) directly, not str(tmp_path).
+            assert converter.verify_conversion(tmp_path, tensor_parallel_size=1) is True
