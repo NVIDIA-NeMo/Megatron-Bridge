@@ -20,7 +20,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
 
-def step3p5_196b_a11b_pretrain_config(hf_path: str | None = None) -> ConfigContainer:
+def step3p5_196b_a11b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for stepfun-ai/Step-3.5-Flash.
 
     Recommended parallelism: TP=1, PP=8, CP=8, EP=8.
@@ -28,12 +28,10 @@ def step3p5_196b_a11b_pretrain_config(hf_path: str | None = None) -> ConfigConta
     cfg = _pretrain_common()
 
     # Model config
-    model_path = hf_path or "stepfun-ai/Step-3.5-Flash"
-    print(f"for debug, hf_path: {hf_path}, model_path: {model_path}")
-    cfg.model = AutoBridge.from_hf_pretrained(model_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("stepfun-ai/Step-3.5-Flash").to_megatron_provider(load_weights=False)
 
     # Tokenizer (--tokenizer-model)
-    cfg.tokenizer.tokenizer_model = model_path
+    cfg.tokenizer.tokenizer_model = "stepfun-ai/Step-3.5-Flash"
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
