@@ -24,7 +24,10 @@ import torch
 import torch.distributed as dist
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY, ModuleLayout
 from megatron.core.num_microbatches_calculator import get_num_microbatches
-from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
+from megatron.core.pipeline_parallel.schedules import (
+    forward_backward_no_pipelining,
+    forward_backward_pipelining_without_interleaving,
+)
 
 from megatron.bridge.training.checkpointing import CheckpointManager, DefaultCheckpointManager
 from megatron.bridge.training.eval import evaluate_and_print_results
@@ -127,17 +130,35 @@ def train_step_megatron_mimo(
     # Run forward-backward schedule
     timers("forward-backward", log_level=1).start(barrier=False)
 
-    losses_reduced = forward_backward_pipelining_without_interleaving(
-        forward_step_func=forward_step_func,
-        data_iterator=data_iterator,
-        model=[model],
-        num_microbatches=num_microbatches,
-        seq_length=seq_length,
-        micro_batch_size=micro_batch_size,
-        forward_only=False,
-        p2p_communicator=multimodule_communicator,
-        pg_collection=multimodule_pg_collection,
-    )
+    if is_colocated:
+        # Colocated LLM-PP=1: encoder→language flows through
+        # MimoModel._forward_all_modules via ColocatedBridgeCommunicator —
+        # no cross-module P2P at the schedule level. Use the no-pipelining
+        # schedule with the language module's pg_collection. Matches mcore's
+        # test_mimo_colocated_correctness.py:_run_forward_backward pattern.
+        language_pg = infra.pg_collections[MIMO_LANGUAGE_MODULE_KEY]
+        losses_reduced = forward_backward_no_pipelining(
+            forward_step_func=forward_step_func,
+            data_iterator=data_iterator,
+            model=[model],
+            num_microbatches=num_microbatches,
+            seq_length=seq_length,
+            micro_batch_size=micro_batch_size,
+            forward_only=False,
+            pg_collection=language_pg,
+        )
+    else:
+        losses_reduced = forward_backward_pipelining_without_interleaving(
+            forward_step_func=forward_step_func,
+            data_iterator=data_iterator,
+            model=[model],
+            num_microbatches=num_microbatches,
+            seq_length=seq_length,
+            micro_batch_size=micro_batch_size,
+            forward_only=False,
+            p2p_communicator=multimodule_communicator,
+            pg_collection=multimodule_pg_collection,
+        )
 
     timers("forward-backward").stop()
 

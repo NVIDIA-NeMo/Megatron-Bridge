@@ -239,6 +239,9 @@ def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
 def _build_config(
     parallelism_config: MegatronMIMOParallelismConfig,
     train_iters: int = _TRAIN_ITERS,
+    *,
+    micro_batch_size: int = 1,
+    global_batch_size: int = 1,
 ) -> ConfigContainer:
     language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
 
@@ -253,8 +256,8 @@ def _build_config(
         megatron_mimo_provider.num_moe_experts = None
 
     train_cfg = TrainingConfig(
-        micro_batch_size=1,
-        global_batch_size=1,
+        micro_batch_size=micro_batch_size,
+        global_batch_size=global_batch_size,
         train_iters=train_iters,
     )
     train_cfg.num_microbatches = 1
@@ -475,6 +478,67 @@ class TestMegatronMIMOTraining:
         )
 
         cfg = _build_config(par_cfg)
+
+        pretrain_megatron_mimo(
+            cfg=cfg,
+            forward_step_func=megatron_mimo_forward_step,
+            build_data_iterators_fn=_build_data_iterators,
+        )
+
+    @pytest.mark.run_only_on("GPU")
+    def test_megatron_mimo_colocated_equal_dp_smoke(self):
+        """Smoke test: colocated MegatronMIMO with symmetric DP/TP, LLM PP=1.
+
+        Both modules share rank range [0, 2): TP=1, DP=2 each. Symmetric TP/DP
+        passes the asymmetric-DP / asymmetric-TP validator guards. The
+        ColocatedBridgeCommunicator runs in pass-through mode (DP equal, TP
+        equal). Trains for 5 iters with synthetic data.
+
+        First L2 test for the colocated path. Catches:
+        - R10: DDP wrap skipped for a module on a colocated rank → would
+          raise during gradient finalization.
+        - Path coverage: provider grid construction, setup_megatron_mimo's
+          colocated-canonical PG bridge, train_megatron_mimo's threaded
+          active_module_name/local_pg_collection, MimoModel with
+          cp_group/tp_group from the LLM pg_collection.
+
+        Numerical correctness (R3 wrong DP reduction group, R4 wrong loss
+        reduction group) is deferred to a follow-up oracle test that builds
+        a non-distributed reference and compares per-rank outputs.
+        """
+        initialize_distributed()
+
+        world_size = dist.get_world_size()
+        if world_size != 2:
+            pytest.skip(f"MegatronMIMO test requires exactly 2 GPUs, got {world_size}")
+
+        # Monkey-patch: report_theoretical_memory crashes on MegatronMIMO models.
+        import megatron.bridge.training.utils.train_utils as _tu
+
+        _tu.report_theoretical_memory = lambda *a, **kw: None
+
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+            },
+        )
+
+        # MBS must be divisible by every module's DP (here: 2). GBS = MBS *
+        # num_microbatches because the sampler uses dp_size=1 per the
+        # MegatronMIMO data contract — every data-loading rank sees the same
+        # global micro-batch and slices per-module at forward time.
+        cfg = _build_config(par_cfg, micro_batch_size=2, global_batch_size=2)
 
         pretrain_megatron_mimo(
             cfg=cfg,

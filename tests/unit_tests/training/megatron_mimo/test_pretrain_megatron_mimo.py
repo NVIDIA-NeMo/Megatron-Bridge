@@ -352,19 +352,24 @@ def test_train_step_raises_for_colocated_with_llm_pp_gt_one():
 
 
 @pytest.mark.parametrize(
-    "mode_name, lm_has_pp",
+    "mode_name, lm_has_pp, expected_schedule",
     [
-        ("COLOCATED", False),  # colocated + LLM PP=1: standard schedule
-        ("NON_COLOCATED", False),  # non-colocated + LLM PP=1
-        (
-            "NON_COLOCATED",
-            True,
-        ),  # non-colocated + LLM PP>1: standard schedule (MultiModulePipelineCommunicator handles it)
+        # colocated + LLM PP=1: no-pipelining schedule with language pg_collection.
+        # Cross-module flow happens inside MimoModel._forward_all_modules via
+        # ColocatedBridgeCommunicator — the schedule does no P2P.
+        ("COLOCATED", False, "forward_backward_no_pipelining"),
+        # non-colocated + LLM PP=1: pipelining-without-interleaving with the
+        # MultiModulePipelineCommunicator — encoder and language live on disjoint
+        # ranks so cross-module P2P at the schedule level is required.
+        ("NON_COLOCATED", False, "forward_backward_pipelining_without_interleaving"),
+        # non-colocated + LLM PP>1: same as above (MultiModulePipelineCommunicator
+        # handles both cross-module and intra-LLM-PP P2P).
+        ("NON_COLOCATED", True, "forward_backward_pipelining_without_interleaving"),
     ],
     ids=["colocated_pp1", "non_colocated_pp1", "non_colocated_pp_gt1"],
 )
-def test_train_step_non_three_phase_cases_dispatch_to_standard_schedule(mode_name, lm_has_pp):
-    """Every mode that isn't colocated-PP>1 should reach forward_backward_pipelining_without_interleaving."""
+def test_train_step_non_three_phase_cases_dispatch_to_correct_schedule(mode_name, lm_has_pp, expected_schedule):
+    """Schedule dispatch picks no-pipelining for colocated-PP=1 and pipelining-without-interleaving otherwise."""
     from megatron.core.models.mimo.config.role import ModuleLayout
 
     from megatron.bridge.training.train_megatron_mimo import train_step_megatron_mimo
@@ -373,15 +378,15 @@ def test_train_step_non_three_phase_cases_dispatch_to_standard_schedule(mode_nam
     # Use a sentinel exception thrown from the mocked schedule as the "got past the
     # dispatch" marker. This avoids exercising downstream code paths (loss
     # aggregation, torch.distributed calls) that aren't the subject under test.
-    sentinel = RuntimeError("DISPATCH_REACHED_STANDARD_SCHEDULE")
+    sentinel = RuntimeError(f"DISPATCH_REACHED_{expected_schedule}")
     with (
         patch("megatron.bridge.training.train_megatron_mimo.unwrap_megatron_mimo_model", return_value=stub),
         patch(
-            "megatron.bridge.training.train_megatron_mimo.forward_backward_pipelining_without_interleaving",
+            f"megatron.bridge.training.train_megatron_mimo.{expected_schedule}",
             side_effect=sentinel,
         ) as mock_fb,
         patch("megatron.bridge.training.train_megatron_mimo.zero_grad_buffer_for_multimodule"),
     ):
-        with pytest.raises(RuntimeError, match="DISPATCH_REACHED_STANDARD_SCHEDULE"):
+        with pytest.raises(RuntimeError, match=f"DISPATCH_REACHED_{expected_schedule}"):
             train_step_megatron_mimo(**_make_minimal_train_step_kwargs())
-        assert mock_fb.called, f"standard schedule not called for mode={mode_name}, lm_has_pp={lm_has_pp}"
+        assert mock_fb.called, f"{expected_schedule} not called for mode={mode_name}, lm_has_pp={lm_has_pp}"

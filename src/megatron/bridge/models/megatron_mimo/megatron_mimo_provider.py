@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
 import torch
 import torch.distributed as dist
 from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.enums import ModelType
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.base_configs import MimoModelConfig
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
@@ -339,6 +340,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         cp_group = llm_pg.cp if llm_pg is not None else None
         tp_group = llm_pg.tp if llm_pg is not None else None
         megatron_mimo_model = MimoModel(mimo_model_config, cp_group=cp_group, tp_group=tp_group)
+
+        # Set model_type so mcore schedules can introspect it
+        # (forward_backward_no_pipelining calls get_model_type via get_attr_wrapped_model).
+        megatron_mimo_model.model_type = ModelType.encoder_or_decoder
 
         # Apply freezing
         self._apply_freezing(megatron_mimo_model)
