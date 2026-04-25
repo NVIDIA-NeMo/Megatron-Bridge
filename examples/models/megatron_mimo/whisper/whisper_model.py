@@ -17,7 +17,7 @@ try:
     from megatron.core.extensions.transformer_engine import TENorm
 
     NORM_IMPL = TENorm
-except:
+except ImportError:
     NORM_IMPL = torch.nn.LayerNorm
 
 
@@ -57,7 +57,6 @@ class WhisperEncoder(MegatronModule):
         pg_collection: Optional[ProcessGroupCollection] = None,
         vp_stage: Optional[int] = None,
     ) -> None:
-
         super().__init__(config=transformer_config)
 
         if has_config_logger_enabled(transformer_config):

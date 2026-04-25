@@ -313,7 +313,12 @@ def _llava_preprocess(example, dataset_root):
             audio_path = audio_val if os.path.isabs(audio_val) else os.path.join(dataset_root, audio_val)
             import soundfile as sf
 
-            audio_array, _sr = sf.read(audio_path)
+            audio_array, sr = sf.read(audio_path)
+            if sr != 16000:
+                raise ValueError(
+                    f"Whisper expects 16 kHz audio but {audio_path} has sample rate {sr}. "
+                    "Resample the dataset to 16 kHz before training."
+                )
             example["audio"] = audio_array
         elif isinstance(audio_val, dict) and "array" in audio_val:
             # HuggingFace Audio feature format

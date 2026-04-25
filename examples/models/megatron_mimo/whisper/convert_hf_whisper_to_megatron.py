@@ -134,7 +134,14 @@ def convert_hf_whisper_to_megatron(
                 k_name = name.replace("q_proj", "k_proj")
                 v_name = name.replace("q_proj", "v_proj")
                 q = new_tensor
-                k = state_dict.get(k_name, torch.zeros_like(new_tensor)).float()
+                # HF Whisper hardcodes k_proj with bias=False, so k_name is absent
+                # from the state dict. Guard the zero-fill with an assertion so a
+                # future variant that adds K bias doesn't silently get zeroed out.
+                assert k_name not in state_dict, (
+                    f"Unexpected k_proj bias {k_name} in HF state dict; "
+                    "this conversion assumes Whisper's bias=False k_proj."
+                )
+                k = torch.zeros_like(new_tensor)
                 v = state_dict[v_name].float()
                 qkv = torch.cat([q, k, v], dim=0)[indices]
                 new_name = f"{base}.self_attention.linear_qkv.bias"
