@@ -426,15 +426,11 @@ class TestBuildParallelismConfig:
 @pytest.fixture(scope="module")
 def make_audio_config_fn():
     tc_mod = pytest.importorskip("megatron.core.transformer.transformer_config")
-    enums_mod = pytest.importorskip("megatron.core.transformer.enums")
     return _extract_node(
         TRAINING_PATH,
         "_make_audio_config",
         ast.FunctionDef,
-        globals_extra={
-            "TransformerConfig": tc_mod.TransformerConfig,
-            "AttnBackend": enums_mod.AttnBackend,
-        },
+        globals_extra={"TransformerConfig": tc_mod.TransformerConfig},
     )
 
 
@@ -442,30 +438,25 @@ def make_audio_config_fn():
 class TestMakeAudioConfig:
     def test_whisper_base_dimensions(self, make_audio_config_fn):
         """Whisper-base: 6 layers × 512 hidden × 8 heads × 2048 ffn."""
-        cfg = make_audio_config_fn(deterministic=False)
+        cfg = make_audio_config_fn()
         assert cfg.num_layers == 6
         assert cfg.hidden_size == 512
         assert cfg.ffn_hidden_size == 2048
         assert cfg.num_attention_heads == 8
 
-    def test_default_runs_in_bf16(self, make_audio_config_fn):
-        cfg = make_audio_config_fn(deterministic=False)
+    def test_runs_in_bf16(self, make_audio_config_fn):
+        cfg = make_audio_config_fn()
         assert cfg.bf16 is True
         assert cfg.pipeline_dtype == torch.bfloat16
-        # Determinism-only knobs must NOT be set in the default branch.
-        assert not getattr(cfg, "deterministic_mode", False)
 
-    def test_deterministic_toggle_enables_recompute_and_unfused_attn(self, make_audio_config_fn):
-        from megatron.core.transformer.enums import AttnBackend
-
-        cfg = make_audio_config_fn(deterministic=True)
-        assert cfg.bf16 is False
-        assert cfg.pipeline_dtype == torch.float32
-        assert cfg.attention_backend == AttnBackend.unfused
-        assert cfg.deterministic_mode is True
-        assert cfg.recompute_granularity == "full"
-        assert cfg.recompute_method == "uniform"
-        assert cfg.recompute_num_layers == 1
+    def test_dropouts_disabled_and_per_token_loss(self, make_audio_config_fn):
+        """Pin the non-default training knobs that the audio config sets."""
+        cfg = make_audio_config_fn()
+        assert cfg.hidden_dropout == 0.0
+        assert cfg.attention_dropout == 0.0
+        assert cfg.gated_linear_unit is False
+        assert cfg.calculate_per_token_loss is True
+        assert cfg.normalization == "LayerNorm"
 
 
 # ---------------------------------------------------------------------------
@@ -523,9 +514,9 @@ class TestWrapIter:
             "input_ids": torch.zeros(1, 4, dtype=torch.long),
             "modality_inputs": {"images": {"pixel_values": pv}},
         }
-        out = _consume_one(wrap_iter_fn, batch, model_dtype=torch.bfloat16)
+        out = _consume_one(wrap_iter_fn, batch)
         clip = out["modality_inputs"]["images"]["clip"]
-        assert clip["x"].dtype == torch.bfloat16
+        assert clip["x"].dtype == torch.bfloat16  # _wrap_iter hardcodes bf16 cast
         assert clip["x"].shape == pv.shape
 
     def test_audio_seq_lengths_full_signal(self, wrap_iter_fn, cuda_is_noop):
@@ -566,11 +557,12 @@ class TestWrapIter:
         for i in range(1, 5):
             assert out["input_ids"][0, i].item() == 0
 
-    def test_audio_input_features_cast_to_model_dtype(self, wrap_iter_fn, cuda_is_noop):
+    def test_audio_input_features_cast_to_bf16(self, wrap_iter_fn, cuda_is_noop):
+        """`_wrap_iter` casts audio input_features to bfloat16 to match model dtype."""
         af = torch.ones(1, 80, 4, dtype=torch.float32)
         batch = {
             "input_ids": torch.full((1, 4), _AUDIO_SPECIAL_TOKEN_ID, dtype=torch.long),
             "modality_inputs": {"audios": {"input_features": af}},
         }
-        out = _consume_one(wrap_iter_fn, batch, model_dtype=torch.bfloat16)
+        out = _consume_one(wrap_iter_fn, batch)
         assert out["modality_inputs"]["audios"]["whisper"]["input_features"].dtype == torch.bfloat16
