@@ -122,7 +122,16 @@ Preprocess your data using the [DCLM data preprocessing tutorial](https://github
 
 ### Supervised Fine-Tuning (SFT)
 
-See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning. The recipe uses sequence packing by default.
+See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning. Set `DATASET_NAME` to select a preset (`squad` or `openmathinstruct2_gsm8k`).
+
+For `openmathinstruct2_gsm8k`, pre-pack the dataset before submitting the training job:
+
+```bash
+sbatch pack_data_job.sh   # pre-pack once; skipped automatically on subsequent runs
+sbatch slurm_sft.sh
+```
+
+Squad and other datasets that do not use packed sequences do not require this step.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
@@ -187,6 +196,5 @@ Findings from hyperparameter tuning on GPT-OSS 20B × OpenMathInstruct-2:
 - **Packed sequences**: Eliminates padding waste; reduced a 1-epoch run from ~17 h to within 4 h on 2 nodes × 8 H100. Pre-pack before submitting (see `pack_sft_data.py`).
 - **Hyperparameters** — strict-match improved **86.05% → 93.6%** by:
   - `global_batch_size`: 8 → 128
-  - `train_iters`: 1 000 → ~10 000 (1 full epoch)
-  - `lr_warmup_iters`: 50 → 1 000 (~10% of total steps)
+  - `train_iters`: 1 full epoch
   - `min_lr`: 0 → 1/10 × `max_lr` (e.g. 5e-7 when `lr=5e-6`)
