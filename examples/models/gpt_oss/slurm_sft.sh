@@ -50,7 +50,7 @@ WORKSPACE=${WORKSPACE:-/workspace}
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
 export WKDIR="${WKDIR:-}"
 
-# Model and pretrained checkpoint
+# Model and training configurations (use pretrain checkpoint or converted Megatron checkpoint)
 # Use base dir (e.g. .../gpt-oss-20b) with latest_checkpointed_iteration.txt, or Bridge dir with latest_train_state.pt
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b}
 MODEL_NAME=gpt_oss_20b
