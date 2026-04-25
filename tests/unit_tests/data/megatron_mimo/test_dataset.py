@@ -442,3 +442,62 @@ class TestMegatronMIMODatasetEncoderSeqLengths:
         # Just verify they're not placeholders
         for i in range(encoder_seq_length, 64):
             assert item["input_ids"][i].item() != vision_placeholder
+
+
+class _KwargRecordingProcessor:
+    """Processor that records the kwargs it was invoked with.
+
+    Used to verify that MegatronMIMODataset forwards the processor's native
+    `sampling_rate` to audio feature extractors (Whisper et al.).
+    """
+
+    def __init__(self, *, sampling_rate=None, on_feature_extractor=False, output_shape=(80, 3000)):
+        self.last_kwargs = None
+        self.output_shape = output_shape
+        if sampling_rate is None:
+            pass
+        elif on_feature_extractor:
+            # Mirrors HF's WhisperProcessor: sampling_rate lives on .feature_extractor.
+            self.feature_extractor = type("FE", (), {"sampling_rate": sampling_rate})()
+        else:
+            self.sampling_rate = sampling_rate
+
+    def __call__(self, inputs, **kwargs):
+        self.last_kwargs = dict(kwargs)
+        return {"input_features": torch.randn(1, *self.output_shape)}
+
+
+class TestMegatronMIMODatasetAudioSamplingRate:
+    """Tests for the sampling_rate kwarg forwarding added with Whisper support."""
+
+    def _build(self, processor, *, modality="audio", column="audio"):
+        return MegatronMIMODataset(
+            examples=MockExamples(size=1),
+            processors={modality: processor},
+            tokenizer=MockTokenizer(),
+            seq_length=128,
+            special_token_ids={modality: 32000},
+            encoder_seq_lengths={modality: 1},
+            modality_columns={modality: column},
+        )
+
+    def test_sampling_rate_forwarded_when_on_processor(self):
+        """`processor.sampling_rate` (top-level attribute) is forwarded as a kwarg."""
+        proc = _KwargRecordingProcessor(sampling_rate=16000)
+        _ = self._build(proc)[0]
+        assert proc.last_kwargs is not None
+        assert proc.last_kwargs.get("sampling_rate") == 16000
+        assert proc.last_kwargs.get("return_tensors") == "pt"
+
+    def test_sampling_rate_forwarded_via_feature_extractor(self):
+        """Falls back to `processor.feature_extractor.sampling_rate` when not at top level."""
+        proc = _KwargRecordingProcessor(sampling_rate=22050, on_feature_extractor=True)
+        _ = self._build(proc)[0]
+        assert proc.last_kwargs.get("sampling_rate") == 22050
+
+    def test_sampling_rate_omitted_when_processor_lacks_it(self):
+        """No sampling_rate exposed → kwarg not added (vision processors don't accept it)."""
+        proc = _KwargRecordingProcessor(sampling_rate=None)
+        _ = self._build(proc, modality="vision", column="image")[0]
+        assert "sampling_rate" not in proc.last_kwargs
+        assert proc.last_kwargs.get("return_tensors") == "pt"

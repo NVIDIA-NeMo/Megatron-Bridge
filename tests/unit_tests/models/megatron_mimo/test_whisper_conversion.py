@@ -306,3 +306,376 @@ class TestEndToEndConversion:
 
         with pytest.raises(AssertionError, match="Unexpected k_proj bias"):
             self._convert(converter, tmp_path, mutate_state_dict=add_k_bias)
+
+    def test_tp1_baseline_full_shapes(self, converter, tmp_path):
+        """TP=1 must store unsharded shapes for all per-layer linear tensors."""
+        self._convert(converter, tmp_path, tp_size=1)
+        out = self._load_shard(tmp_path, 0)
+        for layer in range(self.NUM_LAYERS):
+            b = f"decoder.layers.{layer}"
+            assert out[f"{b}.self_attention.linear_qkv.weight"].shape == (3 * self.HIDDEN_DIM, self.HIDDEN_DIM)
+            assert out[f"{b}.self_attention.linear_qkv.bias"].shape == (3 * self.HIDDEN_DIM,)
+            assert out[f"{b}.self_attention.linear_proj.weight"].shape == (self.HIDDEN_DIM, self.HIDDEN_DIM)
+            assert out[f"{b}.mlp.linear_fc1.weight"].shape == (self.FFN_DIM, self.HIDDEN_DIM)
+            assert out[f"{b}.mlp.linear_fc2.weight"].shape == (self.HIDDEN_DIM, self.FFN_DIM)
+
+    def test_tp4_reassembly_recovers_tp1_reference(self, converter, tmp_path):
+        """Concatenating all 4 shards on the chunk dim recovers the TP=1 unsharded ref."""
+        ref_dir = tmp_path / "ref"
+        tp4_dir = tmp_path / "tp4"
+        # _convert reseeds torch with manual_seed(0) before each call, so the
+        # mocked HF state dict is identical across both invocations.
+        self._convert(converter, ref_dir, tp_size=1)
+        self._convert(converter, tp4_dir, tp_size=4)
+        ref = self._load_shard(ref_dir, 0)
+        shards = [self._load_shard(tp4_dir, r) for r in range(4)]
+
+        for layer in range(self.NUM_LAYERS):
+            b = f"decoder.layers.{layer}"
+            for key, dim in [
+                (f"{b}.self_attention.linear_qkv.weight", 0),
+                (f"{b}.self_attention.linear_qkv.bias", 0),
+                (f"{b}.mlp.linear_fc1.weight", 0),
+                (f"{b}.mlp.linear_fc1.bias", 0),
+                (f"{b}.self_attention.linear_proj.weight", 1),
+                (f"{b}.mlp.linear_fc2.weight", 1),
+            ]:
+                merged = torch.cat([s[key] for s in shards], dim=dim)
+                assert torch.equal(merged, ref[key]), f"TP=4 reassembly mismatch for {key}"
+
+    def test_replicated_tensor_round_trip(self, converter, tmp_path):
+        """conv1/conv2/position_embeddings/ln_post values match the HF source verbatim (post-fp32)."""
+        sd = self._convert(converter, tmp_path)
+        out = self._load_shard(tmp_path, 0)
+        assert torch.equal(out["conv1.weight"], sd["encoder.conv1.weight"].float())
+        assert torch.equal(out["conv1.bias"], sd["encoder.conv1.bias"].float())
+        assert torch.equal(out["conv2.weight"], sd["encoder.conv2.weight"].float())
+        assert torch.equal(out["conv2.bias"], sd["encoder.conv2.bias"].float())
+        assert torch.equal(out["position_embeddings.weight"], sd["encoder.embed_positions.weight"].float())
+        assert torch.equal(out["ln_post.weight"], sd["encoder.layer_norm.weight"].float())
+        assert torch.equal(out["ln_post.bias"], sd["encoder.layer_norm.bias"].float())
+
+    def test_per_layer_non_qkv_round_trip_te(self, converter, tmp_path):
+        """out_proj/fc1/fc2 and TE-fused layernorms preserve HF values bit-for-bit at TP=1."""
+        sd = self._convert(converter, tmp_path, use_te=True)
+        out = self._load_shard(tmp_path, 0)
+        for layer in range(self.NUM_LAYERS):
+            b = f"decoder.layers.{layer}"
+            hf = f"encoder.layers.{layer}"
+            assert torch.equal(
+                out[f"{b}.self_attention.linear_proj.weight"], sd[f"{hf}.self_attn.out_proj.weight"].float()
+            )
+            assert torch.equal(
+                out[f"{b}.self_attention.linear_proj.bias"], sd[f"{hf}.self_attn.out_proj.bias"].float()
+            )
+            assert torch.equal(out[f"{b}.mlp.linear_fc1.weight"], sd[f"{hf}.fc1.weight"].float())
+            assert torch.equal(out[f"{b}.mlp.linear_fc1.bias"], sd[f"{hf}.fc1.bias"].float())
+            assert torch.equal(out[f"{b}.mlp.linear_fc2.weight"], sd[f"{hf}.fc2.weight"].float())
+            assert torch.equal(out[f"{b}.mlp.linear_fc2.bias"], sd[f"{hf}.fc2.bias"].float())
+            assert torch.equal(
+                out[f"{b}.self_attention.linear_qkv.layer_norm_weight"],
+                sd[f"{hf}.self_attn_layer_norm.weight"].float(),
+            )
+            assert torch.equal(
+                out[f"{b}.self_attention.linear_qkv.layer_norm_bias"],
+                sd[f"{hf}.self_attn_layer_norm.bias"].float(),
+            )
+            assert torch.equal(
+                out[f"{b}.mlp.linear_fc1.layer_norm_weight"],
+                sd[f"{hf}.final_layer_norm.weight"].float(),
+            )
+            assert torch.equal(
+                out[f"{b}.mlp.linear_fc1.layer_norm_bias"],
+                sd[f"{hf}.final_layer_norm.bias"].float(),
+            )
+
+    def test_layernorm_round_trip_use_te_false(self, converter, tmp_path):
+        """With use_te=False the standalone input_layernorm / pre_mlp_layernorm preserve HF values."""
+        sd = self._convert(converter, tmp_path, use_te=False)
+        out = self._load_shard(tmp_path, 0)
+        for layer in range(self.NUM_LAYERS):
+            b = f"decoder.layers.{layer}"
+            hf = f"encoder.layers.{layer}"
+            assert torch.equal(out[f"{b}.input_layernorm.weight"], sd[f"{hf}.self_attn_layer_norm.weight"].float())
+            assert torch.equal(out[f"{b}.input_layernorm.bias"], sd[f"{hf}.self_attn_layer_norm.bias"].float())
+            assert torch.equal(out[f"{b}.pre_mlp_layernorm.weight"], sd[f"{hf}.final_layer_norm.weight"].float())
+            assert torch.equal(out[f"{b}.pre_mlp_layernorm.bias"], sd[f"{hf}.final_layer_norm.bias"].float())
+
+    def test_output_dir_auto_created_for_nested_path(self, converter, tmp_path):
+        nested = tmp_path / "missing" / "nested" / "out"
+        self._convert(converter, nested, tp_size=2)
+        assert (nested / "tp_rank_00" / "model_weights.pt").is_file()
+        assert (nested / "tp_rank_01" / "model_weights.pt").is_file()
+
+    def test_determinism_two_runs_produce_identical_shards(self, converter, tmp_path):
+        a_dir = tmp_path / "a"
+        b_dir = tmp_path / "b"
+        self._convert(converter, a_dir, tp_size=2)
+        self._convert(converter, b_dir, tp_size=2)
+        for rank in (0, 1):
+            a = self._load_shard(a_dir, rank)
+            b = self._load_shard(b_dir, rank)
+            assert a.keys() == b.keys()
+            for k in a:
+                assert torch.equal(a[k], b[k]), f"rank {rank} key {k} differs between runs"
+
+    def test_bf16_input_state_dict_saved_as_fp32(self, converter, tmp_path):
+        """The converter casts every saved tensor to fp32 regardless of HF dtype."""
+
+        def to_bf16(sd):
+            for k in list(sd):
+                sd[k] = sd[k].to(torch.bfloat16)
+
+        self._convert(converter, tmp_path, mutate_state_dict=to_bf16)
+        out = self._load_shard(tmp_path, 0)
+        for key, tensor in out.items():
+            assert tensor.dtype == torch.float32, f"{key} dtype is {tensor.dtype}, expected float32"
+
+    def test_decoder_filter_skips_multiple_decoder_keys(self, converter, tmp_path):
+        """Anything not under encoder.* must not leak into the converted checkpoint."""
+
+        def add_decoder_garbage(sd):
+            sd["decoder.embed_tokens.weight"] = torch.randn(64, self.HIDDEN_DIM)
+            sd["decoder.layer_norm.weight"] = torch.randn(self.HIDDEN_DIM)
+            sd["decoder.layers.5.fc1.weight"] = torch.randn(self.FFN_DIM, self.HIDDEN_DIM)
+            sd["proj_out.weight"] = torch.randn(50, self.HIDDEN_DIM)
+
+        self._convert(converter, tmp_path, mutate_state_dict=add_decoder_garbage)
+        out = self._load_shard(tmp_path, 0)
+        # Per-layer keys cap at NUM_LAYERS — the seeded decoder.layers.5 must not leak through.
+        per_layer = {int(k.split(".")[2]) for k in out if k.startswith("decoder.layers.")}
+        assert per_layer == set(range(self.NUM_LAYERS))
+        assert "embed_tokens.weight" not in out
+        assert "proj_out.weight" not in out
+
+    def test_layer_count_matches_num_layers(self, converter, tmp_path):
+        """Exactly NUM_LAYERS of each per-layer key — no off-by-one in the layer loop."""
+        self._convert(converter, tmp_path, tp_size=1)
+        out = self._load_shard(tmp_path, 0)
+        for tail in (
+            "self_attention.linear_qkv.weight",
+            "self_attention.linear_qkv.bias",
+            "self_attention.linear_proj.weight",
+            "self_attention.linear_proj.bias",
+            "mlp.linear_fc1.weight",
+            "mlp.linear_fc2.weight",
+        ):
+            keys = [k for k in out if k.endswith(tail)]
+            assert len(keys) == self.NUM_LAYERS, f"{tail}: got {len(keys)}, want {self.NUM_LAYERS}"
+
+    def test_linear_qkv_bias_shards_along_dim_0(self, converter, tmp_path):
+        tp_size = 2
+        self._convert(converter, tmp_path, tp_size=tp_size)
+        out0 = self._load_shard(tmp_path, 0)
+        out1 = self._load_shard(tmp_path, 1)
+        for layer in range(self.NUM_LAYERS):
+            key = f"decoder.layers.{layer}.self_attention.linear_qkv.bias"
+            assert out0[key].shape == (3 * self.HIDDEN_DIM // tp_size,)
+            assert out1[key].shape == (3 * self.HIDDEN_DIM // tp_size,)
+            assert torch.cat([out0[key], out1[key]], dim=0).shape == (3 * self.HIDDEN_DIM,)
+
+    def test_row_parallel_biases_are_replicated(self, converter, tmp_path):
+        """linear_proj.bias and linear_fc2.bias are not sharded (replicated across ranks)."""
+        tp_size = 2
+        self._convert(converter, tmp_path, tp_size=tp_size)
+        out0 = self._load_shard(tmp_path, 0)
+        out1 = self._load_shard(tmp_path, 1)
+        for layer in range(self.NUM_LAYERS):
+            for key in (
+                f"decoder.layers.{layer}.self_attention.linear_proj.bias",
+                f"decoder.layers.{layer}.mlp.linear_fc2.bias",
+            ):
+                assert out0[key].shape == (self.HIDDEN_DIM,)
+                assert torch.equal(out0[key], out1[key])
+
+
+@pytest.mark.unit
+class TestGetTpConcatDimExtras:
+    """Cases not covered by the original parametrize block."""
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "decoder.layers.0.self_attention.linear_qkv._extra_state",
+            "decoder.layers.0.self_attention.linear_proj._extra_state",
+            "decoder.layers.0.mlp.linear_fc1._extra_state",
+            "decoder.layers.0.mlp.linear_fc2._extra_state",
+        ],
+    )
+    def test_extra_state_keys_are_replicated(self, converter, name):
+        assert converter._get_tp_concat_dim(name) is None
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "totally.unrelated.tensor",
+            "model.bias",
+            "decoder.layers.0.unknown.weight",
+            "",
+        ],
+    )
+    def test_unrelated_names_are_replicated(self, converter, name):
+        assert converter._get_tp_concat_dim(name) is None
+
+
+# ---------------------------------------------------------------------------
+# Loader tests: load_megatron_whisper_weights is the inverse of the converter.
+# A real Megatron WhisperEncoder requires megatron.core extensions that aren't
+# always available in CPU-only test envs, so we use a stand-in that records
+# load_state_dict() calls.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingModel:
+    """Stand-in for nn.Module that records load_state_dict() and reports configurable keys."""
+
+    def __init__(self, *, missing=None, unexpected=None):
+        self._missing = list(missing) if missing else []
+        self._unexpected = list(unexpected) if unexpected else []
+        self.received = None
+
+    def load_state_dict(self, state_dict, strict=True):
+        self.received = state_dict
+        return SimpleNamespace(missing_keys=self._missing, unexpected_keys=self._unexpected)
+
+
+def _run_conversion(converter, output_path, *, tp_size=1, use_te=True):
+    """Module-level wrapper sharing config with TestEndToEndConversion."""
+    return TestEndToEndConversion()._convert(converter, output_path, tp_size=tp_size, use_te=use_te)
+
+
+@pytest.mark.unit
+class TestLoadMegatronWhisperWeights:
+    def test_matching_tp_loads_single_rank_and_filters_none_values(self, converter, tmp_path):
+        _run_conversion(converter, tmp_path, tp_size=2)
+        model = _RecordingModel()
+        converter.load_megatron_whisper_weights(model, str(tmp_path), tp_rank=1, tp_size=2)
+        assert model.received is not None
+        # _extra_state placeholders are saved as None and must be stripped before load_state_dict.
+        assert not any(v is None for v in model.received.values())
+        # Rank 1 holds the second half of column-parallel tensors.
+        qkv = model.received["decoder.layers.0.self_attention.linear_qkv.weight"]
+        assert qkv.shape == (
+            3 * TestEndToEndConversion.HIDDEN_DIM // 2,
+            TestEndToEndConversion.HIDDEN_DIM,
+        )
+
+    def test_reconcile_ckpt_tp2_into_model_tp1_concatenates(self, converter, tmp_path):
+        """Loading a TP=2 checkpoint into a TP=1 model must reconstruct the unsharded tensors."""
+        ref_dir = tmp_path / "ref"
+        ckpt_dir = tmp_path / "ckpt"
+        _run_conversion(converter, ref_dir, tp_size=1)
+        _run_conversion(converter, ckpt_dir, tp_size=2)
+
+        ref = torch.load(ref_dir / "tp_rank_00" / "model_weights.pt", map_location="cpu", weights_only=True)
+        ref_full = {k: v for k, v in ref["model"].items() if v is not None}
+
+        model = _RecordingModel()
+        converter.load_megatron_whisper_weights(model, str(ckpt_dir), tp_rank=0, tp_size=1)
+        for key, ref_tensor in ref_full.items():
+            assert torch.equal(model.received[key], ref_tensor), f"merged {key} differs from TP=1 ref"
+
+    def test_reconcile_ckpt_tp4_into_model_tp2_resplits(self, converter, tmp_path):
+        ref_dir = tmp_path / "ref_tp2"
+        ckpt_dir = tmp_path / "ckpt_tp4"
+        _run_conversion(converter, ref_dir, tp_size=2)
+        _run_conversion(converter, ckpt_dir, tp_size=4)
+
+        for tp_rank in range(2):
+            model = _RecordingModel()
+            converter.load_megatron_whisper_weights(model, str(ckpt_dir), tp_rank=tp_rank, tp_size=2)
+            ref = torch.load(
+                ref_dir / f"tp_rank_{tp_rank:02d}" / "model_weights.pt",
+                map_location="cpu",
+                weights_only=True,
+            )
+            ref_dict = {k: v for k, v in ref["model"].items() if v is not None}
+            for key, ref_tensor in ref_dict.items():
+                assert torch.equal(model.received[key], ref_tensor), (
+                    f"reconciled rank {tp_rank} {key} differs from native TP=2"
+                )
+
+    def test_empty_ckpt_dir_raises(self, converter, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            converter.load_megatron_whisper_weights(_RecordingModel(), str(tmp_path), tp_rank=0, tp_size=1)
+
+    def test_unexpected_extra_state_keys_are_tolerated(self, converter, tmp_path):
+        _run_conversion(converter, tmp_path, tp_size=1)
+        model = _RecordingModel(
+            unexpected=["decoder.layers.0.self_attention.linear_qkv._extra_state"],
+        )
+        converter.load_megatron_whisper_weights(model, str(tmp_path), tp_rank=0, tp_size=1)
+
+    def test_other_unexpected_keys_raise(self, converter, tmp_path):
+        _run_conversion(converter, tmp_path, tp_size=1)
+        model = _RecordingModel(unexpected=["totally.unrelated.tensor"])
+        with pytest.raises(RuntimeError, match="State dict mismatch"):
+            converter.load_megatron_whisper_weights(model, str(tmp_path), tp_rank=0, tp_size=1)
+
+    def test_missing_keys_raise(self, converter, tmp_path):
+        _run_conversion(converter, tmp_path, tp_size=1)
+        model = _RecordingModel(missing=["decoder.layers.0.self_attention.linear_qkv.weight"])
+        with pytest.raises(RuntimeError, match="State dict mismatch"):
+            converter.load_megatron_whisper_weights(model, str(tmp_path), tp_rank=0, tp_size=1)
+
+    def test_missing_only_extra_state_is_tolerated(self, converter, tmp_path):
+        _run_conversion(converter, tmp_path, tp_size=1)
+        model = _RecordingModel(missing=["foo._extra_state", "bar._extra_state"])
+        converter.load_megatron_whisper_weights(model, str(tmp_path), tp_rank=0, tp_size=1)
+
+
+@pytest.mark.unit
+class TestVerifyConversionShapeChecker:
+    """Tests for verify_conversion(), the in-module shape sanity-checker."""
+
+    def _convert_with_mock(self, converter, output, *, tp_size, use_te=True):
+        """Convert and return the same mocked HF model so verify_conversion sees matching config."""
+        torch.manual_seed(0)
+        sd = _make_hf_whisper_state_dict(
+            TestEndToEndConversion.NUM_LAYERS,
+            TestEndToEndConversion.HIDDEN_DIM,
+            TestEndToEndConversion.FFN_DIM,
+            TestEndToEndConversion.NUM_MEL_BINS,
+            TestEndToEndConversion.MAX_POS,
+        )
+        mock_hf = _make_mock_hf_model(
+            sd,
+            hidden_dim=TestEndToEndConversion.HIDDEN_DIM,
+            num_heads=TestEndToEndConversion.NUM_HEADS,
+            ffn_dim=TestEndToEndConversion.FFN_DIM,
+            num_layers=TestEndToEndConversion.NUM_LAYERS,
+            num_mel_bins=TestEndToEndConversion.NUM_MEL_BINS,
+            max_pos=TestEndToEndConversion.MAX_POS,
+        )
+        with patch.object(converter, "WhisperModel") as mock_cls:
+            mock_cls.from_pretrained.return_value = mock_hf
+            converter.convert_hf_whisper_to_megatron(
+                hf_model_name="dummy",
+                output_path=str(output),
+                tensor_parallel_size=tp_size,
+                use_te=use_te,
+            )
+        return mock_hf
+
+    def test_healthy_checkpoint_passes(self, converter, tmp_path):
+        mock_hf = self._convert_with_mock(converter, tmp_path, tp_size=2)
+        with patch.object(converter, "WhisperModel") as mock_cls:
+            mock_cls.from_pretrained.return_value = mock_hf
+            assert converter.verify_conversion(str(tmp_path), tensor_parallel_size=2) is True
+
+    def test_corrupt_shape_fails(self, converter, tmp_path):
+        mock_hf = self._convert_with_mock(converter, tmp_path, tp_size=1)
+        path = tmp_path / "tp_rank_00" / "model_weights.pt"
+        bad = torch.load(path, map_location="cpu", weights_only=True)
+        bad["model"]["decoder.layers.0.self_attention.linear_qkv.weight"] = torch.zeros(7, 7)
+        torch.save(bad, path)
+        with patch.object(converter, "WhisperModel") as mock_cls:
+            mock_cls.from_pretrained.return_value = mock_hf
+            assert converter.verify_conversion(str(tmp_path), tensor_parallel_size=1) is False
+
+    def test_missing_rank_file_fails(self, converter, tmp_path):
+        mock_hf = self._convert_with_mock(converter, tmp_path, tp_size=2)
+        (tmp_path / "tp_rank_01" / "model_weights.pt").unlink()
+        with patch.object(converter, "WhisperModel") as mock_cls:
+            mock_cls.from_pretrained.return_value = mock_hf
+            assert converter.verify_conversion(str(tmp_path), tensor_parallel_size=2) is False
