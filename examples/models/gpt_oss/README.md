@@ -181,7 +181,7 @@ python /opt/Evaluator/scripts/evaluation_with_nemo_run.py  \
     --additional_args="--legacy_model_format"
 ```
 
-Replace `<checkpoint_dir>/<iter>` with your SFT result path (e.g. `gpt_oss_20b_openmathinstruct2_finetune_tp2_pp2_ep4_spTrue_cp1/iter_0001000`).
+Replace `<checkpoint_dir>/<iter>` with your SFT result path (e.g. `gpt_oss_20b_openmathinstruct2_gsm8k_finetune_tp2_pp2_ep4_spTrue_cp1/iter_0001000`).
 The script deploys an inference server, runs lm-eval against it, and writes results to `<evaluation_result_dir>/megatron_model/results_*.json`.
 Scores are reported as `flexible-extract` (flex) and `strict-match` (strict) accuracy.
 
