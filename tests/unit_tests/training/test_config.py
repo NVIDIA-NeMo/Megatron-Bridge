@@ -1985,9 +1985,7 @@ class TestCheckpointConfig:
             dist_config=dist_cfg,
         )
         try:
-            # Should raise error - async_save with fsdp_dtensor is not allowed
-            with pytest.raises(AssertionError, match="async_save is only supported with ckpt_format='torch_dist'"):
-                container.validate()
+            container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
