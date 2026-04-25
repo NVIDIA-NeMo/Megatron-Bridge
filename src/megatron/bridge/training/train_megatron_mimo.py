@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from megatron.core.models.mimo.optimizer import MimoOptimizer
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
     from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
-    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
+    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection, ProcessGroupCollection
 
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOInfra
 
@@ -217,6 +217,8 @@ def train_megatron_mimo(
     global_state: GlobalState,
     megatron_mimo_infra: "MegatronMIMOInfra",
     multimodule_communicator: "MultiModulePipelineCommunicator",
+    active_module_name: str,
+    local_pg_collection: "ProcessGroupCollection",
     checkpoint_manager: Optional[CheckpointManager] = None,
     multimodule_pg_collection: Optional["MultiModuleProcessGroupCollection"] = None,
     module_to_grid_tuple: Optional[List] = None,
@@ -247,6 +249,13 @@ def train_megatron_mimo(
         global_state: GlobalState containing timers, config, train_state.
         megatron_mimo_infra: MegatronMIMOInfra with grids, topology, pg_collections.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
+        active_module_name: Canonical module name for this rank (from setup). In
+            non-colocated mode this is the single active module; in colocated
+            mode it defaults to the language module. Used for logging reductions
+            and legacy consumers that require a single module identity.
+        local_pg_collection: Canonical per-rank ProcessGroupCollection matching
+            ``active_module_name`` (from setup). Per-module operations should
+            still iterate ``megatron_mimo_infra.pg_collections`` directly.
         checkpoint_manager: CheckpointManager for save operations. Created by
             setup_megatron_mimo(). If None, a DefaultCheckpointManager is created.
         multimodule_pg_collection: Pre-built PG collection for the pipeline schedule.
@@ -279,16 +288,6 @@ def train_megatron_mimo(
             "MultiModuleProcessGroupCollection is required for MegatronMIMO training. "
             "The list-based fallback is not supported. Ensure Megatron-LM PR 3212 is available."
         )
-
-    # Use rank-local module PG for logging reductions and checkpoint saving to
-    # avoid global MPU fallback. In non-colocated MegatronMIMO each rank participates in
-    # exactly one module, so "first non-None" unambiguously selects that module's PG.
-    active_modules = [(name, pg) for name, pg in megatron_mimo_infra.pg_collections.items() if pg is not None]
-    assert len(active_modules) == 1, (
-        f"Non-colocated MegatronMIMO requires exactly one active ProcessGroupCollection per rank, "
-        f"got {len(active_modules)}. Colocated MegatronMIMO is not supported by this code path."
-    )
-    active_module_name, local_pg_collection = active_modules[0]
 
     if checkpoint_manager is None:
         checkpoint_manager = DefaultCheckpointManager(cfg.checkpoint)

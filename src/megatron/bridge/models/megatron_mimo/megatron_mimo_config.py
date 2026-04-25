@@ -186,6 +186,41 @@ class MegatronMIMOParallelismConfig:
                         f"Encoder DP must be >= LLM DP for embedding alignment across batches."
                     )
 
+        # Colocated with asymmetric DP is not yet supported: the forward step
+        # slices the global micro-batch by a single DP geometry, so modality
+        # inputs and LLM keys cannot be routed independently.
+        # TODO(liding): enable asymmetric DP.
+        is_colocated = len({(p.rank_offset, p.total_ranks) for p in self.module_parallelisms.values()}) == 1
+        if is_colocated and llm_dp is not None:
+            for name, p in self.module_parallelisms.items():
+                if name == MIMO_LANGUAGE_MODULE_KEY:
+                    continue
+                encoder_dp = p.data_parallel_size
+                if encoder_dp is not None and encoder_dp != llm_dp:
+                    raise ValueError(
+                        f"Colocated MegatronMIMO requires encoder DP == LLM DP. "
+                        f"Module '{name}' has DP={encoder_dp}, LLM has DP={llm_dp}."
+                    )
+
+        # Colocated with asymmetric TP is not yet supported: mcore's CUDA RNG
+        # tracker has one set of named states seeded by a single tp_rank, so a
+        # rank whose encoder tp_rank and LLM tp_rank differ will run one module
+        # with the wrong TP-region dropout masks and weight-init RNG. Correct
+        # per-module seeding requires module-scoped tracker contexts, an mcore
+        # architectural change.
+        # TODO(liding): enable asymmetric TP.
+        llm_tp = self.module_parallelisms[MIMO_LANGUAGE_MODULE_KEY].tensor_model_parallel_size
+        if is_colocated:
+            for name, p in self.module_parallelisms.items():
+                if name == MIMO_LANGUAGE_MODULE_KEY:
+                    continue
+                encoder_tp = p.tensor_model_parallel_size
+                if encoder_tp != llm_tp:
+                    raise ValueError(
+                        f"Colocated MegatronMIMO requires encoder TP == LLM TP. "
+                        f"Module '{name}' has TP={encoder_tp}, LLM has TP={llm_tp}."
+                    )
+
     def finalize(self, world_size: int) -> None:
         """Finalize parallelism config: compute data_parallel_size and validate.
 

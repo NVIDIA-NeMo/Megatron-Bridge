@@ -243,7 +243,13 @@ class TestPretrainMegatronMIMOSetup:
         mock_mgr_instance.checkpointing_context = {"test": "context"}
         mock_create_ckpt_mgr.return_value = mock_mgr_instance
 
+        # Distinct sentinel PGs so bridge-write assertions catch wrong wiring.
         local_pg = MagicMock()
+        local_pg.tp = MagicMock(name="tp_pg")
+        local_pg.dp = MagicMock(name="dp_pg")
+        local_pg.dp_cp = MagicMock(name="dp_cp_pg")
+        local_pg.pp = MagicMock(name="pp_pg")
+        local_pg.cp = MagicMock(name="cp_pg")
         mock_get_active_pg.return_value = ("language", local_pg)
 
         model_config = Mock()
@@ -292,8 +298,22 @@ class TestPretrainMegatronMIMOSetup:
             patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
             patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
             patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
+            patch("megatron.core.parallel_state._PIPELINE_MODEL_PARALLEL_GROUP", None),
+            patch("megatron.core.parallel_state._CONTEXT_PARALLEL_GROUP", None),
         ):
             result = setup_megatron_mimo(state=global_state)
+
+            # Bridge must write every relevant PG global from local_pg_collection,
+            # including _CONTEXT_PARALLEL_GROUP — legacy consumers that fall back
+            # to parallel_state.get_context_parallel_group() would otherwise see
+            # an uninitialized group under CP>1.
+            from megatron.core import parallel_state as mpu
+
+            assert mpu._TENSOR_MODEL_PARALLEL_GROUP is local_pg.tp
+            assert mpu._DATA_PARALLEL_GROUP is local_pg.dp
+            assert mpu._DATA_PARALLEL_GROUP_WITH_CP is local_pg.dp_cp
+            assert mpu._PIPELINE_MODEL_PARALLEL_GROUP is local_pg.pp
+            assert mpu._CONTEXT_PARALLEL_GROUP is local_pg.cp
 
         mock_create_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
         global_state.initialize_async_checkpoint_worker.assert_called_once()
@@ -325,62 +345,50 @@ class TestPretrainMegatronMIMOSetup:
 
 
 # ---------------------------------------------------------------------------
-# Tests: non-colocated runtime guard
+# Tests: colocated-aware canonical-PG plumbing
 # ---------------------------------------------------------------------------
 
 
-class TestNonColocatedGuard:
-    """Verify the non-colocated topology assertion in train_megatron_mimo."""
+class TestColocatedAcceptance:
+    """Verify train_megatron_mimo accepts colocated setups by consuming
+    active_module_name and local_pg_collection from its caller (setup_megatron_mimo).
+
+    Replaces the previous non-colocated guard that asserted len(active_pgs) == 1
+    inside the training loop. That inline assertion tripped before the schedule
+    dispatch in colocated mode and is obsolete now that setup computes the
+    canonical identity via get_active_module_pg().
+    """
 
     @patch("megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule", return_value=Mock(spec=[]))
     @patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple")
     @patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func")
     @patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1)
     @patch("torch.distributed.get_rank", return_value=0)
-    def test_rejects_multiple_active_pgs(self, *_mocks):
+    def test_accepts_multiple_active_pgs_when_setup_provides_identity(self, *_mocks):
+        """Colocated topology (multiple active pg_collections) must no longer
+        trip an assertion when the caller provides active_module_name and
+        local_pg_collection. This is the composition test pinning the contract
+        between setup_megatron_mimo and train_megatron_mimo."""
         from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
 
         infra = _make_megatron_mimo_infra(num_active_pgs=2)
-        state = _make_global_state(train_iters=0)
+        state = _make_global_state(train_iters=0)  # exit loop immediately
 
-        with pytest.raises(AssertionError, match="exactly one active ProcessGroupCollection"):
-            train_megatron_mimo(
-                forward_step_func=Mock(),
-                model=Mock(),
-                optimizer=Mock(),
-                schedulers={},
-                train_data_iterator=Mock(),
-                valid_data_iterator=None,
-                global_state=state,
-                megatron_mimo_infra=infra,
-                multimodule_communicator=Mock(),
-                checkpoint_manager=MagicMock(),
-            )
-
-    @patch("megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule", return_value=Mock(spec=[]))
-    @patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple")
-    @patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func")
-    @patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1)
-    @patch("torch.distributed.get_rank", return_value=0)
-    def test_rejects_zero_active_pgs(self, *_mocks):
-        from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
-
-        infra = _make_megatron_mimo_infra(num_active_pgs=0)
-        state = _make_global_state(train_iters=0)
-
-        with pytest.raises(AssertionError, match="exactly one active ProcessGroupCollection"):
-            train_megatron_mimo(
-                forward_step_func=Mock(),
-                model=Mock(),
-                optimizer=Mock(),
-                schedulers={},
-                train_data_iterator=Mock(),
-                valid_data_iterator=None,
-                global_state=state,
-                megatron_mimo_infra=infra,
-                multimodule_communicator=Mock(),
-                checkpoint_manager=MagicMock(),
-            )
+        # Must not raise.
+        train_megatron_mimo(
+            forward_step_func=Mock(),
+            model=Mock(),
+            optimizer=Mock(),
+            schedulers={},
+            train_data_iterator=Mock(),
+            valid_data_iterator=None,
+            global_state=state,
+            megatron_mimo_infra=infra,
+            multimodule_communicator=Mock(),
+            active_module_name="language",
+            local_pg_collection=Mock(),
+            checkpoint_manager=MagicMock(),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +444,8 @@ class TestTrainMegatronMIMOCheckpointIntegration:
             global_state=state,
             megatron_mimo_infra=infra,
             multimodule_communicator=Mock(),
+            active_module_name="language",
+            local_pg_collection=pg,
             checkpoint_manager=ckpt_mgr,
         )
 
@@ -487,6 +497,8 @@ class TestTrainMegatronMIMOCheckpointIntegration:
             global_state=state,
             megatron_mimo_infra=infra,
             multimodule_communicator=Mock(),
+            active_module_name="language",
+            local_pg_collection=Mock(),
             checkpoint_manager=MagicMock(),
         )
 
@@ -536,6 +548,8 @@ class TestTrainMegatronMIMOCheckpointIntegration:
             global_state=state,
             megatron_mimo_infra=infra,
             multimodule_communicator=Mock(),
+            active_module_name="language",
+            local_pg_collection=Mock(),
             checkpoint_manager=ckpt_mgr,
         )
 
@@ -594,6 +608,8 @@ class TestTrainMegatronMIMOCheckpointIntegration:
             global_state=state,
             megatron_mimo_infra=infra,
             multimodule_communicator=Mock(),
+            active_module_name="language",
+            local_pg_collection=Mock(),
             checkpoint_manager=MagicMock(),
         )
 

@@ -26,11 +26,12 @@ def _make_setup_output(module_to_grid_map):
     global_state.train_state.step = 0
     mock_checkpoint_manager = MagicMock()
     mock_checkpoint_manager.checkpointing_context = None
+    language_pg = MagicMock()
     return SimpleNamespace(
         model=MagicMock(),
         megatron_mimo_infra=SimpleNamespace(
             module_to_grid_map=module_to_grid_map,
-            pg_collections={"language": MagicMock()},
+            pg_collections={"language": language_pg},
         ),
         multimodule_communicator=MagicMock(),
         multimodule_pg_collection=MagicMock(),
@@ -41,6 +42,8 @@ def _make_setup_output(module_to_grid_map):
         valid_data_iterator=None,
         global_state=global_state,
         checkpoint_manager=mock_checkpoint_manager,
+        active_module_name="language",
+        local_pg_collection=language_pg,
     )
 
 
@@ -179,6 +182,40 @@ def test_pretrain_megatron_mimo_calls_setup_and_train(
     mock_setup_megatron_mimo.assert_called_once()
     mock_train_megatron_mimo.assert_called_once()
     mock_finish.assert_called_once()
+
+
+@patch("megatron.bridge.training.pretrain_megatron_mimo._finish_train")
+@patch("megatron.bridge.training.pretrain_megatron_mimo.train_megatron_mimo")
+@patch("megatron.bridge.training.pretrain_megatron_mimo.setup_megatron_mimo")
+@patch("megatron.bridge.training.pretrain_megatron_mimo.dist")
+@patch("megatron.bridge.training.pretrain_megatron_mimo.megatron_mimo_runtime_config_update")
+@patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None)
+@patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None)
+@patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None)
+def test_pretrain_megatron_mimo_threads_active_module_from_setup(
+    mock_runtime_update, mock_dist, mock_setup_megatron_mimo, mock_train_megatron_mimo, mock_finish
+):
+    """pretrain_megatron_mimo must pass active_module_name and local_pg_collection
+    from setup_output into train_megatron_mimo. Prevents reintroduction of the
+    rank-dependent inline recompute that fails in colocated mode."""
+    from megatron.bridge.training.pretrain_megatron_mimo import pretrain_megatron_mimo
+
+    cfg = _make_cfg()
+    mock_dist.get_rank.return_value = 0
+    mock_dist.is_initialized.return_value = True
+    setup_output = _make_setup_output(module_to_grid_map={"language": MagicMock()})
+    mock_setup_megatron_mimo.return_value = setup_output
+
+    pretrain_megatron_mimo(
+        cfg=cfg,
+        forward_step_func=MagicMock(),
+        build_data_iterators_fn=MagicMock(return_value=(iter([]), None)),
+        global_state=MagicMock(),
+    )
+
+    _, kwargs = mock_train_megatron_mimo.call_args
+    assert kwargs["active_module_name"] == setup_output.active_module_name
+    assert kwargs["local_pg_collection"] is setup_output.local_pg_collection
 
 
 def test_finish_train_calls_cleanup():

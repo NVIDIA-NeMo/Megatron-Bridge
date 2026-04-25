@@ -342,6 +342,8 @@ def setup_megatron_mimo(
     mpu._DATA_PARALLEL_GROUP_WITH_CP = getattr(local_pg_collection, "dp_cp", local_pg_collection.dp)
     if hasattr(local_pg_collection, "pp"):
         mpu._PIPELINE_MODEL_PARALLEL_GROUP = local_pg_collection.pp
+    if getattr(local_pg_collection, "cp", None) is not None:
+        mpu._CONTEXT_PARALLEL_GROUP = local_pg_collection.cp
 
     # Load checkpoint if one exists (persistent, pretrained, or non-persistent).
     first_scheduler = next(iter(schedulers.values()), None) if schedulers else None

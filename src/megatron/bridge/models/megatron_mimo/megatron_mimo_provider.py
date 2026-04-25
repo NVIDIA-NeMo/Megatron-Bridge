@@ -304,6 +304,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
 
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
+        llm_pg = None
         if self.megatron_mimo_parallelism_config:
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
@@ -332,7 +333,12 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ),
         )
 
-        megatron_mimo_model = MimoModel(mimo_model_config)
+        # Thread the LLM's CP and TP groups explicitly so MimoModel's PartitionAdapter
+        # (built when language CP>1 or sequence_parallel=True) binds to the correct
+        # groups instead of falling back to uninitialised global parallel_state.
+        cp_group = llm_pg.cp if llm_pg is not None else None
+        tp_group = llm_pg.tp if llm_pg is not None else None
+        megatron_mimo_model = MimoModel(mimo_model_config, cp_group=cp_group, tp_group=tp_group)
 
         # Apply freezing
         self._apply_freezing(megatron_mimo_model)

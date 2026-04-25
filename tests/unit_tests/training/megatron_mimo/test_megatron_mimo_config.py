@@ -60,17 +60,48 @@ def test_megatron_mimo_colocated_same_offset_same_size_accepted():
     assert cfg.total_world_size == 8
 
 
-def test_megatron_mimo_colocated_different_tp_dp_accepted():
-    """Colocated with different (TP, DP) layouts per module — the fan-in case
-    that colocated mode is designed for. Both modules occupy ranks [0, 8);
-    encoder has (TP=1, DP=8) and language has (TP=4, DP=2)."""
+def test_megatron_mimo_colocated_asymmetric_dp_rejected():
+    """Colocated with asymmetric DP (encoder_dp != llm_dp) must fail fast.
+
+    Short-term guard: the forward step currently slices the global micro-batch
+    by a single DP geometry, so modality inputs and LLM keys cannot be routed
+    independently. Full per-key per-module slicing is tracked as a follow-up;
+    once it lands, this configuration should be accepted (fan-in case)."""
     module_parallelisms = {
         "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=8, rank_offset=0),
         "language": ModuleParallelismConfig(tensor_model_parallel_size=4, data_parallel_size=2, rank_offset=0),
     }
     cfg = MegatronMIMOParallelismConfig(module_parallelisms=module_parallelisms)
-    cfg.finalize(world_size=8)
-    assert cfg.total_world_size == 8
+    with pytest.raises(ValueError, match="Colocated MegatronMIMO requires encoder DP == LLM DP"):
+        cfg.finalize(world_size=8)
+
+
+def test_megatron_mimo_colocated_asymmetric_tp_rejected():
+    """Colocated with asymmetric TP (encoder_tp != llm_tp) must fail fast.
+
+    Short-term guard: mcore's CUDA RNG tracker is seeded by a single tp_rank,
+    so a rank whose encoder tp_rank and LLM tp_rank differ would run one
+    module with the wrong TP-region dropout masks and weight-init RNG. Full
+    per-module seeding (module-scoped tracker contexts) is an mcore-side
+    change tracked as a follow-up; once it lands, this config should be OK."""
+    # Equal DP with different TP requires PP variation to keep total_ranks equal.
+    module_parallelisms = {
+        "encoder": ModuleParallelismConfig(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=2,
+            data_parallel_size=2,
+            rank_offset=0,
+        ),
+        "language": ModuleParallelismConfig(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            data_parallel_size=2,
+            rank_offset=0,
+        ),
+    }
+    cfg = MegatronMIMOParallelismConfig(module_parallelisms=module_parallelisms)
+    with pytest.raises(ValueError, match="Colocated MegatronMIMO requires encoder TP == LLM TP"):
+        cfg.finalize(world_size=4)
 
 
 def test_megatron_mimo_rejects_partial_overlap_same_offset_different_size():

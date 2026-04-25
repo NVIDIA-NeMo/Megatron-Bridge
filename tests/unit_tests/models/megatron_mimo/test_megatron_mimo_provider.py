@@ -257,6 +257,54 @@ class TestMegatronMIMOProvider:
         assert "language" in infra.module_to_grid_map
         assert "language" in infra.pg_collections
 
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    def test_provide_threads_cp_and_tp_groups_into_mimo_model(
+        self, mock_build_grids, mock_mimo_model, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """MimoModel must receive cp_group and tp_group from the language module's
+        pg_collection. MimoModel's PartitionAdapter (built when language CP>1 or
+        sequence_parallel=True) otherwise falls back to uninitialised globals —
+        MegatronMIMO intentionally skips initialize_model_parallel()."""
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1, 2, 3]
+        mock_new_group.return_value = MagicMock()
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+
+        megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    context_parallel_size=2,
+                    data_parallel_size=1,
+                ),
+            },
+        )
+
+        # Distinct sentinel PGs so we can assert correct threading, not just truthiness.
+        tp_pg = MagicMock(name="tp_pg")
+        cp_pg = MagicMock(name="cp_pg")
+        mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
+        mock_grid.size = 4
+        mock_grid.is_current_rank_in_grid.return_value = True
+        mock_grid.get_pg.side_effect = lambda dims: {"tp": tp_pg, "cp": cp_pg}.get(dims[0], MagicMock())
+        mock_build_grids.return_value = {"language": mock_grid}
+
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+
+        provider.provide()
+
+        kwargs = mock_mimo_model.call_args.kwargs
+        assert kwargs["cp_group"] is cp_pg
+        assert kwargs["tp_group"] is tp_pg
+
     def test_inject_pg_collection_into_language_spec(self):
         """Test that pg_collection is injected into language specs."""
         language_spec = ModuleSpec(module=Mock, params={})
