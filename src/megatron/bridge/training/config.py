@@ -625,6 +625,9 @@ class CheckpointConfig(MTrainCheckpointConfig):
     Example: ``'mypackage.checkpoint.MyCheckpointManager'``
     """
 
+    dist_ckpt_workers: int = 1
+    """Specifies the number of distributed checkpoint workers for asynchronous saving."""
+
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
         if self.pretrained_checkpoint is not None:
@@ -1065,6 +1068,59 @@ class ConfigContainer(Container):
         # Enable deterministic algorithms in torch
         torch.use_deterministic_algorithms(True)
 
+    def _validate_and_apply_megatron_fsdp_configs(self) -> None:
+        """
+        Validate Megatron-FSDP configuration when Megatron-FSDP is used.
+        """
+        # Set configs needed for Megatron-FSDP.
+        self.dist.use_megatron_fsdp = True
+        self.ddp.use_megatron_fsdp = True
+
+        # Megatron-FSDP always uses a distributed optimizer.
+        if not self.ddp.use_distributed_optimizer or not self.optimizer.use_distributed_optimizer:
+            print_rank_0("use_distributed_optimizer=True is required for Megatron-FSDP. Activating...")
+        self.ddp.use_distributed_optimizer = True
+        self.optimizer.use_distributed_optimizer = True
+
+        if self.optimizer.use_precision_aware_optimizer:
+            print_rank_0("Megatron-FSDP installs gradients in `param.decoupled_grad` when using FusedAdam.")
+            # Megatron-FSDP uses a decoupled gradient for FusedAdam.
+            # Aligned with FusedAdam(use_decoupled_grad=True) and
+            # clip_grad_norm(use_decoupled_grad=True)!
+            self.ddp.megatron_fsdp_use_decoupled_grad = True
+
+        if self.ddp.average_in_collective and not self.ddp.disable_symmetric_registration:
+            print_rank_0("average_in_collective not supported with NCCL symmetric registration. Deactivating...")
+            self.ddp.average_in_collective = False
+
+        # reuse_grad_buf_for_mxfp8_param_ag is not implemented for Megatron-FSDP
+        if self.ddp.reuse_grad_buf_for_mxfp8_param_ag or self.optimizer.reuse_grad_buf_for_mxfp8_param_ag:
+            print_rank_0("reuse_grad_buf_for_mxfp8_param_ag not implemented for Megatron FSDP. Deactivating...")
+            self.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+            self.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
+
+        # Assertions / Guards
+        if self.checkpoint.save is not None or self.checkpoint.load is not None:
+            # only check if saving or loading
+            assert self.checkpoint.ckpt_format == "fsdp_dtensor", (
+                "Megatron-FSDP requires the fsdp_dtensor checkpointing format!"
+            )
+        assert os.getenv("CUDA_DEVICE_MAX_CONNECTIONS") != "1", (
+            "FSDP requires CUDA_DEVICE_MAX_CONNECTIONS > 1 or unset."
+        )
+        if self.ddp.nccl_ub:
+            # Without manual registration, UBR is really slow.
+            self.ddp.fsdp_manual_registration = True
+        else:
+            # Only compatible with NCCL UBR.
+            assert not self.ddp.fsdp_manual_registration, "DDP.fsdp_manual_registration requires DDP.nccl_ub!"
+        if self.ddp.data_parallel_sharding_strategy == "optim_grads_params":
+            assert self.train.check_weight_hash_across_dp_replicas_interval is None, (
+                "TrainingConfig.check_weight_hash_across_dp_replicas_interval is not "
+                "supported with the Megatron-FSDP optim_grads_params sharding strategy"
+            )
+        assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1135,6 +1191,13 @@ class ConfigContainer(Container):
             f"{self.data_parallel_size} = {eval_dp_product})"
         )
 
+        # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
+        if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
+            raise ValueError("use_megatron_fsdp and use_torch_fsdp2 are mutually exclusive.")
+        # Validate Megatron-FSDP configuration.
+        if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+            self._validate_and_apply_megatron_fsdp_configs()
+
         # Deterministic mode validations and settings
         self._validate_and_apply_deterministic_mode()
 
@@ -1151,36 +1214,6 @@ class ConfigContainer(Container):
             )
         if self.model.cuda_graph_impl == "none":
             self.model.cuda_graph_scope = []
-
-        if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
-            raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
-
-        # Megatron FSDP Config checks
-        if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
-            # Set Megatron FSDP Configs
-            self.dist.use_megatron_fsdp = True
-            self.ddp.use_megatron_fsdp = True
-
-            assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
-
-            if self.checkpoint.save is not None or self.checkpoint.load is not None:
-                # only check if saving or loading
-                assert self.checkpoint.ckpt_format == "fsdp_dtensor", (
-                    "Megatron FSDP only supports fsdp_dtensor checkpoint format"
-                )
-
-            if self.ddp.average_in_collective and not self.ddp.disable_symmetric_registration:
-                print_rank_0(
-                    "average_in_collective is not supported with NCCL symmetric registration, setting to False"
-                )
-                self.ddp.average_in_collective = False
-
-            # reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP
-            if self.ddp.reuse_grad_buf_for_mxfp8_param_ag:
-                print_rank_0("reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP, setting to False")
-                self.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
-            if self.optimizer.reuse_grad_buf_for_mxfp8_param_ag:
-                self.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
 
         # ModelOpt/Quantization checks
         if getattr(self.model, "restore_modelopt_state", False):
@@ -1199,8 +1232,8 @@ class ConfigContainer(Container):
 
         # Enforce async_save format restriction
         if self.checkpoint.async_save:
-            assert self.checkpoint.ckpt_format == "torch_dist", (
-                "async_save is only supported with ckpt_format='torch_dist'"
+            assert self.checkpoint.ckpt_format in ["torch_dist", "fsdp_dtensor"], (
+                "async_save is only supported with ckpt_format='torch_dist','fsdp_dtensor'"
             )
 
         # Set defaults for tensor inspect callback
