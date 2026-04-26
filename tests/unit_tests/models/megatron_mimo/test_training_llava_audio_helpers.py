@@ -735,11 +735,13 @@ class TestLog:
 @pytest.fixture
 def build_data_iterators_fn(monkeypatch):
     """Returns (build_fn, mocks) so tests can configure the mocked dataloader/TrainState."""
-    # Stub the heavy modules the function imports inside its body.
+    # Stub the heavy modules the function imports inside its body. Use monkeypatch
+    # so the stubs are reverted at test teardown — otherwise they leak across the
+    # session and can break unrelated tests that import the real modules later.
     loaders_mock = MagicMock()
     state_mock = MagicMock()
-    sys.modules["megatron.bridge.data.megatron_mimo.loaders"] = loaders_mock
-    sys.modules["megatron.bridge.training.state"] = state_mock
+    monkeypatch.setitem(sys.modules, "megatron.bridge.data.megatron_mimo.loaders", loaders_mock)
+    monkeypatch.setitem(sys.modules, "megatron.bridge.training.state", state_mock)
 
     # Inject _wrap_iter as a passthrough so the test asserts wiring, not transformation.
     # Accepts arbitrary kwargs so the test isn't sensitive to whether the source passes
