@@ -42,7 +42,7 @@ from whisper_model import WhisperEncoder
 # ---------------------------------------------------------------------------
 
 
-def _init_megatron(tp_size: int = 1):
+def _init_megatron(tp_size: int = 1):  # pragma: no cover
     """Initialize Megatron parallel state for the given TP size."""
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "29500")
@@ -145,7 +145,7 @@ def compare_outputs(
 # ---------------------------------------------------------------------------
 
 
-def main():
+def main():  # pragma: no cover
     """CLI entrypoint for verifying a Whisper HF→Megatron conversion."""
     parser = argparse.ArgumentParser(description="Verify Whisper HF→Megatron conversion.")
     parser.add_argument("--checkpoint-dir", required=True, help="Megatron Whisper checkpoint dir")

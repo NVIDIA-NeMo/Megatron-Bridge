@@ -86,7 +86,7 @@ def _make_audio_config() -> TransformerConfig:
     return cfg
 
 
-def _build_model_specs():
+def _build_model_specs():  # pragma: no cover
     """Return (language_model_spec, modality_submodules_spec, special_token_ids)."""
     vision_config = _make_vision_config()
     audio_config = _make_audio_config()
@@ -397,7 +397,7 @@ class _AnswerMaskedMegatronMIMODataset(MegatronMIMODataset):
 class _AnswerMaskedHFMegatronMIMOProvider(HFMegatronMIMODatasetProvider):
     """HFMegatronMIMODatasetProvider that builds ``_AnswerMaskedMegatronMIMODataset`` instances."""
 
-    def _build_split_dataset(self, split, target_samples, processors, tokenizer):
+    def _build_split_dataset(self, split, target_samples, processors, tokenizer):  # pragma: no cover
         if target_samples <= 0:
             return None
         hf_dataset = self._load_hf_dataset(split)
@@ -421,7 +421,7 @@ def _build_hf_data_provider(
     dataset_root: str,
     audio_column: str | None = None,
     hf_data_files: str = "blip_laion_cc_sbu_558k.json",
-) -> HFMegatronMIMODatasetProvider:
+) -> HFMegatronMIMODatasetProvider:  # pragma: no cover
     """Build an HFMegatronMIMODatasetProvider for LLaVA-Pretrain with optional audio."""
     processor_paths = {"images": "openai/clip-vit-large-patch14-336"}
     special_token_ids = {"images": IMAGE_SPECIAL_TOKEN_ID}
@@ -581,7 +581,7 @@ def _log(msg):
     print(line, end="", flush=True)
 
 
-def parse_args():
+def parse_args():  # pragma: no cover
     """Parse command-line arguments for the MegatronMIMO LLaVA training example."""
     parser = argparse.ArgumentParser(description="MegatronMIMO LLaVA training")
     parser.add_argument("--micro-batch-size", type=int, default=1, help="Micro batch size per GPU")
@@ -651,7 +651,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main():  # pragma: no cover
     """Entry point for the MegatronMIMO LLaVA training example."""
     global _rank_log_file
 

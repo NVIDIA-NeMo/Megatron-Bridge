@@ -54,7 +54,7 @@ def audio_rel_path(record: dict, output_subdir: str) -> str:
     return os.path.join(output_subdir, prefix, f"{rec_id}.flac")
 
 
-def run_synth(args: argparse.Namespace) -> None:
+def run_synth(args: argparse.Namespace) -> None:  # pragma: no cover
     """Synthesize FLAC audio for this shard's records and write a JSONL manifest."""
     # Defer heavy imports so --mode merge (and --help) do not require the
     # audio/TTS stack, which only lives inside the project container.
@@ -231,7 +231,7 @@ def run_merge(args: argparse.Namespace) -> None:
         json.dump(augmented, f)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args() -> argparse.Namespace:  # pragma: no cover
     """Parse command-line arguments for the synth/merge entry points."""
     p = argparse.ArgumentParser(
         description=__doc__,

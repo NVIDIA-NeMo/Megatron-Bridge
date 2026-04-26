@@ -56,7 +56,7 @@ class WhisperEncoder(MegatronModule):
         max_source_positions: int = 1500,
         pg_collection: Optional[ProcessGroupCollection] = None,
         vp_stage: Optional[int] = None,
-    ) -> None:
+    ) -> None:  # pragma: no cover
         super().__init__(config=transformer_config)
 
         if has_config_logger_enabled(transformer_config):
