@@ -10,6 +10,7 @@ import ast
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -566,3 +567,249 @@ class TestWrapIter:
         }
         out = _consume_one(wrap_iter_fn, batch)
         assert out["modality_inputs"]["audios"]["whisper"]["input_features"].dtype == torch.bfloat16
+
+
+# ---------------------------------------------------------------------------
+# _make_checkpoint_loader_hook
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def ckpt_hook_factory():
+    """Returns (factory, fn_globals) so each test gets fresh dist + loader mocks.
+
+    Use `factory.__globals__` (the function's actual globals dict) so any
+    reassignment of mock entries propagates into the running function — the
+    `globals_extra` dict passed in is copied into a fresh exec namespace.
+    """
+    factory = _extract_node(
+        TRAINING_PATH,
+        "_make_checkpoint_loader_hook",
+        ast.FunctionDef,
+        globals_extra={"dist": MagicMock(), "_load_tp_rank_weights": MagicMock()},
+    )
+    return factory, factory.__globals__
+
+
+def _build_mimo_model(*, language=True, vision_clip=True, audio_whisper=True):
+    """Construct a mocked MIMO model object with the attributes the hook reads."""
+    model = MagicMock()
+    model.language_model = MagicMock() if language else None
+    grids = {
+        "language": MagicMock(),
+        "images": MagicMock(),
+        "audios": MagicMock(),
+    }
+    model.mimo_config.module_to_grid_map = grids
+    submodules = {}
+    if vision_clip:
+        sub = MagicMock()
+        sub.encoders.clip = MagicMock()
+        submodules["images"] = sub
+    if audio_whisper:
+        sub = MagicMock()
+        sub.encoders.whisper = MagicMock()
+        submodules["audios"] = sub
+    model.modality_submodules = submodules
+    return model
+
+
+@pytest.mark.unit
+class TestMakeCheckpointLoaderHook:
+    def test_no_checkpoints_is_noop(self, ckpt_hook_factory):
+        factory, ns = ckpt_hook_factory
+        hook = factory()  # all None
+        model = _build_mimo_model()
+        result = hook([model])
+        assert result == [model]
+        ns["_load_tp_rank_weights"].assert_not_called()
+
+    def test_language_checkpoint_loaded_when_present(self, ckpt_hook_factory):
+        factory, ns = ckpt_hook_factory
+        hook = factory(language_model_ckpt="/ckpts/llm")
+        model = _build_mimo_model()
+        hook([model])
+        ns["_load_tp_rank_weights"].assert_called_once()
+        # Second positional arg is the ckpt path.
+        assert ns["_load_tp_rank_weights"].call_args.args[1] == "/ckpts/llm"
+
+    def test_language_checkpoint_skipped_when_language_model_none(self, ckpt_hook_factory):
+        """Encoder-only ranks have language_model=None — guard must skip the load."""
+        factory, ns = ckpt_hook_factory
+        hook = factory(language_model_ckpt="/ckpts/llm")
+        model = _build_mimo_model(language=False)
+        hook([model])
+        ns["_load_tp_rank_weights"].assert_not_called()
+
+    def test_vision_checkpoint_loaded_when_clip_present(self, ckpt_hook_factory):
+        factory, ns = ckpt_hook_factory
+        hook = factory(vision_encoder_ckpt="/ckpts/vit")
+        model = _build_mimo_model()
+        hook([model])
+        ns["_load_tp_rank_weights"].assert_called_once()
+        assert ns["_load_tp_rank_weights"].call_args.args[1] == "/ckpts/vit"
+
+    def test_audio_checkpoint_loaded_when_whisper_present(self, ckpt_hook_factory):
+        factory, ns = ckpt_hook_factory
+        hook = factory(audio_encoder_ckpt="/ckpts/whisper")
+        model = _build_mimo_model()
+        hook([model])
+        ns["_load_tp_rank_weights"].assert_called_once()
+        assert ns["_load_tp_rank_weights"].call_args.args[1] == "/ckpts/whisper"
+
+    def test_all_three_checkpoints_loaded_together(self, ckpt_hook_factory):
+        factory, ns = ckpt_hook_factory
+        hook = factory(
+            language_model_ckpt="/ckpts/llm",
+            vision_encoder_ckpt="/ckpts/vit",
+            audio_encoder_ckpt="/ckpts/whisper",
+        )
+        hook([_build_mimo_model()])
+        assert ns["_load_tp_rank_weights"].call_count == 3
+
+    def test_skipped_when_modality_absent(self, ckpt_hook_factory):
+        """LLM-only ranks have no images/audios submodules — the hook must not crash."""
+        factory, ns = ckpt_hook_factory
+        hook = factory(vision_encoder_ckpt="/ckpts/vit", audio_encoder_ckpt="/ckpts/whisper")
+        model = _build_mimo_model(vision_clip=False, audio_whisper=False)
+        hook([model])
+        ns["_load_tp_rank_weights"].assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _log
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def log_fn():
+    """Returns (log, fn_globals) so tests can flip `_rank_log_file` and inspect dist mocks.
+
+    Returning `fn.__globals__` (the function's actual globals dict) instead of the
+    local `globals_extra` arg — `_extract_node` copies the latter into a fresh dict
+    used as the exec namespace, so reassignments to the original wouldn't propagate.
+    """
+    fn = _extract_node(
+        TRAINING_PATH,
+        "_log",
+        ast.FunctionDef,
+        globals_extra={"dist": MagicMock(), "_rank_log_file": None},
+    )
+    return fn, fn.__globals__
+
+
+@pytest.mark.unit
+class TestLog:
+    def test_uses_question_mark_when_dist_uninitialized(self, log_fn, capsys):
+        log, ns = log_fn
+        ns["dist"].is_initialized.return_value = False
+        log("hello")
+        out = capsys.readouterr().out
+        assert "[Rank ?]" in out and "hello" in out
+
+    def test_uses_get_rank_when_dist_initialized(self, log_fn, capsys):
+        log, ns = log_fn
+        ns["dist"].is_initialized.return_value = True
+        ns["dist"].get_rank.return_value = 3
+        log("hi")
+        out = capsys.readouterr().out
+        assert "[Rank 3]" in out
+
+    def test_writes_to_file_when_set(self, log_fn, capsys):
+        log, ns = log_fn
+        ns["dist"].is_initialized.return_value = False
+        fake_file = MagicMock()
+        ns["_rank_log_file"] = fake_file
+        log("hello")
+        fake_file.write.assert_called_once()
+        fake_file.flush.assert_called_once()
+        # Still prints to stdout regardless.
+        assert "hello" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# _build_data_iterators
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def build_data_iterators_fn(monkeypatch):
+    """Returns (build_fn, mocks) so tests can configure the mocked dataloader/TrainState."""
+    # Stub the heavy modules the function imports inside its body.
+    loaders_mock = MagicMock()
+    state_mock = MagicMock()
+    sys.modules["megatron.bridge.data.megatron_mimo.loaders"] = loaders_mock
+    sys.modules["megatron.bridge.training.state"] = state_mock
+
+    # Inject _wrap_iter as a passthrough so the test asserts wiring, not transformation.
+    # Accepts arbitrary kwargs so the test isn't sensitive to whether the source passes
+    # `model_dtype=` or not.
+    captured_wrap_calls = []
+
+    def fake_wrap_iter(loader_iter, **kwargs):
+        captured_wrap_calls.append(loader_iter)
+        return iter([])  # dummy iterator
+
+    fn = _extract_node(
+        TRAINING_PATH,
+        "_build_data_iterators",
+        ast.FunctionDef,
+        globals_extra={
+            "torch": torch,
+            "_wrap_iter": fake_wrap_iter,
+        },
+    )
+    return fn, loaders_mock, state_mock, captured_wrap_calls
+
+
+@pytest.mark.unit
+class TestBuildDataIterators:
+    def _cfg(self, *, train_iters=10, global_batch_size=4):
+        cfg = SimpleNamespace()
+        cfg.train = SimpleNamespace(train_iters=train_iters, global_batch_size=global_batch_size)
+        cfg.model = SimpleNamespace(bf16=True)
+        cfg.dataset = MagicMock()
+        return cfg
+
+    def test_returns_train_iter_and_none_valid(self, build_data_iterators_fn):
+        fn, loaders_mock, state_mock, captured = build_data_iterators_fn
+        loaders_mock.build_megatron_mimo_data_loaders.return_value = (MagicMock(), None, None)
+        train_iter, valid_iter = fn(self._cfg(), MagicMock())
+        assert valid_iter is None
+        assert train_iter is not None
+        # Loader was passed through to _wrap_iter.
+        assert len(captured) == 1
+
+    def test_default_train_state_constructed_when_not_given(self, build_data_iterators_fn):
+        fn, loaders_mock, state_mock, captured = build_data_iterators_fn
+        loaders_mock.build_megatron_mimo_data_loaders.return_value = (MagicMock(), None, None)
+        fn(self._cfg(), MagicMock())
+        # TrainState was instantiated since train_state defaulted to None.
+        state_mock.TrainState.assert_called_once()
+
+    def test_passed_train_state_used_directly(self, build_data_iterators_fn):
+        fn, loaders_mock, state_mock, captured = build_data_iterators_fn
+        loaders_mock.build_megatron_mimo_data_loaders.return_value = (MagicMock(), None, None)
+        existing_state = MagicMock()
+        fn(self._cfg(), MagicMock(), train_state=existing_state)
+        # Default TrainState NOT constructed when one was provided.
+        state_mock.TrainState.assert_not_called()
+        # The provided state is forwarded.
+        kwargs = loaders_mock.build_megatron_mimo_data_loaders.call_args.kwargs
+        assert kwargs["train_state"] is existing_state
+
+    def test_train_samples_floor_is_10(self, build_data_iterators_fn):
+        """Even tiny iter counts produce at least 10 samples (sanity floor)."""
+        fn, loaders_mock, _, _ = build_data_iterators_fn
+        loaders_mock.build_megatron_mimo_data_loaders.return_value = (MagicMock(), None, None)
+        # train_iters=1, global_batch_size=1 → product=1; max(1, 10) = 10.
+        fn(self._cfg(train_iters=1, global_batch_size=1), MagicMock())
+        kwargs = loaders_mock.build_megatron_mimo_data_loaders.call_args.kwargs
+        assert kwargs["train_samples"] == 10
+
+    def test_no_loader_returns_none_train_iter(self, build_data_iterators_fn):
+        fn, loaders_mock, _, _ = build_data_iterators_fn
+        loaders_mock.build_megatron_mimo_data_loaders.return_value = (None, None, None)
+        train_iter, valid_iter = fn(self._cfg(), MagicMock())
+        assert train_iter is None
+        assert valid_iter is None

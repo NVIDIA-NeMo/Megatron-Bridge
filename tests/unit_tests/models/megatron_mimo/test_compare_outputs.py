@@ -73,3 +73,75 @@ class TestCompareOutputs:
     def test_bf16_inputs_supported(self, compare_outputs):
         a = torch.randn(2, 5, 8).to(torch.bfloat16)
         assert compare_outputs(a, a, label="bf16-identical") is True
+
+
+# ---------------------------------------------------------------------------
+# _make_whisper_config — pure HF-config → Megatron-config translator.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def make_whisper_config():
+    """AST-extract `_make_whisper_config` from verify_whisper_conversion.py.
+
+    Skipped when megatron.core's TransformerConfig isn't importable.
+    """
+    tc_mod = pytest.importorskip("megatron.core.transformer.transformer_config")
+    tree = ast.parse(VERIFY_PATH.read_text())
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_make_whisper_config":
+            ns: dict = {"torch": torch, "TransformerConfig": tc_mod.TransformerConfig}
+            module = ast.Module(body=[node], type_ignores=[])
+            exec(compile(module, str(VERIFY_PATH), "exec"), ns)
+            return ns["_make_whisper_config"]
+    raise RuntimeError("_make_whisper_config not found in verify_whisper_conversion.py")
+
+
+def _hf_config(*, layers=4, d_model=128, ffn=512, heads=8):
+    """Minimal HF-style config namespace with the attrs `_make_whisper_config` reads."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        encoder_layers=layers,
+        d_model=d_model,
+        encoder_ffn_dim=ffn,
+        encoder_attention_heads=heads,
+    )
+
+
+@pytest.mark.unit
+class TestMakeWhisperConfig:
+    def test_dimensions_pulled_from_hf_config(self, make_whisper_config):
+        cfg = make_whisper_config(_hf_config(layers=6, d_model=512, ffn=2048, heads=8), torch.bfloat16)
+        assert cfg.num_layers == 6
+        assert cfg.hidden_size == 512
+        assert cfg.ffn_hidden_size == 2048
+        assert cfg.num_attention_heads == 8
+
+    def test_bf16_dtype_sets_bf16_flag_and_pipeline_dtype(self, make_whisper_config):
+        cfg = make_whisper_config(_hf_config(), torch.bfloat16)
+        assert cfg.bf16 is True
+        assert cfg.pipeline_dtype == torch.bfloat16
+
+    def test_fp32_dtype_disables_bf16(self, make_whisper_config):
+        cfg = make_whisper_config(_hf_config(), torch.float32)
+        assert cfg.bf16 is False
+        assert cfg.pipeline_dtype == torch.float32
+
+    def test_pinned_training_knobs(self, make_whisper_config):
+        """Whisper's encoder needs bias on QKV, gelu activation, and zero dropout — pin those."""
+        cfg = make_whisper_config(_hf_config(), torch.bfloat16)
+        assert cfg.add_bias_linear is True
+        assert cfg.add_qkv_bias is True
+        assert cfg.hidden_dropout == 0.0
+        assert cfg.attention_dropout == 0.0
+        assert cfg.gated_linear_unit is False
+        assert cfg.normalization == "LayerNorm"
+        assert cfg.attention_softmax_in_fp32 is True
+        assert cfg.activation_func is torch.nn.functional.gelu
+
+    def test_use_cpu_initialization_enabled(self, make_whisper_config):
+        """The verify script runs on CPU init so weight loading is deterministic."""
+        cfg = make_whisper_config(_hf_config(), torch.bfloat16)
+        assert cfg.use_cpu_initialization is True
+        assert cfg.variable_seq_lengths is True
