@@ -430,6 +430,23 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
+    # Accumulate FLOPS metadata across micro-batches.
+    # Each micro-batch contributes its actual padded seq_length (not cfg.model.seq_length).
+    # train.py resets these before each step and reads accumulated values afterwards.
+    if tokens is not None:
+        mbs = tokens.shape[0]
+        seq_len = tokens.shape[1]
+        state._flops_seqlen_sum = getattr(state, '_flops_seqlen_sum', 0) + mbs * seq_len
+        state._flops_seqlen_sq_sum = getattr(state, '_flops_seqlen_sq_sum', 0) + mbs * seq_len ** 2
+    if visual_inputs is not None:
+        for attr in ("image_grid_thw", "video_grid_thw"):
+            grid = getattr(visual_inputs, attr, None)
+            if grid is not None and grid.numel() > 0:
+                state._flops_vision_patches = (
+                    getattr(state, '_flops_vision_patches', 0)
+                    + int(grid.prod(dim=-1).sum().item())
+                )
+
     forward_args = {
         "input_ids": tokens,
         "position_ids": position_ids,

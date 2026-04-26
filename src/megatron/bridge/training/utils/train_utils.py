@@ -400,6 +400,7 @@ def training_log(
     pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
     loaded_iteration: int = 0,
+    seq_length: Optional[int] = None,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -783,7 +784,19 @@ def training_log(
         # Calculate GPU utilization
         num_flops = None
         if hasattr(config.model, "kv_channels") and hasattr(config.model, "num_attention_heads"):
-            num_flops = num_floating_point_operations(config, batch_size)
+            if seq_length is not None:
+                seqlen_sum = batch_size * seq_length
+                seqlen_squared_sum = batch_size * seq_length ** 2
+                # Use accumulated vision patches from forward_step micro-batches,
+                # scaled by dp_size (consistent with train.py main loop).
+                local_vision_patches = getattr(global_state, '_flops_vision_patches', 0)
+                num_vision_patches = local_vision_patches * config.data_parallel_size if local_vision_patches > 0 else 0
+                num_flops = num_floating_point_operations(
+                    config, batch_size, seqlen_sum=seqlen_sum,
+                    seqlen_squared_sum=seqlen_squared_sum, num_vision_patches=num_vision_patches,
+                )
+            else:
+                num_flops = num_floating_point_operations(config, batch_size)
             per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
             print_rank_0(
                 f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
