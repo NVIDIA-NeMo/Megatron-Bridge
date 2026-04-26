@@ -604,10 +604,10 @@ _LLAMA3_70B_LORA_CONFIG_GB200 = replace(
     num_gpus=8,
     peft="lora",
     tensor_model_parallel_size=1,
-    pipeline_model_parallel_size=1,
+    pipeline_model_parallel_size=2,
     context_parallel_size=1,
     micro_batch_size=1,
-    global_batch_size=64,
+    global_batch_size=32,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope="mlp",
 )
