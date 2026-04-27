@@ -80,7 +80,7 @@ DEEPSEEK_PRETRAIN_PERF_RECIPES = [
                 "fp8": "e4m3",
                 "fp8_recipe": "mxfp8",
                 "fp8_param_gather": True,
-                "reuse_grad_buf_for_mxfp8_param_ag": True,
+                "reuse_grad_buf_for_mxfp8_param_ag": False,
             },
             "comm_overlap": {
                 "defer_embedding_wgrad_compute": False,
