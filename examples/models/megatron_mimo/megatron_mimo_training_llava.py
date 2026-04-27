@@ -21,6 +21,7 @@ from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.vision.clip_vit_model import CLIPViTModel
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.mlp import MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -48,7 +49,7 @@ _PATCH_DIM = 14
 _ENCODER_SEQ_LEN = 576
 
 
-def _make_vision_config() -> TransformerConfig:
+def _make_vision_config(deterministic: bool = False) -> TransformerConfig:
     """CLIP ViT-L/14 vision encoder config (23 layers = penultimate layer output per HF LLaVA)."""
     cfg = TransformerConfig(
         num_layers=23,
@@ -56,8 +57,8 @@ def _make_vision_config() -> TransformerConfig:
         ffn_hidden_size=4096,
         num_attention_heads=16,
         use_cpu_initialization=True,
-        pipeline_dtype=torch.bfloat16,
-        bf16=True,
+        pipeline_dtype=torch.float32 if deterministic else torch.bfloat16,
+        bf16=not deterministic,
         variable_seq_lengths=True,
         moe_token_dispatcher_type="alltoall",
     )
@@ -77,10 +78,17 @@ def _make_vision_config() -> TransformerConfig:
     cfg.activation_func = lambda x: x * torch.sigmoid(1.702 * x)
     cfg.calculate_per_token_loss = True
 
+    if deterministic:
+        cfg.attention_backend = AttnBackend.unfused
+        cfg.deterministic_mode = True
+        cfg.recompute_granularity = "full"
+        cfg.recompute_method = "uniform"
+        cfg.recompute_num_layers = 1
+
     return cfg
 
 
-def _make_language_config() -> TransformerConfig:
+def _make_language_config(deterministic: bool = False) -> TransformerConfig:
     """Vicuna-7B language model config (same arch as Llama-7B)."""
     cfg = TransformerConfig(
         num_layers=32,
@@ -116,16 +124,23 @@ def _make_language_config() -> TransformerConfig:
     cfg.bias_dropout_fusion = True
     cfg.apply_rope_fusion = True
 
-    cfg.pipeline_dtype = torch.bfloat16
-    cfg.bf16 = True
-    cfg.cross_entropy_loss_fusion = True
+    cfg.pipeline_dtype = torch.float32 if deterministic else torch.bfloat16
+    cfg.bf16 = not deterministic
+    cfg.cross_entropy_loss_fusion = not deterministic
     cfg.variable_seq_lengths = True
     cfg.calculate_per_token_loss = True
+
+    if deterministic:
+        cfg.attention_backend = AttnBackend.unfused
+        cfg.deterministic_mode = True
+        cfg.recompute_granularity = "full"
+        cfg.recompute_method = "uniform"
+        cfg.recompute_num_layers = 1
 
     return cfg
 
 
-def _make_projection_config(hidden_size: int = 4096) -> TransformerConfig:
+def _make_projection_config(hidden_size: int = 4096, deterministic: bool = False) -> TransformerConfig:
     """Vision→language projection MLP config."""
     cfg = TransformerConfig(num_layers=1, hidden_size=hidden_size, num_attention_heads=1, use_cpu_initialization=True)
     cfg.ffn_hidden_size = 4096
@@ -133,15 +148,20 @@ def _make_projection_config(hidden_size: int = 4096) -> TransformerConfig:
     cfg.add_bias_linear = True
     cfg.activation_func = torch.nn.functional.gelu
     cfg.calculate_per_token_loss = True
+    cfg.pipeline_dtype = torch.float32 if deterministic else torch.bfloat16
+    cfg.bf16 = not deterministic
+
+    if deterministic:
+        cfg.deterministic_mode = True
 
     return cfg
 
 
-def _build_model_specs():
+def _build_model_specs(deterministic: bool = False):
     """Return (language_model_spec, modality_submodules_spec, special_token_ids)."""
-    vision_config = _make_vision_config()
-    language_config = _make_language_config()
-    projection_config = _make_projection_config(hidden_size=language_config.hidden_size)
+    vision_config = _make_vision_config(deterministic=deterministic)
+    language_config = _make_language_config(deterministic=deterministic)
+    projection_config = _make_projection_config(hidden_size=language_config.hidden_size, deterministic=deterministic)
 
     # CLIP ViT-L/14 encoder
     vision_encoder = ModuleSpec(
@@ -530,7 +550,7 @@ def _build_hf_data_provider(dataset_root: str) -> HFMegatronMIMODatasetProvider:
     return provider
 
 
-def _wrap_iter(loader_iter):
+def _wrap_iter(loader_iter, model_dtype=torch.bfloat16):
     """Adapt data-loader batches for the MIMO model.
 
     Transforms:
@@ -555,12 +575,12 @@ def _wrap_iter(loader_iter):
                                 value[k][kk] = vv.cuda(non_blocking=True)
 
         # Rewrap modality_inputs: {"images": {"pixel_values": t}} → {"images": {"clip": {"x": t}}}
-        # Cast to bfloat16 to match model weights
+        # Cast to match model weights
         mi = batch.get("modality_inputs")
         if mi and "images" in mi:
             pv = mi["images"].get("pixel_values")
             if pv is not None:
-                mi["images"] = {"clip": {"x": pv.to(torch.bfloat16)}}
+                mi["images"] = {"clip": {"x": pv.to(model_dtype)}}
 
         # Ensure loss_mask exists
         if "loss_mask" not in batch or batch["loss_mask"] is None:
@@ -599,7 +619,8 @@ def _build_data_iterators(cfg, _megatron_mimo_infra, *, train_state=None):
         test_samples=test_samples,
     )
 
-    train_iter = _wrap_iter(train_loader) if train_loader is not None else None
+    model_dtype = torch.bfloat16 if getattr(cfg.model, "bf16", True) else torch.float32
+    train_iter = _wrap_iter(train_loader, model_dtype=model_dtype) if train_loader is not None else None
     valid_iter = None
     return train_iter, valid_iter
 
@@ -635,6 +656,7 @@ def _build_config(
     wandb_save_dir: str | None = None,
     lr_warmup_iters: int = 0,
     seed: int = 42,
+    deterministic: bool = False,
 ) -> ConfigContainer:
     train_cfg = TrainingConfig(
         micro_batch_size=micro_batch_size,
@@ -643,7 +665,6 @@ def _build_config(
     )
     # Runtime patches for MIMO
     train_cfg.num_microbatches = 1
-    train_cfg.grad_reduce_in_fp32 = False
     train_cfg.overlap_grad_reduce = False
     train_cfg.use_distributed_optimizer = True
     train_cfg.check_for_nan_in_grad = False
@@ -677,6 +698,8 @@ def _build_config(
         checkpoint=CheckpointConfig(),
     )
     cfg.rng.seed = seed
+    # grad_reduce_in_fp32 lives on DistributedDataParallelConfig, not TrainingConfig.
+    cfg.ddp.grad_reduce_in_fp32 = deterministic
     # data_parallel_size=1 because the sampler does not shard by DP.
     # All data-loading ranks receive identical global micro-batches;
     # per-module DP sub-sharding is handled by slice_batch_for_megatron_mimo in the
@@ -761,6 +784,13 @@ def parse_args():
     parser.add_argument(
         "--freeze-projector", type=_str2bool, default=False, help="Freeze the projector (default: False)"
     )
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        default=False,
+        help="Enable deterministic mode: FP32 precision, unfused attention, disabled CE-loss fusion, "
+        "full activation recompute, deterministic torch/cuDNN/NCCL/TE algorithms (slower, more reproducible).",
+    )
     return parser.parse_args()
 
 
@@ -775,6 +805,11 @@ def main():
     rank = dist.get_rank()
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
+    if args.deterministic:
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
 
     # Seed all RNGs for reproducible weight initialization.
     # NOTE: _set_megatron_mimo_random_seeds() in setup_megatron_mimo re-seeds all RNGs with
@@ -807,7 +842,7 @@ def main():
 
     # 2. Build model provider
     _log("building model specs")
-    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
+    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs(deterministic=args.deterministic)
     megatron_mimo_parallelism_config = _build_parallelism_config()
 
     # Propagate per-module pipeline parallelism size into the TransformerConfig
@@ -825,7 +860,7 @@ def main():
         megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
         topology={"images": ["language"], "language": []},
         use_cpu_initialization=True,
-        bf16=True,
+        bf16=not args.deterministic,
         freeze_language_model=args.freeze_llm,
         freeze_modality_encoders={"images": args.freeze_vision},
         freeze_modality_projections={"images": args.freeze_projector},
@@ -867,7 +902,7 @@ def main():
         adam_beta1=args.adam_beta1,
         adam_beta2=args.adam_beta2,
         clip_grad=args.clip_grad,
-        bf16=True,
+        bf16=not args.deterministic,
         use_distributed_optimizer=True,
     )
 
@@ -887,6 +922,7 @@ def main():
         wandb_save_dir=args.wandb_save_dir,
         lr_warmup_iters=args.lr_warmup_iters,
         seed=seed,
+        deterministic=args.deterministic,
     )
 
     # Configure checkpointing from CLI args
