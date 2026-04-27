@@ -50,7 +50,7 @@ model:
 
 ### Model Optimizer Script
 
-NVIDIA Model Optimizer provides a general Megatron Bridge distillation script at [`examples/megatron_bridge/distill.py`](https://github.com/NVIDIA/Model-Optimizer/blob/main/examples/megatron_bridge/distill.py). This is the recommended workflow for custom use cases; see the Model Optimizer repository for usage details.
+NVIDIA Model Optimizer provides a general [Megatron Bridge distillation script](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge#distillation). This is the recommended workflow for custom use cases; see the Model Optimizer repository for usage details.
 
 ### Megatron Bridge Recipe
 
