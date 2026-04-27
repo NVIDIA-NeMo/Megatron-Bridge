@@ -150,4 +150,8 @@ def get_vision_model_config(hf_config, megatron_config=None):
     # Propagate max vision CUDA graph sequence length from provider
     if megatron_config is not None and hasattr(megatron_config, "max_vision_cuda_graph_seq_length"):
         config.max_vision_cuda_graph_seq_length = megatron_config.max_vision_cuda_graph_seq_length
+
+    if megatron_config is not None and hasattr(megatron_config, "use_cpu_initialization"):
+        config.use_cpu_initialization = megatron_config.use_cpu_initialization
+
     return config
