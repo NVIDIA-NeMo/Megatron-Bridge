@@ -259,11 +259,111 @@ def make_llava_video_178k_dataset(
     return [ex for ex in formatted if ex is not None]
 
 
+def make_valor32k_avqa_dataset(
+    data_root: str,
+    split: str = "train",
+    max_audio_duration: float = 10.0,
+    modality_filter: str = "all",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load Valor32k-AVQA v2.0 dataset for audio-visual QA finetuning.
+
+    Expects a directory produced by ``prepare_valor32k_avqa.py``::
+
+        data_root/
+        ├── videos/                                  # 10s MP4 clips
+        ├── audio/                                   # 16 kHz mono WAV
+        └── combined_dataset_{split}_flattened.json
+
+    Args:
+        data_root: Root directory of the preprocessed dataset.
+        split: ``"train"``, ``"val"``, or ``"test"``.
+        max_audio_duration: Maximum audio duration in seconds.
+        modality_filter: ``"all"``, ``"audio-visual"``, ``"audio"``, or ``"visual"``.
+    """
+    root = Path(data_root)
+    # Map split names: "train"→"train", "validation"→"val", "test"→"test"
+    split_name = "val" if split == "validation" else split
+    qa_file = root / f"combined_dataset_{split_name}_flattened.json"
+    if not qa_file.exists():
+        raise FileNotFoundError(f"QA file not found: {qa_file}. Run prepare_valor32k_avqa.py first.")
+
+    with open(qa_file) as f:
+        qa_pairs = json.load(f)
+
+    examples: List[Dict[str, Any]] = []
+    for qa in qa_pairs:
+        # Apply modality filter
+        modality = qa.get("modality", "audio-visual")
+        if modality_filter != "all" and modality != modality_filter:
+            continue
+
+        video_id = str(qa["video_id"])
+        video_path = root / "videos" / f"{video_id}.mp4"
+        audio_path = root / "audio" / f"{video_id}.wav"
+
+        # For visual-only, skip audio requirement; for audio-only, skip video
+        has_video = video_path.exists()
+        has_audio = audio_path.exists()
+        if modality in ("visual", "audio-visual") and not has_video:
+            continue
+        if modality in ("audio", "audio-visual") and not has_audio:
+            continue
+
+        # Build question with MCQ options
+        question = qa["question"]
+        options = qa.get("options", [])
+        if options:
+            option_labels = "ABCD"
+            option_text = "\n".join(f"{option_labels[i]}. {opt}" for i, opt in enumerate(options))
+            question = f"{question}\n{option_text}"
+
+        # Build answer from correct option
+        correct_idx = qa.get("correct_answer_idx", 0)
+        if options and correct_idx < len(options):
+            answer = options[correct_idx]
+        else:
+            answer = qa.get("rephrased_answers", [""])[0] if qa.get("rephrased_answers") else ""
+
+        # Build conversation with video + question
+        user_content = []
+        if has_video:
+            user_content.append({"type": "video", "path": str(video_path)})
+        user_content.append({"type": "text", "text": question})
+
+        example = {
+            "conversation": [
+                {"role": "user", "content": user_content},
+                {"role": "assistant", "content": [{"type": "text", "text": answer}]},
+            ],
+        }
+        if has_audio:
+            example["audio_path"] = str(audio_path)
+            example["max_audio_duration"] = max_audio_duration
+
+        examples.append(example)
+
+    if not examples:
+        raise ValueError(f"No valid examples found in {qa_file}.")
+    return examples
+
+
 def make_cv17_dataset(
     path_or_dataset: str = "ysdede/commonvoice_17_tr_fixed", split: str = "train", **kwargs
 ) -> List[Dict[str, Any]]:
     """Load and preprocess the CommonVoice 17 dataset for audio-to-text fine-tuning."""
+    import io
+
+    import soundfile as sf
+    from datasets import Audio
+
     dataset = load_dataset(path_or_dataset, split=split)
+
+    # Disable automatic audio decoding (avoids torchcodec dependency)
+    # and decode manually using soundfile.
+    if hasattr(dataset, "cast_column"):
+        dataset = dataset.cast_column("audio", Audio(decode=False))
+
     # Be robust to simple list-like datasets used in tests without `column_names` attr
     try:
         all_columns = dataset.column_names  # type: ignore[attr-defined]
@@ -274,13 +374,31 @@ def make_cv17_dataset(
         columns_to_remove = [col for col in all_columns if col not in ["audio", "transcription"]]
         dataset = dataset.remove_columns(columns_to_remove)
 
+    def _decode_audio(audio_dict):
+        """Decode audio bytes/path to numpy array using soundfile."""
+        if isinstance(audio_dict, dict) and "array" in audio_dict:
+            # Already decoded
+            return audio_dict["array"], audio_dict["sampling_rate"]
+        audio_bytes = audio_dict.get("bytes") if isinstance(audio_dict, dict) else None
+        audio_path = audio_dict.get("path") if isinstance(audio_dict, dict) else None
+        if audio_bytes is not None:
+            waveform, sr = sf.read(io.BytesIO(audio_bytes))
+        elif audio_path is not None:
+            waveform, sr = sf.read(audio_path)
+        else:
+            raise ValueError("Audio example has neither 'bytes', 'path', nor 'array'")
+        if waveform.ndim > 1:
+            waveform = waveform.mean(axis=1)
+        return waveform, sr
+
     def format(example):
+        array, sr = _decode_audio(example["audio"])
         return {
             "conversation": [
                 {"role": "user", "content": "<|audio_1|>Transcribe the Turkish audio clip."},
                 {"role": "assistant", "content": example["transcription"]},
             ],
-            "audio": (example["audio"]["array"], example["audio"]["sampling_rate"]),
+            "audio": (array, sr),
         }
 
     return [format(example) for example in dataset]

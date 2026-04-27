@@ -30,6 +30,7 @@ from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_medpix_dataset,
     make_raven_dataset,
     make_rdr_dataset,
+    make_valor32k_avqa_dataset,
 )
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
@@ -78,10 +79,10 @@ class HFDatasetConversationProvider(DatasetProvider):
             "make_cv17_dataset": make_cv17_dataset,
             "make_raven_dataset": make_raven_dataset,
             "make_llava_video_178k_dataset": make_llava_video_178k_dataset,
+            "make_valor32k_avqa_dataset": make_valor32k_avqa_dataset,
         }
         if self.maker_name in registry:
             return registry[self.maker_name]
-        # Allow passing function name alias without prefix, e.g., "rdr" -> make_rdr_dataset
         alias_map = {
             "rdr": "make_rdr_dataset",
             "cord_v2": "make_cord_v2_dataset",
@@ -89,6 +90,7 @@ class HFDatasetConversationProvider(DatasetProvider):
             "cv17": "make_cv17_dataset",
             "raven": "make_raven_dataset",
             "llava_video_178k": "make_llava_video_178k_dataset",
+            "valor32k_avqa": "make_valor32k_avqa_dataset",
         }
         if self.maker_name in alias_map and alias_map[self.maker_name] in registry:
             return registry[alias_map[self.maker_name]]
@@ -113,6 +115,7 @@ class HFDatasetConversationProvider(DatasetProvider):
             target_length=target_length,
             processor=processor,
             collate_impl=self.collate_impl,
+            pack_sequences=self.pack_sequences_in_batch,
         )
 
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:

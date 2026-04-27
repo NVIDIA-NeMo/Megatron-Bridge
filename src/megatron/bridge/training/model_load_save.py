@@ -517,6 +517,8 @@ def save_megatron_model(
         tokenizer=tokenizer_config,
         checkpoint=CheckpointConfig(
             async_save=False,
+            async_strategy="mcore",
+            fully_parallel_save=False,
             save=str(path),
             save_optim=False,
             save_rng=False,

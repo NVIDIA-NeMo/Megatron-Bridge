@@ -30,6 +30,7 @@ from megatron.bridge.recipes.gpt_oss import *
 from megatron.bridge.recipes.llama import *
 from megatron.bridge.recipes.ministral3 import *
 from megatron.bridge.recipes.moonlight import *
+from megatron.bridge.recipes.nemotron_omni import *
 from megatron.bridge.recipes.nemotronh import *
 from megatron.bridge.recipes.olmoe import *
 from megatron.bridge.recipes.qwen import *

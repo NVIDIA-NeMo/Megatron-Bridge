@@ -26,6 +26,7 @@ from megatron.bridge.data.vlm_datasets.collate import (
     COLLATE_FNS,
     default_collate_fn,
     nemotron_nano_v2_vl_collate_fn,
+    nemotron_omni_collate_fn,
     phi4_mm_collate_fn,
     qwen2_5_collate_fn,
 )
@@ -62,4 +63,6 @@ __all__ = [
     "default_collate_fn",
     "qwen2_5_collate_fn",
     "phi4_mm_collate_fn",
+    "nemotron_nano_v2_vl_collate_fn",
+    "nemotron_omni_collate_fn",
 ]

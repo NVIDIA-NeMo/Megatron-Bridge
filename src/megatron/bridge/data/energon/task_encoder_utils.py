@@ -208,11 +208,12 @@ def _videos_to_pil(videos):
 # ---------------------------------------------------------------------------
 @dataclass
 class ChatMLSample(Sample):
-    """Multi-turn complex samples with images and videos."""
+    """Multi-turn complex samples with images, videos, and audio."""
 
     conversation: str  # JSON string of GPT-format conversations
     imgs: Optional[List[torch.Tensor]] = None
     videos: Optional[List[List[torch.Tensor]]] = None
+    audio: Optional[torch.Tensor] = None  # Raw waveform tensor [num_samples] or pre-computed mel [frames, mel_bins]
 
 
 class videohandler:
@@ -235,6 +236,33 @@ class videohandler:
         else:
             data = [[self.image_handler(key, d) for d in video] for video in data]
         return data
+
+
+class audiohandler:
+    """Webdataset decoder handler for audio fields stored as raw WAV/FLAC bytes."""
+
+    EXTENSIONS = {"wav", "flac", "mp3", "audio"}
+
+    def __call__(self, key, data):
+        extension = re.sub(r".*[.]", "", key)
+        if extension.lower() not in self.EXTENSIONS:
+            return None
+        try:
+            import io
+
+            import soundfile as sf
+
+            waveform, sr = sf.read(io.BytesIO(data), dtype="float32", always_2d=False)
+            if waveform.ndim > 1:
+                waveform = waveform.mean(axis=-1)
+            if sr != 16000:
+                import librosa
+
+                waveform = librosa.resample(waveform, orig_sr=sr, target_sr=16000)
+            return torch.from_numpy(waveform.astype(np.float32))
+        except Exception:
+            logging.warning(f"Failed to decode audio for key {key}")
+            return None
 
 
 class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
@@ -261,13 +289,15 @@ class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
 
     def __init__(self, path: EPath, *, auto_decode: bool = True, image_decode_spec: Optional[str] = None, **kwargs):
         kwargs.pop("decoder", None)
-        super().__init__(path, auto_decode=auto_decode, **kwargs)
+        kwargs.pop("auto_decode", None)
+        super().__init__(path, **kwargs)
         if auto_decode:
             spec = image_decode_spec if image_decode_spec is not None else getattr(self, "image_decode", "torchrgb")
             self._decoder = Decoder(
                 [
                     imagehandler(spec),
                     videohandler(spec),
+                    audiohandler(),
                 ]
             )
 
