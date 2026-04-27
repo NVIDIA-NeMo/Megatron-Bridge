@@ -37,7 +37,6 @@ def initialize_distributed() -> None:
 
     device_count = torch.cuda.device_count()
     if device_count > 0:
-        print(f"Setting device to {local_rank}")
         torch.cuda.set_device(local_rank)
 
     # Call the init process
