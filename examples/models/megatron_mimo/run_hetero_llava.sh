@@ -8,7 +8,7 @@ NUM_NODES=1
 # AND pass --deterministic to the training script (FP32, unfused attention, etc.).
 # Also disables gradient clipping (clip-grad=0.0), which is non-associative under
 # distributed reductions and introduces run-to-run variance.
-DETERMINISTIC=${DETERMINISTIC:-1}
+DETERMINISTIC=${DETERMINISTIC:-0}
 DETERMINISTIC_FLAG=""
 EXP_SUFFIX=""
 CLIP_GRAD=1.0
