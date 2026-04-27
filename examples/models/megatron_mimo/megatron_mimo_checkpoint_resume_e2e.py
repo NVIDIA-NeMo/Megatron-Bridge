@@ -257,9 +257,6 @@ def _build_config(
         global_batch_size=max_dp * max_dp,
         train_iters=train_iters,
     )
-    train_cfg.num_microbatches = 1
-    train_cfg.log_interval = 1
-
     from megatron.core.distributed import DistributedDataParallelConfig
 
     ddp_cfg = DistributedDataParallelConfig(

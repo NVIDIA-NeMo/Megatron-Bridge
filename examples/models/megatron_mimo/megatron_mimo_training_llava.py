@@ -663,12 +663,6 @@ def _build_config(
         global_batch_size=global_batch_size,
         train_iters=train_iters,
     )
-    # Runtime patches for MIMO
-    train_cfg.num_microbatches = 1
-    train_cfg.overlap_grad_reduce = False
-    train_cfg.use_distributed_optimizer = True
-    train_cfg.check_for_nan_in_grad = False
-    train_cfg.log_interval = log_interval
 
     logger_cfg = LoggerConfig()
     logger_cfg.log_timers_to_tensorboard = True
@@ -698,7 +692,10 @@ def _build_config(
         checkpoint=CheckpointConfig(),
     )
     cfg.rng.seed = seed
-    # grad_reduce_in_fp32 lives on DistributedDataParallelConfig, not TrainingConfig.
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.check_for_nan_in_grad = False
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.optimizer.use_distributed_optimizer = True
     cfg.ddp.grad_reduce_in_fp32 = deterministic
     # data_parallel_size=1 because the sampler does not shard by DP.
     # All data-loading ranks receive identical global micro-batches;
