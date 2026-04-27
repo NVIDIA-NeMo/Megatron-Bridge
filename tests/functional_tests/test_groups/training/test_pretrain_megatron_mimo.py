@@ -285,16 +285,10 @@ _RESUME_TEST_CONSUMED_INDICES: list[int] = []
 
 
 class _IndexTaggedDataset(torch.utils.data.Dataset):
-    """Wrap a Dataset so each sample's ``input_ids[-1]`` holds its global index.
+    """Wrap a Dataset so each sample carries its global index separately.
 
     Used by the checkpoint-resume L2 test to trace which samples were consumed
-    across save/resume phases. Read ``batch["input_ids"][:, -1]`` to get the
-    indices fed into a step.
-
-    The tag goes in the *last* text position (not position 0) because positions
-    [0, _ENCODER_SEQ_LEN) hold vision placeholder tokens that MimoModel's
-    ``align_embeddings_by_token_positions`` counts against the vision encoder's
-    output (mismatch → ValueError).
+    across save/resume phases without modifying model inputs.
     """
 
     def __init__(self, inner: torch.utils.data.Dataset):
@@ -305,7 +299,7 @@ class _IndexTaggedDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         sample = self._inner[idx]
-        sample["input_ids"][-1] = idx
+        sample["sample_index"] = idx
         return sample
 
 
@@ -318,13 +312,24 @@ class _TraceableMockProvider(MockMegatronMIMOProvider):
         wrap = lambda ds: _IndexTaggedDataset(ds) if ds is not None else None
         return wrap(train), wrap(valid), wrap(test)
 
+    def get_collate_fn(self):
+        base_collate_fn = super().get_collate_fn()
+
+        def _collate_with_sample_index(batch):
+            collated = base_collate_fn(batch)
+            sample_indices = [sample["sample_index"] for sample in batch]
+            collated["sample_index"] = torch.tensor(sample_indices, dtype=torch.long)
+            return collated
+
+        return _collate_with_sample_index
+
 
 def _tracing_wrap_iter(loader_iter):
     """Like ``_wrap_iter`` but records batch sample-indices into the module-level
     ``_RESUME_TEST_CONSUMED_INDICES`` list before yielding."""
     for batch in _wrap_iter(loader_iter):
-        # input_ids was moved to cuda by _wrap_iter.
-        _RESUME_TEST_CONSUMED_INDICES.extend(batch["input_ids"][:, -1].cpu().tolist())
+        sample_index = batch.pop("sample_index")
+        _RESUME_TEST_CONSUMED_INDICES.extend(sample_index.cpu().tolist())
         yield batch
 
 
@@ -351,7 +356,7 @@ def _build_tracing_data_iterators(cfg, megatron_mimo_infra, *, train_state=None)
 
 def _build_traceable_mock_provider() -> _TraceableMockProvider:
     """Like ``_build_mock_data_provider`` but returns a provider whose datasets
-    embed each sample's global index in ``input_ids[0]``."""
+    include each sample's global index."""
     provider = _TraceableMockProvider(
         seq_length=_SEQ_LENGTH,
         processor_paths={},
@@ -490,7 +495,7 @@ class TestMegatronMIMOTraining:
         calls back-to-back: phase 1 trains for ``SAVE_STEPS`` iters and writes a
         checkpoint; phase 2 loads the same checkpoint and trains to ``TOTAL_STEPS``.
         ``_IndexTaggedDataset`` puts each sample's global index into
-        ``input_ids[0]``, and ``_tracing_wrap_iter`` records those indices as the
+        ``sample_index``, and ``_tracing_wrap_iter`` records those indices as the
         sampler yields them. Asserts:
 
         * ``train_state.step`` goes 0 → SAVE_STEPS after phase 1, SAVE_STEPS → TOTAL_STEPS after phase 2
