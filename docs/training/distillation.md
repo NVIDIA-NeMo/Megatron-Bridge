@@ -63,7 +63,7 @@ uv run -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/d
 You can customize this by providing a YAML configuration file to override default settings:
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py \
+uv run -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py \
     --config-file my_custom_config.yaml
 ```
 
