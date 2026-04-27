@@ -47,13 +47,13 @@ Note:
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict
 
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
 from megatron.core.models.mamba import MambaModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, MegatronParamMapping
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -94,10 +94,11 @@ class DeepSeekV3MambaBridge(DeepSeekV3Bridge):
     - Auto-populates `hybrid_layer_pattern` from `first_k_dense_replace`.
     - Resizes `moe_layer_freq` to match the doubled hybrid layer count.
 
-    `mapping_registry` rewrites the DSv3 common mappings so attention
-    params land on even Megatron decoder indices and MLP/MoE params land on
-    odd ones, matching the `+-` / `+E` hybrid pattern. MTP mappings are
-    carried over unchanged.
+    `mapping_registry` reuses `get_common_mapping_list` and rewrites each
+    `decoder.layers.*.*` template so attention params land on even Megatron
+    decoder indices and MLP/MoE params land on odd ones, matching the
+    `+-` / `+E` hybrid pattern. Everything else (embeddings, final
+    layernorm, LM head, MTP) passes through unchanged.
     """
 
     PROVIDER_CLASS = DeepSeekV3MambaProvider
@@ -111,7 +112,7 @@ class DeepSeekV3MambaBridge(DeepSeekV3Bridge):
 
         Reuses the DSv3 MLA/MoE configuration produced by the parent
         `DeepSeekV3Bridge`, then adjusts for the Mamba backbone: drops
-        GPT-only wiring, builds a hybrid layer pattern, and doubles
+        GPT-only wiring, builds a hybrid layer pattern, and resizes
         `moe_layer_freq` to match the pattern length.
         """
         provider: DeepSeekV3MambaProvider = super().provider_bridge(hf_pretrained)
@@ -139,9 +140,7 @@ class DeepSeekV3MambaBridge(DeepSeekV3Bridge):
         # moe_layer_freq must match the final num_layers (i.e., pattern length)
         # for MCore validation. Dense hybrid positions use `-` (ignored), MoE
         # positions use `E`; reflect this per-position freq.
-        provider.moe_layer_freq = [
-            1 if ch == Symbols.MOE else 0 for ch in pattern
-        ]
+        provider.moe_layer_freq = [1 if ch == Symbols.MOE else 0 for ch in pattern]
 
         return provider
 
@@ -162,196 +161,69 @@ class DeepSeekV3MambaBridge(DeepSeekV3Bridge):
                 parts.append(Symbols.MLA + Symbols.MOE)
         return "".join(parts)
 
-    # Pattern templates categorized by which Megatron hybrid-position they land on.
-    # `.*` is the (single) layer wildcard; trailing `*` (no dot) is the expert wildcard.
-    _ATTENTION_TEMPLATES: List[Tuple[str, str]] = [
-        ("decoder.layers.*.input_layernorm.weight", "model.layers.*.input_layernorm.weight"),
-        ("decoder.layers.*.self_attention.linear_proj.weight", "model.layers.*.self_attn.o_proj.weight"),
-        (
-            "decoder.layers.*.self_attention.linear_kv_down_proj.weight",
-            "model.layers.*.self_attn.kv_a_proj_with_mqa.weight",
-        ),
-        (
-            "decoder.layers.*.self_attention.linear_kv_up_proj.weight",
-            "model.layers.*.self_attn.kv_b_proj.weight",
-        ),
-        (
-            "decoder.layers.*.self_attention.linear_kv_up_proj.layer_norm_weight",
-            "model.layers.*.self_attn.kv_a_layernorm.weight",
-        ),
-        (
-            "decoder.layers.*.self_attention.kv_layernorm.weight",
-            "model.layers.*.self_attn.kv_a_layernorm.weight",
-        ),
-        (
-            "decoder.layers.*.self_attention.linear_q_down_proj.weight",
-            "model.layers.*.self_attn.q_a_proj.weight",
-        ),
-        (
-            "decoder.layers.*.self_attention.linear_q_up_proj.weight",
-            "model.layers.*.self_attn.q_b_proj.weight",
-        ),
-        (
-            "decoder.layers.*.self_attention.linear_q_up_proj.layer_norm_weight",
-            "model.layers.*.self_attn.q_a_layernorm.weight",
-        ),
-        (
-            "decoder.layers.*.self_attention.q_layernorm.weight",
-            "model.layers.*.self_attn.q_a_layernorm.weight",
-        ),
-        # Fallback for DSv3 variants without LoRA on Q.
-        (
-            "decoder.layers.*.self_attention.linear_q_proj.weight",
-            "model.layers.*.self_attn.q_proj.weight",
-        ),
-    ]
-
-    _MLP_TEMPLATES: List[Tuple[str, str]] = [
-        ("decoder.layers.*.pre_mlp_layernorm.weight", "model.layers.*.post_attention_layernorm.weight"),
-        (
-            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight",
-            "model.layers.*.post_attention_layernorm.weight",
-        ),
-        ("decoder.layers.*.mlp.linear_fc2.weight", "model.layers.*.mlp.down_proj.weight"),
-        ("decoder.layers.*.mlp.router.weight", "model.layers.*.mlp.gate.weight"),
-        (
-            "decoder.layers.*.mlp.router.expert_bias",
-            "model.layers.*.mlp.gate.e_score_correction_bias",
-        ),
-        (
-            "decoder.layers.*.mlp.experts.linear_fc2.weight*",
-            "model.layers.*.mlp.experts.*.down_proj.weight",
-        ),
-        (
-            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight",
-            "model.layers.*.mlp.shared_experts.down_proj.weight",
-        ),
-    ]
-
-    # (megatron, gate_hf, up_hf) – always on the MLP/MoE hybrid position.
-    _MLP_GATED_TEMPLATES: List[Tuple[str, str, str]] = [
-        (
-            "decoder.layers.*.mlp.linear_fc1.weight",
-            "model.layers.*.mlp.gate_proj.weight",
-            "model.layers.*.mlp.up_proj.weight",
-        ),
-        (
-            "decoder.layers.*.mlp.experts.linear_fc1.weight*",
-            "model.layers.*.mlp.experts.*.gate_proj.weight",
-            "model.layers.*.mlp.experts.*.up_proj.weight",
-        ),
-        (
-            "decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-            "model.layers.*.mlp.shared_experts.gate_proj.weight",
-            "model.layers.*.mlp.shared_experts.up_proj.weight",
-        ),
-    ]
-
-    # Top-level (non-layer) mappings – identical on both sides.
-    _STATIC_MAPPINGS: List[Tuple[str, str]] = [
-        ("embedding.word_embeddings.weight", "model.embed_tokens.weight"),
-        ("decoder.final_layernorm.weight", "model.norm.weight"),
-        ("output_layer.weight", "lm_head.weight"),
-    ]
-
-    @staticmethod
-    def _specialize(pattern: str, hf_idx: int, meg_idx: int) -> str:
-        """Substitute the first `.*.` with the Megatron index and any later
-        `.*.` with the HF index. Trailing `*` (no dot – expert wildcard)
-        is preserved.
-        """
-        # First wildcard = layer index
-        out = pattern.replace(".*.", f".{meg_idx}.", 1)
-        # Any remaining `.*.` is the HF *layer* wildcard (only on HF side).
-        # On Megatron side this won't match because only one layer wildcard
-        # exists in our templates.
-        return out
-
     def mapping_registry(self) -> MegatronMappingRegistry:
-        """Build mappings that split HF layer i into Megatron layers 2i and 2i+1.
+        """Reuse the shared DSv3 mappings, splitting HF layer `i` into
+        Megatron layers `2*i` (attention) and `2*i + 1` (MLP/MoE).
 
-        Attention-side templates are emitted at Megatron index `2*i`; MLP/MoE
-        templates at `2*i + 1`. MTP mappings are reused from the DSv3 common
-        list unchanged because MTP layers form a separate decoder namespace
-        (`mtp.layers.*`) whose internal structure has no hybrid split.
+        Non-layer mappings (embeddings, final layernorm, LM head, and the
+        `mtp.layers.*` MTP subtree) pass through unchanged.
         """
         hf_config = self.hf_config
         if hf_config is None:
-            # Fall back to the GPT-layout mappings (still useful for tooling
-            # that only inspects the registry without running conversion).
             return super().mapping_registry()
 
         num_layers = getattr(hf_config, "num_hidden_layers", None)
         if num_layers is None:
             return super().mapping_registry()
 
-        mapping_list = []
-
-        # Top-level, non-layer params are untouched.
-        for megatron_param, hf_param in self._STATIC_MAPPINGS:
-            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
-
-        # Per-layer unrolling.
-        for hf_layer_idx in range(num_layers):
-            attn_meg_idx = 2 * hf_layer_idx
-            mlp_meg_idx = 2 * hf_layer_idx + 1
-
-            for meg_tpl, hf_tpl in self._ATTENTION_TEMPLATES:
-                mapping_list.append(
-                    AutoMapping(
-                        megatron_param=self._specialize(meg_tpl, hf_layer_idx, attn_meg_idx),
-                        hf_param=hf_tpl.replace(".*.", f".{hf_layer_idx}.", 1),
-                    )
-                )
-
-            for meg_tpl, hf_tpl in self._MLP_TEMPLATES:
-                mapping_list.append(
-                    AutoMapping(
-                        megatron_param=self._specialize(meg_tpl, hf_layer_idx, mlp_meg_idx),
-                        hf_param=hf_tpl.replace(".*.", f".{hf_layer_idx}.", 1),
-                    )
-                )
-
-            for meg_tpl, gate_tpl, up_tpl in self._MLP_GATED_TEMPLATES:
-                mapping_list.append(
-                    GatedMLPMapping(
-                        megatron_param=self._specialize(meg_tpl, hf_layer_idx, mlp_meg_idx),
-                        gate=gate_tpl.replace(".*.", f".{hf_layer_idx}.", 1),
-                        up=up_tpl.replace(".*.", f".{hf_layer_idx}.", 1),
-                    )
-                )
-
-        # MTP mappings – delegate to the shared DSv3 helper. It emits MTP-only
-        # entries (under `mtp.layers.*` / `model.layers.{N + k}.*`) that are
-        # unaffected by the hybrid layer split.
-        mtp_mappings = self._mtp_mappings_only(hf_config)
-        mapping_list.extend(mtp_mappings)
-
-        # DSv3-specific router bias mapping inherited from the default bridge.
-        mapping_list.append(
+        # Shared DSv3 mappings (wildcard transformer templates + already-
+        # concretized MTP entries) plus the DSv3-specific router expert bias
+        # mapping that the parent bridge appends in `super().mapping_registry()`.
+        templated = list(get_common_mapping_list(hf_config=hf_config))
+        templated.append(
             AutoMapping(
                 megatron_param="decoder.layers.*.mlp.router.expert_bias",
                 hf_param="model.layers.*.mlp.gate.e_score_correction_bias",
             )
         )
 
-        return MegatronMappingRegistry(*mapping_list)
+        remapped = []
+        for mapping in templated:
+            meg_param = getattr(mapping, "megatron_param", "") or ""
+            if not (isinstance(meg_param, str) and meg_param.startswith("decoder.layers.")):
+                # Non-layer or MTP mapping – pass through unchanged.
+                remapped.append(mapping)
+                continue
+
+            is_attention = "self_attention" in meg_param or ".input_layernorm." in meg_param
+            for hf_layer_idx in range(num_layers):
+                meg_idx = (2 * hf_layer_idx) if is_attention else (2 * hf_layer_idx + 1)
+                remapped.append(self._concretize_layer_mapping(mapping, hf_layer_idx, meg_idx))
+
+        return MegatronMappingRegistry(*remapped)
 
     @staticmethod
-    def _mtp_mappings_only(hf_config) -> list:
-        """Extract only the MTP mappings from the DSv3 common mapping list.
+    def _concretize_layer_mapping(
+        mapping: MegatronParamMapping, hf_layer_idx: int, meg_idx: int
+    ) -> MegatronParamMapping:
+        """Replace the first `.*.` layer wildcard with concrete indices.
 
-        The shared `get_common_mapping_list` builds both transformer-layer
-        mappings (for the GPT layout) and MTP mappings. We want only the MTP
-        half for the hybrid layout – filter by the Megatron param prefix.
+        Preserves any trailing `*` expert wildcard and uses `type(mapping)`
+        so subclasses (AutoMapping, GatedMLPMapping, ...) round-trip cleanly.
         """
-        common = get_common_mapping_list(hf_config=hf_config)
-        mtp_only = []
-        for mapping in common:
-            megatron_param = getattr(mapping, "megatron_param", "") or ""
-            if isinstance(megatron_param, str) and megatron_param.startswith("mtp."):
-                mtp_only.append(mapping)
-        return mtp_only
+        meg_sub = f".{meg_idx}."
+        hf_sub = f".{hf_layer_idx}."
+
+        if isinstance(mapping, GatedMLPMapping):
+            return GatedMLPMapping(
+                megatron_param=mapping.megatron_param.replace(".*.", meg_sub, 1),
+                gate=mapping.gate.replace(".*.", hf_sub, 1),
+                up=mapping.up.replace(".*.", hf_sub, 1),
+            )
+        return type(mapping)(
+            megatron_param=mapping.megatron_param.replace(".*.", meg_sub, 1),
+            hf_param=mapping.hf_param.replace(".*.", hf_sub, 1),
+        )
 
     def maybe_modify_converted_hf_weight(
         self,
