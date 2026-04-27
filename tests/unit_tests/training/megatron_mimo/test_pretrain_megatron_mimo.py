@@ -113,7 +113,12 @@ def test_set_megatron_mimo_random_seeds_offsets_by_pp_rank(mock_dist, _mock_in_g
 
 
 def test_get_rng_state_namespaces_key_with_module_name():
-    """get_rng_state should namespace ShardedObject key when module_name is set."""
+    """get_rng_state should namespace ShardedObject key when module_name is set.
+
+    Unit test: mocks ``torch.cuda.get_rng_state`` and the Megatron CUDA RNG
+    tracker so the test runs without a GPU (``get_rng_state`` otherwise calls
+    these unconditionally at ``checkpointing.py:425-426``).
+    """
     from megatron.bridge.training.checkpointing import get_rng_state
 
     pg = MagicMock()
@@ -125,16 +130,22 @@ def test_get_rng_state_namespaces_key_with_module_name():
     pg.dp_cp.size.return_value = 1
     pg.ep = None  # no EP
 
-    # Without module_name: key is "rng_state"
-    result = get_rng_state(False, "torch_dist", pg_collection=pg)
-    assert result.key == "rng_state"
+    with (
+        patch("torch.cuda.get_rng_state", return_value=b"dummy_cuda_rng_state"),
+        patch("megatron.bridge.training.checkpointing.tensor_parallel.get_cuda_rng_tracker") as mock_tracker,
+    ):
+        mock_tracker.return_value.get_states.return_value = {}
 
-    # With module_name: key is namespaced
-    result = get_rng_state(False, "torch_dist", pg_collection=pg, module_name="language")
-    assert result.key == "rng_state.language"
+        # Without module_name: key is "rng_state"
+        result = get_rng_state(False, "torch_dist", pg_collection=pg)
+        assert result.key == "rng_state"
 
-    result = get_rng_state(False, "torch_dist", pg_collection=pg, module_name="vision")
-    assert result.key == "rng_state.vision"
+        # With module_name: key is namespaced
+        result = get_rng_state(False, "torch_dist", pg_collection=pg, module_name="language")
+        assert result.key == "rng_state.language"
+
+        result = get_rng_state(False, "torch_dist", pg_collection=pg, module_name="vision")
+        assert result.key == "rng_state.vision"
 
 
 @patch("megatron.bridge.training.pretrain_megatron_mimo._finish_train")
@@ -194,9 +205,9 @@ def test_finish_train_calls_cleanup():
     # NVRx shutdown
     m_nvrx.assert_called_once_with(global_state.nvrx_straggler_manager)
 
-    # Fault tolerance lifecycle
+    # Fault tolerance lifecycle — mirror the exact contract at train.py:1445-1448.
     m_ft.on_checkpointing_start.assert_called_once_with(global_state)
-    m_ft.on_checkpointing_end.assert_called_once()
+    m_ft.on_checkpointing_end.assert_called_once_with(global_state=global_state, is_async_finalization=True)
     m_ft.shutdown.assert_called_once_with(global_state)
 
     # Logger flush (MagicMock is truthy)
