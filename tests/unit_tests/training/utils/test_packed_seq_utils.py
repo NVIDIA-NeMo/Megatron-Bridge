@@ -153,6 +153,60 @@ class TestGetPackedSeqParams:
         torch.testing.assert_close(result.cu_seqlens_q, expected)
         assert result.cu_seqlens_q_padded is None  # No unpadded, so no padded variants
 
+    def test_total_tokens_generates_seq_idx(self):
+        """Test that passing total_tokens causes PackedSeqParams to generate seq_idx.
+
+        This is critical for hybrid SSM/Mamba models in varlen (packed sequence)
+        settings. Without total_tokens, seq_idx remains None and SSM state bleeds
+        across sequence boundaries.
+        """
+        batch = {
+            "cu_seqlens": torch.IntTensor([0, 5, 7, 11, -1]),
+            "cu_seqlens_argmin": torch.tensor(4),
+            "max_seqlen": torch.tensor(6),
+            "total_tokens": 16,
+        }
+
+        result = get_packed_seq_params(batch)
+
+        assert result.total_tokens == 16
+        assert result.seq_idx is not None
+        # seq_idx maps each token position to its sequence index:
+        # seq 0: tokens 0-4 (len 5), seq 1: tokens 5-6 (len 2),
+        # seq 2: tokens 7-10 (len 4), seq 3: tokens 11-15 (len 5)
+        expected_seq_idx = torch.IntTensor([[0, 0, 0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3]])
+        torch.testing.assert_close(result.seq_idx, expected_seq_idx)
+
+    def test_without_total_tokens_seq_idx_is_none(self):
+        """Test that omitting total_tokens leaves seq_idx as None (backward compat)."""
+        batch = {
+            "cu_seqlens": torch.IntTensor([0, 128, 256, -1]),
+            "cu_seqlens_argmin": torch.tensor(3),
+            "max_seqlen": torch.tensor(128),
+        }
+
+        result = get_packed_seq_params(batch)
+
+        assert result.total_tokens is None
+        assert result.seq_idx is None
+
+    def test_total_tokens_with_cu_seqlens_unpadded(self):
+        """Test total_tokens flows through when cu_seqlens_unpadded is present."""
+        batch = {
+            "cu_seqlens": torch.IntTensor([0, 128, 256, 384, -1]),
+            "cu_seqlens_argmin": torch.tensor(4),
+            "cu_seqlens_unpadded": torch.IntTensor([0, 120, 245, 370, -1]),
+            "cu_seqlens_unpadded_argmin": torch.tensor(4),
+            "max_seqlen": torch.tensor(128),
+            "total_tokens": 384,
+        }
+
+        result = get_packed_seq_params(batch)
+
+        assert result.total_tokens == 384
+        # seq_idx should be generated from cu_seqlens_q_padded (the padded variant)
+        assert result.seq_idx is not None
+
     def test_performance_no_unnecessary_padded_variants(self):
         """Verify that when unpadded is not provided, padded variants are None.
 

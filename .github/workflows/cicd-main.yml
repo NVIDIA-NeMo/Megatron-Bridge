@@ -83,11 +83,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pre-flight]
     outputs:
-      needs_more_tests: ${{ steps.configure.outputs.needs_more_tests }}
-      full_test_suite:  ${{ steps.configure.outputs.full_test_suite }}
-      expect_l0:        ${{ steps.configure.outputs.expect_l0 }}
-      expect_l1:        ${{ steps.configure.outputs.expect_l1 }}
-      expect_l2:        ${{ steps.configure.outputs.expect_l2 }}
+      needs_more_tests:  ${{ steps.configure.outputs.needs_more_tests }}
+      full_test_suite:   ${{ steps.configure.outputs.full_test_suite }}
+      expect_l0:         ${{ steps.configure.outputs.expect_l0 }}
+      expect_l1:         ${{ steps.configure.outputs.expect_l1 }}
+      expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
+      perf_scripts_only: ${{ steps.configure.outputs.perf_scripts_only }}
     steps:
       - name: Get PR info
         id: get-pr-info
@@ -113,8 +114,18 @@ jobs:
           NEEDS_MORE_TESTS=$(echo "$LABELS" | jq 'any(. == "needs-more-tests")')
           FULL_TEST_SUITE=$(echo "$LABELS"  | jq 'any(. == "full-test-suite")')
 
-          # Tests are expected on every run except docs-only and deployment
-          if [[ "$DOCS_ONLY" == "true" || "$IS_DEPLOYMENT" == "true" ]]; then
+          # Detect if every changed file lives under scripts/performance/
+          PERF_SCRIPTS_ONLY=false
+          if [[ -n "$PR_NUMBER" ]]; then
+            CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo ${{ github.repository }} --name-only 2>/dev/null) || CHANGED_FILES=""
+            if [[ -n "$CHANGED_FILES" ]]; then
+              NON_PERF=$(echo "$CHANGED_FILES" | grep -v '^scripts/performance/' || true)
+              [[ -z "$NON_PERF" ]] && PERF_SCRIPTS_ONLY=true
+            fi
+          fi
+
+          # Tests are expected on every run except docs-only, deployment, and perf-scripts-only
+          if [[ "$DOCS_ONLY" == "true" || "$IS_DEPLOYMENT" == "true" || "$PERF_SCRIPTS_ONLY" == "true" ]]; then
             RUN_TESTS=false
           else
             RUN_TESTS=true
@@ -142,24 +153,26 @@ jobs:
             EXPECT_L2=true
           fi
 
-          echo "needs_more_tests=$NEEDS_MORE_TESTS" | tee -a "$GITHUB_OUTPUT"
-          echo "full_test_suite=$FULL_TEST_SUITE"   | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l0=$EXPECT_L0"               | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l1=$EXPECT_L1"               | tee -a "$GITHUB_OUTPUT"
-          echo "expect_l2=$EXPECT_L2"               | tee -a "$GITHUB_OUTPUT"
+          echo "needs_more_tests=$NEEDS_MORE_TESTS"   | tee -a "$GITHUB_OUTPUT"
+          echo "full_test_suite=$FULL_TEST_SUITE"     | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l0=$EXPECT_L0"                 | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l1=$EXPECT_L1"                 | tee -a "$GITHUB_OUTPUT"
+          echo "expect_l2=$EXPECT_L2"                 | tee -a "$GITHUB_OUTPUT"
+          echo "perf_scripts_only=$PERF_SCRIPTS_ONLY" | tee -a "$GITHUB_OUTPUT"
 
           # Active row markers for step summary decision tree
-          _L0=$(    [[ "$EXPECT_L0" == "true" ]] && echo "**→**" || echo "" )
-          _L1=$(    [[ "$EXPECT_L1" == "true" ]] && echo "**→**" || echo "" )
-          _L2=$(    [[ "$EXPECT_L2" == "true" ]] && echo "**→**" || echo "" )
-          _SKIP_DOCS=$(    [[ "$DOCS_ONLY"     == "true" ]] && echo "**→**" || echo "" )
-          _SKIP_DEPLOY=$(  [[ "$IS_DEPLOYMENT" == "true" ]] && echo "**→**" || echo "" )
-          _MG=$(    [[ "$EVENT_NAME" == "merge_group"       ]] && echo "**→**" || echo "" )
-          _MAIN=$(  [[ "$REF"        == "refs/heads/main"   ]] && echo "**→**" || echo "" )
-          _SCHED=$( [[ "$EVENT_NAME" == "schedule"          ]] && echo "**→**" || echo "" )
-          _WD=$(    [[ "$EVENT_NAME" == "workflow_dispatch" ]] && echo "**→**" || echo "" )
-          _NMT=$(   [[ "$NEEDS_MORE_TESTS" == "true"        ]] && echo "**→**" || echo "" )
-          _FTS=$(   [[ "$FULL_TEST_SUITE"  == "true"        ]] && echo "**→**" || echo "" )
+          _L0=$(         [[ "$EXPECT_L0"        == "true" ]] && echo "**→**" || echo "" )
+          _L1=$(         [[ "$EXPECT_L1"        == "true" ]] && echo "**→**" || echo "" )
+          _L2=$(         [[ "$EXPECT_L2"        == "true" ]] && echo "**→**" || echo "" )
+          _SKIP_DOCS=$(  [[ "$DOCS_ONLY"        == "true" ]] && echo "**→**" || echo "" )
+          _SKIP_DEPLOY=$([[ "$IS_DEPLOYMENT"    == "true" ]] && echo "**→**" || echo "" )
+          _SKIP_PERF=$(  [[ "$PERF_SCRIPTS_ONLY" == "true" ]] && echo "**→**" || echo "" )
+          _MG=$(         [[ "$EVENT_NAME" == "merge_group"       ]] && echo "**→**" || echo "" )
+          _MAIN=$(       [[ "$REF"        == "refs/heads/main"   ]] && echo "**→**" || echo "" )
+          _SCHED=$(      [[ "$EVENT_NAME" == "schedule"          ]] && echo "**→**" || echo "" )
+          _WD=$(         [[ "$EVENT_NAME" == "workflow_dispatch" ]] && echo "**→**" || echo "" )
+          _NMT=$(        [[ "$NEEDS_MORE_TESTS" == "true"        ]] && echo "**→**" || echo "" )
+          _FTS=$(        [[ "$FULL_TEST_SUITE"  == "true"        ]] && echo "**→**" || echo "" )
 
           cat <<SUMMARY >> "$GITHUB_STEP_SUMMARY"
           ## CI Configuration
@@ -170,6 +183,7 @@ jobs:
           |---|---|
           | \`docs_only\` | \`$DOCS_ONLY\` |
           | \`is_deployment_workflow\` | \`$IS_DEPLOYMENT\` |
+          | \`perf_scripts_only\` | \`$PERF_SCRIPTS_ONLY\` |
           | \`needs_more_tests\` | \`$NEEDS_MORE_TESTS\` |
           | \`full_test_suite\` | \`$FULL_TEST_SUITE\` |
 
@@ -177,7 +191,7 @@ jobs:
 
           | | Tier | Condition |
           |---|---|---|
-          | $_L0 | **L0** | any non-docs/deployment run |
+          | $_L0 | **L0** | any non-docs/deployment/perf-scripts run |
           | $_L1 | **L1** | \`main\` / \`schedule\` / \`workflow_dispatch\` / \`merge_group\` / label _needs-more-tests_ |
           | $_L2 | **L2** | \`schedule\` / \`workflow_dispatch\` / label _full-test-suite_ |
 
@@ -189,6 +203,7 @@ jobs:
           |---|---|
           | $_SKIP_DOCS   | Docs-only change (no src files modified) |
           | $_SKIP_DEPLOY | Deployment workflow (\`deploy-release/*\` branch) |
+          | $_SKIP_PERF   | Perf-scripts-only change (all changes under \`scripts/performance/\`) |
 
           **L1/L2 active trigger**
 
@@ -245,13 +260,14 @@ jobs:
           pre-commit run --all-files --show-diff-on-failure --color=always
 
   cicd-wait-in-queue:
-    needs: [pre-flight, lint-check]
+    needs: [pre-flight, lint-check, configure]
     runs-on: ubuntu-latest
     environment: test
     if: |
       !(needs.pre-flight.outputs.is_ci_workload == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true'
-      || needs.pre-flight.outputs.docs_only == 'true')
+      || needs.pre-flight.outputs.docs_only == 'true'
+      || needs.configure.outputs.perf_scripts_only == 'true')
       && github.event_name != 'merge_group'
     steps:
       - name: Running CI tests
@@ -259,7 +275,7 @@ jobs:
           echo "Running CI tests"
 
   cicd-compute-build-matrix:
-    needs: [pre-flight, cicd-wait-in-queue]
+    needs: [pre-flight, configure, cicd-wait-in-queue]
     runs-on: ubuntu-latest
     if: |
       (
@@ -269,6 +285,7 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
+      && needs.configure.outputs.perf_scripts_only != 'true'
     outputs:
       matrix: ${{ steps.compute.outputs.matrix }}
     steps:
@@ -293,7 +310,7 @@ jobs:
           echo "matrix=$MATRIX" | tee -a "$GITHUB_OUTPUT"
 
   cicd-container-build:
-    needs: [pre-flight, cicd-wait-in-queue, cicd-compute-build-matrix]
+    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-compute-build-matrix]
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.cicd-compute-build-matrix.outputs.matrix) }}
@@ -307,6 +324,7 @@ jobs:
         || github.event_name == 'merge_group'
       )
       && !cancelled()
+      && needs.configure.outputs.perf_scripts_only != 'true'
     steps:
       - name: Get PR info
         id: get-pr-info
@@ -1010,7 +1028,7 @@ jobs:
 
   Coverage_Fake:
     runs-on: ubuntu-latest
-    needs: [Nemo_CICD_Test, pre-flight]
+    needs: [Nemo_CICD_Test, pre-flight, configure]
     if: |
       always()
       && !cancelled()
@@ -1018,6 +1036,7 @@ jobs:
       && (
         needs.pre-flight.outputs.docs_only == 'true'
         || needs.pre-flight.outputs.is_deployment_workflow == 'true'
+        || needs.configure.outputs.perf_scripts_only == 'true'
       )
     steps:
       - name: Generate fake coverage report
@@ -1049,6 +1068,11 @@ jobs:
           - unit-test
           - e2e
     steps:
+      - name: Get PR info
+        id: get-pr-info
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        uses: nv-gha-runners/get-pr-info@main
+
       - name: Checkout
         uses: actions/checkout@v6
 
@@ -1076,6 +1100,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true
           flags: ${{ matrix.flag }}
+          base_sha: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').base.sha }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
