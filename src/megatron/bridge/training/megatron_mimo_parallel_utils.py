@@ -24,6 +24,7 @@ import torch.distributed as dist
 from megatron.core.distributed.finalize_model_grads import finalize_model_grads as _finalize_model_grads
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from megatron.core.pipeline_parallel.utils import get_pp_last_rank
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOInfra
 
@@ -241,12 +242,31 @@ def finalize_model_grads_multimodule(
 
     Args:
         model: Model list (passed by schedule, ignored - we use module_to_grid_tuple).
-        num_tokens: Token count for gradient scaling.
+        num_tokens: Language-local token count for per-token loss scaling.
         pg_collection: Schedule-provided PG (ignored - we use per-module PGs).
         force_all_reduce: Schedule-provided flag (ignored - per-module PGs control sync).
         infra: MegatronMIMOInfra with per-module pg_collections (keyword-only, bound via partial).
         module_to_grid_tuple: List of (module, grid) tuples (keyword-only, bound via partial).
     """
+    global_num_tokens = None
+    language_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
+    language_grid = infra.module_to_grid_map.get(MIMO_LANGUAGE_MODULE_KEY)
+    if num_tokens is not None and language_grid is not None:
+        global_num_tokens = num_tokens.clone()
+        if language_pg is not None:
+            dist.broadcast(global_num_tokens, src=get_pp_last_rank(language_pg.pp), group=language_pg.pp)
+            language_dp_cp_group = getattr(language_pg, "dp_cp", None)
+            if language_dp_cp_group is None:
+                language_dp_cp_group = language_pg.dp
+            dist.all_reduce(global_num_tokens, group=language_dp_cp_group, op=dist.ReduceOp.SUM)
+        if any(pg is None for pg in infra.pg_collections.values()):
+            dist.broadcast(global_num_tokens, src=language_grid.rank_offset, group=dist.group.WORLD)
+    grad_scale = None
+    if global_num_tokens is not None:
+        global_num_tokens_value = global_num_tokens.item()
+        if global_num_tokens_value > 0:
+            grad_scale = 1.0 / global_num_tokens_value
+
     for module, grid in module_to_grid_tuple:
         if module is not None and is_current_rank_in_grid(grid):
             # Get the module's pg_collection from infra
@@ -258,7 +278,27 @@ def finalize_model_grads_multimodule(
                     break
 
             if module_pg is not None:
-                _finalize_model_grads([module], num_tokens=num_tokens, pg_collection=module_pg)
+                # MCore's token scaling path assumes the token count belongs
+                # to the same DP/CP group as the module being finalized. In
+                # MIMO the loss count is produced by the language module, so
+                # compute the global denominator once from the language group
+                # and apply it uniformly after each module's grad sync.
+                module_num_tokens = None if global_num_tokens is not None else num_tokens
+                if module_num_tokens is not None:
+                    module_num_tokens = module_num_tokens.clone()
+                # Propagate force_all_reduce: mcore's finish_grad_sync only
+                # waits for in-flight async all-reduces when force_all_reduce
+                # is False, which means nothing happens unless
+                # overlap_grad_reduce is on. Dropping the kwarg here would
+                # silently leave grads un-synced across DP.
+                _finalize_model_grads(
+                    [module],
+                    num_tokens=module_num_tokens,
+                    pg_collection=module_pg,
+                    force_all_reduce=force_all_reduce,
+                )
+                if grad_scale is not None:
+                    module.scale_gradients(grad_scale)
 
 
 def zero_grad_buffer_for_multimodule(module_to_grid_tuple: List[Tuple]):

@@ -1,9 +1,10 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO parallel utilities."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
+import torch
 
 
 class TestIsCurrentRankInGrid:
@@ -245,6 +246,170 @@ class TestMultimoduleNoSync:
 
         # no_sync should not be called
         mock_module.no_sync.assert_not_called()
+
+
+class TestFinalizeModelGradsMultimodule:
+    """Test cases for finalize_model_grads_multimodule()."""
+
+    def test_uses_language_global_token_scale_for_all_modules(self):
+        """Test per-token scaling is lifted out of per-module finalization."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
+
+        language_grid = MagicMock(name="language_grid")
+        vision_grid = MagicMock(name="vision_grid")
+        language_grid.rank_offset = 0
+        language_module = MagicMock(name="language_module")
+        vision_module = MagicMock(name="vision_module")
+        language_pg = MagicMock(name="language_pg")
+        vision_pg = MagicMock(name="vision_pg")
+        language_pg.pp = MagicMock(name="language_pp")
+        language_pg.dp_cp = MagicMock(name="language_dp_cp")
+        language_pg.dp = MagicMock(name="language_dp")
+
+        infra = MagicMock()
+        infra.module_to_grid_map = {
+            "language": language_grid,
+            "vision": vision_grid,
+        }
+        infra.pg_collections = {
+            "language": language_pg,
+            "vision": vision_pg,
+        }
+        num_tokens = torch.tensor(4, dtype=torch.int)
+
+        def all_reduce_num_tokens(tensor, group=None, op=None):
+            tensor.mul_(2)
+
+        with (
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils.is_current_rank_in_grid", return_value=True),
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils.get_pp_last_rank", return_value=3),
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils.dist") as mock_dist,
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils._finalize_model_grads") as mock_finalize,
+        ):
+            mock_dist.all_reduce.side_effect = all_reduce_num_tokens
+
+            finalize_model_grads_multimodule(
+                [MagicMock()],
+                num_tokens=num_tokens,
+                force_all_reduce=True,
+                infra=infra,
+                module_to_grid_tuple=[
+                    (language_module, language_grid),
+                    (vision_module, vision_grid),
+                ],
+            )
+
+        broadcast_tokens = mock_dist.broadcast.call_args.args[0]
+        assert broadcast_tokens is not num_tokens
+        assert broadcast_tokens.item() == 8
+        assert num_tokens.item() == 4
+        mock_dist.broadcast.assert_called_once_with(broadcast_tokens, src=3, group=language_pg.pp)
+        mock_dist.all_reduce.assert_called_once_with(
+            broadcast_tokens,
+            group=language_pg.dp_cp,
+            op=mock_dist.ReduceOp.SUM,
+        )
+        mock_finalize.assert_has_calls(
+            [
+                call([language_module], num_tokens=None, pg_collection=language_pg, force_all_reduce=True),
+                call([vision_module], num_tokens=None, pg_collection=vision_pg, force_all_reduce=True),
+            ]
+        )
+        language_module.scale_gradients.assert_called_once_with(0.125)
+        vision_module.scale_gradients.assert_called_once_with(0.125)
+
+    def test_broadcasts_language_token_scale_to_non_colocated_module(self):
+        """Test disjoint encoder ranks receive the language global token count."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
+
+        language_grid = MagicMock(name="language_grid")
+        language_grid.rank_offset = 4
+        vision_grid = MagicMock(name="vision_grid")
+        vision_module = MagicMock(name="vision_module")
+        vision_pg = MagicMock(name="vision_pg")
+        infra = MagicMock()
+        infra.module_to_grid_map = {
+            "language": language_grid,
+            "vision": vision_grid,
+        }
+        infra.pg_collections = {
+            "language": None,
+            "vision": vision_pg,
+        }
+        num_tokens = torch.tensor(0, dtype=torch.int)
+
+        def broadcast_global_num_tokens(tensor, src=None, group=None):
+            tensor.fill_(8)
+
+        with (
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils.is_current_rank_in_grid", return_value=True),
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils.dist") as mock_dist,
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils._finalize_model_grads") as mock_finalize,
+        ):
+            mock_dist.broadcast.side_effect = broadcast_global_num_tokens
+
+            finalize_model_grads_multimodule(
+                [MagicMock()],
+                num_tokens=num_tokens,
+                force_all_reduce=True,
+                infra=infra,
+                module_to_grid_tuple=[(vision_module, vision_grid)],
+            )
+
+        broadcast_tokens = mock_dist.broadcast.call_args.args[0]
+        assert broadcast_tokens is not num_tokens
+        assert broadcast_tokens.item() == 8
+        assert num_tokens.item() == 0
+        mock_dist.broadcast.assert_called_once_with(broadcast_tokens, src=4, group=mock_dist.group.WORLD)
+        mock_dist.all_reduce.assert_not_called()
+        mock_finalize.assert_called_once_with(
+            [vision_module],
+            num_tokens=None,
+            pg_collection=vision_pg,
+            force_all_reduce=True,
+        )
+        vision_module.scale_gradients.assert_called_once_with(0.125)
+
+    def test_fallback_clones_num_tokens_without_language_grid(self):
+        """Test malformed infra without a language grid keeps the old MCore path."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
+
+        vision_grid = MagicMock(name="vision_grid")
+        vision_module = MagicMock(name="vision_module")
+        vision_pg = MagicMock(name="vision_pg")
+        infra = MagicMock()
+        infra.module_to_grid_map = {"vision": vision_grid}
+        infra.pg_collections = {
+            "language": None,
+            "vision": vision_pg,
+        }
+        num_tokens = torch.tensor(4, dtype=torch.int)
+
+        with (
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils.is_current_rank_in_grid", return_value=True),
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils.dist") as mock_dist,
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils._finalize_model_grads") as mock_finalize,
+        ):
+            finalize_model_grads_multimodule(
+                [MagicMock()],
+                num_tokens=num_tokens,
+                force_all_reduce=True,
+                infra=infra,
+                module_to_grid_tuple=[(vision_module, vision_grid)],
+            )
+
+        mock_dist.broadcast.assert_not_called()
+        mock_dist.all_reduce.assert_not_called()
+        module_num_tokens = mock_finalize.call_args.kwargs["num_tokens"]
+        assert module_num_tokens is not num_tokens
+        assert module_num_tokens.item() == num_tokens.item()
+        mock_finalize.assert_called_once_with(
+            [vision_module],
+            num_tokens=module_num_tokens,
+            pg_collection=vision_pg,
+            force_all_reduce=True,
+        )
+        vision_module.scale_gradients.assert_not_called()
 
 
 class TestZeroGradBufferForMultimodule:
