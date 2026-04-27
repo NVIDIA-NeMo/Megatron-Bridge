@@ -61,7 +61,7 @@ def test_build_datasets_happy_path(monkeypatch):
             raise ValueError("missing split")
         return [{"text": "hello", "image": "image_0.jpg"}]
 
-    class _AutoProcessor:
+    class _AutoImageProcessor:
         @staticmethod
         def from_pretrained(path, trust_remote_code=None):
             del path, trust_remote_code
@@ -77,7 +77,7 @@ def test_build_datasets_happy_path(monkeypatch):
 
     monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.is_safe_repo", fake_is_safe_repo)
     monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.load_dataset", fake_load_dataset)
-    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.AutoProcessor", _AutoProcessor)
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.AutoImageProcessor", _AutoImageProcessor)
     monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.AutoTokenizer", _AutoTokenizer)
 
     provider = _make_provider()
