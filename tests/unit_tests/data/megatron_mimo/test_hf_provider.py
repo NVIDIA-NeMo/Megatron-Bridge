@@ -100,3 +100,96 @@ def test_get_collate_fn_returns_partial():
     collate_fn = provider.get_collate_fn()
     assert callable(collate_fn)
     assert collate_fn.keywords["modality_names"] == ["vision"]
+
+
+def test_load_processors_falls_back_to_feature_extractor(monkeypatch):
+    calls = Calls()
+    feature_extractor_calls = 0
+
+    def fake_is_safe_repo(trust_remote_code, hf_path):
+        del trust_remote_code, hf_path
+        calls.is_safe_repo += 1
+        return False
+
+    class _AutoImageProcessor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            del path, trust_remote_code
+            calls.auto_processor += 1
+            raise OSError("not an image processor repo")
+
+    class _AutoFeatureExtractor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            nonlocal feature_extractor_calls
+            del path, trust_remote_code
+            feature_extractor_calls += 1
+            return DummyProcessor()
+
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.is_safe_repo", fake_is_safe_repo)
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.AutoImageProcessor", _AutoImageProcessor)
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.AutoFeatureExtractor", _AutoFeatureExtractor)
+
+    provider = _make_provider()
+    processors = provider._load_processors()
+
+    assert "vision" in processors
+    assert isinstance(processors["vision"], DummyProcessor)
+    assert calls.auto_processor == 1
+    assert feature_extractor_calls == 1
+
+
+def test_load_processors_caches_result(monkeypatch):
+    calls = Calls()
+
+    def fake_is_safe_repo(trust_remote_code, hf_path):
+        del trust_remote_code, hf_path
+        calls.is_safe_repo += 1
+        return False
+
+    class _AutoImageProcessor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            del path, trust_remote_code
+            calls.auto_processor += 1
+            return DummyProcessor()
+
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.is_safe_repo", fake_is_safe_repo)
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.AutoImageProcessor", _AutoImageProcessor)
+
+    provider = _make_provider()
+    first = provider._load_processors()
+    second = provider._load_processors()
+
+    assert first is second
+    assert calls.auto_processor == 1
+
+
+def test_load_processors_fallback_propagates_when_both_fail(monkeypatch):
+    def fake_is_safe_repo(trust_remote_code, hf_path):
+        del trust_remote_code, hf_path
+        return False
+
+    class _AutoImageProcessor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            del path, trust_remote_code
+            raise OSError("not an image processor repo")
+
+    class _AutoFeatureExtractor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            del path, trust_remote_code
+            raise ValueError("not a feature extractor either")
+
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.is_safe_repo", fake_is_safe_repo)
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.AutoImageProcessor", _AutoImageProcessor)
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.AutoFeatureExtractor", _AutoFeatureExtractor)
+
+    provider = _make_provider()
+    try:
+        provider._load_processors()
+    except ValueError as exc:
+        assert "feature extractor" in str(exc)
+    else:
+        raise AssertionError("expected ValueError from AutoFeatureExtractor fallback")
