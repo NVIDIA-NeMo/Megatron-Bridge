@@ -43,7 +43,7 @@ huggingface-cli download black-forest-labs/FLUX.1-dev \
 Convert a Hugging Face FLUX model to Megatron format:
 
 ```bash
-uv run python examples/diffusion/recipes/flux/conversion/convert_checkpoints.py import \
+uv run python examples/diffusion/models/flux/conversion/convert_checkpoints.py import \
   --hf-model ${WORKSPACE}/checkpoints/flux_hf/flux.1-dev \
   --megatron-path ${WORKSPACE}/checkpoints/flux/flux.1-dev
 ```
@@ -55,7 +55,7 @@ The Megatron checkpoint is written under `--megatron-path` (e.g. `.../flux.1-dev
 Export a Megatron checkpoint back to Hugging Face (e.g. for use in diffusers). You must pass the **reference** HF model (for config and non-DiT components) and the **Megatron iteration directory**:
 
 ```bash
-uv run python examples/diffusion/recipes/flux/conversion/convert_checkpoints.py export \
+uv run python examples/diffusion/models/flux/conversion/convert_checkpoints.py export \
   --hf-model ${WORKSPACE}/checkpoints/flux_hf/flux.1-dev \
   --megatron-path ${WORKSPACE}/checkpoints/flux/flux.1-dev/iter_0000000 \
   --hf-path ${WORKSPACE}/checkpoints/flux_hf/flux.1-dev_export
@@ -76,7 +76,7 @@ The script [inference_flux.py](inference_flux.py) runs text-to-image generation 
 ### Single prompt (default 1024×1024, 10 steps)
 
 ```bash
-uv run python examples/diffusion/recipes/flux/inference_flux.py \
+uv run python examples/diffusion/models/flux/inference_flux.py \
   --flux_ckpt ${WORKSPACE}/checkpoints/flux/flux.1-dev/iter_0000000 \
   --vae_ckpt ${WORKSPACE}/checkpoints/flux_hf/flux.1-dev/vae \
   --prompts "a dog holding a sign that says hello world" \
@@ -153,7 +153,7 @@ img2dataset --url_list /path/to/GRIT/grit-20m/coyo_0_snappy.parquet \
 **Generate embeddings** (T5, CLIP, VAE, etc.) and write WebDataset-style output for FLUX. `--data_folder` should be the `img2dataset` output directory (here `grit_images`):
 
 ```bash
-uv run python examples/diffusion/recipes/flux/prepare_energon_dataset_flux.py \
+uv run python examples/diffusion/models/flux/prepare_energon_dataset_flux.py \
   --data_folder /path/to/GRIT/grit_images/ \
   --output_dir /path/to/GRIT/grit_wds \
   --center-crop

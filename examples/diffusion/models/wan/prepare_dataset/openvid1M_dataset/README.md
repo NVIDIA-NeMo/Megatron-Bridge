@@ -33,7 +33,7 @@ The preprocessing script reads the CSV caption file and creates a sidecar `.json
 
 ```bash
 cd ${MBRIDGE_PATH}
-uv run python examples/diffusion/recipes/wan/prepare_dataset/openvid1M_dataset/openvid1M_preprocess.py \
+uv run python examples/diffusion/models/wan/prepare_dataset/openvid1M_dataset/openvid1M_preprocess.py \
   --csv_path ${PROCESSED_DATA_PATH}/OpenVidHD.csv \
   --video_dir ${PROCESSED_DATA_PATH}/OpenVidHD_part_1
 ```
@@ -49,7 +49,7 @@ DATASET_SRC=${PROCESSED_DATA_PATH}/OpenVidHD_part_1
 DATASET_PATH=${PROCESSED_DATA_PATH}/prepared_dataset_wds
 
 uv run python -m torch.distributed.run --nproc_per_node=8 \
-  examples/diffusion/recipes/wan/prepare_dataset/prepare_dataset_wan.py \
+  examples/diffusion/models/wan/prepare_dataset/prepare_dataset_wan.py \
   --video_folder "${DATASET_SRC}" \
   --output_dir "${DATASET_PATH}" \
   --output_format energon \

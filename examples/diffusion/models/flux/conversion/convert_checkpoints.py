@@ -26,12 +26,12 @@ Usage examples:
   --local-dir-use-symlinks False
 
   # Import a HuggingFace model to Megatron format
-  python examples/diffusion/recipes/flux/conversion/convert_checkpoints.py import \
+  python examples/diffusion/models/flux/conversion/convert_checkpoints.py import \
   --hf-model /root/.cache/huggingface/flux.1-dev\
   --megatron-path /workspace/checkpoints/megatron_checkpoints/flux.1-dev
 
   # Export a Megatron checkpoint to HuggingFace format
-  python examples/diffusion/recipes/flux/conversion/convert_checkpoints.py export \
+  python examples/diffusion/models/flux/conversion/convert_checkpoints.py export \
   --hf-model /root/.cache/huggingface/flux.1-dev \
   --megatron-path /workspace/checkpoints/megatron_checkpoints/flux.1-dev/iter_0000000 \
   --hf-path /workspace/checkpoints/hf_checkpoints/flux.1-dev_hf
