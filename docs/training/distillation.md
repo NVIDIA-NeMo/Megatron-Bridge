@@ -60,8 +60,6 @@ You can also quickly try a knowledge distillation example for distilling Llama3.
 uv run -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py
 ```
 
-#### Using a Custom YAML Config File
-
 You can customize this by providing a YAML configuration file to override default settings:
 
 ```bash
@@ -69,23 +67,11 @@ uv run python -m torch.distributed.run --nproc_per_node=2 examples/distillation/
     --config-file my_custom_config.yaml
 ```
 
-#### Using CLI Overrides
-
-Megatron Bridge supports Hydra-style CLI overrides for flexible configuration:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py \
-    model.tensor_model_parallel_size=2 \
-    model.teacher.tensor_model_parallel_size=2
-```
-
-#### Combining YAML and CLI Overrides
-
-CLI overrides take precedence over YAML configuration:
+It additionally supports Hydra-style CLI overrides for flexible configuration (CLI overrides take precedence over YAML):
 
 ```bash
 uv run -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py \
-    --config-file conf/my_config.yaml \
+    --config-file my_custom_config.yaml \
     train.global_batch_size=512
 ```
 
