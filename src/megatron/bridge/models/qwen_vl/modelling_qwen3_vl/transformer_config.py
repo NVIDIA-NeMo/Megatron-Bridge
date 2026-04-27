@@ -52,6 +52,8 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     hf_text_config: Optional[Qwen3VLTextConfig] = None
     vision_dp_when_cp: bool = False
     use_hf_vision_model: bool = False
+    # Maximum sequence length for vision encoder CUDA graphs.
+    max_vision_cuda_graph_seq_length: Optional[int] = None
 
 
 def get_vision_model_config(hf_config, megatron_config=None):
@@ -120,4 +122,36 @@ def get_vision_model_config(hf_config, megatron_config=None):
     config.pipeline_model_parallel_layout = None
     config.account_for_embedding_in_pipeline_split = None
     config.account_for_loss_in_pipeline_split = None
+
+    # Vision encoder CUDA graph settings
+    # Check megatron_config (the provider / language config) for vision-specific CUDA graph
+    # settings. The provider stores these as vision_cuda_graph_impl / vision_cuda_graph_scope.
+    # If present, use them; otherwise default to "none" for backward compatibility.
+    if (
+        megatron_config is not None
+        and hasattr(megatron_config, "vision_cuda_graph_impl")
+        and megatron_config.vision_cuda_graph_impl != "none"
+    ):
+        config.cuda_graph_impl = megatron_config.vision_cuda_graph_impl
+        if hasattr(megatron_config, "vision_cuda_graph_scope") and megatron_config.vision_cuda_graph_scope:
+            # Convert string scope list to CudaGraphScope enums if needed
+            from megatron.core.transformer.cuda_graphs import CudaGraphScope
+
+            scope_list = megatron_config.vision_cuda_graph_scope
+            if scope_list and isinstance(scope_list[0], str):
+                config.cuda_graph_scope = [CudaGraphScope[scope] for scope in scope_list]
+            else:
+                config.cuda_graph_scope = scope_list
+        else:
+            config.cuda_graph_scope = []
+    else:
+        config.cuda_graph_impl = "none"
+        config.cuda_graph_scope = []
+    # Propagate max vision CUDA graph sequence length from provider
+    if megatron_config is not None and hasattr(megatron_config, "max_vision_cuda_graph_seq_length"):
+        config.max_vision_cuda_graph_seq_length = megatron_config.max_vision_cuda_graph_seq_length
+
+    if megatron_config is not None and hasattr(megatron_config, "use_cpu_initialization"):
+        config.use_cpu_initialization = megatron_config.use_cpu_initialization
+
     return config

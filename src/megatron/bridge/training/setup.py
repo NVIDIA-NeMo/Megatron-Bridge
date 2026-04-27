@@ -55,7 +55,9 @@ from megatron.bridge.training.tensor_inspect import (
 )
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
+from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
+
 
 class SetupOutput(NamedTuple):
     """Represents the output of the main setup function.
@@ -228,6 +230,10 @@ def setup(
 
         _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
 
+    # Enable CUDA allocator history tracing before any model tensors are allocated,
+    # so snapshots dumped later in training contain a full timeline + stack context.
+    start_memory_history_recording(cfg.profiling)
+
     model = _build_distributed_model(cfg, pg_collection)
 
     cfg.model.timers = timers
@@ -279,7 +285,7 @@ def setup(
             model=model,
             optimizer=optimizer,
             opt_param_scheduler=scheduler,
-            skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2 or cfg.dist.use_megatron_fsdp,
+            skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
         ))
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])

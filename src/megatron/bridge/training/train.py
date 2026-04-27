@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import gc
+import inspect
 import os
 import sys
 import time
@@ -37,7 +38,10 @@ from megatron.core.optimizer.qk_clip import clip_qk
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
 from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
-from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.pipeline_parallel.schedules import (
+    forward_backward_pipelining_without_interleaving,
+    get_forward_backward_func,
+)
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -45,9 +49,17 @@ from megatron.core.pipeline_parallel.utils import (
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
+from megatron.core.transformer.cuda_graphs import (
+    TECudaGraphHelper,
+    VisionTECudaGraphHelper,
+    get_vision_cuda_graph_seq_length,
+)
 from megatron.core.transformer.enums import CudaGraphScope
-from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
+from megatron.core.utils import (
+    check_param_hashes_across_dp_replicas,
+    get_attr_wrapped_model,
+    get_model_config,
+)
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
@@ -86,6 +98,15 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
+
+
+# For Paged Stashing support
+try:
+    from megatron.core.transformer.moe.paged_stash import PagedStashRunner
+
+    HAS_PAGED_STASHING = True
+except ImportError:
+    HAS_PAGED_STASHING = False
 
 
 def train(
@@ -234,14 +255,40 @@ def train(
     # Capture CUDA Graphs.
     cuda_graph_helper = None
     if model_config.cuda_graph_impl == "transformer_engine":
-        cuda_graph_helper = TECudaGraphHelper(
+        _te_cg_kwargs: dict[str, Any] = dict(
             model=model,
             config=model_config,
             seq_length=config.model.seq_length,
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
         )
-
+        if "pg_collection" in inspect.signature(TECudaGraphHelper.__init__).parameters:
+            _te_cg_kwargs["pg_collection"] = pg_collection
+        cuda_graph_helper = TECudaGraphHelper(**_te_cg_kwargs)
+    # Capture Vision Encoder CUDA Graphs (separate from language model).
+    # Check if vision encoder has CUDA graph enabled
+    vision_cuda_graph_helper = None
+    vision_config = getattr(config.model, "vision_cuda_graph_impl", None)
+    if vision_config == "transformer_engine":
+        # Try to get vision config from the model
+        for model_chunk in model:
+            unwrapped = get_attr_wrapped_model(model_chunk, "vision_model", allow_none=True, return_model_obj=True)
+            if unwrapped is not None and hasattr(unwrapped, "vision_model") and unwrapped.vision_model is not None:
+                vision_model_config = unwrapped.vision_model.config
+                if vision_model_config.cuda_graph_impl == "transformer_engine":
+                    vision_seq_length = get_vision_cuda_graph_seq_length(vision_model_config)
+                    _vision_cg_kwargs: dict[str, Any] = dict(
+                        model=model,
+                        vision_config=vision_model_config,
+                        vision_seq_length=vision_seq_length,
+                        micro_batch_size=config.train.micro_batch_size,
+                        num_microbatches=get_num_microbatches(),
+                    )
+                    if "pg_collection" in inspect.signature(VisionTECudaGraphHelper.__init__).parameters:
+                        _vision_cg_kwargs["pg_collection"] = pg_collection
+                    vision_cuda_graph_helper = VisionTECudaGraphHelper(**_vision_cg_kwargs)
+                    print_rank_0(f"Vision encoder CUDA graph enabled with seq_length={vision_seq_length}")
+                break
     # Track train step elapsed time for throughput logging
     history_wct = None
     if config.logger.log_throughput_to_tensorboard:
@@ -256,12 +303,22 @@ def train(
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
+    # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
+    # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
+    if HAS_PAGED_STASHING and config.model.moe_expert_rank_capacity_factor is not None:
+        copy_main_params = config.optimizer.reuse_grad_buf_for_mxfp8_param_ag and config.ddp.overlap_param_gather
+        forward_backward_func = PagedStashRunner(
+            model_config, copy_main_params, model, optimizer, forward_backward_func
+        )
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
     num_floating_point_operations_model = flop_utils.num_floating_point_operations(config, batch_size=1)
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     dp_size = pg_collection.dp.size()
+    if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
+        forward_backward_func = forward_backward_pipelining_without_interleaving
+        p2p_communicator = config.model._p2p_communicator
 
     if should_fire(callback_manager, "on_train_start"):
         callback_manager.fire(
@@ -352,6 +409,14 @@ def train(
             if model_config.cuda_graph_warmup_steps > 0 and should_toggle_forward_pre_hook:
                 enable_forward_pre_hook(model)
                 cuda_graph_helper.cuda_graph_set_manual_hooks()
+        # Capture Vision Encoder CUDA Graphs after warmup (separate from language model).
+        if (
+            vision_cuda_graph_helper is not None
+            and not vision_cuda_graph_helper.graphs_created()
+            and global_state.train_state.step - start_iteration == model_config.cuda_graph_warmup_steps
+        ):
+            vision_cuda_graph_helper.create_cudagraphs()
+            vision_cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
@@ -451,7 +516,13 @@ def train(
                     ):
                         assert cuda_graph_helper.graphs_created(), "CUDA Graphs should have been created."
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
-
+                    # Also set manual hooks for vision encoder CUDA graphs if enabled
+                    if (
+                        vision_cuda_graph_helper is not None
+                        and model_config.cuda_graph_warmup_steps == 0
+                        and vision_cuda_graph_helper.graphs_created()
+                    ):
+                        vision_cuda_graph_helper.cuda_graph_set_manual_hooks()
         global_state.train_state.step += 1
 
         # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
@@ -514,6 +585,9 @@ def train(
         if (
             global_state.train_state.do_valid
             and val_config.eval_interval
+            and (
+                val_config.start_eval_at_iter is None or global_state.train_state.step >= val_config.start_eval_at_iter
+            )
             and global_state.train_state.step % val_config.eval_interval == 0
         ):
             if energy_monitor is not None:
@@ -822,7 +896,12 @@ def train_step(
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
-    if is_pp_last_stage(pg_collection.pp):
+    pp_last_stage = None
+    if p2p_communicator is not None:
+        pp_last_stage = p2p_communicator.is_pp_last_stage
+    else:
+        pp_last_stage = is_pp_last_stage(pg_collection.pp)
+    if pp_last_stage:
         # Average loss across microbatches.
         loss_reduced = {}
 
@@ -1130,7 +1209,7 @@ def save_checkpoint_and_time(
         non_persistent_ckpt: Flag indicating if this is a non-persistent
                              (local) checkpoint. Defaults to False.
         train_data_iterator: Optional training data iterator to save its state.
-        pg_collection: Optional process group collection for MiMo topologies.
+        pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
     """
     timers = state.timers
@@ -1220,7 +1299,7 @@ def checkpoint_and_decide_exit(
         num_floating_point_operations_so_far: Cumulative TFLOPs up to this point.
         checkpoint_manager: The checkpoint manager for save operations.
         train_data_iterator: Optional training data iterator to save its state.
-        pg_collection: Optional process group collection for MiMo topologies.
+        pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
 
     Returns:
@@ -1502,13 +1581,12 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
     if "training" in FullCudaGraphWrapper.cuda_graph:
         del FullCudaGraphWrapper.cuda_graph["training"]
 
-    # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
-    if cuda_graph_helper is not None:
-        for layers in cuda_graph_helper.callables_per_chunk:
-            for layer in layers:
-                for cuda_graph in layer.cuda_graphs:
-                    del cuda_graph
-                del layer.cuda_graphs
+    # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
+    # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper
+    # may finish its capture phase without actually producing any graphs, in which case
+    # delete_cuda_graphs() asserts. Mirrors the guard in upstream mcore training.py.
+    if cuda_graph_helper is not None and cuda_graph_helper.graphs_created():
+        cuda_graph_helper.delete_cuda_graphs()
 
     # Run GC to collect the freshed object
     gc.collect()
