@@ -339,14 +339,13 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         # Pack sequences
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
 
-        # Compute pad_to_multiple_of as lcm of CP and TP constraints.
-        # CP zigzag requires divisibility by 2*cp_size.
-        # preprocess_packed_seqs (called inside Qwen3VL model) aligns sequences to
-        # tp_size (or tp_size*cp_size*2 for CP>1), so packing must also be TP-aligned
-        # to avoid a mismatch between token and label sequence lengths.
+        # Compute pad_to_multiple_of as lcm of CP and SP constraints.
+        # CP zigzag requires divisibility by 2*cp_size; SP reduce_scatter requires
+        # the per-CP-rank length to be divisible by tp_size (i.e. total divisible by
+        # cp_size*tp_size). Reference: megatron/core/models/multimodal/context_parallel.py
         cp_multiple = 2 * cp_size if cp_size > 1 else 1
-        tp_multiple = tp_size
-        pad_multiple = math.lcm(cp_multiple, tp_multiple)
+        sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
+        pad_multiple = math.lcm(cp_multiple, sp_multiple)
 
         (
             packed_tokens,
