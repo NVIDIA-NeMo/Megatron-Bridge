@@ -842,7 +842,9 @@ def main():
 
     # 2. Build model provider
     _log("building model specs")
-    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs(deterministic=args.deterministic)
+    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs(
+        deterministic=args.deterministic
+    )
     megatron_mimo_parallelism_config = _build_parallelism_config()
 
     # Propagate per-module pipeline parallelism size into the TransformerConfig
