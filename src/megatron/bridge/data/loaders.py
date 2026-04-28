@@ -228,6 +228,13 @@ def build_train_valid_test_data_loaders(
         cfg=cfg, build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider
     )
 
+    # Check that the train dataset has at least one global batch of samples.
+    if len(train_ds) < cfg.train.global_batch_size:
+        raise RuntimeError(
+            f"Not enough train samples for a single global batch: "
+            f"train dataset size ({len(train_ds)}) < global batch size ({cfg.train.global_batch_size})."
+        )
+
     exit_signal = cfg.train.exit_signal
 
     def worker_init_fn(_):
