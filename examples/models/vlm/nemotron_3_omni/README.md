@@ -141,16 +141,9 @@ modality combinations exercised by the model:
 | 3 | Audio + Text | 1 | — |
 | 4 | Video + Audio + Text | 8 | TP=4, EP=2 |
 
-The default assets are pulled automatically from
-[here](https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/tree/main/images)
-on the first run. `curl` and `ffmpeg` must be available. The NeMo 26.04
-container does **not** include `ffmpeg` — install it before running
-`inference.sh`:
-
-```bash
-apt-get install -y ffmpeg
-```
-
+The default assets are pulled automatically from the public HF model card
+([`nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16`](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16/tree/main/media))
+on the first run — `curl` must be available.
 Override `IMAGE_PATH` / `VIDEO_PATH` / `AUDIO_PATH` with your own assets to
 use different inputs; omit `--megatron_model_path` (set `MEGATRON_PATH=""`)
 to convert HF → Megatron on the fly instead of reusing the imported
@@ -168,15 +161,14 @@ checkpoint.
 - *Video + Text* — `Describe what you see.` on `demo.mp4` → "A variety of
   plants with green leaves and some with red leaves are shown. Some plants
   have white flowers."
-- *Audio + Text* — `Transcribe the audio.` on the audio track extracted
-  from `demo.mp4` → "Hey guys, today I want you to have a look at all these
-  vibrant colors and lush greenery. And when you move closer, see these
-  delicate purple flowers peeking through the leaves. It's a perfect spot to
-  relax and connect with the nature."
+- *Audio + Text* — `Transcribe the audio.` on `2414-165385-0000.wav`
+  (a LibriSpeech test-clean sample) → "And that accomplished, he excited
+  the admiration of every silly coquette, and the envy of every fluttering
+  beau. But by all young gentlemen and ladies of understanding, he was
+  heartily despised as a mere civilized monkey."
 - *Video + Audio + Text* — `Describe the video and audio.` on `demo.mp4`
-  with its extracted audio track → "A person is speaking while the camera
-  pans over a field of plants with green, red, and white leaves and
-  flowers."
+  with `2414-165385-0000.wav` → a description of the plants and greenery
+  visible in the video alongside a transcription of the spoken passage.
 
 Run from `$WORKSPACE/Megatron-Bridge`:
 
