@@ -336,100 +336,25 @@ class Gemma4OutputLayer(torch.nn.Module):
         return output, bias
 
 
-class Gemma4TiedKVMixin(torch.nn.Module):
-    """Mixin for linear_qkv in Gemma4 global attention layers that enforces K=V tying.
+
+def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") -> None:
+    """Mark global attention layers that require K=V weight tying.
 
     In Gemma4, global attention layers share K and V projections (``v_proj``
     absent in the HF checkpoint).  At import time the bridge copies K rows into
-    the V rows of ``linear_qkv.weight``.  Without this mixin, K and V diverge
-    during fine-tuning, and the trained V rows are silently discarded on export
-    (since ``v_proj`` is absent in the HF state dict).
-
-    This mixin wraps the ``forward`` pass of ``linear_qkv`` so that:
-
-    1. The raw Q+K output is computed by the underlying TE linear.
-    2. K is duplicated into the V slot (same tensor object, not a copy).
-    3. ``cat([Q, K, K])`` is returned as if ``linear_qkv`` had V=K rows.
-
-    **Gradient effect**:
-
-    - K rows receive the accumulated gradient ``dL/dK + dL/dV`` from both the
-      key *and* value attention paths — the correct combined gradient.
-    - V rows receive zero gradient (the second K tensor is used in their place)
-      and stay frozen at their initial K=V values throughout training.
-
-    On export the existing bridge logic already drops ``v_proj`` for K=V layers,
-    so no additional changes are needed for checkpoint round-trips.
-
-    **TP handling**: per-rank Q and KV sizes are inferred from the actual
-    output dimension at runtime, supporting both uniform sharding and the case
-    where KV heads are replicated (``num_kv_heads < tp_size``).
-
-    Usage (applied by ``_install_tied_kv``)::
-
-        linear_qkv._tied_kv_q_size = q_total   # e.g. num_heads * global_head_dim
-        linear_qkv._tied_kv_kv_size = kv_total  # e.g. num_global_kv_heads * global_head_dim
-        extend_instance(linear_qkv, Gemma4TiedKVMixin)
-    """
-
-    def forward(self, *args, **kwargs):
-        from megatron.core import parallel_state
-
-        output = super().forward(*args, **kwargs)
-
-        # Unpack the (potentially nested) tuple produced by TE column-parallel linears.
-        # adapter_wrapper.base_linear_forward expects one of four patterns:
-        #   1. tensor                        — no bias, no layernorm_output
-        #   2. (tensor, bias)                — plain ColumnParallelLinear
-        #   3. ((tensor, ln_out), bias)      — LayerNormColumnParallelLinear
-        #   4. (tensor, bias, ln_out)        — fused with both
-        if isinstance(output, tuple):
-            first, rest = output[0], output[1:]
-        else:
-            first, rest = output, None
-
-        # Pattern 3: first element is itself a tuple (fused layernorm output)
-        if isinstance(first, tuple):
-            qkv, ln_out = first[0], first[1:]
-        else:
-            qkv, ln_out = first, None
-
-        out_dim = qkv.size(-1)
-        tp = (
-            parallel_state.get_tensor_model_parallel_world_size()
-            if parallel_state.is_initialized()
-            else 1
-        )
-
-        # Derive per-rank Q and KV output sizes.
-        # Case (a): uniform sharding — each TP rank gets (q+kv+kv)/tp rows.
-        # Case (b): KV replicated   — num_kv_heads < tp, so KV is not sharded.
-        q_rank = self._tied_kv_q_size // tp
-        kv_rank = self._tied_kv_kv_size // tp
-        if q_rank + 2 * kv_rank != out_dim:
-            # Fall back to KV-replicated layout
-            kv_rank = self._tied_kv_kv_size
-            q_rank = out_dim - 2 * kv_rank
-
-        q = qkv[..., :q_rank]
-        k = qkv[..., q_rank : q_rank + kv_rank]
-        # Reference k twice so CatBackward accumulates dL/dk from both K and V paths
-        tied = torch.cat([q, k, k], dim=-1)
-
-        # Reconstruct the output in the original format, replacing the QKV tensor
-        # with the tied version while preserving bias and layernorm_output slots.
-        first_out = (tied,) + tuple(ln_out) if ln_out is not None else tied
-        if rest is not None:
-            return (first_out,) + tuple(rest)
-        return first_out
-
-
-def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") -> None:
-    """Apply :class:`Gemma4TiedKVMixin` to ``linear_qkv`` in every global attention layer.
+    the V rows of ``linear_qkv.weight``.  This function marks each global
+    ``Gemma4SelfAttention`` module with ``_tied_kv = True`` so that
+    :meth:`Gemma4SelfAttention.get_query_key_value_tensors` can enforce V=K in
+    the forward pass.
 
     Skips dense models (``provider.num_moe_experts is None``) where K=V sharing
     has not been verified.  Must be called after model construction so that the
-    attention modules and their ``linear_qkv`` weights are already built.
+    attention modules are already built.
+
+    Note on gradient routing for LoRA: since V-rows = K-rows in the loaded
+    checkpoint, the forward pass is numerically correct without any further
+    modification.  Full gradient routing (accumulating dL/dV into K-rows) is
+    left as a future improvement.
     """
     # Only confirmed for MoE models (26B-A4B family); skip dense variants
     if getattr(provider, "num_moe_experts", None) is None:
@@ -440,8 +365,6 @@ def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") 
         return  # No global KV heads configured
 
     pattern = provider.interleaved_attn_pattern
-    q_total = provider.num_attention_heads * provider.global_head_dim
-    kv_total = num_global_kv_heads * provider.global_head_dim
 
     decoder = getattr(model, "decoder", None)
     if decoder is None:
@@ -449,17 +372,12 @@ def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") 
 
     for layer in decoder.layers:
         if _is_local_attn_layer(layer.layer_number, pattern):
-            continue  # Sliding layers share nothing — skip
+            continue  # Sliding layers — skip
         attn = getattr(layer, "self_attention", None)
         if attn is None:
             continue
-        linear_qkv = getattr(attn, "linear_qkv", None)
-        if linear_qkv is None:
-            continue
-        # Tag the instance with the sizes needed by the mixin's forward()
-        linear_qkv._tied_kv_q_size = q_total
-        linear_qkv._tied_kv_kv_size = kv_total
-        extend_instance(linear_qkv, Gemma4TiedKVMixin)
+        # Mark this attention module so get_query_key_value_tensors knows to tie K=V.
+        attn._tied_kv = True
 
 
 def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
@@ -632,9 +550,21 @@ class Gemma4SelfAttention(SelfAttention):
 
         HF Gemma4 applies ``v_norm = Gemma4RMSNorm(head_dim, with_scale=False)``
         to the value states. This is a parameter-free normalization: ``v / rms(v)``.
+
+        For global attention layers (``self._tied_kv = True``), K=V tying is enforced
+        here after ``super()`` has completed the all-gather for KV-replicated TP layouts.
+        This ensures V=K throughout training for all tensor-parallel configs.
         """
         result = super().get_query_key_value_tensors(hidden_states, key_value_states, **kwargs)
+        # When split_qkv=False (fused_single_qkv_rope / fused RoPE path), super() returns
+        # (mixed_qkv, split_arg_list) — V-norm is not applied in this case.
+        if len(result) < 3:
+            return result
         query, key, value = result[0], result[1], result[2]
+        # For global attention layers K=V tying is required (HF Gemma4 has no v_proj).
+        # Enforced here — after the all-gather — so it is TP-safe for all configs.
+        if getattr(self, "_tied_kv", False):
+            value = key
         # Parameter-free RMSNorm on V: v / sqrt(mean(v^2) + eps)
         v_float = value.float()
         rms = v_float.pow(2).mean(-1, keepdim=True).add(self._v_norm_eps).sqrt()

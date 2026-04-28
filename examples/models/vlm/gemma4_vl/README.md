@@ -200,3 +200,17 @@ python examples/models/vlm/gemma4_vl/eval_sft_autoregressive.py \
 For batch evaluation on Slurm, see [slurm_eval_sft.sh](slurm_eval_sft.sh).
 
 After 40 SFT iterations on CORD-v2, expected teacher-forced token accuracy is ~98%.
+
+## Architecture Notes
+
+### Global Attention K=V Tying
+
+Gemma 4 26B-A4B uses an interleaved pattern of sliding-window (local) and full (global) attention
+layers. The global attention layers have a unique property: in the HF checkpoint there is no `v_proj`
+weight — key and value share the same projection matrix. At checkpoint import the bridge copies the
+K rows into the V rows of Megatron's fused QKV weight.
+
+During fine-tuning, K=V tying must be enforced in every forward pass to keep the model
+architecturally consistent. This is handled in `Gemma4SelfAttention.get_query_key_value_tensors`
+by setting `value = key` after the parent class returns the split Q/K/V tensors.
+
