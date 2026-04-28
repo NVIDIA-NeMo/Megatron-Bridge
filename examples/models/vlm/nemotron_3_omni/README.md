@@ -96,7 +96,7 @@ the container), `uv` is resolving against a stale environment — re-run
 
 ## Checkpoint Conversion
 
-[conversion.sh](conversion.sh) covers HF → Megatron import, Megatron → HF
+[conversion.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/conversion.sh) covers HF → Megatron import, Megatron → HF
 export, and a multi-GPU HF↔Megatron round-trip verification.
 
 - **Import** writes `iter_0000000/`, `latest_train_state.pt`, and
@@ -130,7 +130,7 @@ bash examples/models/vlm/nemotron_3_omni/conversion.sh
 
 ## Inference
 
-[inference.sh](inference.sh) drives
+[inference.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/inference.sh) drives
 `examples/conversion/hf_to_megatron_generate_nemotron_omni.py` over the four
 modality combinations exercised by the model:
 
@@ -222,8 +222,8 @@ base config. Recipe base: `nemotron_omni_cord_v2_*_config` in
 
 | Mode | Script | Recipe |
 |---|---|---|
-| Full SFT | [slurm_sft_cord_v2.sh](slurm_sft_cord_v2.sh) | `nemotron_omni_cord_v2_sft_config` |
-| LoRA | [slurm_peft_cord_v2.sh](slurm_peft_cord_v2.sh) | `nemotron_omni_cord_v2_peft_config` |
+| Full SFT | [slurm_sft_cord_v2.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_sft_cord_v2.sh) | `nemotron_omni_cord_v2_sft_config` |
+| LoRA | [slurm_peft_cord_v2.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_peft_cord_v2.sh) | `nemotron_omni_cord_v2_peft_config` |
 
 Parallelism (both): TP=2, EP=8, CP=1, MBS=2, GBS=16, packed sequences,
 selective recompute. LoRA targets `linear_qkv`, `linear_proj`, `in_proj`,
@@ -252,8 +252,8 @@ uv run python examples/models/vlm/nemotron_3_omni/data/build_valor32k_avqa_shard
 
 | Mode | Script | Recipe |
 |---|---|---|
-| Full SFT | [slurm_sft_valor32k_avqa.sh](slurm_sft_valor32k_avqa.sh) | `nemotron_omni_valor32k_sft_config` |
-| LoRA | [slurm_peft_valor32k_avqa.sh](slurm_peft_valor32k_avqa.sh) | `nemotron_omni_valor32k_peft_config` |
+| Full SFT | [slurm_sft_valor32k_avqa.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_sft_valor32k_avqa.sh) | `nemotron_omni_valor32k_sft_config` |
+| LoRA | [slurm_peft_valor32k_avqa.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_peft_valor32k_avqa.sh) | `nemotron_omni_valor32k_peft_config` |
 
 Parallelism (both): TP=2, EP=8, CP=1, MBS=2, packed sequences, selective
 recompute. SFT uses GBS=16 and the recipe-default LR; LoRA uses GBS=64 and
@@ -276,8 +276,8 @@ finetuned Megatron checkpoint on the same datasets used for training:
 
 | Dataset | Script | Output |
 |---|---|---|
-| CORD-V2 | [cord_v2_inference.py](cord_v2_inference.py) | JSON of `{prompt, gold, prediction}` per sample plus image bytes for eyeballing |
-| VALOR32K-AVQA | [valor32k_avqa_inference.py](valor32k_avqa_inference.py) | Per-sample predictions and an aggregate multiple-choice accuracy |
+| CORD-V2 | [cord_v2_inference.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/cord_v2_inference.py) | JSON of `{prompt, gold, prediction}` per sample plus image bytes for eyeballing |
+| VALOR32K-AVQA | [valor32k_avqa_inference.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/valor32k_avqa_inference.py) | Per-sample predictions and an aggregate multiple-choice accuracy |
 
 Example invocations (8 GPUs, single node). The slurm scripts tag
 `OUTPUT_DIR` with the run config (`<recipe>_<sft|lora>_<RUN_TAG>`, where
