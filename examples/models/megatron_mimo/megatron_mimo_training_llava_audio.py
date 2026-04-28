@@ -7,7 +7,6 @@ import argparse
 import logging
 import os
 import sys
-from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -17,8 +16,8 @@ from megatron.core.extensions.transformer_engine import (
 )
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.mimo.submodules.audio import AudioModalitySubmodules
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
-from megatron.core.models.vision.clip_vit_model import CLIPViTModel
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 from megatron.core.transformer.enums import AttnBackend
@@ -26,36 +25,46 @@ from megatron.core.transformer.mlp import MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-
-class CLIPViTNoCLS(CLIPViTModel):
-    """CLIPViTModel that drops the CLS token to match HF LLaVA (mm_vision_select_feature='patch')."""
-
-    def forward(self, x: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        x = super().forward(x, attention_mask=attention_mask)
-        return x[:, self.class_token_len :, :]
+# Shared LLaVA (Vicuna-7B + CLIP ViT-L/14) configs and checkpoint helpers.
+from megatron_mimo_training_llava import (
+    _ENCODER_SEQ_LEN,
+    _IMG_SIZE,
+    _PATCH_DIM,
+    CLIP_OUTPUT_DIM,
+    IMAGE_SPECIAL_TOKEN_ID,
+    MAX_SEQ_LENGTH,
+    VOCAB_SIZE,
+    CLIPViTNoCLS,
+    _build_config,
+    _load_tp_rank_weights,
+    _make_language_config,
+    _make_projection_config,
+    _make_vision_config,
+    _str2bool,
+)
+from whisper.whisper_layer_specs import get_whisper_layer_with_transformer_engine_spec
+from whisper.whisper_model import WhisperEncoder
 
 
 # ---------------------------------------------------------------------------
-# LLaVA model configs (Vicuna-7B + CLIP ViT-L/14 + MLP projection)
+# Audio-specific constants (Whisper-base encoder)
 # ---------------------------------------------------------------------------
 
-IMAGE_SPECIAL_TOKEN_ID = 32000
-VOCAB_SIZE = 32256
-CLIP_OUTPUT_DIM = 1024  # CLIP ViT-L/14 hidden size
-MAX_SEQ_LENGTH = 4096
-_IMG_SIZE = 336
-_PATCH_DIM = 14
-# CLIP ViT-L/14 @ 336×336: (336/14)^2 = 576 patches (CLS token dropped per HF LLaVA)
-_ENCODER_SEQ_LEN = 576
+AUDIO_SPECIAL_TOKEN_ID = 32002
+WHISPER_OUTPUT_DIM = 512  # Whisper-base hidden size
+# Whisper-base: 30s padded audio → 3000 mel frames → 1500 encoder output tokens
+_AUDIO_ENCODER_SEQ_LEN = 1500
+_AUDIO_NUM_MEL_BINS = 80
+_AUDIO_MAX_SOURCE_POSITIONS = 1500
 
 
-def _make_vision_config(deterministic: bool = False) -> TransformerConfig:
-    """CLIP ViT-L/14 vision encoder config (23 layers = penultimate layer output per HF LLaVA)."""
+def _make_audio_config(deterministic: bool = False) -> TransformerConfig:
+    """Whisper-base audio encoder config (6 encoder layers, d_model=512)."""
     cfg = TransformerConfig(
-        num_layers=23,
-        hidden_size=1024,
-        ffn_hidden_size=4096,
-        num_attention_heads=16,
+        num_layers=6,
+        hidden_size=512,
+        ffn_hidden_size=2048,
+        num_attention_heads=8,
         use_cpu_initialization=True,
         pipeline_dtype=torch.float32 if deterministic else torch.bfloat16,
         bf16=not deterministic,
@@ -74,8 +83,6 @@ def _make_vision_config(deterministic: bool = False) -> TransformerConfig:
     cfg.attention_softmax_in_fp32 = True
     cfg.normalization = "LayerNorm"
     cfg.apply_rope_fusion = False
-    # CLIP uses "quick_gelu", not standard gelu
-    cfg.activation_func = lambda x: x * torch.sigmoid(1.702 * x)
     cfg.calculate_per_token_loss = True
 
     if deterministic:
@@ -88,78 +95,10 @@ def _make_vision_config(deterministic: bool = False) -> TransformerConfig:
     return cfg
 
 
-def _make_language_config(deterministic: bool = False) -> TransformerConfig:
-    """Vicuna-7B language model config (same arch as Llama-7B)."""
-    cfg = TransformerConfig(
-        num_layers=32,
-        hidden_size=4096,
-        num_attention_heads=32,
-        use_cpu_initialization=True,
-    )
-
-    cfg.ffn_hidden_size = 11008
-    cfg.activation_func = torch.nn.functional.silu
-    cfg.gated_linear_unit = True
-
-    cfg.normalization = "RMSNorm"
-    cfg.rms_norm_eps = 1e-5
-
-    cfg.position_embedding_type = "rope"
-    cfg.rotary_base = 10000
-    cfg.rotary_percent = 1.0
-
-    cfg.seq_length = MAX_SEQ_LENGTH
-    cfg.max_position_embeddings = MAX_SEQ_LENGTH
-
-    cfg.attention_dropout = 0.0
-    cfg.hidden_dropout = 0.0
-
-    cfg.num_query_groups = 32
-    cfg.add_bias_linear = False
-    cfg.untie_embeddings_and_output_weights = True
-
-    cfg.bias_activation_fusion = True
-    cfg.masked_softmax_fusion = True
-    cfg.persist_layer_norm = True
-    cfg.bias_dropout_fusion = True
-    cfg.apply_rope_fusion = True
-
-    cfg.pipeline_dtype = torch.float32 if deterministic else torch.bfloat16
-    cfg.bf16 = not deterministic
-    cfg.cross_entropy_loss_fusion = not deterministic
-    cfg.variable_seq_lengths = True
-    cfg.calculate_per_token_loss = True
-
-    if deterministic:
-        cfg.attention_backend = AttnBackend.unfused
-        cfg.deterministic_mode = True
-        cfg.recompute_granularity = "full"
-        cfg.recompute_method = "uniform"
-        cfg.recompute_num_layers = 1
-
-    return cfg
-
-
-def _make_projection_config(hidden_size: int = 4096, deterministic: bool = False) -> TransformerConfig:
-    """Vision→language projection MLP config."""
-    cfg = TransformerConfig(num_layers=1, hidden_size=hidden_size, num_attention_heads=1, use_cpu_initialization=True)
-    cfg.ffn_hidden_size = 4096
-    cfg.bias_activation_fusion = True
-    cfg.add_bias_linear = True
-    cfg.activation_func = torch.nn.functional.gelu
-    cfg.calculate_per_token_loss = True
-    cfg.pipeline_dtype = torch.float32 if deterministic else torch.bfloat16
-    cfg.bf16 = not deterministic
-
-    if deterministic:
-        cfg.deterministic_mode = True
-
-    return cfg
-
-
-def _build_model_specs(deterministic: bool = False):
+def _build_model_specs(deterministic: bool = False):  # pragma: no cover
     """Return (language_model_spec, modality_submodules_spec, special_token_ids)."""
     vision_config = _make_vision_config(deterministic=deterministic)
+    audio_config = _make_audio_config(deterministic=deterministic)
     language_config = _make_language_config(deterministic=deterministic)
     projection_config = _make_projection_config(hidden_size=language_config.hidden_size, deterministic=deterministic)
 
@@ -198,6 +137,43 @@ def _build_model_specs(deterministic: bool = False):
         },
     )
 
+    # Megatron-native Whisper encoder (TP-shardable)
+    audio_encoder = ModuleSpec(
+        module=WhisperEncoder,
+        params={
+            "transformer_config": audio_config,
+            "transformer_layer_spec": get_whisper_layer_with_transformer_engine_spec(),
+            "num_mel_bins": _AUDIO_NUM_MEL_BINS,
+            "max_source_positions": _AUDIO_MAX_SOURCE_POSITIONS,
+        },
+    )
+
+    # Audio→language projection MLP
+    audio_projection_config = _make_projection_config(
+        hidden_size=language_config.hidden_size, deterministic=deterministic
+    )
+    audio_projection = ModuleSpec(
+        module=MultimodalProjector,
+        params={
+            "config": audio_projection_config,
+            "submodules": MLPSubmodules(
+                linear_fc1=TEColumnParallelLinear,
+                linear_fc2=TERowParallelLinear,
+            ),
+            "projector_type": "mlp",
+            "input_size": WHISPER_OUTPUT_DIM,
+        },
+    )
+
+    audio_submodule_spec = ModuleSpec(
+        module=AudioModalitySubmodules,
+        params={},
+        submodules={
+            "encoders": {"whisper": audio_encoder},
+            "input_projections": [audio_projection],
+        },
+    )
+
     language_model_spec = ModuleSpec(
         module=GPTModel,
         params={
@@ -209,8 +185,8 @@ def _build_model_specs(deterministic: bool = False):
         },
     )
 
-    modality_submodules_spec = {"images": vision_submodule_spec}
-    special_token_ids = {"images": IMAGE_SPECIAL_TOKEN_ID}
+    modality_submodules_spec = {"images": vision_submodule_spec, "audios": audio_submodule_spec}
+    special_token_ids = {"images": IMAGE_SPECIAL_TOKEN_ID, "audios": AUDIO_SPECIAL_TOKEN_ID}
     return language_model_spec, modality_submodules_spec, special_token_ids
 
 
@@ -219,139 +195,20 @@ def _build_model_specs(deterministic: bool = False):
 # ---------------------------------------------------------------------------
 
 
-def _get_pp_layer_offset(module: torch.nn.Module) -> int:
-    """Return the global layer offset for a module's PP stage.
-
-    Inspects the first transformer layer's ``layer_number`` attribute (1-based
-    global index set by Megatron) and compares it with the local ModuleList
-    index to derive the offset.  Returns 0 when PP=1 or for non-transformer
-    modules (e.g. the vision encoder).
-    """
-    decoder = getattr(module, "decoder", None)
-    if decoder is None:
-        return 0
-    layers = getattr(decoder, "layers", None)
-    if not layers or len(layers) == 0:
-        return 0
-    first_layer = layers[0]
-    global_layer_number = getattr(first_layer, "layer_number", None)
-    if global_layer_number is None:
-        return 0
-    # layer_number is 1-based; local index is 0-based
-    return global_layer_number - 1
-
-
-def _remap_checkpoint_for_pp(
-    state_dict: dict[str, torch.Tensor],
-    module: torch.nn.Module,
-    layer_offset: int,
-) -> dict[str, torch.Tensor]:
-    """Remap globally-numbered checkpoint layer keys to local PP stage indices.
-
-    The HF→Megatron converters produce globally-numbered keys
-    (``decoder.layers.0`` … ``decoder.layers.31``), but each PP stage stores
-    layers in a ``nn.ModuleList`` with 0-based local indices.  For PP stage 1
-    with offset=16, checkpoint key ``decoder.layers.16`` must become
-    ``decoder.layers.0`` so it matches the module's state dict.
-
-    Non-layer keys (embedding, output_layer, final_layernorm) are passed
-    through unchanged, then filtered to keys the module actually owns.
-    """
-    import re
-
-    module_keys = set(module.state_dict().keys())
-    remapped = {}
-
-    for key, value in state_dict.items():
-        m = re.match(r"^(decoder\.layers\.)(\d+)(\..*)", key)
-        if m:
-            global_idx = int(m.group(2))
-            local_idx = global_idx - layer_offset
-            if local_idx < 0:
-                continue  # belongs to an earlier PP stage
-            new_key = f"{m.group(1)}{local_idx}{m.group(3)}"
-            if new_key in module_keys:
-                remapped[new_key] = value
-        else:
-            # Non-layer key (embedding, output_layer, final_layernorm, etc.)
-            if key in module_keys:
-                remapped[key] = value
-
-    return remapped
-
-
-def _load_tp_rank_weights(
-    module: torch.nn.Module,
-    ckpt_dir: str,
-    tp_rank: int,
-    label: str,
-) -> None:
-    """Load per-TP-rank ``.pt`` weights produced by the HF→Megatron converters.
-
-    Both ``convert_hf_clip_to_megatron.py`` and ``convert_hf_llama_to_megatron.py``
-    write the same layout::
-
-        {ckpt_dir}/tp_rank_{NN}/model_weights.pt   →  {"model": {key: tensor}}
-
-    When pipeline parallelism (PP) > 1, checkpoint layer keys are globally
-    numbered but the module uses local 0-based indices.  We remap
-    ``decoder.layers.<global_idx>`` → ``decoder.layers.<local_idx>`` using
-    the PP stage's layer offset so each stage loads the correct layer weights.
-
-    After loading, a spot-check compares up to 5 parameter tensors against the
-    file to verify the weights actually landed in the module.
-    """
-    ckpt_file = os.path.join(ckpt_dir, f"tp_rank_{tp_rank:02d}", "model_weights.pt")
-    if not os.path.exists(ckpt_file):
-        raise FileNotFoundError(f"[{label}] Checkpoint not found: {ckpt_file}")
-
-    saved = torch.load(ckpt_file, map_location="cpu", weights_only=True)
-    state_dict = {k: v for k, v in saved["model"].items() if v is not None}
-
-    # With pipeline parallelism (PP > 1), checkpoint layer keys are globally
-    # numbered (decoder.layers.0 … decoder.layers.31) but each PP stage's
-    # nn.ModuleList uses local 0-based indices.  Remap before loading.
-    layer_offset = _get_pp_layer_offset(module)
-    state_dict = _remap_checkpoint_for_pp(state_dict, module, layer_offset)
-    if layer_offset > 0:
-        print(f"[{label}] PP layer offset={layer_offset}, remapped checkpoint keys to local indices")
-
-    incompat = module.load_state_dict(state_dict, strict=False)
-    unexpected = [k for k in incompat.unexpected_keys if "_extra_state" not in k]
-    missing = [k for k in incompat.missing_keys if "_extra_state" not in k]
-    if unexpected or missing:
-        raise RuntimeError(f"[{label}] load_state_dict mismatch.\n  Missing:    {missing}\n  Unexpected: {unexpected}")
-
-    # Spot-check: re-read module state and compare against checkpoint tensors
-    model_sd = module.state_dict()
-    checked = 0
-    for key, ref_tensor in state_dict.items():
-        if key not in model_sd or ref_tensor is None:
-            continue
-        if not torch.equal(model_sd[key].float().cpu(), ref_tensor.float().cpu()):
-            max_diff = (model_sd[key].float().cpu() - ref_tensor.float().cpu()).abs().max().item()
-            raise RuntimeError(f"[{label}] Weight verification FAILED for '{key}': max abs diff = {max_diff}")
-        checked += 1
-        if checked >= 5:
-            break
-    if checked == 0:
-        raise RuntimeError(f"[{label}] Weight verification found 0 overlapping keys to check")
-    print(f"[{label}] Loaded and verified from {ckpt_file} ({checked} keys spot-checked)")
-
-
 def _make_checkpoint_loader_hook(
     language_model_ckpt: str | None = None,
     vision_encoder_ckpt: str | None = None,
+    audio_encoder_ckpt: str | None = None,
 ):
     """Return a ``pre_wrap_hook`` that loads per-module checkpoints.
 
     In hetero MIMO each rank only materialises the modules it participates in
     (``MimoModel.language_model`` is ``None`` on encoder-only ranks, and the
-    vision submodule is absent on LLM-only ranks).  The hook therefore guards
-    every load with an existence check so it is safe to call on all ranks.
+    vision/audio submodules are absent on LLM-only ranks).  The hook therefore
+    guards every load with an existence check so it is safe to call on all ranks.
 
-    Both checkpoint dirs are expected to contain per-TP-rank ``.pt`` files
-    produced by ``convert_hf_llama_to_megatron.py`` / ``convert_hf_clip_to_megatron.py``.
+    Checkpoint dirs are expected to contain per-TP-rank ``.pt`` files
+    produced by HF→Megatron converters.
     """
 
     def _hook(model_list):
@@ -383,13 +240,27 @@ def _make_checkpoint_loader_hook(
                     label=f"CLIP tp_rank={tp_rank}/{tp_size}",
                 )
 
+        if audio_encoder_ckpt and "audios" in model.modality_submodules:
+            audios_sub = model.modality_submodules["audios"]
+            encoder = getattr(audios_sub.encoders, "whisper", None) if hasattr(audios_sub, "encoders") else None
+            if encoder is not None:
+                tp_group = grids["audios"].get_pg(["tp"])
+                tp_rank = dist.get_rank(tp_group)
+                tp_size = dist.get_world_size(tp_group)
+                _load_tp_rank_weights(
+                    encoder,
+                    audio_encoder_ckpt,
+                    tp_rank,
+                    label=f"Whisper tp_rank={tp_rank}/{tp_size}",
+                )
+
         return model_list
 
     return _hook
 
 
 # ---------------------------------------------------------------------------
-# Parallelism config (8 GPUs: TP=4 for both modules)
+# Parallelism config (8 GPUs: LLM TP=4, vision TP=2, audio TP=2)
 # ---------------------------------------------------------------------------
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
@@ -408,10 +279,16 @@ def _build_parallelism_config() -> MegatronMIMOParallelismConfig:
                 rank_offset=int(os.environ.get("MIMO_LLM_OFFSET", 0)),
             ),
             "images": ModuleParallelismConfig(
-                tensor_model_parallel_size=int(os.environ.get("MIMO_VISION_TP", 4)),
+                tensor_model_parallel_size=int(os.environ.get("MIMO_VISION_TP", 2)),
                 pipeline_model_parallel_size=int(os.environ.get("MIMO_VISION_PP", 1)),
                 data_parallel_size=int(os.environ.get("MIMO_VISION_DP", 1)),
                 rank_offset=int(os.environ.get("MIMO_VISION_OFFSET", 4)),
+            ),
+            "audios": ModuleParallelismConfig(
+                tensor_model_parallel_size=int(os.environ.get("MIMO_AUDIO_TP", 2)),
+                pipeline_model_parallel_size=int(os.environ.get("MIMO_AUDIO_PP", 1)),
+                data_parallel_size=int(os.environ.get("MIMO_AUDIO_DP", 1)),
+                rank_offset=int(os.environ.get("MIMO_AUDIO_OFFSET", 6)),
             ),
         },
     )
@@ -426,20 +303,37 @@ from megatron.bridge.data.megatron_mimo.hf_provider import HFMegatronMIMODataset
 
 
 def _llava_preprocess(example, dataset_root):
-    """Convert LLaVA conversations format to plain text and resolve image paths.
+    """Convert LLaVA conversations format to plain text and resolve media paths.
 
     Emits the full conversation (human + gpt turns) as ``text`` so the LM
     conditions on the human prompt during training. Loss masking to the
-    assistant-answer tokens is applied by ``_AnswerMaskedMimoDataset``,
+    assistant-answer tokens is applied by ``_AnswerMaskedMegatronMIMODataset``,
     matching HF LLaVA's ``preprocess_plain`` and the Megatron-LM
     examples/mimo task encoders.
     """
     conversations = example.get("conversations", [])
     text_parts = [turn.get("value", "") for turn in conversations]
-    example["text"] = " ".join(text_parts).replace("<image>", "").strip()
+    example["text"] = " ".join(text_parts).replace("<image>", "").replace("<audio>", "").strip()
     # Resolve relative image paths to absolute paths
     if "image" in example and example["image"] and not os.path.isabs(example["image"]):
         example["image"] = os.path.join(dataset_root, example["image"])
+    # Load audio from file path into a numpy array for WhisperProcessor
+    if "audio" in example and example["audio"]:
+        audio_val = example["audio"]
+        if isinstance(audio_val, str):
+            audio_path = audio_val if os.path.isabs(audio_val) else os.path.join(dataset_root, audio_val)
+            import soundfile as sf
+
+            audio_array, sr = sf.read(audio_path)
+            if sr != 16000:
+                raise ValueError(
+                    f"Whisper expects 16 kHz audio but {audio_path} has sample rate {sr}. "
+                    "Resample the dataset to 16 kHz before training."
+                )
+            example["audio"] = audio_array
+        elif isinstance(audio_val, dict) and "array" in audio_val:
+            # HuggingFace Audio feature format
+            example["audio"] = audio_val["array"]
     return example
 
 
@@ -463,7 +357,7 @@ def _find_token_span(
     return -1, -1
 
 
-class _AnswerMaskedMimoDataset(MegatronMIMODataset):
+class _AnswerMaskedMegatronMIMODataset(MegatronMIMODataset):
     """MegatronMIMODataset variant that masks loss to assistant-answer tokens only.
 
     The base class sets ``loss_mask=1`` for every non-placeholder, non-pad
@@ -471,6 +365,10 @@ class _AnswerMaskedMimoDataset(MegatronMIMODataset):
     caption. For LLaVA-Pretrain loss must be computed on the assistant ("gpt")
     turn only — the HF LLaVA ``preprocess_plain`` contract, also implemented
     by the Megatron-LM examples/mimo task encoders.
+
+    Works identically for vision-only and audio-augmented variants: the audio
+    placeholders (if any) fall outside the answer span and remain ``-100`` /
+    ``loss_mask=0``.
     """
 
     def __getitem__(self, idx):
@@ -485,7 +383,7 @@ class _AnswerMaskedMimoDataset(MegatronMIMODataset):
         labels = torch.full_like(input_ids, -100)
         search_idx = 0
         for ans in answers:
-            ans = ans.replace("<image>", "").strip()
+            ans = ans.replace("<image>", "").replace("<audio>", "").strip()
             if not ans:
                 continue
             ans_ids = self.tokenizer(ans, add_special_tokens=False, return_tensors="pt")["input_ids"].squeeze(0)
@@ -507,16 +405,16 @@ class _AnswerMaskedMimoDataset(MegatronMIMODataset):
         return item
 
 
-class _AnswerMaskedHFMimoProvider(HFMegatronMIMODatasetProvider):
-    """HFMegatronMIMODatasetProvider that builds ``_AnswerMaskedMimoDataset`` instances."""
+class _AnswerMaskedHFMegatronMIMOProvider(HFMegatronMIMODatasetProvider):
+    """HFMegatronMIMODatasetProvider that builds ``_AnswerMaskedMegatronMIMODataset`` instances."""
 
-    def _build_split_dataset(self, split, target_samples, processors, tokenizer):
+    def _build_split_dataset(self, split, target_samples, processors, tokenizer):  # pragma: no cover
         if target_samples <= 0:
             return None
         hf_dataset = self._load_hf_dataset(split)
         if hf_dataset is None:
             return None
-        return _AnswerMaskedMimoDataset(
+        return _AnswerMaskedMegatronMIMODataset(
             examples=hf_dataset,
             processors=processors,
             tokenizer=tokenizer,
@@ -530,17 +428,32 @@ class _AnswerMaskedHFMimoProvider(HFMegatronMIMODatasetProvider):
         )
 
 
-def _build_hf_data_provider(dataset_root: str) -> HFMegatronMIMODatasetProvider:
-    """Build an HFMegatronMIMODatasetProvider for liuhaotian/LLaVA-Pretrain."""
-    provider = _AnswerMaskedHFMimoProvider(
+def _build_hf_data_provider(
+    dataset_root: str,
+    audio_column: str | None = None,
+    hf_data_files: str = "blip_laion_cc_sbu_558k.json",
+) -> HFMegatronMIMODatasetProvider:  # pragma: no cover
+    """Build an HFMegatronMIMODatasetProvider for LLaVA-Pretrain with optional audio."""
+    processor_paths = {"images": "openai/clip-vit-large-patch14-336"}
+    special_token_ids = {"images": IMAGE_SPECIAL_TOKEN_ID}
+    encoder_seq_lengths = {"images": _ENCODER_SEQ_LEN}
+    modality_columns = {"images": "image"}
+
+    if audio_column:
+        processor_paths["audios"] = "openai/whisper-base"
+        special_token_ids["audios"] = AUDIO_SPECIAL_TOKEN_ID
+        encoder_seq_lengths["audios"] = _AUDIO_ENCODER_SEQ_LEN
+        modality_columns["audios"] = audio_column
+
+    provider = _AnswerMaskedHFMegatronMIMOProvider(
         seq_length=MAX_SEQ_LENGTH,
         hf_dataset_path=dataset_root,
-        hf_data_files="blip_laion_cc_sbu_558k.json",
+        hf_data_files=hf_data_files,
         hf_tokenizer_path="llava-hf/llava-1.5-7b-hf",
-        processor_paths={"images": "openai/clip-vit-large-patch14-336"},
-        special_token_ids={"images": IMAGE_SPECIAL_TOKEN_ID},
-        encoder_seq_lengths={"images": _ENCODER_SEQ_LEN},
-        modality_columns={"images": "image"},
+        processor_paths=processor_paths,
+        special_token_ids=special_token_ids,
+        encoder_seq_lengths=encoder_seq_lengths,
+        modality_columns=modality_columns,
         text_column="text",
         train_split="train",
         preprocess_fn=lambda example: _llava_preprocess(example, dataset_root),
@@ -557,6 +470,13 @@ def _wrap_iter(loader_iter, model_dtype=torch.bfloat16):
     - modality_inputs["images"]["pixel_values"] → modality_inputs["images"]["clip"]["x"]
       so VisionModalitySubmodules.encode() finds the "clip" encoder key and
       CLIPViTModel.forward() receives ``x=...``.
+    - modality_inputs["audios"]["input_features"] → modality_inputs["audios"]["whisper"]["input_features"]
+      so AudioModalitySubmodules.encode() finds the "whisper" encoder key and
+      WhisperEncoder.forward() receives ``input_features=...``.
+    - Drops padding-derived audio encoder tokens: computes valid frame counts
+      from the mel spectrogram (padding frames are zero), derives per-sample
+      encoder output lengths, trims excess audio placeholder tokens from
+      input_ids, and passes seq_lengths to the encoder.
     - Sets attention_mask=None (not needed for this test).
     - Generates loss_mask if not present.
     """
@@ -574,13 +494,37 @@ def _wrap_iter(loader_iter, model_dtype=torch.bfloat16):
                             if isinstance(vv, torch.Tensor):
                                 value[k][kk] = vv.cuda(non_blocking=True)
 
-        # Rewrap modality_inputs: {"images": {"pixel_values": t}} → {"images": {"clip": {"x": t}}}
-        # Cast to match model weights
+        # Rewrap modality_inputs to encoder-keyed dicts and cast to match model weights
         mi = batch.get("modality_inputs")
         if mi and "images" in mi:
             pv = mi["images"].get("pixel_values")
             if pv is not None:
                 mi["images"] = {"clip": {"x": pv.to(model_dtype)}}
+
+        if mi and "audios" in mi:
+            af = mi["audios"].get("input_features")
+            if af is not None:
+                audio_kwargs = {"input_features": af.to(model_dtype)}
+
+                # Compute per-sample valid encoder output lengths.
+                # WhisperFeatureExtractor pads mel spectrograms with zeros;
+                # real frames always have non-zero energy in at least one bin.
+                frame_energy = af.abs().sum(dim=-2)  # [B, mel_frames], sum over mel bins
+                valid_frames = (frame_energy > 0).sum(dim=-1)  # [B]
+                # Conv2 uses stride=2: output_len = (input_len - 1) // 2 + 1
+                seq_lengths = ((valid_frames - 1) // 2 + 1).clamp(min=0).long()
+                audio_kwargs["seq_lengths"] = seq_lengths
+
+                # Replace excess audio placeholder tokens in input_ids so that
+                # align_embeddings_by_token_positions sees the correct count.
+                input_ids = batch["input_ids"]
+                for i in range(input_ids.size(0)):
+                    positions = (input_ids[i] == AUDIO_SPECIAL_TOKEN_ID).nonzero(as_tuple=True)[0]
+                    n_valid = seq_lengths[i].item()
+                    if n_valid < len(positions):
+                        input_ids[i, positions[n_valid:]] = 0  # replace with pad token
+
+                mi["audios"] = {"whisper": audio_kwargs}
 
         # Ensure loss_mask exists
         if "loss_mask" not in batch or batch["loss_mask"] is None:
@@ -626,89 +570,11 @@ def _build_data_iterators(cfg, _megatron_mimo_infra, *, train_state=None):
 
 
 # ---------------------------------------------------------------------------
-# Config assembly
-# ---------------------------------------------------------------------------
-
-
-from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    LoggerConfig,
-    SchedulerConfig,
-    TrainingConfig,
-)
-from megatron.bridge.training.config import OptimizerConfig as BridgeOptimizerConfig
-from megatron.bridge.training.tokenizers.config import TokenizerConfig
-
-
-def _build_config(
-    megatron_mimo_provider: MegatronMIMOProvider,
-    data_provider: HFMegatronMIMODatasetProvider,
-    opt_config: BridgeOptimizerConfig,
-    micro_batch_size: int = 1,
-    global_batch_size: int = 1,
-    train_iters: int = 2,
-    log_interval: int = 1,
-    wandb_project: str | None = None,
-    wandb_exp_name: str | None = None,
-    wandb_entity: str | None = None,
-    wandb_save_dir: str | None = None,
-    lr_warmup_iters: int = 0,
-    seed: int = 42,
-    deterministic: bool = False,
-) -> ConfigContainer:
-    train_cfg = TrainingConfig(
-        micro_batch_size=micro_batch_size,
-        global_batch_size=global_batch_size,
-        train_iters=train_iters,
-    )
-
-    logger_cfg = LoggerConfig()
-    logger_cfg.log_timers_to_tensorboard = True
-    logger_cfg.log_interval = log_interval
-    logger_cfg.wandb_project = wandb_project
-    logger_cfg.wandb_exp_name = wandb_exp_name
-    logger_cfg.wandb_entity = wandb_entity
-    logger_cfg.wandb_save_dir = wandb_save_dir
-    logger_cfg.tensorboard_dir = os.path.join(wandb_save_dir or "/tmp/tb_logs", "tb_logs") if wandb_project else None
-
-    scheduler_cfg = SchedulerConfig(
-        lr_decay_style="cosine",
-        lr_warmup_iters=lr_warmup_iters,
-        lr_warmup_init=opt_config.min_lr,
-        start_weight_decay=opt_config.weight_decay,
-        end_weight_decay=opt_config.weight_decay,
-    )
-
-    cfg = ConfigContainer(
-        train=train_cfg,
-        model=megatron_mimo_provider,
-        optimizer=opt_config,
-        scheduler=scheduler_cfg,
-        dataset=data_provider,
-        logger=logger_cfg,
-        tokenizer=TokenizerConfig(),
-        checkpoint=CheckpointConfig(),
-    )
-    cfg.rng.seed = seed
-    cfg.ddp.overlap_grad_reduce = False
-    cfg.ddp.check_for_nan_in_grad = False
-    cfg.ddp.use_distributed_optimizer = True
-    cfg.optimizer.use_distributed_optimizer = True
-    cfg.ddp.grad_reduce_in_fp32 = deterministic
-    # data_parallel_size=1 because the sampler does not shard by DP.
-    # All data-loading ranks receive identical global micro-batches;
-    # per-module DP sub-sharding is handled by slice_batch_for_megatron_mimo in the
-    # forward step.  num_microbatches = global_batch_size / micro_batch_size.
-    cfg.data_parallel_size = 1
-    return cfg
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+from megatron.bridge.training.config import OptimizerConfig as BridgeOptimizerConfig
 from megatron.bridge.training.megatron_mimo_step import forward_step as megatron_mimo_forward_step
 from megatron.bridge.training.pretrain_megatron_mimo import pretrain_megatron_mimo
 
@@ -727,18 +593,7 @@ def _log(msg):
     print(line, end="", flush=True)
 
 
-def _str2bool(v):
-    """Parse boolean values from command line arguments."""
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ("yes", "true", "t", "1"):
-        return True
-    if v.lower() in ("no", "false", "f", "0"):
-        return False
-    raise argparse.ArgumentTypeError(f"Boolean value expected, got '{v}'")
-
-
-def parse_args():
+def parse_args():  # pragma: no cover
     """Parse command-line arguments for the MegatronMIMO LLaVA training example."""
     parser = argparse.ArgumentParser(description="MegatronMIMO LLaVA training")
     parser.add_argument("--micro-batch-size", type=int, default=1, help="Micro batch size per GPU")
@@ -764,6 +619,12 @@ def parse_args():
         default=None,
         help="Path to a Megatron distributed checkpoint to load into the vision encoder only",
     )
+    parser.add_argument(
+        "--audio-encoder-checkpoint",
+        type=str,
+        default=None,
+        help="Path to a Megatron distributed checkpoint to load into the audio encoder only",
+    )
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--wandb-project", type=str, default="Megatron-Bridge-MIMO", help="W&B project name")
@@ -775,11 +636,29 @@ def parse_args():
     )
     parser.add_argument("--dataset-root", type=str, required=True, help="Root directory of the LLaVA-Pretrain dataset")
     parser.add_argument(
+        "--hf-data-files",
+        type=str,
+        default="blip_laion_cc_sbu_558k.json",
+        help="JSON file under --dataset-root to load (e.g. the audio-augmented variant).",
+    )
+    parser.add_argument(
+        "--audio-column",
+        type=str,
+        default=None,
+        help="Dataset column name for audio data (e.g. 'audio'). Enables the audio encoder when set.",
+    )
+    parser.add_argument(
         "--freeze-vision", type=_str2bool, default=True, help="Freeze the vision encoder (default: True)"
     )
     parser.add_argument("--freeze-llm", type=_str2bool, default=True, help="Freeze the language model (default: True)")
     parser.add_argument(
-        "--freeze-projector", type=_str2bool, default=False, help="Freeze the projector (default: False)"
+        "--freeze-vision-projector", type=_str2bool, default=False, help="Freeze the vision projector (default: False)"
+    )
+    parser.add_argument(
+        "--freeze-audio", type=_str2bool, default=True, help="Freeze the audio encoder (default: True)"
+    )
+    parser.add_argument(
+        "--freeze-audio-projector", type=_str2bool, default=False, help="Freeze the audio projector (default: False)"
     )
     parser.add_argument(
         "--deterministic",
@@ -791,7 +670,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main():  # pragma: no cover
     """Entry point for the MegatronMIMO LLaVA training example."""
     global _rank_log_file
 
@@ -857,25 +736,27 @@ def main():
         modality_submodules_spec=modality_submodules_spec,
         special_token_ids=special_token_ids,
         megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
-        topology={"images": ["language"], "language": []},
+        topology={"images": ["language"], "audios": ["language"], "language": []},
         use_cpu_initialization=True,
         bf16=not args.deterministic,
         freeze_language_model=args.freeze_llm,
-        freeze_modality_encoders={"images": args.freeze_vision},
-        freeze_modality_projections={"images": args.freeze_projector},
+        freeze_modality_encoders={"images": args.freeze_vision, "audios": args.freeze_audio},
+        freeze_modality_projections={"images": args.freeze_vision_projector, "audios": args.freeze_audio_projector},
     )
     # Register per-module checkpoint loading hook (runs before DDP wrapping)
-    if args.language_model_checkpoint or args.vision_encoder_checkpoint:
+    if args.language_model_checkpoint or args.vision_encoder_checkpoint or args.audio_encoder_checkpoint:
         megatron_mimo_provider.register_pre_wrap_hook(
             _make_checkpoint_loader_hook(
                 language_model_ckpt=args.language_model_checkpoint,
                 vision_encoder_ckpt=args.vision_encoder_checkpoint,
+                audio_encoder_ckpt=args.audio_encoder_checkpoint,
             )
         )
         _log(
             f"Registered checkpoint hooks: "
             f"LLM={args.language_model_checkpoint}, "
-            f"vision={args.vision_encoder_checkpoint}"
+            f"vision={args.vision_encoder_checkpoint}, "
+            f"audio={args.audio_encoder_checkpoint}"
         )
 
     # Patch: training_log accesses config.model.num_moe_experts
@@ -884,7 +765,11 @@ def main():
 
     # 4. Build data provider
     _log("building data provider")
-    data_provider = _build_hf_data_provider(args.dataset_root)
+    data_provider = _build_hf_data_provider(
+        args.dataset_root,
+        audio_column=args.audio_column,
+        hf_data_files=args.hf_data_files,
+    )
 
     # 5. Build optimizer config
     _log("building optimizer config")
