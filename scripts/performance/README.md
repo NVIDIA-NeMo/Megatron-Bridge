@@ -75,6 +75,63 @@ uv run python scripts/performance/setup_experiment.py \
 - `-a/--account` (Mandatory for Slurm based clusters)
 - `-p/--partition` (Mandatory for Slurm based clusters)
 
+## Determinism
+
+Deterministic training guarantees that two runs with identical inputs produce identical outputs at every step.  It is useful for debugging (isolating regressions) and for reproducibility studies.
+
+### What `--deterministic` does
+
+**Environment variables** (set on the Slurm executor via `PerfEnvPlugin`):
+
+| Variable | Value | Reason |
+|---|---|---|
+| `NCCL_ALGO` | `Ring` | Disables tree/NVLink collectives that are non-deterministic |
+| `NVTE_ALLOW_NONDETERMINISTIC_ALGO` | `0` | Forces TE to use deterministic algorithms |
+| `CUBLAS_WORKSPACE_CONFIG` | `:4096:8` | Disables cuBLAS heuristic workspace selection |
+
+**Model config overrides** (applied by `apply_determinism_overrides` in the recipe layer):
+
+| Field | Value |
+|---|---|
+| `model.deterministic_mode` | `True` |
+| `model.cross_entropy_loss_fusion` | `False` |
+| `comm_overlap.tp_comm_overlap` | `False` |
+
+### Example commands
+
+```bash
+# Llama 3 70B — deterministic, H100 64-GPU
+python scripts/performance/setup_experiment.py \
+  --account <account> --partition <partition> \
+  --gpu h100 -m llama3 -s 70b -ng 64 -gn 8 \
+  --container_image <image> --task pretrain \
+  --deterministic
+
+# Llama 3.1 405B — deterministic, H100 512-GPU
+python scripts/performance/setup_experiment.py \
+  --account <account> --partition <partition> \
+  --gpu h100 -m llama31 -s 405b -ng 512 -gn 8 \
+  --container_image <image> --task pretrain \
+  --deterministic
+```
+
+### Using the recipe library directly
+
+`apply_determinism_overrides` is also importable for use outside the performance script layer:
+
+```python
+from megatron.bridge.recipes.llama import llama3_70b_pretrain_deterministic_config
+
+cfg = llama3_70b_pretrain_deterministic_config(mock=True)
+
+# Or, apply overrides to any existing recipe:
+from megatron.bridge.recipes.utils import apply_determinism_overrides
+from megatron.bridge.recipes.llama import llama3_70b_pretrain_config
+
+cfg = llama3_70b_pretrain_config(mock=True)
+apply_determinism_overrides(cfg)
+```
+
 #### <ins>Configuration Options</ins>
 
 ##### Container Image

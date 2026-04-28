@@ -747,6 +747,13 @@ def parse_cli_args():
         required=False,
         default=-1,
     )
+    performance_args.add_argument(
+        "--deterministic",
+        help="Enable deterministic training. Sets NCCL_ALGO=Ring, "
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO=0, and CUBLAS_WORKSPACE_CONFIG env vars, "
+        "and disables non-deterministic model ops.",
+        action="store_true",
+    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")

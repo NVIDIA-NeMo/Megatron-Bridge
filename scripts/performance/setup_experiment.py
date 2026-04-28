@@ -265,6 +265,7 @@ def main(
     kubeflow_workdir_pvc: str,
     kubeflow_workdir_pvc_path: str,
     kubeflow_image_pull_secrets: List[str],
+    deterministic: bool = False,
     config_variant: str = "v1",
     gres: Optional[str] = None,
     packager: str = "git",
@@ -411,6 +412,7 @@ def main(
                 compute_dtype=compute_dtype,
                 train_task=task,
                 config_variant=config_variant,
+                deterministic=deterministic,
             )
         )
 
@@ -725,6 +727,7 @@ if __name__ == "__main__":
         kubeflow_workdir_pvc=args.kubeflow_workdir_pvc,
         kubeflow_workdir_pvc_path=args.kubeflow_workdir_pvc_path,
         kubeflow_image_pull_secrets=args.kubeflow_image_pull_secrets,
+        deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,
