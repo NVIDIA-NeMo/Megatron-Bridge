@@ -11,6 +11,7 @@
 </div>
 
 ## 📣 News
+- [04/28/2026] Day 0 support for [**Nemotron-3 Nano Omni**](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16), a 30B-A3B MoE multimodal model that jointly processes image, video, audio, and text. Checkpoint conversion, SFT, and LoRA recipes are available on the [`nemotron_3_omni`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nemotron_3_omni) branch — see the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/README.md) for the full walkthrough.
 
 - [04/19/2026] [**Qwen3.6-35B-A3B**](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) is now supported! Qwen3.6 uses the same architecture as Qwen3.5 VL MoE (`Qwen3_5MoeForConditionalGeneration`) and works with the existing [Qwen3.5-VL bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_vl) out of the box — no code changes needed. HF→Megatron conversion and inference verified.
 
