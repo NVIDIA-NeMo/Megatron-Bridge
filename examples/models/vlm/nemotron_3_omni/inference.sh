@@ -31,19 +31,18 @@ MEGATRON_PATH=${MEGATRON_PATH:-${WORKSPACE}/models/${MODEL_NAME}}
 # Default asset paths — override with your own image / mp4 / wav if desired.
 IMAGE_PATH=${IMAGE_PATH:-${WORKSPACE}/assets/table.png}
 VIDEO_PATH=${VIDEO_PATH:-${WORKSPACE}/assets/demo.mp4}
-AUDIO_PATH=${AUDIO_PATH:-${WORKSPACE}/assets/demo_audio.wav}
+AUDIO_PATH=${AUDIO_PATH:-${WORKSPACE}/assets/2414-165385-0000.wav}
 
 # ---------------------------------------------------------------------------
 # Assets: download from the public HF model card if the paths don't exist.
-# Audio is extracted from the video with ffmpeg (requires ffmpeg in PATH).
 # ---------------------------------------------------------------------------
-_HF_ASSETS="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images"
+_HF_ASSETS="https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16/resolve/main/media"
 
 mkdir -p "$(dirname "$IMAGE_PATH")" "$(dirname "$VIDEO_PATH")" "$(dirname "$AUDIO_PATH")"
 
-[[ -f "$IMAGE_PATH" ]] || curl -fL "${_HF_ASSETS}/table.png" -o "$IMAGE_PATH"
-[[ -f "$VIDEO_PATH" ]] || curl -fL "${_HF_ASSETS}/demo.mp4"  -o "$VIDEO_PATH"
-[[ -f "$AUDIO_PATH" ]] || ffmpeg -y -i "$VIDEO_PATH" -vn -acodec pcm_s16le -ar 16000 -ac 1 "$AUDIO_PATH"
+[[ -f "$IMAGE_PATH" ]] || curl -fL "${_HF_ASSETS}/table.png"             -o "$IMAGE_PATH"
+[[ -f "$VIDEO_PATH" ]] || curl -fL "${_HF_ASSETS}/demo.mp4"              -o "$VIDEO_PATH"
+[[ -f "$AUDIO_PATH" ]] || curl -fL "${_HF_ASSETS}/2414-165385-0000.wav"  -o "$AUDIO_PATH"
 
 GEN_SCRIPT=examples/conversion/hf_to_megatron_generate_nemotron_omni.py
 
