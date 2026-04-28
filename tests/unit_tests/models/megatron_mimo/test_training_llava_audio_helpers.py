@@ -427,11 +427,15 @@ class TestBuildParallelismConfig:
 @pytest.fixture(scope="module")
 def make_audio_config_fn():
     tc_mod = pytest.importorskip("megatron.core.transformer.transformer_config")
+    enums_mod = pytest.importorskip("megatron.core.transformer.enums")
     return _extract_node(
         TRAINING_PATH,
         "_make_audio_config",
         ast.FunctionDef,
-        globals_extra={"TransformerConfig": tc_mod.TransformerConfig},
+        globals_extra={
+            "TransformerConfig": tc_mod.TransformerConfig,
+            "AttnBackend": enums_mod.AttnBackend,
+        },
     )
 
 
@@ -458,6 +462,27 @@ class TestMakeAudioConfig:
         assert cfg.gated_linear_unit is False
         assert cfg.calculate_per_token_loss is True
         assert cfg.normalization == "LayerNorm"
+
+    def test_default_does_not_set_deterministic_knobs(self, make_audio_config_fn):
+        """The deterministic-only knobs must stay at their TransformerConfig defaults when off."""
+        cfg = make_audio_config_fn()
+        assert cfg.deterministic_mode is False
+        assert cfg.recompute_granularity is None
+
+    def test_deterministic_switches_to_fp32(self, make_audio_config_fn):
+        cfg = make_audio_config_fn(deterministic=True)
+        assert cfg.bf16 is False
+        assert cfg.pipeline_dtype == torch.float32
+
+    def test_deterministic_enables_unfused_attention_and_recompute(self, make_audio_config_fn):
+        """The --deterministic flag wires unfused attention + full activation recompute."""
+        enums_mod = pytest.importorskip("megatron.core.transformer.enums")
+        cfg = make_audio_config_fn(deterministic=True)
+        assert cfg.attention_backend == enums_mod.AttnBackend.unfused
+        assert cfg.deterministic_mode is True
+        assert cfg.recompute_granularity == "full"
+        assert cfg.recompute_method == "uniform"
+        assert cfg.recompute_num_layers == 1
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +592,26 @@ class TestWrapIter:
         }
         out = _consume_one(wrap_iter_fn, batch)
         assert out["modality_inputs"]["audios"]["whisper"]["input_features"].dtype == torch.bfloat16
+
+    def test_pixel_values_cast_to_fp32_when_model_dtype_is_fp32(self, wrap_iter_fn, cuda_is_noop):
+        """Deterministic mode runs the model in FP32; pixel cast must follow."""
+        pv = torch.randn(1, 3, 8, 8, dtype=torch.float32)
+        batch = {
+            "input_ids": torch.zeros(1, 4, dtype=torch.long),
+            "modality_inputs": {"images": {"pixel_values": pv}},
+        }
+        out = _consume_one(wrap_iter_fn, batch, model_dtype=torch.float32)
+        assert out["modality_inputs"]["images"]["clip"]["x"].dtype == torch.float32
+
+    def test_audio_input_features_cast_to_fp32_when_model_dtype_is_fp32(self, wrap_iter_fn, cuda_is_noop):
+        """Deterministic-mode audio path: FP32 cast end-to-end."""
+        af = torch.ones(1, 80, 4, dtype=torch.float32)
+        batch = {
+            "input_ids": torch.full((1, 4), _AUDIO_SPECIAL_TOKEN_ID, dtype=torch.long),
+            "modality_inputs": {"audios": {"input_features": af}},
+        }
+        out = _consume_one(wrap_iter_fn, batch, model_dtype=torch.float32)
+        assert out["modality_inputs"]["audios"]["whisper"]["input_features"].dtype == torch.float32
 
 
 # ---------------------------------------------------------------------------
@@ -749,7 +794,7 @@ def build_data_iterators_fn(monkeypatch):
     captured_wrap_calls = []
 
     def fake_wrap_iter(loader_iter, **kwargs):
-        captured_wrap_calls.append(loader_iter)
+        captured_wrap_calls.append({"loader_iter": loader_iter, "kwargs": kwargs})
         return iter([])  # dummy iterator
 
     fn = _extract_node(
@@ -766,10 +811,10 @@ def build_data_iterators_fn(monkeypatch):
 
 @pytest.mark.unit
 class TestBuildDataIterators:
-    def _cfg(self, *, train_iters=10, global_batch_size=4):
+    def _cfg(self, *, train_iters=10, global_batch_size=4, bf16=True):
         cfg = SimpleNamespace()
         cfg.train = SimpleNamespace(train_iters=train_iters, global_batch_size=global_batch_size)
-        cfg.model = SimpleNamespace(bf16=True)
+        cfg.model = SimpleNamespace(bf16=bf16)
         cfg.dataset = MagicMock()
         return cfg
 
@@ -815,3 +860,27 @@ class TestBuildDataIterators:
         train_iter, valid_iter = fn(self._cfg(), MagicMock())
         assert train_iter is None
         assert valid_iter is None
+
+    def test_bf16_model_passes_bfloat16_dtype_to_wrap_iter(self, build_data_iterators_fn):
+        fn, loaders_mock, _, captured = build_data_iterators_fn
+        loaders_mock.build_megatron_mimo_data_loaders.return_value = (MagicMock(), None, None)
+        fn(self._cfg(bf16=True), MagicMock())
+        assert captured[-1]["kwargs"] == {"model_dtype": torch.bfloat16}
+
+    def test_fp32_model_passes_float32_dtype_to_wrap_iter(self, build_data_iterators_fn):
+        """Deterministic mode sets cfg.model.bf16=False; pixels/audio must be cast to FP32."""
+        fn, loaders_mock, _, captured = build_data_iterators_fn
+        loaders_mock.build_megatron_mimo_data_loaders.return_value = (MagicMock(), None, None)
+        fn(self._cfg(bf16=False), MagicMock())
+        assert captured[-1]["kwargs"] == {"model_dtype": torch.float32}
+
+    def test_missing_bf16_attr_defaults_to_bfloat16(self, build_data_iterators_fn):
+        """`getattr(cfg.model, 'bf16', True)` falls back to True when the attr is absent."""
+        fn, loaders_mock, _, captured = build_data_iterators_fn
+        loaders_mock.build_megatron_mimo_data_loaders.return_value = (MagicMock(), None, None)
+        cfg = SimpleNamespace()
+        cfg.train = SimpleNamespace(train_iters=10, global_batch_size=4)
+        cfg.model = SimpleNamespace()  # no bf16 attribute
+        cfg.dataset = MagicMock()
+        fn(cfg, MagicMock())
+        assert captured[-1]["kwargs"] == {"model_dtype": torch.bfloat16}

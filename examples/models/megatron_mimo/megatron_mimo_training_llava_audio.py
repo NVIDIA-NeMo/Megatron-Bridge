@@ -20,6 +20,7 @@ from megatron.core.models.mimo.submodules.audio import AudioModalitySubmodules
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.mlp import MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -57,7 +58,7 @@ _AUDIO_NUM_MEL_BINS = 80
 _AUDIO_MAX_SOURCE_POSITIONS = 1500
 
 
-def _make_audio_config() -> TransformerConfig:
+def _make_audio_config(deterministic: bool = False) -> TransformerConfig:
     """Whisper-base audio encoder config (6 encoder layers, d_model=512)."""
     cfg = TransformerConfig(
         num_layers=6,
@@ -65,8 +66,8 @@ def _make_audio_config() -> TransformerConfig:
         ffn_hidden_size=2048,
         num_attention_heads=8,
         use_cpu_initialization=True,
-        pipeline_dtype=torch.bfloat16,
-        bf16=True,
+        pipeline_dtype=torch.float32 if deterministic else torch.bfloat16,
+        bf16=not deterministic,
         variable_seq_lengths=True,
         moe_token_dispatcher_type="alltoall",
     )
@@ -83,15 +84,23 @@ def _make_audio_config() -> TransformerConfig:
     cfg.normalization = "LayerNorm"
     cfg.apply_rope_fusion = False
     cfg.calculate_per_token_loss = True
+
+    if deterministic:
+        cfg.attention_backend = AttnBackend.unfused
+        cfg.deterministic_mode = True
+        cfg.recompute_granularity = "full"
+        cfg.recompute_method = "uniform"
+        cfg.recompute_num_layers = 1
+
     return cfg
 
 
-def _build_model_specs():  # pragma: no cover
+def _build_model_specs(deterministic: bool = False):  # pragma: no cover
     """Return (language_model_spec, modality_submodules_spec, special_token_ids)."""
-    vision_config = _make_vision_config()
-    audio_config = _make_audio_config()
-    language_config = _make_language_config()
-    projection_config = _make_projection_config(hidden_size=language_config.hidden_size)
+    vision_config = _make_vision_config(deterministic=deterministic)
+    audio_config = _make_audio_config(deterministic=deterministic)
+    language_config = _make_language_config(deterministic=deterministic)
+    projection_config = _make_projection_config(hidden_size=language_config.hidden_size, deterministic=deterministic)
 
     # CLIP ViT-L/14 encoder
     vision_encoder = ModuleSpec(
@@ -140,7 +149,9 @@ def _build_model_specs():  # pragma: no cover
     )
 
     # Audio→language projection MLP
-    audio_projection_config = _make_projection_config(hidden_size=language_config.hidden_size)
+    audio_projection_config = _make_projection_config(
+        hidden_size=language_config.hidden_size, deterministic=deterministic
+    )
     audio_projection = ModuleSpec(
         module=MultimodalProjector,
         params={
@@ -452,7 +463,7 @@ def _build_hf_data_provider(
     return provider
 
 
-def _wrap_iter(loader_iter):
+def _wrap_iter(loader_iter, model_dtype=torch.bfloat16):
     """Adapt data-loader batches for the MIMO model.
 
     Transforms:
@@ -483,17 +494,17 @@ def _wrap_iter(loader_iter):
                             if isinstance(vv, torch.Tensor):
                                 value[k][kk] = vv.cuda(non_blocking=True)
 
-        # Rewrap modality_inputs to encoder-keyed dicts and cast to bfloat16
+        # Rewrap modality_inputs to encoder-keyed dicts and cast to match model weights
         mi = batch.get("modality_inputs")
         if mi and "images" in mi:
             pv = mi["images"].get("pixel_values")
             if pv is not None:
-                mi["images"] = {"clip": {"x": pv.to(torch.bfloat16)}}
+                mi["images"] = {"clip": {"x": pv.to(model_dtype)}}
 
         if mi and "audios" in mi:
             af = mi["audios"].get("input_features")
             if af is not None:
-                audio_kwargs = {"input_features": af.to(torch.bfloat16)}
+                audio_kwargs = {"input_features": af.to(model_dtype)}
 
                 # Compute per-sample valid encoder output lengths.
                 # WhisperFeatureExtractor pads mel spectrograms with zeros;
@@ -552,7 +563,8 @@ def _build_data_iterators(cfg, _megatron_mimo_infra, *, train_state=None):
         test_samples=test_samples,
     )
 
-    train_iter = _wrap_iter(train_loader) if train_loader is not None else None
+    model_dtype = torch.bfloat16 if getattr(cfg.model, "bf16", True) else torch.float32
+    train_iter = _wrap_iter(train_loader, model_dtype=model_dtype) if train_loader is not None else None
     valid_iter = None
     return train_iter, valid_iter
 
@@ -648,6 +660,13 @@ def parse_args():  # pragma: no cover
     parser.add_argument(
         "--freeze-audio-projector", type=_str2bool, default=False, help="Freeze the audio projector (default: False)"
     )
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        default=False,
+        help="Enable deterministic mode: FP32 precision, unfused attention, disabled CE-loss fusion, "
+        "full activation recompute, deterministic torch/cuDNN/NCCL/TE algorithms (slower, more reproducible).",
+    )
     return parser.parse_args()
 
 
@@ -662,6 +681,11 @@ def main():  # pragma: no cover
     rank = dist.get_rank()
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
+    if args.deterministic:
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
 
     # Seed all RNGs for reproducible weight initialization.
     # NOTE: _set_megatron_mimo_random_seeds() in setup_megatron_mimo re-seeds all RNGs with
@@ -694,7 +718,9 @@ def main():  # pragma: no cover
 
     # 2. Build model provider
     _log("building model specs")
-    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
+    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs(
+        deterministic=args.deterministic
+    )
     megatron_mimo_parallelism_config = _build_parallelism_config()
 
     # Propagate per-module pipeline parallelism size into the TransformerConfig
@@ -712,7 +738,7 @@ def main():  # pragma: no cover
         megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
         topology={"images": ["language"], "audios": ["language"], "language": []},
         use_cpu_initialization=True,
-        bf16=True,
+        bf16=not args.deterministic,
         freeze_language_model=args.freeze_llm,
         freeze_modality_encoders={"images": args.freeze_vision, "audios": args.freeze_audio},
         freeze_modality_projections={"images": args.freeze_vision_projector, "audios": args.freeze_audio_projector},
@@ -760,7 +786,7 @@ def main():  # pragma: no cover
         adam_beta1=args.adam_beta1,
         adam_beta2=args.adam_beta2,
         clip_grad=args.clip_grad,
-        bf16=True,
+        bf16=not args.deterministic,
         use_distributed_optimizer=True,
     )
 
@@ -780,6 +806,7 @@ def main():  # pragma: no cover
         wandb_save_dir=args.wandb_save_dir,
         lr_warmup_iters=args.lr_warmup_iters,
         seed=seed,
+        deterministic=args.deterministic,
     )
 
     # Configure checkpointing from CLI args

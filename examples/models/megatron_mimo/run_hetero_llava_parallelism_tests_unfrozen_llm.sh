@@ -1,11 +1,16 @@
 #!/bin/bash
 # Run heterogeneous MIMO LLaVA E2E test with various parallelism configurations
-# Usage: ./run_hetero_llava_parallelism_tests.sh [--gpus N] [--config CONFIG_NAME]
+# Usage: ./run_hetero_llava_parallelism_tests_unfrozen_llm.sh [--gpus N] [--config CONFIG_NAME] [--deterministic]
+#
+# Set DETERMINISTIC=1 (env var) or pass --deterministic to enable deterministic mode:
+# exports deterministic NCCL/CUBLAS/cuDNN/TE env vars AND passes --deterministic
+# to the training script (FP32 precision, unfused attention, full recompute, etc.).
 #
 # Examples:
-#   ./run_hetero_llava_parallelism_tests.sh                    # Run all configs with 8 GPUs
-#   ./run_hetero_llava_parallelism_tests.sh --gpus 4           # Run all configs with 4 GPUs
-#   ./run_hetero_llava_parallelism_tests.sh --config tp2_dp2   # Run only tp2_dp2 config
+#   ./run_hetero_llava_parallelism_tests_unfrozen_llm.sh                    # Run all configs with 8 GPUs
+#   ./run_hetero_llava_parallelism_tests_unfrozen_llm.sh --gpus 4           # Run all configs with 4 GPUs
+#   ./run_hetero_llava_parallelism_tests_unfrozen_llm.sh --config tp2_dp2   # Run only tp2_dp2 config
+#   ./run_hetero_llava_parallelism_tests_unfrozen_llm.sh --deterministic    # Run in deterministic mode
 
 set -euo pipefail
 
@@ -15,6 +20,7 @@ TEST_FILE="${SCRIPT_DIR}/megatron_mimo_training_llava.py"
 # Default values
 NUM_GPUS=${NUM_GPUS:-8}
 SINGLE_CONFIG=""
+DETERMINISTIC=${DETERMINISTIC:-0}
 
 # Training defaults (can be overridden via env vars)
 # MBS is set per-config (must be divisible by every module's DP size).
@@ -27,7 +33,6 @@ LR_WARMUP_ITERS=${LR_WARMUP_ITERS:-60}
 WEIGHT_DECAY=${WEIGHT_DECAY:-0.0}
 ADAM_BETA1=${ADAM_BETA1:-0.9}
 ADAM_BETA2=${ADAM_BETA2:-0.95}
-CLIP_GRAD=${CLIP_GRAD:-1.0}
 LOG_INTERVAL=${LOG_INTERVAL:-1}
 WANDB_PROJECT=${WANDB_PROJECT:-"Megatron-Bridge-MIMO"}
 WANDB_SAVE_DIR=${WANDB_SAVE_DIR:-"/tmp/wandb"}
@@ -51,6 +56,10 @@ while [[ $# -gt 0 ]]; do
             SINGLE_CONFIG="$2"
             shift 2
             ;;
+        --deterministic)
+            DETERMINISTIC=1
+            shift
+            ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -58,9 +67,39 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Export determinism env vars, prepare --deterministic flag, and disable grad
+# clipping iff DETERMINISTIC=1.  Grad clipping's all-reduce-of-norms is
+# non-associative and introduces run-to-run variance.  Both CLIP_GRAD defaults
+# still honor an explicit user override.
+DETERMINISTIC_FLAG=""
+EXP_SUFFIX=""
+if [[ "${DETERMINISTIC}" == "1" ]]; then
+    DETERMINISTIC_FLAG="--deterministic"
+    EXP_SUFFIX="-fp32"
+    CLIP_GRAD=${CLIP_GRAD:-0.0}
+    # Pin Ring algorithm for deterministic reduction order.
+    # Tree is faster for some message sizes but NCCL 2.28 Tree doesn't support
+    # AllGather with Int8 (used by torch.distributed.all_gather_object), and
+    # letting NCCL choose per-operation (^NVLS) still leaves Tree/Ring selection
+    # non-deterministic.  Ring supports all collective ops.
+    export NCCL_ALGO=Ring
+    export NCCL_PROTO=Simple
+    # Disable NCCL's topology-aware optimizations that can change paths between runs
+    export NCCL_TUNER_PLUGIN=""
+    # For full CUDA-level determinism
+    export CUBLAS_WORKSPACE_CONFIG=:4096:8
+    # Force deterministic cuDNN attention (disable non-deterministic workspace)
+    export CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT=0
+    # Required by Transformer Engine when deterministic_mode=True
+    export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
+else
+    CLIP_GRAD=${CLIP_GRAD:-1.0}
+fi
+
 echo "=========================================="
 echo "Hetero MIMO LLaVA Parallelism E2E Tests"
 echo "GPUs: ${NUM_GPUS}"
+echo "Deterministic: ${DETERMINISTIC}"
 echo "=========================================="
 
 # Define configurations as: "name|llm_tp|llm_pp|llm_dp|llm_offset|vision_tp|vision_pp|vision_dp|vision_offset|mbs"
@@ -186,12 +225,13 @@ run_config() {
            --min-lr "${MIN_LR}" \
            --weight-decay "${WEIGHT_DECAY}" \
            --wandb-project "${WANDB_PROJECT}" \
-           --wandb-exp-name "${exp_name}" \
+           --wandb-exp-name "${exp_name}${EXP_SUFFIX}" \
            --wandb-save-dir "${WANDB_SAVE_DIR}" \
            --dataset-root "${DATASET_ROOT}" \
            --vision-encoder-checkpoint "${CONVERTED_CLIP_CKPT}" \
            --language-model-checkpoint "${CONVERTED_LLM_CKPT}" \
            --freeze-llm False \
+           ${DETERMINISTIC_FLAG} \
            2>&1; then
         local end_time=$(date +%s)
         local duration=$((end_time - start_time))

@@ -248,9 +248,6 @@ def _build_config(
         global_batch_size=1,
         train_iters=2,
     )
-    train_cfg.num_microbatches = 1
-    train_cfg.log_interval = log_interval
-
     logger_cfg = LoggerConfig()
     logger_cfg.log_interval = log_interval
     logger_cfg.wandb_project = wandb_project

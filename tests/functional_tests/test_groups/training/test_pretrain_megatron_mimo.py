@@ -23,6 +23,8 @@ Run:
 
 from __future__ import annotations
 
+import os
+
 import pytest
 import torch
 import torch.distributed as dist
@@ -31,6 +33,7 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.vision.clip_vit_model import CLIPViTModel
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
@@ -68,14 +71,14 @@ _TRAIN_ITERS = 5
 # ── Model helpers ────────────────────────────────────────────────────────────
 
 
-def _make_vision_config() -> TransformerConfig:
+def _make_vision_config(deterministic: bool = False) -> TransformerConfig:
     cfg = TransformerConfig(
         num_layers=2,
         hidden_size=64,
         ffn_hidden_size=256,
         num_attention_heads=4,
-        pipeline_dtype=torch.bfloat16,
-        bf16=True,
+        pipeline_dtype=torch.float32 if deterministic else torch.bfloat16,
+        bf16=not deterministic,
         variable_seq_lengths=True,
         moe_token_dispatcher_type="alltoall",
     )
@@ -91,29 +94,42 @@ def _make_vision_config() -> TransformerConfig:
     cfg.attention_softmax_in_fp32 = True
     cfg.normalization = "LayerNorm"
     cfg.apply_rope_fusion = False
+    if deterministic:
+        cfg.attention_backend = AttnBackend.unfused
+        cfg.deterministic_mode = True
+        cfg.recompute_granularity = "full"
+        cfg.recompute_method = "uniform"
+        cfg.recompute_num_layers = 1
     return cfg
 
 
-def _make_language_config() -> TransformerConfig:
-    return TransformerConfig(
+def _make_language_config(deterministic: bool = False) -> TransformerConfig:
+    cfg = TransformerConfig(
         num_layers=2,
         hidden_size=64,
         ffn_hidden_size=256,
         num_attention_heads=4,
-        pipeline_dtype=torch.bfloat16,
-        bf16=True,
+        pipeline_dtype=torch.float32 if deterministic else torch.bfloat16,
+        bf16=not deterministic,
         variable_seq_lengths=True,
         moe_token_dispatcher_type="alltoall",
-        cross_entropy_loss_fusion=True,
+        cross_entropy_loss_fusion=not deterministic,
     )
+    if deterministic:
+        cfg.attention_backend = AttnBackend.unfused
+        cfg.deterministic_mode = True
+        cfg.recompute_granularity = "full"
+        cfg.recompute_method = "uniform"
+        cfg.recompute_num_layers = 1
+    return cfg
 
 
-def _build_model_specs():
+def _build_model_specs(deterministic: bool = False):
     """Return (language_model_spec, modality_submodules_spec, special_token_ids)."""
     vision_encoder = ModuleSpec(
         module=CLIPViTModel,
         params={
-            "transformer_config": _make_vision_config(),
+            "transformer_config": _make_vision_config(deterministic=deterministic),
             "transformer_layer_spec": get_vit_layer_with_transformer_engine_spec(),
             "patch_dim": _PATCH_DIM,
             "img_h": _IMG_SIZE,
@@ -128,7 +144,7 @@ def _build_model_specs():
     language_model_spec = ModuleSpec(
         module=GPTModel,
         params={
-            "config": _make_language_config(),
+            "config": _make_language_config(deterministic=deterministic),
             "transformer_layer_spec": get_gpt_layer_with_transformer_engine_spec(),
             "vocab_size": _VOCAB_SIZE,
             "max_sequence_length": _SEQ_LENGTH,
@@ -174,11 +190,13 @@ def _build_mock_data_provider() -> MockMegatronMIMOProvider:
     return provider
 
 
-def _wrap_iter(loader_iter):
+def _wrap_iter(loader_iter, vision_dtype: torch.dtype = torch.bfloat16):
     """Adapt data-loader batches for the MegatronMIMO model.
 
     Remaps modality_inputs["vision"]["pixel_values"] to
-    modality_inputs["vision"]["clip"]["x"] for CLIPViTModel.
+    modality_inputs["vision"]["clip"]["x"] for CLIPViTModel. ``vision_dtype``
+    must match the vision encoder's compute dtype — fp32 in deterministic
+    mode, bf16 otherwise.
     """
     for batch in loader_iter:
         for key, value in batch.items():
@@ -197,7 +215,7 @@ def _wrap_iter(loader_iter):
         if mi and "vision" in mi:
             pv = mi["vision"].get("pixel_values")
             if pv is not None:
-                mi["vision"] = {"clip": {"x": pv.to(torch.bfloat16)}}
+                mi["vision"] = {"clip": {"x": pv.to(vision_dtype)}}
 
         if "loss_mask" not in batch or batch["loss_mask"] is None:
             batch["loss_mask"] = torch.ones_like(batch["input_ids"], dtype=torch.float)
@@ -229,7 +247,12 @@ def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
         test_samples=0,
     )
 
-    train_iter = _wrap_iter(train_loader) if train_loader is not None else None
+    # Match the vision encoder's compute dtype (fp32 under --deterministic, bf16 otherwise).
+    vision_cfg = (
+        cfg.model.modality_submodules_spec["vision"].submodules["encoders"]["clip"].params["transformer_config"]
+    )
+    vision_dtype = torch.bfloat16 if vision_cfg.bf16 else torch.float32
+    train_iter = _wrap_iter(train_loader, vision_dtype=vision_dtype) if train_loader is not None else None
     return train_iter, None
 
 
@@ -239,8 +262,9 @@ def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
 def _build_config(
     parallelism_config: MegatronMIMOParallelismConfig,
     train_iters: int = _TRAIN_ITERS,
+    deterministic: bool = False,
 ) -> ConfigContainer:
-    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
+    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs(deterministic=deterministic)
 
     megatron_mimo_provider = MegatronMIMOProvider(
         language_model_spec=language_model_spec,
@@ -248,6 +272,10 @@ def _build_config(
         special_token_ids=special_token_ids,
         megatron_mimo_parallelism_config=parallelism_config,
         topology={"vision": ["language"], "language": []},
+        # MegatronMIMOProvider casts the whole model via .bfloat16() after build,
+        # overriding per-submodule TransformerConfig dtypes — flip it off in
+        # deterministic mode so the model stays fp32.
+        bf16=not deterministic,
     )
     if not hasattr(megatron_mimo_provider, "num_moe_experts"):
         megatron_mimo_provider.num_moe_experts = None
@@ -260,13 +288,13 @@ def _build_config(
     train_cfg.num_microbatches = 1
 
     opt_config = OptimizerConfig(
-        bf16=True,
+        bf16=not deterministic,
         use_distributed_optimizer=True,
         lr=1e-4,
         min_lr=0.0,
     )
 
-    return ConfigContainer(
+    cfg = ConfigContainer(
         train=train_cfg,
         model=megatron_mimo_provider,
         optimizer=opt_config,
@@ -276,6 +304,12 @@ def _build_config(
         tokenizer=TokenizerConfig(),
         checkpoint=CheckpointConfig(),
     )
+    # Mirrors the --deterministic flag plumbing in
+    # examples/models/megatron_mimo/megatron_mimo_training_llava.py: fp32 grad
+    # reduction is the part of "deterministic mode" that lives on DDP rather
+    # than TransformerConfig.
+    cfg.ddp.grad_reduce_in_fp32 = deterministic
+    return cfg
 
 
 # ── Index tracing for checkpoint-resume test ─────────────────────────────────
@@ -444,11 +478,18 @@ class TestMegatronMIMOTraining:
     """
 
     @pytest.mark.run_only_on("GPU")
-    def test_megatron_mimo_tp1_both(self):
+    @pytest.mark.parametrize("deterministic", [False, True], ids=["default", "deterministic"])
+    def test_megatron_mimo_tp1_both(self, deterministic):
         """Smoke test: MegatronMIMO training with TP=1 for both LLM and vision.
 
         LLM on rank 0 (TP=1, DP=1), vision on rank 1 (TP=1, DP=1).
         Trains for 5 iterations with synthetic data and verifies completion.
+
+        Parametrized over the ``--deterministic`` code path exposed by
+        ``examples/models/megatron_mimo/megatron_mimo_training_llava.py`` to
+        guard against regressions in the deterministic config knobs (FP32
+        dtypes, unfused attention, deterministic_mode, recompute, fp32 grad
+        reduction, and process-wide torch deterministic algorithms).
         """
         initialize_distributed()
 
@@ -479,13 +520,51 @@ class TestMegatronMIMOTraining:
             },
         )
 
-        cfg = _build_config(par_cfg)
+        cfg = _build_config(par_cfg, deterministic=deterministic)
 
-        pretrain_megatron_mimo(
-            cfg=cfg,
-            forward_step_func=megatron_mimo_forward_step,
-            build_data_iterators_fn=_build_data_iterators,
-        )
+        # Process-wide torch knobs and env vars the --deterministic flag flips.
+        # Toggle in a try/finally because they leak across pytest cases sharing
+        # this process. The env vars in particular are required:
+        #   - NVTE_ALLOW_NONDETERMINISTIC_ALGO=0 is checked by Transformer
+        #     Engine's TEDotProductAttention.__init__ when deterministic_mode
+        #     is set, and would raise otherwise.
+        #   - CUBLAS_WORKSPACE_CONFIG=:4096:8 is required by
+        #     torch.use_deterministic_algorithms(True) for some cuBLAS ops.
+        _DET_ENV = {
+            "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+            "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+            "CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT": "0",
+        }
+        prev_use_deterministic = torch.are_deterministic_algorithms_enabled()
+        prev_cudnn_benchmark = torch.backends.cudnn.benchmark
+        prev_matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+        prev_cudnn_tf32 = torch.backends.cudnn.allow_tf32
+        prev_env = {k: os.environ.get(k) for k in _DET_ENV}
+        if deterministic:
+            for k, v in _DET_ENV.items():
+                os.environ[k] = v
+            torch.use_deterministic_algorithms(True)
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
+
+        try:
+            pretrain_megatron_mimo(
+                cfg=cfg,
+                forward_step_func=megatron_mimo_forward_step,
+                build_data_iterators_fn=_build_data_iterators,
+            )
+        finally:
+            if deterministic:
+                torch.use_deterministic_algorithms(prev_use_deterministic)
+                torch.backends.cudnn.benchmark = prev_cudnn_benchmark
+                torch.backends.cuda.matmul.allow_tf32 = prev_matmul_tf32
+                torch.backends.cudnn.allow_tf32 = prev_cudnn_tf32
+                for k, v in prev_env.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
 
     @pytest.mark.run_only_on("GPU")
     def test_megatron_mimo_checkpoint_resume_dp1_both(self, tmp_path):
