@@ -1198,6 +1198,14 @@ class ConfigContainer(Container):
         if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
             self._validate_and_apply_megatron_fsdp_configs()
 
+        # Validate reuse_grad_buf_for_mxfp8_param_ag when FSDP is not enabled
+        is_fsdp = self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+        if not is_fsdp and self.mixed_precision.fp8_param_gather and self.mixed_precision.fp8_recipe == "mxfp8":
+            assert self.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag, (
+                "When fp8_param_gather=True and fp8_recipe='mxfp8', "
+                "reuse_grad_buf_for_mxfp8_param_ag must be set to True"
+            )
+
         # Deterministic mode validations and settings
         self._validate_and_apply_deterministic_mode()
 
