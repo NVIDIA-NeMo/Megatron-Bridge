@@ -122,7 +122,16 @@ Preprocess your data using the [DCLM data preprocessing tutorial](https://github
 
 ### Supervised Fine-Tuning (SFT)
 
-See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning. The recipe uses sequence packing by default.
+See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning. Set `DATASET_NAME` to select a preset (`squad` or `openmathinstruct2_gsm8k`).
+
+For `openmathinstruct2_gsm8k`, pre-pack the dataset before submitting the training job:
+
+```bash
+sbatch pack_data_job.sh   # pre-pack once; skipped automatically on subsequent runs
+sbatch slurm_sft.sh
+```
+
+Squad and other datasets that do not use packed sequences do not require this step.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
@@ -153,4 +162,39 @@ TP×PP×EP must equal `--nproc_per_node`. Adjust parallelism to match your SFT r
 
 ## Evaluation
 
-Coming soon.
+### GSM8K (zero-shot chain-of-thought)
+
+Evaluate a SFT checkpoint on GSM8K using the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) via the NeMo evaluation framework:
+
+```bash
+python /opt/Evaluator/scripts/evaluation_with_nemo_run.py  \
+    --megatron_checkpoint ${WORKSPACE}/results/<checkpoint_dir>/<iter> \
+    --evaluation_result_dir ${WORKSPACE}/results/eval_<run_name> \
+    --serving_backend ray \
+    --endpoint_type chat \
+    --eval_task gsm8k_cot_instruct \
+    --nodes 1 --devices 8 \
+    --tensor_parallelism_size 2 \
+    --pipeline_parallelism_size 1 \
+    --expert_model_parallel_size 4 \
+    --batch_size 8 --parallel_requests 8 \
+    --additional_args="--legacy_model_format"
+```
+
+Replace `<checkpoint_dir>/<iter>` with your SFT result path (e.g. `gpt_oss_20b_openmathinstruct2_gsm8k_finetune_tp2_pp2_ep4_spTrue_cp1/iter_0001000`).
+The script deploys an inference server, runs lm-eval against it, and writes results to `<evaluation_result_dir>/megatron_model/results_*.json`.
+Scores are reported as `flexible-extract` (flex) and `strict-match` (strict) accuracy.
+
+## SFT Tuning Learnings (GSM8K)
+
+Findings from hyperparameter tuning on GPT-OSS 20B × OpenMathInstruct-2:
+
+- **Chat template**: Must match at both train and eval time.
+- **Analysis channel format**: Use `generated_solution` from OpenMathInstruct-2 as the `analysis` channel and put only the final answer in `final`, rather than mixing both in `final`. This should be better theoretically since it matches what the channel architecture is designed for — the model reasons freely in `analysis` and commits to the final answer in `final`.
+  - Plain: `<|start|>assistant<|channel|>final<|message|>{CoT} #### N<|end|>`
+  - Analysis: `<|start|>assistant<|channel|>analysis<|message|>{CoT}<|end|>` + `<|start|>assistant<|channel|>final<|message|>#### N<|end|>`
+- **Packed sequences**: Eliminates padding waste; reduced a 1-epoch run from ~17 h to within 4 h on 2 nodes × 8 H100. Pre-pack before submitting (see `pack_sft_data.py`).
+- **Hyperparameters** — strict-match improved **86.05% → 93.6%** by:
+  - `global_batch_size`: 8 → 128
+  - `train_iters`: 1 full epoch
+  - `min_lr`: 0 → 1/10 × `max_lr` (e.g. 5e-7 when `lr=5e-6`)

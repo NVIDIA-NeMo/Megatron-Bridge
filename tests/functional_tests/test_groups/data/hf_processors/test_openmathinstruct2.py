@@ -157,3 +157,149 @@ class TestProcessOpenmathinstruct2Example:
         assert result["input"] == f"Problem: {long_problem} Solution:"
         assert result["output"] == long_solution
         assert result["original_answers"] == ["42"]
+
+
+@pytest.mark.unit
+class TestStripIntermediateBoxed:
+    """Test cases for _strip_intermediate_boxed function."""
+
+    def test_single_boxed(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import _strip_intermediate_boxed
+
+        assert _strip_intermediate_boxed(r"The answer is \boxed{5}.") == "The answer is 5."
+
+    def test_nested_braces(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import _strip_intermediate_boxed
+
+        assert _strip_intermediate_boxed(r"\boxed{\frac{1}{2}}") == r"\frac{1}{2}"
+
+    def test_multiple_boxed(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import _strip_intermediate_boxed
+
+        result = _strip_intermediate_boxed(r"First \boxed{3}, then \boxed{5}.")
+        assert result == "First 3, then 5."
+
+    def test_no_boxed(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import _strip_intermediate_boxed
+
+        text = "No boxed expressions here."
+        assert _strip_intermediate_boxed(text) == text
+
+    def test_malformed_boxed(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import _strip_intermediate_boxed
+
+        # Malformed \boxed{ with no closing brace — keep as-is
+        text = r"Malformed \boxed{no close"
+        assert _strip_intermediate_boxed(text) == text
+
+    def test_empty_string(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import _strip_intermediate_boxed
+
+        assert _strip_intermediate_boxed("") == ""
+
+
+@pytest.mark.unit
+class TestProcessOpenmathinstruct2ThinkingPackedExample:
+    """Test cases for process_openmathinstruct2_thinking_packed_example."""
+
+    def test_basic_boxed_answer(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import (
+            process_openmathinstruct2_thinking_packed_example,
+        )
+
+        example = {
+            "problem": "What is 2+3?",
+            "generated_solution": r"We compute 2+3=5. So the answer is \boxed{5}",
+            "expected_answer": "5",
+        }
+        result = process_openmathinstruct2_thinking_packed_example(example)
+
+        assert result["messages"][0] == {"role": "user", "content": "What is 2+3?"}
+        assistant = result["messages"][1]
+        assert assistant["role"] == "assistant"
+        assert assistant["content"] == "#### 5"
+        assert "We compute 2+3=5" in assistant["thinking"]
+        assert r"\boxed{5}" not in assistant["thinking"]
+
+    def test_no_boxed_in_solution(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import (
+            process_openmathinstruct2_thinking_packed_example,
+        )
+
+        example = {
+            "problem": "What is 1+1?",
+            "generated_solution": "The answer is 2.",
+            "expected_answer": "2",
+        }
+        result = process_openmathinstruct2_thinking_packed_example(example)
+
+        assistant = result["messages"][1]
+        assert assistant["thinking"] == "The answer is 2."
+        assert assistant["content"] == "#### 2"
+
+    def test_intermediate_boxed_stripped_from_thinking(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import (
+            process_openmathinstruct2_thinking_packed_example,
+        )
+
+        example = {
+            "problem": "Solve it.",
+            "generated_solution": r"First step gives \boxed{3}. Final answer is \boxed{7}",
+            "expected_answer": "7",
+        }
+        result = process_openmathinstruct2_thinking_packed_example(example)
+
+        assistant = result["messages"][1]
+        # Intermediate \boxed{3} should be stripped to just 3
+        assert r"\boxed{3}" not in assistant["thinking"]
+        assert "3" in assistant["thinking"]
+        assert assistant["content"] == "#### 7"
+
+    def test_nested_boxed_answer(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import (
+            process_openmathinstruct2_thinking_packed_example,
+        )
+
+        example = {
+            "problem": "Simplify.",
+            "generated_solution": r"The answer is \boxed{\frac{1}{2}}",
+            "expected_answer": r"\frac{1}{2}",
+        }
+        result = process_openmathinstruct2_thinking_packed_example(example)
+
+        assistant = result["messages"][1]
+        assert assistant["content"] == r"#### \frac{1}{2}"
+
+    def test_output_structure(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import (
+            process_openmathinstruct2_thinking_packed_example,
+        )
+
+        example = {
+            "problem": "Problem.",
+            "generated_solution": r"Solution \boxed{42}",
+            "expected_answer": "42",
+        }
+        result = process_openmathinstruct2_thinking_packed_example(example)
+
+        assert result["input"] == ""
+        assert result["output"] == ""
+        assert result["original_answers"] == ["42"]
+        assert len(result["messages"]) == 2
+        assert result["messages"][0]["role"] == "user"
+        assert result["messages"][1]["role"] == "assistant"
+
+    def test_expected_answer_cast_to_string(self):
+        from megatron.bridge.data.hf_processors.openmathinstruct2 import (
+            process_openmathinstruct2_thinking_packed_example,
+        )
+
+        example = {
+            "problem": "What is 6*7?",
+            "generated_solution": r"6 times 7 is \boxed{42}",
+            "expected_answer": 42,  # int, not str
+        }
+        result = process_openmathinstruct2_thinking_packed_example(example)
+
+        assert result["messages"][1]["content"] == "#### 42"
+        assert result["original_answers"] == ["42"]

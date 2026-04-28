@@ -82,6 +82,7 @@ class FinetuningDatasetBuilder:
         self.dataset_kwargs = dataset_kwargs or {}
         self._pad_cu_seqlens = False if not packed_sequence_specs else packed_sequence_specs.pad_cu_seqlens
         self._pad_seq_to_mult = None if not packed_sequence_specs else packed_sequence_specs.pad_seq_to_mult
+        self._num_tokenizer_workers = -1 if not packed_sequence_specs else packed_sequence_specs.num_tokenizer_workers
 
         self.do_validation = do_validation
         self.do_test = do_test
@@ -160,6 +161,7 @@ class FinetuningDatasetBuilder:
             seed=self.seed,
             dataset_kwargs=self.dataset_kwargs,
             pad_seq_to_mult=self._pad_seq_to_mult,
+            num_tokenizer_workers=self._num_tokenizer_workers,
         )
 
     def _packed_path_exists(self, path: Union[str, Path]) -> bool:
