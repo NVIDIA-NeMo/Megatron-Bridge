@@ -239,8 +239,7 @@ def llama3_70b_lora_config_gb200(precision: str = "bf16", config_variant: str = 
     )
     precision_config = get_precision_config(precision)
 
-    # BF16 uses seq_length=2048, FP8 variants use seq_length=4096
-    seq_length = 2048 if precision.lower() == "bf16" else 4096
+    seq_length = 4096
 
     cfg = llama3_70b_peft_config(peft_scheme="lora")
     cfg.mixed_precision = precision_config
