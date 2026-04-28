@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Callable, Literal, Optional, Tuple
 
 from torch.utils.data import Dataset
 
@@ -34,6 +34,14 @@ class MegatronMIMODatasetProvider(DatasetProvider):
         ...         # Return collate function
         ...         return my_collate_fn
     """
+
+    # Override the DataloaderConfig default (None → "single") so MegatronMIMO
+    # providers get a concrete sampler that honors train_state.consumed_train_samples
+    # on checkpoint resume. "batch" is excluded because it requires global_batch_size
+    # plumbing that MegatronMIMO data loading does not set up.
+    dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
+    """Dataloader type: 'single' (default, sequential + resume-aware),
+    'cyclic' (shuffled across epochs, also resume-aware), or 'external' (pass-through)."""
 
     @abstractmethod
     def build_datasets(

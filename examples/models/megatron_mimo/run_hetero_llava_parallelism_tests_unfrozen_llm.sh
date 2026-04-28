@@ -38,7 +38,7 @@ UV_CACHE_DIR=${UV_CACHE_DIR:-/workspace/uv_cache/}
 HF_VISION_MODEL=${HF_VISION_MODEL:-"openai/clip-vit-large-patch14-336"}
 HF_LLM_MODEL=${HF_LLM_MODEL:-"lmsys/vicuna-7b-v1.5"}
 MEGATRON_VOCAB_SIZE=${MEGATRON_VOCAB_SIZE:-32256}
-CHECKPOINT_BASE_DIR=${CHECKPOINT_BASE_DIR:-/tmp/megatron_mimo_checkpoints}
+CHECKPOINT_BASE_DIR=${CHECKPOINT_BASE_DIR:-/workspace/megatron_mimo_checkpoints}
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
