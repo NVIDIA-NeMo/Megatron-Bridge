@@ -571,11 +571,10 @@ jobs:
           }
           get_runner() {
             local f="$1"
-            local r
-            r=$(grep -m1 '^# CI_RUNNER=' "$f" | cut -d= -f2)
-            if [ -n "$r" ]; then
-              [[ "$RUNNER_PREFIX" == *-ephemeral ]] && r="${r}-ephemeral"
-              echo "$r"
+            local gpu_count
+            gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2)
+            if [ -n "$gpu_count" ]; then
+              echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-${gpu_count}/"
             else
               echo "${RUNNER_PREFIX}"
             fi
@@ -781,9 +780,13 @@ jobs:
           }
           get_runner() {
             local f="$1"
-            local r
-            r=$(grep -m1 '^# CI_RUNNER=' "$f" | cut -d= -f2)
-            echo "${r:-nemo-ci-gcp-gpu-x2}"
+            local gpu_count
+            gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2)
+            if [ -n "$gpu_count" ]; then
+              echo "nemo-ci-gcp-gpu-${gpu_count}"
+            else
+              echo "nemo-ci-gcp-gpu-x2"
+            fi
           }
           for tier in L0 L1 L2; do
             entries=""
