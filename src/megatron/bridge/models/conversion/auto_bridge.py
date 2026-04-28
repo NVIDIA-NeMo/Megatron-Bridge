@@ -61,7 +61,9 @@ except ImportError as exc:
     )
 
     def is_quantized(_model: object) -> bool:
+        """Fallback quantization probe when ModelOpt is unavailable."""
         return False
+
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")

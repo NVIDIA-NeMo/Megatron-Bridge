@@ -482,7 +482,6 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         total_video_tokens = 0
         total_text_tokens = 0
         total_vit_patches = 0
-        merge_length = self.merge_size ** 2
 
         for s in samples:
             seq_len = len(s.text)
@@ -541,8 +540,8 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         packed_video_mask = torch.cat(all_video_masks, dim=0)
 
         cu_lengths_list = [0]
-        for l in sub_lengths:
-            cu_lengths_list.append(cu_lengths_list[-1] + l)
+        for length in sub_lengths:
+            cu_lengths_list.append(cu_lengths_list[-1] + length)
         cu_lengths = torch.tensor(cu_lengths_list, dtype=torch.int32)
 
         total_packed = int(cu_lengths[-1].item())
