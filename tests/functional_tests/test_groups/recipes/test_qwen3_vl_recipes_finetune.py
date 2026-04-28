@@ -27,23 +27,30 @@ Run with:
 
 import pytest
 
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.qwen_vl.qwen3_vl import qwen3_vl_8b_sft_config
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
 
+# Variants that route through the Qwen3-VL-specific forward step (``qwen3_vl_step``).
+# Covers the step function used by the examples / ``run_recipe.py --step_func qwen3_vl_step``,
+# which is otherwise only exercised by the DistTrain smoke test that requires 8 GPUs.
+# Qwen3-VL is incompatible with the generic vlm_step because preprocess_packed_seqs
+# inside Qwen3VLModel.forward always pads to tp_size alignment, which the generic
+# vlm_step packing does not match. Use qwen3_vl_step for all Qwen3-VL training.
 QWEN3_VL_FINETUNE_RECIPES = [
     # (config_func, recipe_name, parallelism_overrides, model_overrides)
     # Qwen3-VL 8B finetune - uses TP=2 for 2-GPU CI
     # Note: deepstack_visual_indexes must have len <= num_layers
     (
         qwen3_vl_8b_sft_config,
-        "qwen3_vl_8b_sft",
+        "qwen3_vl_8b_sft_qwen3_vl_step",
         {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
         {"num_layers": 4, "deepstack_visual_indexes": [0, 1, 2]},
     ),
     (
         qwen3_vl_8b_sft_config,
-        "qwen3_vl_8b_sft",
+        "qwen3_vl_8b_sft_qwen3_vl_step",
         {
             "tensor_model_parallel_size": 2,
             "pipeline_model_parallel_size": 1,
@@ -61,7 +68,7 @@ QWEN3_VL_FINETUNE_RECIPES = [
     ),
     (
         qwen3_vl_8b_sft_config,
-        "qwen3_vl_8b_sft",
+        "qwen3_vl_8b_sft_qwen3_vl_step",
         {
             "tensor_model_parallel_size": 2,
             "pipeline_model_parallel_size": 1,
@@ -70,18 +77,6 @@ QWEN3_VL_FINETUNE_RECIPES = [
             "num_layers": 4,
             "deepstack_visual_indexes": [0, 1, 2],
         },
-    ),
-]
-
-QWEN3_VL_FINETUNE_PACKED_RECIPES = [
-    # (config_func, recipe_name, parallelism_overrides, model_overrides, dataset_overrides)
-    # Qwen3-VL 8B finetune with packed sequences
-    (
-        qwen3_vl_8b_sft_config,
-        "qwen3_vl_8b_sft_packed",
-        {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
-        {"num_layers": 4, "deepstack_visual_indexes": [0, 1, 2]},
-        {"pack_sequences_in_batch": True},
     ),
 ]
 
@@ -102,42 +97,18 @@ class TestQwen3VLFinetuneRecipes:
         model_overrides,
         tmp_path,
     ):
-        """Functional test for Qwen3-VL finetune recipes.
+        """Functional test for Qwen3-VL finetune recipes using ``qwen3_vl_step.forward_step``.
 
-        This test runs a minimal training session to verify that:
-        1. The config loads correctly
-        2. Model forward pass accepts all required parameters (loss_mask, etc.)
-        3. Training completes without errors
-        4. Checkpoints are created
+        Exercises the Qwen3-VL-specific forward/step path (not the generic VLM step),
+        which handles Qwen3-VL visual inputs, deepstack indexing, and batch padding.
+        Qwen3-VL must use qwen3_vl_step — the generic vlm_step is incompatible because
+        preprocess_packed_seqs inside Qwen3VLModel always pads to tp_size alignment.
         """
         run_pretrain_vl_recipe_test(
             config_func,
             recipe_name,
             tmp_path,
             model_overrides=model_overrides,
-            **parallelism_overrides,
-        )
-
-    @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize(
-        "config_func,recipe_name,parallelism_overrides,model_overrides,dataset_overrides",
-        QWEN3_VL_FINETUNE_PACKED_RECIPES,
-    )
-    def test_qwen3_vl_finetune_packed_recipes(
-        self,
-        config_func,
-        recipe_name,
-        parallelism_overrides,
-        model_overrides,
-        dataset_overrides,
-        tmp_path,
-    ):
-        """Functional test for Qwen3-VL finetune recipes with packed sequences enabled."""
-        run_pretrain_vl_recipe_test(
-            config_func,
-            recipe_name,
-            tmp_path,
-            model_overrides=model_overrides,
-            dataset_overrides=dataset_overrides,
+            forward_step_func=qwen3_vl_forward_step,
             **parallelism_overrides,
         )
