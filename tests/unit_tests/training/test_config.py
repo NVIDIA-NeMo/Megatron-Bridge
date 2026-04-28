@@ -44,6 +44,7 @@ from megatron.bridge.training.config import (
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
 )
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 from megatron.bridge.utils.cuda_graph import (
     cuda_graph_module_names,
     set_cuda_graph_modules,
@@ -1175,6 +1176,74 @@ class TestConfigContainerValidation:
             # After validation, both should be forced to False due to FSDP
             assert container.ddp.reuse_grad_buf_for_mxfp8_param_ag is False
             assert container.optimizer.reuse_grad_buf_for_mxfp8_param_ag is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_reuse_grad_buf_for_mxfp8_param_ag_required_without_fsdp(self, monkeypatch):
+        """Test that reuse_grad_buf_for_mxfp8_param_ag must be True when
+        FSDP is disabled, fp8_param_gather=True, and fp8_recipe='mxfp8'."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+
+        # Case 1: Should raise when reuse_grad_buf_for_mxfp8_param_ag=False
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+        try:
+            container.mixed_precision = MixedPrecisionConfig(
+                fp8_param_gather=True, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=False
+            )
+            with pytest.raises(AssertionError, match="reuse_grad_buf_for_mxfp8_param_ag must be set to True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        # Case 2: Should pass when reuse_grad_buf_for_mxfp8_param_ag=True
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+        try:
+            container.mixed_precision = MixedPrecisionConfig(
+                fp8_param_gather=True, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=True
+            )
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        # Case 3: Should pass when fp8_param_gather=False (guard skips)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+        try:
+            container.mixed_precision = MixedPrecisionConfig(
+                fp8_param_gather=False, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=False
+            )
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        # Case 4: Should pass when fp8_recipe is not mxfp8 (guard skips)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+        try:
+            container.mixed_precision = MixedPrecisionConfig(
+                fp8_param_gather=True, fp8_recipe="delayed", reuse_grad_buf_for_mxfp8_param_ag=False
+            )
+            container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
