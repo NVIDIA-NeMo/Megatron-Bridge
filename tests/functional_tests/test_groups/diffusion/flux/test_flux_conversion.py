@@ -17,7 +17,7 @@ Functional tests for FLUX HF <-> Megatron checkpoint conversion.
 
 Uses a tiny randomly initialized diffusers FluxTransformer2DModel saved under a local
 ``transformer/`` layout (same as FLUX.1-dev) and drives
-``examples/diffusion/recipes/flux/conversion/convert_checkpoints.py``.
+``examples/diffusion/models/flux/conversion/convert_checkpoints.py``.
 
 """
 
@@ -35,7 +35,7 @@ FluxTransformer2DModel = diffusers.FluxTransformer2DModel
 
 # Repo root: tests/functional_tests/test_groups/diffusion/flux -> six parents
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
-CONVERT_SCRIPT = "examples/diffusion/recipes/flux/conversion/convert_checkpoints.py"
+CONVERT_SCRIPT = "examples/diffusion/models/flux/conversion/convert_checkpoints.py"
 
 
 def _build_toy_flux_hf_root(base: Path) -> Path:
