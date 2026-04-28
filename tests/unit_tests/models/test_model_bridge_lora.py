@@ -509,6 +509,8 @@ def test_resolve_hf_adapter_param_name_without_weight_suffix():
 
 def test_build_adapter_conversion_tasks(monkeypatch):
     bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
 
     adapters_info = [
         (
@@ -597,6 +599,8 @@ def test_materialize_adapter_weights(monkeypatch):
 
 def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
     bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
 
     adapter_task = AdapterWeightConversionTask(
         global_base_prefix="decoder.layers.0.mlp.linear_fc1",
@@ -644,7 +648,13 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
     )
 
     megatron_model = [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))]
-    weights = list(bridge.stream_adapter_weights_megatron_to_hf(megatron_model, cpu=False, show_progress=False))
+    weights = list(
+        bridge.stream_adapter_weights_megatron_to_hf(
+            megatron_model,
+            cpu=False,
+            show_progress=False,
+        )
+    )
     assert len(weights) == 2
     assert weights[0].param_name.endswith("lora_A.weight")
     assert weights[1].param_name.endswith("lora_B.weight")
@@ -654,6 +664,8 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
 
 def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
     bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
 
     adapter_task = AdapterWeightConversionTask(
         global_base_prefix="decoder.layers.0.self_attn.linear_qkv",
@@ -728,6 +740,8 @@ def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
 
 def test_stream_adapter_weights_megatron_to_hf_fused_fc1(monkeypatch):
     bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
 
     adapter_task = AdapterWeightConversionTask(
         global_base_prefix="decoder.layers.0.mlp.linear_fc1",

@@ -492,9 +492,8 @@ class AutoBridge(Generic[MegatronModelT]):
             # Use FP8 export tasks for blockwise FP8 weights
             conversion_tasks = self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
 
-        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
-        return model_bridge.stream_weights_megatron_to_hf(
-            dispatch_instance,
+        bridge = self._model_bridge
+        return bridge.stream_weights_megatron_to_hf(
             model,
             self.hf_pretrained,
             cpu=cpu,
@@ -523,13 +522,8 @@ class AutoBridge(Generic[MegatronModelT]):
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters
         """
-        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
-        return model_bridge.stream_adapter_weights_megatron_to_hf(
-            dispatch_instance,
-            model,
-            cpu=cpu,
-            show_progress=show_progress,
-        )
+        bridge = self._model_bridge
+        return bridge.stream_adapter_weights_megatron_to_hf(model, cpu=cpu, show_progress=show_progress)
 
     def save_hf_adapter(
         self,
@@ -799,9 +793,8 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
-        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
-        generator = model_bridge.stream_weights_megatron_to_hf(
-            dispatch_instance,
+        bridge = self._model_bridge
+        generator = bridge.stream_weights_megatron_to_hf(
             model,
             self.hf_pretrained,
             cpu=True,
