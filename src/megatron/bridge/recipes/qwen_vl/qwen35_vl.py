@@ -125,7 +125,10 @@ def _qwen35_vl_apply_common(
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
-    cfg.dataset.pack_sequences_in_batch = False
+    # Enable THD packing by default for SFT/PEFT: the step function builds
+    # cu_seqlens so attention skips padding FLOPs on short samples (especially
+    # when PP/EP forces micro-batches to pad to seq_length).
+    cfg.dataset.pack_sequences_in_batch = True
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
