@@ -591,8 +591,8 @@ _LLAMA3_70B_LORA_CONFIG_GB300 = replace(
 LLAMA3_70B_LORA_CONFIG_GB300_BF16_V1 = _LLAMA3_70B_LORA_CONFIG_GB300
 LLAMA3_70B_LORA_CONFIG_GB300_FP8_CS_V1 = replace(
     _LLAMA3_70B_LORA_CONFIG_GB300,
-    pipeline_model_parallel_size=1,
-    # virtual_pipeline_model_parallel_size=20,
+    pipeline_model_parallel_size=2,
+    virtual_pipeline_model_parallel_size=20,
 )
 LLAMA3_70B_LORA_CONFIG_GB300_FP8_MX_V1 = replace(
     _LLAMA3_70B_LORA_CONFIG_GB300,
