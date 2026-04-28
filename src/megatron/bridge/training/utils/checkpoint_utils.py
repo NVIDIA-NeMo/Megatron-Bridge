@@ -369,9 +369,9 @@ def read_train_state(train_state_filename: str) -> TrainState:
             try:
                 if MultiStorageClientFeature.is_enabled():
                     msc = MultiStorageClientFeature.import_package()
-                    state_dict = msc.torch.load(train_state_filename, map_location="cpu")
+                    state_dict = msc.torch.load(train_state_filename, map_location="cpu", weights_only=True)
                 else:
-                    state_dict = torch.load(train_state_filename, map_location="cpu")
+                    state_dict = torch.load(train_state_filename, map_location="cpu", weights_only=True)
                 ts = TrainState()
                 ts.load_state_dict(state_dict)
                 state_obj[0] = ts
@@ -391,9 +391,9 @@ def read_train_state(train_state_filename: str) -> TrainState:
     try:
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
-            state_dict = msc.torch.load(train_state_filename, map_location="cpu")
+            state_dict = msc.torch.load(train_state_filename, map_location="cpu", weights_only=True)
         else:
-            state_dict = torch.load(train_state_filename, map_location="cpu")
+            state_dict = torch.load(train_state_filename, map_location="cpu", weights_only=True)
         ts = TrainState()
         ts.load_state_dict(state_dict)
         return ts
