@@ -94,6 +94,8 @@ def pretrain_megatron_mimo(
         global_state=setup_output.global_state,
         megatron_mimo_infra=setup_output.megatron_mimo_infra,
         multimodule_communicator=setup_output.multimodule_communicator,
+        active_module_name=setup_output.active_module_name,
+        local_pg_collection=setup_output.local_pg_collection,
         checkpoint_manager=setup_output.checkpoint_manager,
         multimodule_pg_collection=setup_output.multimodule_pg_collection,
         module_to_grid_tuple=setup_output.module_to_grid_tuple,

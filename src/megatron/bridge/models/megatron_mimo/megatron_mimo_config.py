@@ -61,8 +61,19 @@ class ModuleParallelismConfig:
 class MegatronMIMOParallelismConfig:
     """Configuration for multi-module (MegatronMIMO) heterogeneous parallelism.
 
-    Note: Phase 1 only supports heterogeneous deployment where each module
-    can have different parallelism configurations and rank offsets.
+    Supports two module-placement modes — auto-detected from module rank ranges:
+
+    * Non-colocated: each module occupies a disjoint rank range (different
+      ``rank_offset`` / ``total_ranks``). Encoder and LLM run on separate
+      physical ranks; cross-module communication uses the multi-module
+      pipeline communicator.
+    * Colocated: every module spans the same rank range (identical
+      ``rank_offset`` AND identical ``total_ranks``), each with its own
+      TP/DP layout. MCore's ``ColocatedBridgeCommunicator`` handles the
+      encoder→LLM activation reshape.
+
+    Partial overlap — modules whose ranges neither fully match nor are fully
+    disjoint — is rejected because neither mode applies.
 
     The language module must be named MIMO_LANGUAGE_MODULE_KEY ("language") in module_parallelisms.
     """
@@ -83,20 +94,48 @@ class MegatronMIMOParallelismConfig:
         ranges = [p.rank_offset + p.total_ranks for p in self.module_parallelisms.values()]
         return max(ranges) if ranges else 0
 
-    def _validate_heterogeneous(self) -> None:
-        """Validate heterogeneous deployment: no overlapping rank ranges."""
-        ranges = []
-        for name, parallelism in self.module_parallelisms.items():
-            if parallelism.data_parallel_size is None:
-                raise ValueError("data_parallel_size must be set for heterogeneous deployment.")
-            ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks, name))
+    def _validate_module_placement(self) -> None:
+        """Validate module placement against the two supported modes.
 
-        ranges.sort(key=lambda x: x[0])
+        Accepts either:
+          * Colocated — every module range identical (same ``rank_offset``
+            AND ``total_ranks``).
+          * Non-colocated — every module range pairwise disjoint.
+
+        Rejects any other layout (partial overlap or containment — e.g. an
+        LLM spanning all ranks while two encoders occupy disjoint halves).
+        Such "hybrid" layouts are a legitimate pattern but not yet
+        supported: MCore's ``RankRole.build`` collapses placement to a
+        single mode enum and ``MimoModel.forward`` dispatches on that enum,
+        so a rank in both an encoder grid and the LLM grid would run only
+        one module per step. Supporting hybrid placement would require
+        per-pair mode detection on the MCore side. Until then we fail
+        fast here so configurations are unambiguous.
+        """
+        for parallelism in self.module_parallelisms.values():
+            if parallelism.data_parallel_size is None:
+                raise ValueError("data_parallel_size must be set for module placement.")
+
+        placement_tuples = [(p.rank_offset, p.total_ranks) for p in self.module_parallelisms.values()]
+        if len(set(placement_tuples)) == 1:
+            # All modules share the same rank range → colocated. Valid.
+            return
+
+        # Non-colocated: every pair of ranges must be disjoint.
+        ranges = sorted(
+            (p.rank_offset, p.rank_offset + p.total_ranks, name) for name, p in self.module_parallelisms.items()
+        )
         for idx in range(1, len(ranges)):
-            prev_end = ranges[idx - 1][1]
-            cur_start = ranges[idx][0]
+            prev_start, prev_end, prev_name = ranges[idx - 1]
+            cur_start, cur_end, cur_name = ranges[idx]
             if cur_start < prev_end:
-                raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
+                raise ValueError(
+                    f"Module rank ranges must be either all identical (colocated) "
+                    f"or all pairwise disjoint (non-colocated). Got partial overlap "
+                    f"(hybrid placement — valid pattern, not yet supported): "
+                    f"'{prev_name}' = [{prev_start}, {prev_end}), "
+                    f"'{cur_name}' = [{cur_start}, {cur_end})."
+                )
 
     def _validate_parallelism_constraints(self) -> None:
         """Validate parallelism constraints for cross-module communication.
@@ -147,6 +186,116 @@ class MegatronMIMOParallelismConfig:
                         f"Encoder DP must be >= LLM DP for embedding alignment across batches."
                     )
 
+        # Colocated heterogeneous TP/DP is supported: per-key per-module batch
+        # slicing in ``slice_batch_for_megatron_mimo_modules`` handles asymmetric
+        # DP, and module-scoped CUDA RNG tracker swap (Step 3 — ``MimoModel``'s
+        # ``module_rng_scopes`` kwarg threaded through ``MegatronMIMOProvider``)
+        # handles asymmetric TP. Provider-level guards in
+        # ``_validate_asymmetric_tp_constraints`` reject the residual unsafe
+        # activation recomputation case where the module-scoped RNG plumbing
+        # doesn't reach.
+
+    def validate_static(self) -> None:
+        """Run validation that doesn't depend on world_size or distributed state.
+
+        Public, idempotent entry point for callers that build infrastructure
+        before ``finalize()`` (e.g. ``MegatronMIMOProvider.build_infra``) or
+        in non-distributed test paths. ``finalize()`` invokes this internally,
+        so callers don't need to call both.
+
+        Currently runs the required-modules check; future no-dist invariants
+        can be added here without changing call sites.
+        """
+        self._validate_required_modules()
+
+    def _validate_required_modules(self) -> None:
+        """Require the language module plus at least one non-language module.
+
+        MegatronMIMO is fundamentally multi-modal: it composes a language model
+        with one or more modality encoders. A single-module config (just
+        language, or just an encoder) isn't a valid MIMO shape — it should
+        either use the standard non-MIMO training path or add the missing
+        side. Checking this first means a malformed config produces the right
+        error message ("requires at least one modality module") instead of
+        the wrong one ("colocated requires PP=1") — both could be true, but
+        only one is the actual problem.
+        """
+        if MIMO_LANGUAGE_MODULE_KEY not in self.module_parallelisms:
+            raise ValueError(
+                f"Language module '{MIMO_LANGUAGE_MODULE_KEY}' must be in module_parallelisms. "
+                f"Found modules: {list(self.module_parallelisms.keys())}"
+            )
+        non_language = [name for name in self.module_parallelisms if name != MIMO_LANGUAGE_MODULE_KEY]
+        if not non_language:
+            raise ValueError(
+                f"MegatronMIMO requires at least one modality module in addition to "
+                f"the language module. Found only {{'{MIMO_LANGUAGE_MODULE_KEY}'}}; "
+                f"add at least one modality entry (e.g. 'vision') to module_parallelisms, "
+                f"or use a non-MegatronMIMO training path for language-only models."
+            )
+
+    def _is_colocated(self) -> bool:
+        """True iff every module shares the same ``(rank_offset, total_ranks)``.
+
+        Used by ``_validate_colocated_stage2_constraints`` to gate the
+        colocated-only stage-2 rules. Assumes ``data_parallel_size`` has been
+        finalized for every module (so ``total_ranks`` is well-defined).
+
+        Defensive: returns ``False`` for fewer than two modules. Single-module
+        configs are rejected upstream by ``_validate_required_modules`` so this
+        path shouldn't be reachable in normal use, but keeping the invariant
+        here means a future caller that bypasses the required-modules check
+        (e.g. an ad-hoc test) doesn't accidentally treat a one-module config
+        as colocated and fall into stage-2 rules with the wrong error message.
+        """
+        if len(self.module_parallelisms) < 2:
+            return False
+        placement = {(p.rank_offset, p.total_ranks) for p in self.module_parallelisms.values()}
+        return len(placement) == 1
+
+    def _validate_colocated_stage2_constraints(self) -> None:
+        """Validate stage-2 colocated heterogeneous constraints.
+
+        Stage 2 of the colocated rollout supports heterogeneous encoder and
+        LLM TP/DP factorizations on the same physical rank range. PP, CP,
+        EP, and ETP must remain at 1 on every module — the schedule,
+        communicator, and RNG paths for those are tracked separately.
+        Non-colocated layouts are unaffected.
+
+        Hybrid placement (some modules overlap, others disjoint) is rejected
+        upstream by ``_validate_module_placement``.
+
+        The asymmetric-DP and asymmetric-TP short-term guards live in
+        ``_validate_parallelism_constraints``; this method does not duplicate
+        them. They will be removed once module-scoped CUDA RNG and per-key
+        per-module batch slicing land (Step 3 / Step 2 of the heterogeneous
+        TP/DP plan).
+        """
+        if not self._is_colocated():
+            return
+
+        for name, p in self.module_parallelisms.items():
+            if p.pipeline_model_parallel_size != 1:
+                raise ValueError(
+                    f"Colocated heterogeneous MegatronMIMO requires PP=1 in this stage. "
+                    f"Module '{name}' has pipeline_model_parallel_size="
+                    f"{p.pipeline_model_parallel_size}. LLM PP>1 with the colocated "
+                    f"three-phase schedule is tracked as a follow-up."
+                )
+            if p.context_parallel_size != 1:
+                raise ValueError(
+                    f"Colocated heterogeneous MegatronMIMO requires CP=1 in this stage. "
+                    f"Module '{name}' has context_parallel_size={p.context_parallel_size}. "
+                    f"Asymmetric CP coverage is tracked as a follow-up."
+                )
+            if p.expert_tensor_parallel_size != 1:
+                raise ValueError(
+                    f"Colocated heterogeneous MegatronMIMO requires ETP=1 in this stage. "
+                    f"Module '{name}' has expert_tensor_parallel_size="
+                    f"{p.expert_tensor_parallel_size}. EP/ETP coverage is tracked "
+                    f"as a follow-up."
+                )
+
     def finalize(self, world_size: int) -> None:
         """Finalize parallelism config: compute data_parallel_size and validate.
 
@@ -154,18 +303,18 @@ class MegatronMIMOParallelismConfig:
             world_size: Total number of ranks in the distributed world.
                 MegatronMIMO requires a distributed environment, so this must always be provided.
         """
-        if MIMO_LANGUAGE_MODULE_KEY not in self.module_parallelisms:
-            raise ValueError(
-                f"Language module '{MIMO_LANGUAGE_MODULE_KEY}' must be in module_parallelisms. "
-                f"Found modules: {list(self.module_parallelisms.keys())}"
-            )
+        # Static checks (required modules etc.) first so a malformed module
+        # set fails with the right error before any geometry-shape validator
+        # runs.
+        self.validate_static()
 
         # In heterogeneous mode, data_parallel_size must be pre-set (not computed from world_size)
         for parallelism in self.module_parallelisms.values():
             parallelism.finalize(None)
 
-        self._validate_heterogeneous()
+        self._validate_module_placement()
         self._validate_parallelism_constraints()
+        self._validate_colocated_stage2_constraints()
 
         expected = self.total_world_size
         if expected and world_size != expected:

@@ -9,6 +9,7 @@ from megatron.bridge.data.megatron_mimo.dp_utils import (
     get_megatron_mimo_dp_info,
     get_megatron_mimo_sampling_info,
     slice_batch_for_megatron_mimo,
+    slice_batch_for_megatron_mimo_modules,
 )
 from megatron.bridge.data.megatron_mimo.hf_provider import HFMegatronMIMODatasetProvider
 from megatron.bridge.data.megatron_mimo.loaders import build_megatron_mimo_data_loaders
@@ -27,5 +28,6 @@ __all__ = [
     "get_megatron_mimo_dp_info",
     "get_megatron_mimo_sampling_info",
     "slice_batch_for_megatron_mimo",
+    "slice_batch_for_megatron_mimo_modules",
     "build_megatron_mimo_data_loaders",
 ]

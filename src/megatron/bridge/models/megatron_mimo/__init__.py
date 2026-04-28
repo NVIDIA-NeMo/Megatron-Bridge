@@ -8,13 +8,17 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import (
     MegatronMIMOInfra,
     MegatronMIMOProvider,
+    MegatronMIMORNGMode,
+    get_megatron_mimo_rng_mode,
 )
 
 
 __all__ = [
     "LlavaMegatronMIMOProvider",
     "MegatronMIMOInfra",
+    "MegatronMIMORNGMode",
     "MegatronMIMOProvider",
     "MegatronMIMOParallelismConfig",
     "ModuleParallelismConfig",
+    "get_megatron_mimo_rng_mode",
 ]

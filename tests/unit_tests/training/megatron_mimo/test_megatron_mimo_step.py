@@ -86,6 +86,56 @@ class TestGetBatch:
 class TestForwardStep:
     """Test cases for forward_step()."""
 
+    def test_colocated_data_alignment_check_accepts_fan_in_layout(self, monkeypatch):
+        """The optional L3 alignment check should accept encoder-DP fan-in."""
+        from megatron.bridge.training import megatron_mimo_step
+
+        class FakePG:
+            def __init__(self, rank, size):
+                self._rank = rank
+                self._size = size
+
+            def rank(self):
+                return self._rank
+
+            def size(self):
+                return self._size
+
+        class FakeGrid:
+            rank_offset = 0
+            size = 8
+
+            def __init__(self, dp_rank, dp_size):
+                self._dp = FakePG(dp_rank, dp_size)
+
+            def get_pg(self, dims):
+                assert dims == ["dp"]
+                return self._dp
+
+        monkeypatch.setenv("MIMO_CHECK_DATA_ALIGNMENT", "true")
+        monkeypatch.setenv("MIMO_CHECK_DATA_ALIGNMENT_STEPS", "1")
+        monkeypatch.setattr(megatron_mimo_step.dist, "is_available", lambda: True)
+        monkeypatch.setattr(megatron_mimo_step.dist, "is_initialized", lambda: True)
+        monkeypatch.setattr(megatron_mimo_step.dist, "get_rank", lambda: 0)
+        megatron_mimo_step._DATA_ALIGNMENT_CHECK_COUNT = 0
+
+        original_batch = {
+            "input_ids": torch.zeros(4, 8),
+            "modality_inputs": {"images": {"clip": {"x": torch.zeros(4, 3, 336, 336)}}},
+        }
+        sliced_batch = {
+            "input_ids": torch.zeros(2, 8),
+            "modality_inputs": {"images": {"clip": {"x": torch.zeros(1, 3, 336, 336)}}},
+        }
+        grids = {
+            "language": FakeGrid(dp_rank=0, dp_size=2),
+            "images": FakeGrid(dp_rank=0, dp_size=4),
+        }
+
+        megatron_mimo_step._maybe_check_colocated_data_alignment(original_batch, sliced_batch, grids)
+
+        assert megatron_mimo_step._DATA_ALIGNMENT_CHECK_COUNT == 1
+
     @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
     def test_forward_step_last_stage(self, mock_unwrap):
         """Test forward step at last pipeline stage returns loss func."""
@@ -171,3 +221,49 @@ class TestForwardStep:
         # Should have state as first parameter
         assert params[0] == "state"
         assert len(params) == 3
+
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    @patch("megatron.bridge.training.megatron_mimo_step.slice_batch_for_megatron_mimo_modules")
+    def test_forward_step_invokes_module_aware_slicing_with_grids(self, mock_slice, mock_unwrap):
+        """Composition test: forward_step routes the global micro-batch through
+        ``slice_batch_for_megatron_mimo_modules`` with the model's grid map.
+
+        This is the load-bearing wire-up for asymmetric DP: a regression where
+        forward_step still calls the legacy single-DP helper would silently
+        collapse modality_inputs and language keys onto the same DP, breaking
+        ``align_embeddings_by_token_positions`` on the first forward.
+        """
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_model = MagicMock()
+        mock_model.role = None  # last stage → returns loss tuple
+
+        # Two grids same offset/size — colocated layout.
+        fake_grids = {
+            "vision": MagicMock(rank_offset=0, size=2),
+            "language": MagicMock(rank_offset=0, size=2),
+        }
+        mock_model.mimo_config.module_to_grid_map = fake_grids
+
+        # The helper returns the same dict so the rest of forward_step proceeds.
+        original_batch = {"input_ids": torch.tensor([[1, 2], [3, 4]])}
+        sliced_batch = {"input_ids": torch.tensor([[1, 2]])}
+        mock_slice.return_value = sliced_batch
+
+        mock_model.return_value = (torch.tensor([1.0]), torch.ones(1))
+        mock_unwrap.return_value = mock_model
+
+        data_iter = iter([original_batch])
+        forward_step(mock_state, data_iter, mock_model)
+
+        # Helper called once with the global batch and the model's grids.
+        # ``get_batch`` moves tensors to cuda (creating a new dict), so we
+        # check structural equivalence and grid identity, not dict identity.
+        mock_slice.assert_called_once()
+        call_args = mock_slice.call_args
+        passed_batch = call_args.args[0] if call_args.args else call_args.kwargs.get("batch")
+        passed_grids = call_args.kwargs["grids"]
+        assert set(passed_batch.keys()) == set(original_batch.keys())
+        torch.testing.assert_close(passed_batch["input_ids"].cpu(), original_batch["input_ids"])
+        assert passed_grids is fake_grids

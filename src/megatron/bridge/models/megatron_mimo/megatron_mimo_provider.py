@@ -12,13 +12,17 @@ Key differences from standard providers:
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
+from enum import Enum
+from typing import TYPE_CHECKING, Callable, ContextManager, Dict, Iterator, List, Optional, Union
 
 import torch
 import torch.distributed as dist
 from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.enums import ModelType
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.base_configs import MimoModelConfig
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
@@ -38,8 +42,243 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_ddp import wrap_megatron
 from megatron.bridge.models.model_provider import ModelProviderMixin
 
 
+logger = logging.getLogger(__name__)
+
+
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
+
+
+class MegatronMIMORNGMode(str, Enum):
+    """CUDA RNG handling mode for MegatronMIMO."""
+
+    SINGLETON = "singleton"
+    PER_MODULE = "per_module"
+
+
+def get_megatron_mimo_rng_mode(
+    par_cfg: Optional[MegatronMIMOParallelismConfig],
+) -> MegatronMIMORNGMode:
+    """Select the CUDA RNG mode for a MegatronMIMO parallel layout.
+
+    Non-colocated layouts and colocated layouts with identical TP sizes use
+    MCore's standard singleton CUDA RNG tracker. Colocated asymmetric TP needs
+    per-module snapshots because one physical rank can execute modules with
+    different module-local TP coordinates.
+    """
+    if par_cfg is None or not par_cfg._is_colocated():
+        return MegatronMIMORNGMode.SINGLETON
+    tp_sizes = {p.tensor_model_parallel_size for p in par_cfg.module_parallelisms.values()}
+    if len(tp_sizes) > 1:
+        return MegatronMIMORNGMode.PER_MODULE
+    return MegatronMIMORNGMode.SINGLETON
+
+
+def _get_active_module_grids(
+    infra: "MegatronMIMOInfra",
+    current_rank: int,
+) -> Dict[str, "HyperCommGrid"]:
+    """Return module grids that include ``current_rank``."""
+    active_modules: Dict[str, "HyperCommGrid"] = {}
+    for module_name, grid in infra.module_to_grid_map.items():
+        if grid.rank_offset <= current_rank < (grid.rank_offset + grid.size):
+            active_modules[module_name] = grid
+    return active_modules
+
+
+def _get_global_seed_and_module(
+    seed: int,
+    active_modules: Dict[str, "HyperCommGrid"],
+) -> tuple[int, Optional[str]]:
+    """Choose the rank-local global RNG seed from active modules."""
+    if MIMO_LANGUAGE_MODULE_KEY in active_modules:
+        global_seed_module: Optional[str] = MIMO_LANGUAGE_MODULE_KEY
+    elif active_modules:
+        global_seed_module = next(iter(active_modules))
+    else:
+        global_seed_module = None
+
+    if global_seed_module is None:
+        return seed, None
+
+    global_pp_rank = active_modules[global_seed_module].get_pg(["pp"]).rank()
+    return seed + 100 * global_pp_rank, global_seed_module
+
+
+def _seed_python_numpy_torch(seed: int) -> None:
+    """Seed non-TP-region RNGs shared by all MegatronMIMO RNG modes."""
+    import random
+
+    import numpy as np
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
+def seed_singleton_rng_tracker(
+    seed: int,
+    infra: "MegatronMIMOInfra",
+    *,
+    seed_kwargs: Optional[dict] = None,
+    current_rank: Optional[int] = None,
+) -> None:
+    """Seed MCore's singleton CUDA RNG tracker for baseline MegatronMIMO modes."""
+    from megatron.core import tensor_parallel
+
+    if current_rank is None:
+        current_rank = dist.get_rank() if dist.is_initialized() else 0
+    manual_seed_kwargs = dict(seed_kwargs or {})
+    manual_seed_kwargs.pop("tp_rank", None)
+    manual_seed_kwargs.pop("ep_rank", None)
+    manual_seed_kwargs.pop("etp_rank", None)
+
+    active_modules = _get_active_module_grids(infra, current_rank)
+    global_seed, global_seed_module = _get_global_seed_and_module(seed, active_modules)
+    _seed_python_numpy_torch(global_seed)
+    infra.cuda_rng_states_per_module.clear()
+
+    if torch.cuda.device_count() > 0 and global_seed_module is not None:
+        grid = active_modules[global_seed_module]
+        tp_rank = grid.get_pg(["tp"]).rank()
+        pp_rank = grid.get_pg(["pp"]).rank()
+        module_seed = seed + 100 * pp_rank
+        tensor_parallel.model_parallel_cuda_manual_seed(
+            module_seed,
+            **manual_seed_kwargs,
+            tp_rank=tp_rank,
+            ep_rank=0,
+            etp_rank=0,
+        )
+
+    logger.info(
+        f"Rank {current_rank}: Initialized MegatronMIMO singleton random seeds "
+        f"(global_seed={global_seed}, global_seed_module={global_seed_module}, "
+        f"active_modules={list(active_modules)})"
+    )
+
+
+def seed_per_module_rng_tracker(
+    seed: int,
+    infra: "MegatronMIMOInfra",
+    *,
+    seed_kwargs: Optional[dict] = None,
+    current_rank: Optional[int] = None,
+) -> None:
+    """Seed global RNGs and snapshot MCore's CUDA RNG tracker per active module.
+
+    MegatronMIMO does not use global MPU process groups. In colocated
+    heterogeneous TP, the same physical rank can have different module-local TP
+    ranks, so one singleton CUDA RNG tracker state is not enough. This helper
+    seeds the tracker once per active module using that module's TP/PP
+    coordinates, then stores the resulting tracker states on ``infra`` for
+    ``module_rng_scope`` to swap during module construction and forward.
+
+    Args:
+        seed: Base random seed.
+        infra: Built MegatronMIMO infrastructure.
+        seed_kwargs: Optional kwargs forwarded to
+            ``tensor_parallel.model_parallel_cuda_manual_seed``. Module-local
+            ``tp_rank``, ``ep_rank``, and ``etp_rank`` are owned by this helper
+            and override any values in this dict.
+        current_rank: Optional rank override for callers that already abstract
+            distributed state in tests. Defaults to ``dist.get_rank()`` when
+            torch.distributed is initialized, otherwise 0.
+    """
+    from megatron.core import tensor_parallel
+
+    if current_rank is None:
+        current_rank = dist.get_rank() if dist.is_initialized() else 0
+    manual_seed_kwargs = dict(seed_kwargs or {})
+    manual_seed_kwargs.pop("tp_rank", None)
+    manual_seed_kwargs.pop("ep_rank", None)
+    manual_seed_kwargs.pop("etp_rank", None)
+
+    active_modules = _get_active_module_grids(infra, current_rank)
+    global_seed, global_seed_module = _get_global_seed_and_module(seed, active_modules)
+    _seed_python_numpy_torch(global_seed)
+
+    if torch.cuda.device_count() > 0 and active_modules:
+        snapshots: Dict[str, Dict] = {}
+        for module_name, grid in active_modules.items():
+            tp_rank = grid.get_pg(["tp"]).rank()
+            pp_rank = grid.get_pg(["pp"]).rank()
+            module_seed = seed + 100 * pp_rank
+            tensor_parallel.model_parallel_cuda_manual_seed(
+                module_seed,
+                **manual_seed_kwargs,
+                tp_rank=tp_rank,
+                ep_rank=0,
+                etp_rank=0,
+            )
+            snapshots[module_name] = tensor_parallel.get_cuda_rng_tracker().get_states()
+
+        infra.cuda_rng_states_per_module.clear()
+        infra.cuda_rng_states_per_module.update(snapshots)
+
+    logger.info(
+        f"Rank {current_rank}: Initialized MegatronMIMO random seeds "
+        f"(global_seed={global_seed}, global_seed_module={global_seed_module}, "
+        f"active_modules={list(active_modules)})"
+    )
+
+
+@contextlib.contextmanager
+def module_rng_scope(module_name: str, infra: "MegatronMIMOInfra") -> Iterator[None]:
+    """Swap the singleton CUDA RNG tracker into ``module_name``'s saved state.
+
+    Implements Step 3b of the colocated heterogeneous TP/DP plan: each per-module
+    construction and forward boundary inside ``MimoModel`` is bracketed by a
+    fresh invocation of this scope (via a factory bound in ``provide()``), so
+    asymmetric-TP encoder and language modules each draw from their own
+    TP-region RNG tracker state.
+
+    Semantics:
+      * On entry: load ``module_name``'s saved tracker state into the live
+        singleton tracker via ``set_states()``.
+      * On exit: snapshot the (possibly-advanced) live tracker back into
+        ``module_name``'s slot via ``get_states()``, so any RNG draws inside
+        the scope persist across context entries.
+
+    The simpler-than-symmetric design (no explicit ``previously-active``
+    bookkeeping) relies on the invariant that no MIMO code path draws from the
+    tracker outside a module scope: every per-module RNG-touching call site
+    inside ``MimoModel`` is wrapped in ``self._scope(name)``, which resolves to
+    a factory-built ``module_rng_scope``. Between consecutive scope entries the
+    live tracker may belong to whichever module was last active, but that
+    module's slot was already saved at its own scope exit, so swapping in the
+    next module's state is a clean snapshot/restore — no RNG history is lost.
+
+    When ``module_name`` is not in ``infra.cuda_rng_states_per_module`` (e.g.
+    a non-colocated rank that doesn't participate in the requested module, or
+    a legacy path where seeding hasn't run), the scope falls through to
+    ``contextlib.nullcontext`` semantics — no swap, no save.
+
+    Args:
+        module_name: The module whose RNG state should be active inside the
+            scope. Must match a key in ``infra.cuda_rng_states_per_module``
+            (populated by ``seed_per_module_rng_tracker``).
+        infra: The shared ``MegatronMIMOInfra`` (memoized by
+            ``MegatronMIMOProvider.build_infra``) carrying the per-module
+            snapshot dict.
+    """
+    if module_name not in infra.cuda_rng_states_per_module:
+        # No snapshot for this module on this rank — fall through cleanly.
+        # ``MimoModel._scope`` already handles the no-factory case via
+        # ``nullcontext``, but we still get called when a factory is bound
+        # for a module the rank doesn't actually serve (e.g. when callers
+        # bind factories defensively for every module key). Treat as no-op.
+        yield
+        return
+
+    from megatron.core import tensor_parallel
+
+    tracker = tensor_parallel.get_cuda_rng_tracker()
+    tracker.set_states(infra.cuda_rng_states_per_module[module_name])
+    try:
+        yield
+    finally:
+        infra.cuda_rng_states_per_module[module_name] = tracker.get_states()
 
 
 @dataclass
@@ -55,6 +294,17 @@ class MegatronMIMOInfra:
         pg_collections: Mapping of module names to ProcessGroupCollections.
             None for modules this rank doesn't participate in.
         participating_modules: List of module names this rank participates in.
+        cuda_rng_states_per_module: Per-module snapshots of the CUDA RNG tracker
+            states, populated only for colocated asymmetric-TP layouts by
+            ``MegatronMIMOProvider.initialize_model_parallel``.
+            Keyed by module name; the values are dicts of {tracker-name → state}
+            captured by ``get_cuda_rng_tracker().get_states()``. Read by the
+            ``module_rng_scope`` factories threaded into ``MimoModel`` so that
+            asymmetric-TP encoder and language modules each draw from their own
+            TP-region RNG. Empty dict (default) is the singleton path used by
+            non-colocated, symmetric colocated, and non-distributed layouts —
+            Bridge passes ``module_rng_scopes=None`` to ``MimoModel`` in that
+            case and behavior is unchanged from prior releases.
     """
 
     module_to_grid_map: Dict[str, "HyperCommGrid"]
@@ -62,6 +312,8 @@ class MegatronMIMOInfra:
     pg_collections: Dict[str, Optional[ProcessGroupCollection]]
     participating_modules: List[str]
     module_output_ndim: Dict[str, int] = field(default_factory=dict)
+    rng_mode: MegatronMIMORNGMode = MegatronMIMORNGMode.SINGLETON
+    cuda_rng_states_per_module: Dict[str, Dict] = field(default_factory=dict)
 
 
 @dataclass
@@ -121,6 +373,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
 
     # Cached grids after build_model() - used by data loading
     _grids: Optional[Dict[str, "HyperCommGrid"]] = field(default=None, repr=False)
+    _mimo_model_parallel_initialized: bool = field(default=False, init=False, repr=False)
 
     # Freezing options
     freeze_language_model: bool = False
@@ -133,12 +386,154 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
     use_cpu_initialization: bool = False
     init_model_with_meta_device: bool = False
 
+    def _validate_specs_static(self) -> None:
+        """No-dist required-spec validation. Idempotent.
+
+        MegatronMIMO is fundamentally multi-modal: it requires the language
+        model spec AND at least one modality submodule spec. Without both,
+        the resulting model is either invalid (no language) or a degenerate
+        non-MIMO model (no modality), neither of which is a supported shape.
+
+        ``finalize()`` (provider-level) only runs when ``dist`` is initialized
+        and only when ``megatron_mimo_parallelism_config`` is set. Callers that
+        bypass ``finalize()`` — ``build_infra()``, ``provide()``, the legacy
+        no-parallelism path — would otherwise silently accept malformed specs.
+        This method runs from both ``build_infra()`` and ``provide()`` so that
+        every infrastructure/model-build path enforces the same contract.
+        """
+        if self.language_model_spec is None:
+            raise ValueError(
+                "language_model_spec must be set on MegatronMIMOProvider. "
+                "Set it directly or use a subclass that populates it in __post_init__."
+            )
+        if not self.modality_submodules_spec:
+            raise ValueError(
+                "MegatronMIMOProvider requires at least one modality submodule in "
+                "modality_submodules_spec. Found none; add at least one entry "
+                "(e.g. 'vision') or use a non-MegatronMIMO training path for "
+                "language-only models."
+            )
+        if self.megatron_mimo_parallelism_config is not None:
+            # Catch malformed parallelism module sets before build_hypercomm_grids
+            # runs, even when called outside of finalize() / non-distributed paths.
+            self.megatron_mimo_parallelism_config.validate_static()
+
+    def _is_asymmetric_tp_colocated(self) -> bool:
+        """True iff colocated mode AND modules disagree on TP size.
+
+        Drives the recompute guard in ``_validate_asymmetric_tp_constraints``:
+        activation recomputation re-runs forward inside backward, outside the
+        per-module ``module_rng_scope`` context, so each module's CUDA RNG
+        state isn't restored when the recomputed forward draws.
+
+        ``use_cpu_initialization=True`` was previously rejected here too, but
+        that was over-conservative — CPU init builds the full master weight
+        deterministically across ranks (every rank shares the same
+        ``torch.manual_seed`` state) and slices using each module's own
+        ``tp_group``, so per-module TP shards are correct without any
+        CUDA-tracker involvement. The standard Bridge path uses the same
+        single-``torch.manual_seed`` mechanism for CPU init across arbitrarily
+        complex TP/PP layouts.
+        """
+        par_cfg = self.megatron_mimo_parallelism_config
+        return get_megatron_mimo_rng_mode(par_cfg) == MegatronMIMORNGMode.PER_MODULE
+
+    def get_rng_mode(self) -> MegatronMIMORNGMode:
+        """Return the RNG mode selected by this provider's parallelism config."""
+        return get_megatron_mimo_rng_mode(self.megatron_mimo_parallelism_config)
+
+    def uses_per_module_rng(self) -> bool:
+        """Whether this provider requires module-scoped CUDA RNG snapshots."""
+        return self.get_rng_mode() == MegatronMIMORNGMode.PER_MODULE
+
+    def _walk_module_spec_for_recompute(self, spec, path: str) -> List[str]:
+        """Recursively inspect a ``ModuleSpec`` tree for recompute-enabled configs.
+
+        Returns dotted paths (e.g. ``"vision.encoders.clip"``) for every
+        ``TransformerConfig``-bearing entry where ``recompute_granularity`` is
+        set. Walks ``spec.params['config']`` / ``spec.params['transformer_config']``
+        plus all nested entries under ``spec.submodules`` (which can be a
+        ``ModuleSpec``, a dict mapping names to specs, a dict-of-dicts, or a
+        list/tuple of specs).
+
+        Required because modality submodule wrappers typically have empty
+        top-level ``params`` and the real ``transformer_config`` lives inside
+        ``submodules["encoders"]["<encoder>"]``. A non-recursive check would
+        miss encoder recompute and let asymmetric TP + encoder recompute slip
+        through silently.
+        """
+        offenders: List[str] = []
+        params = spec.params or {}
+        cfg = params.get("config") or params.get("transformer_config")
+        if cfg is not None and getattr(cfg, "recompute_granularity", None) is not None:
+            offenders.append(path)
+
+        submodules = getattr(spec, "submodules", None) or {}
+
+        def _walk(node, sub_path: str) -> None:
+            if node is None:
+                return
+            if hasattr(node, "params") or hasattr(node, "submodules"):
+                # ModuleSpec-like — recurse via the same walker.
+                offenders.extend(self._walk_module_spec_for_recompute(node, sub_path))
+            elif isinstance(node, dict):
+                for key, child in node.items():
+                    _walk(child, f"{sub_path}.{key}" if sub_path else key)
+            elif isinstance(node, (list, tuple)):
+                for idx, child in enumerate(node):
+                    _walk(child, f"{sub_path}[{idx}]")
+            # else: scalar/None — ignore.
+
+        if isinstance(submodules, dict):
+            for key, child in submodules.items():
+                _walk(child, f"{path}.{key}" if path else key)
+        else:
+            _walk(submodules, path)
+
+        return offenders
+
+    def _validate_asymmetric_tp_constraints(self) -> None:
+        """Block v1-unsafe combinations with asymmetric TP under colocated.
+
+        Currently rejects only activation recomputation: recompute re-runs
+        forward inside backward, outside the per-module ``module_rng_scope``
+        context, so each module's CUDA RNG state isn't restored when the
+        recomputed forward draws. Long-term fix is autograd-side scope
+        registration; tracked separately.
+
+        ``use_cpu_initialization=True`` is intentionally NOT rejected — CPU
+        init's correctness mechanism (deterministic master weight built from
+        a shared ``torch.manual_seed``, then per-module ``tp_group`` slicing)
+        is independent of the CUDA RNG tracker and works correctly under
+        asymmetric TP. See ``_is_asymmetric_tp_colocated`` docstring.
+        """
+        if not self._is_asymmetric_tp_colocated():
+            return
+
+        offenders: List[str] = []
+        offenders.extend(self._walk_module_spec_for_recompute(self.language_model_spec, "language"))
+        for modality_name, spec in self.modality_submodules_spec.items():
+            offenders.extend(self._walk_module_spec_for_recompute(spec, modality_name))
+        if offenders:
+            raise ValueError(
+                f"Colocated asymmetric TP with activation recomputation is not "
+                f"supported in v1 — recompute re-runs forward inside backward, "
+                f"outside the module RNG scope. Offending configs: {offenders}. "
+                f"Disable recompute_granularity or use symmetric TP."
+            )
+
     def build_infra(self) -> MegatronMIMOInfra:
         """Build MegatronMIMO parallelism infrastructure.
 
         This method builds HyperCommGrids, ProcessGroupCollections, and topology
-        for MegatronMIMO's heterogeneous parallelism. It is idempotent and does not
-        mutate provider state (results are not cached).
+        for MegatronMIMO's heterogeneous parallelism. **Memoized**: subsequent
+        calls return the same ``MegatronMIMOInfra`` object so that side state
+        attached to it (e.g. ``cuda_rng_states_per_module`` populated by
+        ``seed_per_module_rng_tracker`` between setup and model construction)
+        is shared with ``provide()``/``provide_distributed_model()``. Without
+        memoization, setup-side mutations would be invisible to the model
+        construction path because ``provide_distributed_model`` calls
+        ``build_infra()`` again internally.
 
         Can be called before or after provide(). Call finalize() first to
         validate the parallelism configuration.
@@ -147,6 +542,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             MegatronMIMOInfra containing grids, topology, pg_collections,
             and the list of modules this rank participates in.
         """
+        self._validate_specs_static()
+        cached = getattr(self, "_infra", None)
+        if cached is not None:
+            return cached
         if self.megatron_mimo_parallelism_config is not None:
             grids = build_hypercomm_grids(self.megatron_mimo_parallelism_config)
             pg_collections = self._get_pg_collections_from_grids(grids)
@@ -173,13 +572,18 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         else:
             output_ndim = {name: 3 if name == MIMO_LANGUAGE_MODULE_KEY else 2 for name in grids}
 
-        return MegatronMIMOInfra(
+        infra = MegatronMIMOInfra(
             module_to_grid_map=grids,
             topology=topology,
             pg_collections=pg_collections,
             participating_modules=participating_modules,
             module_output_ndim=output_ndim,
+            rng_mode=self.get_rng_mode(),
         )
+        # Memoize so setup-side mutations (e.g. cuda_rng_states_per_module)
+        # are visible when provide_distributed_model() calls build_infra() again.
+        object.__setattr__(self, "_infra", infra)
+        return infra
 
     def _get_pg_collections_from_grids(
         self,
@@ -290,20 +694,29 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             consistent with other providers. This method returns a CPU model.
 
         Raises:
-            ValueError: If language_model_spec is not set, or if this rank
-                doesn't participate in any module.
+            ValueError: If language_model_spec is not set, modality_submodules_spec
+                is empty, or if this rank doesn't participate in any module.
         """
-        if self.language_model_spec is None:
-            raise ValueError(
-                "language_model_spec must be set before calling provide(). "
-                "Set it directly or use a subclass that populates it in __post_init__."
-            )
+        # _validate_specs_static() runs again here (build_infra calls it too)
+        # so direct callers of provide() get the same contract enforcement.
+        # The check is cheap and idempotent.
+        self._validate_specs_static()
 
         # Build infrastructure
         infra = self.build_infra()
 
+        if self.uses_per_module_rng() and not infra.cuda_rng_states_per_module:
+            raise RuntimeError(
+                "Colocated MegatronMIMO with asymmetric TP requires per-module RNG snapshots "
+                "before raw provide() constructs the model. Call "
+                "MegatronMIMOProvider.initialize_model_parallel(seed=...) first, or use "
+                "provide_distributed_model(), which initializes MegatronMIMO provider state "
+                "for standalone construction."
+            )
+
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
+        llm_pg = None
         if self.megatron_mimo_parallelism_config:
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
@@ -332,7 +745,36 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ),
         )
 
-        megatron_mimo_model = MimoModel(mimo_model_config)
+        # Thread the LLM's CP and TP groups explicitly so MimoModel's PartitionAdapter
+        # (built when language CP>1 or sequence_parallel=True) binds to the correct
+        # groups instead of falling back to uninitialised global parallel_state.
+        cp_group = llm_pg.cp if llm_pg is not None else None
+        tp_group = llm_pg.tp if llm_pg is not None else None
+
+        # Bind one factory per module the rank participates in. Each factory
+        # captures the module name via default-arg so the lambda doesn't all
+        # close over the same loop variable. MimoModel calls factory() per
+        # entry, returning a fresh context manager — required because
+        # construction and per-step forward enter the same scope multiple times.
+        # Only bind factories in the per-module RNG mode. Non-colocated and
+        # symmetric colocated layouts intentionally stay on the standard
+        # singleton tracker path even when they use MegatronMIMO parallelism.
+        module_rng_scopes: Optional[Dict[str, Callable[[], ContextManager[None]]]] = None
+        if self.uses_per_module_rng() and infra.cuda_rng_states_per_module:
+            module_rng_scopes = {
+                name: (lambda n=name: module_rng_scope(n, infra)) for name in infra.participating_modules
+            }
+
+        megatron_mimo_model = MimoModel(
+            mimo_model_config,
+            cp_group=cp_group,
+            tp_group=tp_group,
+            module_rng_scopes=module_rng_scopes,
+        )
+
+        # Set model_type so mcore schedules can introspect it
+        # (forward_backward_no_pipelining calls get_model_type via get_attr_wrapped_model).
+        megatron_mimo_model.model_type = ModelType.encoder_or_decoder
 
         # Apply freezing
         self._apply_freezing(megatron_mimo_model)
@@ -408,8 +850,22 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                 "FSDP is not yet supported for MegatronMIMO models. Use DDP (wrap_with_ddp=True) instead."
             )
 
-        # Finalize parallelism config
-        self.finalize()
+        # Standard Bridge users typically enter through provide_distributed_model()
+        # without calling initialize_model_parallel() explicitly. Mirror that
+        # provider contract while keeping MIMO's setup module free to pre-seed
+        # with the training config seed before it gets here.
+        if self.megatron_mimo_parallelism_config is not None and not self._mimo_model_parallel_initialized:
+            self.initialize_model_parallel(seed=0)
+        else:
+            self.finalize()
+
+        # Note: the asymmetric-TP guard runs inside finalize() (and
+        # transitively from initialize_model_parallel above). We previously
+        # re-ran it here to catch the use_cpu_initialization kwarg override,
+        # but CPU init is no longer rejected — it's safe under asymmetric TP
+        # by construction (deterministic master weight + per-module tp_group
+        # slicing). Recompute, the only remaining guard, is fixed at spec
+        # construction time so finalize-time alone is sufficient.
 
         # Build infrastructure
         infra = self.build_infra()
@@ -514,16 +970,48 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         seed_kwargs: Optional[dict] = None,
         **model_parallel_kwargs,
     ) -> None:
-        """MegatronMIMO uses per-module HyperCommGrids, not global MPU state.
+        """Initialize MegatronMIMO provider state without global MPU mutation.
 
-        Raises NotImplementedError to prevent accidental global MPU initialization,
-        which would corrupt process groups for heterogeneous parallelism.
-        Use finalize() + build_infra() instead.
+        This mirrors the public provider lifecycle used by standard Bridge
+        providers, but MegatronMIMO cannot call
+        ``parallel_state.initialize_model_parallel`` because modules may have
+        independent TP/DP/PP grids. Instead, this method finalizes the
+        MegatronMIMO parallelism config, builds/memoizes HyperCommGrid
+        infrastructure, and, when ``seed`` is provided, seeds the per-module
+        CUDA RNG tracker snapshots consumed by ``module_rng_scope``.
+
+        Args:
+            seed: Base random seed. ``None`` finalizes/builds process groups but
+                leaves RNG state unchanged.
+            seed_kwargs: Optional kwargs forwarded to MCore's
+                ``model_parallel_cuda_manual_seed``.
+            **model_parallel_kwargs: Accepted for API compatibility with
+                ``ModelProviderMixin.initialize_model_parallel``. MegatronMIMO
+                does not use global MPU initialization kwargs.
         """
-        raise NotImplementedError(
-            "MegatronMIMO does not use global model parallelism initialization. "
-            "Use finalize() to validate config and build_infra() to create HyperCommGrids."
-        )
+        del model_parallel_kwargs
+
+        if self.megatron_mimo_parallelism_config is not None and not dist.is_initialized():
+            import os
+
+            from megatron.bridge.utils.common_utils import get_local_rank_preinit
+
+            os.environ["RANK"] = os.environ.get("RANK", "0")
+            os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
+            os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
+            os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "12355")
+            torch.cuda.set_device(get_local_rank_preinit())
+            dist.init_process_group("nccl")
+
+        self.finalize()
+        infra = self.build_infra()
+        if seed is not None:
+            if self.uses_per_module_rng():
+                seed_per_module_rng_tracker(seed, infra, seed_kwargs=seed_kwargs)
+            else:
+                seed_singleton_rng_tracker(seed, infra, seed_kwargs=seed_kwargs)
+
+        object.__setattr__(self, "_mimo_model_parallel_initialized", True)
 
     def _apply_freezing(self, model: MimoModel) -> None:
         """Apply freezing based on configuration."""
@@ -585,3 +1073,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     "Call torch.distributed.init_process_group() first."
                 )
             self.megatron_mimo_parallelism_config.finalize(dist.get_world_size())
+            # After parallelism config is finalized, _is_colocated() and
+            # asymmetric-TP geometry are determined. Catch v1-unsafe combos
+            # (cpu init, recompute) at config-build time.
+            self._validate_asymmetric_tp_constraints()

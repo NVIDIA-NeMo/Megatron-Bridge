@@ -1,13 +1,17 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO Model Provider."""
 
+from typing import Optional
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.megatron_mimo import (
     MegatronMIMOInfra,
     MegatronMIMOProvider,
+    MegatronMIMORNGMode,
+    get_megatron_mimo_rng_mode,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
@@ -15,8 +19,80 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
 )
 
 
+# MegatronMIMOProvider rejects single-module configs (language-only or no
+# modality submodule spec). Tests that don't care about modality specifics
+# use this dummy to satisfy the required-modules contract while keeping the
+# test focused on whatever else it's asserting.
+def _dummy_modality_spec_dict() -> dict:
+    return {"vision": ModuleSpec(module=Mock, params={})}
+
+
+def _dummy_modality_parallelism(rank_offset: int = 0, **kwargs) -> dict:
+    """Module-parallelism dict containing language + a dummy 'vision' entry.
+
+    Mirrors the language entry's geometry so the resulting layout is colocated
+    by default; pass ``rank_offset`` and parallelism kwargs to override.
+    """
+    return {
+        "vision": ModuleParallelismConfig(rank_offset=rank_offset, **kwargs),
+    }
+
+
 class TestMegatronMIMOProvider:
     """Test cases for MegatronMIMOProvider."""
+
+    def test_get_megatron_mimo_rng_mode_selects_expected_mode(self):
+        """RNG mode is selected from placement plus TP symmetry."""
+        non_colocated = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    data_parallel_size=2,
+                    rank_offset=2,
+                ),
+            },
+        )
+        non_colocated.finalize(world_size=4)
+        assert get_megatron_mimo_rng_mode(non_colocated) == MegatronMIMORNGMode.SINGLETON
+
+        symmetric_colocated = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    data_parallel_size=1,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    data_parallel_size=1,
+                    rank_offset=0,
+                ),
+            },
+        )
+        symmetric_colocated.finalize(world_size=2)
+        assert get_megatron_mimo_rng_mode(symmetric_colocated) == MegatronMIMORNGMode.SINGLETON
+
+        asymmetric_colocated = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    data_parallel_size=1,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+            },
+        )
+        asymmetric_colocated.finalize(world_size=2)
+        assert get_megatron_mimo_rng_mode(asymmetric_colocated) == MegatronMIMORNGMode.PER_MODULE
 
     def test_provider_initialization_minimal(self):
         """Test provider initializes with minimal required fields."""
@@ -81,6 +157,7 @@ class TestMegatronMIMOProvider:
 
         provider = MegatronMIMOProvider(
             language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
             special_token_ids={"images": 32000},
         )
 
@@ -102,7 +179,10 @@ class TestMegatronMIMOProvider:
     def test_provide_signature_matches_mixin(self, _mock_build_grids, mock_mimo_model):
         """Test provide() accepts standard mixin signature arguments."""
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
-        provider = MegatronMIMOProvider(language_model_spec=language_spec)
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
+        )
 
         mock_mimo_model.return_value = MagicMock()
 
@@ -112,18 +192,82 @@ class TestMegatronMIMOProvider:
         # Should still return a model
         assert result is not None
 
+    # ── Required-spec validator (no-dist static check) ────────────────────────
+    #
+    # MegatronMIMOProvider must reject single-module / no-modality configs at
+    # every infrastructure-build entry point — finalize() alone isn't enough
+    # because build_infra() and provide() can be called without ever running
+    # finalize() (e.g. in test paths or from callers that build infra directly).
+
+    def test_build_infra_rejects_missing_modality_spec(self):
+        """``build_infra`` must reject providers with empty
+        ``modality_submodules_spec`` even when no parallelism config is set
+        (legacy no-grid-map path) and even when ``finalize()`` is never called."""
+        import pytest
+
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+        provider = MegatronMIMOProvider(language_model_spec=language_spec)
+
+        with pytest.raises(ValueError, match="at least one modality submodule"):
+            provider.build_infra()
+
+    def test_provide_rejects_missing_modality_spec(self):
+        """``provide`` must reject the same shape that ``build_infra`` rejects."""
+        import pytest
+
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+        provider = MegatronMIMOProvider(language_model_spec=language_spec)
+
+        with pytest.raises(ValueError, match="at least one modality submodule"):
+            provider.provide()
+
+    def test_build_infra_rejects_single_module_parallelism_config(self):
+        """A parallelism config with only the language module must be rejected
+        before ``build_hypercomm_grids`` runs.
+
+        Pre-fix: ``provider.finalize()`` would catch this, but ``build_infra``
+        and ``provide`` skipped that path under non-distributed tests and
+        legacy callers, so the malformed config slipped through to the grid
+        builder. ``_validate_specs_static`` now calls
+        ``parallelism_config.validate_static()`` early, surfacing the right
+        error regardless of dist state.
+        """
+        import pytest
+
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+        # Parallelism declares only "language" — no modality. With a valid
+        # modality_submodules_spec on the provider this still fails because
+        # parallelism config itself is malformed (no modality entry).
+        megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=1),
+            },
+        )
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+
+        with pytest.raises(ValueError, match="at least one modality module"):
+            provider.build_infra()
+
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
     def test_build_infra_without_parallelism(self, mock_build_grids):
         """Test build_infra() without parallelism config."""
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
-        provider = MegatronMIMOProvider(language_model_spec=language_spec)
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
+        )
 
         infra = provider.build_infra()
 
-        # Should return infrastructure with auto-derived topology
+        # Should return infrastructure with auto-derived topology including the
+        # dummy modality entry that the required-specs validator now mandates.
         assert isinstance(infra, MegatronMIMOInfra)
         assert infra.module_to_grid_map == {}
-        assert infra.topology == {"language": []}
+        assert infra.topology == {"vision": ["language"], "language": []}
         assert infra.pg_collections == {}
         assert infra.participating_modules == []
 
@@ -147,18 +291,27 @@ class TestMegatronMIMOProvider:
                     tensor_model_parallel_size=2,
                     data_parallel_size=2,
                 ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    data_parallel_size=2,
+                ),
             },
         )
 
-        # Mock grid
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 0
-        mock_grid.size = 4
-        mock_grid.get_pg.return_value = MagicMock()
-        mock_build_grids.return_value = {"language": mock_grid}
+        # Mock grids — one per module since the parallelism config has both.
+        language_grid = MagicMock()
+        language_grid.rank_offset = 0
+        language_grid.size = 4
+        language_grid.get_pg.return_value = MagicMock()
+        vision_grid = MagicMock()
+        vision_grid.rank_offset = 0
+        vision_grid.size = 4
+        vision_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"language": language_grid, "vision": vision_grid}
 
         provider = MegatronMIMOProvider(
             language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
             megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
         )
 
@@ -178,7 +331,15 @@ class TestMegatronMIMOProvider:
     @patch("torch.distributed.get_rank")
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
     def test_build_infra_is_idempotent(self, mock_build_grids, mock_get_rank, mock_get_pg_ranks, mock_new_group):
-        """Test build_infra() can be called multiple times."""
+        """Test build_infra() can be called multiple times.
+
+        ``build_infra()`` is now memoized — repeated calls return the SAME
+        ``MegatronMIMOInfra`` object (identity, not just equality). This is
+        load-bearing for the per-module RNG plumbing: ``setup_megatron_mimo``
+        populates ``infra.cuda_rng_states_per_module`` after the first
+        ``build_infra()`` call, and ``provide_distributed_model`` calls
+        ``build_infra()`` again internally — the memoized return makes the
+        snapshots visible to ``MimoModel.__init__``."""
         mock_get_rank.return_value = 0
         mock_get_pg_ranks.return_value = [0, 1]
         mock_new_group.return_value = MagicMock()
@@ -187,17 +348,23 @@ class TestMegatronMIMOProvider:
         megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0),
+                "vision": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0),
             },
         )
 
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 0
-        mock_grid.size = 2
-        mock_grid.get_pg.return_value = MagicMock()
-        mock_build_grids.return_value = {"language": mock_grid}
+        language_grid = MagicMock()
+        language_grid.rank_offset = 0
+        language_grid.size = 2
+        language_grid.get_pg.return_value = MagicMock()
+        vision_grid = MagicMock()
+        vision_grid.rank_offset = 0
+        vision_grid.size = 2
+        vision_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"language": language_grid, "vision": vision_grid}
 
         provider = MegatronMIMOProvider(
             language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
             megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
         )
 
@@ -205,8 +372,14 @@ class TestMegatronMIMOProvider:
         infra1 = provider.build_infra()
         infra2 = provider.build_infra()
 
-        # Should return equivalent results (not cached, but same structure)
-        assert infra1.participating_modules == infra2.participating_modules
+        # Memoized: same object identity across calls.
+        assert infra1 is infra2
+        # build_hypercomm_grids should only fire on the first call.
+        assert mock_build_grids.call_count == 1
+        # And mutations on the returned infra are visible to subsequent callers
+        # — the load-bearing property for cuda_rng_states_per_module.
+        infra1.cuda_rng_states_per_module["vision"] = {"sentinel": object()}
+        assert "vision" in infra2.cuda_rng_states_per_module
 
     @patch("torch.distributed.new_group")
     @patch("torch.distributed.get_process_group_ranks")
@@ -228,17 +401,26 @@ class TestMegatronMIMOProvider:
                     tensor_model_parallel_size=2,
                     data_parallel_size=2,
                 ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    data_parallel_size=2,
+                ),
             },
         )
 
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 0
-        mock_grid.size = 4
-        mock_grid.get_pg.return_value = MagicMock()
-        mock_build_grids.return_value = {"language": mock_grid}
+        language_grid = MagicMock()
+        language_grid.rank_offset = 0
+        language_grid.size = 4
+        language_grid.get_pg.return_value = MagicMock()
+        vision_grid = MagicMock()
+        vision_grid.rank_offset = 0
+        vision_grid.size = 4
+        vision_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"language": language_grid, "vision": vision_grid}
 
         provider = MegatronMIMOProvider(
             language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
             megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
         )
 
@@ -250,12 +432,226 @@ class TestMegatronMIMOProvider:
         # Should return model directly
         assert model == mock_model_instance
         config_arg = mock_mimo_model.call_args[0][0]
-        assert config_arg.module_to_grid_map == {"language": mock_grid}
+        assert config_arg.module_to_grid_map == {"language": language_grid, "vision": vision_grid}
 
         # Infrastructure should be available via build_infra()
         infra = provider.build_infra()
         assert "language" in infra.module_to_grid_map
         assert "language" in infra.pg_collections
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    def test_provide_threads_cp_and_tp_groups_into_mimo_model(
+        self, mock_build_grids, mock_mimo_model, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """MimoModel must receive cp_group and tp_group from the language module's
+        pg_collection. MimoModel's PartitionAdapter (built when language CP>1 or
+        sequence_parallel=True) otherwise falls back to uninitialised globals —
+        MegatronMIMO intentionally skips initialize_model_parallel()."""
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1, 2, 3]
+        mock_new_group.return_value = MagicMock()
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+
+        megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    context_parallel_size=2,
+                    data_parallel_size=1,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    context_parallel_size=2,
+                    data_parallel_size=1,
+                ),
+            },
+        )
+
+        # Distinct sentinel PGs so we can assert correct threading, not just truthiness.
+        tp_pg = MagicMock(name="tp_pg")
+        cp_pg = MagicMock(name="cp_pg")
+        language_grid = MagicMock()
+        language_grid.rank_offset = 0
+        language_grid.size = 4
+        language_grid.is_current_rank_in_grid.return_value = True
+        language_grid.get_pg.side_effect = lambda dims: {"tp": tp_pg, "cp": cp_pg}.get(dims[0], MagicMock())
+        vision_grid = MagicMock()
+        vision_grid.rank_offset = 0
+        vision_grid.size = 4
+        vision_grid.is_current_rank_in_grid.return_value = True
+        vision_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"language": language_grid, "vision": vision_grid}
+
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+
+        provider.provide()
+
+        kwargs = mock_mimo_model.call_args.kwargs
+        assert kwargs["cp_group"] is cp_pg
+        assert kwargs["tp_group"] is tp_pg
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    def test_provide_threads_module_rng_scope_factories_when_snapshots_present(
+        self, mock_build_grids, mock_mimo_model, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """When ``infra.cuda_rng_states_per_module`` is populated (Step 3b
+        seeding ran), ``provide()`` binds one factory per module and threads
+        the dict into ``MimoModel(module_rng_scopes=...)``. Each factory
+        captures the module name via default-arg so calling factory() yields
+        a fresh context manager every time.
+
+        Load-bearing for asymmetric TP: a regression where the kwarg gets
+        dropped or the factories all close over the same loop variable would
+        either skip module-scoped RNG entirely or use the wrong module's
+        snapshot.
+        """
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1, 2, 3]
+        mock_new_group.return_value = MagicMock()
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+
+        megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
+                "vision": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4),
+            },
+        )
+        language_grid = MagicMock()
+        language_grid.rank_offset = 0
+        language_grid.size = 4
+        language_grid.get_pg.return_value = MagicMock()
+        vision_grid = MagicMock()
+        vision_grid.rank_offset = 0
+        vision_grid.size = 4
+        vision_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"language": language_grid, "vision": vision_grid}
+
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+
+        # Simulate setup having seeded snapshots before provide() runs.
+        infra = provider.build_infra()
+        infra.cuda_rng_states_per_module["language"] = {"sentinel": "lang"}
+        infra.cuda_rng_states_per_module["vision"] = {"sentinel": "vision"}
+
+        provider.provide()
+
+        scopes = mock_mimo_model.call_args.kwargs["module_rng_scopes"]
+        assert scopes is not None
+        assert set(scopes.keys()) == {"language", "vision"}
+        # Each value is a callable returning a context manager.
+        for name, factory in scopes.items():
+            assert callable(factory), f"{name} factory must be callable"
+            with factory():
+                pass  # context-manager protocol works.
+
+        # Default-arg capture: factories must be bound to distinct module names,
+        # not all closing over the loop variable's final value. Inspect each
+        # factory's __defaults__ to verify the bound name matches.
+        assert scopes["language"].__defaults__ == ("language",)
+        assert scopes["vision"].__defaults__ == ("vision",)
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    def test_provide_does_not_bind_module_rng_scopes_for_symmetric_colocated(
+        self, mock_build_grids, mock_mimo_model, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """Symmetric colocated layouts stay on MCore's singleton RNG tracker.
+
+        Even if a stale test fixture populates ``cuda_rng_states_per_module``,
+        ``provide()`` must not bind ``module_rng_scopes`` unless the layout
+        actually requires per-module RNG.
+        """
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1, 2, 3]
+        mock_new_group.return_value = MagicMock()
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+
+        megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
+                "vision": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
+            },
+        )
+        language_grid = MagicMock(rank_offset=0, size=4)
+        language_grid.get_pg.return_value = MagicMock()
+        vision_grid = MagicMock(rank_offset=0, size=4)
+        vision_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"language": language_grid, "vision": vision_grid}
+
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+        infra = provider.build_infra()
+        infra.cuda_rng_states_per_module["language"] = {"sentinel": "lang"}
+        infra.cuda_rng_states_per_module["vision"] = {"sentinel": "vision"}
+
+        provider.provide()
+
+        assert mock_mimo_model.call_args.kwargs["module_rng_scopes"] is None
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    def test_provide_passes_none_module_rng_scopes_when_no_snapshots(
+        self, mock_build_grids, mock_mimo_model, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """Legacy / un-seeded path: ``cuda_rng_states_per_module`` empty →
+        ``module_rng_scopes=None`` so MimoModel uses its prior single-tracker
+        behavior. Backward-compat guard for existing non-asymmetric-TP setups."""
+        mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1, 2, 3]
+        mock_new_group.return_value = MagicMock()
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+
+        megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
+                "vision": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
+            },
+        )
+        language_grid = MagicMock()
+        language_grid.rank_offset = 0
+        language_grid.size = 4
+        language_grid.get_pg.return_value = MagicMock()
+        vision_grid = MagicMock()
+        vision_grid.rank_offset = 0
+        vision_grid.size = 4
+        vision_grid.get_pg.return_value = MagicMock()
+        mock_build_grids.return_value = {"language": language_grid, "vision": vision_grid}
+
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+
+        # NO snapshot population — leaves cuda_rng_states_per_module empty.
+        provider.provide()
+
+        assert mock_mimo_model.call_args.kwargs["module_rng_scopes"] is None
 
     def test_inject_pg_collection_into_language_spec(self):
         """Test that pg_collection is injected into language specs."""
@@ -303,6 +699,7 @@ class TestMegatronMIMOProvider:
 
         provider = MegatronMIMOProvider(
             language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
             freeze_language_model=True,
         )
 
@@ -387,17 +784,92 @@ class TestMegatronMIMOProvider:
         # Should return model directly
         assert model == mock_model_instance
 
-    def test_initialize_model_parallel_raises(self):
-        """Test that initialize_model_parallel() raises NotImplementedError for MegatronMIMO."""
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.seed_singleton_rng_tracker")
+    def test_initialize_model_parallel_builds_infra_and_seeds(self, mock_seed):
+        """initialize_model_parallel is the public provider setup hook for
+        MegatronMIMO: it finalizes, builds/memoizes infra, and seeds CUDA RNG
+        snapshots without invoking global MPU initialization."""
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
-        provider = MegatronMIMOProvider(language_model_spec=language_spec)
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
+        )
+        infra = MegatronMIMOInfra(
+            module_to_grid_map={},
+            topology={},
+            pg_collections={},
+            participating_modules=[],
+        )
 
-        import pytest
+        with (
+            patch.object(provider, "finalize") as mock_finalize,
+            patch.object(provider, "build_infra", return_value=infra) as mock_build_infra,
+        ):
+            provider.initialize_model_parallel(seed=42, seed_kwargs={"te_rng_tracker": True})
 
-        with pytest.raises(NotImplementedError, match="MegatronMIMO does not use global model parallelism"):
-            provider.initialize_model_parallel(seed=42)
-        with pytest.raises(NotImplementedError, match="MegatronMIMO does not use global model parallelism"):
-            provider.initialize_model_parallel()
+        mock_finalize.assert_called_once()
+        mock_build_infra.assert_called_once()
+        mock_seed.assert_called_once_with(42, infra, seed_kwargs={"te_rng_tracker": True})
+        assert provider._mimo_model_parallel_initialized is True
+
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.get_model_config")
+    def test_provide_distributed_model_auto_initializes_mimo_state(self, mock_get_config):
+        """Provider-facing conversion paths call provide_distributed_model()
+        directly. Match standard Bridge by auto-initializing MIMO provider state
+        with seed=0 when the caller did not do it explicitly."""
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2),
+                    "vision": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2),
+                },
+            ),
+            bf16=False,
+            fp16=False,
+        )
+        infra = MegatronMIMOInfra(
+            module_to_grid_map={"language": Mock(), "vision": Mock()},
+            topology={"vision": ["language"], "language": []},
+            pg_collections={"language": Mock(), "vision": Mock()},
+            participating_modules=["language", "vision"],
+        )
+        model = MagicMock()
+        mock_model_config = MagicMock(variable_seq_lengths=False)
+        mock_get_config.return_value = mock_model_config
+
+        with (
+            patch.object(provider, "initialize_model_parallel") as mock_init,
+            patch.object(provider, "build_infra", return_value=infra),
+            patch.object(provider, "provide", return_value=model),
+        ):
+            provider.provide_distributed_model(
+                wrap_with_ddp=False,
+                use_cpu_initialization=True,
+            )
+
+        mock_init.assert_called_once_with(seed=0)
+        assert mock_model_config.variable_seq_lengths is True
+
+    def test_raw_provide_requires_rng_snapshots_for_colocated_asymmetric_tp(self):
+        """Raw provide() is not the user-facing distributed constructor. If a
+        caller bypasses initialize_model_parallel() under colocated asymmetric
+        TP, fail loudly instead of constructing with the wrong singleton RNG."""
+        provider = self._make_asymmetric_tp_provider()
+        provider.megatron_mimo_parallelism_config.finalize(world_size=2)
+        infra = MegatronMIMOInfra(
+            module_to_grid_map={"language": Mock(), "vision": Mock()},
+            topology={"vision": ["language"], "language": []},
+            pg_collections={"language": Mock(), "vision": Mock()},
+            participating_modules=["language", "vision"],
+            cuda_rng_states_per_module={},
+        )
+
+        with patch.object(provider, "build_infra", return_value=infra):
+            with pytest.raises(RuntimeError, match="requires per-module RNG snapshots"):
+                provider.provide()
 
     @patch("megatron.core.transformer.module.Float16Module")
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.get_model_config")
@@ -413,6 +885,7 @@ class TestMegatronMIMOProvider:
 
         provider = MegatronMIMOProvider(
             language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
             bf16=False,  # Disable to simplify test
             fp16=False,
         )
@@ -430,6 +903,155 @@ class TestMegatronMIMOProvider:
 
         # Should have set variable_seq_lengths=True
         assert mock_config.variable_seq_lengths is True
+
+    # ── Step 3f: asymmetric-TP unsafe-combo guards ────────────────────────────
+
+    def _make_asymmetric_tp_provider(
+        self,
+        *,
+        use_cpu_initialization: bool = False,
+        language_recompute: Optional[str] = None,
+        encoder_recompute: Optional[str] = None,
+    ) -> MegatronMIMOProvider:
+        """Construct a provider with the canonical fan-in asymmetric-TP shape.
+
+        Optionally injects ``recompute_granularity`` into the language config
+        and/or into the nested encoder config under
+        ``vision_spec.submodules["encoders"]["clip"]``. This nesting matches
+        the production modality-spec shape (vision wrapper has empty top-level
+        params; the real TransformerConfig lives inside the encoder spec).
+        """
+        from types import SimpleNamespace
+
+        language_config = SimpleNamespace(recompute_granularity=language_recompute)
+        language_spec = ModuleSpec(module=Mock, params={"config": language_config})
+
+        encoder_config = SimpleNamespace(recompute_granularity=encoder_recompute)
+        encoder_spec = ModuleSpec(module=Mock, params={"transformer_config": encoder_config})
+        # Modality wrapper has empty top-level params (matches production shape).
+        vision_spec = ModuleSpec(
+            module=Mock,
+            params={},
+            submodules={"encoders": {"clip": encoder_spec}},
+        )
+
+        return MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec={"vision": vision_spec},
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    "language": ModuleParallelismConfig(
+                        tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0
+                    ),
+                    "vision": ModuleParallelismConfig(
+                        tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0
+                    ),
+                },
+            ),
+            use_cpu_initialization=use_cpu_initialization,
+        )
+
+    def test_asymmetric_tp_validator_accepts_clean_config(self):
+        """Sanity: asymmetric-TP fan-in with no cpu-init / recompute passes."""
+        provider = self._make_asymmetric_tp_provider()
+        # Force-finalize the parallelism config so _is_colocated() works without dist.
+        provider.megatron_mimo_parallelism_config.finalize(world_size=2)
+        provider._validate_asymmetric_tp_constraints()  # must not raise
+
+    def test_asymmetric_tp_validator_accepts_cpu_init(self):
+        """``use_cpu_initialization=True`` is accepted under colocated asymmetric TP.
+
+        CPU init's correctness mechanism (``init_method`` builds the full
+        master weight on every rank from a shared ``torch.manual_seed``, then
+        each layer slices its own TP shard via the module's ``tp_group``) is
+        independent of the CUDA RNG tracker. The standard Bridge path uses
+        the same single-``torch.manual_seed`` mechanism for CPU init across
+        arbitrarily complex TP/PP layouts.
+
+        A previous version of this validator rejected this combination —
+        the rejection was over-conservative and is removed in v1. This test
+        pins the accepting behavior so a future regression that re-adds the
+        rejection without justification flips this test red.
+        """
+        provider = self._make_asymmetric_tp_provider(use_cpu_initialization=True)
+        provider.megatron_mimo_parallelism_config.finalize(world_size=2)
+        provider._validate_asymmetric_tp_constraints()  # must not raise
+
+    def test_asymmetric_tp_validator_rejects_language_recompute(self):
+        """Recompute on the top-level language ``TransformerConfig`` is caught."""
+        provider = self._make_asymmetric_tp_provider(language_recompute="full")
+        provider.megatron_mimo_parallelism_config.finalize(world_size=2)
+        with pytest.raises(ValueError, match=r"recomputation is not supported.*language"):
+            provider._validate_asymmetric_tp_constraints()
+
+    def test_asymmetric_tp_validator_rejects_recompute_in_nested_encoder(self):
+        """Recompute on the NESTED encoder config (inside
+        ``vision_spec.submodules["encoders"]["clip"]``) must be caught.
+
+        Critical regression guard for ``_walk_module_spec_for_recompute``: a
+        non-recursive check would miss this entirely because
+        ``vision_spec.params`` is empty. Production modality specs always nest
+        the real TransformerConfig under ``submodules["encoders"]``.
+        """
+        provider = self._make_asymmetric_tp_provider(encoder_recompute="full")
+        provider.megatron_mimo_parallelism_config.finalize(world_size=2)
+        with pytest.raises(ValueError, match=r"vision\.encoders\.clip"):
+            provider._validate_asymmetric_tp_constraints()
+
+    def test_asymmetric_tp_validator_no_op_under_symmetric_tp(self):
+        """Symmetric-TP colocated → validator is a no-op even with recompute
+        set. Backward-compat for existing symmetric setups."""
+        from types import SimpleNamespace
+
+        encoder_config = SimpleNamespace(recompute_granularity="full")
+        encoder_spec = ModuleSpec(module=Mock, params={"transformer_config": encoder_config})
+        vision_spec = ModuleSpec(module=Mock, params={}, submodules={"encoders": {"clip": encoder_spec}})
+        language_spec = ModuleSpec(module=Mock, params={"config": SimpleNamespace(recompute_granularity="full")})
+
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec={"vision": vision_spec},
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2),
+                    "vision": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2),
+                },
+            ),
+        )
+        provider.megatron_mimo_parallelism_config.finalize(world_size=2)
+        # No raise — symmetric TP is unaffected by the asymmetric-TP guards.
+        provider._validate_asymmetric_tp_constraints()
+
+    def test_asymmetric_tp_validator_no_op_under_non_colocated(self):
+        """Non-colocated (disjoint ranks) → validator is a no-op even with
+        asymmetric TP and recompute. The asymmetric-TP guard is colocated-only
+        because non-colocated places encoder and language on different ranks.
+        """
+        from types import SimpleNamespace
+
+        encoder_config = SimpleNamespace(recompute_granularity="full")
+        encoder_spec = ModuleSpec(module=Mock, params={"transformer_config": encoder_config})
+        vision_spec = ModuleSpec(module=Mock, params={}, submodules={"encoders": {"clip": encoder_spec}})
+        language_spec = ModuleSpec(module=Mock, params={"config": SimpleNamespace(recompute_granularity=None)})
+
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec={"vision": vision_spec},
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    # Disjoint rank ranges — non-colocated.
+                    "language": ModuleParallelismConfig(
+                        tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0
+                    ),
+                    "vision": ModuleParallelismConfig(
+                        tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=2
+                    ),
+                },
+            ),
+        )
+        provider.megatron_mimo_parallelism_config.finalize(world_size=4)
+        # No raise — non-colocated is outside the asymmetric-TP guard's scope.
+        provider._validate_asymmetric_tp_constraints()
 
 
 class TestMegatronMIMOInfra:

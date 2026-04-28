@@ -655,6 +655,8 @@ def _build_config(
     wandb_entity: str | None = None,
     wandb_save_dir: str | None = None,
     lr_warmup_iters: int = 0,
+    timing_log_level: int = 0,
+    timing_log_option: str = "minmax",
     seed: int = 42,
     deterministic: bool = False,
 ) -> ConfigContainer:
@@ -671,6 +673,8 @@ def _build_config(
     logger_cfg.wandb_exp_name = wandb_exp_name
     logger_cfg.wandb_entity = wandb_entity
     logger_cfg.wandb_save_dir = wandb_save_dir
+    logger_cfg.timing_log_level = timing_log_level
+    logger_cfg.timing_log_option = timing_log_option
     logger_cfg.tensorboard_dir = os.path.join(wandb_save_dir or "/tmp/tb_logs", "tb_logs") if wandb_project else None
 
     scheduler_cfg = SchedulerConfig(
@@ -753,6 +757,12 @@ def parse_args():
     parser.add_argument("--checkpoint-dir", type=str, default=None, help="Checkpoint output directory")
     parser.add_argument("--load-checkpoint", type=str, default=None, help="Checkpoint directory to resume from")
     parser.add_argument(
+        "--fully-parallel-save",
+        type=_str2bool,
+        default=True,
+        help="Use fully parallel distributed checkpoint save (default: True)",
+    )
+    parser.add_argument(
         "--language-model-checkpoint",
         type=str,
         default=None,
@@ -770,6 +780,20 @@ def parse_args():
     parser.add_argument("--wandb-exp-name", type=str, default="omni-modal-llava-e2e-test", help="W&B experiment name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity")
     parser.add_argument("--wandb-save-dir", type=str, default="/tmp/wandb", help="W&B save directory")
+    parser.add_argument(
+        "--timing-log-level",
+        type=int,
+        choices=[-1, 0, 1, 2],
+        default=0,
+        help="Megatron timer detail level: 0 disables detailed timers, 1 logs step regions, 2 logs schedule internals",
+    )
+    parser.add_argument(
+        "--timing-log-option",
+        type=str,
+        choices=["max", "minmax", "all"],
+        default="minmax",
+        help="How to aggregate timer logs across ranks",
+    )
     parser.add_argument(
         "--lr-warmup-iters", type=int, default=20, help="Number of iterations to linearly warmup learning rate"
     )
@@ -920,6 +944,8 @@ def main():
         wandb_entity=args.wandb_entity,
         wandb_save_dir=args.wandb_save_dir,
         lr_warmup_iters=args.lr_warmup_iters,
+        timing_log_level=args.timing_log_level,
+        timing_log_option=args.timing_log_option,
         seed=seed,
         deterministic=args.deterministic,
     )
@@ -932,7 +958,7 @@ def main():
     if args.load_checkpoint is not None:
         cfg.checkpoint.load = args.load_checkpoint
     cfg.checkpoint.ckpt_format = "torch_dist"
-    cfg.checkpoint.fully_parallel_save = True
+    cfg.checkpoint.fully_parallel_save = args.fully_parallel_save
     cfg.checkpoint.dist_ckpt_optim_fully_reshardable = True
     # MiMo RNG save is not yet supported: each module produces ShardedObject
     # with key "rng_state" using module-local PP/TP/DP ranks, causing

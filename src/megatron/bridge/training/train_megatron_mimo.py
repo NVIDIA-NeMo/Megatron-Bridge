@@ -22,9 +22,12 @@ from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Tupl
 
 import torch
 import torch.distributed as dist
-from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY, ModuleLayout
 from megatron.core.num_microbatches_calculator import get_num_microbatches
-from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
+from megatron.core.pipeline_parallel.schedules import (
+    forward_backward_no_pipelining,
+    forward_backward_pipelining_without_interleaving,
+)
 
 from megatron.bridge.training.checkpointing import CheckpointManager, DefaultCheckpointManager
 from megatron.bridge.training.eval import evaluate_and_print_results
@@ -53,12 +56,54 @@ if TYPE_CHECKING:
     from megatron.core.models.mimo.optimizer import MimoOptimizer
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
     from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
-    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
+    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection, ProcessGroupCollection
 
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOInfra
 
 
 logger = logging.getLogger(__name__)
+
+
+def _optimizer_has_params(optimizer: object) -> bool:
+    """Return whether an optimizer owns any rank-local trainable parameters."""
+    return any(group.get("params") for group in getattr(optimizer, "param_groups", ()))
+
+
+def _first_scheduler_with_param_groups(
+    schedulers: Dict[str, "OptimizerParamScheduler"],
+) -> Optional["OptimizerParamScheduler"]:
+    """Return the first scheduler backed by a non-empty optimizer."""
+    for scheduler in schedulers.values():
+        if scheduler is not None and _optimizer_has_params(scheduler.optimizer):
+            return scheduler
+    return None
+
+
+def _learning_rate_for_logging(
+    schedulers: Dict[str, "OptimizerParamScheduler"],
+) -> float:
+    """Return a globally visible learning rate for logging.
+
+    Non-colocated MegatronMIMO can have ranks whose local module is fully frozen.
+    Those ranks have no rank-local scheduler, but training_log still expects a
+    scalar learning rate on every rank.
+    """
+    local_learning_rate = -1.0
+    sched = _first_scheduler_with_param_groups(schedulers)
+    if sched is not None:
+        local_learning_rate = sched.get_lr(sched.optimizer.param_groups[0])
+
+    if dist.is_available() and dist.is_initialized():
+        device = (
+            torch.device("cuda", torch.cuda.current_device())
+            if torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+        learning_rate_tensor = torch.tensor([local_learning_rate], dtype=torch.float32, device=device)
+        dist.all_reduce(learning_rate_tensor, op=dist.ReduceOp.MAX)
+        local_learning_rate = learning_rate_tensor.item()
+
+    return max(local_learning_rate, 0.0)
 
 
 def train_step_megatron_mimo(
@@ -101,20 +146,61 @@ def train_step_megatron_mimo(
     # Zero gradients for all modules
     zero_grad_buffer_for_multimodule(module_to_grid_tuple)
 
+    # Schedule dispatch: the colocated path with LLM PP>1 needs the three-phase
+    # schedule (encoder full-batch forward → LLM 1F1B pipeline → encoder
+    # backward) to avoid deadlocking encoder collectives inside the pipeline
+    # staggering. Other cases — non-colocated (any PP layout) and colocated
+    # with LLM PP=1 — use the standard schedule; colocated PP=1 works because
+    # MimoModel._forward_all_modules runs encoder+communicate+LLM in a single
+    # forward on every rank, which is what the standard schedule expects.
+    megatron_mimo_model = unwrap_megatron_mimo_model(model)
+    is_colocated = megatron_mimo_model.role.mode is ModuleLayout.COLOCATED
+    needs_three_phase = is_colocated and megatron_mimo_model.lm_has_pp
+    if needs_three_phase:
+        # Three-phase schedule integration is deferred. See
+        # colocated_forward_backward_with_pp in the submodule and the
+        # "Known limitations" section of playground/colocated_mode_plan.md
+        # for the scope of work still needed (iterator shape, loss func,
+        # p2p_communicator plumbing).
+        raise NotImplementedError(
+            "Colocated MegatronMIMO with LLM PP>1 requires the three-phase schedule "
+            "(colocated_forward_backward_with_pp) which is not yet wired into MB's "
+            "train_step. Use LLM PP=1 in colocated mode, or non-colocated mode for PP>1, "
+            "until the three-phase integration lands."
+        )
+
     # Run forward-backward schedule
     timers("forward-backward", log_level=1).start(barrier=False)
 
-    losses_reduced = forward_backward_pipelining_without_interleaving(
-        forward_step_func=forward_step_func,
-        data_iterator=data_iterator,
-        model=[model],
-        num_microbatches=num_microbatches,
-        seq_length=seq_length,
-        micro_batch_size=micro_batch_size,
-        forward_only=False,
-        p2p_communicator=multimodule_communicator,
-        pg_collection=multimodule_pg_collection,
-    )
+    if is_colocated:
+        # Colocated LLM-PP=1: encoder→language flows through
+        # MimoModel._forward_all_modules via ColocatedBridgeCommunicator —
+        # no cross-module P2P at the schedule level. Use the no-pipelining
+        # schedule with the language module's pg_collection. Matches mcore's
+        # test_mimo_colocated_correctness.py:_run_forward_backward pattern.
+        language_pg = infra.pg_collections[MIMO_LANGUAGE_MODULE_KEY]
+        losses_reduced = forward_backward_no_pipelining(
+            forward_step_func=forward_step_func,
+            data_iterator=data_iterator,
+            model=[model],
+            num_microbatches=num_microbatches,
+            seq_length=seq_length,
+            micro_batch_size=micro_batch_size,
+            forward_only=False,
+            pg_collection=language_pg,
+        )
+    else:
+        losses_reduced = forward_backward_pipelining_without_interleaving(
+            forward_step_func=forward_step_func,
+            data_iterator=data_iterator,
+            model=[model],
+            num_microbatches=num_microbatches,
+            seq_length=seq_length,
+            micro_batch_size=micro_batch_size,
+            forward_only=False,
+            p2p_communicator=multimodule_communicator,
+            pg_collection=multimodule_pg_collection,
+        )
 
     timers("forward-backward").stop()
 
@@ -194,6 +280,8 @@ def train_megatron_mimo(
     global_state: GlobalState,
     megatron_mimo_infra: "MegatronMIMOInfra",
     multimodule_communicator: "MultiModulePipelineCommunicator",
+    active_module_name: str,
+    local_pg_collection: "ProcessGroupCollection",
     checkpoint_manager: Optional[CheckpointManager] = None,
     multimodule_pg_collection: Optional["MultiModuleProcessGroupCollection"] = None,
     module_to_grid_tuple: Optional[List] = None,
@@ -224,6 +312,13 @@ def train_megatron_mimo(
         global_state: GlobalState containing timers, config, train_state.
         megatron_mimo_infra: MegatronMIMOInfra with grids, topology, pg_collections.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
+        active_module_name: Canonical module name for this rank (from setup). In
+            non-colocated mode this is the single active module; in colocated
+            mode it defaults to the language module. Used for logging reductions
+            and legacy consumers that require a single module identity.
+        local_pg_collection: Canonical per-rank ProcessGroupCollection matching
+            ``active_module_name`` (from setup). Per-module operations should
+            still iterate ``megatron_mimo_infra.pg_collections`` directly.
         checkpoint_manager: CheckpointManager for save operations. Created by
             setup_megatron_mimo(). If None, a DefaultCheckpointManager is created.
         multimodule_pg_collection: Pre-built PG collection for the pipeline schedule.
@@ -257,16 +352,6 @@ def train_megatron_mimo(
             "The list-based fallback is not supported. Ensure Megatron-LM PR 3212 is available."
         )
 
-    # Use rank-local module PG for logging reductions and checkpoint saving to
-    # avoid global MPU fallback. In non-colocated MegatronMIMO each rank participates in
-    # exactly one module, so "first non-None" unambiguously selects that module's PG.
-    active_modules = [(name, pg) for name, pg in megatron_mimo_infra.pg_collections.items() if pg is not None]
-    assert len(active_modules) == 1, (
-        f"Non-colocated MegatronMIMO requires exactly one active ProcessGroupCollection per rank, "
-        f"got {len(active_modules)}. Colocated MegatronMIMO is not supported by this code path."
-    )
-    active_module_name, local_pg_collection = active_modules[0]
-
     if checkpoint_manager is None:
         checkpoint_manager = DefaultCheckpointManager(cfg.checkpoint)
 
@@ -277,7 +362,7 @@ def train_megatron_mimo(
 
     # Get first scheduler for checkpoint saving.
     # All modules share the same LR schedule, so first scheduler state is representative.
-    first_scheduler = next(iter(schedulers.values()), None) if schedulers else None
+    first_scheduler = _first_scheduler_with_param_groups(schedulers)
 
     # Profiler setup (mirrors train.py behavior)
     prof = None
@@ -340,12 +425,9 @@ def train_megatron_mimo(
         train_state.step += 1
         train_state.consumed_train_samples += micro_batch_size * num_microbatches * cfg.data_parallel_size
 
-        # Get learning rate from first scheduler
-        learning_rate = None
-        if schedulers:
-            sched = next(iter(schedulers.values()))
-            if sched is not None:
-                learning_rate = sched.get_lr(sched.optimizer.param_groups[0])
+        # Get learning rate from the first active scheduler. Some non-colocated
+        # ranks may serve only frozen modules, so the value is shared globally.
+        learning_rate = _learning_rate_for_logging(schedulers)
 
         # Log training metrics
         if not cfg.logger.skip_train_metrics_log:
@@ -419,6 +501,7 @@ def train_megatron_mimo(
             train_data_iterator=train_data_iterator,
             pg_collection=local_pg_collection,
             module_name=active_module_name,
+            megatron_mimo_infra=megatron_mimo_infra,
         )
         if should_exit:
             break

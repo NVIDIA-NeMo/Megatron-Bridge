@@ -16,6 +16,7 @@
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -29,11 +30,16 @@ from megatron.bridge.training.checkpointing import (
     CheckpointSaveContext,
     CheckpointType,
     DefaultCheckpointManager,
+    _convert_module_rng_tracker_states,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
+    _get_module_rng_layout_fingerprint_for_checkpoint,
+    _get_module_rng_layout_mismatch_message,
     _get_non_persistent_iteration,
     _load_base_checkpoint,
     _load_model_state_dict,
+    _restore_module_rng_tracker_states_for_checkpoint,
+    _validate_module_rng_layout_fingerprint,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
     create_checkpoint_manager,
@@ -305,6 +311,227 @@ class TestRNGState:
         assert rng_state["random_rng_state"] == "random_state"
         assert rng_state["np_rng_state"] == "np_state"
         assert rng_state["rng_tracker_states"] == "tracker_states"
+
+    @patch("megatron.bridge.training.checkpointing.tensor_parallel")
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.cuda.get_rng_state")
+    @patch("torch.get_rng_state")
+    @patch("numpy.random.get_state")
+    @patch("random.getstate")
+    def test_get_rng_state_includes_module_rng_tracker_states(
+        self, mock_random, mock_np, mock_torch, mock_cuda, mock_dist_init, mock_tp
+    ):
+        """MegatronMIMO per-module tracker snapshots are stored inside the
+        rank-local RNG payload, not as separate sharded RNG objects."""
+        mock_dist_init.return_value = False
+        mock_random.return_value = "random_state"
+        mock_np.return_value = "np_state"
+        mock_torch.return_value = torch.tensor([1, 2, 3])
+        mock_cuda.return_value = torch.tensor([4, 5, 6])
+        mock_tracker = Mock()
+        mock_tracker.get_states.return_value = {"singleton": "state"}
+        mock_tp.get_cuda_rng_tracker.return_value = mock_tracker
+
+        mock_pg_collection = Mock()
+        mock_pg_collection.pp.rank.return_value = 0
+        mock_pg_collection.pp.size.return_value = 1
+        mock_pg_collection.tp.rank.return_value = 0
+        mock_pg_collection.tp.size.return_value = 1
+        mock_pg_collection.dp_cp.rank.return_value = 0
+        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.ep.size.return_value = 1
+
+        module_rng_tracker_states = {
+            "vision": {"tracker": "vision_state"},
+            "language": {"tracker": "language_state"},
+        }
+        module_rng_layout_fingerprint = {
+            "rng_mode": "per_module",
+            "module_names": ["language", "vision"],
+            "module_tp_pp_dp": {"language": (2, 1, 1), "vision": (1, 1, 2)},
+            "module_rank_offsets": {"language": 0, "vision": 0},
+        }
+
+        result = get_rng_state(
+            data_parallel_random_init=False,
+            ckpt_format="torch_dist",
+            pg_collection=mock_pg_collection,
+            module_name="language",
+            module_rng_tracker_states=module_rng_tracker_states,
+            module_rng_layout_fingerprint=module_rng_layout_fingerprint,
+        )
+
+        rng_state = result.data[0]
+        assert result.key == "rng_state.language"
+        assert rng_state["rng_tracker_states"] == {"singleton": "state"}
+        assert rng_state["module_rng_tracker_states"] == module_rng_tracker_states
+        assert rng_state["module_rng_tracker_states"] is not module_rng_tracker_states
+        assert rng_state["module_rng_layout_fingerprint"] == module_rng_layout_fingerprint
+        assert rng_state["module_rng_layout_fingerprint"] is not module_rng_layout_fingerprint
+
+    @patch("megatron.bridge.training.checkpointing.tensor_parallel")
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.cuda.get_rng_state")
+    @patch("torch.get_rng_state")
+    @patch("numpy.random.get_state")
+    @patch("random.getstate")
+    def test_module_rng_tracker_states_round_trip_through_rng_payload(
+        self,
+        mock_random,
+        mock_np,
+        mock_torch,
+        mock_cuda,
+        mock_dist_init,
+        mock_tp,
+    ):
+        """Module-keyed RNG snapshots survive save payload + load conversion exactly."""
+        mock_dist_init.return_value = False
+        mock_random.return_value = "random_state"
+        mock_np.return_value = "np_state"
+        mock_torch.return_value = "torch_state"
+        mock_cuda.return_value = "cuda_state"
+        mock_tracker = Mock()
+        mock_tracker.get_states.return_value = {"singleton": "state"}
+        mock_tp.get_cuda_rng_tracker.return_value = mock_tracker
+        mock_tp.convert_cuda_rng_state.side_effect = lambda value, *, to_graphable: value
+
+        mock_pg_collection = Mock()
+        mock_pg_collection.pp.rank.return_value = 0
+        mock_pg_collection.pp.size.return_value = 1
+        mock_pg_collection.tp.rank.return_value = 0
+        mock_pg_collection.tp.size.return_value = 1
+        mock_pg_collection.dp_cp.rank.return_value = 0
+        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.ep.size.return_value = 1
+
+        saved_module_states = {
+            "vision": {"tracker": "vision_state", "extra": "vision_extra"},
+            "language": {"tracker": "language_state", "extra": "language_extra"},
+        }
+        fingerprint = {
+            "rng_mode": "per_module",
+            "module_names": ["language", "vision"],
+            "module_tp_pp_dp": {"language": (2, 1, 1), "vision": (1, 1, 2)},
+            "module_rank_offsets": {"language": 0, "vision": 0},
+        }
+
+        result = get_rng_state(
+            data_parallel_random_init=False,
+            ckpt_format="torch_dist",
+            pg_collection=mock_pg_collection,
+            module_name="language",
+            module_rng_tracker_states=saved_module_states,
+            module_rng_layout_fingerprint=fingerprint,
+        )
+
+        payload = result.data[0]
+        restored_module_states = _convert_module_rng_tracker_states(
+            payload["module_rng_tracker_states"],
+            graph_safe_rng=False,
+        )
+
+        assert restored_module_states == saved_module_states
+        assert restored_module_states is not saved_module_states
+        assert payload["module_rng_tracker_states"] is not saved_module_states
+
+    @patch("megatron.bridge.training.checkpointing.tensor_parallel.convert_cuda_rng_state")
+    def test_restore_module_rng_tracker_states_updates_existing_infra_dict(self, mock_convert_rng_state):
+        """Per-module RNG restore mutates the memoized infra dict in place."""
+        mock_convert_rng_state.side_effect = lambda value, *, to_graphable: value
+        existing_snapshots = {"vision": {"tracker": "old_vision"}}
+        infra = SimpleNamespace(cuda_rng_states_per_module=existing_snapshots)
+        cuda_rng_tracker = Mock()
+        saved_module_states = {
+            "vision": {"tracker": "vision_state"},
+            "language": {"tracker": "language_state"},
+        }
+
+        restored_module_states = _restore_module_rng_tracker_states_for_checkpoint(
+            saved_module_states,
+            megatron_mimo_infra=infra,
+            module_name="vision",
+            graph_safe_rng=False,
+            cuda_rng_tracker=cuda_rng_tracker,
+        )
+
+        assert restored_module_states == saved_module_states
+        assert infra.cuda_rng_states_per_module is existing_snapshots
+        assert existing_snapshots == saved_module_states
+        cuda_rng_tracker.set_states.assert_called_once_with(saved_module_states["vision"])
+
+    def test_module_rng_layout_fingerprint_records_current_layout(self):
+        def make_grid(*, tp: int, pp: int, dp: int, rank_offset: int) -> Mock:
+            pg_sizes = {"tp": tp, "pp": pp, "dp": dp}
+            grid = Mock(rank_offset=rank_offset)
+
+            def get_pg(dims):
+                pg = Mock()
+                pg.size.return_value = pg_sizes[dims[0]]
+                return pg
+
+            grid.get_pg.side_effect = get_pg
+            return grid
+
+        infra = SimpleNamespace(
+            rng_mode=SimpleNamespace(value="per_module"),
+            module_to_grid_map={
+                "vision": make_grid(tp=1, pp=1, dp=2, rank_offset=0),
+                "language": make_grid(tp=2, pp=1, dp=1, rank_offset=0),
+            },
+        )
+
+        fingerprint = _get_module_rng_layout_fingerprint_for_checkpoint(infra)
+
+        assert fingerprint == {
+            "rng_mode": "per_module",
+            "module_names": ["language", "vision"],
+            "module_tp_pp_dp": {"language": (2, 1, 1), "vision": (1, 1, 2)},
+            "module_rank_offsets": {"language": 0, "vision": 0},
+        }
+
+    def test_module_rng_layout_fingerprint_rejects_missing_or_mismatched_checkpoint(self):
+        current = {
+            "rng_mode": "per_module",
+            "module_names": ["language", "vision"],
+            "module_tp_pp_dp": {"language": (2, 1, 1), "vision": (1, 1, 2)},
+            "module_rank_offsets": {"language": 0, "vision": 0},
+        }
+
+        with pytest.raises(RuntimeError, match="per-module RNG checkpoint layout mismatch"):
+            _validate_module_rng_layout_fingerprint(None, current)
+
+        saved = {
+            "rng_mode": "per_module",
+            "module_names": ["language", "vision"],
+            "module_tp_pp_dp": {"language": (4, 1, 1), "vision": (1, 1, 4)},
+            "module_rank_offsets": {"language": 0, "vision": 0},
+        }
+        with pytest.raises(RuntimeError, match="per-module RNG checkpoint layout mismatch"):
+            _validate_module_rng_layout_fingerprint(saved, current)
+
+        _validate_module_rng_layout_fingerprint(current, current)
+
+    def test_module_rng_layout_mismatch_message_matches_standard_ignore_semantics(self):
+        current = {
+            "rng_mode": "per_module",
+            "module_names": ["language", "vision"],
+            "module_tp_pp_dp": {"language": (2, 1, 1), "vision": (1, 1, 2)},
+            "module_rank_offsets": {"language": 0, "vision": 0},
+        }
+        saved = {
+            "rng_mode": "per_module",
+            "module_names": ["language", "vision"],
+            "module_tp_pp_dp": {"language": (4, 1, 1), "vision": (1, 1, 4)},
+            "module_rank_offsets": {"language": 0, "vision": 0},
+        }
+
+        assert _get_module_rng_layout_mismatch_message(current, None) is None
+        assert _get_module_rng_layout_mismatch_message(current, current) is None
+
+        message = _get_module_rng_layout_mismatch_message(saved, current)
+        assert message is not None
+        assert "per-module RNG checkpoint layout mismatch" in message
+        assert "RNG state will be ignored" in message
 
     @patch("megatron.bridge.training.checkpointing.get_pg_size")
     @patch("megatron.bridge.training.checkpointing.tensor_parallel")
@@ -1172,7 +1399,13 @@ class TestLoadBaseCheckpoint:
         mock_get_format.return_value = "torch_dist"
         mock_load_global.return_value = ({"model": "data"}, "/ckpt/iter_0001000", False, CheckpointType.GLOBAL)
 
-        result = _load_base_checkpoint("/ckpt/iter_0001000", base_config, rank0=True, pg_collection=mock_pg_collection)
+        result = _load_base_checkpoint(
+            "/ckpt/iter_0001000",
+            base_config,
+            rank0=True,
+            is_megatron_mimo=True,
+            pg_collection=mock_pg_collection,
+        )
 
         state_dict, _, _, ckpt_type = result
         assert state_dict == {"model": "data"}
@@ -1184,6 +1417,7 @@ class TestLoadBaseCheckpoint:
             call_kwargs[1].get("checkpoint_path_override") == "/ckpt/iter_0001000"
             or call_kwargs[0][6] == "/ckpt/iter_0001000"
         )
+        assert call_kwargs[1].get("is_megatron_mimo") is True
 
     @patch("megatron.bridge.training.checkpointing._load_fsdp_dtensor_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
@@ -3078,6 +3312,7 @@ class TestCheckpointManager:
                 pg_collection=None,
                 callback_manager=None,
                 module_name=None,
+                megatron_mimo_infra=None,
             )
 
     def test_default_checkpoint_manager_load_delegates(self):
@@ -3117,6 +3352,7 @@ class TestCheckpointManager:
                 skip_load_to_model_and_opt=True,
                 pg_collection=None,
                 module_name=None,
+                megatron_mimo_infra=None,
             )
             assert result == (100, 50000)
 
@@ -3411,6 +3647,7 @@ class TestLayerWiseOptimizerCheckpointing:
     @patch("megatron.bridge.training.checkpointing._build_sharded_state_dict_metadata")
     @patch("os.path.exists")
     @patch("torch.distributed.is_initialized")
+    @pytest.mark.parametrize("is_megatron_mimo", [False, True])
     def test_load_global_checkpoint_uses_standard_load_state_dict(
         self,
         mock_dist_init,
@@ -3429,13 +3666,15 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_read_config,
         mock_read_state,
         mock_load_base,
+        is_megatron_mimo,
         load_checkpoint_fixtures,
     ):
         """For GLOBAL checkpoints, optimizer state is loaded via standard load_state_dict.
 
-        Even with a LayerWiseDistributedOptimizer, global (torch_dist) checkpoints embed
-        optimizer state in the distributed checkpoint.  load_state_dict_from_file must NOT
-        be called; the regular load_state_dict path is used instead.
+        Even with a LayerWiseDistributedOptimizer or MegatronMIMO, global
+        (torch_dist) checkpoints embed optimizer state in the distributed
+        checkpoint.  load_state_dict_from_file must NOT be called; the regular
+        load_state_dict path is used instead.
         """
         from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOptimizer
 
@@ -3468,8 +3707,12 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_train_state.floating_point_operations_so_far = 0
         mock_read_state.return_value = mock_train_state
 
+        model_run_config = {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1}
+        if is_megatron_mimo:
+            model_run_config["megatron_mimo_parallelism_config"] = {}
+
         mock_read_config.return_value = {
-            "model": {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1},
+            "model": model_run_config,
             "checkpoint": {"save_rng": False, "save_optim": True, "fully_parallel_save": False},
         }
 
@@ -3483,8 +3726,11 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_load_base.return_value = (mock_state_dict, "/ckpts/iter_0001000", False, CheckpointType.GLOBAL)
 
         load_checkpoint_fixtures["mock_cfg"].checkpoint.load = "/ckpts"
-        # Ensure _is_megatron_mimo is False so the optimizer load path is not skipped.
-        del load_checkpoint_fixtures["mock_cfg"].model.megatron_mimo_parallelism_config
+        if is_megatron_mimo:
+            load_checkpoint_fixtures["mock_cfg"].model.megatron_mimo_parallelism_config = {}
+        else:
+            # Mock() auto-creates attributes, making hasattr(..., "megatron_mimo_parallelism_config") True.
+            del load_checkpoint_fixtures["mock_cfg"].model.megatron_mimo_parallelism_config
 
         load_checkpoint(
             load_checkpoint_fixtures["mock_state"],

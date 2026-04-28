@@ -15,6 +15,7 @@
 """Input/output checkpointing."""
 
 import contextlib
+import copy
 import inspect
 import os
 import random
@@ -46,6 +47,7 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
 )
 from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy, _get_filesystem_reader
 from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer
@@ -420,6 +422,8 @@ def get_rng_state(
     *,
     pg_collection: ProcessGroupCollection,
     module_name: str | None = None,
+    module_rng_tracker_states: Optional[dict[str, dict[str, Any]]] = None,
+    module_rng_layout_fingerprint: dict[str, Any] | None = None,
 ) -> ShardedObject | dict:
     """Get the random number generator states for all necessary libraries.
 
@@ -439,6 +443,14 @@ def get_rng_state(
             When set, the ShardedObject key becomes ``"rng_state.{module_name}"``
             to avoid duplicate shard keys across modules that share the same
             (pp_rank, tp_rank) coordinates from module-local process groups.
+        module_rng_tracker_states: Optional MegatronMIMO per-module CUDA RNG
+            tracker snapshots. When set, the payload keeps the normal singleton
+            ``rng_tracker_states`` for backward compatibility and adds
+            ``module_rng_tracker_states`` as the authoritative module-keyed
+            tracker state for module-scoped MIMO RNG restore.
+        module_rng_layout_fingerprint: Optional MegatronMIMO per-module RNG
+            layout metadata. Restore refuses to load per-module tracker states
+            if this fingerprint differs from the current layout.
 
     Returns:
         For torch_dist: A ShardedObject containing the RNG states, sharded by
@@ -452,6 +464,9 @@ def get_rng_state(
         "cuda_rng_state": torch.cuda.get_rng_state(),
         "rng_tracker_states": tensor_parallel.get_cuda_rng_tracker().get_states(),
     }
+    if module_rng_tracker_states is not None:
+        rng_state["module_rng_tracker_states"] = copy.deepcopy(module_rng_tracker_states)
+        rng_state["module_rng_layout_fingerprint"] = copy.deepcopy(module_rng_layout_fingerprint)
 
     rng_state_list = None
     if torch.distributed.is_initialized() and pg_collection.dp_cp.size() > 1 and data_parallel_random_init:
@@ -502,6 +517,137 @@ def get_rng_state(
     return rng_state_list
 
 
+def _convert_rng_tracker_states(
+    rng_tracker_states: dict[str, Any],
+    *,
+    graph_safe_rng: bool,
+) -> dict[str, Any]:
+    """Convert serialized CUDA RNG tracker states to the live tracker format."""
+    return {
+        k: tensor_parallel.convert_cuda_rng_state(v, to_graphable=graph_safe_rng)
+        for k, v in rng_tracker_states.items()
+    }
+
+
+def _convert_module_rng_tracker_states(
+    module_rng_tracker_states: dict[str, dict[str, Any]],
+    *,
+    graph_safe_rng: bool,
+) -> dict[str, dict[str, Any]]:
+    """Convert module-keyed CUDA RNG tracker states to the live tracker format."""
+    return {
+        module_name: _convert_rng_tracker_states(states, graph_safe_rng=graph_safe_rng)
+        for module_name, states in module_rng_tracker_states.items()
+    }
+
+
+def _select_module_rng_tracker_state(
+    module_rng_tracker_states: dict[str, dict[str, Any]],
+    *,
+    module_name: str | None,
+) -> dict[str, Any]:
+    """Pick a module tracker state to install into MCore's singleton tracker."""
+    if module_name is not None and module_name in module_rng_tracker_states:
+        return module_rng_tracker_states[module_name]
+    if MIMO_LANGUAGE_MODULE_KEY in module_rng_tracker_states:
+        return module_rng_tracker_states[MIMO_LANGUAGE_MODULE_KEY]
+    return next(iter(module_rng_tracker_states.values()))
+
+
+def _get_module_rng_tracker_states_for_checkpoint(
+    megatron_mimo_infra: Any | None,
+) -> dict[str, dict[str, Any]] | None:
+    """Return module RNG snapshots when a MIMO setup is in per-module RNG mode."""
+    if not _uses_per_module_rng_checkpoint_mode(megatron_mimo_infra):
+        return None
+    module_rng_tracker_states = getattr(megatron_mimo_infra, "cuda_rng_states_per_module", None)
+    if not module_rng_tracker_states:
+        return None
+    return module_rng_tracker_states
+
+
+def _restore_module_rng_tracker_states_for_checkpoint(
+    module_rng_tracker_states: dict[str, dict[str, Any]],
+    *,
+    megatron_mimo_infra: Any | None,
+    module_name: str | None,
+    graph_safe_rng: bool,
+    cuda_rng_tracker: Any,
+) -> dict[str, dict[str, Any]]:
+    """Restore module-keyed CUDA RNG tracker states into the active MIMO infra."""
+    module_rng_tracker_states = _convert_module_rng_tracker_states(
+        module_rng_tracker_states,
+        graph_safe_rng=graph_safe_rng,
+    )
+    if megatron_mimo_infra is not None:
+        megatron_mimo_infra.cuda_rng_states_per_module.clear()
+        megatron_mimo_infra.cuda_rng_states_per_module.update(module_rng_tracker_states)
+    cuda_rng_tracker.set_states(_select_module_rng_tracker_state(module_rng_tracker_states, module_name=module_name))
+    return module_rng_tracker_states
+
+
+def _get_module_rng_layout_fingerprint_for_checkpoint(
+    megatron_mimo_infra: Any | None,
+) -> dict[str, Any] | None:
+    """Return the per-module RNG layout fingerprint for checkpoint validation."""
+    if not _uses_per_module_rng_checkpoint_mode(megatron_mimo_infra):
+        return None
+    module_to_grid_map = getattr(megatron_mimo_infra, "module_to_grid_map", None)
+    if not module_to_grid_map:
+        return None
+    module_names = sorted(module_to_grid_map)
+    return {
+        "rng_mode": "per_module",
+        "module_names": module_names,
+        "module_tp_pp_dp": {
+            name: (
+                module_to_grid_map[name].get_pg(["tp"]).size(),
+                module_to_grid_map[name].get_pg(["pp"]).size(),
+                module_to_grid_map[name].get_pg(["dp"]).size(),
+            )
+            for name in module_names
+        },
+        "module_rank_offsets": {name: module_to_grid_map[name].rank_offset for name in module_names},
+    }
+
+
+def _validate_module_rng_layout_fingerprint(
+    saved_fingerprint: dict[str, Any] | None,
+    current_fingerprint: dict[str, Any] | None,
+) -> None:
+    """Refuse per-module RNG restore when checkpoint and current layouts differ."""
+    if current_fingerprint is None:
+        return
+    if saved_fingerprint != current_fingerprint:
+        raise RuntimeError(
+            "MegatronMIMO per-module RNG checkpoint layout mismatch. "
+            f"Checkpoint fingerprint: {saved_fingerprint}; current fingerprint: {current_fingerprint}. "
+            "Set load_rng=False to intentionally ignore checkpoint RNG state."
+        )
+
+
+def _get_module_rng_layout_mismatch_message(
+    saved_fingerprint: dict[str, Any] | None,
+    current_fingerprint: dict[str, Any] | None,
+) -> str | None:
+    """Return a warning message when per-module RNG layout restore should be skipped."""
+    if current_fingerprint is None or saved_fingerprint == current_fingerprint:
+        return None
+    return (
+        "MegatronMIMO per-module RNG checkpoint layout mismatch. "
+        f"Checkpoint fingerprint: {saved_fingerprint}; current fingerprint: {current_fingerprint}. "
+        "RNG state will be ignored."
+    )
+
+
+def _uses_per_module_rng_checkpoint_mode(megatron_mimo_infra: Any | None) -> bool:
+    """Whether checkpointing should treat MIMO RNG state as module-scoped."""
+    if megatron_mimo_infra is None:
+        return False
+    rng_mode = getattr(megatron_mimo_infra, "rng_mode", None)
+    return getattr(rng_mode, "value", rng_mode) == "per_module"
+
+
 class CheckpointType(Enum):
     """Types of checkpoints to save."""
 
@@ -534,6 +680,7 @@ class CheckpointSaveContext:
     non_persistent_ckpt: bool = False
     pg_collection: ProcessGroupCollection | None = None
     module_name: str | None = None
+    megatron_mimo_infra: Any | None = None
 
 
 @dataclass
@@ -559,6 +706,7 @@ class CheckpointLoadContext:
     skip_load_to_model_and_opt: bool = False
     pg_collection: ProcessGroupCollection | None = None
     module_name: str | None = None
+    megatron_mimo_infra: Any | None = None
 
 
 @runtime_checkable
@@ -663,6 +811,7 @@ class DefaultCheckpointManager:
             pg_collection=ctx.pg_collection,
             callback_manager=callback_manager,
             module_name=ctx.module_name,
+            megatron_mimo_infra=ctx.megatron_mimo_infra,
         )
 
     def load(self, ctx: CheckpointLoadContext) -> tuple[int, int]:
@@ -686,6 +835,7 @@ class DefaultCheckpointManager:
             skip_load_to_model_and_opt=ctx.skip_load_to_model_and_opt,
             pg_collection=ctx.pg_collection,
             module_name=ctx.module_name,
+            megatron_mimo_infra=ctx.megatron_mimo_infra,
         )
 
     def finalize_async_saves(self, state: GlobalState, blocking: bool = False, terminate: bool = False) -> None:
@@ -785,6 +935,7 @@ def save_checkpoint(
     pg_collection: Optional[ProcessGroupCollection] = None,
     callback_manager: Optional[CallbackManager] = None,
     module_name: str | None = None,
+    megatron_mimo_infra: Any | None = None,
 ) -> None:
     """Save a model checkpoint.
 
@@ -813,6 +964,8 @@ def save_checkpoint(
         module_name: Optional MegatronMIMO module name for per-module RNG state namespacing.
                     When set, RNG ShardedObject keys are namespaced to avoid collisions
                     across modules with identical (pp_rank, tp_rank) coordinates.
+        megatron_mimo_infra: Optional MegatronMIMO infra carrying per-module RNG
+                             tracker states for colocated asymmetric TP.
     """
 
     train_state = state.train_state
@@ -861,11 +1014,14 @@ def save_checkpoint(
     # Collect rng state across data parallel ranks.
     if pg_collection is None:
         pg_collection = get_pg_collection(model)
+    module_rng_layout_fingerprint = _get_module_rng_layout_fingerprint_for_checkpoint(megatron_mimo_infra)
     rng_state = get_rng_state(
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
         ckpt_format=ckpt_cfg.ckpt_format,
         pg_collection=pg_collection,
         module_name=module_name,
+        module_rng_tracker_states=_get_module_rng_tracker_states_for_checkpoint(megatron_mimo_infra),
+        module_rng_layout_fingerprint=module_rng_layout_fingerprint,
     )
 
     # Collect rerun state across all ranks
@@ -933,6 +1089,8 @@ def save_checkpoint(
             rerun_state=rerun_state,
             pg_collection=pg_collection,
         )
+    if module_rng_layout_fingerprint is not None:
+        state_dict["megatron_mimo_rng_layout_fingerprint"] = copy.deepcopy(module_rng_layout_fingerprint)
 
     # De-interleave GLU weights/biases if model has interleaved weights in memory
     # Checkpoints are always saved in contiguous format
@@ -1758,6 +1916,7 @@ def load_checkpoint(
     skip_load_to_model_and_opt: bool = False,
     pg_collection: Optional[ProcessGroupCollection] = None,
     module_name: str | None = None,
+    megatron_mimo_infra: Any | None = None,
 ) -> tuple[int, int]:
     """Load a model checkpoint.
 
@@ -1778,6 +1937,8 @@ def load_checkpoint(
                       extracting from model via get_pg_collection(). Required for MegatronMIMO where
                       model-level PG extraction may not reflect rank-local topology.
         module_name: Optional MegatronMIMO module name for per-module RNG state namespacing.
+        megatron_mimo_infra: Optional MegatronMIMO infra carrying per-module RNG
+                             tracker states for colocated asymmetric TP.
 
     Returns:
         A tuple containing:
@@ -1810,6 +1971,7 @@ def load_checkpoint(
         skip_load_to_model_and_opt=skip_load_to_model_and_opt,
         pg_collection=pg_collection,
         module_name=module_name,
+        megatron_mimo_infra=megatron_mimo_infra,
     )
 
 
@@ -2001,6 +2163,7 @@ def _load_checkpoint_from_path(
     ignore_ckpt_step: bool = False,
     pg_collection: Optional[ProcessGroupCollection] = None,
     module_name: str | None = None,
+    megatron_mimo_infra: Any | None = None,
 ) -> tuple[int, int]:
     """Load a checkpoint from a given path.
 
@@ -2104,22 +2267,38 @@ def _load_checkpoint_from_path(
             mismatch_msg = "(TP, PP) mismatch after resume ({} vs {} from checkpoint)".format(run_tp_pp, ckpt_tp_pp)
 
         # Determine if RNG state will be loaded
+        current_module_rng_fingerprint = _get_module_rng_layout_fingerprint_for_checkpoint(megatron_mimo_infra)
+        if current_module_rng_fingerprint is not None and ckpt_type == CheckpointType.LOCAL:
+            # Local checkpoints are only valid for same-layout resume; the
+            # rank0 metadata pass intentionally does not load common.pt.
+            saved_module_rng_fingerprint = current_module_rng_fingerprint
+        else:
+            saved_module_rng_fingerprint = state_dict.get("megatron_mimo_rng_layout_fingerprint")
+        module_rng_mismatch_msg = _get_module_rng_layout_mismatch_message(
+            saved_module_rng_fingerprint,
+            current_module_rng_fingerprint,
+        )
         if (
             tp_pp_match
             and not release
             and not cfg.checkpoint.finetune
             and cfg.checkpoint.load_rng
             and run_config["checkpoint"]["save_rng"]
+            and module_rng_mismatch_msg is None
         ):
             gen_sd_rng_state = get_rng_state(
                 cfg.rng.data_parallel_random_init,
                 ckpt_format,
                 pg_collection=pg_collection,
                 module_name=module_name,
+                module_rng_tracker_states=_get_module_rng_tracker_states_for_checkpoint(megatron_mimo_infra),
+                module_rng_layout_fingerprint=current_module_rng_fingerprint,
             )
         else:
             ignore_rng_state = True
             gen_sd_rng_state = None
+            if module_rng_mismatch_msg is not None:
+                print_rank_0(module_rng_mismatch_msg)
             if not tp_pp_match:
                 print_rank_0("{}: RNG state will be ignored".format(mismatch_msg))
 
@@ -2237,7 +2416,13 @@ def _load_checkpoint_from_path(
                 )
             if cfg.checkpoint.load_rng:
                 gen_sd_rng_state = get_rng_state(
-                    cfg.rng.data_parallel_random_init, ckpt_format, pg_collection=pg_collection
+                    cfg.rng.data_parallel_random_init,
+                    ckpt_format,
+                    pg_collection=pg_collection,
+                    module_rng_tracker_states=_get_module_rng_tracker_states_for_checkpoint(megatron_mimo_infra),
+                    module_rng_layout_fingerprint=_get_module_rng_layout_fingerprint_for_checkpoint(
+                        megatron_mimo_infra
+                    ),
                 )
             if cfg.checkpoint.load_optim:
                 gen_sd_optim = optimizer
@@ -2400,35 +2585,22 @@ def _load_checkpoint_from_path(
                 and optimizer is not None
                 and not getattr(optimizer, "is_stub_optimizer", False)
             ):
-                # For MegatronMIMO with global torch_dist checkpoints, skip
-                # optimizer.load_state_dict(): dist_checkpointing only saves
-                # common state from rank 0, but non-colocated MegatronMIMO has different
-                # common state per rank (each rank only holds its active
-                # module's param_groups).  The sharded param states are already
-                # loaded by dist_checkpointing.load, and the optimizer was
-                # pre-initialized via sharded_state_dict(is_loading=True).
-                # Local checkpoints save per-rank state, so the skip does not
-                # apply — each rank has its own correct optimizer state.
-                # TODO: Make dist_checkpointing.save collect common state from
-                # all ranks in MegatronMIMO, or have MegatronMIMO replicate all modules' common
-                # state on every rank during save.  That fix belongs in MCore.
-                if not (ckpt_type == CheckpointType.GLOBAL and _is_megatron_mimo):
-                    if isinstance(optimizer, LayerWiseDistributedOptimizer) and ckpt_type == CheckpointType.LOCAL:
-                        # Local checkpoints save LayerWiseDistributedOptimizer state to a
-                        # separate per-rank file at the base local checkpoint directory rather
-                        # than embedding it in the sharded distributed checkpoint.
-                        # Load it back from that file here.
-                        dp_rank = pg_collection.dp.rank()
-                        local_ckpt_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
-                        optim_ckpt_path = os.path.join(local_ckpt_dir, f"layer_wise_optimizer_{dp_rank}.pt")
-                        optimizer.load_state_dict_from_file(optim_ckpt_path)
-                    else:
-                        # torch.no_grad() is needed for local checkpoints: the
-                        # DistributedOptimizer copies loaded tensors into main
-                        # params via .copy_(), which fails on leaf Variables that
-                        # require grad without this context.
-                        with torch.no_grad():
-                            optimizer.load_state_dict(state_dict["optimizer"])
+                if isinstance(optimizer, LayerWiseDistributedOptimizer) and ckpt_type == CheckpointType.LOCAL:
+                    # Local checkpoints save LayerWiseDistributedOptimizer state to a
+                    # separate per-rank file at the base local checkpoint directory
+                    # rather than embedding it in the sharded distributed checkpoint.
+                    # Load it back from that file here.
+                    dp_rank = pg_collection.dp.rank()
+                    local_ckpt_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
+                    optim_ckpt_path = os.path.join(local_ckpt_dir, f"layer_wise_optimizer_{dp_rank}.pt")
+                    optimizer.load_state_dict_from_file(optim_ckpt_path)
+                else:
+                    # torch.no_grad() is needed for local checkpoints: the
+                    # DistributedOptimizer copies loaded tensors into main
+                    # params via .copy_(), which fails on leaf Variables that
+                    # require grad without this context.
+                    with torch.no_grad():
+                        optimizer.load_state_dict(state_dict["optimizer"])
 
             if opt_param_scheduler is not None:
                 if "lr_scheduler" in state_dict:
@@ -2491,13 +2663,33 @@ def _load_checkpoint_from_path(
                 np.random.set_state(rng_state["np_rng_state"])
                 torch.set_rng_state(rng_state["torch_rng_state"])
                 torch.cuda.set_rng_state(rng_state["cuda_rng_state"])
-                if not rng_state["rng_tracker_states"]:
-                    raise KeyError
-                rng_tracker_states = {
-                    k: tensor_parallel.convert_cuda_rng_state(v, to_graphable=graph_safe_rng)
-                    for k, v in rng_state["rng_tracker_states"].items()
-                }
-                cuda_rng_tracker.set_states(rng_tracker_states)
+                module_rng_tracker_states = rng_state.get("module_rng_tracker_states")
+                current_module_rng_fingerprint = _get_module_rng_layout_fingerprint_for_checkpoint(megatron_mimo_infra)
+                if current_module_rng_fingerprint is not None:
+                    _validate_module_rng_layout_fingerprint(
+                        rng_state.get("module_rng_layout_fingerprint"),
+                        current_module_rng_fingerprint,
+                    )
+                    if not module_rng_tracker_states:
+                        raise RuntimeError(
+                            "MegatronMIMO per-module RNG checkpoint is missing module_rng_tracker_states. "
+                            "Set load_rng=False to intentionally ignore checkpoint RNG state."
+                        )
+                    _restore_module_rng_tracker_states_for_checkpoint(
+                        module_rng_tracker_states,
+                        megatron_mimo_infra=megatron_mimo_infra,
+                        module_name=module_name,
+                        graph_safe_rng=graph_safe_rng,
+                        cuda_rng_tracker=cuda_rng_tracker,
+                    )
+                else:
+                    if not rng_state["rng_tracker_states"]:
+                        raise KeyError
+                    rng_tracker_states = _convert_rng_tracker_states(
+                        rng_state["rng_tracker_states"],
+                        graph_safe_rng=graph_safe_rng,
+                    )
+                    cuda_rng_tracker.set_states(rng_tracker_states)
             else:  # backward compatibility
                 random.setstate(state_dict["random_rng_state"])
                 np.random.set_state(state_dict["np_rng_state"])
@@ -2505,10 +2697,10 @@ def _load_checkpoint_from_path(
                 torch.cuda.set_rng_state(state_dict["cuda_rng_state"])
                 if not state_dict["rng_tracker_states"]:
                     raise KeyError
-                rng_tracker_states = {
-                    k: tensor_parallel.convert_cuda_rng_state(v, to_graphable=graph_safe_rng)
-                    for k, v in state_dict["rng_tracker_states"].items()
-                }
+                rng_tracker_states = _convert_rng_tracker_states(
+                    state_dict["rng_tracker_states"],
+                    graph_safe_rng=graph_safe_rng,
+                )
                 cuda_rng_tracker.set_states(rng_tracker_states)
         except KeyError:
             print_rank_0(
@@ -2924,6 +3116,7 @@ def _load_base_checkpoint(
                 release=False,
                 checkpoint_path_override=checkpoint_path,
                 checkpointing_context=checkpointing_context,
+                is_megatron_mimo=is_megatron_mimo,
                 pg_collection=pg_collection,
             )
         elif ckpt_format == "fsdp_dtensor":

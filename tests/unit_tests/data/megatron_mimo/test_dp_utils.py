@@ -4,8 +4,14 @@
 import pytest
 import torch
 import torch.distributed as dist
+from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
-from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_dp_info, slice_batch_for_megatron_mimo
+from megatron.bridge.data.megatron_mimo.dp_utils import (
+    get_megatron_mimo_dp_info,
+    get_megatron_mimo_sampling_info,
+    slice_batch_for_megatron_mimo,
+    slice_batch_for_megatron_mimo_modules,
+)
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
@@ -135,6 +141,85 @@ def test_get_megatron_mimo_dp_info_non_participating_rank(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Tests: multi-module rank membership (colocated mode)
+# ---------------------------------------------------------------------------
+
+
+def _make_colocated_grids(vision_dp: int = 8, llm_dp: int = 2, llm_tp: int = 4) -> dict:
+    """Build fake grids for a colocated 8-GPU setup with a fan-in layout.
+
+    Both grids span ranks [0, 8). Encoder has DP=8/TP=1, LLM has DP=llm_dp/TP=llm_tp.
+    Process-group ranks/sizes on the fake grids are set to what rank 0 would see.
+    """
+    return {
+        "vision": FakeGrid(0, 8, dp_rank=0, dp_size=vision_dp, pp_rank=0, pp_size=1),
+        "language": FakeGrid(0, 8, dp_rank=0, dp_size=llm_dp, pp_rank=0, pp_size=1),
+    }
+
+
+def _make_colocated_cfg(vision_dp: int = 8, llm_dp: int = 2, llm_tp: int = 4) -> MegatronMIMOParallelismConfig:
+    """Build a colocated parallelism config matching _make_colocated_grids."""
+    return MegatronMIMOParallelismConfig(
+        module_parallelisms={
+            "vision": ModuleParallelismConfig(
+                tensor_model_parallel_size=1, data_parallel_size=vision_dp, rank_offset=0
+            ),
+            "language": ModuleParallelismConfig(
+                tensor_model_parallel_size=llm_tp, data_parallel_size=llm_dp, rank_offset=0
+            ),
+        }
+    )
+
+
+def test_get_megatron_mimo_sampling_info_colocated_needs_data_union(monkeypatch):
+    """Colocated: needs_data is True if ANY served module needs data on this rank.
+
+    Previously, `_find_rank_module` returned whichever grid appeared first in the
+    dict and could report needs_data=False on a rank where the other module
+    actually needs data — a silent no-op training bug waiting to happen.
+    """
+    monkeypatch.setattr(dist, "get_rank", lambda: 0)
+    cfg = _make_colocated_cfg()
+    # Encoder at PP=1 stage != 0 (would report False), LLM at PP stage 0 (True).
+    # Iteration order puts vision first; the pre-fix code would have returned False.
+    grids = {
+        "vision": FakeGrid(0, 8, dp_rank=0, dp_size=8, pp_rank=1, pp_size=2),
+        "language": FakeGrid(0, 8, dp_rank=0, dp_size=2, pp_rank=0, pp_size=2),
+    }
+    _, _, needs_data = get_megatron_mimo_sampling_info(cfg, grids)
+    assert needs_data is True
+
+
+def test_get_megatron_mimo_dp_info_colocated_by_module_name(monkeypatch):
+    """Colocated: explicit module_name selects that module's DP geometry."""
+    monkeypatch.setattr(dist, "get_rank", lambda: 0)
+    cfg = _make_colocated_cfg()
+    grids = _make_colocated_grids()
+
+    vision_dp_rank, vision_dp_size, _, vision_name = get_megatron_mimo_dp_info(cfg, grids, module_name="vision")
+    assert vision_name == "vision"
+    assert vision_dp_size == 8  # encoder is fully DP-parallel
+
+    llm_dp_rank, llm_dp_size, _, llm_name = get_megatron_mimo_dp_info(cfg, grids, module_name="language")
+    assert llm_name == "language"
+    assert llm_dp_size == 2  # LLM is TP4/DP2
+
+
+def test_get_megatron_mimo_dp_info_colocated_no_module_name_defaults_to_language(monkeypatch, caplog):
+    """Colocated: omitting module_name falls back to the language module and logs a warning."""
+    monkeypatch.setattr(dist, "get_rank", lambda: 0)
+    cfg = _make_colocated_cfg()
+    grids = _make_colocated_grids()
+
+    with caplog.at_level("WARNING", logger="megatron.bridge.data.megatron_mimo.dp_utils"):
+        _, dp_size, _, name = get_megatron_mimo_dp_info(cfg, grids)
+
+    assert name == MIMO_LANGUAGE_MODULE_KEY
+    assert dp_size == 2  # LLM DP
+    assert any("multiple modules" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
 # Tests: slice_batch_for_megatron_mimo
 # ---------------------------------------------------------------------------
 
@@ -214,3 +299,196 @@ class TestSliceBatchForMegatronMIMO:
         # This test documents that dp_size=1 early-return handles the common case.
         result = slice_batch_for_megatron_mimo({}, dp_rank=0, dp_size=1)
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Tests: slice_batch_for_megatron_mimo_modules (Step 2 of heterogeneous plan)
+#
+# Per-key per-module DP slicing. Colocated ranks serve multiple modules with
+# possibly different DP sizes; language keys must be sliced by language DP and
+# modality_inputs[<name>] by that encoder's DP. Non-colocated ranks reduce to
+# the legacy uniform slicing.
+# ---------------------------------------------------------------------------
+
+
+def _make_batch(global_size: int = 4) -> dict:
+    """Construct a representative batch with all the routed key shapes."""
+    return {
+        "input_ids": torch.arange(global_size * 8).reshape(global_size, 8),
+        "labels": torch.arange(global_size * 8, global_size * 16).reshape(global_size, 8),
+        "loss_mask": torch.ones(global_size, 8, dtype=torch.float),
+        "position_ids": torch.arange(8).unsqueeze(0).repeat(global_size, 1),
+        "attention_mask": torch.ones(global_size, 8, dtype=torch.bool),
+        "modality_inputs": {
+            "vision": {
+                "pixel_values": torch.arange(global_size * 3).reshape(global_size, 3),
+            },
+        },
+    }
+
+
+class TestSliceBatchForMegatronMIMOModules:
+    """Per-module per-key DP slicing for colocated heterogeneous TP/DP."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_dist_initialized(self, monkeypatch):
+        # The helper short-circuits when distributed isn't initialized
+        # (defensive for non-distributed tests/legacy callers). These tests
+        # exercise the rank-aware path, so stub is_initialized to True and
+        # rely on the per-test ``dist.get_rank`` monkeypatch for membership.
+        monkeypatch.setattr(dist, "is_initialized", lambda: True)
+
+    def test_routes_language_keys_by_language_dp_colocated(self, monkeypatch):
+        """Colocated fan-in (vision DP=4, language DP=2): language keys take
+        language DP slice, modality_inputs[vision] takes vision DP slice."""
+        monkeypatch.setattr(dist, "get_rank", lambda: 1)
+        # Rank 1 is in vision_dp_rank=1 (DP=4 → rank 1 sees sample 1) and
+        # language_dp_rank=0 (DP=2 → rank 0 sees samples 0..1).
+        grids = {
+            "vision": FakeGrid(0, 4, dp_rank=1, dp_size=4, pp_rank=0, pp_size=1),
+            "language": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
+        }
+        batch = _make_batch(global_size=4)
+
+        sliced = slice_batch_for_megatron_mimo_modules(batch, grids=grids)
+
+        # Language keys: dp_rank=0, dp_size=2 → samples [0:2]
+        assert sliced["input_ids"].shape == (2, 8)
+        torch.testing.assert_close(sliced["input_ids"], batch["input_ids"][0:2])
+        torch.testing.assert_close(sliced["labels"], batch["labels"][0:2])
+        torch.testing.assert_close(sliced["loss_mask"], batch["loss_mask"][0:2])
+        torch.testing.assert_close(sliced["position_ids"], batch["position_ids"][0:2])
+        torch.testing.assert_close(sliced["attention_mask"], batch["attention_mask"][0:2])
+
+        # Modality keys: vision dp_rank=1, dp_size=4 → sample [1:2]
+        assert sliced["modality_inputs"]["vision"]["pixel_values"].shape == (1, 3)
+        torch.testing.assert_close(
+            sliced["modality_inputs"]["vision"]["pixel_values"],
+            batch["modality_inputs"]["vision"]["pixel_values"][1:2],
+        )
+
+    def test_loss_mask_follows_language_not_encoder(self, monkeypatch):
+        """Regression guard for the asymmetric-DP forward-step bug.
+
+        Pre-fix: a single uniform DP collapsed every key onto one module's
+        slice, so loss_mask either matched encoder DP (wrong shape for LLM)
+        or matched LLM DP (wrong contents on encoder ranks). Lock the
+        invariant explicitly: loss_mask routes through language DP.
+        """
+        monkeypatch.setattr(dist, "get_rank", lambda: 3)
+        grids = {
+            "vision": FakeGrid(0, 4, dp_rank=3, dp_size=4, pp_rank=0, pp_size=1),
+            "language": FakeGrid(0, 4, dp_rank=1, dp_size=2, pp_rank=0, pp_size=1),
+        }
+        batch = _make_batch(global_size=4)
+
+        sliced = slice_batch_for_megatron_mimo_modules(batch, grids=grids)
+
+        # loss_mask sliced by language DP (rank=1, size=2) → samples [2:4],
+        # NOT by vision DP (rank=3, size=4) → would be sample [3:4].
+        assert sliced["loss_mask"].shape == (2, 8)
+        torch.testing.assert_close(sliced["loss_mask"], batch["loss_mask"][2:4])
+
+    def test_recurses_into_nested_modality_inputs(self, monkeypatch):
+        """Encoder-internal nested dicts (e.g. {"clip": {"x": tensor}}) get
+        sliced by the encoder's DP, recursively."""
+        monkeypatch.setattr(dist, "get_rank", lambda: 0)
+        grids = {
+            "vision": FakeGrid(0, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
+            "language": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
+        }
+        batch = {
+            "input_ids": torch.arange(4 * 8).reshape(4, 8),
+            "loss_mask": torch.ones(4, 8),
+            "modality_inputs": {
+                "vision": {
+                    "clip": {
+                        "x": torch.arange(4 * 6).reshape(4, 6),
+                    },
+                },
+            },
+        }
+
+        sliced = slice_batch_for_megatron_mimo_modules(batch, grids=grids)
+
+        # vision dp_rank=0, dp_size=4 → sample [0:1]
+        assert sliced["modality_inputs"]["vision"]["clip"]["x"].shape == (1, 6)
+        torch.testing.assert_close(
+            sliced["modality_inputs"]["vision"]["clip"]["x"],
+            batch["modality_inputs"]["vision"]["clip"]["x"][0:1],
+        )
+
+    def test_non_colocated_falls_through_to_uniform_slice(self, monkeypatch):
+        """Non-colocated rank (one module on this rank) reduces to legacy
+        uniform slicing by that module's DP — preserves existing behavior."""
+        monkeypatch.setattr(dist, "get_rank", lambda: 2)
+        grids = {
+            "vision": FakeGrid(0, 4, dp_rank=2, dp_size=4, pp_rank=0, pp_size=1),
+            "language": FakeGrid(4, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
+        }
+        batch = _make_batch(global_size=4)
+
+        sliced = slice_batch_for_megatron_mimo_modules(batch, grids=grids)
+
+        # Rank 2 is in vision only. Vision DP=4, rank=2 → sample [2:3] for everything.
+        assert sliced["input_ids"].shape == (1, 8)
+        torch.testing.assert_close(sliced["input_ids"], batch["input_ids"][2:3])
+        assert sliced["modality_inputs"]["vision"]["pixel_values"].shape == (1, 3)
+        torch.testing.assert_close(
+            sliced["modality_inputs"]["vision"]["pixel_values"],
+            batch["modality_inputs"]["vision"]["pixel_values"][2:3],
+        )
+
+    def test_unknown_key_falls_back_to_language_dp(self, monkeypatch):
+        """A batch key that's neither a known language key nor under
+        modality_inputs (e.g. future metadata) falls back to language DP."""
+        monkeypatch.setattr(dist, "get_rank", lambda: 0)
+        grids = {
+            "vision": FakeGrid(0, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
+            "language": FakeGrid(0, 4, dp_rank=1, dp_size=2, pp_rank=0, pp_size=1),
+        }
+        batch = {
+            "input_ids": torch.arange(4 * 8).reshape(4, 8),
+            "loss_mask": torch.ones(4, 8),
+            "modality_inputs": {
+                "vision": {"pixel_values": torch.arange(12).reshape(4, 3)},
+            },
+            "future_metadata": torch.arange(4),
+        }
+
+        sliced = slice_batch_for_megatron_mimo_modules(batch, grids=grids)
+
+        # language dp_rank=1, dp_size=2 → samples [2:4]
+        assert sliced["future_metadata"].shape == (2,)
+        torch.testing.assert_close(sliced["future_metadata"], batch["future_metadata"][2:4])
+
+    def test_empty_grids_returns_batch_unchanged(self):
+        """No grids configured (legacy / no module_to_grid_map): batch unchanged."""
+        batch = _make_batch(global_size=4)
+        sliced = slice_batch_for_megatron_mimo_modules(batch, grids={})
+        assert sliced is batch
+
+    def test_language_keys_with_language_dp_1_passthrough(self, monkeypatch):
+        """Fan-in 2-GPU shape: language DP=1 means language keys are not sliced
+        (every TP rank sees the full global micro-batch), while modality_inputs
+        is still sliced by encoder DP."""
+        monkeypatch.setattr(dist, "get_rank", lambda: 1)
+        # enc(TP=1,DP=2) × llm(TP=2,DP=1), total=2 each.
+        grids = {
+            "vision": FakeGrid(0, 2, dp_rank=1, dp_size=2, pp_rank=0, pp_size=1),
+            "language": FakeGrid(0, 2, dp_rank=0, dp_size=1, pp_rank=0, pp_size=1),
+        }
+        batch = _make_batch(global_size=2)
+
+        sliced = slice_batch_for_megatron_mimo_modules(batch, grids=grids)
+
+        # language DP=1 → no slice on language keys
+        assert sliced["input_ids"].shape == batch["input_ids"].shape
+        torch.testing.assert_close(sliced["input_ids"], batch["input_ids"])
+
+        # vision DP=2, rank=1 → sample [1:2]
+        assert sliced["modality_inputs"]["vision"]["pixel_values"].shape == (1, 3)
+        torch.testing.assert_close(
+            sliced["modality_inputs"]["vision"]["pixel_values"],
+            batch["modality_inputs"]["vision"]["pixel_values"][1:2],
+        )

@@ -12,46 +12,159 @@ Key design notes (per PR 3212):
 from __future__ import annotations
 
 import logging
+import os
 from functools import partial
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 import torch
+import torch.distributed as dist
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
-from megatron.bridge.data.megatron_mimo.dp_utils import slice_batch_for_megatron_mimo
+from megatron.bridge.data.megatron_mimo.dp_utils import slice_batch_for_megatron_mimo_modules
 from megatron.bridge.training.megatron_mimo_parallel_utils import unwrap_megatron_mimo_model
 from megatron.bridge.training.state import GlobalState
 
 
 logger = logging.getLogger(__name__)
 
+_DATA_ALIGNMENT_CHECK_COUNT = 0
 
-def _get_module_dp_info(
-    megatron_mimo_model: MimoModel,
-) -> Tuple[int, int]:
-    """Get module-local DP rank and size for the current rank.
 
-    Used to slice the global micro-batch via :func:`slice_batch_for_megatron_mimo`.
-    Returns (0, 1) when grids are not configured (colocated mode).
-    """
-    grids = getattr(megatron_mimo_model.mimo_config, "module_to_grid_map", None)
-    if not grids:
-        return 0, 1
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "y", "on"}
 
-    import torch.distributed as _dist
 
-    if not _dist.is_initialized():
-        return 0, 1
+def _first_tensor_batch_dim(value: Any) -> int | None:
+    if isinstance(value, torch.Tensor):
+        return value.size(0)
+    if isinstance(value, dict):
+        for nested in value.values():
+            batch_dim = _first_tensor_batch_dim(nested)
+            if batch_dim is not None:
+                return batch_dim
+    return None
 
-    current_rank = _dist.get_rank()
-    for _name, grid in grids.items():
-        if grid.rank_offset <= current_rank < (grid.rank_offset + grid.size):
-            dp_rank = grid.get_pg(["dp"]).rank()
-            dp_size = grid.get_pg(["dp"]).size()
-            return dp_rank, dp_size
 
-    return 0, 1
+def _rank_modules(grids: Dict[str, Any]) -> Dict[str, Any]:
+    current_rank = dist.get_rank()
+    return {
+        name: grid for name, grid in grids.items() if grid.rank_offset <= current_rank < (grid.rank_offset + grid.size)
+    }
+
+
+def _maybe_check_colocated_data_alignment(
+    original_batch: Dict[str, Any],
+    sliced_batch: Dict[str, Any],
+    grids: Dict[str, Any],
+) -> None:
+    """One-shot L3 guardrail for colocated heterogeneous-DP data slicing."""
+    global _DATA_ALIGNMENT_CHECK_COUNT
+
+    # TODO(liding): to be removed after L3 data-alignment validation is no longer needed.
+    if not _env_flag("MIMO_CHECK_DATA_ALIGNMENT"):
+        return
+    max_checks = int(os.environ.get("MIMO_CHECK_DATA_ALIGNMENT_STEPS", "1"))
+    if _DATA_ALIGNMENT_CHECK_COUNT >= max_checks:
+        return
+    if not dist.is_available() or not dist.is_initialized() or not grids:
+        return
+
+    rank_modules = _rank_modules(grids)
+    if len(rank_modules) < 2:
+        return
+
+    language_grid = rank_modules.get(MIMO_LANGUAGE_MODULE_KEY)
+    if language_grid is None:
+        return
+
+    language_dp = language_grid.get_pg(["dp"])
+    language_dp_rank = language_dp.rank()
+    language_dp_size = language_dp.size()
+    global_batch = _first_tensor_batch_dim(original_batch.get("input_ids"))
+    if global_batch is None:
+        return
+    if global_batch % language_dp_size != 0:
+        raise RuntimeError(
+            f"MegatronMIMO data alignment check failed: global language batch {global_batch} "
+            f"is not divisible by language DP size {language_dp_size}."
+        )
+
+    expected_language_batch = global_batch // language_dp_size
+    local_language_batch = _first_tensor_batch_dim(sliced_batch.get("input_ids"))
+    if local_language_batch != expected_language_batch:
+        raise RuntimeError(
+            "MegatronMIMO data alignment check failed: "
+            f"language local batch is {local_language_batch}, expected {expected_language_batch} "
+            f"from global batch {global_batch}, language dp_rank={language_dp_rank}, "
+            f"language dp_size={language_dp_size}."
+        )
+
+    modality_reports = []
+    original_modalities = original_batch.get("modality_inputs") or {}
+    sliced_modalities = sliced_batch.get("modality_inputs") or {}
+    for modality_name, encoder_grid in sorted(rank_modules.items()):
+        if modality_name == MIMO_LANGUAGE_MODULE_KEY or modality_name not in original_modalities:
+            continue
+
+        encoder_dp = encoder_grid.get_pg(["dp"])
+        encoder_dp_rank = encoder_dp.rank()
+        encoder_dp_size = encoder_dp.size()
+        original_modality_batch = _first_tensor_batch_dim(original_modalities.get(modality_name))
+        local_modality_batch = _first_tensor_batch_dim(sliced_modalities.get(modality_name))
+        if original_modality_batch is None:
+            continue
+        if original_modality_batch != global_batch:
+            raise RuntimeError(
+                "MegatronMIMO data alignment check failed: "
+                f"modality '{modality_name}' global batch is {original_modality_batch}, "
+                f"language global batch is {global_batch}."
+            )
+        if original_modality_batch % encoder_dp_size != 0:
+            raise RuntimeError(
+                "MegatronMIMO data alignment check failed: "
+                f"modality '{modality_name}' global batch {original_modality_batch} is not divisible "
+                f"by encoder DP size {encoder_dp_size}."
+            )
+
+        expected_modality_batch = original_modality_batch // encoder_dp_size
+        if local_modality_batch != expected_modality_batch:
+            raise RuntimeError(
+                "MegatronMIMO data alignment check failed: "
+                f"modality '{modality_name}' local batch is {local_modality_batch}, "
+                f"expected {expected_modality_batch} from encoder dp_rank={encoder_dp_rank}, "
+                f"encoder dp_size={encoder_dp_size}."
+            )
+
+        if encoder_dp_size % language_dp_size == 0:
+            fanin = encoder_dp_size // language_dp_size
+            expected_language_dp_rank = encoder_dp_rank // fanin
+            if expected_language_dp_rank != language_dp_rank:
+                raise RuntimeError(
+                    "MegatronMIMO data alignment check failed: "
+                    f"modality '{modality_name}' encoder dp_rank={encoder_dp_rank} maps to "
+                    f"language dp_rank={expected_language_dp_rank}, but this rank is language "
+                    f"dp_rank={language_dp_rank}."
+                )
+
+        modality_reports.append(
+            f"{modality_name}:dp={encoder_dp_rank}/{encoder_dp_size},local_batch={local_modality_batch}"
+        )
+
+    logger.info(
+        "MegatronMIMO data alignment check passed on rank %s: global_batch=%s, "
+        "language_dp=%s/%s, language_local_batch=%s, modalities=[%s]",
+        dist.get_rank(),
+        global_batch,
+        language_dp_rank,
+        language_dp_size,
+        local_language_batch,
+        "; ".join(modality_reports),
+    )
+    _DATA_ALIGNMENT_CHECK_COUNT += 1
 
 
 def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor) -> Tuple:
@@ -174,12 +287,15 @@ def forward_step(
                 "get_batch returned None at a stage that requires data. "
                 "This indicates a data-loading or parallelism misconfiguration."
             )
-        # Slice the global micro-batch for this module's DP shard.
-        # All data-loading ranks receive identical batches (sampler dp_size=1).
-        # slice_batch_for_megatron_mimo contiguously sub-shards to match the
-        # BridgeCommunicator's fan-in/fan-out batch-dimension routing.
-        dp_rank, dp_size = _get_module_dp_info(megatron_mimo_model)
-        data_batch = slice_batch_for_megatron_mimo(data_batch, dp_rank, dp_size)
+        # Slice the global micro-batch per-module. All data-loading ranks
+        # receive identical batches (sampler dp_size=1); the helper sub-shards
+        # language keys by language DP and modality_inputs by each encoder's
+        # DP. In non-colocated mode this reduces to uniform slicing by the
+        # rank's single module's DP.
+        grids = getattr(megatron_mimo_model.mimo_config, "module_to_grid_map", None) or {}
+        original_data_batch = data_batch
+        data_batch = slice_batch_for_megatron_mimo_modules(data_batch, grids=grids)
+        _maybe_check_colocated_data_alignment(original_data_batch, data_batch, grids)
     else:
         # Non-data stages consume hidden states from pipeline input tensors.
         data_batch = {

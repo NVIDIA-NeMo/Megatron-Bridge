@@ -26,11 +26,12 @@ def _make_setup_output(module_to_grid_map):
     global_state.train_state.step = 0
     mock_checkpoint_manager = MagicMock()
     mock_checkpoint_manager.checkpointing_context = None
+    language_pg = MagicMock()
     return SimpleNamespace(
         model=MagicMock(),
         megatron_mimo_infra=SimpleNamespace(
             module_to_grid_map=module_to_grid_map,
-            pg_collections={"language": MagicMock()},
+            pg_collections={"language": language_pg},
         ),
         multimodule_communicator=MagicMock(),
         multimodule_pg_collection=MagicMock(),
@@ -41,75 +42,361 @@ def _make_setup_output(module_to_grid_map):
         valid_data_iterator=None,
         global_state=global_state,
         checkpoint_manager=mock_checkpoint_manager,
+        active_module_name="language",
+        local_pg_collection=language_pg,
     )
 
 
-@patch(
-    "megatron.bridge.training.setup_megatron_mimo.is_current_rank_in_grid",
-    side_effect=lambda grid: grid.rank_offset <= 4 < (grid.rank_offset + grid.size),
-)
-@patch("megatron.bridge.training.setup_megatron_mimo.dist")
-def test_set_megatron_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mock_dist, _mock_in_grid):
-    """_set_megatron_mimo_random_seeds should derive TP/PP ranks from grids and call model_parallel_cuda_manual_seed."""
-    from megatron.bridge.training.setup_megatron_mimo import _set_megatron_mimo_random_seeds
-
-    mock_dist.get_rank.return_value = 4  # e.g. first rank of vision encoder
-
-    # Build a mock grid: vision ranks [4,8), TP=2, PP=1
+def _make_fake_grid(*, rank_offset: int, size: int, tp_rank: int, pp_rank: int) -> MagicMock:
+    """Build a mock grid whose ``get_pg`` returns PGs with the given ranks."""
     tp_pg = MagicMock()
+    tp_pg.rank.return_value = tp_rank
     pp_pg = MagicMock()
-    mock_dist.get_group_rank.side_effect = lambda pg, rank: {tp_pg: 0, pp_pg: 0}[pg]
-
+    pp_pg.rank.return_value = pp_rank
     grid = MagicMock()
-    grid.rank_offset = 4
-    grid.size = 4
+    grid.rank_offset = rank_offset
+    grid.size = size
     grid.get_pg.side_effect = lambda dims: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
+    return grid
 
-    megatron_mimo_infra = SimpleNamespace(module_to_grid_map={"vision": grid})
-    cfg = SimpleNamespace(rng=SimpleNamespace(seed=42))
+
+def test_scheduler_helpers_skip_frozen_module_optimizer_stubs():
+    """Frozen modules can create optimizer stubs that must not drive LR scheduling."""
+    from megatron.bridge.training.setup_megatron_mimo import (
+        _first_scheduler_with_param_groups as setup_first_scheduler,
+    )
+    from megatron.bridge.training.setup_megatron_mimo import (
+        _optimizer_has_params,
+    )
+    from megatron.bridge.training.train_megatron_mimo import (
+        _first_scheduler_with_param_groups as train_first_scheduler,
+    )
+
+    stub_optimizer = SimpleNamespace(param_groups=[])
+    empty_group_optimizer = SimpleNamespace(param_groups=[{"params": [], "lr": 1e-3}])
+    real_optimizer = SimpleNamespace(param_groups=[{"params": [object()], "lr": 1e-3}])
+    stub_scheduler = SimpleNamespace(optimizer=stub_optimizer)
+    empty_group_scheduler = SimpleNamespace(optimizer=empty_group_optimizer)
+    real_scheduler = SimpleNamespace(optimizer=real_optimizer)
+    schedulers = {"language": stub_scheduler, "audio": empty_group_scheduler, "images": real_scheduler}
+
+    assert not _optimizer_has_params(stub_optimizer)
+    assert not _optimizer_has_params(empty_group_optimizer)
+    assert _optimizer_has_params(real_optimizer)
+    assert setup_first_scheduler(schedulers) is real_scheduler
+    assert train_first_scheduler(schedulers) is real_scheduler
+
+
+def test_learning_rate_for_logging_handles_ranks_without_local_scheduler(monkeypatch):
+    """Frozen-only ranks should log the globally active learning rate."""
+    from megatron.bridge.training import train_megatron_mimo
+
+    monkeypatch.setattr(train_megatron_mimo.dist, "is_available", lambda: True)
+    monkeypatch.setattr(train_megatron_mimo.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(train_megatron_mimo.torch.cuda, "is_available", lambda: False)
+
+    def fake_all_reduce(tensor, op):
+        assert op == train_megatron_mimo.dist.ReduceOp.MAX
+        tensor[0] = 1e-3
+
+    monkeypatch.setattr(train_megatron_mimo.dist, "all_reduce", fake_all_reduce)
+
+    assert train_megatron_mimo._learning_rate_for_logging({}) == pytest.approx(1e-3)
+
+
+def test_seed_per_module_rng_tracker_non_colocated_single_module():
+    """Non-colocated rank serving one module → seed called once with that
+    module's tp_rank, snapshot dict has one entry."""
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import seed_per_module_rng_tracker
+
+    current_rank = 4  # first rank of vision encoder
+    grid = _make_fake_grid(rank_offset=4, size=4, tp_rank=0, pp_rank=0)
+
+    megatron_mimo_infra = SimpleNamespace(
+        module_to_grid_map={"vision": grid},
+        cuda_rng_states_per_module={},
+    )
 
     with patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
-        import torch
+        with patch(
+            "megatron.core.tensor_parallel.get_cuda_rng_tracker",
+            return_value=MagicMock(get_states=MagicMock(return_value={"sentinel": "vision"})),
+        ):
+            import torch
 
-        with patch.object(torch.cuda, "device_count", return_value=1):
-            _set_megatron_mimo_random_seeds(cfg, megatron_mimo_infra)
+            with patch.object(torch.cuda, "device_count", return_value=1):
+                seed_per_module_rng_tracker(42, megatron_mimo_infra, current_rank=current_rank)
 
-        # pp_rank=0, so seed stays 42. tp_rank=0 passed explicitly.
-        mock_seed.assert_called_once_with(42, tp_rank=0, ep_rank=0, etp_rank=0)
+            # pp_rank=0, so seed stays 42. tp_rank=0 passed explicitly.
+            mock_seed.assert_called_once_with(42, tp_rank=0, ep_rank=0, etp_rank=0)
+            # Snapshot stashed on infra under the active module's name.
+            assert "vision" in megatron_mimo_infra.cuda_rng_states_per_module
 
 
-@patch(
-    "megatron.bridge.training.setup_megatron_mimo.is_current_rank_in_grid",
-    side_effect=lambda grid: grid.rank_offset <= 2 < (grid.rank_offset + grid.size),
-)
-@patch("megatron.bridge.training.setup_megatron_mimo.dist")
-def test_set_megatron_mimo_random_seeds_offsets_by_pp_rank(mock_dist, _mock_in_grid):
-    """PP rank > 0 should offset the seed by 100 * pp_rank."""
-    from megatron.bridge.training.setup_megatron_mimo import _set_megatron_mimo_random_seeds
+def test_seed_per_module_rng_tracker_offsets_by_pp_rank():
+    """PP rank > 0 → seed offset by 100 * pp_rank."""
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import seed_per_module_rng_tracker
 
-    mock_dist.get_rank.return_value = 2
+    current_rank = 2
+    grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=1, pp_rank=1)
 
-    tp_pg = MagicMock()
-    pp_pg = MagicMock()
-    # tp_rank=1, pp_rank=1
-    mock_dist.get_group_rank.side_effect = lambda pg, rank: {tp_pg: 1, pp_pg: 1}[pg]
-
-    grid = MagicMock()
-    grid.rank_offset = 0
-    grid.size = 4
-    grid.get_pg.side_effect = lambda dims: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
-
-    megatron_mimo_infra = SimpleNamespace(module_to_grid_map={"llm": grid})
-    cfg = SimpleNamespace(rng=SimpleNamespace(seed=42))
+    megatron_mimo_infra = SimpleNamespace(
+        module_to_grid_map={"language": grid},
+        cuda_rng_states_per_module={},
+    )
 
     with patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
-        import torch
+        with patch(
+            "megatron.core.tensor_parallel.get_cuda_rng_tracker",
+            return_value=MagicMock(get_states=MagicMock(return_value={})),
+        ):
+            import torch
 
-        with patch.object(torch.cuda, "device_count", return_value=1):
-            _set_megatron_mimo_random_seeds(cfg, megatron_mimo_infra)
+            with patch.object(torch.cuda, "device_count", return_value=1):
+                seed_per_module_rng_tracker(42, megatron_mimo_infra, current_rank=current_rank)
 
-        # seed = 42 + 100 * 1 = 142, tp_rank=1
-        mock_seed.assert_called_once_with(142, tp_rank=1, ep_rank=0, etp_rank=0)
+            # seed = 42 + 100 * 1 = 142, tp_rank=1
+            mock_seed.assert_called_once_with(142, tp_rank=1, ep_rank=0, etp_rank=0)
+
+
+def test_seed_per_module_rng_tracker_colocated_calls_seed_per_module():
+    """Colocated heterogeneous TP rank in BOTH modules → one seed call per
+    module with that module's tp_rank, snapshot dict has both entries.
+
+    This is the load-bearing test for asymmetric TP: the pre-task helper
+    iterated module_to_grid_map and broke out on the first match (single
+    seed call). The new helper must call seeding once per active module so
+    each module's TP-region RNG is correct.
+    """
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import seed_per_module_rng_tracker
+
+    current_rank = 1
+    # Asymmetric TP: vision tp_rank=0, language tp_rank=1.
+    vision_grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=0, pp_rank=0)
+    language_grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=1, pp_rank=0)
+
+    megatron_mimo_infra = SimpleNamespace(
+        module_to_grid_map={"vision": vision_grid, "language": language_grid},
+        cuda_rng_states_per_module={},
+    )
+    # Per-module tracker snapshots — return distinguishable sentinels per call.
+    states_per_call = [
+        {"tracker_state": "vision_state"},
+        {"tracker_state": "language_state"},
+    ]
+    fake_tracker = MagicMock()
+    fake_tracker.get_states.side_effect = states_per_call
+
+    with patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
+        with patch(
+            "megatron.core.tensor_parallel.get_cuda_rng_tracker",
+            return_value=fake_tracker,
+        ):
+            import torch
+
+            with patch.object(torch.cuda, "device_count", return_value=1):
+                seed_per_module_rng_tracker(42, megatron_mimo_infra, current_rank=current_rank)
+
+    # Two seed calls — one per active module — with each module's tp_rank.
+    assert mock_seed.call_count == 2
+    seed_calls = [tuple(call.args) + tuple(sorted(call.kwargs.items())) for call in mock_seed.call_args_list]
+    assert (42, ("ep_rank", 0), ("etp_rank", 0), ("tp_rank", 0)) in seed_calls
+    assert (42, ("ep_rank", 0), ("etp_rank", 0), ("tp_rank", 1)) in seed_calls
+
+    # Snapshot dict has both modules' tracker states.
+    assert set(megatron_mimo_infra.cuda_rng_states_per_module.keys()) == {"vision", "language"}
+    assert megatron_mimo_infra.cuda_rng_states_per_module["vision"] == {"tracker_state": "vision_state"}
+    assert megatron_mimo_infra.cuda_rng_states_per_module["language"] == {"tracker_state": "language_state"}
+
+
+def test_seed_per_module_rng_tracker_global_offset_falls_back_to_unique_module():
+    """Non-colocated encoder-only rank (language not active here) → global
+    Python/numpy/torch.manual_seed pp_offset comes from the unique active
+    module, preserving pre-task non-colocated behavior."""
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import seed_per_module_rng_tracker
+
+    current_rank = 0
+    # vision is at rank_offset=0 (active here, pp_rank=2).
+    # language is at rank_offset=4 (NOT active here).
+    vision_grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=0, pp_rank=2)
+    language_grid = _make_fake_grid(rank_offset=4, size=4, tp_rank=0, pp_rank=0)
+
+    megatron_mimo_infra = SimpleNamespace(
+        module_to_grid_map={"vision": vision_grid, "language": language_grid},
+        cuda_rng_states_per_module={},
+    )
+    import random as random_module
+
+    import numpy as np_module
+
+    with patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed"):
+        with patch(
+            "megatron.core.tensor_parallel.get_cuda_rng_tracker",
+            return_value=MagicMock(get_states=MagicMock(return_value={})),
+        ):
+            with patch.object(random_module, "seed") as mock_random_seed:
+                with patch.object(np_module.random, "seed") as mock_np_seed:
+                    with patch("torch.manual_seed") as mock_torch_seed:
+                        import torch
+
+                        with patch.object(torch.cuda, "device_count", return_value=1):
+                            seed_per_module_rng_tracker(42, megatron_mimo_infra, current_rank=current_rank)
+
+    # vision pp_rank=2 → global_seed = 42 + 100*2 = 242. Verifies fallback
+    # picks the unique active module's pp_rank when language isn't on this rank.
+    mock_random_seed.assert_called_once_with(242)
+    mock_np_seed.assert_called_once_with(242)
+    mock_torch_seed.assert_called_once_with(242)
+
+
+def test_seed_per_module_rng_tracker_global_offset_uses_language_when_active():
+    """Colocated rank with language active → global pp_offset uses language's
+    pp_rank (canonical pick), even when listed second in module_to_grid_map.
+    Python random / numpy / torch CPU RNG aren't TP-region-sensitive, so a
+    single canonical pp_offset is correct.
+    """
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import seed_per_module_rng_tracker
+
+    current_rank = 0
+    # Language listed SECOND in iteration order to exercise the explicit
+    # MIMO_LANGUAGE_MODULE_KEY preference (a "first match" implementation
+    # would pick vision and use vision pp_rank).
+    vision_grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=0, pp_rank=3)
+    language_grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=0, pp_rank=1)
+
+    megatron_mimo_infra = SimpleNamespace(
+        module_to_grid_map={"vision": vision_grid, "language": language_grid},
+        cuda_rng_states_per_module={},
+    )
+    import random as random_module
+
+    import numpy as np_module
+
+    with patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed"):
+        with patch(
+            "megatron.core.tensor_parallel.get_cuda_rng_tracker",
+            return_value=MagicMock(get_states=MagicMock(return_value={})),
+        ):
+            with patch.object(random_module, "seed") as mock_random_seed:
+                with patch.object(np_module.random, "seed") as mock_np_seed:
+                    with patch("torch.manual_seed") as mock_torch_seed:
+                        import torch
+
+                        with patch.object(torch.cuda, "device_count", return_value=1):
+                            seed_per_module_rng_tracker(42, megatron_mimo_infra, current_rank=current_rank)
+
+    # language pp_rank=1 → global_seed = 42 + 100*1 = 142. Confirms language is
+    # picked over vision despite vision appearing first in dict iteration.
+    mock_random_seed.assert_called_once_with(142)
+    mock_np_seed.assert_called_once_with(142)
+    mock_torch_seed.assert_called_once_with(142)
+
+
+def test_module_rng_scope_swaps_tracker_state_on_entry_and_saves_on_exit():
+    """``module_rng_scope`` swaps the singleton tracker via ``set_states`` on
+    entry and writes back via ``get_states`` on exit, so RNG advances inside
+    the scope persist into the per-module snapshot dict."""
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import (
+        MegatronMIMOInfra,
+        module_rng_scope,
+    )
+
+    initial_state = {"tracker": "vision_initial"}
+    advanced_state = {"tracker": "vision_advanced"}
+    infra = MegatronMIMOInfra(
+        module_to_grid_map={},
+        topology={},
+        pg_collections={},
+        participating_modules=[],
+        cuda_rng_states_per_module={"vision": initial_state, "language": {"tracker": "lang_state"}},
+    )
+
+    fake_tracker = MagicMock()
+    # Each get_states() call returns the "current" state. We track what the
+    # tracker has been set_states-d to so the test can verify the order.
+    fake_tracker.get_states.return_value = advanced_state
+
+    with patch("megatron.core.tensor_parallel.get_cuda_rng_tracker", return_value=fake_tracker):
+        with module_rng_scope("vision", infra):
+            # set_states called with vision's saved state on entry.
+            fake_tracker.set_states.assert_called_once_with(initial_state)
+
+        # get_states called on exit; result stashed under vision's slot.
+        fake_tracker.get_states.assert_called_once()
+        assert infra.cuda_rng_states_per_module["vision"] == advanced_state
+        # Other modules' slots are untouched.
+        assert infra.cuda_rng_states_per_module["language"] == {"tracker": "lang_state"}
+
+
+def test_module_rng_scope_falls_through_when_module_not_in_snapshots():
+    """Missing snapshot → no tracker swap (nullcontext semantics).
+
+    Happens when a rank doesn't participate in the requested module (factories
+    are sometimes bound for every module name) or before seeding has run.
+    Important to fail open here so legacy paths and not-yet-seeded states
+    don't crash with a KeyError.
+    """
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import (
+        MegatronMIMOInfra,
+        module_rng_scope,
+    )
+
+    infra = MegatronMIMOInfra(
+        module_to_grid_map={},
+        topology={},
+        pg_collections={},
+        participating_modules=[],
+        cuda_rng_states_per_module={},  # empty — no snapshots populated yet
+    )
+
+    fake_tracker = MagicMock()
+
+    with patch("megatron.core.tensor_parallel.get_cuda_rng_tracker", return_value=fake_tracker):
+        with module_rng_scope("vision", infra):
+            pass
+
+    # No tracker mutation when there's no snapshot to load.
+    fake_tracker.set_states.assert_not_called()
+    fake_tracker.get_states.assert_not_called()
+
+
+def test_module_rng_scope_can_be_re_entered():
+    """Same scope entered multiple times must keep working — the factory used
+    by ``MimoModel._scope`` produces a fresh context manager per entry, but
+    each entry needs to load this module's *current* snapshot, not a stale
+    one. Specifically: state advanced inside an earlier scope must be the
+    starting state of the next entry (advances persist via get_states on exit).
+    """
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import (
+        MegatronMIMOInfra,
+        module_rng_scope,
+    )
+
+    infra = MegatronMIMOInfra(
+        module_to_grid_map={},
+        topology={},
+        pg_collections={},
+        participating_modules=[],
+        cuda_rng_states_per_module={"vision": {"step": 0}},
+    )
+
+    fake_tracker = MagicMock()
+    fake_tracker.get_states.side_effect = [{"step": 1}, {"step": 2}]
+
+    with patch("megatron.core.tensor_parallel.get_cuda_rng_tracker", return_value=fake_tracker):
+        with module_rng_scope("vision", infra):
+            pass
+        first_snapshot = dict(infra.cuda_rng_states_per_module["vision"])
+        with module_rng_scope("vision", infra):
+            pass
+        second_snapshot = dict(infra.cuda_rng_states_per_module["vision"])
+
+    # First exit wrote {step: 1}; second entry loaded that and saved {step: 2}.
+    assert first_snapshot == {"step": 1}
+    assert second_snapshot == {"step": 2}
+    # set_states called twice — second time with the post-first-exit state.
+    set_calls = [call.args[0] for call in fake_tracker.set_states.call_args_list]
+    assert set_calls == [{"step": 0}, {"step": 1}]
 
 
 def test_get_rng_state_namespaces_key_with_module_name():
@@ -179,6 +466,40 @@ def test_pretrain_megatron_mimo_calls_setup_and_train(
     mock_setup_megatron_mimo.assert_called_once()
     mock_train_megatron_mimo.assert_called_once()
     mock_finish.assert_called_once()
+
+
+@patch("megatron.bridge.training.pretrain_megatron_mimo._finish_train")
+@patch("megatron.bridge.training.pretrain_megatron_mimo.train_megatron_mimo")
+@patch("megatron.bridge.training.pretrain_megatron_mimo.setup_megatron_mimo")
+@patch("megatron.bridge.training.pretrain_megatron_mimo.dist")
+@patch("megatron.bridge.training.pretrain_megatron_mimo.megatron_mimo_runtime_config_update")
+@patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None)
+@patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None)
+@patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None)
+def test_pretrain_megatron_mimo_threads_active_module_from_setup(
+    mock_runtime_update, mock_dist, mock_setup_megatron_mimo, mock_train_megatron_mimo, mock_finish
+):
+    """pretrain_megatron_mimo must pass active_module_name and local_pg_collection
+    from setup_output into train_megatron_mimo. Prevents reintroduction of the
+    rank-dependent inline recompute that fails in colocated mode."""
+    from megatron.bridge.training.pretrain_megatron_mimo import pretrain_megatron_mimo
+
+    cfg = _make_cfg()
+    mock_dist.get_rank.return_value = 0
+    mock_dist.is_initialized.return_value = True
+    setup_output = _make_setup_output(module_to_grid_map={"language": MagicMock()})
+    mock_setup_megatron_mimo.return_value = setup_output
+
+    pretrain_megatron_mimo(
+        cfg=cfg,
+        forward_step_func=MagicMock(),
+        build_data_iterators_fn=MagicMock(return_value=(iter([]), None)),
+        global_state=MagicMock(),
+    )
+
+    _, kwargs = mock_train_megatron_mimo.call_args
+    assert kwargs["active_module_name"] == setup_output.active_module_name
+    assert kwargs["local_pg_collection"] is setup_output.local_pg_collection
 
 
 def test_finish_train_calls_cleanup():
@@ -251,7 +572,6 @@ def test_setup_megatron_mimo_asserts_when_constructor_fields_missing(
 
     with (
         patch("megatron.bridge.training.setup_megatron_mimo.validate_no_stub_ranks"),
-        patch("megatron.bridge.training.setup_megatron_mimo._set_megatron_mimo_random_seeds"),
         patch("megatron.bridge.training.setup_megatron_mimo.build_pg_collection_for_schedule"),
         patch("megatron.bridge.training.setup_megatron_mimo.get_module_to_grid_tuple"),
         patch("megatron.bridge.training.setup_megatron_mimo.MultiModulePipelineCommunicator"),
@@ -262,3 +582,166 @@ def test_setup_megatron_mimo_asserts_when_constructor_fields_missing(
         mock_state.cfg = cfg
         with pytest.raises(AssertionError, match="module_to_grid_map must be set"):
             setup_megatron_mimo(state=mock_state)
+
+
+# ---------------------------------------------------------------------------
+# Tests: train_step_megatron_mimo schedule dispatch
+# ---------------------------------------------------------------------------
+
+
+def _make_mimo_model_stub(mode, lm_has_pp: bool):
+    """Build a minimal MimoModel-like stub for dispatch tests."""
+    from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+
+    stub = MagicMock()
+    stub.role.mode = mode
+    stub.lm_has_pp = lm_has_pp
+    stub.role.has_language_module = True
+    stub.role.is_last_stage.return_value = False
+    # Make MIMO_LANGUAGE_MODULE_KEY resolvable for post-schedule loss code paths
+    _ = MIMO_LANGUAGE_MODULE_KEY  # suppress unused warning
+    return stub
+
+
+def _make_minimal_train_step_kwargs():
+    """Minimal kwargs for train_step_megatron_mimo; values only need to reach the dispatch."""
+    return dict(
+        forward_step_func=MagicMock(),
+        data_iterator=iter([]),
+        model=MagicMock(),
+        optimizer=MagicMock(),
+        schedulers={},
+        global_state=MagicMock(),
+        multimodule_communicator=MagicMock(),
+        multimodule_pg_collection=MagicMock(),
+        infra=SimpleNamespace(pg_collections={"language": MagicMock()}),
+        module_to_grid_tuple=[],
+        num_microbatches=1,
+        seq_length=4,
+        micro_batch_size=1,
+    )
+
+
+def test_train_step_raises_for_colocated_with_llm_pp_gt_one():
+    """Colocated + LLM PP>1 must raise NotImplementedError until the three-phase schedule is wired."""
+    from megatron.core.models.mimo.config.role import ModuleLayout
+
+    from megatron.bridge.training.train_megatron_mimo import train_step_megatron_mimo
+
+    stub = _make_mimo_model_stub(mode=ModuleLayout.COLOCATED, lm_has_pp=True)
+    with patch("megatron.bridge.training.train_megatron_mimo.unwrap_megatron_mimo_model", return_value=stub):
+        with pytest.raises(NotImplementedError, match="three-phase schedule"):
+            train_step_megatron_mimo(**_make_minimal_train_step_kwargs())
+
+
+@pytest.mark.parametrize(
+    "mode_name, lm_has_pp, expected_schedule",
+    [
+        # colocated + LLM PP=1: no-pipelining schedule with language pg_collection.
+        # Cross-module flow happens inside MimoModel._forward_all_modules via
+        # ColocatedBridgeCommunicator — the schedule does no P2P.
+        ("COLOCATED", False, "forward_backward_no_pipelining"),
+        # non-colocated + LLM PP=1: pipelining-without-interleaving with the
+        # MultiModulePipelineCommunicator — encoder and language live on disjoint
+        # ranks so cross-module P2P at the schedule level is required.
+        ("NON_COLOCATED", False, "forward_backward_pipelining_without_interleaving"),
+        # non-colocated + LLM PP>1: same as above (MultiModulePipelineCommunicator
+        # handles both cross-module and intra-LLM-PP P2P).
+        ("NON_COLOCATED", True, "forward_backward_pipelining_without_interleaving"),
+    ],
+    ids=["colocated_pp1", "non_colocated_pp1", "non_colocated_pp_gt1"],
+)
+def test_train_step_non_three_phase_cases_dispatch_to_correct_schedule(mode_name, lm_has_pp, expected_schedule):
+    """Schedule dispatch picks no-pipelining for colocated-PP=1 and pipelining-without-interleaving otherwise."""
+    from megatron.core.models.mimo.config.role import ModuleLayout
+
+    from megatron.bridge.training.train_megatron_mimo import train_step_megatron_mimo
+
+    stub = _make_mimo_model_stub(mode=getattr(ModuleLayout, mode_name), lm_has_pp=lm_has_pp)
+    # Use a sentinel exception thrown from the mocked schedule as the "got past the
+    # dispatch" marker. This avoids exercising downstream code paths (loss
+    # aggregation, torch.distributed calls) that aren't the subject under test.
+    sentinel = RuntimeError(f"DISPATCH_REACHED_{expected_schedule}")
+    with (
+        patch("megatron.bridge.training.train_megatron_mimo.unwrap_megatron_mimo_model", return_value=stub),
+        patch(
+            f"megatron.bridge.training.train_megatron_mimo.{expected_schedule}",
+            side_effect=sentinel,
+        ) as mock_fb,
+        patch("megatron.bridge.training.train_megatron_mimo.zero_grad_buffer_for_multimodule"),
+    ):
+        with pytest.raises(RuntimeError, match=f"DISPATCH_REACHED_{expected_schedule}"):
+            train_step_megatron_mimo(**_make_minimal_train_step_kwargs())
+        assert mock_fb.called, f"{expected_schedule} not called for mode={mode_name}, lm_has_pp={lm_has_pp}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: schedule contract — colocated must stay language-PG-scoped, never
+# pulls in the MultiModulePipelineCommunicator (would self-send/deadlock).
+# ---------------------------------------------------------------------------
+
+
+def test_colocated_pp1_passes_language_pg_collection_to_no_pipelining():
+    """Colocated PP=1 must pass the language module's pg_collection — not multimodule — to the schedule."""
+    from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY, ModuleLayout
+
+    from megatron.bridge.training.train_megatron_mimo import train_step_megatron_mimo
+
+    stub = _make_mimo_model_stub(mode=ModuleLayout.COLOCATED, lm_has_pp=False)
+    kwargs = _make_minimal_train_step_kwargs()
+    language_pg = kwargs["infra"].pg_collections[MIMO_LANGUAGE_MODULE_KEY]
+    multimodule_pg = kwargs["multimodule_pg_collection"]
+    multimodule_comm = kwargs["multimodule_communicator"]
+
+    sentinel = RuntimeError("STOP_AFTER_DISPATCH")
+    with (
+        patch("megatron.bridge.training.train_megatron_mimo.unwrap_megatron_mimo_model", return_value=stub),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.forward_backward_no_pipelining",
+            side_effect=sentinel,
+        ) as mock_fb,
+        patch("megatron.bridge.training.train_megatron_mimo.zero_grad_buffer_for_multimodule"),
+    ):
+        with pytest.raises(RuntimeError, match="STOP_AFTER_DISPATCH"):
+            train_step_megatron_mimo(**kwargs)
+
+    call_kwargs = mock_fb.call_args.kwargs
+    assert call_kwargs["pg_collection"] is language_pg, (
+        "colocated PP=1 must dispatch with the language pg_collection from infra.pg_collections, "
+        "not the MultiModuleProcessGroupCollection (would route cross-module P2P that doesn't exist)."
+    )
+    assert call_kwargs["pg_collection"] is not multimodule_pg
+    # forward_backward_no_pipelining doesn't take a p2p_communicator. Verify the
+    # MultiModulePipelineCommunicator never reaches the schedule — it would
+    # self-send on degenerate single-rank groups in colocated.
+    assert "p2p_communicator" not in call_kwargs
+    for value in call_kwargs.values():
+        assert value is not multimodule_comm
+
+
+def test_non_colocated_passes_multimodule_communicator_and_pg_collection():
+    """Non-colocated must pass the multimodule communicator + pg_collection — cross-module P2P is required."""
+    from megatron.core.models.mimo.config.role import ModuleLayout
+
+    from megatron.bridge.training.train_megatron_mimo import train_step_megatron_mimo
+
+    stub = _make_mimo_model_stub(mode=ModuleLayout.NON_COLOCATED, lm_has_pp=False)
+    kwargs = _make_minimal_train_step_kwargs()
+    multimodule_pg = kwargs["multimodule_pg_collection"]
+    multimodule_comm = kwargs["multimodule_communicator"]
+
+    sentinel = RuntimeError("STOP_AFTER_DISPATCH")
+    with (
+        patch("megatron.bridge.training.train_megatron_mimo.unwrap_megatron_mimo_model", return_value=stub),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.forward_backward_pipelining_without_interleaving",
+            side_effect=sentinel,
+        ) as mock_fb,
+        patch("megatron.bridge.training.train_megatron_mimo.zero_grad_buffer_for_multimodule"),
+    ):
+        with pytest.raises(RuntimeError, match="STOP_AFTER_DISPATCH"):
+            train_step_megatron_mimo(**kwargs)
+
+    call_kwargs = mock_fb.call_args.kwargs
+    assert call_kwargs["pg_collection"] is multimodule_pg
+    assert call_kwargs["p2p_communicator"] is multimodule_comm
