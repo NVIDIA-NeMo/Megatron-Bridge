@@ -211,6 +211,23 @@ def _megatron_local_name_to_global(
             param_name = _update_expert_number(param_name, "weight")
         elif ".bias" in param_name:
             param_name = _update_expert_number(param_name, "bias")
+
+    # EP for SequentialMLP: expert index is in the module path as local_experts.N.
+    # This covers both standard SequentialMLP (e.g., quantization) and dual-pool MoE
+    # (e.g., text_moe_layer.experts.local_experts.N or vision_moe_layer.experts.local_experts.N).
+    elif ".experts.local_experts." in param_name and get_pg_size(ep_group) > 1 and ".adapter." not in param_name:
+        num_experts = config.num_moe_experts
+        num_experts_per_rank = num_experts // ep_group.size()
+
+        match = re.search(r"\.local_experts\.(\d+)\.", param_name)
+        if match:
+            local_expert_number = int(match.group(1))
+            global_expert_number = num_experts_per_rank * ep_group.rank() + local_expert_number
+            param_name = param_name.replace(
+                f".local_experts.{local_expert_number}.",
+                f".local_experts.{global_expert_number}.",
+            )
+
     return param_name
 
 
@@ -920,6 +937,15 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         _hf_import_cache: Dict[str, torch.Tensor] = {}
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
+            # A None task means the Megatron model has a parameter for which no
+            # HF↔Megatron mapping was registered.  This is expected when the HF
+            # config declares optional layers (e.g. num_nextn_predict_layers for
+            # MTP) but the HF checkpoint ships no weights for them; the bridge
+            # intentionally omits mappings so these layers keep their default
+            # (random-init) weights.  Skipping here is safe — it is NOT a
+            # missing-mapping bug.
+            if task is None:
+                continue
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue

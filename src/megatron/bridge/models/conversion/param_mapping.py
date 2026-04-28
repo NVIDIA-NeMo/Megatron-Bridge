@@ -179,10 +179,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
     def is_expert(self) -> bool:
         """Check if this mapping is for an expert parameter.
 
-        Matches both TEGroupedMLP (.mlp.experts.linear_fc) and
-        SequentialMLP (.mlp.experts.local_experts.*.linear_fc) patterns.
+        Matches both TEGroupedMLP (.experts.linear_fc) and
+        SequentialMLP (.experts.local_experts.*.linear_fc) patterns.
+        Uses ``.experts.`` rather than ``.mlp.experts.`` so models with an
+        intermediate sub-module (e.g. ``.mlp.<pool>.experts.``) are matched too.
         """
-        return ".mlp.experts.linear_fc" in self.megatron_param or ".mlp.experts.local_experts." in self.megatron_param
+        return ".experts.linear_fc" in self.megatron_param or ".experts.local_experts." in self.megatron_param
 
     @property
     def is_adapter(self) -> bool:
@@ -361,7 +363,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         if target_tensor_spec is None:
             # No rank had the tensor – this is an error in the caller.
-            raise ValueError("Object must exist on at least one PP rank")
+            raise ValueError(
+                f"Object must exist on at least one PP rank. "
+                f"megatron_param={self.megatron_param}, hf_param={self.hf_param}, "
+                f"cache_key={cache_key}"
+            )
 
         # ------------------------------------------------------------------
         # 3.  Ensure every rank has an allocated tensor with the right shape
@@ -681,6 +687,10 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Dict[str, torch.Tensor]: Mapping from HF parameter names (one per EP rank)
             to the corresponding expert tensors gathered from each EP rank.
         """
+        # Fast path for EP=1: no gathering needed, just return with the given name.
+        if self.ep_size == 1:
+            return {str(hf_param_name): megatron_weights}
+
         if megatron_module is None:
             num_experts_per_rank = self.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
         else:
@@ -1255,8 +1265,11 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Delegate to appropriate mapping based on module type."""
-        # Apply permutation if specified (before distribution)
-        if self.permute_dims is not None and self.tp_rank == 0:
+        # Apply permutation if specified (before distribution).
+        # Must be applied on ALL ranks (not just tp_rank 0) because some delegate
+        # mappings (e.g. ReplicatedMapping) expect hf_weights to have the correct
+        # shape on every rank.
+        if self.permute_dims is not None:
             hf_weights = torch.permute(hf_weights, self.permute_dims).contiguous()
 
         # Detect type and create delegate on first use
@@ -1286,6 +1299,12 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
                 if self._detected_type is None:
                     # PP group likely has 1 member - skipping.
                     return {}
+
+            # If no PP rank detected a type (e.g. Megatron parameter without an
+            # HF counterpart, such as MoE modules on dense layers created by
+            # moe_layer_freq), skip export gracefully.
+            if self._detected_type is None:
+                return {}
 
             self._mapping = self._get_or_create_mapping(self._detected_type)
 
