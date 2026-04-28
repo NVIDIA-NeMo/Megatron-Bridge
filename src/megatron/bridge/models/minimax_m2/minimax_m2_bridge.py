@@ -61,10 +61,15 @@ class _FullDimQKNormMapping(MegatronParamMapping[torch.Tensor]):
 
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         target_param = megatron_module.weight
-        shard_size = target_param.shape[0]
-
         if self.tp_size == 1:
             return hf_weights.to(device=target_param.device, dtype=target_param.dtype)
+
+        shard_size = target_param.shape[0]
+        _, shard_rank = self._get_shard_spec(
+            shard_size=shard_size,
+            megatron_module=megatron_module,
+            global_size_attr="global_dim",
+        )
 
         device = torch.device("cuda", torch.cuda.current_device())
         hf_weights = hf_weights.to(device=device, dtype=target_param.dtype)
@@ -73,7 +78,7 @@ class _FullDimQKNormMapping(MegatronParamMapping[torch.Tensor]):
             hf_weights = torch.empty_like(hf_weights)
 
         full_weight = self.broadcast_tensor_to_tp_ranks(hf_weights, src_rank=0)
-        start = self.tp_rank * shard_size
+        start = shard_rank * shard_size
         return full_weight[start : start + shard_size]
 
     def megatron_to_hf(
@@ -86,6 +91,14 @@ class _FullDimQKNormMapping(MegatronParamMapping[torch.Tensor]):
         if self.tp_size == 1:
             return {str(self.hf_param): megatron_weights}
         gathered = self.gather_from_tp_ranks(megatron_weights)
+        shard_world_size, _ = self._get_shard_spec(
+            shard_size=megatron_weights.shape[0],
+            megatron_module=megatron_module,
+            global_size_attr="global_dim",
+        )
+        if shard_world_size < self.tp_size:
+            replica_stride = self.tp_size // shard_world_size
+            gathered = gathered[::replica_stride]
         return {str(self.hf_param): torch.cat(gathered, dim=0)}
 
 
@@ -169,7 +182,7 @@ class MiniMaxM2Bridge(MegatronModelBridge):
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Load HF weights with FP8 block-wise dequantization when needed.
 
         MiniMax-M2 stores linear weights as float8_e4m3fn with per-block scale
