@@ -29,7 +29,7 @@ from megatron.core.optimizer import (
     ParamKey,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
+from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
@@ -61,6 +61,7 @@ from megatron.bridge.utils.common_utils import (
     print_rank_0,
     warn_rank_0,
 )
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, is_full_iteration_cuda_graph
 
 
 @dataclass
@@ -1207,13 +1208,13 @@ class ConfigContainer(Container):
         _validate_fine_grained_activation_offloading(self)
 
         # CUDA graph scope validation: check_for_nan_in_loss must be disabled with full_iteration graph
-        if self.model.cuda_graph_impl == "local" and CudaGraphScope.full_iteration in self.model.cuda_graph_scope:
+        if is_full_iteration_cuda_graph(self.model):
             assert not self.rerun_state_machine.check_for_nan_in_loss, (
                 "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
                 "Set rerun_state_machine.check_for_nan_in_loss=False."
             )
         if self.model.cuda_graph_impl == "none":
-            self.model.cuda_graph_scope = []
+            clear_cuda_graph_modules(self.model)
 
         # ModelOpt/Quantization checks
         if getattr(self.model, "restore_modelopt_state", False):
