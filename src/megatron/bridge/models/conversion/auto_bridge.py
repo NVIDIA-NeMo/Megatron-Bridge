@@ -18,7 +18,7 @@ import dataclasses
 import logging
 from functools import cached_property, partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optional, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optional, Type, TypeVar, Union, Tuple
 
 import torch
 import torch.distributed as dist
@@ -497,6 +497,34 @@ class AutoBridge(Generic[MegatronModelT]):
             dispatch_instance,
             model,
             self.hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+        )
+
+    def export_hf_weights_quant(
+        self,
+        model: list[MegatronModelT],
+        quantization_checker: callable,
+        quant_fn: callable,
+        quant_block_size: Optional[Tuple[int, int]] = None,
+        cpu: bool = False,
+        show_progress: bool = True,
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        merge_adapter_weights: bool = False,
+    ) -> Iterable["HFWeightTuple"]:
+        """
+        Export Megatron model weights to HuggingFace format with quantization.
+        """
+        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
+        return model_bridge.stream_weights_megatron_to_hf_quant(
+            dispatch_instance,
+            model,
+            self.hf_pretrained,
+            quantization_checker,
+            quant_fn,
+            quant_block_size=quant_block_size,
             cpu=cpu,
             show_progress=show_progress,
             conversion_tasks=conversion_tasks,

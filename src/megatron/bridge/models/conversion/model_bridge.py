@@ -34,6 +34,7 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    Tuple,
 )
 
 import torch
@@ -51,6 +52,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
 )
+from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 from megatron.bridge.models.conversion.peft_bridge import (
     AdapterWeight,
     AdapterWeightConversionTask,
@@ -214,7 +216,7 @@ def _megatron_local_name_to_global(
     return param_name
 
 
-class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
+class MegatronModelBridge(MegatronPeftBridge, MegatronQuantizationBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
     """
     High-level orchestrator for HuggingFace ↔ Megatron model conversions.
 
@@ -1877,6 +1879,23 @@ def stream_weights_megatron_to_hf(
 
 
 @dispatch
+def stream_weights_megatron_to_hf_quant(
+    dispatch_instance: MegatronModel,
+    megatron_model: Union[MegatronModel, List[MegatronModel]],
+    hf_pretrained: HFPreTrained,
+    quantization_checker: callable,
+    quant_fn: callable,
+    quant_block_size: Optional[Tuple[int, int]] = None,
+    cpu: bool = True,
+    show_progress: bool = True,
+    conversion_tasks: Optional[List[WeightConversionTask]] = None,
+    merge_adapter_weights: bool = False,
+) -> Iterable[HFWeightTuple]:
+    """Bridge Megatron model state to HuggingFace format with quantization."""
+    ...
+
+
+@dispatch
 def stream_adapter_weights_megatron_to_hf(
     dispatch_instance: MegatronModel,
     megatron_model: Union[MegatronModel, List[MegatronModel]],
@@ -1929,6 +1948,35 @@ def register_bridge_implementation(
         return bridge.stream_weights_megatron_to_hf(
             megatron_model,
             hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+        )
+
+    @stream_weights_megatron_to_hf_quant.impl((source, target))
+    def _megatron_to_hf_quant_registered_impl(
+        _,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        hf_pretrained: HFPreTrained,
+        quantization_checker: callable,
+        quant_fn: callable,
+        quant_block_size: Optional[Tuple[int, int]] = None,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        merge_adapter_weights: bool = False,
+    ) -> Iterable[HFWeightTuple]:
+        bridge = bridge_class()
+
+        bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+
+        return bridge.stream_weights_megatron_to_hf_quant(
+            megatron_model,
+            hf_pretrained,
+            quantization_checker,
+            quant_fn,
+            quant_block_size=quant_block_size,
             cpu=cpu,
             show_progress=show_progress,
             conversion_tasks=conversion_tasks,
