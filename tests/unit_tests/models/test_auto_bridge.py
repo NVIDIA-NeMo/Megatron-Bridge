@@ -24,6 +24,7 @@ from transformers import LlamaConfig
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -732,6 +733,41 @@ class TestAutoBridge:
                     assert weights[1][0] == "weight2"
                     assert isinstance(weights[0][1], torch.Tensor)
                     assert isinstance(weights[1][1], torch.Tensor)
+
+    def test_export_adapter_weights(self):
+        """Test exporting adapter weights from Megatron to HF format."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = Mock()
+        mock_hf_model.config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config.auto_map = None
+
+        mock_megatron_model = [object()]
+
+        with patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop:
+            mock_model_bridge = Mock()
+            mock_weight_iter = [HFWeightTuple("adapter.weight", torch.randn(4, 4))]
+            mock_model_bridge.stream_adapter_weights_megatron_to_hf.return_value = iter(mock_weight_iter)
+            mock_model_bridge_prop.return_value = mock_model_bridge
+
+            with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
+                mock_arch_class = Mock()
+                mock_transformers.LlamaForCausalLM = mock_arch_class
+
+                bridge = AutoBridge(mock_hf_model)
+
+                with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as mock_prop:
+                    mock_prop.return_value = mock_arch_class
+                    weights = list(bridge.export_adapter_weights(mock_megatron_model, cpu=False, show_progress=False))
+
+                    assert len(weights) == 1
+                    assert isinstance(weights[0], HFWeightTuple)
+                    assert weights[0].param_name == "adapter.weight"
+                    assert isinstance(weights[0].weight, torch.Tensor)
+                    mock_model_bridge.stream_adapter_weights_megatron_to_hf.assert_called_once_with(
+                        mock_megatron_model,
+                        cpu=False,
+                        show_progress=False,
+                    )
 
     def test_get_causal_lm_architecture(self):
         """Test getting the CausalLM architecture class."""

@@ -25,9 +25,11 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.nn as nn
+from megatron.core.dist_checkpointing.mapping import ShardedTensorFactory
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 
 from megatron.bridge.peft.utils import (
+    GroupedExpertLinearAdapter,
     ParallelLinearAdapter,
     all2all_hp2sp,
     get_adapter_attributes_from_linear,
@@ -35,6 +37,7 @@ from megatron.bridge.peft.utils import (
     init_method_kaiming_uniform,
     init_method_normal,
     is_expert_linear,
+    is_grouped_expert_linear,
     pad_seq_to_mult,
     unpad_seq_to_mult,
     wildcard_match,
@@ -127,6 +130,11 @@ class TestUtilityFunctions:
 
         for case in negative_cases:
             assert not is_expert_linear(case), f"Should not match: {case}"
+
+    def test_is_grouped_expert_linear(self):
+        """Grouped expert helper should exclude sequential local expert modules."""
+        assert is_grouped_expert_linear("decoder.layers.0.mlp.experts.linear_fc1")
+        assert not is_grouped_expert_linear("decoder.layers.0.mlp.experts.local_experts.0.linear_fc1")
 
     def test_wildcard_match_basic(self):
         """Test basic wildcard matching."""
@@ -372,6 +380,7 @@ class TestParallelLinearAdapter:
         assert adapter.dim == 16
         assert adapter.alpha == 16  # Default alpha equals dim
         assert not adapter.input_is_parallel
+        assert adapter.base_linear_is_parallel is True
         assert adapter.linear_in is mock_linear_in
         assert adapter.linear_out is mock_linear_out
 
@@ -656,3 +665,423 @@ class TestParallelLinearAdapter:
         # Should call swiglu factory for fc1 weights
         mock_swiglu_factory.assert_called()
         assert result["adapter.linear_out.weight"] == "swiglu_processed_tensor"
+
+
+class TestGroupedExpertLinearAdapter:
+    """Tests for grouped-expert per-expert LoRA adapters."""
+
+    @pytest.mark.parametrize("split_kwarg", ["m_splits", "tokens_per_expert"])
+    def test_grouped_expert_linear_adapter_accepts_tensor_split_kwargs(self, split_kwarg):
+        """Tensor-valued split kwargs should not trigger ambiguous truth-value errors."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        with torch.no_grad():
+            adapter.linear_in.weight[0].copy_(torch.eye(2))
+            adapter.linear_out.weight[0].copy_(torch.eye(2))
+            adapter.linear_in.weight[1].copy_(2 * torch.eye(2))
+            adapter.linear_out.weight[1].copy_(torch.eye(2))
+
+        x = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]
+        )
+        output = adapter(x, **{split_kwarg: torch.tensor([1, 2])})
+
+        expected = torch.tensor(
+            [
+                [1.0, 2.0],
+                [6.0, 8.0],
+                [10.0, 12.0],
+            ]
+        )
+        torch.testing.assert_close(output, expected)
+
+    def test_grouped_expert_linear_adapter_forward_uses_per_expert_weights(self):
+        """Each local expert should use its own LoRA weights."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        with torch.no_grad():
+            adapter.linear_in.weight[0].copy_(torch.eye(2))
+            adapter.linear_out.weight[0].copy_(torch.eye(2))
+            adapter.linear_in.weight[1].copy_(2 * torch.eye(2))
+            adapter.linear_out.weight[1].copy_(torch.eye(2))
+
+        x = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]
+        )
+        output = adapter(x, [1, 2])
+
+        expected = torch.tensor(
+            [
+                [1.0, 2.0],
+                [6.0, 8.0],
+                [10.0, 12.0],
+            ]
+        )
+        torch.testing.assert_close(output, expected)
+
+    def test_grouped_expert_linear_adapter_grouped_mm_falls_back_on_cpu(self):
+        """CPU inputs should not enter the grouped_mm fast path."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        with torch.no_grad():
+            adapter.linear_in.weight[0].copy_(torch.eye(2))
+            adapter.linear_out.weight[0].copy_(torch.eye(2))
+            adapter.linear_in.weight[1].copy_(2 * torch.eye(2))
+            adapter.linear_out.weight[1].copy_(torch.eye(2))
+
+        x = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]
+        )
+        with patch(
+            "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+            side_effect=AssertionError("grouped_mm should not run on CPU"),
+            create=True,
+        ):
+            output = adapter(x, [1, 2])
+
+        expected = torch.tensor(
+            [
+                [1.0, 2.0],
+                [6.0, 8.0],
+                [10.0, 12.0],
+            ]
+        )
+        torch.testing.assert_close(output, expected)
+
+    def test_grouped_expert_linear_adapter_grouped_mm_skips_zero_split_experts(self):
+        """Grouped GEMM should only include experts that actually receive tokens."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=3,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        with torch.no_grad():
+            adapter.linear_in.weight[0].copy_(torch.eye(2))
+            adapter.linear_out.weight[0].copy_(torch.eye(2))
+            adapter.linear_in.weight[1].copy_(7 * torch.eye(2))
+            adapter.linear_out.weight[1].copy_(torch.eye(2))
+            adapter.linear_in.weight[2].copy_(3 * torch.eye(2))
+            adapter.linear_out.weight[2].copy_(torch.eye(2))
+
+        x = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]
+        )
+
+        def fake_grouped_mm(inputs, weights, *, offs):
+            assert offs.dtype == torch.int32
+            chunks = []
+            start = 0
+            for weight_idx, end in enumerate(offs.tolist()):
+                chunks.append(inputs[start:end] @ weights[weight_idx])
+                start = end
+            return torch.cat(chunks, dim=0)
+
+        with (
+            patch.object(GroupedExpertLinearAdapter, "_can_use_grouped_mm", return_value=True),
+            patch(
+                "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+                side_effect=fake_grouped_mm,
+                create=True,
+            ) as mock_grouped_mm,
+        ):
+            output = adapter(x, [1, 0, 2])
+
+        expected = torch.tensor(
+            [
+                [1.0, 2.0],
+                [9.0, 12.0],
+                [15.0, 18.0],
+            ]
+        )
+        torch.testing.assert_close(output, expected)
+        assert mock_grouped_mm.call_count == 2
+        assert mock_grouped_mm.call_args_list[0].args[1].shape[0] == 2
+        assert mock_grouped_mm.call_args_list[0].kwargs["offs"].tolist() == [1, 3]
+
+    def test_grouped_expert_linear_adapter_grouped_mm_requires_rank_alignment(self):
+        """Grouped GEMM should be disabled when the LoRA rank violates kernel stride requirements."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=16,
+            out_features=32,
+            dim=12,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        fake_x = Mock(is_cuda=True, dtype=torch.bfloat16, device=torch.device("cuda"))
+
+        with patch("megatron.bridge.peft.utils.torch.cuda.get_device_capability", return_value=(8, 0)):
+            assert not adapter._can_use_grouped_mm(fake_x)
+
+    def test_grouped_expert_linear_adapter_te_grouped_mlp_prefers_te_backend_over_grouped_mm(self):
+        """TEGroupedMLP-style positional list splits should prefer the TE backend."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        x = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]
+        )
+        hidden = torch.tensor(
+            [
+                [0.5, 1.0],
+                [1.5, 2.0],
+                [2.5, 3.0],
+            ]
+        )
+        expected = torch.tensor(
+            [
+                [1.0, 1.5],
+                [2.0, 2.5],
+                [3.0, 3.5],
+            ]
+        )
+
+        with (
+            patch.object(GroupedExpertLinearAdapter, "_can_use_grouped_mm", return_value=True),
+            patch.object(GroupedExpertLinearAdapter, "_can_use_te_grouped_linear", return_value=True),
+            patch.object(
+                GroupedExpertLinearAdapter,
+                "_forward_te_grouped_linear",
+                side_effect=[hidden, expected],
+            ) as mock_te_backend,
+            patch(
+                "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+                side_effect=AssertionError("grouped_mm should not run for TEGroupedMLP"),
+                create=True,
+            ),
+        ):
+            output = adapter(x, [1, 2])
+
+        torch.testing.assert_close(output, expected)
+        assert mock_te_backend.call_count == 2
+        assert mock_te_backend.call_args_list[0].kwargs["m_splits"] == [1, 2]
+        assert mock_te_backend.call_args_list[1].kwargs["m_splits"] == [1, 2]
+
+    def test_grouped_expert_linear_adapter_requires_expert_tp_group_for_gather(self):
+        """Per-expert LoRA should fail clearly when expert TP is configured without initialized groups."""
+        config = MockModelParallelConfig()
+        config.expert_tensor_parallel_size = 2
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=1,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=config,
+        )
+
+        with (
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
+                return_value=None,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_group",
+                return_value=None,
+            ),
+            patch("megatron.bridge.peft.utils.torch.distributed.all_gather") as mock_all_gather,
+        ):
+            with pytest.raises(
+                ValueError,
+                match="requires initialized expert tensor parallel state when expert_tensor_parallel_size=2",
+            ):
+                adapter(torch.tensor([[1.0, 2.0]]), [1])
+
+        mock_all_gather.assert_not_called()
+
+    def test_grouped_expert_linear_fc1_sharded_state_dict_preserves_expert_axis(self):
+        """Grouped expert fc1 checkpoints should split SwiGLU on the hidden axis, not the expert axis."""
+        with (
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_world_size",
+                return_value=2,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_rank",
+                return_value=1,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_data_parallel_rank",
+                return_value=0,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
+                return_value=1,
+            ),
+        ):
+            adapter = GroupedExpertLinearAdapter(
+                in_features=2,
+                out_features=4,
+                dim=2,
+                num_local_experts=2,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
+                activation="identity",
+                input_is_parallel=False,
+                model_parallel_config=MockModelParallelConfig(),
+            )
+
+            result = adapter.sharded_state_dict("adapter.")
+
+        factory = result["adapter.linear_out.weight"]
+        assert isinstance(factory, ShardedTensorFactory)
+
+        built = factory.build()
+        assert len(built) == 2
+        assert built[0].local_shape == (2, 2, 2)
+        assert built[1].local_shape == (2, 2, 2)
+        assert built[0].global_shape == (4, 4, 2)
+        assert built[1].global_shape == (4, 4, 2)
+        assert built[0].global_offset == (2, 0, 0)
+        assert built[1].global_offset == (2, 2, 0)
+
+    def test_grouped_expert_linear_fc1_factory_merge_restores_gate_up_order(self):
+        """Grouped expert fc1 checkpoint reload should de-interleave gate/up expert-TP shards."""
+        with (
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_world_size",
+                return_value=1,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_rank",
+                return_value=0,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_data_parallel_rank",
+                return_value=0,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
+                return_value=2,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_rank",
+                return_value=0,
+            ),
+        ):
+            adapter = GroupedExpertLinearAdapter(
+                in_features=2,
+                out_features=8,
+                dim=2,
+                num_local_experts=1,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
+                activation="identity",
+                input_is_parallel=False,
+                model_parallel_config=MockModelParallelConfig(),
+            )
+
+            factory = adapter.sharded_state_dict("adapter.")["adapter.linear_out.weight"]
+
+        fused_tp0 = torch.tensor([[[1.0, 1.0], [1.0, 1.0], [2.0, 2.0], [2.0, 2.0]]])
+        fused_tp1 = torch.tensor([[[3.0, 3.0], [3.0, 3.0], [4.0, 4.0], [4.0, 4.0]]])
+
+        merged = factory.merge_fn([fused_tp0, fused_tp1])
+        expected = torch.tensor(
+            [[[1.0, 1.0], [1.0, 1.0], [3.0, 3.0], [3.0, 3.0], [2.0, 2.0], [2.0, 2.0], [4.0, 4.0], [4.0, 4.0]]]
+        )
+        torch.testing.assert_close(merged, expected)
+
+    def test_grouped_expert_linear_sharded_state_dict_uses_expert_parallel_offsets(self):
+        """Grouped-expert weights should shard only across expert EP/ETP and use expert-DP replica ids."""
+        with (
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_world_size",
+                return_value=2,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_rank",
+                return_value=1,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_data_parallel_rank",
+                return_value=4,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
+                return_value=1,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_rank",
+                return_value=0,
+            ),
+        ):
+            adapter = GroupedExpertLinearAdapter(
+                in_features=2,
+                out_features=2,
+                dim=2,
+                num_local_experts=2,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+                activation="identity",
+                input_is_parallel=False,
+                model_parallel_config=MockModelParallelConfig(),
+            )
+            result = adapter.sharded_state_dict("adapter.")
+
+        sharded_weight = result["adapter.linear_in.weight"]
+        assert sharded_weight.local_shape == (2, 2, 2)
+        assert sharded_weight.global_shape == (4, 2, 2)
+        assert sharded_weight.global_offset == (2, 0, 0)
+        assert sharded_weight.replica_id == (0, 0, 4)
