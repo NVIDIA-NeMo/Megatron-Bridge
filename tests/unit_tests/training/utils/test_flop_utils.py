@@ -1168,7 +1168,7 @@ class TestVitFlops:
 
 
 class TestDynamicSeqLenFlops:
-    """Unit tests for dynamic-length FLOPS accounting (VLM review fix).
+    """Unit tests for dynamic-length FLOPS accounting .
 
     Covers the ``seqlen_sum``, ``seqlen_squared_sum`` and ``num_vision_patches``
     parameters added to ``num_floating_point_operations`` for accurate VLM
@@ -1243,6 +1243,44 @@ class TestDynamicSeqLenFlops:
         assert flops_imbalanced > flops_equal, (
             "seqlen_squared_sum must feed core attention FLOPS; otherwise the accumulator "
             "pipeline is dead code."
+        )
+
+    def test_attention_term_scales_linearly_with_seqlen_squared_sum(self):
+        """Attention core FLOPS must be *linear* in Σ L² .
+
+        Strategy: keep every other input identical (same cfg, same batch_size,
+        same ``seqlen_sum``) and vary only ``seqlen_squared_sum``. All linear
+        terms (MLP, QKV/O projection, logits, MTP) depend on ``seqlen_sum``
+        only, so they cancel out in the delta. The remaining increment must
+        equal the closed-form quadratic coefficient times Δ(Σ L²).
+
+        Core-attn contribution per layer (standard MHA/GQA):
+            ``full_core = query_projection_size * core_attn_seq_factor``
+        After outer ``seqlen_sum *`` and the training factor ``3 * 2``:
+            ``ΔFLOPS = 3 * 2 * num_layers * Q * Δ(Σ L²)``
+        where ``Q = kv_channels * num_attention_heads``. Anything weaker than
+        a linear dependency (e.g. sqrt/log) would fail this assertion.
+        """
+        cfg = self._llm_cfg()
+        batch_size = 4
+        seqlen_sum = batch_size * cfg.model.seq_length
+        sq_base = batch_size * cfg.model.seq_length**2
+        sq_bumped = sq_base + 1_000_000  # arbitrary non-trivial increment
+
+        flops_base = num_floating_point_operations(
+            cfg, batch_size=batch_size,
+            seqlen_sum=seqlen_sum, seqlen_squared_sum=sq_base,
+        )
+        flops_bumped = num_floating_point_operations(
+            cfg, batch_size=batch_size,
+            seqlen_sum=seqlen_sum, seqlen_squared_sum=sq_bumped,
+        )
+
+        query_projection_size = cfg.model.kv_channels * cfg.model.num_attention_heads
+        expected_delta = 3 * 2 * cfg.model.num_layers * query_projection_size * (sq_bumped - sq_base)
+        assert flops_bumped - flops_base == expected_delta, (
+            f"attention core should be linear in Σ L²: expected Δ = {expected_delta}, "
+            f"got {flops_bumped - flops_base}"
         )
 
     def test_num_vision_patches_adds_vit_flops(self):
