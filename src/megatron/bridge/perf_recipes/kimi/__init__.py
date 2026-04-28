@@ -1,0 +1,15 @@
+from megatron.bridge.perf_recipes.kimi.kimi_k2_perf import (
+    kimi_k2_pretrain_1024gpu_h100_bf16_config,
+    kimi_k2_pretrain_1024gpu_h100_fp8cs_config,
+    kimi_k2_pretrain_1024gpu_h100_fp8sc_config,
+    kimi_k2_pretrain_256gpu_b200_bf16_config,
+    kimi_k2_pretrain_256gpu_b200_fp8cs_config,
+    kimi_k2_pretrain_256gpu_b200_fp8mx_config,
+    kimi_k2_pretrain_256gpu_gb200_bf16_config,
+    kimi_k2_pretrain_256gpu_gb200_fp8cs_config,
+    kimi_k2_pretrain_256gpu_gb200_fp8mx_config,
+    kimi_k2_pretrain_256gpu_gb300_bf16_config,
+    kimi_k2_pretrain_256gpu_gb300_fp8cs_config,
+    kimi_k2_pretrain_256gpu_gb300_fp8mx_config,
+    kimi_k2_pretrain_256gpu_gb300_nvfp4_config,
+)
