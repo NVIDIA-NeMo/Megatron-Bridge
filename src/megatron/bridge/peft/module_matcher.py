@@ -67,11 +67,11 @@ class ModuleMatcher:
     # alias = user supplied target_modules entry that maps to a pattern
     _alias_to_pattern: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _alias_matches: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set), init=False, repr=False)
+    _registered_target_modules: tuple[str, ...] = field(default_factory=tuple, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize target-module alias bookkeeping for validation."""
-        for target in self.target_modules or []:
-            self.register_target_alias(target, target)
+        self._rebuild_target_aliases()
 
     def match(
         self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None
@@ -160,6 +160,23 @@ class ModuleMatcher:
         # Ensure alias has an entry in matches tracking so len(...) works without lookups later.
         self._alias_matches.setdefault(alias, set())
 
+    def _rebuild_target_aliases(self) -> None:
+        """Rebuild validation aliases from the current target_modules."""
+        self._pattern_to_alias.clear()
+        self._alias_to_pattern.clear()
+        self._alias_matches.clear()
+        for target in self.target_modules or []:
+            self.register_target_alias(target, target)
+        self._registered_target_modules = tuple(self.target_modules or [])
+
+    def _sync_target_aliases(self) -> None:
+        """Keep validation aliases in sync with post-init target_modules updates."""
+        if self.canonical_mapping:
+            return
+
+        if tuple(self.target_modules or []) != self._registered_target_modules:
+            self._rebuild_target_aliases()
+
     def _record_match(self, pattern: str, full_name: Optional[str]) -> None:
         """Track which aliases successfully matched modules during traversal."""
         for alias in self._pattern_to_alias.get(pattern, []):
@@ -167,6 +184,7 @@ class ModuleMatcher:
 
     def _reset_target_match_state(self) -> None:
         """Reset per-call match tracking."""
+        self._sync_target_aliases()
         for alias in self._alias_matches:
             self._alias_matches[alias].clear()
 
