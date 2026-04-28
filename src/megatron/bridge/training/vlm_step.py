@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import logging
-import os
 import math
+import os
 from functools import partial
 from typing import Any, Iterable
 
