@@ -15,7 +15,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from megatron.core.transformer.enums import CudaGraphScope
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -28,6 +27,7 @@ from megatron.bridge.training.comm_overlap import (
     userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
 )
 from megatron.bridge.training.config import DistributedDataParallelConfig, OptimizerConfig
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def create_gpt_config(**kwargs):
@@ -654,8 +654,8 @@ class TestMegatronCommOverlapConfig:
             add_bias_linear=False,
             add_qkv_bias=False,
             gradient_accumulation_fusion=False,
-            cuda_graph_scope=[CudaGraphScope.attn],
         )
+        set_cuda_graph_modules(model_cfg, ["attn"])
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         with (
@@ -687,8 +687,8 @@ class TestMegatronCommOverlapConfig:
             add_bias_linear=True,
             add_qkv_bias=False,
             gradient_accumulation_fusion=True,
-            cuda_graph_scope=[CudaGraphScope.attn],
         )
+        set_cuda_graph_modules(model_cfg, ["attn"])
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         with (
@@ -720,8 +720,8 @@ class TestMegatronCommOverlapConfig:
             add_bias_linear=False,
             add_qkv_bias=False,
             gradient_accumulation_fusion=True,
-            cuda_graph_scope=[CudaGraphScope.attn],
         )
+        set_cuda_graph_modules(model_cfg, ["attn"])
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         with (

@@ -23,7 +23,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from megatron.core.transformer.enums import CudaGraphScope
 
 from megatron.bridge.models.gpt_full_te_layer_autocast_spec import (
     AutocastTransformerLayer,
@@ -31,6 +30,7 @@ from megatron.bridge.models.gpt_full_te_layer_autocast_spec import (
     get_gpt_full_te_layer_autocast_spec,
     torch_dtype_from_precision,
 )
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules, set_full_iteration_cuda_graph
 
 
 class TestTorchDtypeFromPrecision:
@@ -214,7 +214,7 @@ class TestTETransformerLayerAutocast:
         config.bf16 = False
         config.num_layers = 12
         config.cuda_graph_impl = "none"
-        config.cuda_graph_scope = []
+        set_cuda_graph_modules(config, [])
         config.cpu_offloading = False
         config.recompute_granularity = None
         config.virtual_pipeline_model_parallel_size = None
@@ -305,7 +305,7 @@ class TestTETransformerLayerAutocast:
 
         mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
         mock_config.cuda_graph_impl = "local"
-        mock_config.cuda_graph_scope = []  # Empty list means layerwise graph
+        set_cuda_graph_modules(mock_config, [])
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.CudaGraphManager") as mock_cuda_manager:
@@ -324,8 +324,8 @@ class TestTETransformerLayerAutocast:
     def test_te_transformer_layer_autocast_with_full_iteration_cuda_graph(self, mock_config):
         """Test TETransformerLayerAutocast with full_iteration CUDA graph (cudagraph_manager should NOT be created).
 
-        Note: MCore's TransformerConfig.__post_init__ converts string scope values to CudaGraphScope enums.
-        This test uses the enum directly to match the runtime behavior after config finalization.
+        MCore represents full-iteration graph capture with either the new
+        cuda_graph_impl="full_iteration" form or the old cuda_graph_scope value.
         """
         mock_config.tensor_model_parallel_size = 1
         mock_config.pipeline_model_parallel_size = 1
@@ -335,8 +335,7 @@ class TestTETransformerLayerAutocast:
                 return 0
 
         mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
-        mock_config.cuda_graph_impl = "local"
-        mock_config.cuda_graph_scope = [CudaGraphScope.full_iteration]  # Full iteration graph (enum)
+        set_full_iteration_cuda_graph(mock_config)
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.CudaGraphManager") as mock_cuda_manager:
@@ -349,8 +348,8 @@ class TestTETransformerLayerAutocast:
     def test_te_transformer_layer_autocast_external_cuda_graph(self, mock_config):
         """Test TETransformerLayerAutocast with external CUDA graph.
 
-        Note: MCore's TransformerConfig.__post_init__ converts string scope values to CudaGraphScope enums.
-        This test uses the enum directly to match the runtime behavior after config finalization.
+        MCore represents TE graph scopes as either cuda_graph_modules or
+        cuda_graph_scope depending on version.
         """
         mock_config.tensor_model_parallel_size = 1
         mock_config.pipeline_model_parallel_size = 1
@@ -361,7 +360,7 @@ class TestTETransformerLayerAutocast:
 
         mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
         mock_config.cuda_graph_impl = "transformer_engine"
-        mock_config.cuda_graph_scope = [CudaGraphScope.attn, CudaGraphScope.mlp]  # TE supports multi-scope (enum)
+        set_cuda_graph_modules(mock_config, ["attn", "mlp"])
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer") as mock_autocast:
             mock_transformer = Mock()
