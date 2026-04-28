@@ -20,7 +20,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
+from megatron.bridge.training.utils.flop_utils import num_floating_point_operations, vit_flops
+
+
+@dataclass
+class MockVisionConfig:
+    """Mock ViT vision config for testing vit_flops."""
+
+    depth: int = 24
+    hidden_size: int = 1024
+    num_heads: int = 16
+    intermediate_size: int = 4096
+    spatial_merge_size: int = 2
+    out_hidden_size: int = 4096
 
 
 @dataclass
@@ -73,6 +85,8 @@ class MockModelConfig:
     linear_value_head_dim: int = 128
     linear_num_key_heads: int = 16
     linear_num_value_heads: int = 48
+    # Optional ViT vision config (for VLM FLOPS tests)
+    vision_config: object | None = None
 
     def __post_init__(self):
         import torch.nn.functional as F
@@ -1054,3 +1068,208 @@ class TestSlidingWindowAttentionFlops:
         assert flops_all_swa < flops_full, (
             "window_size set with skip_freq=None should make all layers SWA (fewer FLOPs)"
         )
+
+
+class TestVitFlops:
+    """Unit tests for the `vit_flops` helper (reviewer-requested config-based signature)."""
+
+    @staticmethod
+    def _base_cfg(**vision_overrides):
+        vision = MockVisionConfig(**vision_overrides)
+        return MockConfigContainer(model=MockModelConfig(vision_config=vision))
+
+    def test_vit_flops_returns_zero_without_vision_config(self):
+        """When the model has no attached vision_config, vit_flops must return 0.
+
+        This lets callers unconditionally invoke the helper for LLM-only models
+        without special-casing VLM detection at the call site.
+        """
+        cfg = MockConfigContainer(model=MockModelConfig(vision_config=None))
+        assert vit_flops(cfg, batch_size=2, num_patches=256) == 0
+
+    def test_vit_flops_returns_zero_for_non_positive_patches(self):
+        """Non-positive patch counts should short-circuit to 0 regardless of config."""
+        cfg = self._base_cfg()
+        assert vit_flops(cfg, batch_size=1, num_patches=0) == 0
+        assert vit_flops(cfg, batch_size=1, num_patches=-5) == 0
+
+    def test_vit_flops_matches_closed_form(self):
+        """Hand-computed closed form should match the helper output exactly.
+
+        Per-token per-layer cost:
+            8*h^2 (QKVO) + 4*h*num_patches (core attn) + 4*h*intermediate (MLP)
+        Transformer total: per_token_per_layer * num_patches * depth
+        Patch merger (spatial_merge=2 => merge_unit=4):
+            num_merged * (2*(4h)^2 + 2*(4h)*out_h)
+        Training multiplier: * batch_size * 3 (fwd + bwd)
+        """
+        depth, h, inter, spatial, out_h = 4, 256, 1024, 2, 2048
+        num_patches = 16  # divisible by spatial_merge_size**2 = 4
+        batch_size = 2
+        cfg = self._base_cfg(
+            depth=depth,
+            hidden_size=h,
+            intermediate_size=inter,
+            spatial_merge_size=spatial,
+            out_hidden_size=out_h,
+        )
+
+        per_token_per_layer = 8 * h**2 + 4 * h * num_patches + 4 * h * inter
+        transformer_total = per_token_per_layer * num_patches * depth
+        merge_unit = spatial**2
+        merged_hidden = h * merge_unit
+        num_merged = num_patches // merge_unit
+        merger_total = num_merged * (2 * merged_hidden * merged_hidden + 2 * merged_hidden * out_h)
+        expected = (transformer_total + merger_total) * batch_size * 3
+
+        assert vit_flops(cfg, batch_size=batch_size, num_patches=num_patches) == expected
+
+    def test_vit_flops_scales_linearly_with_batch_size(self):
+        """Doubling batch_size should double the returned FLOPS (per-image attn is fixed)."""
+        cfg = self._base_cfg()
+        f1 = vit_flops(cfg, batch_size=1, num_patches=64)
+        f2 = vit_flops(cfg, batch_size=2, num_patches=64)
+        assert f2 == 2 * f1
+
+    def test_vit_flops_quadratic_in_num_patches_attention_term(self):
+        """Attention core term should grow faster than linear in per-image patch count.
+
+        Doubling ``num_patches`` more than doubles the returned FLOPS because the
+        core-attn contribution scales as O(num_patches^2) while other terms are linear.
+        """
+        cfg = self._base_cfg(depth=2, hidden_size=128, intermediate_size=256)
+        f_low = vit_flops(cfg, batch_size=1, num_patches=32)
+        f_high = vit_flops(cfg, batch_size=1, num_patches=64)
+        assert f_high > 2 * f_low, "Attention quadratic term must make doubling patches > 2x FLOPS"
+
+    def test_vit_flops_out_hidden_size_defaults_to_model_hidden_size(self):
+        """When vision_config lacks out_hidden_size, fall back to cfg.model.hidden_size."""
+
+        class _VisionNoOut:
+            depth = 2
+            hidden_size = 128
+            intermediate_size = 256
+            spatial_merge_size = 2
+            # intentionally no out_hidden_size attribute
+
+        cfg_fallback = MockConfigContainer(
+            model=MockModelConfig(hidden_size=512, vision_config=_VisionNoOut())
+        )
+        cfg_explicit = MockConfigContainer(
+            model=MockModelConfig(
+                hidden_size=512,
+                vision_config=MockVisionConfig(
+                    depth=2, hidden_size=128, intermediate_size=256,
+                    spatial_merge_size=2, out_hidden_size=512,
+                ),
+            )
+        )
+        assert vit_flops(cfg_fallback, 1, 16) == vit_flops(cfg_explicit, 1, 16)
+
+
+class TestDynamicSeqLenFlops:
+    """Unit tests for dynamic-length FLOPS accounting (VLM review fix).
+
+    Covers the ``seqlen_sum``, ``seqlen_squared_sum`` and ``num_vision_patches``
+    parameters added to ``num_floating_point_operations`` for accurate VLM
+    reporting with variable-length padded batches.
+    """
+
+    @staticmethod
+    def _llm_cfg():
+        # Small GQA transformer so the numbers are cheap to compute.
+        return MockConfigContainer(
+            model=MockModelConfig(
+                num_layers=2,
+                hidden_size=128,
+                seq_length=1024,
+                ffn_hidden_size=256,
+                num_attention_heads=8,
+                num_query_groups=4,
+                kv_channels=16,
+                vocab_size=1024,
+                make_vocab_size_divisible_by=128,
+                gated_linear_unit=False,
+            )
+        )
+
+    def test_seqlen_sum_fallback_matches_legacy(self):
+        """Omitting the new parameters must reproduce the legacy constant-length result."""
+        cfg = self._llm_cfg()
+        legacy = num_floating_point_operations(cfg, batch_size=4)
+        equivalent = num_floating_point_operations(
+            cfg,
+            batch_size=4,
+            seqlen_sum=4 * cfg.model.seq_length,
+            seqlen_squared_sum=4 * cfg.model.seq_length**2,
+        )
+        assert legacy == equivalent
+
+    def test_shorter_seqlen_sum_reduces_flops(self):
+        """Passing a smaller effective seq length than cfg must reduce the reported FLOPS."""
+        cfg = self._llm_cfg()
+        legacy = num_floating_point_operations(cfg, batch_size=2)
+        short = num_floating_point_operations(
+            cfg,
+            batch_size=2,
+            seqlen_sum=2 * 256,  # effective seq_length = 256 << 1024
+            seqlen_squared_sum=2 * 256**2,
+        )
+        assert short < legacy
+
+    def test_seqlen_squared_sum_is_wired_into_core_attention(self):
+        """Higher seqlen_squared_sum (same mean) must increase FLOPS via core-attn.
+
+        Two batches with identical ``seqlen_sum`` but different ``seqlen_squared_sum``
+        (more variance) must not produce identical FLOPS — otherwise the squared-sum
+        pipeline is dead code (the exact bug the reviewer flagged).
+        """
+        cfg = self._llm_cfg()
+        batch_size = 2
+        total_tokens = 2048  # equal mean seq_len = 1024 for both batches
+
+        # Equal-length case: seq_lens = [1024, 1024] => sq_sum = 2*1024^2
+        equal_sq = 2 * 1024**2
+        # Imbalanced case: seq_lens = [256, 1792] => sq_sum = 256^2 + 1792^2 (larger)
+        imbalanced_sq = 256**2 + 1792**2
+        assert imbalanced_sq > equal_sq  # sanity for the test input
+
+        flops_equal = num_floating_point_operations(
+            cfg, batch_size=batch_size, seqlen_sum=total_tokens, seqlen_squared_sum=equal_sq,
+        )
+        flops_imbalanced = num_floating_point_operations(
+            cfg, batch_size=batch_size, seqlen_sum=total_tokens, seqlen_squared_sum=imbalanced_sq,
+        )
+        assert flops_imbalanced > flops_equal, (
+            "seqlen_squared_sum must feed core attention FLOPS; otherwise the accumulator "
+            "pipeline is dead code."
+        )
+
+    def test_num_vision_patches_adds_vit_flops(self):
+        """Supplying num_vision_patches must add a strictly positive ViT contribution."""
+        cfg_llm = self._llm_cfg()
+        cfg_vlm = MockConfigContainer(
+            model=MockModelConfig(
+                **{k: v for k, v in cfg_llm.model.__dict__.items() if k != "vision_config"},
+                vision_config=MockVisionConfig(
+                    depth=2, hidden_size=128, num_heads=8,
+                    intermediate_size=256, spatial_merge_size=2, out_hidden_size=128,
+                ),
+            )
+        )
+        batch_size = 2
+        llm_only = num_floating_point_operations(cfg_vlm, batch_size=batch_size)
+        vlm_flops = num_floating_point_operations(
+            cfg_vlm, batch_size=batch_size, num_vision_patches=128,
+        )
+        assert vlm_flops > llm_only
+        # ViT-only path matches the delta (invoked with per-image patches)
+        vit_only = vit_flops(cfg_vlm, batch_size=batch_size, num_patches=128 / batch_size)
+        assert vlm_flops - llm_only == vit_only
+
+    def test_num_vision_patches_zero_has_no_effect(self):
+        """Zero vision patches should match the pure LLM path exactly."""
+        cfg = self._llm_cfg()
+        baseline = num_floating_point_operations(cfg, batch_size=2)
+        assert num_floating_point_operations(cfg, batch_size=2, num_vision_patches=0) == baseline
+
