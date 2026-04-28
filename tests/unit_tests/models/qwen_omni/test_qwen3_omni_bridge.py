@@ -31,6 +31,7 @@ def mock_text_config():
     text_config.moe_intermediate_size = 768
     text_config.num_attention_heads = 32
     text_config.num_key_value_heads = 4
+    text_config.head_dim = 128
     text_config.num_experts = 128
     text_config.num_experts_per_tok = 8
     text_config.initializer_range = 0.02
@@ -91,6 +92,7 @@ class TestQwen3OmniBridge:
         assert provider.moe_ffn_hidden_size == 768
         assert provider.num_attention_heads == 32
         assert provider.num_query_groups == 4
+        assert provider.kv_channels == 128
         assert provider.num_moe_experts == 128
         assert provider.moe_router_topk == 8
         assert provider.share_embeddings_and_output_weights is False
@@ -127,9 +129,12 @@ class TestQwen3OmniBridge:
         )
         assert any("thinker.language_model.decoder.layers.*.mlp.router.weight" in name for name in mapping_names)
 
-    def test_provider_bridge_rejects_audio_output_stack(self, mock_hf_pretrained):
+    def test_provider_bridge_warns_for_audio_output_stack(self, mock_hf_pretrained, caplog):
         mock_hf_pretrained.config.enable_audio_output = True
+        caplog.set_level("WARNING")
 
         bridge = Qwen3OmniBridge()
-        with pytest.raises(NotImplementedError, match="audio-output checkpoints are not supported yet"):
-            bridge.provider_bridge(mock_hf_pretrained)
+        provider = bridge.provider_bridge(mock_hf_pretrained)
+
+        assert isinstance(provider, Qwen3OmniModelProvider)
+        assert "converting thinker-side weights only" in caplog.text

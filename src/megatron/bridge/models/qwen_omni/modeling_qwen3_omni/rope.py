@@ -51,6 +51,13 @@ def _count_run(tokens: list[int], start: int, token_id: int) -> int:
     return count
 
 
+def _next_position_start(llm_pos_ids_list: list[torch.Tensor]) -> torch.Tensor | int:
+    for pos_ids in reversed(llm_pos_ids_list):
+        if pos_ids.numel() > 0:
+            return pos_ids.max() + 1
+    return 0
+
+
 def get_rope_index(
     spatial_merge_size: int,
     image_token_id: int,
@@ -112,7 +119,7 @@ def get_rope_index(
             remain_images, remain_videos, remain_audios = image_nums, video_nums, audio_nums
             multimodal_nums = image_nums + audio_nums if use_audio_in_video else image_nums + video_nums + audio_nums
             for _ in range(multimodal_nums):
-                st_idx = llm_pos_ids_list[-1].max() + 1 if llm_pos_ids_list else 0
+                st_idx = _next_position_start(llm_pos_ids_list)
                 if (image_token_id in input_tokens or video_token_id in input_tokens) and (
                     remain_videos > 0 or remain_images > 0
                 ):
@@ -227,11 +234,11 @@ def get_rope_index(
                     remain_videos -= 1
                     remain_audios -= 1
 
-                st_idx = llm_pos_ids_list[-1].max() + 1 if llm_pos_ids_list else 0
+                st_idx = _next_position_start(llm_pos_ids_list)
                 llm_pos_ids_list.append(torch.arange(eos_len).view(1, -1).expand(3, -1) + st_idx)
 
             if st < len(input_tokens):
-                st_idx = llm_pos_ids_list[-1].max() + 1 if llm_pos_ids_list else 0
+                st_idx = _next_position_start(llm_pos_ids_list)
                 text_len = len(input_tokens) - st
                 llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
 

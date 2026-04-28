@@ -122,6 +122,36 @@ def _trim_feature_sequence(
     return trimmed_features, trimmed_multiscale
 
 
+def _normalize_visual_outputs(outputs: object) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    def _as_feature_list(features: object) -> list[torch.Tensor]:
+        if features is None:
+            return []
+        if isinstance(features, torch.Tensor):
+            return [features]
+        return list(features)
+
+    if hasattr(outputs, "pooler_output") or hasattr(outputs, "last_hidden_state"):
+        hidden_states = getattr(outputs, "pooler_output", None)
+        if hidden_states is None:
+            hidden_states = outputs.last_hidden_state
+        deepstack_features = getattr(outputs, "deepstack_features", None)
+        if deepstack_features is None:
+            deepstack_features = getattr(outputs, "deepstack_feature_lists", None)
+        if deepstack_features is None:
+            deepstack_features = getattr(outputs, "hidden_states", None)
+        return hidden_states, _as_feature_list(deepstack_features)
+
+    if not isinstance(outputs, (tuple, list)) or len(outputs) == 0:
+        raise TypeError(f"Unexpected vision encoder output type: {type(outputs)!r}")
+
+    hidden_states = outputs[0]
+    if len(outputs) == 2 and isinstance(outputs[1], (tuple, list)):
+        deepstack_features = outputs[1]
+    else:
+        deepstack_features = outputs[1:]
+    return hidden_states, _as_feature_list(deepstack_features)
+
+
 class Qwen3OmniThinkerModel(MegatronModule):
     """Qwen3-Omni thinker model.
 
@@ -271,10 +301,8 @@ class Qwen3OmniThinkerModel(MegatronModule):
         image_grid_thw: torch.LongTensor,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         target_dtype = getattr(self.visual, "dtype", pixel_values.dtype)
-        image_embeds, image_embeds_multiscale = self.visual(
-            pixel_values.to(dtype=target_dtype), grid_thw=image_grid_thw
-        )
-        return image_embeds, list(image_embeds_multiscale)
+        image_outputs = self.visual(pixel_values.to(dtype=target_dtype), grid_thw=image_grid_thw)
+        return _normalize_visual_outputs(image_outputs)
 
     def get_video_features(
         self,
@@ -282,10 +310,8 @@ class Qwen3OmniThinkerModel(MegatronModule):
         video_grid_thw: torch.LongTensor,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         target_dtype = getattr(self.visual, "dtype", pixel_values_videos.dtype)
-        video_embeds, video_embeds_multiscale = self.visual(
-            pixel_values_videos.to(dtype=target_dtype), grid_thw=video_grid_thw
-        )
-        return video_embeds, list(video_embeds_multiscale)
+        video_outputs = self.visual(pixel_values_videos.to(dtype=target_dtype), grid_thw=video_grid_thw)
+        return _normalize_visual_outputs(video_outputs)
 
     def get_audio_features(
         self,
