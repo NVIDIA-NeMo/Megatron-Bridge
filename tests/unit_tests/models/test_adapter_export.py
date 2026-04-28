@@ -210,6 +210,19 @@ class TestMergeSingleAdapterWeight:
         assert merged.device == base.device
 
 
+class TestFusedFc1NameHelpers:
+    def test_gate_and_up_detection_supports_standard_and_minimax_names(self):
+        bridge = MegatronPeftBridge()
+
+        assert bridge._is_fused_fc1_gate_proj("model.layers.0.mlp.gate_proj.weight")
+        assert bridge._is_fused_fc1_gate_proj("model.layers.0.block_sparse_moe.experts.0.w1.weight")
+        assert not bridge._is_fused_fc1_gate_proj("model.layers.0.mlp.up_proj.weight")
+
+        assert bridge._is_fused_fc1_up_proj("model.layers.0.mlp.up_proj.weight")
+        assert bridge._is_fused_fc1_up_proj("model.layers.0.block_sparse_moe.experts.0.w3.weight")
+        assert not bridge._is_fused_fc1_up_proj("model.layers.0.mlp.gate_proj.weight")
+
+
 # ---------------------------------------------------------------------------
 # AutoBridge.save_hf_adapter
 # ---------------------------------------------------------------------------

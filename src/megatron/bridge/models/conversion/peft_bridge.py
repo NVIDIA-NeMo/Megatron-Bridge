@@ -250,15 +250,15 @@ class MegatronPeftBridge:
         linear_out_tensor: torch.Tensor,
         base_weight_shape: Optional[torch.Size] = None,
     ) -> bool:
-        """Detect fused FC1 (gate/up) adapters based on names and tensor shape."""
+        """Detect fused FC1 adapters based on names and tensor shape."""
 
         names = list(base_hf_weight_names)
         has_gate_up = (
             bool(names)
             and len(names) % 2 == 0
-            and all(("gate_proj" in name or "up_proj" in name) for name in names)
-            and any("gate_proj" in name for name in names)
-            and any("up_proj" in name for name in names)
+            and all(self._is_fused_fc1_gate_proj(name) or self._is_fused_fc1_up_proj(name) for name in names)
+            and any(self._is_fused_fc1_gate_proj(name) for name in names)
+            and any(self._is_fused_fc1_up_proj(name) for name in names)
         )
         if not has_gate_up:
             return False
@@ -289,6 +289,16 @@ class MegatronPeftBridge:
             if projection_key in hf_name:
                 return projection_key
         return None
+
+    def _is_fused_fc1_gate_proj(self, hf_name: str) -> bool:
+        """Return whether the HF name maps to the gate half of fused FC1."""
+
+        return "gate_proj" in hf_name or ".w1." in hf_name
+
+    def _is_fused_fc1_up_proj(self, hf_name: str) -> bool:
+        """Return whether the HF name maps to the up half of fused FC1."""
+
+        return "up_proj" in hf_name or ".w3." in hf_name
 
     def _infer_hf_expert_idx(self, hf_name: str) -> Optional[int]:
         """Return the expert index embedded in an HF MoE weight name."""
@@ -934,9 +944,9 @@ class MegatronPeftBridge:
             )
             per_base = {}
             for base_name in base_hf_weight_names:
-                if "gate_proj" in base_name:
+                if self._is_fused_fc1_gate_proj(base_name):
                     per_base[base_name] = gate_weight
-                elif "up_proj" in base_name:
+                elif self._is_fused_fc1_up_proj(base_name):
                     per_base[base_name] = up_weight
                 else:
                     raise ValueError(f"Unknown fused-fc1 base weight name: {base_name}")
@@ -1047,9 +1057,9 @@ class MegatronPeftBridge:
                         current_linear_out_weight,
                         is_expert=is_expert,
                     )
-                if "gate_proj" in hf_name:
+                if self._is_fused_fc1_gate_proj(hf_name):
                     current_linear_out_weight = fc1_gate_weight
-                elif "up_proj" in hf_name:
+                elif self._is_fused_fc1_up_proj(hf_name):
                     current_linear_out_weight = fc1_up_weight
                 else:
                     raise ValueError(f"Unknown weight name: {hf_name}")
