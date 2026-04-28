@@ -573,7 +573,12 @@ jobs:
             local f="$1"
             local r
             r=$(grep -m1 '^# CI_RUNNER=' "$f" | cut -d= -f2)
-            echo "${r:-${RUNNER_PREFIX}}"
+            if [ -n "$r" ]; then
+              [[ "$RUNNER_PREFIX" == *-ephemeral ]] && r="${r}-ephemeral"
+              echo "$r"
+            else
+              echo "${RUNNER_PREFIX}"
+            fi
           }
           for tier in L0 L1 L2; do
             entries=""
