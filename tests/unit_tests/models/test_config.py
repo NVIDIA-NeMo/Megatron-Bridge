@@ -22,6 +22,7 @@ import yaml
 
 from megatron.bridge.models.config import (
     ConfigProtocol,
+    _contains_code_references,
     from_hf_pretrained,
     save_hf_pretrained,
 )
@@ -181,3 +182,85 @@ class TestSavePretrained:
 
         assert save_dir.exists()
         assert (save_dir / "config.json").exists()
+
+
+class TestContainsCodeReferences:
+    """Tests for _contains_code_references security guard."""
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "str",
+            "int",
+            "float",
+            "bool",
+            "list",
+            "dict",
+            "tuple",
+            "builtins.str",
+            "builtins.int",
+            "builtins.float",
+            "builtins.bool",
+            "builtins.list",
+            "builtins.dict",
+            "builtins.tuple",
+        ],
+    )
+    def test_safe_targets_allowed(self, target):
+        """Safe built-in type targets should not be flagged."""
+        assert _contains_code_references({"_target_": target}) is False
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "builtins.exec",
+            "builtins.eval",
+            "builtins.__import__",
+            "builtins.compile",
+            "builtins.getattr",
+            "builtins.setattr",
+            "builtins.delattr",
+            "builtins.globals",
+            "builtins.open",
+        ],
+    )
+    def test_dangerous_builtins_blocked(self, target):
+        """Dangerous builtins must be flagged even though they share the builtins. prefix."""
+        assert _contains_code_references({"_target_": target}) is True
+
+    def test_arbitrary_module_blocked(self):
+        """Arbitrary module paths must be flagged."""
+        assert _contains_code_references({"_target_": "os.system"}) is True
+        assert _contains_code_references({"_target_": "subprocess.call"}) is True
+
+    def test_nested_dangerous_target_blocked(self):
+        """Dangerous targets nested inside config dicts must be detected."""
+        config = {
+            "model": {
+                "_target_": "builtins.exec",
+                "_args_": ["print('pwned')"],
+            }
+        }
+        assert _contains_code_references(config) is True
+
+    def test_dangerous_target_in_list_blocked(self):
+        """Dangerous targets inside lists must be detected."""
+        config = [{"_target_": "builtins.eval", "_args_": ["1+1"]}]
+        assert _contains_code_references(config) is True
+
+    def test_call_false_flagged(self):
+        """_call_=False is a code reference indicator and must be flagged."""
+        assert _contains_code_references({"_call_": False}) is True
+
+    def test_no_target_is_safe(self):
+        """Config with no _target_ or _call_ should not be flagged."""
+        assert _contains_code_references({"hidden_size": 768, "num_layers": 12}) is False
+
+    def test_from_hf_pretrained_blocks_builtins_exec(self, tmp_path):
+        """Loading a config with builtins.exec must raise even without trust_remote_code."""
+        config_file = tmp_path / "config.json"
+        with open(config_file, "w") as f:
+            json.dump({"_target_": "builtins.exec", "_args_": ["print('pwned')"]}, f)
+
+        with pytest.raises(ValueError, match="trust_remote_code"):
+            from_hf_pretrained(MockConfig, str(tmp_path), trust_remote_code=False)

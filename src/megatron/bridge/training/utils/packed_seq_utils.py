@@ -40,8 +40,9 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
 
     Args:
         batch: A dictionary containing packed-sequence metadata. Expected keys:
-            `cu_seqlens`, optional `cu_seqlens_unpadded`, optional argmins, and
-            optional `max_seqlen`.
+            `cu_seqlens`, optional `cu_seqlens_unpadded`, optional argmins,
+            optional `max_seqlen`, and optional `total_tokens` (required for
+            hybrid SSM/Mamba models to generate ``seq_idx``).
 
     Returns:
         PackedSeqParams for THD (`qkv_format="thd"`). If unpadded boundaries
@@ -65,6 +66,7 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
         cu_seqlens_unpadded = _trim_cu_seqlens(cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
 
     max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
+    total_tokens = batch.get("total_tokens")
 
     # When cu_seqlens_unpadded is present (pad_seq_to_mult > 1), pass both unpadded and padded
     # for proper THD CP support. Otherwise, just use cu_seqlens_padded to avoid slower TE kernel.
@@ -76,6 +78,7 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
             cu_seqlens_kv_padded=cu_seqlens_padded,
             max_seqlen_q=max_seqlen,
             max_seqlen_kv=max_seqlen,
+            total_tokens=total_tokens,
             qkv_format="thd",
         )
     else:
@@ -89,5 +92,6 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
             cu_seqlens_kv_padded=cu_seqlens_padded,
             max_seqlen_q=max_seqlen,
             max_seqlen_kv=max_seqlen,
+            total_tokens=total_tokens,
             qkv_format="thd",
         )

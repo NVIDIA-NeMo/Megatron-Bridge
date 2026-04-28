@@ -610,6 +610,7 @@ def forward_step(
             "cu_seqlens": cu_padded,
             "cu_seqlens_argmin": torch.tensor(len(cu_padded)),
             "max_seqlen": max_seqlen_out,
+            "total_tokens": tokens.size(1) if tokens is not None else labels.size(1),
         }
         # Build an explicit padding mask for MoE routing/aux-loss accounting.
         # True means padding token that should be excluded from MoE statistics.
