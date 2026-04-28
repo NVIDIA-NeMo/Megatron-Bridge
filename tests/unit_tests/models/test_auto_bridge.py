@@ -230,6 +230,7 @@ class TestAutoBridge:
                 assert result.hf_pretrained == mock_model
                 mock_from_pretrained.assert_called_once_with(
                     "model-id",
+                    trust_remote_code=False,
                     torch_dtype=torch.bfloat16,
                     low_cpu_mem_usage=True,
                     attn_implementation="flash_attention_2",

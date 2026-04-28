@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from functools import cached_property, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
@@ -46,6 +47,8 @@ from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_co
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
 
+
+logger = logging.getLogger(__name__)
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")
@@ -249,12 +252,19 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         # First load just the config to check architecture support
         # Use thread-safe config loading to prevent race conditions
-        config = safe_load_config_with_retry(path, trust_remote_code=kwargs.get("trust_remote_code", False))
+        config_kwargs = dict(kwargs)
+        trust_remote_code = bool(config_kwargs.pop("trust_remote_code", False))
+        if trust_remote_code:
+            logger.warning(
+                "Loading a model with trust_remote_code=True allows arbitrary code execution "
+                "from the model repository. Only use this with models you trust."
+            )
+        config = safe_load_config_with_retry(path, trust_remote_code=trust_remote_code, **config_kwargs)
 
         cls._validate_config(config, str(path))
 
         try:
-            return cls(PreTrainedCausalLM.from_pretrained(path, **kwargs))
+            return cls(PreTrainedCausalLM.from_pretrained(path, trust_remote_code=trust_remote_code, **config_kwargs))
         except Exception as e:
             raise ValueError(f"Failed to load model with AutoBridge: {e}") from e
 

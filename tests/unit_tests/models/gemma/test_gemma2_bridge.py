@@ -576,7 +576,7 @@ class TestAutoBridgeIntegration:
             assert isinstance(bridge, AutoBridge)
             assert bridge.hf_pretrained == mock_model
             mock_autoconfig.assert_called_once_with(temp_dir, trust_remote_code=False)
-            mock_pretrained.assert_called_once_with(temp_dir)
+            mock_pretrained.assert_called_once_with(temp_dir, trust_remote_code=False)
 
     def test_supports_gemma2_architectures(self, gemma2_configs):
         """Test that AutoBridge.supports correctly identifies Gemma2 models."""

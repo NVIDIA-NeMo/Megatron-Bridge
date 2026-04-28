@@ -80,7 +80,7 @@ class TestAutoBridgeSarvamConfigValidation:
             assert bridge.hf_pretrained == hf_model
 
             mock_safe_load_cfg.assert_called_once_with(temp_dir, trust_remote_code=False)
-            mock_from_pretrained.assert_called_once_with(temp_dir)
+            mock_from_pretrained.assert_called_once_with(temp_dir, trust_remote_code=False)
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
     @patch("megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry")
@@ -105,7 +105,7 @@ class TestAutoBridgeSarvamConfigValidation:
             assert bridge.hf_pretrained == hf_model
 
             mock_safe_load_cfg.assert_called_once_with(temp_dir, trust_remote_code=False)
-            mock_from_pretrained.assert_called_once_with(temp_dir)
+            mock_from_pretrained.assert_called_once_with(temp_dir, trust_remote_code=False)
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
     @patch("megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry")

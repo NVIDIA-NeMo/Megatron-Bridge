@@ -361,7 +361,7 @@ class TestAutoBridgeIntegration:
             assert isinstance(bridge, AutoBridge)
             assert bridge.hf_pretrained == mock_model
             mock_autoconfig.assert_called_once_with(temp_dir, trust_remote_code=False)
-            mock_pretrained.assert_called_once_with(temp_dir)
+            mock_pretrained.assert_called_once_with(temp_dir, trust_remote_code=False)
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
     @patch("transformers.AutoConfig.from_pretrained")
