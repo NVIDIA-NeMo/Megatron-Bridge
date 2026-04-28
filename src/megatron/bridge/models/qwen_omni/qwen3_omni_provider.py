@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import Callable
 
+import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.pipeline_parallel.utils import (
@@ -47,6 +49,7 @@ class Qwen3OmniModelProvider(GPTModelProvider):
     pretrained_model_name: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
     normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
     gated_linear_unit: bool = True
     add_bias_linear: bool = False
     add_qkv_bias: bool = False

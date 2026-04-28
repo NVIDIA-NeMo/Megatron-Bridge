@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
@@ -93,6 +94,8 @@ class TestQwen3OmniBridge:
         assert provider.num_attention_heads == 32
         assert provider.num_query_groups == 4
         assert provider.kv_channels == 128
+        assert provider.activation_func is F.silu
+        assert provider.gated_linear_unit is True
         assert provider.num_moe_experts == 128
         assert provider.moe_router_topk == 8
         assert provider.share_embeddings_and_output_weights is False
