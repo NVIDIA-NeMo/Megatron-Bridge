@@ -633,6 +633,8 @@ def calc_convergence_and_performance(
         if key == max_alloc_metric:
             golden_max_alloc = value
             continue
+        if not isinstance(value, dict):
+            continue
         steps.append(key)
         golden_train_loss[key] = value[loss_metric]
         golden_iter_time[key] = value[timing_metric]
