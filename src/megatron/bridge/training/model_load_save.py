@@ -446,6 +446,9 @@ def save_megatron_model(
     hf_tokenizer_path: Optional[Union[str, Path]] = None,
     low_memory_save: bool = False,
     hf_tokenizer_kwargs: Optional[dict] = None,
+    fully_parallel_save: bool = True,
+    validate_access_integrity: bool = True,
+    distributed_timeout_minutes: int = 10,
 ) -> None:
     """Save a Megatron model in native Megatron checkpoint format without optimizer state.
 
@@ -472,6 +475,10 @@ def save_megatron_model(
             Default is False, preserving the model for further use.
         hf_tokenizer_kwargs: Optional dictionary of kwargs to pass to the HuggingFace tokenizer.
             Common options include trust_remote_code=True for models with custom tokenizers.
+        fully_parallel_save: If True (default), uses fully parallel save strategy which
+            requires all DP ranks to participate in collective operations. Set to False
+            when saving from contexts where not all ranks will enter the save path
+            (e.g., mixed training/inference worlds with non-colocated vLLM).
 
     Example:
         >>> # Save model checkpoint
@@ -538,6 +545,8 @@ def save_megatron_model(
             save_rng=False,
             ckpt_format=ckpt_format,
             dist_ckpt_optim_fully_reshardable=True,
+            fully_parallel_save=fully_parallel_save,
+            ckpt_assume_constant_structure=not validate_access_integrity,
         ),
         dist=None,
     )
