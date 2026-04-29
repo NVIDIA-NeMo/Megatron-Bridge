@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.12.*"
 resolution-markers = [
     "platform_machine != 's390x'",
@@ -2335,7 +2335,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.6.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformer-engine", extras = ["core-cu13", "pytorch"] },
-    { name = "transformers", specifier = ">=5.0.0,<=5.3.0" },
+    { name = "transformers", specifier = ">=5.0.0,<=5.6.0" },
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.25.0" },
 ]
@@ -4898,14 +4898,9 @@ name = "transformer-engine"
 version = "2.14.0+f031cf87"
 source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=f031cf87bd054c7558b887df7bed93975456667f#f031cf87bd054c7558b887df7bed93975456667f" }
 dependencies = [
-    { name = "einops" },
     { name = "importlib-metadata" },
-    { name = "nvdlfw-inspect" },
-    { name = "onnx" },
-    { name = "onnxscript" },
     { name = "packaging" },
     { name = "pydantic" },
-    { name = "torch", marker = "sys_platform == 'never'" },
 ]
 
 [[package]]
