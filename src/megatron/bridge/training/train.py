@@ -313,7 +313,6 @@ def train(
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
-    num_floating_point_operations_model = flop_utils.num_floating_point_operations(config, batch_size=1)
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     dp_size = pg_collection.dp.size()
     if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
@@ -433,6 +432,11 @@ def train(
                 ),
             )
 
+        # Reset per-step FLOPS accumulators (filled by forward_step micro-batches).
+        global_state._flops_seqlen_sum = 0
+        global_state._flops_seqlen_sq_sum = 0
+        global_state._flops_vision_patches = 0
+
         (
             loss_dict,
             skipped_iter,
@@ -537,7 +541,28 @@ def train(
         else:
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
-        num_floating_point_operations_in_batch = num_floating_point_operations_model * batch_size
+
+        # Read accumulated FLOPS metadata from forward_step micro-batches.
+        # These are per-DP-rank totals; scale by dp_size for global estimate.
+        local_seqlen_sum = getattr(global_state, '_flops_seqlen_sum', 0)
+        local_seqlen_sq_sum = getattr(global_state, '_flops_seqlen_sq_sum', 0)
+        num_vision_patches = getattr(global_state, '_flops_vision_patches', 0)
+
+        if local_seqlen_sum > 0:
+            seqlen_sum = local_seqlen_sum * dp_size
+            seqlen_squared_sum = local_seqlen_sq_sum * dp_size
+        else:
+            # Fallback for step functions that don't set accumulators
+            seqlen_sum = None
+            seqlen_squared_sum = None
+
+        # Vision patches: local accumulation * dp_size for global
+        num_vision_patches = num_vision_patches * dp_size if num_vision_patches > 0 else 0
+
+        num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
+            config, batch_size=batch_size, seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum, num_vision_patches=num_vision_patches,
+        )
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
@@ -580,6 +605,7 @@ def train(
                 model,
                 log_max_attention_logit,
                 loaded_iteration=start_iteration,
+                seq_length=seqlen_sum // batch_size if seqlen_sum else None,
             )
 
         if (

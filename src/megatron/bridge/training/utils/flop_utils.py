@@ -26,8 +26,114 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 _lora_seq_stats_cache: dict = {}
 
 
-def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
-    """Return the number of floating point operations"""
+def vit_flops(
+    cfg: ConfigContainer,
+    batch_size: int,
+    num_patches: int,
+):
+    """Calculate FLOPs for a Vision Transformer (ViT) encoder + patch merger.
+
+    Includes:
+    - ViT transformer layers (bidirectional full attention, not causal)
+    - Patch merger (spatial merge + MLP projection to LLM hidden size)
+
+    Args:
+        cfg: Configuration container. ViT hyper-parameters are read from
+            ``cfg.model.vision_config`` (``depth``, ``hidden_size``,
+            ``num_heads``, ``intermediate_size``, ``spatial_merge_size``,
+            ``out_hidden_size``). Passing the whole config keeps the public
+            signature stable as the list of required ViT attributes grows.
+        batch_size: Batch size.
+        num_patches: Per-image number of vision patches (before spatial
+            merge). Callers that track the total patch count across the
+            batch should divide by ``batch_size`` before invoking, because
+            ViT attention is per-image (not cross-image) and scales
+            quadratically with the per-image patch count.
+
+    Returns:
+        Total training FLOPs (forward * 3 for fwd+bwd). Returns 0 when
+        no ``vision_config`` is attached or ``num_patches`` is non-positive.
+    """
+    vision_config = getattr(cfg.model, "vision_config", None)
+    if vision_config is None or num_patches <= 0:
+        return 0
+
+    depth = getattr(vision_config, "depth", 0)
+    hidden_size = getattr(vision_config, "hidden_size", 0)
+    intermediate_size = getattr(vision_config, "intermediate_size", 0)
+    spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)
+    out_hidden_size = getattr(vision_config, "out_hidden_size", cfg.model.hidden_size)
+
+    # ViT Transformer layers (bidirectional attention)
+    per_token_per_layer = (
+        # QKV + O projections: 4 matmuls of h x h => 4 * 2 * h^2 FMA = 8h^2
+        # but standard counting: Q,K,V each h->h (3 * 2h^2) + O h->h (2h^2) = 8h^2
+        8 * hidden_size**2
+        # Attention core (full bidirectional, not causal): QK^T + attn*V
+        # = 2 * 2 * h * num_patches = 4 * h * num_patches
+        + 4 * hidden_size * num_patches
+        # MLP (GELU, 2 matmuls): fc1 h->intermediate + fc2 intermediate->h
+        # = 2 * 2 * h * intermediate = 4 * h * intermediate
+        + 4 * hidden_size * intermediate_size
+    )
+    transformer_flops_val = per_token_per_layer * num_patches * depth
+
+    # Patch Merger: spatial merge (2x2) + MLP projection
+    merge_unit = spatial_merge_size**2
+    merged_hidden = hidden_size * merge_unit  # concatenated hidden dim
+    num_merged_tokens = num_patches // merge_unit if merge_unit > 0 else num_patches
+    merger_flops_val = num_merged_tokens * (
+        2 * merged_hidden * merged_hidden  # fc1: merged_hidden -> merged_hidden
+        + 2 * merged_hidden * out_hidden_size  # fc2: merged_hidden -> out_hidden_size
+    )
+
+    return (transformer_flops_val + merger_flops_val) * batch_size * 3  # 3x for training (fwd + bwd)
+
+
+def num_floating_point_operations(
+    cfg: ConfigContainer,
+    batch_size: int = 1,
+    seqlen_sum: int | None = None,
+    seqlen_squared_sum: int | None = None,
+    num_vision_patches: int = 0,
+):
+    """Return the number of floating point operations.
+
+    Args:
+        cfg: Configuration container.
+        batch_size: Batch size.
+        seqlen_sum: Sum of actual sequence lengths across the batch
+            (batch_size * actual_seq_length). When provided, overrides
+            cfg.model.seq_length for more accurate FLOPS estimation with
+            dynamic-length sequences (e.g., VLM with dynamic padding).
+        seqlen_squared_sum: Sum of squared sequence lengths across the batch
+            (sum_i actual_seq_length_i^2). Used for attention core FLOPS
+            which scale quadratically with sequence length; when omitted,
+            falls back to ``batch_size * effective_seq_length^2`` so the
+            result matches the legacy constant-length estimate.
+        num_vision_patches: Total number of vision patches in the batch
+            (before spatial merge). Used to compute ViT encoder FLOPS.
+    """
+    # Compute effective sequence length from actual values or fall back to config.
+    if seqlen_sum is not None and batch_size > 0:
+        effective_seq_length = seqlen_sum / batch_size
+    else:
+        effective_seq_length = cfg.model.seq_length
+        seqlen_sum = batch_size * cfg.model.seq_length
+
+    # Per-layer attention core FLOPS scale as sum_i(s_i^2), while the outer
+    # formula multiplies every per-layer term by ``seqlen_sum``. To account
+    # for the quadratic scaling (and variance) of core attention we replace
+    # the linear ``effective_seq_length`` factor in core-attn expressions
+    # with ``core_attn_seq_factor``. With ``seqlen_sum * core_attn_seq_factor
+    # == sum_i(s_i^2)`` this reproduces the correct quadratic sum; when the
+    # squared sum is unavailable we fall back to ``effective_seq_length`` so
+    # the result matches the legacy constant-length estimate.
+    if seqlen_squared_sum is not None and seqlen_sum > 0:
+        core_attn_seq_factor = seqlen_squared_sum / seqlen_sum
+    else:
+        core_attn_seq_factor = effective_seq_length
+
     peft = getattr(cfg, "peft", None)
     is_lora = isinstance(peft, LoRA)
     # If the model provider has a custom TFLOPS calculation method, use it (non-LoRA only).
@@ -387,13 +493,13 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     ## o proj
                     + (cfg.model.num_attention_heads * getattr(cfg.model, "v_head_dim", 64)) * cfg.model.hidden_size
                     ## core attn
-                    + cfg.model.seq_length
+                    + core_attn_seq_factor
                     * (
                         cfg.model.num_attention_heads
                         * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "qk_pos_emb_head_dim", 0))
                     )
                     / 2
-                    + cfg.model.seq_length * cfg.model.num_attention_heads * getattr(cfg.model, "v_head_dim", 64) / 2
+                    + core_attn_seq_factor * cfg.model.num_attention_heads * getattr(cfg.model, "v_head_dim", 64) / 2
                 )
             )
 
@@ -416,7 +522,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     effective_window = window_size[0] + window_size[1] + 1
                 else:
                     effective_window = window_size
-                swa_context = min(effective_window, cfg.model.seq_length)
+                swa_context = min(effective_window, effective_seq_length)
 
                 if window_attn_skip_freq is None:
                     num_swa_layers = num_layers
@@ -433,7 +539,9 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     num_swa_layers = 0
                     num_full_attn_layers = num_layers
 
-                full_core = query_projection_size * cfg.model.seq_length / 2 * 2
+                # Full attention is quadratic in seq_len -> use core_attn_seq_factor.
+                # SWA core is bounded by window_size, so keep the averaged bound.
+                full_core = query_projection_size * core_attn_seq_factor / 2 * 2
                 swa_core = query_projection_size * swa_context / 2 * 2
 
                 self_attn_term = (
@@ -445,7 +553,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     )
                 )
             else:
-                full_core = query_projection_size * cfg.model.seq_length / 2 * 2
+                full_core = query_projection_size * core_attn_seq_factor / 2 * 2
                 self_attn_term = 3 * 2 * num_layers * (proj_per_layer + full_core)
 
         # Handle GDN (Gated DeltaNet) hybrid attention variant.
@@ -525,8 +633,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             ) + 2 * moe_latent_size
 
         total_floating_point_operations = (
-            batch_size
-            * cfg.model.seq_length
+            seqlen_sum
             * (
                 # MLP
                 3
@@ -556,7 +663,21 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 + 3 * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
             )
         )
-        return total_floating_point_operations
+        return total_floating_point_operations + _compute_vit_flops()
+
+    def _compute_vit_flops():
+        """Compute ViT encoder FLOPs if vision config is available.
+
+        Note: num_vision_patches is the *total* patches across the batch.
+        ViT attention is per-image (not cross-image), so we convert to
+        per-image patch count before invoking ``vit_flops`` to get the
+        correct quadratic attention scaling. ``vit_flops`` itself returns
+        0 when ``cfg.model.vision_config`` is absent.
+        """
+        if num_vision_patches <= 0:
+            return 0
+        patches_per_image = num_vision_patches / batch_size if batch_size > 0 else num_vision_patches
+        return vit_flops(cfg, batch_size, patches_per_image)
 
     # Main entrypoint for FLOPs calculation.
     if getattr(cfg.model, "is_hybrid_model", False):
@@ -588,9 +709,9 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         )
 
         # Compute hybrid model FLOPs.
-        return hybrid_flops(
+        llm_flops = hybrid_flops(
             batch_size=batch_size,
-            seq_len=cfg.model.seq_length,
+            seq_len=effective_seq_length,
             hidden_size=cfg.model.hidden_size,
             num_attn_layers=num_attn_layers,
             num_mamba_layers=num_mamba_layers,
@@ -626,6 +747,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             vocab_size=padded_vocab_size,
             mtp_num_layers=mtp_num_layers,
         )
+        return llm_flops + _compute_vit_flops()
     else:
         # Compute standard Transformer model FLOPs.
         return transformer_flops()
