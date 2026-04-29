@@ -62,6 +62,30 @@ class ModuleMatcher:
     )
     exclude_modules: List[str] = field(default_factory=list)
     canonical_mapping: Dict[str, Set] = field(default_factory=lambda: defaultdict(set))
+    # Private validation state, rebuilt at PEFT.__call__ time so it always reflects
+    # the *current* value of target_modules. Recipes commonly mutate target_modules
+    # after construction (e.g. ``peft_cfg.target_modules = ["linear_qkv"]``); doing
+    # this bookkeeping in __post_init__ would snapshot stale defaults and cause
+    # spurious "no modules matched" errors.
+    # pattern = canonical matcher string used internally (e.g., "linear_fc1")
+    _pattern_to_alias: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set), init=False, repr=False)
+    # alias = user-supplied target_modules entry that maps to a pattern
+    _alias_to_pattern: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _alias_matches: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set), init=False, repr=False)
+
+    def _init_target_match_state(self) -> None:
+        """(Re)initialize target-module alias bookkeeping from the current ``target_modules``.
+
+        Called from ``PEFT.__call__`` immediately before the validation walk so that any
+        post-construction mutation of ``self.target_modules`` is reflected. Subclasses that
+        derive aliases from ``target_modules`` differently (e.g. ``CanonicalLoRA``) override
+        this method.
+        """
+        self._pattern_to_alias.clear()
+        self._alias_to_pattern.clear()
+        self._alias_matches.clear()
+        for target in self.target_modules or []:
+            self.register_target_alias(target, target)
 
     def match(
         self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None
@@ -108,11 +132,13 @@ class ModuleMatcher:
             assert len(self.exclude_modules) == 0, "exclude_modules should be empty when using canonical_mapping"
             for pattern in self.canonical_mapping:
                 if name == pattern or wildcard_match(pattern, full_name):
+                    self._record_match(pattern, full_name)
                     return (pattern, full_name)
         elif len(self.target_modules or []) > 0:
             assert len(self.exclude_modules) == 0, "exclude_modules should be empty when using target_modules"
             for pattern in self.target_modules:
                 if name == pattern or wildcard_match(pattern, full_name):
+                    self._record_match(pattern, full_name)
                     return (pattern, full_name)
         else:
             linear_types = [ColumnParallelLinear, RowParallelLinear, nn.Linear]
@@ -129,6 +155,48 @@ class ModuleMatcher:
                 and not any(wildcard_match(pattern, full_name) for pattern in self.exclude_modules)
                 and isinstance(m, linear_types)
             ):
+                self._record_match(name, full_name)
                 return (name, full_name)
 
         return None
+
+    def register_target_alias(self, alias: str, pattern: str) -> None:
+        """Associate a user-supplied alias with the canonical pattern used for matching.
+
+        For plain ``LoRA`` an alias is identical to its pattern. For ``CanonicalLoRA`` an
+        alias such as ``"linear_q"`` maps to the canonical pattern ``"linear_qkv"``.
+        """
+        if alias is None or pattern is None:
+            return
+
+        previous_pattern = self._alias_to_pattern.get(alias)
+        if previous_pattern:
+            self._pattern_to_alias[previous_pattern].discard(alias)
+
+        self._alias_to_pattern[alias] = pattern
+        self._pattern_to_alias[pattern].add(alias)
+        # Ensure alias has an entry in matches tracking so len(...) works without lookups later.
+        self._alias_matches.setdefault(alias, set())
+
+    def _record_match(self, pattern: str, full_name: Optional[str]) -> None:
+        """Track which aliases successfully matched modules during traversal."""
+        for alias in self._pattern_to_alias.get(pattern, ()):
+            self._alias_matches.setdefault(alias, set()).add(full_name or alias)
+
+    def _reset_target_match_state(self) -> None:
+        """Clear per-call match tracking without discarding the alias registrations."""
+        for alias in self._alias_matches:
+            self._alias_matches[alias].clear()
+
+    def _validate_target_matches(self) -> None:
+        """Raise an error if any requested target aliases failed to match a module.
+
+        Intended to be called after a full validation walk over the model. Skips when no
+        aliases are registered (e.g. ``exclude_modules`` mode).
+        """
+        if not self._alias_to_pattern:
+            return
+
+        unmatched = sorted(alias for alias, matches in self._alias_matches.items() if len(matches) == 0)
+        if unmatched:
+            raise ValueError("No modules matched the requested target_modules entries: " + ", ".join(unmatched))
