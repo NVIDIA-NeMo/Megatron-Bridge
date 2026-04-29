@@ -31,6 +31,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
+    DeepSeekV4Bridge,
 )
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,
@@ -167,6 +168,7 @@ __all__ = [
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
+    "DeepSeekV4Bridge",
     "Gemma3ModelProvider",
     "Gemma3ModelProvider1B",
     "Gemma3ModelProvider4B",
