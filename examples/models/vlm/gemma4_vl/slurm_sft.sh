@@ -105,10 +105,7 @@ echo "Save: $SAVE_DIR"
 echo "Master: $MASTER_ADDR:$MASTER_PORT"
 echo "======================================"
 
-# uv.lock pins transformers==5.3.0; gemma4 requires >=5.5.0. Upgrade from shared
-# cache (pre-warmed) so each node gets the right version before training.
 CMD="cd /opt/Megatron-Bridge && "
-CMD="${CMD}uv pip install -q --upgrade 'transformers>=5.5.0' mistral_common && "
 CMD="${CMD}export RANK=\$SLURM_PROCID LOCAL_RANK=\$SLURM_LOCALID WORLD_SIZE=\$SLURM_NTASKS && "
 CMD="${CMD}uv run --no-sync python scripts/training/run_recipe.py"
 CMD="${CMD} --recipe ${RECIPE}"

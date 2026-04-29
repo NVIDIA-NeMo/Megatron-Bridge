@@ -20,10 +20,6 @@ WORKSPACE=${WORKSPACE:-/workspace}
 # export WANDB_API_KEY=<your_wandb_api_key>
 # export WANDB_MODE=disabled
 
-# gemma4 requires transformers>=5.5.0; the lockfile pins 5.3.0.
-# Upgrade first, then use --no-sync so uv run does not revert the upgrade.
-uv pip install -q --upgrade 'transformers>=5.5.0' mistral_common
-
 # Common configurations
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/gemma-4-26B-A4B
 MODEL_NAME=gemma4_vl_26b

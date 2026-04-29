@@ -50,13 +50,13 @@ See the [conversion.sh](conversion.sh) script for more examples including multi-
 
 ## Inference
 
-Gemma 4 uses a dedicated inference script (`hf_to_megatron_generate_gemma4.py`) instead of the generic VLM inference script. This is required because Gemma 4's processor uses a different input format for image tokens.
+Gemma 4 uses VLM inference script (`hf_to_megatron_generate_vlm.py`) as other models. The script auto-detects the bridge type and switches to Gemma4-specific input preprocessing, attention mask handling, and stop tokens.
 
 ### Text-only
 
 ```bash
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 \
-    examples/conversion/hf_to_megatron_generate_gemma4.py \
+    examples/conversion/hf_to_megatron_generate_vlm.py \
     --hf_model_path google/gemma-4-26B-A4B \
     --prompt "The capital of France is" \
     --max_new_tokens 20 \
@@ -69,7 +69,7 @@ Use the instruction-tuned model (`-it`) for image+text queries — the base mode
 
 ```bash
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 \
-    examples/conversion/hf_to_megatron_generate_gemma4.py \
+    examples/conversion/hf_to_megatron_generate_vlm.py \
     --hf_model_path google/gemma-4-26B-A4B-it \
     --image_path "https://raw.githubusercontent.com/google-gemma/cookbook/refs/heads/main/Demos/sample-data/GoldenGate.png" \
     --prompt "What is shown in this image?" \
@@ -81,7 +81,7 @@ uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 \
 
 ```bash
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 \
-    examples/conversion/hf_to_megatron_generate_gemma4.py \
+    examples/conversion/hf_to_megatron_generate_vlm.py \
     --hf_model_path google/gemma-4-26B-A4B \
     --megatron_model_path ${WORKSPACE}/models/gemma-4-26B-A4B/iter_0000000 \
     --image_path "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/p-blog/candy.JPG" \
