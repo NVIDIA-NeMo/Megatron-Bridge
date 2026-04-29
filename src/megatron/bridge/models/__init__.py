@@ -160,6 +160,11 @@ from megatron.bridge.models.sarvam import (
     SarvamMLABridge,
     SarvamMoEBridge,
 )
+from megatron.bridge.models.step_vl import (
+    Step3VLBridge,
+    Step3VLModel,
+    Step3VLModelProvider,
+)
 from megatron.bridge.models.t5_provider import T5ModelProvider
 
 
@@ -265,4 +270,8 @@ __all__ = [
     "Qwen3OmniModelProvider",
     "SarvamMLABridge",
     "SarvamMoEBridge",
+    # Step3-VL
+    "Step3VLBridge",
+    "Step3VLModel",
+    "Step3VLModelProvider",
 ]
