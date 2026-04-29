@@ -69,6 +69,7 @@ def slurm_executor(
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
     packager: str = "git",
+    enable_pct_binding: bool = True,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -134,7 +135,7 @@ def slurm_executor(
 
     numa_divisor = 2 if gpu.lower() in ["gb200", "gb300"] else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
-    if gpu.lower() in ["b300"]:
+    if gpu.lower() in ["b300"] and enable_pct_binding:
         numa_cmd += " -C $((SLURM_LOCALID * 16)),$((SLURM_LOCALID * 16 + 1))"
     custom_bash_cmds.append(numa_cmd)
 
