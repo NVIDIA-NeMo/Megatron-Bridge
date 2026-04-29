@@ -55,6 +55,10 @@ the authoritative rules. For judgment calls not covered by tooling, see
 - Use `*` separator for functions with multiple same-type parameters
 - No arbitrary defaults for config values — be explicit
 
+## Testing
+
+- **No foreign `setattr` on config dataclasses in tests.** When a test applies overrides to a recipe config via `setattr(config_obj, key, value)`, always guard with `if not hasattr(config_obj, key): raise ValueError(...)` first. Setting an attribute that does not exist on the dataclass silently creates a phantom field — the test passes but the recipe would fail for a real user who never sets that key. This applies to all override patterns (`model_overrides`, `checkpoint_overrides`, `config_overrides`, etc.) in `tests/functional_tests/`.
+
 ## Contributing
 
 See `CONTRIBUTING.md` for the full contributor guide, including:
