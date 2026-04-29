@@ -12,19 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.gemma_vl.gemma3_vl_bridge import Gemma3VLBridge
-from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
-from megatron.bridge.models.gemma_vl.gemma4_vl_bridge import Gemma4VLBridge
-from megatron.bridge.models.gemma_vl.gemma4_vl_provider import Gemma4VLModelProvider
-from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel
-from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
+from megatron.bridge.recipes.gemma4_vl.gemma4_vl import (
+    gemma4_vl_26b_peft_config,
+    gemma4_vl_26b_sft_config,
+)
 
 
 __all__ = [
-    "Gemma3VLModel",
-    "Gemma3VLBridge",
-    "Gemma3VLModelProvider",
-    "Gemma4VLModel",
-    "Gemma4VLBridge",
-    "Gemma4VLModelProvider",
+    "gemma4_vl_26b_sft_config",
+    "gemma4_vl_26b_peft_config",
 ]
