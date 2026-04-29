@@ -36,6 +36,7 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
+_BATCH_LEVEL_PACKING_WARNED = False
 
 
 def get_batch_from_iterator(
@@ -248,7 +249,19 @@ def forward_step(
 
     # To be compatible with qwen3vl, we move the sequence padding and packing to forward_step function.
     # Qwen3VL model need the original input and do cp and sp split in model.forward.
-    pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
+    in_batch_pack_enabled = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
+    batch_level_pack_enabled = getattr(state.cfg.dataset, "batch_level_packing", False)
+    # qwen3_vl_step does not yet wire full THD metadata (rope/moe padding-mask)
+    # for batch-level packing. Keep this path disabled to avoid incorrect token
+    # accounting until parity with training.vlm_step is implemented.
+    global _BATCH_LEVEL_PACKING_WARNED
+    if batch_level_pack_enabled and not _BATCH_LEVEL_PACKING_WARNED:
+        logger.warning(
+            "dataset.batch_level_packing is not fully supported in qwen3_vl_step yet; "
+            "falling back to in-batch packing behavior."
+        )
+        _BATCH_LEVEL_PACKING_WARNED = True
+    enable_sequence_packing = in_batch_pack_enabled
 
     tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
         tokens,
@@ -275,7 +288,7 @@ def forward_step(
     forward_args["input_ids"] = original_tokens
     # calculate position_ids in model forward
     forward_args["position_ids"] = None
-    if pack_sequences_in_batch:
+    if enable_sequence_packing:
         if forward_args["labels"] is not None:
             # When using pp, labels could be None
             forward_args["labels"] = forward_args["labels"].reshape(1, -1)

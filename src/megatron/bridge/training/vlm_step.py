@@ -14,6 +14,7 @@
 
 import logging
 import math
+import os
 from functools import partial
 from typing import Any, Iterable
 
@@ -37,6 +38,52 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
+_SWITCH_LOGGED: set[str] = set()
+
+
+def _rank0() -> bool:
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return True
+    return torch.distributed.get_rank() == 0
+
+
+def _thd_diag_enabled() -> bool:
+    return _switch_enabled("THD_DIAG")
+
+
+def _thd_diag_boundary_enabled() -> bool:
+    return _switch_enabled("THD_DIAG_BOUNDARY")
+
+
+def _switch_enabled(name: str) -> bool:
+    enabled = os.environ.get(name, "0") not in ("0", "", "false", "False")
+    if enabled and _rank0() and name not in _SWITCH_LOGGED:
+        logger.info("[THD_SWITCH] %s=1 enabled", name)
+        _SWITCH_LOGGED.add(name)
+    return enabled
+
+
+def _thd_force_bshd_enabled() -> bool:
+    return _switch_enabled("THD_FORCE_BSHD")
+
+
+def _thd_force_single_segment_cu_enabled() -> bool:
+    return _switch_enabled("THD_FORCE_SINGLE_SEGMENT_CU")
+
+
+def _thd_skip_preprocess_packed_pos_enabled() -> bool:
+    return _switch_enabled("THD_SKIP_PREPROCESS_PACKED_POS")
+
+
+def _resolve_cfg_token_id(cfg: ConfigContainer, key: str) -> int | None:
+    model_cfg = getattr(cfg, "model", None)
+    token_id = getattr(model_cfg, key, None)
+    if token_id is None:
+        return None
+    try:
+        return int(token_id)
+    except (TypeError, ValueError):
+        return None
 
 
 def get_batch_from_iterator(
@@ -70,8 +117,12 @@ def get_batch_from_iterator(
 
     if "cu_seqlens" in batch:
         required_device_keys.add("cu_seqlens")
+        if "cu_seqlens_unpadded" in batch:
+            required_device_keys.add("cu_seqlens_unpadded")
         required_host_keys.add("cu_seqlens_argmin")
         required_host_keys.add("max_seqlen")
+        if "cu_seqlens_unpadded_argmin" in batch:
+            required_host_keys.add("cu_seqlens_unpadded_argmin")
 
     required_device_keys.update(("tokens", "input_ids", "position_ids"))
     if is_last_pp_stage:
@@ -192,7 +243,7 @@ def pack_batch_sequences(
         else:
             padded_len = length
         padded_seq_lengths.append(padded_len)
-        # Use padded lengths for cu_seqlens so THD RoPE splits sum correctly under CP.
+        # Use padded lengths for packed kernels under CP/SP alignment constraints.
         cu_seqlens.append(cu_seqlens[-1] + padded_len)
 
     cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32, device=device)
@@ -233,9 +284,10 @@ def pack_batch_sequences(
             )
         offset += padded_len
 
-    logger.debug(
-        f"Packed {len(valid_sequences)} sequences: lengths={seq_lengths}, total_len={total_len}, max_len={max_seqlen}"
-    )
+    if _thd_diag_enabled():
+        logger.debug(
+            f"Packed {len(valid_sequences)} sequences: lengths={seq_lengths}, total_len={total_len}, max_len={max_seqlen}"
+        )
 
     # Attention mask is not used with packed sequences (handled by cu_seqlens)
     packed_attention_mask = None
@@ -275,8 +327,16 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
     )
-    enable_packing = getattr(cfg.dataset, "pack_sequences_in_batch", False)
+    in_batch_pack_enabled = getattr(cfg.dataset, "pack_sequences_in_batch", False)
+    batch_level_pack_enabled = getattr(cfg.dataset, "batch_level_packing", False)
+    enable_packing = in_batch_pack_enabled or batch_level_pack_enabled
+    force_bshd = _thd_force_bshd_enabled()
+    force_single_segment_cu = _thd_force_single_segment_cu_enabled()
 
+    if force_bshd and force_single_segment_cu and _rank0():
+        logger.warning(
+            "[THD_SWITCH] THD_FORCE_BSHD=1 overrides THD_FORCE_SINGLE_SEGMENT_CU=1 (single-segment CU ignored)."
+        )
     if not enable_packing:
         # When using pipeline parallelism, ensure fixed shapes equal to cfg.model.seq_length
         if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1:
@@ -335,8 +395,69 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     tp_size = pg_collection.tp.size() if pg_collection is not None and pg_collection.tp is not None else 1
     has_sp = getattr(cfg.model, "sequence_parallel", False)
 
+    if force_bshd:
+        # Explicitly disable packed paths and ignore pre-packed cu_seqlens metadata.
+        enable_packing = False
+
+    # Energon pre-packed path: cu_seqlens already present from TaskEncoder packing
+    energon_cu_seqlens = batch.get("cu_seqlens")
+    if energon_cu_seqlens is not None and not force_bshd:
+        tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
+        energon_max_seqlen = batch.get("max_seqlen")
+        energon_cu_argmin = batch.get("cu_seqlens_argmin")
+
+        if force_single_segment_cu and tokens_or_input is not None:
+            seq_len = int(tokens_or_input.shape[-1])
+            device = energon_cu_seqlens.device if isinstance(energon_cu_seqlens, torch.Tensor) else tokens_or_input.device
+            energon_cu_seqlens = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
+            energon_max_seqlen = torch.tensor(seq_len, dtype=torch.int32, device=device)
+            energon_cu_argmin = torch.tensor(2, dtype=torch.int64)
+            if _thd_diag_enabled() and _rank0():
+                logger.info("[THD_SWITCH] force single-segment cu_seqlens=[0, %d]", seq_len)
+
+        # Log detailed packed-iteration diagnostics when explicitly enabled.
+        if tokens_or_input is not None and _thd_diag_enabled():
+            _seq_dim = tokens_or_input.shape[-1]
+            if energon_cu_seqlens.dim() == 1:
+                _content_len = energon_cu_seqlens[-1].item()
+            elif energon_cu_argmin is not None:
+                _argmin_val = energon_cu_argmin.item() if energon_cu_argmin.dim() == 0 else energon_cu_argmin[0].item()
+                _content_len = energon_cu_seqlens[0, _argmin_val - 1].item()
+            else:
+                _content_len = energon_cu_seqlens[0, -1].item()
+            _pad_len = _seq_dim - _content_len
+            image_token_id = _resolve_cfg_token_id(cfg, "image_token_id")
+            if image_token_id is not None:
+                _n_img_toks: int | str = int((tokens_or_input == image_token_id).sum().item())
+            else:
+                _n_img_toks = "n/a"
+            _vit_shape = (
+                visual_inputs.pixel_values.shape
+                if visual_inputs is not None and visual_inputs.pixel_values is not None
+                else "None"
+            )
+            logger.info(
+                f"[IterStats] decoder_input={list(tokens_or_input.shape)}, "
+                f"content={_content_len}, pad={_pad_len}, "
+                f"image_tokens_in_decoder={_n_img_toks}, "
+                f"image_token_id={image_token_id}, "
+                f"vit_input={_vit_shape}"
+            )
+
+        return (
+            tokens_or_input,
+            batch.get("labels"),
+            batch.get("loss_mask"),
+            batch.get("attention_mask"),
+            batch.get("position_ids"),
+            energon_cu_seqlens,
+            energon_max_seqlen,
+            visual_inputs,
+            energon_cu_argmin,
+        )
+
     if enable_packing:
-        # Pack sequences
+        # In-batch packing (concatenate all micro-batch sequences)
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
 
         # Compute pad_to_multiple_of as lcm of CP and SP constraints.
@@ -366,7 +487,6 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
             padding_mask=batch.get("_padding_mask"),
         )
 
-        # Update batch dict with packed tensors
         if batch.get("tokens") is not None:
             batch["tokens"] = packed_tokens
         else:
@@ -376,10 +496,9 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         batch["attention_mask"] = packed_attention_mask
         batch["position_ids"] = packed_position_ids
 
-        # # Add packing metadata
-        logger.debug(f"Packed batch: cu_seqlens={cu_seqlens.tolist()}, max_seqlen={max_seqlen}")
+        if _thd_diag_enabled():
+            logger.debug(f"In-batch packed: cu_seqlens={cu_seqlens.tolist()}, max_seqlen={max_seqlen}")
     else:
-        # No packing, use dummy values
         cu_seqlens = None
         max_seqlen = None
 
@@ -392,6 +511,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         cu_seqlens,
         max_seqlen,
         visual_inputs,
+        None,  # cu_seqlens_argmin (only set for Energon pre-packed path)
     )
 
 
@@ -427,12 +547,17 @@ def forward_step(
             cu_seqlens,
             max_seqlen,
             visual_inputs,
+            cu_seqlens_argmin,
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
+    # For Qwen-VL, let model compute MRoPE position_ids from multimodal tokens.
+    # Passing 1D sequential position_ids from dataloader would bypass that path.
+    model_position_ids = None if visual_inputs is not None else position_ids
+
     forward_args = {
         "input_ids": tokens,
-        "position_ids": position_ids,
+        "position_ids": model_position_ids,
         "attention_mask": attention_mask,
         "labels": labels,
         "loss_mask": loss_mask,  # Pass full loss_mask so model can slice it consistently with labels
@@ -443,14 +568,122 @@ def forward_step(
 
     # Add packed sequence support
     if cu_seqlens is not None:
-        cu_seqlens_argmin = torch.tensor(len(cu_seqlens))  # no padding in cu_seqlens since packing is done in-batch
-        packed_seq_params = {
-            "cu_seqlens": cu_seqlens,
-            "max_seqlen": max_seqlen,
-            "cu_seqlens_argmin": cu_seqlens_argmin,
+        physical_seq_len = tokens.shape[-1]
+
+        # Determine the number of valid entries in cu_seqlens.
+        cu = cu_seqlens.squeeze()
+        if cu_seqlens_argmin is not None:
+            n_valid = int(cu_seqlens_argmin.item())
+        elif cu.dim() == 1:
+            n_valid = len(cu)
+        else:
+            n_valid = int(torch.argmin(cu).item())
+
+        cu_clean = cu[:n_valid]
+        last_boundary = int(cu_clean[-1].item())
+
+        # Keep an unpadded copy for Qwen MRoPE sub-sequence semantics.
+        # Do not feed unpadded cu_seqlens into PackedSeqParams, which can
+        # switch TE kernels and destabilize training.
+        cu_unpadded = cu_clean
+
+        if last_boundary < physical_seq_len and not _thd_skip_preprocess_packed_pos_enabled():
+            # Trailing padding exists: extend padded boundary to full physical
+            # sequence length so packed kernels cover all tokens.
+            cu_padded = cu_clean.clone()
+            cu_padded[-1] = physical_seq_len
+            max_seqlen_out = (cu_padded[1:] - cu_padded[:-1]).max()
+        else:
+            if last_boundary < physical_seq_len and _thd_diag_enabled() and _rank0():
+                logger.info(
+                    "[THD_SWITCH] skip packed-pos preprocess: preserve original cu_seqlens last_boundary=%d physical_seq_len=%d",
+                    last_boundary,
+                    physical_seq_len,
+                )
+            cu_padded = cu_clean
+            if max_seqlen is not None:
+                max_seqlen_out = max_seqlen.squeeze()
+            else:
+                max_seqlen_out = (cu_padded[1:] - cu_padded[:-1]).max()
+
+        packed_seq_dict = {
+            "cu_seqlens": cu_padded,
+            "cu_seqlens_argmin": torch.tensor(len(cu_padded)),
+            "max_seqlen": max_seqlen_out,
             "total_tokens": tokens.size(1) if tokens is not None else labels.size(1),
         }
-        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
+        # Build an explicit padding mask for MoE routing/aux-loss accounting.
+        # True means padding token that should be excluded from MoE statistics.
+        moe_padding_mask = torch.zeros_like(tokens, dtype=torch.bool)
+        if cu_unpadded.numel() == cu_padded.numel() and cu_padded.numel() > 1:
+            for i in range(int(cu_padded.numel()) - 1):
+                seg_unpadded_end = int(cu_unpadded[i + 1].item())
+                seg_padded_end = int(cu_padded[i + 1].item())
+                if seg_padded_end > seg_unpadded_end:
+                    moe_padding_mask[..., seg_unpadded_end:seg_padded_end] = True
+
+        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_dict)
+        # Pass unpadded boundaries only to Qwen model's MRoPE construction.
+        forward_args["rope_cu_seqlens"] = cu_unpadded
+        forward_args["moe_padding_mask"] = moe_padding_mask
+        if _thd_diag_enabled() and _rank0():
+            logger.info(
+                "[THD_DIAG][packed] physical_seq_len=%d cu_unpadded_last=%d cu_padded_last=%d implicit_pad=%d max_seqlen=%d moe_padding_tokens=%d",
+                int(physical_seq_len),
+                int(cu_unpadded[-1].item()),
+                int(cu_padded[-1].item()),
+                int(physical_seq_len - int(cu_unpadded[-1].item())),
+                int(max_seqlen_out.item()) if torch.is_tensor(max_seqlen_out) else int(max_seqlen_out),
+                int(moe_padding_mask.sum().item()),
+            )
+        if _thd_diag_boundary_enabled() and _rank0():
+            cu_padded_cpu = cu_padded.detach().cpu()
+            cu_unpadded_cpu = cu_unpadded.detach().cpu()
+            seg_lens_padded = (cu_padded_cpu[1:] - cu_padded_cpu[:-1]).tolist()
+            seg_lens_unpadded = (cu_unpadded_cpu[1:] - cu_unpadded_cpu[:-1]).tolist()
+            logger.info(
+                "[THD_DIAG][cu] kernel_num_segs=%d rope_num_segs=%d kernel_cu_head=%s rope_cu_head=%s kernel_seg_lens_head=%s rope_seg_lens_head=%s",
+                max(0, int(cu_padded_cpu.numel()) - 1),
+                max(0, int(cu_unpadded_cpu.numel()) - 1),
+                cu_padded_cpu[:8].tolist(),
+                cu_unpadded_cpu[:8].tolist(),
+                seg_lens_padded[:8],
+                seg_lens_unpadded[:8],
+            )
+            # Boundary windows are centered on each segment join index.
+            # This helps detect edge-only mismatch that can be hidden by global stats.
+            if labels is not None and loss_mask is not None and cu_unpadded_cpu.numel() > 2:
+                win_k = 8
+                seq_len = int(tokens.shape[-1])
+                boundary_window = torch.zeros(seq_len, dtype=torch.bool, device=tokens.device)
+                boundary_positions = []
+                for i in range(1, int(cu_unpadded_cpu.numel()) - 1):
+                    join_idx = int(cu_unpadded_cpu[i].item())
+                    boundary_positions.append(join_idx)
+                    left = max(0, join_idx - win_k)
+                    right = min(seq_len, join_idx + win_k)
+                    if right > left:
+                        boundary_window[left:right] = True
+                labels_flat = labels.view(-1)
+                loss_mask_flat = loss_mask.view(-1)
+                moe_mask_flat = moe_padding_mask.view(-1)
+                bw = boundary_window.view(-1)
+                bw_tokens = int(bw.sum().item())
+                bw_valid_loss = int(((loss_mask_flat > 0) & bw).sum().item())
+                bw_valid_labels = int(((labels_flat != -100) & bw).sum().item())
+                bw_moe_padding = int((moe_mask_flat & bw).sum().item())
+                bw_label_loss_mismatch = int((((labels_flat != -100) != (loss_mask_flat > 0)) & bw).sum().item())
+                logger.info(
+                    "[THD_DIAG][boundary] win_k=%d joins=%d join_head=%s window_tokens=%d valid_loss=%d valid_labels=%d moe_padding=%d label_loss_mismatch=%d",
+                    win_k,
+                    len(boundary_positions),
+                    boundary_positions[:8],
+                    bw_tokens,
+                    bw_valid_loss,
+                    bw_valid_labels,
+                    bw_moe_padding,
+                    bw_label_loss_mismatch,
+                )
 
     if loss_mask is not None:
         loss_mask = loss_mask.contiguous()
@@ -474,6 +707,28 @@ def forward_step(
                 output_tensor, loss_mask = model_output
             else:
                 output_tensor = model_output
+
+    if _thd_diag_enabled() and _rank0() and loss_mask is not None:
+        loss_mask_flat = loss_mask.view(-1)
+        valid_loss_tokens = int((loss_mask_flat > 0).sum().item())
+        total_loss_tokens = int(loss_mask_flat.numel())
+        if labels is not None:
+            labels_flat = labels.view(-1)
+            ignore_tokens = int((labels_flat == -100).sum().item())
+            logger.info(
+                "[THD_DIAG][loss] total=%d valid=%d masked=%d labels_ignore=%d",
+                total_loss_tokens,
+                valid_loss_tokens,
+                total_loss_tokens - valid_loss_tokens,
+                ignore_tokens,
+            )
+        else:
+            logger.info(
+                "[THD_DIAG][loss] total=%d valid=%d masked=%d labels_ignore=n/a",
+                total_loss_tokens,
+                valid_loss_tokens,
+                total_loss_tokens - valid_loss_tokens,
+            )
 
     loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
 

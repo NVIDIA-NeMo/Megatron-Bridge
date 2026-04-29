@@ -66,6 +66,11 @@ def get_rank_safe() -> int:
     return 0
 
 
+def is_rank_0() -> bool:
+    """Return whether the current process is rank 0."""
+    return get_rank_safe() == 0
+
+
 def get_world_size_safe() -> int:
     """Get the distributed world size safely, even if torch.distributed is not initialized.
 

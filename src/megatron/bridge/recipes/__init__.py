@@ -18,8 +18,18 @@ Megatron Bridge Recipe Configurations
 This module exposes all recipe configurations from all model families.
 """
 
-from megatron.bridge.diffusion.recipes.flux.flux import *
-from megatron.bridge.diffusion.recipes.wan.wan import *
+# Diffusion recipes require optional dependencies (e.g. diffusers). Keep
+# non-diffusion training paths (LLM/VLM) usable when those deps are absent.
+try:
+    from megatron.bridge.diffusion.recipes.flux.flux import *
+except ModuleNotFoundError:
+    pass
+
+try:
+    from megatron.bridge.diffusion.recipes.wan.wan import *
+except ModuleNotFoundError:
+    pass
+
 from megatron.bridge.recipes.deepseek import *
 from megatron.bridge.recipes.gemma import *
 from megatron.bridge.recipes.gemma3_vl import *

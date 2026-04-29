@@ -26,6 +26,7 @@ from megatron.bridge.utils.common_utils import (
     get_master_port_safe,
     get_rank_safe,
     get_world_size_safe,
+    is_rank_0,
     is_last_rank,
     print_rank_0,
     print_rank_last,
@@ -176,6 +177,24 @@ class TestPrintRank0:
 
         mock_get_rank_safe.assert_called_once()
         mock_print.assert_not_called()
+
+
+class TestIsRank0:
+    """Test is_rank_0 function."""
+
+    @patch("megatron.bridge.utils.common_utils.get_rank_safe")
+    def test_rank_zero(self, mock_get_rank_safe):
+        """Test is_rank_0 returns True when rank is 0."""
+        mock_get_rank_safe.return_value = 0
+        assert is_rank_0() is True
+        mock_get_rank_safe.assert_called_once()
+
+    @patch("megatron.bridge.utils.common_utils.get_rank_safe")
+    def test_non_zero_rank(self, mock_get_rank_safe):
+        """Test is_rank_0 returns False when rank is non-zero."""
+        mock_get_rank_safe.return_value = 3
+        assert is_rank_0() is False
+        mock_get_rank_safe.assert_called_once()
 
 
 class TestIsLastRank:

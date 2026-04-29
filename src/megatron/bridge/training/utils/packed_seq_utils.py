@@ -18,12 +18,25 @@ import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
 
+def _trim_cu_seqlens(cu_seqlens: torch.Tensor, cu_seqlens_argmin: torch.Tensor | None) -> torch.Tensor:
+    """Trim padded cu_seqlens tail safely.
+
+    If argmin metadata is available from dataloader, trust it. Otherwise, detect
+    the first zero in the tail region after index 0 (the leading 0 is valid).
+    """
+    if cu_seqlens_argmin is not None:
+        return cu_seqlens[: int(cu_seqlens_argmin.item())]
+
+    padded_tail = torch.nonzero(cu_seqlens[1:] == 0, as_tuple=False)
+    first_tail = int(padded_tail[0].item() + 1) if padded_tail.numel() else cu_seqlens.numel()
+    return cu_seqlens[:first_tail]
+
+
 def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     """Build packed sequence parameters from a batch dictionary.
 
-    The function squeezes possible batch dimensions and removes any padding
-    marked by -1 values. It returns a `PackedSeqParams` instance suitable for
-    packed sequence attention kernels.
+    The function trims optional sentinel tails via argmin metadata and returns
+    a `PackedSeqParams` instance suitable for packed sequence kernels.
 
     Args:
         batch: A dictionary containing packed-sequence metadata. Expected keys:
@@ -32,8 +45,9 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
             hybrid SSM/Mamba models to generate ``seq_idx``).
 
     Returns:
-        PackedSeqParams with identical q/kv parameters and `qkv_format` set to
-        "thd".
+        PackedSeqParams for THD (`qkv_format="thd"`). If unpadded boundaries
+        are provided, they are used for q/kv while padded boundaries remain in
+        `*_padded` fields for kernel compatibility.
     """
 
     cu_seqlens_padded = batch["cu_seqlens"].squeeze()
@@ -44,18 +58,12 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     cu_seqlens_argmin = batch.get("cu_seqlens_argmin")
     cu_seqlens_unpadded_argmin = batch.get("cu_seqlens_unpadded_argmin")
 
-    # note: if argmin is not pre-computed in the dataloader, torch.argmin here will incur a
-    # device-to-host synchronization, which can slow down training
-    if cu_seqlens_argmin is not None:
-        cu_seqlens_padded = cu_seqlens_padded[: cu_seqlens_argmin.item()]
-    else:
-        cu_seqlens_padded = cu_seqlens_padded[: torch.argmin(cu_seqlens_padded)]
+    # Note: if argmin metadata is absent, fallback tail detection can still incur
+    # device-to-host synchronization.
+    cu_seqlens_padded = _trim_cu_seqlens(cu_seqlens_padded, cu_seqlens_argmin)
 
     if cu_seqlens_unpadded is not None:
-        if cu_seqlens_unpadded_argmin is not None:
-            cu_seqlens_unpadded = cu_seqlens_unpadded[: cu_seqlens_unpadded_argmin.item()]
-        else:
-            cu_seqlens_unpadded = cu_seqlens_unpadded[: torch.argmin(cu_seqlens_unpadded)]
+        cu_seqlens_unpadded = _trim_cu_seqlens(cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
 
     max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
     total_tokens = batch.get("total_tokens")
@@ -74,9 +82,14 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
             qkv_format="thd",
         )
     else:
+        # Follow Megatron-LM data_schedule.py convention: set all four
+        # cu_seqlens fields to padded values so packed kernels consume a
+        # single consistent boundary set.
         return PackedSeqParams(
             cu_seqlens_q=cu_seqlens_padded,
             cu_seqlens_kv=cu_seqlens_padded,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
             max_seqlen_q=max_seqlen,
             max_seqlen_kv=max_seqlen,
             total_tokens=total_tokens,

@@ -19,19 +19,31 @@ This module provides pretrain, SFT, and PEFT configurations for Qwen3-VL models 
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional, Union
 
 import torch
-from transformers import AutoTokenizer, Qwen3VLProcessor
+from transformers import AutoTokenizer
 from typing_extensions import TypedDict, Unpack
+
+logger = logging.getLogger(__name__)
+
+try:
+    from transformers import Qwen3VLProcessor
+except (ImportError, ModuleNotFoundError) as exc:
+    logger.warning(
+        "Qwen3VLProcessor import unavailable; falling back to AutoProcessor: %s",
+        exc,
+    )
+    Qwen3VLProcessor = None
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
-from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
+from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder, _resolve_hf_mm_token_ids
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -269,14 +281,49 @@ def _make_energon_dataset(
     hf_path: str, seq_length: int, micro_batch_size: int, global_batch_size: int
 ) -> EnergonProvider:
     """Create an EnergonProvider dataset config for Qwen3-VL recipes."""
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
     tokenizer = AutoTokenizer.from_pretrained(hf_path)
-    # Use Qwen3VLProcessor to match the HF flow (which uses AutoProcessor).
-    # This processor accepts both images and videos kwargs.
-    image_processor = Qwen3VLProcessor.from_pretrained(hf_path)
+    # Prefer Qwen3VLProcessor on newer transformers; fall back to AutoProcessor
+    # for older container images that do not yet expose that symbol or lack
+    # the video_processing sub-module required by from_pretrained.
+    image_processor = None
+    if Qwen3VLProcessor is not None:
+        try:
+            image_processor = Qwen3VLProcessor.from_pretrained(hf_path)
+        except (AttributeError, OSError, RuntimeError, ValueError) as exc:
+            logger.warning(
+                "Qwen3VLProcessor.from_pretrained failed, falling back to AutoProcessor: %s",
+                exc,
+            )
+    if image_processor is None:
+        from transformers import AutoProcessor
+
+        image_processor = AutoProcessor.from_pretrained(hf_path)
+    image_token_id, video_token_id = _resolve_hf_mm_token_ids(tokenizer)
+    if image_token_id != model_cfg.image_token_id or video_token_id != model_cfg.video_token_id:
+        raise ValueError(
+            "Tokenizer multimodal token ids do not match model config: "
+            f"tokenizer(image={image_token_id}, video={video_token_id}) vs "
+            f"model(image={model_cfg.image_token_id}, video={model_cfg.video_token_id})"
+        )
+
+    min_pixels = getattr(image_processor, "min_pixels", None)
+    max_pixels = getattr(image_processor, "max_pixels", None)
+    if min_pixels is None or max_pixels is None:
+        raise ValueError("Processor must expose both min_pixels and max_pixels for strict task encoder config")
+
     task_encoder = QwenVLTaskEncoder(
         tokenizer=tokenizer,
         image_processor=image_processor,
+        temporal_patch_size=model_cfg.temporal_patch_size,
+        spatial_merge_size=model_cfg.spatial_merge_size,
+        patch_size=model_cfg.patch_size,
+        image_token_id=model_cfg.image_token_id,
+        video_token_id=model_cfg.video_token_id,
         max_padding_length=seq_length,
+        min_pixels=int(min_pixels),
+        max_pixels=int(max_pixels),
     )
     return EnergonProvider(
         path="",  # Must be set via CLI override: dataset.path=<path>

@@ -1129,9 +1129,20 @@ class ConfigContainer(Container):
         Ensures compatibility between different configuration settings.
         """
 
-        # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
+        in_batch_pack_enabled = getattr(self.dataset, "pack_sequences_in_batch", False)
+        batch_level_pack_enabled = getattr(self.dataset, "batch_level_packing", False)
+
+        # Keep in-batch packing and batch-level packing as two independent modes.
+        # They serve different semantics and should not be enabled together.
+        if in_batch_pack_enabled and batch_level_pack_enabled:
+            raise ValueError(
+                "dataset.pack_sequences_in_batch and dataset.batch_level_packing "
+                "cannot both be true. Keep in-batch packing and batch-level packing separate."
+            )
+
+        # Propagate packed-batch flags to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
-        if getattr(self.dataset, "pack_sequences_in_batch", False):
+        if in_batch_pack_enabled or batch_level_pack_enabled:
             self.model._pack_sequences_in_batch = True
 
         if hasattr(self.dataset, "finalize"):
@@ -1305,10 +1316,11 @@ class ConfigContainer(Container):
                 f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
             )
 
-        if getattr(self.dataset, "pack_sequences_in_batch", False) and self.train.micro_batch_size == 1:
+        if in_batch_pack_enabled and self.train.micro_batch_size == 1:
             raise ValueError(
-                "micro_batch_size should be greater than 1 when using pack_sequences_in_batch=True. "
-                "In-batch packing concatenates multiple sequences within a microbatch, so at least 2 sequences "
+                "micro_batch_size should be greater than 1 when using in-batch packing "
+                "(dataset.pack_sequences_in_batch=True). In-batch packing concatenates multiple sequences "
+                "within a microbatch, so at least 2 sequences "
                 "are required per micro-batch."
             )
 

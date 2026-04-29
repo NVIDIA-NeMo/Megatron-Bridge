@@ -31,6 +31,7 @@ from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
     _resolve_hf_mm_token_ids,
     convert_to_qwenvl_content,
     find_pattern_indices,
+    greedy_knapsack,
     get_ltor_masks_and_position_ids,
     process_vision,
     videohandler,
@@ -40,6 +41,28 @@ from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
 @pytest.fixture(autouse=True)
 def cleanup_local_folder():
     pass
+
+
+@pytest.fixture
+def qwenvl_encoder_config():
+    """Centralized encoder config for unit tests."""
+    return {
+        "temporal_patch_size": 2,
+        "patch_size": 14,
+        "spatial_merge_size": 2,
+        "image_token_id": 151655,
+        "video_token_id": 151656,
+        "max_padding_length": 128,
+        "min_pixels": 200704,
+        "max_pixels": 1003520,
+    }
+
+
+@pytest.fixture(autouse=True)
+def inject_qwenvl_encoder_config(request, qwenvl_encoder_config):
+    """Inject shared encoder config into unittest-style test cases."""
+    if request.instance is not None:
+        request.instance.qwenvl_encoder_config = qwenvl_encoder_config
 
 
 class TestHelperFunctions(unittest.TestCase):
@@ -87,6 +110,24 @@ class TestHelperFunctions(unittest.TestCase):
         self.assertTrue(torch.all(loss_mask == 1.0))
 
 
+class TestGreedyKnapsack(unittest.TestCase):
+    def test_empty_input(self):
+        self.assertEqual(greedy_knapsack([], [], max_capacity=8), [])
+
+    def test_single_item(self):
+        bins = greedy_knapsack([4], ["a"], max_capacity=8)
+        self.assertEqual(bins, [["a"]])
+
+    def test_exact_fill(self):
+        bins = greedy_knapsack([5, 3], ["a", "b"], max_capacity=8)
+        self.assertEqual(len(bins), 1)
+        self.assertCountEqual(bins[0], ["a", "b"])
+
+    def test_item_exceeds_capacity(self):
+        with self.assertRaises(ValueError):
+            greedy_knapsack([9], ["a"], max_capacity=8)
+
+
 class TestResolveHfMmTokenIds(unittest.TestCase):
     def test_resolves_from_tokenizer_attributes(self):
         tokenizer = MagicMock()
@@ -105,14 +146,13 @@ class TestResolveHfMmTokenIds(unittest.TestCase):
         self.assertEqual(image_id, 300)
         self.assertEqual(video_id, 400)
 
-    def test_returns_defaults_when_all_fail(self):
+    def test_raises_when_all_resolution_paths_fail(self):
         tokenizer = MagicMock()
         tokenizer.image_token_id = None
         tokenizer.video_token_id = None
         tokenizer.convert_tokens_to_ids.side_effect = Exception("not found")
-        image_id, video_id = _resolve_hf_mm_token_ids(tokenizer)
-        self.assertEqual(image_id, 151655)
-        self.assertEqual(video_id, 151656)
+        with self.assertRaises(ValueError):
+            _resolve_hf_mm_token_ids(tokenizer)
 
 
 class TestVideoHandler(unittest.TestCase):
@@ -164,9 +204,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.encoder = QwenVLTaskEncoder(
             tokenizer=self.tokenizer,
             image_processor=self.image_processor,
-            max_padding_length=128,
-            patch_size=14,
-            spatial_merge_size=2,
+            **self.qwenvl_encoder_config,
         )
 
     def test_process_vision(self):

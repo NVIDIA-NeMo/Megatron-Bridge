@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
-from modelopt.torch.quantization.utils import is_quantized
 from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
@@ -50,6 +49,21 @@ from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelK
 
 
 logger = logging.getLogger(__name__)
+
+try:
+    from modelopt.torch.quantization.utils import is_quantized
+except ImportError as exc:
+    # modelopt/scipy is optional for recipe import and training startup.
+    # Keep quantization-only export path available when dependency exists.
+    logger.warning(
+        "modelopt quantization utils unavailable; quantized-export detection disabled: %s",
+        exc,
+    )
+
+    def is_quantized(_model: object) -> bool:
+        """Fallback quantization probe when ModelOpt is unavailable."""
+        return False
+
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")

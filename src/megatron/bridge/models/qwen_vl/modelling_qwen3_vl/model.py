@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Optional
 
 import torch
@@ -42,14 +43,21 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     collapse_thw,
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
+    is_rank_0,
     pack_dist_train_vision_module_output,
     preprocess_packed_seqs,
     qwen3vl_cp_split,
     reorganize_inputs,
     split_data_cp_rank,
     split_deepstack_embs,
+    thd_diag_align_enabled,
+    thd_diag_enabled,
+    thd_diag_mrope_enabled,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+
+
+logger = logging.getLogger(__name__)
 
 
 class Qwen3VLModel(MegatronModule):
@@ -349,6 +357,8 @@ class Qwen3VLModel(MegatronModule):
         video_input_mask: torch.Tensor = None,
         cp_img_num: list[int] = None,
         images_padded: list[bool] = None,
+        rope_cu_seqlens: torch.Tensor = None,
+        moe_padding_mask: torch.Tensor = None,
         inference_context: object | None = None,
         runtime_gather_output: bool | None = None,
         mm_token_type_ids: torch.Tensor = None,
@@ -399,6 +409,19 @@ class Qwen3VLModel(MegatronModule):
         # so it must be a real tensor. For packed sequences we use the THD-format
         # input_ids_thd (updated below); for regular sequences we use input_ids as-is.
         lm_input_ids = input_ids
+        moe_padding_mask_for_lm = moe_padding_mask
+
+        def _mask_summary(mask: torch.Tensor, max_items: int = 8) -> tuple[int, str]:
+            flat_idx = torch.nonzero(mask.reshape(-1), as_tuple=False).view(-1)
+            count = int(flat_idx.numel())
+            if count == 0:
+                return count, "[]"
+            head = flat_idx[:max_items].tolist()
+            tail = flat_idx[-max_items:].tolist() if count > max_items else []
+            summary = f"head={head}"
+            if tail:
+                summary += f", tail={tail}"
+            return count, summary
 
         if self.pre_process:
             # can reorganize_inputs at dataset
@@ -506,10 +529,60 @@ class Qwen3VLModel(MegatronModule):
             if packed_seq_params is not None:
                 if attention_mask is None:
                     attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
+                attn_mask_bool = attention_mask.bool()
                 input_ids_thd, _ = preprocess_packed_seqs(
-                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
+                    input_ids, attn_mask_bool, pre_process=True, pg_collection=self.pg_collection
                 )
                 lm_input_ids = input_ids_thd
+                if moe_padding_mask_for_lm is not None:
+                    moe_padding_mask_for_lm = preprocess_packed_seqs(
+                        moe_padding_mask_for_lm.to(dtype=torch.int32),
+                        attn_mask_bool,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0].bool()
+                if thd_diag_align_enabled() and is_rank_0() and labels is not None and loss_mask is not None:
+                    labels_thd = preprocess_packed_seqs(
+                        labels,
+                        attn_mask_bool,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                    loss_mask_thd = preprocess_packed_seqs(
+                        loss_mask.to(dtype=torch.float32),
+                        attn_mask_bool,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                    labels_valid_pre = labels.ne(-100)
+                    labels_valid_post = labels_thd.ne(-100)
+                    loss_valid_pre = loss_mask > 0
+                    loss_valid_post = loss_mask_thd > 0
+                    label_pre_cnt, label_pre_idx = _mask_summary(labels_valid_pre)
+                    label_post_cnt, label_post_idx = _mask_summary(labels_valid_post)
+                    loss_pre_cnt, loss_pre_idx = _mask_summary(loss_valid_pre)
+                    loss_post_cnt, loss_post_idx = _mask_summary(loss_valid_post)
+                    logger.info(
+                        "[THD_DIAG][align] labels_pre_count=%d labels_post_count=%d labels_same=%s labels_pre_%s labels_post_%s",
+                        label_pre_cnt,
+                        label_post_cnt,
+                        str(bool(torch.equal(labels_valid_pre, labels_valid_post))),
+                        label_pre_idx,
+                        label_post_idx,
+                    )
+                    logger.info(
+                        "[THD_DIAG][align] loss_pre_count=%d loss_post_count=%d loss_same=%s loss_pre_%s loss_post_%s",
+                        loss_pre_cnt,
+                        loss_post_cnt,
+                        str(bool(torch.equal(loss_valid_pre, loss_valid_post))),
+                        loss_pre_idx,
+                        loss_post_idx,
+                    )
+                    logger.info(
+                        "[THD_DIAG][align] pre_label_loss_same=%s post_label_loss_same=%s",
+                        str(bool(torch.equal(labels_valid_pre, loss_valid_pre))),
+                        str(bool(torch.equal(labels_valid_post, loss_valid_post))),
+                    )
                 _, _, vision_mask_thd = reorganize_inputs(
                     input_ids=input_ids_thd,
                     pixel_values=pixel_values,
@@ -530,7 +603,7 @@ class Qwen3VLModel(MegatronModule):
                         tmp_embeddings[vision_mask] = deepstack_visual_embed
                         tmp_embeddings_thd = preprocess_packed_seqs(
                             tmp_embeddings.contiguous(),
-                            attention_mask,
+                            attn_mask_bool,
                             pre_process=True,
                             pg_collection=self.pg_collection,
                         )[0]
@@ -542,7 +615,7 @@ class Qwen3VLModel(MegatronModule):
                 combined_embeddings_thd = (
                     preprocess_packed_seqs(
                         combined_embeddings.transpose(0, 1).contiguous(),
-                        attention_mask,
+                        attn_mask_bool,
                         pre_process=True,
                         pg_collection=self.pg_collection,
                     )[0]
@@ -562,9 +635,17 @@ class Qwen3VLModel(MegatronModule):
             if packed_seq_params is not None:
                 if attention_mask is None:
                     attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
+                attn_mask_bool = attention_mask.bool()
                 lm_input_ids, _ = preprocess_packed_seqs(
-                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
+                    input_ids, attn_mask_bool, pre_process=True, pg_collection=self.pg_collection
                 )
+                if moe_padding_mask_for_lm is not None:
+                    moe_padding_mask_for_lm = preprocess_packed_seqs(
+                        moe_padding_mask_for_lm.to(dtype=torch.int32),
+                        attn_mask_bool,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0].bool()
 
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
@@ -591,37 +672,191 @@ class Qwen3VLModel(MegatronModule):
                 )
 
         if position_ids is None:
-            # BSHD
-            # Megatron uses 4D bool masks ([B|1,1,S,S], True=masked); HF uses 2D keep masks ([B,S], 1=keep)
-            # For simplicity, we set hf_attention_mask to None.
-            hf_attention_mask = None
-            position_ids, _ = get_rope_index(
-                self.config.spatial_merge_size,
-                self.image_token_id,
-                self.video_token_id,
-                self.vision_start_token_id,
-                input_ids,
-                image_grid_thw=image_grid_thw,
-                video_grid_thw=video_grid_thw,
-                attention_mask=hf_attention_mask,
-            )  #  [3*b*s]
             if packed_seq_params is not None:
-                # convert position_ids to THD format
+                # Packed sequences: compute MRoPE per sub-sequence independently
+                # so that each sub-sequence's positions restart from 0.
+                cu = rope_cu_seqlens if rope_cu_seqlens is not None else packed_seq_params.cu_seqlens_q
+                if cu.dim() > 1:
+                    cu = cu.squeeze()
+                seq_lens = (cu[1:] - cu[:-1]).tolist()
+                num_seqs = len(seq_lens)
+                max_subseq_len = int(max(seq_lens))
+                total_len = input_ids.shape[1]
+                flat_ids = input_ids.squeeze(0)
+
+                sub_ids = torch.zeros(
+                    num_seqs, max_subseq_len, dtype=input_ids.dtype, device=input_ids.device
+                )
+                sub_mask = torch.zeros(
+                    num_seqs, max_subseq_len, dtype=torch.int32, device=input_ids.device
+                )
+                for i, sl in enumerate(seq_lens):
+                    start = int(cu[i].item())
+                    sl_int = int(sl)
+                    sub_ids[i, :sl_int] = flat_ids[start : start + sl_int]
+                    sub_mask[i, :sl_int] = 1
+
+                position_ids, _ = get_rope_index(
+                    self.config.spatial_merge_size,
+                    self.image_token_id,
+                    self.video_token_id,
+                    self.vision_start_token_id,
+                    sub_ids,
+                    image_grid_thw=image_grid_thw,
+                    video_grid_thw=video_grid_thw,
+                    attention_mask=sub_mask,
+                )  # [3, num_seqs, max_subseq_len]
+
+                packed_pos = torch.zeros(
+                    3, 1, total_len, dtype=position_ids.dtype, device=position_ids.device
+                )
+                for i, sl in enumerate(seq_lens):
+                    start = int(cu[i].item())
+                    sl_int = int(sl)
+                    packed_pos[:, 0, start : start + sl_int] = position_ids[:, i, :sl_int]
+
+                if thd_diag_mrope_enabled() and is_rank_0():
+                    # Summarize per-subsequence MRoPE position behavior before THD remap.
+                    # This is diagnostics-only and intentionally does not affect semantics.
+                    show_n = 4
+                    head_stats = []
+                    for i, sl in enumerate(seq_lens[:show_n]):
+                        start = int(cu[i].item())
+                        sl_int = int(sl)
+                        if sl_int <= 0:
+                            head_stats.append(f"{i}:len=0")
+                            continue
+                        pos0 = packed_pos[0, 0, start : start + sl_int]
+                        nonmono = int((pos0[1:] < pos0[:-1]).sum().item()) if sl_int > 1 else 0
+                        head_stats.append(
+                            f"{i}:len={sl_int},start={int(pos0[0].item())},end={int(pos0[-1].item())},"
+                            f"min={int(pos0.min().item())},max={int(pos0.max().item())},dec={nonmono}"
+                        )
+                    logger.info(
+                        "[THD_DIAG][mrope] pre_thd cp_size=%d num_seqs=%d total_len=%d seq_lens_head=%s seg_stats_head=%s",
+                        int(cp_size),
+                        int(num_seqs),
+                        int(total_len),
+                        seq_lens[:show_n],
+                        "; ".join(head_stats),
+                    )
+
+                position_ids = packed_pos
+
+                attn_mask_bool = attention_mask.bool()
                 position_ids = (
                     preprocess_packed_seqs(
                         position_ids.permute(1, 2, 0),
-                        attention_mask,
+                        attn_mask_bool,
                         pre_process=True,
                         pg_collection=self.pg_collection,
                     )[0]
                     .permute(2, 0, 1)
                     .contiguous()
                 )
+                if thd_diag_mrope_enabled() and is_rank_0():
+                    pos0_post = position_ids[0, 0]
+                    post_len = int(pos0_post.numel())
+                    head_vals = pos0_post[:12].tolist()
+                    tail_vals = pos0_post[-12:].tolist() if post_len > 12 else []
+                    nonmono_post = int((pos0_post[1:] < pos0_post[:-1]).sum().item()) if post_len > 1 else 0
+                    logger.info(
+                        "[THD_DIAG][mrope] post_thd cp_size=%d len=%d min=%d max=%d dec=%d head=%s tail=%s",
+                        int(cp_size),
+                        post_len,
+                        int(pos0_post.min().item()) if post_len > 0 else -1,
+                        int(pos0_post.max().item()) if post_len > 0 else -1,
+                        nonmono_post,
+                        head_vals,
+                        tail_vals,
+                    )
+                    # Strict check: verify THD-remapped position_ids equals explicit bool-mask gather
+                    # semantics for cp_size==1. This is diagnostics-only.
+                    if int(cp_size) == 1:
+                        tp_size = int(self.pg_collection.tp.size())
+                        align_size = tp_size
+                        packed_pos_bsd = packed_pos.permute(1, 2, 0).contiguous()  # [1, S, 3]
+                        valid_len = int(attn_mask_bool[0].sum().item())
+                        padded_len = valid_len + ((align_size - (valid_len % align_size)) % align_size)
+                        expected_bsd = torch.zeros(
+                            (1, padded_len, packed_pos_bsd.size(-1)),
+                            dtype=packed_pos_bsd.dtype,
+                            device=packed_pos_bsd.device,
+                        )
+                        expected_bsd[0, :valid_len] = packed_pos_bsd[0, attn_mask_bool[0]]
+                        expected_pid = expected_bsd.permute(2, 0, 1).contiguous()
+
+                        same = bool(torch.equal(position_ids, expected_pid))
+                        mismatch = (position_ids != expected_pid).any(dim=0).squeeze(0)
+                        mismatch_cnt = int(mismatch.sum().item())
+                        mismatch_idx = torch.nonzero(mismatch, as_tuple=False).flatten()
+                        head_idx = mismatch_idx[:8].tolist()
+                        tail_idx = mismatch_idx[-8:].tolist() if mismatch_idx.numel() > 8 else []
+                        logger.info(
+                            "[THD_DIAG][mrope] strict_match=%s mismatch_count=%d expected_len=%d actual_len=%d mismatch_head=%s mismatch_tail=%s",
+                            str(same),
+                            mismatch_cnt,
+                            int(expected_pid.size(-1)),
+                            int(position_ids.size(-1)),
+                            head_idx,
+                            tail_idx,
+                        )
+                    else:
+                        logger.info(
+                            "[THD_DIAG][mrope] strict_match_skipped cp_size=%d (currently only checks cp_size==1)",
+                            int(cp_size),
+                        )
                 attention_mask = None
                 self.language_model.rotary_pos_emb.is_thd_format = True
+            else:
+                # BSHD
+                # Megatron uses 4D bool masks ([B|1,1,S,S], True=masked); HF uses 2D keep masks ([B,S], 1=keep)
+                # For get_rope_index we pass None to avoid semantic mismatch.
+                hf_attention_mask = None
+                position_ids, _ = get_rope_index(
+                    self.config.spatial_merge_size,
+                    self.image_token_id,
+                    self.video_token_id,
+                    self.vision_start_token_id,
+                    input_ids,
+                    image_grid_thw=image_grid_thw,
+                    video_grid_thw=video_grid_thw,
+                    attention_mask=hf_attention_mask,
+                )  #  [3*b*s]
 
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
+
+        # For THD packed path we intentionally keep attention_mask=None for model forward.
+        # MoE aux/global-aux accounting still needs to ignore tail padding tokens, so pass
+        # a dedicated padding_mask (True=padding) to GPTModel/Router.
+        padding_mask_for_moe = None
+        if packed_seq_params is not None and lm_input_ids is not None:
+            if moe_padding_mask_for_lm is not None:
+                padding_mask_for_moe = moe_padding_mask_for_lm.bool()
+                mask_source = "explicit"
+            else:
+                # Fallback for old call sites that do not provide explicit packed padding mask.
+                padding_mask_for_moe = lm_input_ids.eq(0)
+                mask_source = "token_eq_0_fallback"
+            if thd_diag_enabled() and is_rank_0():
+                input_zero_cnt = int(input_ids.eq(0).sum().item()) if input_ids is not None else -1
+                lm_zero_cnt = int(lm_input_ids.eq(0).sum().item())
+                pad_cnt = int(padding_mask_for_moe.sum().item())
+                tok_cnt = int(padding_mask_for_moe.numel())
+                loss_valid = int((loss_mask > 0).sum().item()) if loss_mask is not None else -1
+                loss_total = int(loss_mask.numel()) if loss_mask is not None else -1
+                logger.info(
+                    "[THD_DIAG][model] padding_mask_for_moe: source=%s total_tokens=%d padding_tokens=%d valid_tokens=%d input_zero_tokens=%d lm_zero_tokens=%d loss_valid_tokens=%d loss_total_tokens=%d",
+                    mask_source,
+                    tok_cnt,
+                    pad_cnt,
+                    tok_cnt - pad_cnt,
+                    input_zero_cnt,
+                    lm_zero_cnt,
+                    loss_valid,
+                    loss_total,
+                )
 
         output = self.language_model(
             input_ids=lm_input_ids,
@@ -630,8 +865,9 @@ class Qwen3VLModel(MegatronModule):
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
             labels=labels,  # only not None in the last decoder PP stage
             loss_mask=loss_mask,  # Added for THD training compatibility
-            inference_params=inference_params,  # currently always None
-            packed_seq_params=packed_seq_params,  # currently always None
+            padding_mask=padding_mask_for_moe,  # for MoE routing/aux-loss token accounting
+            inference_params=inference_params,  # training path keeps this as None
+            packed_seq_params=packed_seq_params,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
             **(extra_block_kwargs or {}),
