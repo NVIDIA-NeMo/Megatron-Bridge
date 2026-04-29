@@ -88,9 +88,7 @@ dependencies = [
     "megatron-core[dev,mlm]",
     "qwen-vl-utils",
     "transformer-engine[pytorch,core_cu13]",
-    "mamba-ssm",
     "nvidia-resiliency-ext",
-    "causal-conv1d",
     "flash-linear-attention",
     "timm",
     "open-clip-torch>=3.2.0",
@@ -104,7 +102,9 @@ dependencies = [
 version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
-# Currently, TE must be built with no build-isolation b/c it requires torch
+# Packages that require pre-installed torch/CUDA at build time (no PEP 517 isolation).
+# mamba-ssm and causal-conv1d are optional (see [ssm] extra) but kept here so they
+# build correctly when installed.
 no-build-isolation-package = [
     "transformer-engine",
     "transformer-engine-torch",
@@ -147,6 +147,10 @@ parquet = [
 ]
 tensor-inspect = [
     "nvdlfw-inspect==0.2.1",
+]
+ssm = [
+    "mamba-ssm",
+    "causal-conv1d",
 ]
 
 [dependency-groups]
