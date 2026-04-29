@@ -43,6 +43,14 @@ class SimpleModel(nn.Module):
         self.layernorm = nn.LayerNorm(512)
 
 
+class QKVOnlyModel(nn.Module):
+    """Simple test model with only a QKV projection."""
+
+    def __init__(self):
+        super().__init__()
+        self.linear_qkv = nn.Linear(512, 1536)
+
+
 class NestedModel(nn.Module):
     """Model with nested structure for testing pattern matching."""
 
@@ -153,6 +161,16 @@ class TestLoRA:
 
         with pytest.raises(ValueError, match="linear_fc1_typo"):
             lora(model, training=True)
+
+    def test_lora_validation_respects_mutated_target_modules(self):
+        """Ensure validation follows target_modules updates made after LoRA construction."""
+        model = QKVOnlyModel()
+        lora = LoRA()
+        lora.target_modules = ["linear_qkv"]
+
+        transformed_model = lora(model, training=True)
+
+        assert isinstance(transformed_model.linear_qkv, LinearAdapter)
 
     def test_lora_transform_simple_model(self):
         """Test LoRA transformation on a simple model."""
