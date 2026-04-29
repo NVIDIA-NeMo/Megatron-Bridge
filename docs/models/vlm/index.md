@@ -11,6 +11,7 @@ ministral3.md
 nemotron-3-omni.md
 nemotron-nano-v2-vl.md
 qwen2.5-vl.md
+qwen3-omni.md
 qwen3-vl.md
 qwen35-vl.md
 ```

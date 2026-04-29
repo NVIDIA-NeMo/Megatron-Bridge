@@ -112,6 +112,7 @@ import megatron.bridge.recipes as recipes
 # Diffusion forward steps: use class instances so they can be passed as forward_step_func
 from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
 from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
+from megatron.bridge.models.qwen_omni.qwen3_omni_step import forward_step as qwen3_omni_forward_step
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.utils.dataset_utils import (
     DATASET_TYPES,
@@ -132,6 +133,7 @@ STEP_FUNCTIONS: dict[str, Callable] = {
     "audio_lm_step": audio_lm_forward_step,
     "gpt_step": gpt_forward_step,
     "vlm_step": vlm_forward_step,
+    "qwen3_omni_step": qwen3_omni_forward_step,
     "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
     "flux_step": FluxForwardStep,
