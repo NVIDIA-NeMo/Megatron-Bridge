@@ -2237,7 +2237,6 @@ name = "megatron-bridge"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
-    { name = "causal-conv1d" },
     { name = "comet-ml" },
     { name = "datasets" },
     { name = "diffusers" },
@@ -2246,7 +2245,6 @@ dependencies = [
     { name = "hydra-core" },
     { name = "imageio" },
     { name = "imageio-ffmpeg" },
-    { name = "mamba-ssm" },
     { name = "megatron-core", extra = ["dev", "mlm"] },
     { name = "mlflow" },
     { name = "nvidia-resiliency-ext" },
@@ -2274,6 +2272,10 @@ parquet = [
 ]
 recipes = [
     { name = "nemo-run" },
+]
+ssm = [
+    { name = "causal-conv1d" },
+    { name = "mamba-ssm" },
 ]
 tensor-inspect = [
     { name = "nvdlfw-inspect" },
@@ -2318,7 +2320,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate" },
-    { name = "causal-conv1d" },
+    { name = "causal-conv1d", marker = "extra == 'ssm'" },
     { name = "comet-ml", specifier = ">=3.50.0" },
     { name = "datasets", specifier = ">=2.20.0" },
     { name = "diffusers", specifier = ">=0.36.0" },
@@ -2327,7 +2329,7 @@ requires-dist = [
     { name = "hydra-core", specifier = ">1.3,<=1.3.2" },
     { name = "imageio" },
     { name = "imageio-ffmpeg" },
-    { name = "mamba-ssm" },
+    { name = "mamba-ssm", marker = "extra == 'ssm'" },
     { name = "megatron-core", extras = ["dev", "mlm"], editable = "3rdparty/Megatron-LM" },
     { name = "mlflow", specifier = ">=3.9.0" },
     { name = "nemo-run", marker = "extra == 'recipes'" },
@@ -2352,7 +2354,7 @@ requires-dist = [
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.25.0" },
 ]
-provides-extras = ["recipes", "parquet", "tensor-inspect"]
+provides-extras = ["recipes", "parquet", "tensor-inspect", "ssm"]
 
 [package.metadata.requires-dev]
 build = [
