@@ -18,12 +18,12 @@ from typing import Optional
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
-from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+from megatron.bridge.utils.cuda_graph import has_cuda_graph_module
 
 
 try:
@@ -521,57 +521,9 @@ class CommOverlapConfig:
                 or self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm
             ), "overlap_moe_expert_parallel_comm is required for delay_wgrad_compute"
 
-            # CUDA graph scope-specific validations for delayed wgrad.
-            cuda_graph_scope = getattr(model_cfg, "cuda_graph_scope", []) or []
-            if isinstance(cuda_graph_scope, str):
-                cuda_graph_scope = cuda_graph_scope.split(",") if cuda_graph_scope else []
-            elif not isinstance(cuda_graph_scope, list):
-                cuda_graph_scope = [cuda_graph_scope]
-            attn_scope_enabled = (
-                CudaGraphScope.attn in cuda_graph_scope
-                or CudaGraphScope.attn.value in cuda_graph_scope
-                or f"CudaGraphScope.{CudaGraphScope.attn.value}" in cuda_graph_scope
-            )
-            moe_router_scope_enabled = (
-                CudaGraphScope.moe_router in cuda_graph_scope
-                or CudaGraphScope.moe_router.value in cuda_graph_scope
-                or f"CudaGraphScope.{CudaGraphScope.moe_router.value}" in cuda_graph_scope
-            )
-            wgrad_in_graph_scope = attn_scope_enabled or (
-                moe_router_scope_enabled
-                and getattr(model_cfg, "moe_shared_expert_intermediate_size", None) is not None
-                and not getattr(model_cfg, "moe_shared_expert_overlap", False)
-            )
-            if wgrad_in_graph_scope:
-                assert is_te_min_version("2.12.0"), (
-                    "CUDA graph with delay_wgrad_compute requires TE version >= 2.12.0."
-                )
-                assert model_cfg.gradient_accumulation_fusion, (
-                    "CUDA graph with delay_wgrad_compute requires gradient_accumulation_fusion "
-                    "to be enabled. This is because default gradient accumulation does not use "
-                    "static memory addresses, which breaks CUDA graph requirements."
-                )
-                if attn_scope_enabled:
-                    assert not model_cfg.add_bias_linear and not model_cfg.add_qkv_bias, (
-                        "CUDA graph with delay_wgrad_compute does not support attention bias for now."
-                    )
-
-            # CUDA graph scope-specific validations for delayed wgrad.
-            cuda_graph_scope = getattr(model_cfg, "cuda_graph_scope", None)
-            if cuda_graph_scope is None or cuda_graph_scope == "full":
-                cuda_graph_scope = []
-            elif isinstance(cuda_graph_scope, (str, CudaGraphScope)):
-                cuda_graph_scope = [cuda_graph_scope]
-            attn_scope_enabled = (
-                CudaGraphScope.attn in cuda_graph_scope
-                or CudaGraphScope.attn.value in cuda_graph_scope
-                or f"CudaGraphScope.{CudaGraphScope.attn.value}" in cuda_graph_scope
-            )
-            moe_router_scope_enabled = (
-                CudaGraphScope.moe_router in cuda_graph_scope
-                or CudaGraphScope.moe_router.value in cuda_graph_scope
-                or f"CudaGraphScope.{CudaGraphScope.moe_router.value}" in cuda_graph_scope
-            )
+            # CUDA graph module-specific validations for delayed wgrad.
+            attn_scope_enabled = has_cuda_graph_module(model_cfg, "attn")
+            moe_router_scope_enabled = has_cuda_graph_module(model_cfg, "moe_router")
             wgrad_in_graph_scope = attn_scope_enabled or (
                 moe_router_scope_enabled
                 and getattr(model_cfg, "moe_shared_expert_intermediate_size", None) is not None

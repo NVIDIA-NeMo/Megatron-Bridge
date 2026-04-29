@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from datasets import load_dataset
 from torch.utils.data import Dataset
-from transformers import AutoProcessor, AutoTokenizer
+from transformers import AutoFeatureExtractor, AutoImageProcessor, AutoTokenizer
 
 from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
 from megatron.bridge.data.megatron_mimo.collate import megatron_mimo_collate_fn
@@ -88,13 +88,24 @@ class HFMegatronMIMODatasetProvider(MegatronMIMODatasetProvider):
 
         processors = {}
         for modality_name, processor_path in self.processor_paths.items():
-            processors[modality_name] = AutoProcessor.from_pretrained(
-                processor_path,
-                trust_remote_code=is_safe_repo(
-                    trust_remote_code=self.trust_remote_code,
-                    hf_path=processor_path,
-                ),
+            trust = is_safe_repo(
+                trust_remote_code=self.trust_remote_code,
+                hf_path=processor_path,
             )
+            # Skip AutoProcessor to avoid loading bundled tokenizers. With
+            # transformers 4.56 + tokenizers>=0.22, slow CLIPTokenizer crashes
+            # in RobertaProcessing(cls=...) — and AutoProcessor's use_fast flag
+            # is not enforced, so it can fall back to the broken slow path.
+            # See https://github.com/huggingface/transformers/issues/20817.
+            # Safe to drop once tokenizers<0.22 or transformers>=4.57 is used.
+            # Downstream only calls processor(raw_input, ...), so the image
+            # processor / feature extractor alone is sufficient.
+            try:
+                processors[modality_name] = AutoImageProcessor.from_pretrained(processor_path, trust_remote_code=trust)
+            except Exception:
+                processors[modality_name] = AutoFeatureExtractor.from_pretrained(
+                    processor_path, trust_remote_code=trust
+                )
 
         # Store for reuse
         object.__setattr__(self, "_processors", processors)

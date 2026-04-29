@@ -46,7 +46,7 @@ export HF_TOKEN=<your_huggingface_token>
 #      --center-crop: center crop to exact target size after resize
 #      --mode: process "video" or "frames" of video
 uv run python -m torch.distributed.run --nproc_per_node=8 \
-  examples/diffusion/recipes/wan/prepare_dataset_wan.py \
+  examples/diffusion/models/wan/prepare_dataset_wan.py \
   --video_folder "${DATASET_SRC}" \
   --output_dir "${DATASET_PATH}" \
   --output_format energon \
@@ -74,7 +74,7 @@ energon prepare "${DATASET_PATH}"
 
 In the training config, point `dataset.path` to the processed data output directory: `dataset.path=${DATASET_PATH}`.
 
-**Note**: We provide an example instruction to process and train a small portion of OpenVid-1M dataset, at `examples/diffusion/recipes/wan/prepare_dataset/openvid1M_dataset`.
+**Note**: We provide an example instruction to process and train a small portion of OpenVid-1M dataset, at `examples/diffusion/models/wan/prepare_dataset/openvid1M_dataset`.
 
 ---
 
@@ -99,7 +99,7 @@ huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
 Convert a Hugging Face WAN model to Megatron format:
 
 ```bash
-uv run python examples/diffusion/recipes/wan/conversion/convert_checkpoints.py import \
+uv run python examples/diffusion/models/wan/conversion/convert_checkpoints.py import \
   --hf-model ${WORKSPACE}/checkpoints/wan_hf/wan2.1 \
   --megatron-path ${WORKSPACE}/checkpoints/wan/wan2.1
 ```
@@ -111,7 +111,7 @@ The Megatron checkpoint is written under `--megatron-path` (e.g. `.../wan2.1/ite
 Export a Megatron checkpoint back to Hugging Face (e.g. for use in diffusers). You must pass the **reference** HF model (for config and non-DiT components) and the **Megatron iteration directory**:
 
 ```bash
-uv run python examples/diffusion/recipes/wan/conversion/convert_checkpoints.py export \
+uv run python examples/diffusion/models/wan/conversion/convert_checkpoints.py export \
   --hf-model ${WORKSPACE}/checkpoints/wan_hf/wan2.1 \
   --megatron-path ${WORKSPACE}/checkpoints/wan/wan2.1/iter_0000000 \
   --hf-path ${WORKSPACE}/checkpoints/wan_hf/wan2.1_export
@@ -188,7 +188,7 @@ The script [inference_wan.py](inference_wan.py) runs text-to-video generation wi
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 \
-  examples/diffusion/recipes/wan/inference_wan.py \
+  examples/diffusion/models/wan/inference_wan.py \
   --task t2v-1.3B \
   --frame_nums 81 \
   --sizes 480*832 \
