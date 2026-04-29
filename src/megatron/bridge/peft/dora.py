@@ -68,6 +68,7 @@ class DoRA(PEFT, ModuleMatcher):
 
     def __post_init__(self):
         """Initialize attributes from parent classes and validate configuration."""
+        super().__post_init__()
         assert self.dropout_position == "pre", (
             "DoRA only supports pre-adapter dropout at this time. Please set DoRA(..., dropout_position='pre')"
         )

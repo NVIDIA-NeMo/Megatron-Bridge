@@ -493,6 +493,13 @@ def parse_cli_args():
         "'none' skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.",
         required=False,
     )
+    slurm_args.add_argument(
+        "--enable_pct_binding",
+        type=bool_arg,
+        help="Enable PCT binding. Enabled by default.",
+        required=False,
+        default=True,
+    )
 
     # DGXCloud
     dgxc_args = parser.add_argument_group("DGXCloud arguments")
