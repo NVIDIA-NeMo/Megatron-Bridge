@@ -2404,7 +2404,6 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "av" },
-    { name = "causal-conv1d" },
     { name = "datasets" },
     { name = "einops" },
     { name = "emerging-optimizers" },
@@ -2412,7 +2411,6 @@ dev = [
     { name = "flash-linear-attention" },
     { name = "flashinfer-python" },
     { name = "hypercorn" },
-    { name = "mamba-ssm" },
     { name = "megatron-energon", extra = ["av-decode"] },
     { name = "multi-storage-client" },
     { name = "nvidia-modelopt" },
@@ -2442,8 +2440,7 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'training'" },
     { name = "av", marker = "extra == 'dev'" },
     { name = "av", marker = "extra == 'lts'" },
-    { name = "causal-conv1d", marker = "extra == 'dev'", specifier = "~=1.5" },
-    { name = "causal-conv1d", marker = "extra == 'lts'", specifier = "~=1.5" },
+    { name = "causal-conv1d", marker = "extra == 'ssm'", specifier = "~=1.5" },
     { name = "datasets", marker = "extra == 'dev'" },
     { name = "datasets", marker = "extra == 'lts'" },
     { name = "einops", marker = "extra == 'dev'", specifier = "~=0.8" },
@@ -2458,8 +2455,7 @@ requires-dist = [
     { name = "flask-restful", marker = "extra == 'mlm'" },
     { name = "flask-restful", marker = "extra == 'training'" },
     { name = "hypercorn", marker = "extra == 'dev'" },
-    { name = "mamba-ssm", marker = "extra == 'dev'", specifier = "~=2.2" },
-    { name = "mamba-ssm", marker = "extra == 'lts'", specifier = "~=2.2" },
+    { name = "mamba-ssm", marker = "extra == 'ssm'", specifier = "~=2.2" },
     { name = "megatron-energon", extras = ["av-decode"], marker = "extra == 'dev'", specifier = "~=6.0" },
     { name = "megatron-energon", extras = ["av-decode"], marker = "extra == 'lts'", specifier = "~=6.0" },
     { name = "multi-storage-client", marker = "extra == 'dev'", specifier = "~=0.27" },
@@ -2492,7 +2488,7 @@ requires-dist = [
     { name = "wget", marker = "extra == 'dev'" },
     { name = "wget", marker = "extra == 'lts'" },
 ]
-provides-extras = ["training", "mlm", "dev", "lts"]
+provides-extras = ["training", "mlm", "dev", "lts", "ssm"]
 
 [package.metadata.requires-dev]
 build = [
