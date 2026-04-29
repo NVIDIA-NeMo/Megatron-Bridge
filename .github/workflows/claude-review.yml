@@ -13,12 +13,28 @@ permissions:
   id-token: write
 
 jobs:
+  pre-flight:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
+    with:
+      default_runner_prefix: ubuntu-latest
+      sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
+    secrets:
+      NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
+
   auto-review:
     name: Claude Review (auto)
-    # Auto-review non-draft PRs on open / reopen / ready-for-review.
+    needs: [pre-flight]
+    # Auto-review non-draft PRs from NVIDIA authors on open / reopen / ready-for-review.
     # Subsequent commits do not re-trigger; re-request a review by commenting
     # "/claude review" (handled by the manual-review job below).
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    # Skip bot-generated PRs: dependency bumps (`bump-ci-container-*`) and
+    # auto cherry-picks (`cherry-pick-*`).
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.pre-flight.outputs.is_member == 'true' &&
+      github.event.pull_request.draft == false &&
+      !startsWith(github.event.pull_request.head.ref, 'bump-ci-container-') &&
+      !startsWith(github.event.pull_request.head.ref, 'cherry-pick-')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
