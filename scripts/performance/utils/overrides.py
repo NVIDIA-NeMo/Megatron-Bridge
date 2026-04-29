@@ -141,12 +141,11 @@ def _set_recompute_overrides(
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
-
     if recompute_num_layers is not None:
         recipe.model.recompute_granularity = "full"
         recipe.model.recompute_method = "block"
         recipe.model.recompute_num_layers = recompute_num_layers
-    elif recompute_modules is not None:
+    if recompute_modules is not None:
         recipe.model.recompute_modules = recompute_modules
         recipe.model.recompute_granularity = "selective"
     # No else: if the caller has no recompute configuration to apply, leave

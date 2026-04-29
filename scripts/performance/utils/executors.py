@@ -133,6 +133,9 @@ def slurm_executor(
                     segment = segment_candidate
                     break
 
+    log_repo_status_cmd = "bash /opt/Megatron-Bridge/docker/common/print_sha.sh /nemo_run/configs/repo_status.json"
+    custom_bash_cmds.append(log_repo_status_cmd)
+
     numa_divisor = 2 if gpu.lower() in ["gb200", "gb300"] else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
     if gpu.lower() in ["b300"] and enable_pct_binding:
