@@ -560,6 +560,8 @@ jobs:
       - uses: actions/checkout@v6
       - id: scan
         shell: bash
+        env:
+          RUNNER_PREFIX: ${{ needs.pre-flight.outputs.runner_prefix }}
         run: |
           get_timeout() {
             local f="$1"
@@ -567,12 +569,23 @@ jobs:
             t=$(grep -m1 '^# CI_TIMEOUT=' "$f" | cut -d= -f2)
             echo "${t:-30}"
           }
+          get_runner() {
+            local f="$1"
+            local gpu_count
+            gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2)
+            if [ -n "$gpu_count" ]; then
+              echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-${gpu_count}/"
+            else
+              echo "${RUNNER_PREFIX}"
+            fi
+          }
           for tier in L0 L1 L2; do
             entries=""
             for f in tests/functional_tests/launch_scripts/h100/active/${tier}_*.sh; do
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
-              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
+              runner=$(get_runner "$f")
+              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
             done
             matrix="{\"include\":[${entries%,}]}"
             echo "matrix_${tier,,}=${matrix}" | tee -a "$GITHUB_OUTPUT"
@@ -582,7 +595,8 @@ jobs:
             [ -f "$f" ] || continue
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
-            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
+            runner=$(get_runner "$f")
+            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
           done
           echo "matrix_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
 
@@ -593,7 +607,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l0) }}
     needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    runs-on: ${{ matrix.runner }}
     if: |
       (
         success()
@@ -623,7 +637,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
+          runner: ${{ matrix.runner }}
 
   # L1: runs on main push, schedule, and PRs with "needs-more-tests" label
   cicd-functional-tests-l1:
@@ -632,7 +646,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l1) }}
     needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    runs-on: ${{ matrix.runner }}
     if: |
       (
         success()
@@ -663,7 +677,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
+          runner: ${{ matrix.runner }}
 
   # L2: runs on schedule (nightly/weekly) and workflow_dispatch only
   cicd-functional-tests-l2:
@@ -672,7 +686,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l2) }}
     needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    runs-on: ${{ matrix.runner }}
     if: |
       (
         success()
@@ -703,7 +717,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
+          runner: ${{ matrix.runner }}
 
   cicd-functional-tests-flaky:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
@@ -712,7 +726,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_flaky) }}
     needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    runs-on: ${{ matrix.runner }}
     name: ${{ matrix.script }}
     env:
       HF_HOME: /home/TestData/HF_HOME
@@ -734,7 +748,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
+          runner: ${{ matrix.runner }}
 
   generate-gb200-test-matrix:
     needs: [pre-flight, cicd-container-build]
@@ -764,13 +778,24 @@ jobs:
             t=$(grep -m1 '^# CI_TIMEOUT=' "$f" | cut -d= -f2)
             echo "${t:-30}"
           }
+          get_runner() {
+            local f="$1"
+            local gpu_count
+            gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2)
+            if [ -n "$gpu_count" ]; then
+              echo "nemo-ci-gcp-gpu-${gpu_count}"
+            else
+              echo "nemo-ci-gcp-gpu-x2"
+            fi
+          }
           for tier in L0 L1 L2; do
             entries=""
             for f in tests/functional_tests/launch_scripts/gb200/active/${tier}_*.sh; do
               [ -f "$f" ] || continue
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
-              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
+              runner=$(get_runner "$f")
+              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
             done
             echo "matrix_gb200_${tier,,}={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
           done
@@ -779,7 +804,8 @@ jobs:
             [ -f "$f" ] || continue
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
-            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout}},"
+            runner=$(get_runner "$f")
+            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
           done
           echo "matrix_gb200_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
 
@@ -790,7 +816,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l0) }}
     needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: nemo-ci-gcp-gpu-x2
+    runs-on: ${{ matrix.runner }}
     if: |
       (
         success()
@@ -827,7 +853,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: nemo-ci-gcp-gpu-x2
+          runner: ${{ matrix.runner }}
 
   # GB200-L1: mirrors H100-L1 trigger conditions, runs on GB200 hardware
   cicd-functional-tests-gb200-l1:
@@ -836,7 +862,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l1) }}
     needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: nemo-ci-gcp-gpu-x2
+    runs-on: ${{ matrix.runner }}
     if: |
       (
         success()
@@ -874,7 +900,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: nemo-ci-gcp-gpu-x2
+          runner: ${{ matrix.runner }}
 
   # GB200-L2: mirrors H100-L2 trigger conditions, runs on GB200 hardware
   cicd-functional-tests-gb200-l2:
@@ -883,7 +909,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l2) }}
     needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: nemo-ci-gcp-gpu-x2
+    runs-on: ${{ matrix.runner }}
     if: |
       (
         success()
@@ -921,7 +947,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: nemo-ci-gcp-gpu-x2
+          runner: ${{ matrix.runner }}
 
   cicd-functional-tests-gb200-flaky:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all' && needs.pre-flight.outputs.is_member == 'true'
@@ -930,7 +956,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_flaky) }}
     needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: nemo-ci-gcp-gpu-x2
+    runs-on: ${{ matrix.runner }}
     name: gb200_${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
@@ -957,7 +983,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: nemo-ci-gcp-gpu-x2
+          runner: ${{ matrix.runner }}
 
   Nemo_CICD_Test:
     needs:

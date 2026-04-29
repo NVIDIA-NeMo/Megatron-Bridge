@@ -198,6 +198,7 @@ def forward_step(
             "cu_seqlens": cu_seqlens,
             "cu_seqlens_argmin": cu_seqlens_argmin,
             "max_seqlen": max_seqlen,
+            "total_tokens": input_ids.size(1) if input_ids is not None else labels.size(1),
         }
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
