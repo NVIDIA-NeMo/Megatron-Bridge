@@ -248,6 +248,7 @@ def main(
     num_gpus: int,
     is_long_convergence_run: bool,
     additional_slurm_params: Optional[Dict[str, Any]],
+    enable_pct_binding: bool,
     golden_values_path: str,
     convergence_params: Dict[str, Any],
     performance_params: Dict[str, Any],
@@ -284,6 +285,10 @@ def main(
             "For --offline, pre-download the tokenizer with `huggingface-cli download` and ensure HF_HOME points "
             "to the cache directory. NullTokenizer to be used soon."
         )
+
+    # Disable PCT binding for DeepSeek-V3 model
+    if model_family_name == "deepseek" and model_recipe_name == "deepseek_v3" and gpu in ["b300"]:
+        enable_pct_binding = False
 
     if wandb_key is not None:
         assert wandb_project_name is not None and wandb_experiment_name is not None, (
@@ -391,6 +396,7 @@ def main(
             additional_slurm_params=additional_slurm_params,
             wandb_key=wandb_key,
             packager=packager,
+            enable_pct_binding=enable_pct_binding,
         )
 
     plugins = []
@@ -692,6 +698,7 @@ if __name__ == "__main__":
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
         additional_slurm_params=args.additional_slurm_params,
+        enable_pct_binding=args.enable_pct_binding,
         golden_values_path=args.golden_values_path,
         convergence_params={
             "correlation_threshold": args.correlation_threshold,
