@@ -66,7 +66,8 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.0.0,<=5.6.0",
+    "transformers>=5.5.0,<=5.6.0",
+    "mistral-common>=1.10.0",
     "peft>=0.18.1",
     "datasets>=2.20.0",
     "accelerate",
