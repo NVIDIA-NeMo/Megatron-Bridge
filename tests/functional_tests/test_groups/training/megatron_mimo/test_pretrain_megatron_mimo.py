@@ -269,7 +269,7 @@ def _build_mock_data_provider() -> MockMegatronMIMOProvider:
     return provider
 
 
-def _wrap_iter(loader_iter):
+def _wrap_iter(loader_iter, *, pixel_dtype: torch.dtype = torch.bfloat16):
     """Adapt data-loader batches for the MegatronMIMO model.
 
     Remaps modality_inputs["vision"]["pixel_values"] to
@@ -292,7 +292,7 @@ def _wrap_iter(loader_iter):
         if mi and "vision" in mi:
             pv = mi["vision"].get("pixel_values")
             if pv is not None:
-                mi["vision"] = {"clip": {"x": pv.to(torch.bfloat16)}}
+                mi["vision"] = {"clip": {"x": pv.to(pixel_dtype)}}
 
         if "loss_mask" not in batch or batch["loss_mask"] is None:
             batch["loss_mask"] = torch.ones_like(batch["input_ids"], dtype=torch.float)
@@ -324,7 +324,8 @@ def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
         test_samples=0,
     )
 
-    train_iter = _wrap_iter(train_loader) if train_loader is not None else None
+    pixel_dtype = torch.bfloat16 if getattr(cfg.model, "bf16", False) else torch.float32
+    train_iter = _wrap_iter(train_loader, pixel_dtype=pixel_dtype) if train_loader is not None else None
     return train_iter, None
 
 
@@ -438,10 +439,10 @@ class _TraceableMockProvider(MockMegatronMIMOProvider):
         return _collate_with_sample_index
 
 
-def _tracing_wrap_iter(loader_iter):
+def _tracing_wrap_iter(loader_iter, *, pixel_dtype: torch.dtype = torch.bfloat16):
     """Like ``_wrap_iter`` but records batch sample-indices into the module-level
     ``_RESUME_TEST_CONSUMED_INDICES`` list before yielding."""
-    for batch in _wrap_iter(loader_iter):
+    for batch in _wrap_iter(loader_iter, pixel_dtype=pixel_dtype):
         sample_index = batch.pop("sample_index")
         _RESUME_TEST_CONSUMED_INDICES.extend(sample_index.cpu().tolist())
         yield batch
@@ -500,7 +501,8 @@ def _build_tracing_data_iterators(cfg, megatron_mimo_infra, *, train_state=None)
         valid_samples=0,
         test_samples=0,
     )
-    train_iter = _tracing_wrap_iter(train_loader) if train_loader is not None else None
+    pixel_dtype = torch.bfloat16 if getattr(cfg.model, "bf16", False) else torch.float32
+    train_iter = _tracing_wrap_iter(train_loader, pixel_dtype=pixel_dtype) if train_loader is not None else None
     return train_iter, None
 
 
@@ -565,6 +567,8 @@ def _build_resume_config(
         special_token_ids=special_token_ids,
         megatron_mimo_parallelism_config=parallelism_config,
         topology={"vision": ["language"], "language": []},
+        bf16=(dtype == "bf16"),
+        fp16=False,
     )
 
     train_cfg = TrainingConfig(
@@ -668,7 +672,7 @@ def _run_checkpoint_resume_param_parity(
             build_data_iterators_fn=_build_tracing_data_iterators,
             global_state=state_phase0,
         )
-    phase0_indices = sorted(set(_RESUME_TEST_CONSUMED_INDICES))
+    phase0_indices = list(_RESUME_TEST_CONSUMED_INDICES)
     assert state_phase0.train_state.step == total_steps
     assert len(phase0_params) > 0, "phase 0 captured no parameters"
     dist.barrier()
@@ -688,6 +692,11 @@ def _run_checkpoint_resume_param_parity(
         save_rng=True,
         dropout=dropout,
     )
+    # Phase 1 intentionally stops early to produce the checkpoint, but its LR
+    # schedule must match the first ``save_steps`` iterations of the continuous
+    # ``total_steps`` run. Otherwise the saved weights are already on a
+    # different optimizer trajectory before resume starts.
+    cfg_save.scheduler.lr_decay_iters = total_steps
     state_save = GlobalState()
     pretrain_megatron_mimo(
         cfg=cfg_save,
@@ -695,7 +704,7 @@ def _run_checkpoint_resume_param_parity(
         build_data_iterators_fn=_build_tracing_data_iterators,
         global_state=state_save,
     )
-    phase1_indices = sorted(set(_RESUME_TEST_CONSUMED_INDICES))
+    phase1_indices = list(_RESUME_TEST_CONSUMED_INDICES)
     phase1_consumed = state_save.train_state.consumed_train_samples
     assert state_save.train_state.step == save_steps
     assert phase1_consumed > 0
@@ -728,7 +737,7 @@ def _run_checkpoint_resume_param_parity(
             build_data_iterators_fn=_build_tracing_data_iterators,
             global_state=state_resume,
         )
-    phase2_indices = sorted(set(_RESUME_TEST_CONSUMED_INDICES))
+    phase2_indices = list(_RESUME_TEST_CONSUMED_INDICES)
 
     assert state_resume.train_state.step == total_steps, (
         f"Step continuity broken: phase 2 ended at step={state_resume.train_state.step}, expected {total_steps}"
@@ -747,12 +756,12 @@ def _run_checkpoint_resume_param_parity(
         f"(phase 1 saw {phase1_indices}, phase 2 saw {phase2_indices})"
     )
 
-    # Phase 0 saw the whole sample range; phase 1 + phase 2 must cover the same
-    # set in two halves. Otherwise parameter parity could compare different
-    # data trajectories.
-    assert set(phase0_indices) == set(phase1_indices) | set(phase2_indices), (
-        f"Phase-0 indices {phase0_indices} != phase1 {phase1_indices} ∪ phase2 {phase2_indices}; "
-        f"resumed dataloader saw different samples than the continuous run."
+    # Phase 0 saw the whole sample sequence; phase 1 + phase 2 must replay the
+    # exact same ordered trajectory. Set equality is insufficient because
+    # different sample order changes the optimizer trajectory.
+    assert phase0_indices == phase1_indices + phase2_indices, (
+        f"Phase-0 indices {phase0_indices} != phase1 {phase1_indices} + phase2 {phase2_indices}; "
+        f"resumed dataloader saw a different sample trajectory than the continuous run."
     )
 
     assert phase0_params.keys() == phase2_params.keys(), (
@@ -1031,6 +1040,77 @@ class TestMegatronMIMOTraining:
             f"consumed_train_samples mismatch: got {state.train_state.consumed_train_samples}, "
             f"expected {_TRAIN_ITERS * global_batch_size}. Indicates the training loop "
             f"either skipped iterations or accounted samples wrong."
+        )
+
+    @pytest.mark.run_only_on("GPU")
+    def test_megatron_mimo_colocated_language_pp_smoke(self):
+        """Smoke test: colocated MegatronMIMO with language PP=2.
+
+        This is the minimal end-to-end signal for the three-phase colocated PP
+        adapter: encoder forward over colocated ranks, language non-interleaved
+        pipeline schedule, encoder backward, and deferred multimodule gradient
+        finalization. The shape fits on two GPUs:
+
+        * vision:   TP=1, DP=2, PP=1
+        * language: TP=1, DP=1, PP=2
+
+        Validation/eval stays disabled; this test only covers training.
+        """
+        from megatron.bridge.training.state import GlobalState
+
+        initialize_distributed()
+
+        world_size = dist.get_world_size()
+        if world_size != 2:
+            pytest.skip(f"MegatronMIMO test requires exactly 2 GPUs, got {world_size}")
+
+        # Monkey-patch: report_theoretical_memory crashes on MegatronMIMO models.
+        import megatron.bridge.training.utils.train_utils as _tu
+
+        _tu.report_theoretical_memory = lambda *a, **kw: None
+
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=2,
+                    data_parallel_size=1,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+            },
+        )
+
+        # Vision DP=2 requires MBS divisible by 2. The sampler uses dp_size=1
+        # for MegatronMIMO, so GBS=MBS for this one-microbatch smoke.
+        global_batch_size = 2
+        cfg = _build_config(
+            par_cfg,
+            micro_batch_size=2,
+            global_batch_size=global_batch_size,
+            per_token_loss=True,
+        )
+
+        state = GlobalState()
+        pretrain_megatron_mimo(
+            cfg=cfg,
+            forward_step_func=megatron_mimo_forward_step,
+            build_data_iterators_fn=_build_data_iterators,
+            global_state=state,
+        )
+
+        assert state.train_state.step == _TRAIN_ITERS, (
+            f"Training loop did not reach the configured train_iters: "
+            f"step={state.train_state.step}, expected {_TRAIN_ITERS}."
+        )
+        assert state.train_state.consumed_train_samples == _TRAIN_ITERS * global_batch_size, (
+            f"consumed_train_samples mismatch: got {state.train_state.consumed_train_samples}, "
+            f"expected {_TRAIN_ITERS * global_batch_size}."
         )
 
     @pytest.mark.run_only_on("GPU")

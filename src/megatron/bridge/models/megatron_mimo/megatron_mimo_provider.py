@@ -37,7 +37,10 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
     is_pp_last_stage,
     populate_embedding_and_position_groups,
 )
-from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
+from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
+    MegatronMIMOParallelismConfig,
+    ModuleParallelismConfig,
+)
 from megatron.bridge.models.megatron_mimo.megatron_mimo_ddp import wrap_megatron_mimo_model_distributed
 from megatron.bridge.models.model_provider import ModelProviderMixin
 
@@ -90,7 +93,27 @@ def _get_global_seed_and_module(
     seed: int,
     active_modules: Dict[str, "HyperCommGrid"],
 ) -> tuple[int, Optional[str]]:
-    """Choose the rank-local global RNG seed from active modules."""
+    """Pick the rank-local CPU RNG seed and the diagnostic anchor module name.
+
+    The returned ``seed`` is fed to ``_seed_python_numpy_torch`` to drive
+    Python ``random``, ``numpy``, and ``torch.manual_seed`` for CPU init. It
+    is identical on every rank so any module built with
+    ``use_cpu_initialization=True`` (e.g. the LLaVA vision projector) lands
+    with the same parameter values on every DP/PP rank within its module's
+    DP group.
+
+    Per-PP-stage divergence in the CUDA RNG tracker is the *separate*
+    responsibility of the caller, which seeds the tracker with
+    ``seed + 100 * module.pp_rank`` per active module. Folding that PP
+    offset into the CPU seed (the original behavior here) caused
+    vision-module CPU init to diverge across LM PP stages in colocated
+    PP>1 layouts: the projector's CPU-initialized weights then differed
+    across vision-DP siblings on different LM PP stages, breaking iter-1
+    numerics in colocated language-PP=2 LLaVA runs.
+
+    The returned ``global_seed_module`` is used only for diagnostic logging
+    — it does not affect the seed value.
+    """
     if MIMO_LANGUAGE_MODULE_KEY in active_modules:
         global_seed_module: Optional[str] = MIMO_LANGUAGE_MODULE_KEY
     elif active_modules:
@@ -98,11 +121,7 @@ def _get_global_seed_and_module(
     else:
         global_seed_module = None
 
-    if global_seed_module is None:
-        return seed, None
-
-    global_pp_rank = active_modules[global_seed_module].get_pg(["pp"]).rank()
-    return seed + 100 * global_pp_rank, global_seed_module
+    return seed, global_seed_module
 
 
 def _seed_python_numpy_torch(seed: int) -> None:
@@ -522,6 +541,77 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                 f"Disable recompute_granularity or use symmetric TP."
             )
 
+    def _uses_colocated_language_pp(self) -> bool:
+        """Whether this provider is configured for colocated language PP."""
+        par_cfg = self.megatron_mimo_parallelism_config
+        if par_cfg is None or not par_cfg._is_colocated():
+            return False
+        language_parallelism = par_cfg.module_parallelisms.get(MIMO_LANGUAGE_MODULE_KEY)
+        return language_parallelism is not None and language_parallelism.pipeline_model_parallel_size > 1
+
+    def _walk_module_spec_for_per_token_loss(self, spec, path: str) -> List[str]:
+        """Return config paths missing ``calculate_per_token_loss=True``."""
+        offenders: List[str] = []
+        params = spec.params or {}
+        cfg = params.get("config") or params.get("transformer_config")
+        if cfg is not None and not getattr(cfg, "calculate_per_token_loss", False):
+            offenders.append(path)
+
+        submodules = getattr(spec, "submodules", None) or {}
+
+        def _walk(node, sub_path: str) -> None:
+            if node is None:
+                return
+            if hasattr(node, "params") or hasattr(node, "submodules"):
+                offenders.extend(self._walk_module_spec_for_per_token_loss(node, sub_path))
+            elif isinstance(node, dict):
+                for key, child in node.items():
+                    _walk(child, f"{sub_path}.{key}" if sub_path else key)
+            elif isinstance(node, (list, tuple)):
+                for idx, child in enumerate(node):
+                    _walk(child, f"{sub_path}[{idx}]")
+
+        if isinstance(submodules, dict):
+            for key, child in submodules.items():
+                _walk(child, f"{path}.{key}" if path else key)
+        else:
+            _walk(submodules, path)
+
+        return offenders
+
+    def _validate_colocated_language_pp_spec_constraints(self) -> None:
+        """Validate spec-level constraints for colocated language PP."""
+        if not self._uses_colocated_language_pp():
+            return
+
+        if len(self.modality_submodules_spec) != 1:
+            raise ValueError(
+                f"Colocated MegatronMIMO with language PP>1 supports exactly one "
+                f"modality module in v1. Found modality modules: "
+                f"{list(self.modality_submodules_spec.keys())}."
+            )
+
+        modality_name, modality_spec = next(iter(self.modality_submodules_spec.items()))
+        modality_submodules = getattr(modality_spec, "submodules", None) or {}
+        if isinstance(modality_submodules, dict):
+            encoders = modality_submodules.get("encoders")
+            if isinstance(encoders, dict) and len(encoders) != 1:
+                raise ValueError(
+                    f"Colocated MegatronMIMO with language PP>1 supports exactly one "
+                    f"encoder tower per modality in v1. Modality '{modality_name}' "
+                    f"has encoder towers: {list(encoders.keys())}."
+                )
+
+        offenders = self._walk_module_spec_for_per_token_loss(self.language_model_spec, MIMO_LANGUAGE_MODULE_KEY)
+        for mod_name, spec in self.modality_submodules_spec.items():
+            offenders.extend(self._walk_module_spec_for_per_token_loss(spec, mod_name))
+        if offenders:
+            raise ValueError(
+                f"Colocated MegatronMIMO with language PP>1 requires "
+                f"calculate_per_token_loss=True on every active module "
+                f"TransformerConfig. Offending configs: {offenders}."
+            )
+
     def build_infra(self) -> MegatronMIMOInfra:
         """Build MegatronMIMO parallelism infrastructure.
 
@@ -636,6 +726,11 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         spec = copy.deepcopy(spec)
         if spec.params is None:
             spec.params = {}
+        if self.megatron_mimo_parallelism_config is not None:
+            self._inject_parallelism_into_spec_configs(
+                spec,
+                self.megatron_mimo_parallelism_config.module_parallelisms[MIMO_LANGUAGE_MODULE_KEY],
+            )
         spec.params["pg_collection"] = pg_collection
         if pre_process is not None:
             spec.params["pre_process"] = pre_process
@@ -643,13 +738,48 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             spec.params["post_process"] = post_process
         return spec
 
+    def _inject_parallelism_into_spec_configs(
+        self,
+        spec: ModuleSpec,
+        parallelism: ModuleParallelismConfig,
+    ) -> None:
+        """Set module-local parallelism on TransformerConfig objects in ``spec``."""
+
+        def _apply(node) -> None:
+            if node is None:
+                return
+            if isinstance(node, ModuleSpec):
+                params = node.params or {}
+                for key in ("config", "transformer_config"):
+                    cfg = params.get(key)
+                    if cfg is not None:
+                        cfg.tensor_model_parallel_size = parallelism.tensor_model_parallel_size
+                        cfg.pipeline_model_parallel_size = parallelism.pipeline_model_parallel_size
+                        cfg.context_parallel_size = parallelism.context_parallel_size
+                        cfg.expert_tensor_parallel_size = parallelism.expert_tensor_parallel_size
+                _apply(getattr(node, "submodules", None))
+            elif isinstance(node, dict):
+                for child in node.values():
+                    _apply(child)
+            elif isinstance(node, (list, tuple)):
+                for child in node:
+                    _apply(child)
+
+        _apply(spec)
+
     def _inject_pg_collection_into_modality_spec(
         self,
         spec: ModuleSpec,
+        module_name: str,
         pg_collection: ProcessGroupCollection,
     ) -> ModuleSpec:
         """Inject pg_collection into encoder specs within a modality submodule."""
         spec = copy.deepcopy(spec)
+        if self.megatron_mimo_parallelism_config is not None:
+            self._inject_parallelism_into_spec_configs(
+                spec,
+                self.megatron_mimo_parallelism_config.module_parallelisms[module_name],
+            )
 
         # Inject into encoders
         if spec.submodules and "encoders" in spec.submodules:
@@ -732,7 +862,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         for module_name, spec in self.modality_submodules_spec.items():
             module_pg = infra.pg_collections.get(module_name) if infra.pg_collections else None
             if module_pg is not None:
-                spec = self._inject_pg_collection_into_modality_spec(spec, module_pg)
+                spec = self._inject_pg_collection_into_modality_spec(spec, module_name, module_pg)
             modality_specs[module_name] = spec
 
         # Create MimoModel
@@ -1072,8 +1202,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     "MegatronMIMO requires torch.distributed to be initialized before finalize(). "
                     "Call torch.distributed.init_process_group() first."
                 )
+            self._validate_specs_static()
             self.megatron_mimo_parallelism_config.finalize(dist.get_world_size())
             # After parallelism config is finalized, _is_colocated() and
             # asymmetric-TP geometry are determined. Catch v1-unsafe combos
             # (cpu init, recompute) at config-build time.
+            self._validate_colocated_language_pp_spec_constraints()
             self._validate_asymmetric_tp_constraints()

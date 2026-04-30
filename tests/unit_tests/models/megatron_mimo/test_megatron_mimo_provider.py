@@ -1,6 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO Model Provider."""
 
+from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import MagicMock, Mock, patch
 
@@ -36,6 +37,13 @@ def _dummy_modality_parallelism(rank_offset: int = 0, **kwargs) -> dict:
     return {
         "vision": ModuleParallelismConfig(rank_offset=rank_offset, **kwargs),
     }
+
+
+def _config(calculate_per_token_loss: bool = True, recompute_granularity=None) -> SimpleNamespace:
+    return SimpleNamespace(
+        calculate_per_token_loss=calculate_per_token_loss,
+        recompute_granularity=recompute_granularity,
+    )
 
 
 class TestMegatronMIMOProvider:
@@ -680,10 +688,96 @@ class TestMegatronMIMOProvider:
         mock_pg_collection = MagicMock()
         mock_pg_collection.tp = MagicMock()
 
-        injected_spec = provider._inject_pg_collection_into_modality_spec(modality_spec, mock_pg_collection)
+        injected_spec = provider._inject_pg_collection_into_modality_spec(modality_spec, "vision", mock_pg_collection)
 
         # Check encoder has pg_collection
         assert injected_spec.submodules["encoders"]["clip"].params["pg_collection"] == mock_pg_collection
+
+    def test_inject_pg_collection_sets_language_transformer_parallelism(self):
+        """Language spec config must see module-local TP/PP/CP/ETP sizes."""
+        language_config = SimpleNamespace()
+        language_spec = ModuleSpec(module=Mock, params={"config": language_config})
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=2,
+                    context_parallel_size=1,
+                    expert_tensor_parallel_size=1,
+                    data_parallel_size=2,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=1,
+                    context_parallel_size=1,
+                    expert_tensor_parallel_size=1,
+                    data_parallel_size=4,
+                ),
+            },
+        )
+        provider = MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec=_dummy_modality_spec_dict(),
+            megatron_mimo_parallelism_config=par_cfg,
+        )
+
+        injected_spec = provider._inject_pg_collection_into_language_spec(language_spec, MagicMock())
+        injected_config = injected_spec.params["config"]
+
+        assert injected_config.tensor_model_parallel_size == 2
+        assert injected_config.pipeline_model_parallel_size == 2
+        assert injected_config.context_parallel_size == 1
+        assert injected_config.expert_tensor_parallel_size == 1
+        assert not hasattr(language_config, "pipeline_model_parallel_size")
+
+    def test_inject_pg_collection_sets_modality_transformer_parallelism(self):
+        """Modality encoder/projection configs must see module-local parallelism."""
+        encoder_config = SimpleNamespace()
+        projection_config = SimpleNamespace()
+        encoder_spec = ModuleSpec(module=Mock, params={"transformer_config": encoder_config})
+        projection_spec = ModuleSpec(module=Mock, params={"config": projection_config})
+        modality_spec = ModuleSpec(
+            module=Mock,
+            params={},
+            submodules={"encoders": {"clip": encoder_spec}, "input_projections": [projection_spec]},
+        )
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=2,
+                    data_parallel_size=2,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=4,
+                ),
+            },
+        )
+        provider = MegatronMIMOProvider(
+            language_model_spec=ModuleSpec(module=Mock, params={}),
+            modality_submodules_spec={"vision": modality_spec},
+            megatron_mimo_parallelism_config=par_cfg,
+        )
+        mock_pg_collection = MagicMock()
+        mock_pg_collection.tp = MagicMock()
+
+        injected_spec = provider._inject_pg_collection_into_modality_spec(
+            modality_spec,
+            "vision",
+            mock_pg_collection,
+        )
+        injected_encoder_config = injected_spec.submodules["encoders"]["clip"].params["transformer_config"]
+        injected_projection_config = injected_spec.submodules["input_projections"][0].params["config"]
+
+        for cfg in (injected_encoder_config, injected_projection_config):
+            assert cfg.tensor_model_parallel_size == 2
+            assert cfg.pipeline_model_parallel_size == 1
+            assert cfg.context_parallel_size == 1
+            assert cfg.expert_tensor_parallel_size == 1
+        assert not hasattr(encoder_config, "tensor_model_parallel_size")
+        assert not hasattr(projection_config, "tensor_model_parallel_size")
 
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
     def test_freezing_language_model(self, mock_mimo_model):
@@ -1052,6 +1146,79 @@ class TestMegatronMIMOProvider:
         provider.megatron_mimo_parallelism_config.finalize(world_size=4)
         # No raise — non-colocated is outside the asymmetric-TP guard's scope.
         provider._validate_asymmetric_tp_constraints()
+
+    def _make_colocated_language_pp_provider(
+        self,
+        *,
+        language_per_token_loss: bool = True,
+        encoder_per_token_loss: bool = True,
+        encoder_names: tuple[str, ...] = ("clip",),
+    ) -> MegatronMIMOProvider:
+        """Build a finalized colocated language-PP provider for spec validation."""
+        language_spec = ModuleSpec(
+            module=Mock,
+            params={"config": _config(calculate_per_token_loss=language_per_token_loss)},
+        )
+        encoder_specs = {
+            name: ModuleSpec(
+                module=Mock,
+                params={"transformer_config": _config(calculate_per_token_loss=encoder_per_token_loss)},
+            )
+            for name in encoder_names
+        }
+        vision_spec = ModuleSpec(
+            module=Mock,
+            params={},
+            submodules={"encoders": encoder_specs},
+        )
+        parallelism_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=2,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=4,
+                    rank_offset=0,
+                ),
+            },
+        )
+        parallelism_config.finalize(world_size=4)
+        return MegatronMIMOProvider(
+            language_model_spec=language_spec,
+            modality_submodules_spec={"vision": vision_spec},
+            megatron_mimo_parallelism_config=parallelism_config,
+        )
+
+    def test_colocated_language_pp_spec_validator_accepts_single_encoder_per_token_loss(self):
+        """Language PP accepts the v1 spec shape: one modality, one encoder tower."""
+        provider = self._make_colocated_language_pp_provider()
+        provider._validate_colocated_language_pp_spec_constraints()
+
+    def test_colocated_language_pp_spec_validator_rejects_multiple_encoder_towers(self):
+        """Nested multi-encoder modality inputs are rejected for v1."""
+        provider = self._make_colocated_language_pp_provider(encoder_names=("clip", "dino"))
+        with pytest.raises(ValueError, match="exactly one encoder tower"):
+            provider._validate_colocated_language_pp_spec_constraints()
+
+    def test_colocated_language_pp_spec_validator_rejects_language_without_per_token_loss(self):
+        """Language TransformerConfig must use calculate_per_token_loss=True."""
+        provider = self._make_colocated_language_pp_provider(language_per_token_loss=False)
+        with pytest.raises(ValueError, match=r"calculate_per_token_loss=True.*\['language'\]"):
+            provider._validate_colocated_language_pp_spec_constraints()
+
+    def test_colocated_language_pp_spec_validator_rejects_encoder_without_per_token_loss(self):
+        """Encoder TransformerConfig must use calculate_per_token_loss=True."""
+        provider = self._make_colocated_language_pp_provider(encoder_per_token_loss=False)
+        with pytest.raises(
+            ValueError,
+            match=r"calculate_per_token_loss=True.*\['vision\.encoders\.clip'\]",
+        ):
+            provider._validate_colocated_language_pp_spec_constraints()
 
 
 class TestMegatronMIMOInfra:

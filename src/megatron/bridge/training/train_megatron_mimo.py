@@ -24,10 +24,12 @@ import torch
 import torch.distributed as dist
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY, ModuleLayout
 from megatron.core.num_microbatches_calculator import get_num_microbatches
+from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.pipeline_parallel.schedules import (
     forward_backward_no_pipelining,
     forward_backward_pipelining_without_interleaving,
 )
+from megatron.core.utils import get_model_config
 
 from megatron.bridge.training.checkpointing import CheckpointManager, DefaultCheckpointManager
 from megatron.bridge.training.eval import evaluate_and_print_results
@@ -37,6 +39,7 @@ from megatron.bridge.training.megatron_mimo_parallel_utils import (
     unwrap_megatron_mimo_model,
     zero_grad_buffer_for_multimodule,
 )
+from megatron.bridge.training.megatron_mimo_step import forward_backward_colocated_mimo_with_pp
 from megatron.bridge.training.profiling import (
     handle_profiling_step,
     handle_profiling_stop,
@@ -95,15 +98,30 @@ def _learning_rate_for_logging(
 
     if dist.is_available() and dist.is_initialized():
         device = (
-            torch.device("cuda", torch.cuda.current_device())
-            if torch.cuda.is_available()
-            else torch.device("cpu")
+            torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
         )
         learning_rate_tensor = torch.tensor([local_learning_rate], dtype=torch.float32, device=device)
         dist.all_reduce(learning_rate_tensor, op=dist.ReduceOp.MAX)
         local_learning_rate = learning_rate_tensor.item()
 
     return max(local_learning_rate, 0.0)
+
+
+def _get_single_encoder_module_name(infra: "MegatronMIMOInfra") -> str:
+    """Return the one non-language module supported by colocated language PP."""
+    encoder_module_names = [name for name in infra.module_to_grid_map if name != MIMO_LANGUAGE_MODULE_KEY]
+    if len(encoder_module_names) != 1:
+        raise RuntimeError(
+            "Colocated MegatronMIMO with language PP>1 requires exactly one encoder module on this path. "
+            f"Found encoder modules: {encoder_module_names}."
+        )
+    return encoder_module_names[0]
+
+
+def _needs_colocated_language_pp(model: "MimoModel") -> bool:
+    """Return whether the unwrapped MIMO model needs the colocated PP adapter."""
+    megatron_mimo_model = unwrap_megatron_mimo_model(model)
+    return megatron_mimo_model.role.mode is ModuleLayout.COLOCATED and megatron_mimo_model.lm_has_pp
 
 
 def train_step_megatron_mimo(
@@ -155,24 +173,31 @@ def train_step_megatron_mimo(
     # forward on every rank, which is what the standard schedule expects.
     megatron_mimo_model = unwrap_megatron_mimo_model(model)
     is_colocated = megatron_mimo_model.role.mode is ModuleLayout.COLOCATED
-    needs_three_phase = is_colocated and megatron_mimo_model.lm_has_pp
-    if needs_three_phase:
-        # Three-phase schedule integration is deferred. See
-        # colocated_forward_backward_with_pp in the submodule and the
-        # "Known limitations" section of playground/colocated_mode_plan.md
-        # for the scope of work still needed (iterator shape, loss func,
-        # p2p_communicator plumbing).
-        raise NotImplementedError(
-            "Colocated MegatronMIMO with LLM PP>1 requires the three-phase schedule "
-            "(colocated_forward_backward_with_pp) which is not yet wired into MB's "
-            "train_step. Use LLM PP=1 in colocated mode, or non-colocated mode for PP>1, "
-            "until the three-phase integration lands."
-        )
+    needs_three_phase = _needs_colocated_language_pp(model)
 
     # Run forward-backward schedule
     timers("forward-backward", log_level=1).start(barrier=False)
 
-    if is_colocated:
+    if needs_three_phase:
+        language_pg = infra.pg_collections[MIMO_LANGUAGE_MODULE_KEY]
+        if language_pg is None:
+            raise RuntimeError("Colocated language-PP schedule requires an active language pg_collection.")
+        language_p2p_communicator = P2PCommunicator(
+            pp_group=language_pg.pp,
+            config=get_model_config(model),
+        )
+        losses_reduced = forward_backward_colocated_mimo_with_pp(
+            model=model,
+            data_iterator=data_iterator,
+            infra=infra,
+            encoder_module_name=_get_single_encoder_module_name(infra),
+            num_microbatches=num_microbatches,
+            seq_length=seq_length,
+            micro_batch_size=micro_batch_size,
+            forward_only=False,
+            p2p_communicator=language_p2p_communicator,
+        )
+    elif is_colocated:
         # Colocated LLM-PP=1: encoder→language flows through
         # MimoModel._forward_all_modules via ColocatedBridgeCommunicator —
         # no cross-module P2P at the schedule level. Use the no-pipelining

@@ -254,13 +254,13 @@ class MegatronMIMOParallelismConfig:
         return len(placement) == 1
 
     def _validate_colocated_stage2_constraints(self) -> None:
-        """Validate stage-2 colocated heterogeneous constraints.
+        """Validate colocated heterogeneous constraints.
 
-        Stage 2 of the colocated rollout supports heterogeneous encoder and
-        LLM TP/DP factorizations on the same physical rank range. PP, CP,
-        EP, and ETP must remain at 1 on every module — the schedule,
-        communicator, and RNG paths for those are tracked separately.
-        Non-colocated layouts are unaffected.
+        Colocated supports heterogeneous encoder and LLM TP/DP factorizations
+        on the same physical rank range. Language PP>1 is supported by the
+        colocated three-phase schedule; encoder PP must remain 1. CP, EP, and
+        ETP also remain at 1 on every module. Non-colocated layouts are
+        unaffected.
 
         Hybrid placement (some modules overlap, others disjoint) is rejected
         upstream by ``_validate_module_placement``.
@@ -274,13 +274,22 @@ class MegatronMIMOParallelismConfig:
         if not self._is_colocated():
             return
 
+        language_pp = self.module_parallelisms[MIMO_LANGUAGE_MODULE_KEY].pipeline_model_parallel_size
+        modality_names = [name for name in self.module_parallelisms if name != MIMO_LANGUAGE_MODULE_KEY]
+
+        if language_pp > 1 and len(modality_names) != 1:
+            raise ValueError(
+                f"Colocated MegatronMIMO with language PP>1 supports exactly one modality module in v1. "
+                f"Found modality modules: {modality_names}."
+            )
+
         for name, p in self.module_parallelisms.items():
-            if p.pipeline_model_parallel_size != 1:
+            if name != MIMO_LANGUAGE_MODULE_KEY and p.pipeline_model_parallel_size != 1:
                 raise ValueError(
-                    f"Colocated heterogeneous MegatronMIMO requires PP=1 in this stage. "
-                    f"Module '{name}' has pipeline_model_parallel_size="
-                    f"{p.pipeline_model_parallel_size}. LLM PP>1 with the colocated "
-                    f"three-phase schedule is tracked as a follow-up."
+                    f"Colocated MegatronMIMO requires encoder PP=1. Module '{name}' has "
+                    f"pipeline_model_parallel_size={p.pipeline_model_parallel_size}. "
+                    f"Language PP>1 is supported by the colocated three-phase schedule, "
+                    f"but encoder PP>1 is not supported in v1."
                 )
             if p.context_parallel_size != 1:
                 raise ValueError(

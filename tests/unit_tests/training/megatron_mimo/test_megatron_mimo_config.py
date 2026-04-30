@@ -144,31 +144,77 @@ def test_colocated_stage2_accepts_equal_dp_tp_pp1_cp1():
     assert cfg.total_world_size == 2
 
 
-def test_colocated_stage2_rejects_pp_gt_1():
-    """PP>1 in colocated is rejected — three-phase schedule is a separate task.
+def test_colocated_stage2_accepts_language_pp_gt_1():
+    """Language PP>1 in colocated is accepted by the three-phase schedule scope.
 
-    Use symmetric TP/DP so the existing asymmetric-DP/TP guards in
-    ``_validate_parallelism_constraints`` don't fire first. Both modules at
-    PP=2 keeps total_ranks identical (colocated) and isolates the stage-2
-    PP=1 check.
+    Encoder PP remains 1. Data-parallel sizes are chosen so both modules span
+    the same four colocated ranks.
     """
     module_parallelisms = {
         "vision": ModuleParallelismConfig(
             tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=2,
-            data_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            data_parallel_size=4,
             rank_offset=0,
         ),
         "language": ModuleParallelismConfig(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=2,
-            data_parallel_size=1,
+            data_parallel_size=2,
             rank_offset=0,
         ),
     }
     cfg = MegatronMIMOParallelismConfig(module_parallelisms=module_parallelisms)
-    with pytest.raises(ValueError, match="PP=1"):
-        cfg.finalize(world_size=2)
+    cfg.finalize(world_size=4)
+    assert cfg.total_world_size == 4
+
+
+def test_colocated_stage2_rejects_encoder_pp_gt_1():
+    """Encoder PP>1 in colocated is still rejected."""
+    module_parallelisms = {
+        "vision": ModuleParallelismConfig(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=2,
+            data_parallel_size=2,
+            rank_offset=0,
+        ),
+        "language": ModuleParallelismConfig(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            data_parallel_size=2,
+            rank_offset=0,
+        ),
+    }
+    cfg = MegatronMIMOParallelismConfig(module_parallelisms=module_parallelisms)
+    with pytest.raises(ValueError, match="encoder PP=1"):
+        cfg.finalize(world_size=4)
+
+
+def test_colocated_stage2_rejects_language_pp_with_multiple_modality_modules():
+    """Language PP>1 v1 supports exactly one colocated modality module."""
+    module_parallelisms = {
+        "vision": ModuleParallelismConfig(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            data_parallel_size=4,
+            rank_offset=0,
+        ),
+        "audio": ModuleParallelismConfig(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            data_parallel_size=4,
+            rank_offset=0,
+        ),
+        "language": ModuleParallelismConfig(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=2,
+            data_parallel_size=2,
+            rank_offset=0,
+        ),
+    }
+    cfg = MegatronMIMOParallelismConfig(module_parallelisms=module_parallelisms)
+    with pytest.raises(ValueError, match="exactly one modality module"):
+        cfg.finalize(world_size=4)
 
 
 def test_colocated_stage2_rejects_cp_gt_1():
@@ -231,7 +277,7 @@ def test_colocated_stage2_does_not_run_on_non_colocated():
         ),
         "language": ModuleParallelismConfig(
             tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=2,  # would trip the colocated PP=1 check
+            pipeline_model_parallel_size=2,
             data_parallel_size=1,
             rank_offset=2,
         ),

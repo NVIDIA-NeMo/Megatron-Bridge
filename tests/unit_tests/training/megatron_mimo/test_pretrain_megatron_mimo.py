@@ -134,7 +134,12 @@ def test_seed_per_module_rng_tracker_non_colocated_single_module():
 
 
 def test_seed_per_module_rng_tracker_offsets_by_pp_rank():
-    """PP rank > 0 → seed offset by 100 * pp_rank."""
+    """PP rank > 0 → CUDA tracker seed offset by 100 * pp_rank.
+
+    CPU global seed (``_seed_python_numpy_torch``) stays at the base seed
+    regardless of PP rank — see
+    ``test_get_global_seed_independent_of_lm_pp_rank``.
+    """
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import seed_per_module_rng_tracker
 
     current_rank = 2
@@ -155,8 +160,47 @@ def test_seed_per_module_rng_tracker_offsets_by_pp_rank():
             with patch.object(torch.cuda, "device_count", return_value=1):
                 seed_per_module_rng_tracker(42, megatron_mimo_infra, current_rank=current_rank)
 
-            # seed = 42 + 100 * 1 = 142, tp_rank=1
+            # CUDA tracker seed = 42 + 100 * 1 = 142, tp_rank=1.
             mock_seed.assert_called_once_with(142, tp_rank=1, ep_rank=0, etp_rank=0)
+
+
+def test_get_global_seed_independent_of_lm_pp_rank():
+    """CPU global seed must not vary with LM PP rank.
+
+    Regression test for the colocated language-PP=2 iter-1 mismatch: when
+    ``_get_global_seed_and_module`` returned ``seed + 100 * lm_pp_rank``,
+    ``torch.manual_seed`` differed across LM PP stages and the LLaVA vision
+    projector (built with ``use_cpu_initialization=True``) randomly
+    initialized to different values on vision-DP siblings at LM PP stage 0
+    vs stage 1.
+    """
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import _get_global_seed_and_module
+
+    base_seed = 42
+    for lm_pp_rank in (0, 1, 3):
+        grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=0, pp_rank=lm_pp_rank)
+        global_seed, module_name = _get_global_seed_and_module(base_seed, {"language": grid})
+        assert global_seed == base_seed, (
+            f"CPU global seed must equal base seed regardless of lm_pp_rank; "
+            f"got {global_seed} at lm_pp_rank={lm_pp_rank}."
+        )
+        assert module_name == "language"
+
+
+def test_get_global_seed_falls_back_when_language_absent():
+    """Encoder-only ranks (no language module on this rank) still get the
+    base seed; the diagnostic anchor falls back to the first active module."""
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import _get_global_seed_and_module
+
+    grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=0, pp_rank=2)
+    global_seed, module_name = _get_global_seed_and_module(42, {"images": grid})
+    assert global_seed == 42
+    assert module_name == "images"
+
+    # No active modules at all → still returns the base seed.
+    seed_for_unattached, module_name_for_unattached = _get_global_seed_and_module(42, {})
+    assert seed_for_unattached == 42
+    assert module_name_for_unattached is None
 
 
 def test_seed_per_module_rng_tracker_colocated_calls_seed_per_module():
@@ -209,15 +253,23 @@ def test_seed_per_module_rng_tracker_colocated_calls_seed_per_module():
     assert megatron_mimo_infra.cuda_rng_states_per_module["language"] == {"tracker_state": "language_state"}
 
 
-def test_seed_per_module_rng_tracker_global_offset_falls_back_to_unique_module():
-    """Non-colocated encoder-only rank (language not active here) → global
-    Python/numpy/torch.manual_seed pp_offset comes from the unique active
-    module, preserving pre-task non-colocated behavior."""
+def test_seed_per_module_rng_tracker_global_seed_independent_of_pp_rank():
+    """CPU global seed (Python random, numpy, torch.manual_seed) must be the
+    base seed on every rank regardless of any active module's PP rank.
+
+    Regression test for the colocated language-PP=2 iter-1 mismatch: the old
+    behavior folded ``100 * pp_rank`` into the CPU seed, which made
+    CPU-initialized parameters (e.g. the LLaVA vision projector built with
+    ``use_cpu_initialization=True``) randomly initialize to different values
+    on vision-DP siblings on different LM PP stages. Per-PP-stage
+    divergence intentionally lives in the *CUDA RNG tracker*, not in the CPU
+    seed.
+    """
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import seed_per_module_rng_tracker
 
+    # Encoder-only rank with the unique active module at pp_rank=2 — the old
+    # buggy formula would have produced seed=242 here.
     current_rank = 0
-    # vision is at rank_offset=0 (active here, pp_rank=2).
-    # language is at rank_offset=4 (NOT active here).
     vision_grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=0, pp_rank=2)
     language_grid = _make_fake_grid(rank_offset=4, size=4, tp_rank=0, pp_rank=0)
 
@@ -242,25 +294,19 @@ def test_seed_per_module_rng_tracker_global_offset_falls_back_to_unique_module()
                         with patch.object(torch.cuda, "device_count", return_value=1):
                             seed_per_module_rng_tracker(42, megatron_mimo_infra, current_rank=current_rank)
 
-    # vision pp_rank=2 → global_seed = 42 + 100*2 = 242. Verifies fallback
-    # picks the unique active module's pp_rank when language isn't on this rank.
-    mock_random_seed.assert_called_once_with(242)
-    mock_np_seed.assert_called_once_with(242)
-    mock_torch_seed.assert_called_once_with(242)
+    mock_random_seed.assert_called_once_with(42)
+    mock_np_seed.assert_called_once_with(42)
+    mock_torch_seed.assert_called_once_with(42)
 
 
-def test_seed_per_module_rng_tracker_global_offset_uses_language_when_active():
-    """Colocated rank with language active → global pp_offset uses language's
-    pp_rank (canonical pick), even when listed second in module_to_grid_map.
-    Python random / numpy / torch CPU RNG aren't TP-region-sensitive, so a
-    single canonical pp_offset is correct.
+def test_seed_per_module_rng_tracker_global_seed_unchanged_with_language_active():
+    """Colocated rank with language active at pp_rank=1 — CPU global seed is
+    still the base seed; language's pp_rank only drives CUDA tracker seeding,
+    not CPU init.
     """
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import seed_per_module_rng_tracker
 
     current_rank = 0
-    # Language listed SECOND in iteration order to exercise the explicit
-    # MIMO_LANGUAGE_MODULE_KEY preference (a "first match" implementation
-    # would pick vision and use vision pp_rank).
     vision_grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=0, pp_rank=3)
     language_grid = _make_fake_grid(rank_offset=0, size=4, tp_rank=0, pp_rank=1)
 
@@ -285,11 +331,9 @@ def test_seed_per_module_rng_tracker_global_offset_uses_language_when_active():
                         with patch.object(torch.cuda, "device_count", return_value=1):
                             seed_per_module_rng_tracker(42, megatron_mimo_infra, current_rank=current_rank)
 
-    # language pp_rank=1 → global_seed = 42 + 100*1 = 142. Confirms language is
-    # picked over vision despite vision appearing first in dict iteration.
-    mock_random_seed.assert_called_once_with(142)
-    mock_np_seed.assert_called_once_with(142)
-    mock_torch_seed.assert_called_once_with(142)
+    mock_random_seed.assert_called_once_with(42)
+    mock_np_seed.assert_called_once_with(42)
+    mock_torch_seed.assert_called_once_with(42)
 
 
 def test_module_rng_scope_swaps_tracker_state_on_entry_and_saves_on_exit():
@@ -605,6 +649,7 @@ def _make_mimo_model_stub(mode, lm_has_pp: bool):
 
 def _make_minimal_train_step_kwargs():
     """Minimal kwargs for train_step_megatron_mimo; values only need to reach the dispatch."""
+    language_pg = MagicMock()
     return dict(
         forward_step_func=MagicMock(),
         data_iterator=iter([]),
@@ -614,7 +659,10 @@ def _make_minimal_train_step_kwargs():
         global_state=MagicMock(),
         multimodule_communicator=MagicMock(),
         multimodule_pg_collection=MagicMock(),
-        infra=SimpleNamespace(pg_collections={"language": MagicMock()}),
+        infra=SimpleNamespace(
+            module_to_grid_map={"language": MagicMock(), "images": MagicMock()},
+            pg_collections={"language": language_pg, "images": MagicMock()},
+        ),
         module_to_grid_tuple=[],
         num_microbatches=1,
         seq_length=4,
@@ -622,16 +670,44 @@ def _make_minimal_train_step_kwargs():
     )
 
 
-def test_train_step_raises_for_colocated_with_llm_pp_gt_one():
-    """Colocated + LLM PP>1 must raise NotImplementedError until the three-phase schedule is wired."""
+def test_train_step_colocated_llm_pp_gt_one_dispatches_to_three_phase_adapter():
+    """Colocated + LLM PP>1 must use the Bridge three-phase adapter."""
     from megatron.core.models.mimo.config.role import ModuleLayout
 
     from megatron.bridge.training.train_megatron_mimo import train_step_megatron_mimo
 
     stub = _make_mimo_model_stub(mode=ModuleLayout.COLOCATED, lm_has_pp=True)
-    with patch("megatron.bridge.training.train_megatron_mimo.unwrap_megatron_mimo_model", return_value=stub):
-        with pytest.raises(NotImplementedError, match="three-phase schedule"):
-            train_step_megatron_mimo(**_make_minimal_train_step_kwargs())
+    kwargs = _make_minimal_train_step_kwargs()
+    language_pg = kwargs["infra"].pg_collections["language"]
+    model_config = MagicMock()
+    language_p2p_communicator = MagicMock()
+    sentinel = RuntimeError("DISPATCH_REACHED_THREE_PHASE")
+    with (
+        patch("megatron.bridge.training.train_megatron_mimo.unwrap_megatron_mimo_model", return_value=stub),
+        patch("megatron.bridge.training.train_megatron_mimo.get_model_config", return_value=model_config),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.P2PCommunicator",
+            return_value=language_p2p_communicator,
+        ) as mock_p2p,
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.forward_backward_colocated_mimo_with_pp",
+            side_effect=sentinel,
+        ) as mock_adapter,
+        patch("megatron.bridge.training.train_megatron_mimo.zero_grad_buffer_for_multimodule"),
+    ):
+        with pytest.raises(RuntimeError, match="DISPATCH_REACHED_THREE_PHASE"):
+            train_step_megatron_mimo(**kwargs)
+    mock_p2p.assert_called_once_with(pp_group=language_pg.pp, config=model_config)
+    call_kwargs = mock_adapter.call_args.kwargs
+    assert call_kwargs["model"] is kwargs["model"]
+    assert call_kwargs["data_iterator"] is kwargs["data_iterator"]
+    assert call_kwargs["infra"] is kwargs["infra"]
+    assert call_kwargs["encoder_module_name"] == "images"
+    assert call_kwargs["num_microbatches"] == kwargs["num_microbatches"]
+    assert call_kwargs["seq_length"] == kwargs["seq_length"]
+    assert call_kwargs["micro_batch_size"] == kwargs["micro_batch_size"]
+    assert call_kwargs["forward_only"] is False
+    assert call_kwargs["p2p_communicator"] is language_p2p_communicator
 
 
 @pytest.mark.parametrize(
