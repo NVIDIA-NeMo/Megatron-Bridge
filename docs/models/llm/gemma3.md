@@ -49,14 +49,14 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import HF → Megatron
 To import the HF model to your desired Megatron path:
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
 --hf-model google/gemma-3-1b-it \
 --megatron-path /models/gemma-3-1b-it
 ```
 
 ### Export Megatron → HF
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
 --hf-model google/gemma-3-1b-it \
 --megatron-path /results/gemma3_1b/checkpoints/iter_00001000 \
 --hf-path ./gemma3-hf-export
@@ -65,7 +65,7 @@ python examples/conversion/convert_checkpoints.py export \
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
 --hf_model_path google/gemma-3-1b-it \
 --megatron_model_path /models/gemma-3-1b-it \
 --prompt "What is artificial intelligence?" \
@@ -155,7 +155,7 @@ config = gemma3_1b_peft_config(
 
 **Full Finetuning:**
 ```bash
-torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 run/run_recipe.py \
   --pretrained-checkpoint /models/gemma-3-1b-it \
   --recipe gemma3_1b_sft_config \
   train.global_batch_size=64 \
@@ -165,7 +165,7 @@ torchrun --nproc-per-node=8 run/run_recipe.py \
 
 **LoRA Finetuning:**
 ```bash
-torchrun --nproc-per-node=8 run/run_recipe.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 run/run_recipe.py \
   --pretrained-checkpoint /models/gemma-3-1b-it \
   --recipe gemma3_1b_peft_config \
   --peft_scheme lora \

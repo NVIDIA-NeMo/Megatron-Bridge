@@ -183,30 +183,30 @@ def build_train_valid_test_data_loaders(
     Returns:
         A tuple (train_dataloader, valid_dataloader, test_dataloader).
     """
-    # Check for MIMO path
-    from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
-    from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+    # Check for MegatronMIMO path
+    from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 
-    if isinstance(cfg.model, MimoModelProvider):
-        if not isinstance(cfg.dataset, MimoDatasetProvider):
+    if isinstance(cfg.model, MegatronMIMOProvider):
+        if not isinstance(cfg.dataset, MegatronMIMODatasetProvider):
             raise ValueError(
-                "MIMO models require cfg.dataset to be a MimoDatasetProvider. "
-                "Use HFMimoDatasetProvider, MockMimoProvider, or a subclass of MimoDatasetProvider."
+                "MegatronMIMO models require cfg.dataset to be a MegatronMIMODatasetProvider. "
+                "Use HFMegatronMIMODatasetProvider, MockMegatronMIMOProvider, or a subclass of MegatronMIMODatasetProvider."
             )
-        from megatron.bridge.data.mimo.loaders import build_mimo_data_loaders
+        from megatron.bridge.data.megatron_mimo.loaders import build_megatron_mimo_data_loaders
 
         train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
-        train_dataloader, valid_dataloader, test_dataloader = build_mimo_data_loaders(
+        train_dataloader, valid_dataloader, test_dataloader = build_megatron_mimo_data_loaders(
             cfg=cfg,
             train_state=train_state,
-            mimo_provider=cfg.dataset,
+            megatron_mimo_provider=cfg.dataset,
             train_samples=train_samples,
             valid_samples=valid_samples,
             test_samples=test_samples,
         )
 
         # Sync train_state flags across all ranks.
-        # Use all_reduce(MAX) since some ranks may not have loaders in heterogeneous MIMO.
+        # Use all_reduce(MAX) since some ranks may not have loaders in heterogeneous MegatronMIMO.
         do_train = train_dataloader is not None and cfg.train.train_iters > 0
         do_valid = valid_dataloader is not None and cfg.validation.eval_iters > 0
         do_test = test_dataloader is not None and cfg.validation.eval_iters > 0

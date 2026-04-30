@@ -35,13 +35,7 @@ ARG NEMO_EVAL_COMMIT
 ARG NEMO_RUN_COMMIT
 
 # Update FW repository commit
-RUN pushd /opt/NeMo && \
-        git pull && \
-        git fetch origin $NEMO_COMMIT && \
-        git checkout FETCH_HEAD && \
-        echo "Container built with NeMo commit hash: $NEMO_COMMIT" && \
-    popd && \
-    pushd /opt/Export-Deploy && \
+RUN    pushd /opt/Export-Deploy && \
         git pull && \
         git fetch origin $NEMO_EXPORT_DEPLOY_COMMIT && \
         git checkout FETCH_HEAD && \
@@ -61,8 +55,9 @@ RUN pushd /opt/NeMo && \
     popd
 
 # Sync environment
-COPY docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
-COPY docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
+COPY --chmod=644 docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
+COPY --chmod=644 docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
+COPY --chmod=644 docker/common/stubs/ /opt/NeMo-FW/stubs/
 RUN \
     cd /opt/NeMo-FW && \
     uv sync --no-cache-dir --all-groups --inexact && \
@@ -154,7 +149,7 @@ ARG NVIDIA_BUILD_REF
 LABEL com.nvidia.build.ref="${NVIDIA_BUILD_REF}"
 ARG RC_DATE=00.00
 ARG TARGETARCH
-COPY docker/common/README.md README.md
+COPY --chmod=644 docker/common/README.md README.md
 
 # NOTICES.txt file points to where the OSS source code is archived
 RUN echo "This distribution includes open source which is archived at the following URL: https://opensource.nvidia.com/oss/teams/nvidia/nemo/${RC_DATE}:linux-${TARGETARCH}/index.html" > NOTICES.txt && \

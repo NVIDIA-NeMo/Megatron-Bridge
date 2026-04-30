@@ -248,6 +248,7 @@ def main(
     num_gpus: int,
     is_long_convergence_run: bool,
     additional_slurm_params: Optional[Dict[str, Any]],
+    enable_pct_binding: bool,
     golden_values_path: str,
     convergence_params: Dict[str, Any],
     performance_params: Dict[str, Any],
@@ -284,6 +285,15 @@ def main(
             "For --offline, pre-download the tokenizer with `huggingface-cli download` and ensure HF_HOME points "
             "to the cache directory. NullTokenizer to be used soon."
         )
+
+    # Disable PCT binding for certain models on specific hardware/precision combos
+    if (
+        model_family_name == "nemotronh"
+        and model_recipe_name == "nemotron_3_super"
+        and compute_dtype == "bf16"
+        and gpu == "b300"
+    ) or (model_family_name == "deepseek" and model_recipe_name == "deepseek_v3" and gpu == "b300"):
+        enable_pct_binding = False
 
     if wandb_key is not None:
         assert wandb_project_name is not None and wandb_experiment_name is not None, (
@@ -391,6 +401,7 @@ def main(
             additional_slurm_params=additional_slurm_params,
             wandb_key=wandb_key,
             packager=packager,
+            enable_pct_binding=enable_pct_binding,
         )
 
     plugins = []
@@ -560,27 +571,26 @@ def main(
                     resume="allow",
                 )
 
-            logger.info("Waiting 10 seconds for I/O to settle")
-            time.sleep(10)
+                logger.info("Waiting 10 seconds for I/O to settle")
+                time.sleep(10)
 
-            is_testing_passed, error_msg = calc_convergence_and_performance(
-                model_family_name=model_family_name,
-                model_recipe_name=model_recipe_name,
-                assets_dir=os.path.join(job_dir, exp_name),
-                log_paths=log_paths,
-                loss_metric="lm loss",
-                timing_metric="elapsed time per iteration (ms)",
-                alloc_metric="alloc",
-                max_alloc_metric="max_alloc",
-                golden_values_path=golden_values_path,
-                convergence_config=convergence_params,
-                performance_config=performance_params,
-                memory_config=memory_params,
-                wandb_run=wandb_run,
-                _logger=logger,
-            )
+                is_testing_passed, error_msg = calc_convergence_and_performance(
+                    model_family_name=model_family_name,
+                    model_recipe_name=model_recipe_name,
+                    assets_dir=os.path.join(job_dir, exp_name),
+                    log_paths=log_paths,
+                    loss_metric="lm loss",
+                    timing_metric="elapsed time per iteration (ms)",
+                    alloc_metric="alloc",
+                    max_alloc_metric="max_alloc",
+                    golden_values_path=golden_values_path,
+                    convergence_config=convergence_params,
+                    performance_config=performance_params,
+                    memory_config=memory_params,
+                    wandb_run=wandb_run,
+                    _logger=logger,
+                )
 
-            if wandb_run:
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
 
@@ -693,6 +703,7 @@ if __name__ == "__main__":
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
         additional_slurm_params=args.additional_slurm_params,
+        enable_pct_binding=args.enable_pct_binding,
         golden_values_path=args.golden_values_path,
         convergence_params={
             "correlation_threshold": args.correlation_threshold,

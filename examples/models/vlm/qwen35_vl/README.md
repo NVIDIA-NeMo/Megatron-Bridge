@@ -21,14 +21,14 @@ Directory structure:
 ### Import HF → Megatron
 To import the HF VL model to your desired Megatron path:
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model Qwen/Qwen3.5-35B-A3B \
   --megatron-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B
 ```
 
 ### Export Megatron → HF
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
   --hf-model Qwen/Qwen3.5-35B-A3B \
   --megatron-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B/iter_0000000 \
   --hf-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B-hf-export
@@ -41,7 +41,7 @@ See the [conversion.sh](conversion.sh) script for more examples including multi-
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_vlm.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_vlm.py \
   --hf_model_path Qwen/Qwen3.5-35B-A3B \
   --megatron_model_path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B/iter_0000000 \
   --image_path "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \

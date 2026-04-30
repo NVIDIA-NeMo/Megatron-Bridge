@@ -28,7 +28,32 @@ From RC3 onward, RCs are cut **more frequently and as needed**, rather than stri
 
 ## Golden Values
 
-Golden values are reference outputs used to validate model behavior in CI.
+Golden values are reference outputs used to validate model behavior in CI. They live in the **internal CI repository** and are the baseline for the internal regression tracker — keeping them current and accurate is therefore critical for meaningful signal.
+
+### When to update golden values
+
+Any PR that can affect performance metrics (e.g. changes to model code, training loop, optimizer, or numerical kernels) **must be accompanied by a corresponding internal PR that updates the golden values** before merging. Do not wait until after the PR lands.
+
+### Updating golden values for PRs targeting `main`
+
+1. **Rebase the MBridge PR against `main`** so it is at top-of-tree before launching CI.
+2. **Launch an internal CI run** using:
+   - The **latest nightly container** as the base image.
+   - The **latest MCore commit** on `main`.
+   - The **MBridge PR commit** (the head of your MBridge branch).
+3. Collect the outputs and open a PR against the **internal CI repository's `main` branch** with the updated golden values.
+4. The MBridge PR and the internal golden-values PR should be merged together (or the golden-values PR first).
+
+### Updating golden values during a release
+
+When golden values need to be refreshed on the release branch (e.g. at the start of code-freeze or after an accepted regression):
+
+1. **Rebase the MBridge PR against the MBridge release branch** so it is at the head of that branch.
+2. **Launch an internal CI run** using:
+   - The **latest internal RC container** for the release.
+   - The **MCore commit pinned on the release branch**.
+   - The **MBridge PR commit** (head of the MBridge release branch).
+3. Open a PR against the **internal CI repository's release branch** with the updated golden values.
 
 ### During the RC Phase (before code-freeze)
 
@@ -41,7 +66,9 @@ This means golden values are not automatically updated with every run — a deli
 
 ### On the Release Branch (during code-freeze)
 
-When the release branch is created at code-freeze, all golden values are updated **unconditionally**. Whatever the current output is becomes the new reference baseline for the release.
+When the release branch is created at code-freeze, all golden values are updated **unconditionally** — whatever the current output is becomes the new reference baseline for the release.
+
+In **Week 5**, the last bulk update of golden values is performed. After that point, engineers are individually responsible for updating any remaining golden values on the release branch, reviewing discrepancies and ensuring the suite is clean ahead of the release.
 
 -----
 
@@ -49,21 +76,38 @@ When the release branch is created at code-freeze, all golden values are updated
 
 Code-freeze lasts **two weeks** and begins when RC3 is cut. This is the **stabilization phase** — no new features are landed.
 
-### First Half
+### First Half (Weeks 3–5)
 
 - **Release branches are created.**
 - All golden values on the release branch are updated unconditionally (see above).
-- The **last bulk CI run** occurs one week into the code-freeze period.
+- The **last bulk update of golden values** happens in **Week 5**.
 - RCs continue to be cut as needed.
 
-### Second Half
+### Second Half (Weeks 6–7)
 
-- **Engineers are responsible for updating golden values** on the release branch — reviewing any remaining discrepancies and ensuring the suite is in a clean state ahead of release.
+- **Engineers are individually responsible for updating golden values** on the release branch — reviewing any remaining discrepancies and ensuring the suite is in a clean state ahead of release.
 - RCs continue to be cut as needed.
 
 ### Release Day
 
 The release goes out on the **first Wednesday after the code-freeze window ends**.
+
+-----
+
+## Patch Release
+
+After the main release ships (Week 7, typically mid-month), the release branches are **reopened** for contributions targeting the patch release.
+
+### Patch Release Timeline
+
+| Period | Approximate Timing | Key Activity |
+|--------|--------------------|--------------|
+| Reopening | Release day (Week 7) | Branches accept contributions; patch development begins |
+| Lockdown | First Monday of the following month (~2 weeks later) | Release branches locked; **patch RC0 (`XX.YY.01.RC0`) shipped internally** |
+| Stabilization | Week 1–2 after RC0 | Bug fixes and small improvements only |
+| | End of Week 2 | QA exit, patch release |
+
+The patch stabilization flow mirrors the main release's code-freeze phase, but compressed into approximately two weeks.
 
 -----
 

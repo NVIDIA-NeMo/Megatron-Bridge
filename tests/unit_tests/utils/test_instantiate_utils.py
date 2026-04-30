@@ -21,6 +21,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from megatron.bridge.utils.instantiate_utils import (
+    _ALLOWED_TARGET_PREFIXES,
     InstantiationException,
     InstantiationMode,
     _call_target,
@@ -32,9 +33,22 @@ from megatron.bridge.utils.instantiate_utils import (
     _locate,
     _prepare_input_dict_or_list,
     _resolve_target,
+    _validate_target_prefix,
     instantiate,
     instantiate_node,
+    register_allowed_target_prefix,
 )
+
+
+@pytest.fixture(autouse=True)
+def _register_test_prefixes():
+    """Temporarily register test prefixes so test targets pass the allowlist."""
+    original = _ALLOWED_TARGET_PREFIXES.copy()
+    _ALLOWED_TARGET_PREFIXES.add("tests.")
+    _ALLOWED_TARGET_PREFIXES.add("builtins.")
+    yield
+    _ALLOWED_TARGET_PREFIXES.clear()
+    _ALLOWED_TARGET_PREFIXES.update(original)
 
 
 # Test classes and functions for instantiation testing
@@ -188,7 +202,7 @@ class TestInstantiate:
         """Test instantiate in strict mode with error."""
         config = {
             "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestClass",
-            "nested": {"_target_": "non.existent.module.Class"},
+            "nested": {"_target_": "megatron.non_existent_module.Class"},
         }
         with pytest.raises(InstantiationException):
             instantiate(config, mode=InstantiationMode.STRICT)
@@ -197,7 +211,7 @@ class TestInstantiate:
         """In lenient mode, nested resolution errors now propagate (no auto-None)."""
         config = {
             "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestClass",
-            "nested": {"_target_": "non.existent.module.Class"},
+            "nested": {"_target_": "megatron.non_existent_module.Class"},
         }
         with pytest.raises(InstantiationException, match="Error locating target"):
             instantiate(config, mode=InstantiationMode.LENIENT)
@@ -408,9 +422,9 @@ class TestResolveTarget:
         assert result == test_function
 
     def test_resolve_invalid_string_target(self):
-        """Test resolving invalid string target."""
+        """Test resolving invalid string target that passes prefix check but doesn't exist."""
         with pytest.raises(InstantiationException, match="Error locating target"):
-            _resolve_target("invalid.target", "test_key")
+            _resolve_target("megatron.invalid.target", "test_key")
 
     def test_resolve_non_callable_target(self):
         """Test resolving non-callable target with check_callable=True."""
@@ -616,3 +630,70 @@ class TestInstantiateEnum:
         # This previously failed because _args_ was dropped in lenient mode
         result = instantiate(config)
         assert result == TestEnum.B
+
+
+class TestTargetPrefixValidation:
+    """Test _target_ prefix allowlist validation."""
+
+    def test_allowed_prefix_passes(self):
+        """Test that targets with allowed prefixes pass validation."""
+        _validate_target_prefix(target="megatron.bridge.Foo", full_key="key")
+        _validate_target_prefix(target="torch.nn.Module", full_key="key")
+        _validate_target_prefix(target="transformers.AutoModel", full_key="key")
+        _validate_target_prefix(target="numpy.array", full_key="key")
+        _validate_target_prefix(target="nvidia.dali.Pipeline", full_key="key")
+        _validate_target_prefix(target="nemo.collections.nlp", full_key="key")
+
+    def test_disallowed_prefix_rejected(self):
+        """Test that targets without allowed prefixes are rejected."""
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="os.system", full_key="key")
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="subprocess.run", full_key="key")
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="shutil.rmtree", full_key="key")
+
+    def test_disallowed_prefix_error_includes_full_key(self):
+        """Test that the error message includes the full_key when present."""
+        with pytest.raises(InstantiationException, match="full_key: my.config.key"):
+            _validate_target_prefix(target="os.system", full_key="my.config.key")
+
+    def test_disallowed_prefix_error_no_full_key(self):
+        """Test that the error message omits full_key when empty."""
+        with pytest.raises(InstantiationException, match="is not allowed") as exc_info:
+            _validate_target_prefix(target="os.system", full_key="")
+        assert "full_key" not in str(exc_info.value)
+
+    def test_empty_string_target(self):
+        """Test that empty string target is rejected."""
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="", full_key="key")
+
+    def test_register_allowed_target_prefix(self):
+        """Test that register_allowed_target_prefix extends the allowlist."""
+        original = _ALLOWED_TARGET_PREFIXES.copy()
+        try:
+            with pytest.raises(InstantiationException, match="is not allowed"):
+                _validate_target_prefix(target="custom_pkg.MyClass", full_key="key")
+
+            register_allowed_target_prefix("custom_pkg.")
+            _validate_target_prefix(target="custom_pkg.MyClass", full_key="key")  # should not raise
+        finally:
+            _ALLOWED_TARGET_PREFIXES.clear()
+            _ALLOWED_TARGET_PREFIXES.update(original)
+
+    def test_register_empty_prefix_rejected(self):
+        """Test that registering an empty prefix is rejected."""
+        with pytest.raises(ValueError, match="non-empty string"):
+            register_allowed_target_prefix("")
+
+    def test_register_whitespace_prefix_rejected(self):
+        """Test that registering a whitespace-only prefix is rejected."""
+        with pytest.raises(ValueError, match="non-empty string"):
+            register_allowed_target_prefix("   ")
+
+    def test_instantiate_rejects_disallowed_target(self):
+        """Test end-to-end: instantiate rejects a config with a disallowed _target_."""
+        config = {"_target_": "os.system", "command": "echo hello"}
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            instantiate(config)
