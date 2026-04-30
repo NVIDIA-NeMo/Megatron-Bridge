@@ -20,13 +20,14 @@ import torch
 from megatron.core import tensor_parallel
 from megatron.core.fusions.fused_layer_norm import FusedLayerNorm
 from megatron.core.transformer.cuda_graphs import CudaGraphManager
-from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules, get_num_layers_to_build
 from megatron.core.transformer.transformer_layer import BaseTransformerLayer
 from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
 from transformer_engine.pytorch import TransformerLayer
+
+from megatron.bridge.utils.cuda_graph import uses_local_cuda_graph_manager
 
 
 # Copied from  nemo/collections/nlp/models/language_modeling/megatron/gpt_full_te_layer_autocast_spec.py
@@ -226,11 +227,7 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
             transformer_layer_args["ub_atomic_gemm_rs"] = config.tp_comm_atomic_rs
         self.transformer_layer = AutocastTransformerLayer(**transformer_layer_args)
 
-        if (
-            self.config.cuda_graph_impl == "local"
-            and self.training
-            and CudaGraphScope.full_iteration not in self.config.cuda_graph_scope
-        ):
+        if uses_local_cuda_graph_manager(self.config) and self.training:
             assert not config.cpu_offloading and config.recompute_granularity is None, "Cudagraphs not supported"
             self.add_module("cudagraph_manager", CudaGraphManager(config))
 

@@ -209,6 +209,7 @@ jobs:
           git push origin ${{ env.SOURCE_BRANCH }}
 
       - name: Merge PR
+        id: merge-pr
         env:
           title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"
         run: |
@@ -226,4 +227,17 @@ jobs:
           git commit -m "${{ env.title }}"
           git pull --rebase origin ${{ env.TARGET_BRANCH }}
           git push origin ${{ env.TARGET_BRANCH }}
+          echo "merge-sha=$(git rev-parse HEAD)" | tee -a "$GITHUB_OUTPUT"
           git push origin --delete ${{ env.SOURCE_BRANCH }}
+
+      - name: Post merge comment
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR was created, skipping comment"
+            exit 0
+          fi
+          gh pr comment "$PR_NUMBER" --repo ${{ github.repository }} \
+            --body "🤖 Manually merged commit \`${{ steps.merge-pr.outputs.merge-sha }}\` after a successful CI run."

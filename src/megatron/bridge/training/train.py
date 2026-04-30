@@ -54,7 +54,6 @@ from megatron.core.transformer.cuda_graphs import (
     VisionTECudaGraphHelper,
     get_vision_cuda_graph_seq_length,
 )
-from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import (
     check_param_hashes_across_dp_replicas,
     get_attr_wrapped_model,
@@ -98,6 +97,7 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 
 
 # For Paged Stashing support
@@ -299,7 +299,7 @@ def train(
         pp_size=pg_collection.pp.size(),
         vp_size=config.model.virtual_pipeline_model_parallel_size,
     )
-    if config.model.cuda_graph_impl == "local" and CudaGraphScope.full_iteration in config.model.cuda_graph_scope:
+    if is_full_iteration_cuda_graph(config.model):
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
@@ -1209,7 +1209,7 @@ def save_checkpoint_and_time(
         non_persistent_ckpt: Flag indicating if this is a non-persistent
                              (local) checkpoint. Defaults to False.
         train_data_iterator: Optional training data iterator to save its state.
-        pg_collection: Optional process group collection for MiMo topologies.
+        pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
     """
     timers = state.timers
@@ -1299,7 +1299,7 @@ def checkpoint_and_decide_exit(
         num_floating_point_operations_so_far: Cumulative TFLOPs up to this point.
         checkpoint_manager: The checkpoint manager for save operations.
         train_data_iterator: Optional training data iterator to save its state.
-        pg_collection: Optional process group collection for MiMo topologies.
+        pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
 
     Returns:
@@ -1581,8 +1581,11 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
     if "training" in FullCudaGraphWrapper.cuda_graph:
         del FullCudaGraphWrapper.cuda_graph["training"]
 
-    # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
-    if cuda_graph_helper is not None:
+    # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
+    # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper
+    # may finish its capture phase without actually producing any graphs, in which case
+    # delete_cuda_graphs() asserts. Mirrors the guard in upstream mcore training.py.
+    if cuda_graph_helper is not None and cuda_graph_helper.graphs_created():
         cuda_graph_helper.delete_cuda_graphs()
 
     # Run GC to collect the freshed object

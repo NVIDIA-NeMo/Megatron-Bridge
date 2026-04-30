@@ -33,11 +33,12 @@ Multimodal models that combine vision and language capabilities.
 
 | Category | Model Count | Documentation |
 |----------|-------------|---------------|
-| **Vision Language Models** | 4 models | [VLM Documentation](vlm/README.md) |
+| **Vision Language Models** | 5 models | [VLM Documentation](vlm/README.md) |
 
 **Supported VLM Families:**
 
 - Gemma 3 VL
+- Nemotron-3 Nano Omni (image + video + audio + text)
 - Nemotron Nano V2 VL
 - Qwen (2.5 VL, 3 VL)
 
@@ -176,6 +177,7 @@ Each model documentation page typically includes:
 - Gemma 3 VL
 - Qwen 2.5 VL, Qwen 3 VL
 - Nemotron Nano V2 VL
+- Nemotron-3 Nano Omni
 
 ### By Provider
 
@@ -188,6 +190,7 @@ Each model documentation page typically includes:
 - LLaMA Nemotron
 - Nemotron-H
 - Nemotron Nano V2 VL
+- Nemotron-3 Nano Omni
 
 **Alibaba Cloud:**
 
