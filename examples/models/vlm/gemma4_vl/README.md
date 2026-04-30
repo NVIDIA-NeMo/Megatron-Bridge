@@ -177,6 +177,10 @@ ddp.use_distributed_optimizer=False
 
 For MoE models, EP must divide DP (data parallel degree), where `DP = world_size / (TP × PP)`. For example, with 8 GPUs, TP=2, PP=1: DP=4, so EP ∈ {1, 2, 4}. EP=1 is not allowed for LoRA (see above), so use EP=4 for single-node LoRA.
 
+### Expected Training Dynamics
+
+We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/r7dgbroo) for the expected loss curves and grad norms.
+
 ## Evaluation
 
 > **Prerequisite:** Evaluation scripts use `bridge.load_megatron_model()` which requires a **`torch_dist`** checkpoint. The default SFT configuration produces a `dp_reshardable` checkpoint (not loadable). To produce a loadable checkpoint, run SFT with `optimizer.use_distributed_optimizer=False ddp.use_distributed_optimizer=False`. See [Checkpoint Formats](#checkpoint-formats) above.
