@@ -84,6 +84,8 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
+    "lightning; sys_platform == 'never'",           # Pre-installed in base container; depends on torch
+    "pytorch-lightning; sys_platform == 'never'",   # Pre-installed in base container; depends on torch
     "nvidia-cublas-cu12; sys_platform == 'never'",
     "nvidia-cuda-cupti-cu12; sys_platform == 'never'",
     "nvidia-cuda-nvrtc-cu12; sys_platform == 'never'",
