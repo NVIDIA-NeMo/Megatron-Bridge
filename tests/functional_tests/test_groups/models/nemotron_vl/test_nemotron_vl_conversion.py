@@ -109,7 +109,14 @@ class TestNemotronVLConversion:
         # defaults to flash-attention-2 when flash-attn is installed. The
         # Nemotron VL custom model class does not declare flash-attn-2
         # support, so force eager on every PretrainedConfig-shaped sub-config.
-        for cfg in (config, getattr(config, "vision_config", None), getattr(config, "text_config", None)):
+        # Nemotron VL's custom modeling builds the language model from
+        # `config.llm_config`, so that sub-config must also be covered.
+        for cfg in (
+            config,
+            getattr(config, "vision_config", None),
+            getattr(config, "text_config", None),
+            getattr(config, "llm_config", None),
+        ):
             if cfg is not None:
                 cfg._attn_implementation = "eager"
 
