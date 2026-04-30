@@ -25,12 +25,12 @@ Key architecture-specific handling:
 - Router scale/per_expert_scale: loaded as replicated buffers.
 - layer_scalar: per-layer scaling buffer.
 
-Supported models
-----------------
+**Supported models**
+
 - ``google/gemma-4-26B-A4B`` (MoE, ``enable_moe_block=True``) — fully supported.
 
-NOT supported
--------------
+**NOT supported**
+
 - Dense Gemma 4 models (``enable_moe_block=False``, e.g. ``google/gemma-4-e2b-it``).
   ``gemma4_vl_bridge.py`` raises ``ValueError`` for non-MoE models.  Dense support
   requires per-layer ``ffn_hidden_size`` and Per-Layer Embeddings (PLE) in MCore.
