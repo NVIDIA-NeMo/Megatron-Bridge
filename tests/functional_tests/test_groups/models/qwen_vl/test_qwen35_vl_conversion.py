@@ -402,7 +402,14 @@ class TestQwen35VLMoEConversion:
         assert "text_config" in config_data
         text_cfg = config_data["text_config"]
         assert text_cfg["num_experts"] == 4
-        assert text_cfg["full_attention_interval"] == 4
+        # transformers <5.5 saved `full_attention_interval` directly; >=5.5 stores
+        # the equivalent pattern under `layer_types` instead. Accept either layout.
+        if "full_attention_interval" in text_cfg:
+            assert text_cfg["full_attention_interval"] == 4
+        else:
+            layer_types = text_cfg["layer_types"]
+            full_idx = layer_types.index("full_attention")
+            assert full_idx + 1 == 4
 
         _ = Qwen3_5MoeForConditionalGeneration.from_pretrained(
             qwen35_vl_moe_toy_model_path,
