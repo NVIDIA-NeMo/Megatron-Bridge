@@ -156,6 +156,7 @@ class Qwen3VLModelProvider(GPTModelProvider):
             pg_collection=self._pg_collection,
             add_encoder=self.add_encoder,
             add_decoder=self.add_decoder,
+            vp_stage=vp_stage,
         )
 
         # Apply freeze options if any are enabled for fine-tuning
@@ -321,6 +322,7 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
             pg_collection=self._pg_collection,
             add_encoder=self.add_encoder,
             add_decoder=self.add_decoder,
+            vp_stage=vp_stage,
         )
 
         # Apply freeze options if any are enabled for fine-tuning

@@ -127,7 +127,7 @@ class Qwen3VLModel(MegatronModule):
             "If you don't need embd_group, you need to explicitly set it to None."
         )
         self.embd_group = pg_collection.embd
-        self.vp_stage = None
+        self.vp_stage = vp_stage
         self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
         if hasattr(self.config, "dist_train") and getattr(self.config.dist_train, "use_dist_train", False) is True:
