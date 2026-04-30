@@ -277,7 +277,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         self._alias_to_pattern.clear()
         self._alias_matches.clear()
 
-        for target in self.target_modules:
+        for target in self.target_modules or []:
             assert not target.endswith("linear_qkv"), (
                 "Canonical LoRA does not support target 'linear_qkv'. Either use 'linear_qkv' with LoRA() or "
                 "use ['linear_q', 'linear_k', 'linear_v'] with Canonical LoRA"
