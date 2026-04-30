@@ -20,7 +20,12 @@ from typing import Callable, Literal, Optional, Union
 
 import torch
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
-from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
+from megatron.core.models.mamba.mamba_layer_specs import (
+    mamba_inference_stack_spec as default_mamba_inference_stack_spec,
+)
+from megatron.core.models.mamba.mamba_layer_specs import (
+    mamba_stack_spec as default_mamba_stack_spec,
+)
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.post_training.modelopt.mamba.model_specs import get_mamba_stack_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
@@ -121,6 +126,8 @@ def get_default_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     Returns:
         ModuleSpec: Appropriate module specification based on config
     """
+    if getattr(config, "transformer_impl", None) == "inference_optimized":
+        return default_mamba_inference_stack_spec
     return transformer_engine_mamba_stack_spec()
 
 

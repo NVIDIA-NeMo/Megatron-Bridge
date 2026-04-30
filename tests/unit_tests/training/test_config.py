@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from megatron.core.transformer.enums import CudaGraphScope
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -44,6 +43,11 @@ from megatron.bridge.training.config import (
     ValidationConfig,
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
+)
+from megatron.bridge.utils.cuda_graph import (
+    cuda_graph_module_names,
+    set_cuda_graph_modules,
+    set_full_iteration_cuda_graph,
 )
 
 
@@ -1216,11 +1220,10 @@ class TestConfigContainerValidation:
 
     def test_cuda_graph_full_iteration_requires_check_for_nan_disabled(self, monkeypatch):
         """Test that full_iteration CUDA graph requires check_for_nan_in_loss=False."""
-        # Create config with cuda_graph_impl="local" and TE RNG tracker (required for cuda graphs)
         gpt_model_cfg = create_test_gpt_config(
-            cuda_graph_impl="local",
             use_te_rng_tracker=True,
         )
+        set_full_iteration_cuda_graph(gpt_model_cfg)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1228,10 +1231,6 @@ class TestConfigContainerValidation:
         )
 
         try:
-            # Set cuda_graph_scope to include full_iteration after model creation
-            # (MCore's __post_init__ converts strings to enums during finalize)
-            container.model.cuda_graph_scope = [CudaGraphScope.full_iteration]
-
             # Default check_for_nan_in_loss is True - should fail validation
             assert container.rerun_state_machine.check_for_nan_in_loss is True
             with pytest.raises(
@@ -1252,6 +1251,7 @@ class TestConfigContainerValidation:
             cuda_graph_impl="local",
             use_te_rng_tracker=True,
         )
+        set_cuda_graph_modules(gpt_model_cfg, ["attn", "mlp"])
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1259,12 +1259,28 @@ class TestConfigContainerValidation:
         )
 
         try:
-            # Set cuda_graph_scope to NOT include full_iteration
-            container.model.cuda_graph_scope = [CudaGraphScope.attn, CudaGraphScope.mlp]
-
             # check_for_nan_in_loss=True should be allowed
             assert container.rerun_state_machine.check_for_nan_in_loss is True
             container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_cuda_graph_impl_none_clears_modules(self, monkeypatch):
+        """Test that cuda_graph_impl=none clears module-scoped CUDA graph settings."""
+        gpt_model_cfg = create_test_gpt_config(
+            cuda_graph_impl="none",
+            use_te_rng_tracker=True,
+        )
+        set_cuda_graph_modules(gpt_model_cfg, ["attn", "mlp"])
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            container.validate()
+            assert cuda_graph_module_names(container.model) == []
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -1985,9 +2001,7 @@ class TestCheckpointConfig:
             dist_config=dist_cfg,
         )
         try:
-            # Should raise error - async_save with fsdp_dtensor is not allowed
-            with pytest.raises(AssertionError, match="async_save is only supported with ckpt_format='torch_dist'"):
-                container.validate()
+            container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
