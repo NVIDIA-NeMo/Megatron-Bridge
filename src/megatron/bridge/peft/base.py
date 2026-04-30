@@ -99,7 +99,7 @@ class PEFT(ABC):
         if isinstance(self, ModuleMatcher):
             # Rebuild alias/match bookkeeping from the *current* target_modules so that
             # any post-construction mutation (common in recipes) is respected. Then walk
-            # the model once to record which aliases matched and raise on typos.
+            # the model once to record which aliases matched and warn on typos.
             self._init_target_match_state()
 
             def _validate_only(

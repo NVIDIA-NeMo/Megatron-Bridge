@@ -229,13 +229,16 @@ class TestLoRA:
         assert isinstance(transformed_model.layers[1]["mlp"]["linear_fc1"], nn.Linear)
         assert isinstance(transformed_model.layers[1]["mlp"]["linear_fc2"], nn.Linear)
 
-    def test_lora_raises_on_unmatched_target_module(self):
-        """Typos in target_modules should raise instead of silently no-op'ing."""
+    def test_lora_warns_on_unmatched_target_module(self, caplog):
+        """Typos in target_modules should surface a warning so misconfigurations are visible
+        without breaking recipes whose defaults are wider than the model exposes."""
         model = SimpleModel()
         lora = LoRA(target_modules=["linear_qkb"])  # typo for linear_qkv
 
-        with pytest.raises(ValueError, match="No modules matched.*linear_qkb"):
+        with caplog.at_level("WARNING", logger="megatron.bridge.peft.module_matcher"):
             lora(model, training=True)
+
+        assert any("No modules matched" in r.message and "linear_qkb" in r.message for r in caplog.records)
 
     def test_lora_respects_target_modules_mutation_after_construction(self):
         """Recipes commonly mutate ``target_modules`` after constructing the PEFT object.

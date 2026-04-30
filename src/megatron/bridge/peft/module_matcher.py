@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
@@ -21,6 +22,9 @@ from torch import nn
 
 from megatron.bridge.peft.utils import wildcard_match
 from megatron.bridge.utils.import_utils import safe_import_from
+
+
+logger = logging.getLogger(__name__)
 
 
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(
@@ -189,14 +193,17 @@ class ModuleMatcher:
             self._alias_matches[alias].clear()
 
     def _validate_target_matches(self) -> None:
-        """Raise an error if any requested target aliases failed to match a module.
+        """Warn if any requested target aliases failed to match a module.
 
         Intended to be called after a full validation walk over the model. Skips when no
-        aliases are registered (e.g. ``exclude_modules`` mode).
+        aliases are registered (e.g. ``exclude_modules`` mode). A warning (not an error)
+        keeps the previous default behavior — recipes whose ``target_modules`` defaults
+        list more entries than a given model exposes (e.g. ``CanonicalLoRA`` defaults vs.
+        a model without fused linear_qkv) continue to work without per-recipe overrides.
         """
         if not self._alias_to_pattern:
             return
 
         unmatched = sorted(alias for alias, matches in self._alias_matches.items() if len(matches) == 0)
         if unmatched:
-            raise ValueError("No modules matched the requested target_modules entries: " + ", ".join(unmatched))
+            logger.warning("No modules matched the requested target_modules entries: %s", ", ".join(unmatched))
