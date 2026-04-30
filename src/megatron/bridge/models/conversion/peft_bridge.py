@@ -901,7 +901,7 @@ class MegatronPeftBridge:
                     )
                     if per_base_linear_out is not None:
                         for index, base_name in enumerate(base_hf_weight_names):
-                            current_linear_out_tensor = per_base_linear_out[base_name]
+                            current_linear_out_tensor = per_base_linear_out.get(base_name)
                             if isinstance(current_linear_out_tensor, _AbsentProjectionSentinel):
                                 # Bridge explicitly declared this projection absent (e.g.,
                                 # v_proj on Gemma4 global-attention K=V layers).  Skip it.
