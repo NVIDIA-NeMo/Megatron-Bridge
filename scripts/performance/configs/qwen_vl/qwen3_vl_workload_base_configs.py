@@ -101,7 +101,9 @@ QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_B200_BF16 = replace(
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=2,
     expert_model_parallel_size=8,
-    moe_a2a_overlap=True,
+    # Qwen3-VL builds a multimodal wrapper around GPTModel; MCore's combined
+    # 1F1B MoE A2A-overlap schedule currently supports GPTModel directly only.
+    moe_a2a_overlap=False,
 )
 
 
