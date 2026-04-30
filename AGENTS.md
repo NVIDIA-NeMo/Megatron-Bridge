@@ -46,9 +46,9 @@ etc.). Read the relevant `SKILL.md` before starting a task it covers.
 
 ## Code Style
 
-Lint and format are enforced by pre-commit hooks (ruff). See `ruff.toml` for
+Lint and format are enforced by pre-commit hooks (ruff). See @ruff.toml for
 the authoritative rules. For judgment calls not covered by tooling, see
-`skills/code-style/SKILL.md`. Key points the linter cannot catch:
+@skills/code-style/SKILL.md. Key points the linter cannot catch:
 
 - Type hints required on all public API functions (`X | None`, not `Optional[X]`)
 - Google-style docstrings on public classes and functions
@@ -61,7 +61,7 @@ the authoritative rules. For judgment calls not covered by tooling, see
 
 ## Contributing
 
-See `CONTRIBUTING.md` for the full contributor guide, including:
+See @CONTRIBUTING.md for the full contributor guide, including:
 
 - Commit and PR title format (`[{areas}] {type}: {description}`)
 - PR labeling taxonomy (type, area, state, risk labels)

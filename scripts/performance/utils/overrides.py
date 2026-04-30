@@ -141,12 +141,11 @@ def _set_recompute_overrides(
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
-
     if recompute_num_layers is not None:
         recipe.model.recompute_granularity = "full"
         recipe.model.recompute_method = "block"
         recipe.model.recompute_num_layers = recompute_num_layers
-    elif recompute_modules is not None:
+    if recompute_modules is not None:
         recipe.model.recompute_modules = recompute_modules
         recipe.model.recompute_granularity = "selective"
     # No else: if the caller has no recompute configuration to apply, leave
@@ -452,6 +451,10 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
     elif hasattr(recipe.model, "moe_token_dispatcher_type"):
         recipe.model.moe_token_dispatcher_type = "alltoall"
+
+    pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
+    if args.task == "lora" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
+        recipe.dist.use_tp_pp_dp_mapping = True
 
     return recipe
 
