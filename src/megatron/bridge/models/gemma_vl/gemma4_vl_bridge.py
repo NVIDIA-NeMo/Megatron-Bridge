@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.peft_bridge import ABSENT_PROJECTION
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     FusedExpertMapping,
@@ -42,12 +41,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     split_qkv_weights,
 )
+from megatron.bridge.models.conversion.peft_bridge import ABSENT_PROJECTION
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_local_base_freq_from_hf,
     rope_theta_from_hf,
 )
 from megatron.bridge.models.gemma.gemma4_bridge import _Gemma4QKVMapping, _infer_attn_pattern
-from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider
 from megatron.bridge.models.gemma_vl.gemma4_vl_provider import Gemma4VLModelProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
@@ -191,16 +190,13 @@ class Gemma4VLBridge(MegatronModelBridge):
                         router_scale = hf_state_dict[scale_key].float().to(tensor.device)
                         ln2_weight = hf_state_dict[ln2_key].float().to(tensor.device)
                         hidden_size = tensor.shape[-1]
-                        scalar_root_size = hidden_size ** -0.5
+                        scalar_root_size = hidden_size**-0.5
                         fusion_factor = router_scale * scalar_root_size / ln2_weight  # [hidden]
                         tensor = (tensor.float() / fusion_factor.unsqueeze(0)).to(tensor.dtype)
 
             # ── Shared-expert gate/up inverse: mg = hf * (pffl / pffl2)
             #                                  hf = mg * (pffl2 / pffl)
-            elif (
-                hf_name.endswith(("mlp.gate_proj.weight", "mlp.up_proj.weight"))
-                and "experts" not in hf_name
-            ):
+            elif hf_name.endswith(("mlp.gate_proj.weight", "mlp.up_proj.weight")) and "experts" not in hf_name:
                 layer_match = re.search(r"layers\.(\d+)\.", hf_name)
                 if layer_match:
                     layer_idx = layer_match.group(1)
@@ -253,9 +249,7 @@ class Gemma4VLBridge(MegatronModelBridge):
 
         return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
 
-    def _fuse_router_weight(
-        self, hf_param: str, hf_state_dict: Mapping[str, torch.Tensor]
-    ) -> torch.Tensor:
+    def _fuse_router_weight(self, hf_param: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
         """Fuse router preprocessing into projection weight (VLM version)."""
         proj_weight = hf_state_dict[hf_param]
 
@@ -275,7 +269,7 @@ class Gemma4VLBridge(MegatronModelBridge):
         router_scale = hf_state_dict[scale_key].float()
         ln2_weight = hf_state_dict[ln2_key].float()
         hidden_size = proj_weight.shape[-1]
-        scalar_root_size = hidden_size ** -0.5
+        scalar_root_size = hidden_size**-0.5
 
         fusion_factor = router_scale * scalar_root_size / ln2_weight
         fused_weight = proj_weight.float() * fusion_factor.unsqueeze(0)
@@ -322,7 +316,6 @@ class Gemma4VLBridge(MegatronModelBridge):
             # === Embeddings ===
             "language_model.embedding.word_embeddings.weight": "model.language_model.embed_tokens.weight",
             "language_model.decoder.final_layernorm.weight": "model.language_model.norm.weight",
-
             # === Per-layer attention ===
             "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": (
                 "model.language_model.layers.*.input_layernorm.weight"
@@ -342,7 +335,6 @@ class Gemma4VLBridge(MegatronModelBridge):
             "language_model.decoder.layers.*.self_attention.linear_proj.post_layernorm.weight": (
                 "model.language_model.layers.*.post_attention_layernorm.weight"
             ),
-
             # === Post-feedforward layernorm ===
             "language_model.decoder.layers.*.post_ffn_layernorm.weight": (
                 "model.language_model.layers.*.post_feedforward_layernorm.weight"
@@ -359,9 +351,7 @@ class Gemma4VLBridge(MegatronModelBridge):
                 "model.language_model.layers.*.post_feedforward_layernorm_1.weight"
             ),
             # MoE Router
-            "language_model.decoder.layers.*.mlp.router.weight": (
-                "model.language_model.layers.*.router.proj.weight"
-            ),
+            "language_model.decoder.layers.*.mlp.router.weight": ("model.language_model.layers.*.router.proj.weight"),
         }
 
         mapping_list = []
@@ -378,61 +368,65 @@ class Gemma4VLBridge(MegatronModelBridge):
             )
         )
 
-        mapping_list.extend([
-            # === Dense MLP → Shared Expert gated FC1 ===
-            GatedMLPMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                gate="model.language_model.layers.*.mlp.gate_proj.weight",
-                up="model.language_model.layers.*.mlp.up_proj.weight",
-            ),
-            # === MoE Experts (fused format) ===
-            FusedGatedExpertMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                hf_param="model.language_model.layers.*.experts.gate_up_proj",
-            ),
-            FusedExpertMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                hf_param="model.language_model.layers.*.experts.down_proj",
-            ),
-            # === Router per-expert scaling (buffer) ===
-            ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.router.per_expert_scale",
-                hf_param="model.language_model.layers.*.router.per_expert_scale",
-            ),
-            # === Router input scale (fused into router weight on import; stored as buffer) ===
-            ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.router.scale",
-                hf_param="model.language_model.layers.*.router.scale",
-            ),
-            # === Dense/shared-expert pre-norm (fused into gate/up on import; stored as buffer) ===
-            ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.pffl_weight",
-                hf_param="model.language_model.layers.*.pre_feedforward_layernorm.weight",
-            ),
-            # === Post-MoE layernorm ===
-            ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.post_moe_layernorm.weight",
-                hf_param="model.language_model.layers.*.post_feedforward_layernorm_2.weight",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                # === Dense MLP → Shared Expert gated FC1 ===
+                GatedMLPMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                    gate="model.language_model.layers.*.mlp.gate_proj.weight",
+                    up="model.language_model.layers.*.mlp.up_proj.weight",
+                ),
+                # === MoE Experts (fused format) ===
+                FusedGatedExpertMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                    hf_param="model.language_model.layers.*.experts.gate_up_proj",
+                ),
+                FusedExpertMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                    hf_param="model.language_model.layers.*.experts.down_proj",
+                ),
+                # === Router per-expert scaling (buffer) ===
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.router.per_expert_scale",
+                    hf_param="model.language_model.layers.*.router.per_expert_scale",
+                ),
+                # === Router input scale (fused into router weight on import; stored as buffer) ===
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.router.scale",
+                    hf_param="model.language_model.layers.*.router.scale",
+                ),
+                # === Dense/shared-expert pre-norm (fused into gate/up on import; stored as buffer) ===
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.pffl_weight",
+                    hf_param="model.language_model.layers.*.pre_feedforward_layernorm.weight",
+                ),
+                # === Post-MoE layernorm ===
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.post_moe_layernorm.weight",
+                    hf_param="model.language_model.layers.*.post_feedforward_layernorm_2.weight",
+                ),
+            ]
+        )
 
-        mapping_list.extend([
-            # === Vision tower (replicated — all weights pass through) ===
-            ReplicatedMapping(
-                megatron_param="vision_tower.**",
-                hf_param="model.vision_tower.**",
-            ),
-            # === Multimodal embedder (replicated) ===
-            ReplicatedMapping(
-                megatron_param="embed_vision.**",
-                hf_param="model.embed_vision.**",
-            ),
-            # === Per-layer output scaling (buffer, common to both MoE and dense) ===
-            ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.layer_scalar",
-                hf_param="model.language_model.layers.*.layer_scalar",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                # === Vision tower (replicated — all weights pass through) ===
+                ReplicatedMapping(
+                    megatron_param="vision_tower.**",
+                    hf_param="model.vision_tower.**",
+                ),
+                # === Multimodal embedder (replicated) ===
+                ReplicatedMapping(
+                    megatron_param="embed_vision.**",
+                    hf_param="model.embed_vision.**",
+                ),
+                # === Per-layer output scaling (buffer, common to both MoE and dense) ===
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.layer_scalar",
+                    hf_param="model.language_model.layers.*.layer_scalar",
+                ),
+            ]
+        )
 
         return MegatronMappingRegistry(*mapping_list)
 
@@ -457,10 +451,7 @@ class Gemma4VLBridge(MegatronModelBridge):
         qkv_total_sliding = config.num_attention_heads + 2 * config.num_query_groups
         expected_numel_sliding = qkv_total_sliding * config.kv_channels * (feature_dim or 1)
 
-        if (
-            linear_out_weight.numel() != expected_numel_sliding
-            and hasattr(config, "global_head_dim")
-        ):
+        if linear_out_weight.numel() != expected_numel_sliding and hasattr(config, "global_head_dim"):
             # Global attention layer — use per-layer override dimensions
             num_kv_global = config.num_global_key_value_heads
             head_size_global = config.global_head_dim
@@ -473,9 +464,7 @@ class Gemma4VLBridge(MegatronModelBridge):
                 hidden_size = config.hidden_size
                 attention_output_gate = getattr(config, "attention_output_gate", False)
 
-            q_out, k_out, _ = split_qkv_weights(
-                _GlobalAttnCfg(), linear_out_weight, feature_dim=feature_dim
-            )
+            q_out, k_out, _ = split_qkv_weights(_GlobalAttnCfg(), linear_out_weight, feature_dim=feature_dim)
             # v_proj is absent in HF global attention (K=V tying).  Return ABSENT_PROJECTION
             # so the caller knows this is intentional and not a bug (a missing key would
             # raise KeyError; None would hit the assert).

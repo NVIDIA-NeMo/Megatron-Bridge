@@ -1,5 +1,4 @@
 #!/bin/bash
-set -euo pipefail
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,7 +35,6 @@ set -euo pipefail
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-
 WORKSPACE=${WORKSPACE:-/workspace}
 
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gemma-4-26B-A4B}

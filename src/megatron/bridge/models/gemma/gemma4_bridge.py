@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,7 +36,6 @@ NOT supported
   requires per-layer ``ffn_hidden_size`` and Per-Layer Embeddings (PLE) in MCore.
 """
 
-import math
 import re
 from typing import Mapping
 
@@ -45,7 +44,6 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.peft_bridge import ABSENT_PROJECTION
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     FusedExpertMapping,
@@ -55,6 +53,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     split_qkv_weights,
 )
+from megatron.bridge.models.conversion.peft_bridge import ABSENT_PROJECTION
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_local_base_freq_from_hf,
     rope_theta_from_hf,
@@ -210,15 +209,12 @@ class Gemma4Bridge(MegatronModelBridge):
                         router_scale = hf_state_dict[scale_key].float().to(tensor.device)
                         ln2_weight = hf_state_dict[ln2_key].float().to(tensor.device)
                         hidden_size = tensor.shape[-1]
-                        scalar_root_size = hidden_size ** -0.5
+                        scalar_root_size = hidden_size**-0.5
                         fusion_factor = router_scale * scalar_root_size / ln2_weight
                         tensor = (tensor.float() / fusion_factor.unsqueeze(0)).to(tensor.dtype)
 
             # ── Shared-expert gate/up inverse: hf = mg * (pffl2 / pffl)
-            elif (
-                hf_name.endswith(("mlp.gate_proj.weight", "mlp.up_proj.weight"))
-                and "experts" not in hf_name
-            ):
+            elif hf_name.endswith(("mlp.gate_proj.weight", "mlp.up_proj.weight")) and "experts" not in hf_name:
                 layer_match = re.search(r"layers\.(\d+)\.", hf_name)
                 if layer_match:
                     layer_idx = layer_match.group(1)
@@ -275,9 +271,7 @@ class Gemma4Bridge(MegatronModelBridge):
 
         return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
 
-    def _fuse_router_weight(
-        self, hf_param: str, hf_state_dict: Mapping[str, torch.Tensor]
-    ) -> torch.Tensor:
+    def _fuse_router_weight(self, hf_param: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
         """Fuse router preprocessing into projection weight.
 
         HF router: logits = proj(rms_norm(x) * scale * scalar_root_size)
@@ -305,7 +299,7 @@ class Gemma4Bridge(MegatronModelBridge):
         router_scale = hf_state_dict[scale_key].float()  # [hidden]
         ln2_weight = hf_state_dict[ln2_key].float()  # [hidden]
         hidden_size = proj_weight.shape[-1]
-        scalar_root_size = hidden_size ** -0.5
+        scalar_root_size = hidden_size**-0.5
 
         # Compute fusion factor: scale * scalar_root_size / ln2_weight
         # This corrects for the difference between parameter-free rms_norm
@@ -364,51 +358,32 @@ class Gemma4Bridge(MegatronModelBridge):
             # === Embeddings ===
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
-
             # === Per-layer attention ===
             # TE backend: layernorm fused into QKV linear
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": (
-                "model.layers.*.input_layernorm.weight"
-            ),
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": ("model.layers.*.input_layernorm.weight"),
             # Local (non-TE) backend fallback
-            "decoder.layers.*.input_layernorm.weight": (
-                "model.layers.*.input_layernorm.weight"
-            ),
-            "decoder.layers.*.self_attention.q_layernorm.weight": (
-                "model.layers.*.self_attn.q_norm.weight"
-            ),
-            "decoder.layers.*.self_attention.k_layernorm.weight": (
-                "model.layers.*.self_attn.k_norm.weight"
-            ),
-            "decoder.layers.*.self_attention.linear_proj.weight": (
-                "model.layers.*.self_attn.o_proj.weight"
-            ),
+            "decoder.layers.*.input_layernorm.weight": ("model.layers.*.input_layernorm.weight"),
+            "decoder.layers.*.self_attention.q_layernorm.weight": ("model.layers.*.self_attn.q_norm.weight"),
+            "decoder.layers.*.self_attention.k_layernorm.weight": ("model.layers.*.self_attn.k_norm.weight"),
+            "decoder.layers.*.self_attention.linear_proj.weight": ("model.layers.*.self_attn.o_proj.weight"),
             # Post-attention RMSNorm (Gemma 4 applies this after attention, before residual)
             "decoder.layers.*.self_attention.linear_proj.post_layernorm.weight": (
                 "model.layers.*.post_attention_layernorm.weight"
             ),
-
             # === Pre-MLP layernorm ===
             # MCore uses a single pre_mlp_layernorm for both shared and routed experts.
             # Gemma 4 has separate pre-norms: pre_feedforward_layernorm (dense)
             # and pre_feedforward_layernorm_2 (MoE).  We map the MoE pre-norm since
             # MCore's router also receives the normed input.
-            "decoder.layers.*.pre_mlp_layernorm.weight": (
-                "model.layers.*.pre_feedforward_layernorm_2.weight"
-            ),
-
+            "decoder.layers.*.pre_mlp_layernorm.weight": ("model.layers.*.pre_feedforward_layernorm_2.weight"),
             # === Dense MLP → Shared Expert ===
-            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": (
-                "model.layers.*.mlp.down_proj.weight"
-            ),
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": ("model.layers.*.mlp.down_proj.weight"),
             # Post-dense-MLP RMSNorm (Gemma 4: post_feedforward_layernorm_1)
             "decoder.layers.*.mlp.shared_experts.linear_fc2.post_layernorm.weight": (
                 "model.layers.*.post_feedforward_layernorm_1.weight"
             ),
-
             # === MoE Router ===
             "decoder.layers.*.mlp.router.weight": "model.layers.*.router.proj.weight",
-
             # === MoE Router ===
             # router.scale is fused into router.weight on import; stored as an inert buffer
             # (Gemma4TopKRouter.scale) so it round-trips on export without needing the
@@ -419,73 +394,67 @@ class Gemma4Bridge(MegatronModelBridge):
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
-        mapping_list.extend([
-            # === QKV: Combine Q, K, V into single QKV matrix ===
-            # Uses _Gemma4QKVMapping which sets allow_hf_name_mismatch=True so
-            # the loader doesn't skip global layers where v_proj is absent (K=V).
-            # V is synthesized from K in maybe_modify_loaded_hf_weight.
-            _Gemma4QKVMapping(
-                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                q="model.layers.*.self_attn.q_proj.weight",
-                k="model.layers.*.self_attn.k_proj.weight",
-                v="model.layers.*.self_attn.v_proj.weight",
-            ),
-
-            # === Dense MLP → Shared Expert gated FC1 ===
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                gate="model.layers.*.mlp.gate_proj.weight",
-                up="model.layers.*.mlp.up_proj.weight",
-            ),
-
-            # === MoE Experts (fused format) ===
-            # gate_up_proj: [num_experts, 2*moe_intermediate, hidden]
-            FusedGatedExpertMapping(
-                megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                hf_param="model.layers.*.experts.gate_up_proj",
-            ),
-            # down_proj: [num_experts, hidden, moe_intermediate]
-            FusedExpertMapping(
-                megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                hf_param="model.layers.*.experts.down_proj",
-            ),
-
-            # === Per-layer output scaling (buffer) ===
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.layer_scalar",
-                hf_param="model.layers.*.layer_scalar",
-            ),
-
-            # === Router per-expert scaling (buffer on Gemma4TopKRouter) ===
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.mlp.router.per_expert_scale",
-                hf_param="model.layers.*.router.per_expert_scale",
-            ),
-
-            # === Router input scale (fused into router weight on import; stored as buffer) ===
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.mlp.router.scale",
-                hf_param="model.layers.*.router.scale",
-            ),
-
-            # === Dense/shared-expert pre-norm (fused into gate/up on import; stored as buffer) ===
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.pffl_weight",
-                hf_param="model.layers.*.pre_feedforward_layernorm.weight",
-            ),
-
-            # === Post-MoE layernorm (applied to routed expert output before combining) ===
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.mlp.post_moe_layernorm.weight",
-                hf_param="model.layers.*.post_feedforward_layernorm_2.weight",
-            ),
-
-            # === Post-feedforward layernorm (after combined dense+MoE, before residual) ===
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.post_ffn_layernorm.weight",
-                hf_param="model.layers.*.post_feedforward_layernorm.weight",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                # === QKV: Combine Q, K, V into single QKV matrix ===
+                # Uses _Gemma4QKVMapping which sets allow_hf_name_mismatch=True so
+                # the loader doesn't skip global layers where v_proj is absent (K=V).
+                # V is synthesized from K in maybe_modify_loaded_hf_weight.
+                _Gemma4QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="model.layers.*.self_attn.q_proj.weight",
+                    k="model.layers.*.self_attn.k_proj.weight",
+                    v="model.layers.*.self_attn.v_proj.weight",
+                ),
+                # === Dense MLP → Shared Expert gated FC1 ===
+                GatedMLPMapping(
+                    megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                    gate="model.layers.*.mlp.gate_proj.weight",
+                    up="model.layers.*.mlp.up_proj.weight",
+                ),
+                # === MoE Experts (fused format) ===
+                # gate_up_proj: [num_experts, 2*moe_intermediate, hidden]
+                FusedGatedExpertMapping(
+                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                    hf_param="model.layers.*.experts.gate_up_proj",
+                ),
+                # down_proj: [num_experts, hidden, moe_intermediate]
+                FusedExpertMapping(
+                    megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                    hf_param="model.layers.*.experts.down_proj",
+                ),
+                # === Per-layer output scaling (buffer) ===
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.layer_scalar",
+                    hf_param="model.layers.*.layer_scalar",
+                ),
+                # === Router per-expert scaling (buffer on Gemma4TopKRouter) ===
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.mlp.router.per_expert_scale",
+                    hf_param="model.layers.*.router.per_expert_scale",
+                ),
+                # === Router input scale (fused into router weight on import; stored as buffer) ===
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.mlp.router.scale",
+                    hf_param="model.layers.*.router.scale",
+                ),
+                # === Dense/shared-expert pre-norm (fused into gate/up on import; stored as buffer) ===
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.pffl_weight",
+                    hf_param="model.layers.*.pre_feedforward_layernorm.weight",
+                ),
+                # === Post-MoE layernorm (applied to routed expert output before combining) ===
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.mlp.post_moe_layernorm.weight",
+                    hf_param="model.layers.*.post_feedforward_layernorm_2.weight",
+                ),
+                # === Post-feedforward layernorm (after combined dense+MoE, before residual) ===
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.post_ffn_layernorm.weight",
+                    hf_param="model.layers.*.post_feedforward_layernorm.weight",
+                ),
+            ]
+        )
 
         return MegatronMappingRegistry(*mapping_list)
 
@@ -510,10 +479,7 @@ class Gemma4Bridge(MegatronModelBridge):
         qkv_total_sliding = config.num_attention_heads + 2 * config.num_query_groups
         expected_numel_sliding = qkv_total_sliding * config.kv_channels * (feature_dim or 1)
 
-        if (
-            linear_out_weight.numel() != expected_numel_sliding
-            and hasattr(config, "global_head_dim")
-        ):
+        if linear_out_weight.numel() != expected_numel_sliding and hasattr(config, "global_head_dim"):
             # Global attention layer — use per-layer override dimensions
             num_kv_global = config.num_global_key_value_heads
             head_size_global = config.global_head_dim
@@ -526,9 +492,7 @@ class Gemma4Bridge(MegatronModelBridge):
                 hidden_size = config.hidden_size
                 attention_output_gate = getattr(config, "attention_output_gate", False)
 
-            q_out, k_out, _ = split_qkv_weights(
-                _GlobalAttnCfg(), linear_out_weight, feature_dim=feature_dim
-            )
+            q_out, k_out, _ = split_qkv_weights(_GlobalAttnCfg(), linear_out_weight, feature_dim=feature_dim)
             # v_proj is absent in HF global attention (K=V tying).  Return ABSENT_PROJECTION
             # so the caller knows this is intentional and not a bug (a missing key would
             # raise KeyError; None would hit the assert).
