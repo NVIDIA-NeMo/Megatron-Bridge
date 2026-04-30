@@ -78,6 +78,12 @@ TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParalle
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 
+def is_modelopt_linear(m: nn.Module) -> bool:
+    """Return whether a module is ModelOpt's local Megatron Linear."""
+    cls = type(m)
+    return cls.__name__ == "Linear" and cls.__module__ == "megatron.core.post_training.modelopt.layers"
+
+
 @dataclass(frozen=True)
 class AdapterAttributes:
     """Container for base linear adapter attributes."""
@@ -125,6 +131,16 @@ def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) ->
     disable_tensor_parallel_comm = getattr(m, "parallel_mode", "") is None or getattr(m, "explicit_expert_comm", False)
     if disable_tensor_parallel_comm:
         disable_sequence_parallel_comm = True
+
+    if is_modelopt_linear(m):
+        return AdapterAttributes(
+            input_is_parallel=False,
+            in_features=m.in_features,
+            out_features=m.out_features,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=False,
+        )
 
     if is_expert:
         tp_size = parallel_state.get_expert_tensor_parallel_world_size()
