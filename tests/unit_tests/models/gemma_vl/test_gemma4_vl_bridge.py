@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 from unittest.mock import Mock
 
 import pytest
@@ -36,8 +35,8 @@ def mock_text_config_moe():
     config = Mock(spec=[])
     config.num_hidden_layers = 62
     config.hidden_size = 2816
-    config.intermediate_size = 2112         # shared expert FFN size
-    config.moe_intermediate_size = 704      # routed expert FFN size
+    config.intermediate_size = 2112  # shared expert FFN size
+    config.moe_intermediate_size = 704  # routed expert FFN size
     config.num_attention_heads = 8
     config.num_key_value_heads = 4
     config.head_dim = 256
@@ -49,7 +48,7 @@ def mock_text_config_moe():
     config.max_position_embeddings = 131072
     config.sliding_window = 1024
     config.rope_theta = 1000000.0
-    config.query_pre_attn_scalar = 1.0      # not used for scale (softmax_scale=1.0)
+    config.query_pre_attn_scalar = 1.0  # not used for scale (softmax_scale=1.0)
     config.rope_scaling = None
     config.rope_local_base_freq = 10000.0
     config.rope_parameters = {"rope_local_base_freq": 10000.0}
@@ -60,11 +59,11 @@ def mock_text_config_moe():
     config.num_experts = 128
     config.top_k_experts = 8
     # Attention pattern
-    config.layer_types = ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
+    config.layer_types = (
+        ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
+    )
     config.final_logit_softcapping = 30.0
     return config
-
-
 
 
 @pytest.fixture

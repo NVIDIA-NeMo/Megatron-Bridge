@@ -336,6 +336,7 @@ class _Gemma4ProcessorBase:
     create_multiturn_loss_mask_by_search calls tokenizer(text, add_special_tokens=False)
     so _Tok must be callable.
     """
+
     chat_template = "dummy"
 
     class _Tok:

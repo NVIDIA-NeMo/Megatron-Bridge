@@ -26,10 +26,9 @@ Key differences from Gemma 3:
 """
 
 import copy
-import math
 from dataclasses import dataclass, field
 from functools import lru_cache, partial
-from typing import Callable, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Optional, Tuple, Union
 
 import torch
 from megatron.core.activations import fast_gelu
@@ -53,6 +52,10 @@ from megatron.bridge.models.gemma.gemma3_provider import (
 from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.import_utils import safe_import_from
+
+
+if TYPE_CHECKING:
+    from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 
 
 HAVE_TE = safe_import_from("megatron.core.extensions.transformer_engine", "TENorm")[1]
@@ -124,9 +127,7 @@ class Gemma4ModelProvider(GPTModelProvider):
     # Do not change
     flash_decode: bool = False
     transformer_layer_spec: Union[Callable, object] = field(
-        default_factory=lambda: partial(
-            _gemma4_block_spec, use_transformer_engine=HAVE_TE
-        )
+        default_factory=lambda: partial(_gemma4_block_spec, use_transformer_engine=HAVE_TE)
     )
     scatter_embedding_sequence_parallel: bool = True
 
@@ -232,9 +233,7 @@ class Gemma4TransformerLayer(TransformerLayer):
             normed = normed + mlp_bias
         hidden_states = (residual + normed) * self.layer_scalar
 
-        output = make_viewless_tensor(
-            inp=hidden_states, requires_grad=hidden_states.requires_grad, keep_graph=True
-        )
+        output = make_viewless_tensor(inp=hidden_states, requires_grad=hidden_states.requires_grad, keep_graph=True)
         return output
 
 
@@ -334,7 +333,6 @@ class Gemma4OutputLayer(torch.nn.Module):
         output, bias = super().forward(*args, **kwargs)
         output = _logit_softcapping(output, self.config.final_logit_softcapping)
         return output, bias
-
 
 
 def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") -> None:
@@ -488,23 +486,11 @@ class Gemma4SelfAttention(SelfAttention):
         pattern = self.config.interleaved_attn_pattern
         total_layers = self.config.num_layers
         if is_global:
-            type_total = sum(
-                1 for i in range(1, total_layers + 1)
-                if not _is_local_attn_layer(i, pattern)
-            )
-            type_rank = sum(
-                1 for i in range(1, self.layer_number)
-                if not _is_local_attn_layer(i, pattern)
-            )
+            type_total = sum(1 for i in range(1, total_layers + 1) if not _is_local_attn_layer(i, pattern))
+            type_rank = sum(1 for i in range(1, self.layer_number) if not _is_local_attn_layer(i, pattern))
         else:
-            type_total = sum(
-                1 for i in range(1, total_layers + 1)
-                if _is_local_attn_layer(i, pattern)
-            )
-            type_rank = sum(
-                1 for i in range(1, self.layer_number)
-                if _is_local_attn_layer(i, pattern)
-            )
+            type_total = sum(1 for i in range(1, total_layers + 1) if _is_local_attn_layer(i, pattern))
+            type_rank = sum(1 for i in range(1, self.layer_number) if _is_local_attn_layer(i, pattern))
 
         def _remap(t):
             if isinstance(t, _ST):
@@ -513,11 +499,7 @@ class Gemma4SelfAttention(SelfAttention):
                     return t
                 new_global_shape = (type_total,) + t.global_shape[1:]
                 new_global_offset = (type_rank,) + t.global_offset[1:]
-                new_frags = (
-                    (type_total,) + t.axis_fragmentations[1:]
-                    if t.axis_fragmentations is not None
-                    else None
-                )
+                new_frags = (type_total,) + t.axis_fragmentations[1:] if t.axis_fragmentations is not None else None
                 return _dataclasses.replace(
                     t,
                     global_shape=new_global_shape,
@@ -681,8 +663,7 @@ class Gemma4RotaryEmbedding(RotaryEmbedding):
         dim = int(global_kv_channels * global_rotary_percent)  # 128
         device = self.inv_freq.device
         self.inv_freq = 1.0 / (
-            rotary_base
-            ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / global_kv_channels)
+            rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / global_kv_channels)
         )
 
         # Local RoPE: full rotary with low theta

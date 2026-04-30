@@ -198,7 +198,7 @@ def _process_default_inputs(processor, image_path, prompt):
         inputs.get("image_grid_thw"),
         inputs.get("image_sizes"),
         inputs.get("mm_token_type_ids"),
-        inputs.get("image_position_ids")
+        inputs.get("image_position_ids"),
     )
 
 
@@ -214,8 +214,7 @@ def _process_gemma4_inputs(processor, image_path, prompt):
     if image_path:
         image = load_image(image_path)
         has_chat_template = (
-            hasattr(processor, "apply_chat_template")
-            and getattr(processor, "chat_template", None) is not None
+            hasattr(processor, "apply_chat_template") and getattr(processor, "chat_template", None) is not None
         )
         if has_chat_template:
             messages = [

@@ -14,8 +14,8 @@
 
 """Unit tests for Gemma4ModelProvider (text-only LLM provider)."""
 
-import torch
 import pytest
+import torch
 
 from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider

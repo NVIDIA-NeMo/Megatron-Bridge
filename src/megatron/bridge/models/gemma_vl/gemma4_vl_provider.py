@@ -14,7 +14,7 @@
 
 """Gemma 4 VL model provider."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel

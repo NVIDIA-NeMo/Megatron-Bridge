@@ -14,9 +14,8 @@
 
 """Unit tests for Gemma4VLModel helpers (no GPU / Megatron distributed required)."""
 
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
-import pytest
 import torch
 
 from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
@@ -86,7 +85,7 @@ class TestComputeAttentionMask:
             for j in range(6):
                 expected_blocked = j > i
                 assert mask[0, 0, i, j].item() == expected_blocked, (
-                    f"pos ({i},{j}): expected blocked={expected_blocked}, got {mask[0,0,i,j].item()}"
+                    f"pos ({i},{j}): expected blocked={expected_blocked}, got {mask[0, 0, i, j].item()}"
                 )
 
     def test_image_block_gets_bidirectional_attention(self):
@@ -101,9 +100,7 @@ class TestComputeAttentionMask:
         # Image positions 2, 3, 4 should attend to each other (bidirectional = not blocked)
         for i in range(2, 5):
             for j in range(2, 5):
-                assert not mask[0, 0, i, j].item(), (
-                    f"Image pos ({i},{j}) should be unblocked (bidirectional)"
-                )
+                assert not mask[0, 0, i, j].item(), f"Image pos ({i},{j}) should be unblocked (bidirectional)"
 
     def test_text_after_image_cannot_attend_back_to_image_beyond_causal(self):
         """Text token after image block uses causal attention (cannot look into future)."""

@@ -26,6 +26,7 @@ from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
+
 _HF_PATH = "google/gemma-4-26B-A4B-it"
 
 
@@ -128,9 +129,9 @@ def gemma4_vl_26b_sft_config(hf_path: str = _HF_PATH) -> ConfigContainer:
 
     # Reduce overhead to fit within 30-min wall time.
     # 40 iters × ~15s + 5 min init + 4 evals × 35s = ~20 min → 10 min for checkpoint save.
-    cfg.train.train_iters = 40         # override common (was 50)
+    cfg.train.train_iters = 40  # override common (was 50)
     cfg.validation.eval_interval = 10  # override common (was 5)
-    cfg.validation.eval_iters = 5      # override common (was 10)
+    cfg.validation.eval_iters = 5  # override common (was 10)
 
     # Optimizer — lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(

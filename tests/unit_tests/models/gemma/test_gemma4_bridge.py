@@ -14,7 +14,6 @@
 
 """Unit tests for Gemma4Bridge (text-only CausalLM bridge)."""
 
-import math
 from unittest.mock import Mock
 
 import pytest
@@ -38,8 +37,8 @@ def mock_hf_config():
     cfg = Mock(spec=[])
     cfg.num_hidden_layers = 62
     cfg.hidden_size = 2816
-    cfg.intermediate_size = 2112        # shared expert FFN
-    cfg.moe_intermediate_size = 704     # routed expert FFN
+    cfg.intermediate_size = 2112  # shared expert FFN
+    cfg.moe_intermediate_size = 704  # routed expert FFN
     cfg.num_attention_heads = 8
     cfg.num_key_value_heads = 4
     cfg.head_dim = 256
@@ -141,7 +140,7 @@ class TestGemma4BridgeProviderBridge:
         # Should be (local_freq, global_freq) tuple
         assert isinstance(provider.rotary_base, tuple)
         assert len(provider.rotary_base) == 2
-        assert provider.rotary_base[0] == 10000.0   # rope_local_base_freq
+        assert provider.rotary_base[0] == 10000.0  # rope_local_base_freq
         assert provider.rotary_base[1] == 1000000.0  # rope_theta
 
     def test_softmax_scale_is_one(self, bridge, mock_pretrained):
@@ -285,7 +284,7 @@ class TestMaybeModifyLoadedHFWeight:
 
         # Verify: fused = orig * (scale * hidden^-0.5 / ln2_weight)
         # scale=1, ln2_weight=2.0 → factor = 1 * hidden^-0.5 / 2
-        expected_factor = 1.0 * (hidden ** -0.5) / 2.0
+        expected_factor = 1.0 * (hidden**-0.5) / 2.0
         expected = (sd[hf_param].float() * expected_factor).to(sd[hf_param].dtype)
         torch.testing.assert_close(result, expected)
 
@@ -367,7 +366,7 @@ class TestMaybeModifyConvertedHFWeight:
         ref_sd = self._make_ref_sd(hidden=hidden)
 
         # Simulate fused router weight (as it would be after import)
-        factor = 1.0 * (hidden ** -0.5) / 2.0
+        factor = 1.0 * (hidden**-0.5) / 2.0
         fused_router = (ref_sd["model.layers.0.router.proj.weight"].float() * factor).to(
             ref_sd["model.layers.0.router.proj.weight"].dtype
         )
@@ -378,7 +377,8 @@ class TestMaybeModifyConvertedHFWeight:
         torch.testing.assert_close(
             result["model.layers.0.router.proj.weight"],
             ref_sd["model.layers.0.router.proj.weight"],
-            atol=1e-5, rtol=1e-5,
+            atol=1e-5,
+            rtol=1e-5,
         )
 
     def test_shared_expert_gate_unfusion(self, bridge):
@@ -397,7 +397,8 @@ class TestMaybeModifyConvertedHFWeight:
         torch.testing.assert_close(
             result["model.layers.0.mlp.gate_proj.weight"],
             ref_sd["model.layers.0.mlp.gate_proj.weight"],
-            atol=1e-5, rtol=1e-5,
+            atol=1e-5,
+            rtol=1e-5,
         )
 
     def test_empty_hf_state_dict_passthrough(self, bridge):

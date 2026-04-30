@@ -19,7 +19,6 @@ Combines a HuggingFace Gemma4 vision tower + multimodal embedder with a
 Megatron-Core GPT language model (Gemma 4 MoE).
 """
 
-import types
 from typing import TYPE_CHECKING, Optional
 
 import torch
@@ -158,9 +157,7 @@ class Gemma4VLModel(MegatronModule):
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [batch, seq_len, hidden]
 
             if pixel_values is not None:
-                image_features = self.get_image_features(
-                    pixel_values, image_position_ids=image_position_ids
-                )
+                image_features = self.get_image_features(pixel_values, image_position_ids=image_position_ids)
 
                 assert input_ids is not None
                 special_image_mask = (input_ids == self.config.image_token_id).unsqueeze(-1)

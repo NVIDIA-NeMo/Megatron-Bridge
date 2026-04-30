@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 
 from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider
 from megatron.bridge.models.gemma_vl.gemma4_vl_provider import Gemma4VLModelProvider
@@ -134,7 +133,6 @@ class TestInstallTiedKV:
 
     def test_install_tied_kv_skips_dense_model(self):
         """_install_tied_kv does nothing when num_moe_experts is None."""
-        import torch.nn as nn
         from megatron.bridge.models.gemma.gemma4_provider import (
             Gemma4ModelProvider,
             _install_tied_kv,
@@ -161,6 +159,7 @@ class TestInstallTiedKV:
     def test_install_tied_kv_marks_global_layers(self):
         """_install_tied_kv sets _tied_kv=True on global attention modules only."""
         import torch.nn as nn
+
         from megatron.bridge.models.gemma.gemma4_provider import (
             Gemma4ModelProvider,
             _install_tied_kv,
@@ -203,6 +202,4 @@ class TestInstallTiedKV:
         for layer in model.decoder.layers:
             is_global = layer.layer_number == 6  # pattern (5,1): layer 6 is global
             has_flag = getattr(layer.self_attention, "_tied_kv", False)
-            assert has_flag == is_global, (
-                f"Layer {layer.layer_number}: expected _tied_kv={is_global}, got {has_flag}"
-            )
+            assert has_flag == is_global, f"Layer {layer.layer_number}: expected _tied_kv={is_global}, got {has_flag}"
