@@ -6,7 +6,7 @@ Gemma 4 26B-A4B is a Mixture-of-Experts (MoE) VLM with a SigLIP vision encoder a
 
 ## Requirements
 
-Gemma 4 requires `transformers>=5.5.0`. The project lockfile pins an older version, so upgrade before running any script:
+Gemma 4 requires `transformers>=5.5.0`. To upgrade:
 
 ```bash
 uv pip install -q --upgrade 'transformers>=5.5.0' mistral_common
@@ -71,7 +71,7 @@ Use the instruction-tuned model (`-it`) for image+text queries — the base mode
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_to_megatron_generate_vlm.py \
     --hf_model_path google/gemma-4-26B-A4B-it \
-    --image_path "https://raw.githubusercontent.com/google-gemma/cookbook/refs/heads/main/Demos/sample-data/GoldenGate.png" \
+    --image_path "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg" \
     --prompt "What is shown in this image?" \
     --max_new_tokens 50 \
     --tp 4 --pp 2
@@ -94,14 +94,14 @@ Note: when loading a Megatron checkpoint for VLM inference, use the base model (
 
 See the [inference.sh](inference.sh) script for all three steps.
 
-**Expected output (Golden Gate image):**
+**Expected output (cat image):**
 ```
 ======== GENERATED TEXT OUTPUT ========
-Image: https://.../GoldenGate.png
+Image: https://.../pipeline-cat-chonk.jpeg
 Prompt: What is shown in this image?
-New tokens: This image shows the Golden Gate Bridge in San Francisco, California.
-The photo captures the iconic red suspension bridge spanning the Golden Gate
-strait, with the Marin Headlands visible in the background.
+New tokens: The image shows a large, fluffy orange and white cat sitting inside
+what appears to be a wire cage or kennel. The cat looks quite large and appears
+relaxed, with its paws tucked underneath its body.
 =======================================
 ```
 
@@ -140,8 +140,6 @@ For multi-node Slurm jobs, see [slurm_peft.sh](slurm_peft.sh). Default configura
 sbatch slurm_peft.sh
 ```
 
-> **Important:** LoRA fine-tuning of MoE models requires `EP > 1`. With `EP=1`, multiple TP ranks produce duplicate checkpoint keys for expert LoRA adapters (`CheckpointingException: Duplicate ShardedObject keys`). Setting `EP >= TP` (so that `DP >= EP`) satisfies this constraint.
-
 ### Recommended Configurations
 
 | Mode | TP | PP | EP | Nodes | Global Batch Size | Learning Rate | Notes |
@@ -152,30 +150,6 @@ sbatch slurm_peft.sh
 
 > **Note:** Do not use `recompute_granularity="full"`. Megatron's `CheckpointFunction` does not support non-tensor (tuple) arguments, causing a `TypeError` at runtime. Use `"selective"` instead.
 
-### Checkpoint Formats
-
-By default, SFT training produces a **`dp_reshardable`** checkpoint (`use_distributed_optimizer=True` is the Megatron default). This format embeds model weights inside the distributed optimizer's sharded parameter buffers. It is compact but **not loadable** by bridge inference or evaluation scripts (`bridge.load_megatron_model()` fails because model ShardedTensor keys are absent from the checkpoint metadata).
-
-To produce a **`torch_dist`** checkpoint (required for inference and evaluation), add these two flags:
-
-```
-optimizer.use_distributed_optimizer=False
-ddp.use_distributed_optimizer=False
-```
-
-| Format | Size per rank | Loadable for inference/eval |
-|--------|---------------|------------------------------|
-| `dp_reshardable` (default) | ~11 GB | No |
-| `torch_dist` | ~40–44 GB | Yes |
-
-> **Single-node TP=4,PP=2 save timeout:** When saving a `torch_dist` checkpoint with TP=4,PP=2 on a single node, each rank writes ~40–44 GB. Rank 0's shard takes ~14 minutes. The other ranks call the post-save barrier first and wait, triggering the default 10-minute NCCL watchdog. Add `TORCH_NCCL_ASYNC_ERROR_HANDLING=0` to prevent the watchdog from killing the process:
-> ```bash
-> TORCH_NCCL_ASYNC_ERROR_HANDLING=0 uv run --no-sync python -m torch.distributed.run ...
-> ```
-
-### Expert Parallelism Constraint
-
-For MoE models, EP must divide DP (data parallel degree), where `DP = world_size / (TP × PP)`. For example, with 8 GPUs, TP=2, PP=1: DP=4, so EP ∈ {1, 2, 4}. EP=1 is not allowed for LoRA (see above), so use EP=4 for single-node LoRA.
 
 ### Expected Training Dynamics
 
@@ -183,27 +157,59 @@ We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw
 
 ## Evaluation
 
-> **Prerequisite:** Evaluation scripts use `bridge.load_megatron_model()` which requires a **`torch_dist`** checkpoint. The default SFT configuration produces a `dp_reshardable` checkpoint (not loadable). To produce a loadable checkpoint, run SFT with `optimizer.use_distributed_optimizer=False ddp.use_distributed_optimizer=False`. See [Checkpoint Formats](#checkpoint-formats) above.
+After training, use [eval_sft_cord_v2.py](eval_sft_cord_v2.py) to verify the fine-tuned checkpoint on CORD-v2. It feeds the full conversation (image + prompt + ground-truth response) through the model in a single forward pass and reports per-example cross-entropy loss, token accuracy, and GT vs. predicted text.
 
-Two evaluation scripts are provided for measuring SFT quality on CORD-v2:
+Example invocation (single node, 8 GPUs). Replace `<JOB_ID>` with your training job ID:
 
-**Teacher-forced accuracy** (fast, measures token-level accuracy on the full validation set):
 ```bash
-python examples/models/vlm/gemma4_vl/eval_sft_cord_v2.py \
-    --megatron_model_path ${WORKSPACE}/results/gemma4_vl_sft_tp2_pp1_ep8/iter_0000040 \
-    --tp 4 --pp 2
-```
-
-**Autoregressive generation** (slow, generates output tokens and compares to ground truth):
-```bash
-python examples/models/vlm/gemma4_vl/eval_sft_autoregressive.py \
-    --megatron_model_path ${WORKSPACE}/results/gemma4_vl_sft_tp2_pp1_ep8/iter_0000040 \
-    --tp 4 --pp 2
+uv run python -m torch.distributed.run --nproc_per_node=8 \
+  examples/models/vlm/gemma4_vl/eval_sft_cord_v2.py \
+    --hf_model_path google/gemma-4-26B-A4B-it \
+    --megatron_model_path ${WORKSPACE}/results/gemma4_vl_sft_tp2_pp1_ep8_<JOB_ID> \
+    --tp 2 --pp 1 --ep 4 \
+    --num_examples 20
 ```
 
 For batch evaluation on Slurm, see [slurm_eval_sft.sh](slurm_eval_sft.sh).
 
-After 40 SFT iterations on CORD-v2, expected teacher-forced token accuracy is ~98%.
+After 100 SFT iterations on CORD-v2, expected teacher-forced token accuracy is ~98%.
+
+> **These scripts run one sample at a time and are intended only as sanity checks of the trained checkpoint.** For production inference, re-export the checkpoint to HF format using the export step in [conversion.sh](conversion.sh) and run with vLLM.
+
+## LoRA Merge
+
+After LoRA training, merge adapter weights back into the base Megatron checkpoint. The script reads the base checkpoint path from `run_config.yaml` inside the LoRA checkpoint directory, so `--pretrained` is usually not required. Match `--tp` and `--ep` to the parallelism used during training.
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=8 \
+  examples/peft/merge_lora.py \
+    --lora-checkpoint ${WORKSPACE}/results/gemma4_vl_lora_tp2_pp1_ep4_<JOB_ID>/iter_<NNNNNNNN> \
+    --hf-model-path google/gemma-4-26B-A4B-it \
+    --output ${WORKSPACE}/results/gemma4_vl_lora_tp2_pp1_ep4_<JOB_ID>_merged \
+    --tp 2 --pp 1 --ep 4
+```
+
+The merged checkpoint is a standard Megatron checkpoint that can be used for inference or re-exported to HF format using the export step in [conversion.sh](conversion.sh).
+
+If the node does not have enough GPU memory, add `--cpu` to load and merge entirely on CPU (no GPU required, but slower).
+
+## LoRA Adapter Export
+
+Export LoRA adapter weights to HuggingFace PEFT format (`adapter_config.json` + `adapter_model.safetensors`). This lightweight format can be shared and loaded with the `peft` library without distributing the full base model. No GPU required — runs entirely on CPU.
+
+```bash
+uv run python examples/conversion/adapter/export_adapter.py \
+  --hf-model-path google/gemma-4-26B-A4B-it \
+  --lora-checkpoint ${WORKSPACE}/results/gemma4_vl_lora_tp2_pp1_ep4_<JOB_ID>/iter_<NNNNNNNN> \
+  --output ${WORKSPACE}/results/gemma4_vl_lora_tp2_pp1_ep4_<JOB_ID>_adapter
+```
+
+The output directory contains:
+
+- `adapter_config.json` — LoRA configuration (rank, alpha, target modules)
+- `adapter_model.safetensors` — adapter weights only (~3.7 GB for rank-32 on all linear layers)
+
+> **Note:** Gemma 4 global-attention layers use K=V tying — there is no `v_proj` in the HF global-attention modules. The bridge automatically skips exporting the V adapter for those layers, so the exported adapter is compatible with `peft.PeftModel.from_pretrained`.
 
 ## Architecture Notes
 

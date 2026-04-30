@@ -16,10 +16,6 @@
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
 
-# gemma4 requires transformers>=5.5.0; the lockfile pins 5.3.0.
-# Upgrade first, then use --no-sync so uv run does not revert the upgrade.
-uv pip install -q --upgrade 'transformers>=5.5.0' mistral_common
-
 # Import HF → Megatron (base model)
 uv run --no-sync python examples/conversion/convert_checkpoints.py import \
     --hf-model google/gemma-4-26B-A4B \

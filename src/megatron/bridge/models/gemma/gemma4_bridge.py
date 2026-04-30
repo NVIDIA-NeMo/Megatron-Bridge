@@ -45,6 +45,7 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.peft_bridge import ABSENT_PROJECTION
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     FusedExpertMapping,
@@ -52,6 +53,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
+    split_qkv_weights,
 )
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_local_base_freq_from_hf,
@@ -486,6 +488,53 @@ class Gemma4Bridge(MegatronModelBridge):
         ])
 
         return MegatronMappingRegistry(*mapping_list)
+
+    def _split_qkv_linear_out_weight(self, megatron_model, linear_out_weight):
+        """Override for Gemma4 dual-attention: detect global vs sliding layers by tensor size.
+
+        Gemma4 interleaves sliding-window and full (global) attention layers with different
+        head configurations:
+          - Sliding:  kv_channels=256,         num_query_groups=num_key_value_heads
+          - Global:   global_head_dim=512,      num_global_key_value_heads=2, K=V tying
+
+        For global layers the linear_qkv LoRA output tensor is larger than the sliding
+        expectation.  We detect this and re-split using the global head dimensions.
+        For global layers ``v_proj`` is set to ``ABSENT_PROJECTION`` because HF global
+        attention has no v_proj weight (K=V tying); the export loop skips it.
+        """
+        model = megatron_model[0] if isinstance(megatron_model, list) else megatron_model
+        config = model.config
+        feature_dim = linear_out_weight.shape[-1] if linear_out_weight.ndim == 2 else None
+
+        # Expected numel for a sliding-attention layer
+        qkv_total_sliding = config.num_attention_heads + 2 * config.num_query_groups
+        expected_numel_sliding = qkv_total_sliding * config.kv_channels * (feature_dim or 1)
+
+        if (
+            linear_out_weight.numel() != expected_numel_sliding
+            and hasattr(config, "global_head_dim")
+        ):
+            # Global attention layer — use per-layer override dimensions
+            num_kv_global = config.num_global_key_value_heads
+            head_size_global = config.global_head_dim
+
+            # Lightweight proxy: split_qkv_weights only reads these four attributes
+            class _GlobalAttnCfg:
+                num_attention_heads = config.num_attention_heads
+                num_query_groups = num_kv_global
+                kv_channels = head_size_global
+                hidden_size = config.hidden_size
+                attention_output_gate = getattr(config, "attention_output_gate", False)
+
+            q_out, k_out, _ = split_qkv_weights(
+                _GlobalAttnCfg(), linear_out_weight, feature_dim=feature_dim
+            )
+            # v_proj is absent in HF global attention (K=V tying).  Return ABSENT_PROJECTION
+            # so the caller knows this is intentional and not a bug (a missing key would
+            # raise KeyError; None would hit the assert).
+            return {"q_proj": q_out, "k_proj": k_out, "v_proj": ABSENT_PROJECTION}
+
+        return super()._split_qkv_linear_out_weight(megatron_model, linear_out_weight)
 
 
 def _infer_attn_pattern(layer_types: list[str]) -> tuple[int, int]:
