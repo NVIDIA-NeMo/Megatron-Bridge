@@ -39,7 +39,7 @@ Examples:
             --megatron-path /path/to/checkpoints/ar_to_dlm_8b \\
             --hf-model mistralai/Ministral-3-8B-Base-2512 \\
             --prompts "Prompt one" --prompts "Prompt two" \\
-            --gen-length 256 --block-length 32 --diffusion-steps 256
+            --gen-length 256 --block-length 32 --steps-per-block 32
 """
 
 import argparse
@@ -106,10 +106,10 @@ def parse_args():
         help="Denoising block size (dLLM mode)",
     )
     parser.add_argument(
-        "--diffusion-steps",
+        "--steps-per-block",
         type=int,
-        default=256,
-        help="Total denoising steps across all blocks (dLLM mode)",
+        default=32,
+        help="Denoising steps per block (dLLM mode)",
     )
     parser.add_argument(
         "--temperature",
@@ -123,6 +123,19 @@ def parse_args():
         default=100,
         help="Mask token ID used during diffusion (default: 100)",
     )
+    parser.add_argument(
+        "--shift-logits",
+        action="store_true",
+        default=False,
+        help="Use dream-style shifted logits (default: False)",
+    )
+    parser.add_argument(
+        "--neg-entropy",
+        action="store_true",
+        default=True,
+        help="Use negative entropy for confidence scoring (default: True)",
+    )
+
     parser.add_argument(
         "--tp",
         type=int,
@@ -212,9 +225,11 @@ def main():
                 prompt=prompt_ids,
                 gen_length=args.gen_length,
                 block_length=args.block_length,
-                steps=args.diffusion_steps,
+                steps=args.steps_per_block * (args.gen_length // args.block_length),
                 temperature=args.temperature,
                 mask_id=args.mask_token_id,
+                shift_logits=args.shift_logits,
+                neg_entropy=args.neg_entropy,
             )
 
     # Decode and print (rank 0 only)
