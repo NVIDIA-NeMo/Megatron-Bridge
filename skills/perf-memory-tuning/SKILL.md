@@ -77,7 +77,7 @@ If the model genuinely does not fit (not fragmentation), adjust parallelism:
 | Increase PP (keeping DP) | Fewer layers per stage | Moderate (~6% if DP halved) | Only if GPU count allows |
 | Increase TP | Fewer params per GPU | Severe (-28% on 70B) | Last resort |
 | Distributed optimizer | Shards optimizer state across DP ranks | ~1-2% | Recommended for large models |
-| FSDP | Shards params + grads + optimizer | Varies | See `skills/perf-megatron-fsdp/` |
+| FSDP | Shards params + grads + optimizer | Varies | See @skills/perf-megatron-fsdp/SKILL.md |
 
 ### Activation recompute
 

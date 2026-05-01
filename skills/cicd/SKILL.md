@@ -25,7 +25,7 @@ to `main` / `deploy-release/*`, merge groups, and `workflow_dispatch`.
 ```
 pre-flight
   └── lint-check
-        └── cicd-wait-in-queue       # requires maintainer approval for untrusted PRs
+        └── cicd-wait-in-queue       # queues workflows to avoid runner interleaving across PRs
               └── cicd-container-build
                     ├── unit-tests-core
                     ├── unit-tests-diffusion
@@ -80,7 +80,7 @@ gh pr checks "$PR_NUMBER" --repo NVIDIA-NeMo/Megatron-Bridge
 | Container build fails | Dependency conflict or stale `uv.lock` | Re-run `uv lock` inside Docker and commit updated lock |
 | Unit tests fail | Code regression or missing import | Run failing test locally; check the PR diff |
 | Functional test (L0) fails | Integration breakage | Check GPU runner logs; reproduce with `L0_Launch_*.sh` |
-| `cicd-wait-in-queue` blocked | PR not yet approved for CI | Maintainer must comment `/ok to test <SHA>` |
+| `cicd-wait-in-queue` running long | Many PRs queued; automation serializes runners to avoid interleaving | Wait; or check queue depth in the Actions tab |
 | MCore submodule mismatch | Pinned commit out of sync | Update `3rdparty/Megatron-LM` submodule and re-lock |
 | Stale checkpoint auto-resume | `nemo_experiments/` from a previous run exists | `rm -rf nemo_experiments` before starting fresh |
 | Port collision on Slurm (EADDRINUSE) | `ntasks-per-node=8` with `torchrun` | Drop torchrun; use `ntasks-per-node=8` with `uv run python script.py` |
