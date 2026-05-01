@@ -655,7 +655,7 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
     )
 
     adapter = FakeAdapter()
-    monkeypatch.setattr(bridge, "_get_adapter_wrap_module", lambda *_: adapter)
+    monkeypatch.setattr(bridge, "_get_adapter_wrap_module", lambda *_: (adapter, None))
 
     info = bridge._megatron_global_adapters_info_all_pp_ranks([FakeModel()])
     assert len(info) == 1
@@ -672,7 +672,7 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
     ) = info[0]
     assert global_base_name == "decoder.layers.0.mlp.linear_fc1.adapter"
     assert local_base_prefix == "decoder.layers.0.mlp.linear_fc1"
-    assert input_is_parallel is True and base_linear_is_parallel is False
+    assert input_is_parallel is True and base_linear_is_parallel is True
     assert requires_expert_splits is False
     assert alpha == 8 and dim == 2 and pp_rank == 0 and vp_stage == 0
 
@@ -739,7 +739,7 @@ def test_build_adapter_conversion_tasks(monkeypatch):
     )
 
     monkeypatch.setattr(bridge, "_megatron_global_adapters_info_all_pp_ranks", lambda *_: adapters_info)
-    monkeypatch.setattr(bridge, "_get_adapter_wrap_module", lambda *_: adapter)
+    monkeypatch.setattr(bridge, "_get_adapter_wrap_module", lambda *_: (adapter, None))
     monkeypatch.setattr(
         "megatron.bridge.models.conversion.model_bridge.parallel_state.get_pipeline_model_parallel_rank",
         lambda: 0,

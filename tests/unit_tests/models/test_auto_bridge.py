@@ -743,11 +743,11 @@ class TestAutoBridge:
 
         mock_megatron_model = [object()]
 
-        with patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop:
-            mock_model_bridge = Mock()
+        with patch(
+            "megatron.bridge.models.conversion.auto_bridge.model_bridge.stream_adapter_weights_megatron_to_hf"
+        ) as mock_stream_adapter_weights:
             mock_weight_iter = [HFWeightTuple("adapter.weight", torch.randn(4, 4))]
-            mock_model_bridge.stream_adapter_weights_megatron_to_hf.return_value = iter(mock_weight_iter)
-            mock_model_bridge_prop.return_value = mock_model_bridge
+            mock_stream_adapter_weights.return_value = iter(mock_weight_iter)
 
             with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
                 mock_arch_class = Mock()
@@ -763,7 +763,8 @@ class TestAutoBridge:
                     assert isinstance(weights[0], HFWeightTuple)
                     assert weights[0].param_name == "adapter.weight"
                     assert isinstance(weights[0].weight, torch.Tensor)
-                    mock_model_bridge.stream_adapter_weights_megatron_to_hf.assert_called_once_with(
+                    mock_stream_adapter_weights.assert_called_once_with(
+                        (mock_arch_class, mock_megatron_model[0]),
                         mock_megatron_model,
                         cpu=False,
                         show_progress=False,

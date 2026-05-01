@@ -458,7 +458,7 @@ class TestCanonicalLoRA:
                 side_effect=mock_get_attrs,
             ),
             patch(
-                "megatron.bridge.peft.canonical_lora.parallel_state.get_expert_tensor_parallel_world_size",
+                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
                 return_value=2,
             ),
             patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter,
