@@ -25,9 +25,11 @@ production-quality Dockerfiles that pin every dependency.
 
 ### Option 1: NeMo Framework Container (fastest)
 
+Find available tags at https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags
+
 ```bash
 docker run --rm -it --gpus all --shm-size=24g \
-  nvcr.io/nvidia/nemo:latest \
+  nvcr.io/nvidia/nemo:<tag> \
   bash
 ```
 
