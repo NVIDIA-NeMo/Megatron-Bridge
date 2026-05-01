@@ -28,6 +28,11 @@ production-quality Dockerfiles that pin every dependency.
 Find available tags at https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags
 
 ```bash
+skopeo list-tags docker://nvcr.io/nvidia/nemo \
+  | python3 -c "import sys,json,re; tags=json.load(sys.stdin)['Tags']; [print(t) for t in sorted(t for t in tags if re.match(r'^\d{2}\.\d{2}', t))]"
+```
+
+```bash
 docker run --rm -it --gpus all --shm-size=24g \
   nvcr.io/nvidia/nemo:<tag> \
   bash
