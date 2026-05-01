@@ -106,6 +106,7 @@ class FakeLoRA:
 class _ToyExperts(torch.nn.Module):
     def __init__(self):
         super().__init__()
+        self.is_transposed = True
         self.gate_up_proj = torch.nn.Parameter(torch.zeros(2, 6, 4))
         self.down_proj = torch.nn.Parameter(torch.zeros(2, 4, 3))
 
