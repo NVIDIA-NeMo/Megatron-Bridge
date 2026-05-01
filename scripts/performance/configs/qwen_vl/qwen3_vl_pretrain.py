@@ -144,6 +144,9 @@ def qwen3_vl_235b_a22b_pretrain_config_b200(
         cfg.ddp.overlap_param_gather = False
         cfg.optimizer.overlap_param_gather = False
 
+    cfg.model.num_layers_in_first_pipeline_stage = 10
+    cfg.model.num_layers_in_last_pipeline_stage = 12
+
     return cfg
 
 

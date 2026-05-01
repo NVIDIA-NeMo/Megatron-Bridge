@@ -57,6 +57,7 @@ RUN    pushd /opt/Export-Deploy && \
 # Sync environment
 COPY --chmod=644 docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
 COPY --chmod=644 docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
+COPY --chmod=644 docker/common/stubs/ /opt/NeMo-FW/stubs/
 RUN \
     cd /opt/NeMo-FW && \
     uv sync --no-cache-dir --all-groups --inexact && \
