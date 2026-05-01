@@ -1,6 +1,7 @@
 ---
 name: moe-hardware-configs
 description: Representative MoE training playbooks by hardware platform and model family. Summarizes rounded throughput bands, parallelism patterns, and common tuning stacks without mirroring tracker rows exactly.
+when_to_use: When asking for hardware-specific MoE playbooks, expected throughput bands, or recommended parallelism and tuning stacks for H100, B200, GB200, or GB300.
 ---
 
 # MoE Hardware Configuration Reference

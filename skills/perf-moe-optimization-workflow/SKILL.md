@@ -1,6 +1,7 @@
 ---
 name: moe-optimization-workflow
 description: Systematic workflow for MoE training optimization in Megatron Bridge, based on the Megatron-Core MoE paper. Covers the Three Walls framework, parallel folding, recompute strategy, dispatcher choice, and CUDA-graph bring-up.
+when_to_use: When running a full MoE performance tuning sweep, working through the Three Walls framework (memory, communication, compute/host), or planning iterative MoE optimization.
 ---
 
 # MoE Training Optimization Workflow

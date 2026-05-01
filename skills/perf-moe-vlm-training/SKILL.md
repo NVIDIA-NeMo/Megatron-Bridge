@@ -1,6 +1,7 @@
 ---
 name: moe-vlm-training
 description: Practical guidance for training MoE VLMs in Megatron Bridge. Compares FSDP and 3D-parallel approaches, using rounded lessons from Qwen3-VL, Qwen3-Next, and other multimodal experiments.
+when_to_use: When training MoE VLMs, choosing between FSDP and 3D-parallel for multimodal models, or working through bring-up for models like Qwen3-VL.
 ---
 
 # MoE VLM Training

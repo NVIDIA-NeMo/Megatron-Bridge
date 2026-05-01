@@ -1,6 +1,7 @@
 ---
 name: megatron-fsdp
 description: Operational guide for enabling Megatron FSDP in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification.
+when_to_use: When enabling use_megatron_fsdp, choosing data_parallel_sharding_strategy, or using FSDP-based data parallelism as an alternative to DDP.
 ---
 
 # Megatron FSDP Skill

@@ -1,6 +1,7 @@
 ---
 name: cuda-graphs
 description: Validate and use CUDA graph capture in Megatron Bridge, including local full-iteration graphs and Transformer Engine scoped graphs for attention, MLP, and MoE modules.
+when_to_use: When enabling cuda_graph_impl, reducing host-driver overhead via CUDA graphs, or choosing between local full-iteration and TE-scoped graph capture.
 ---
 
 # CUDA Graphs

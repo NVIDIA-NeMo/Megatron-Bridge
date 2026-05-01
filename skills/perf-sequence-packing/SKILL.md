@@ -1,6 +1,7 @@
 ---
 name: sequence-packing
 description: Validate and use packed sequences and long-context training in Megatron-Bridge, distinguishing offline packed SFT for LLMs from in-batch packing for VLMs, and applying the right CP constraints. Use when the user asks about packed sequences, sequence packing, long context training, PackedSequenceSpecs, pack_sequences_in_batch, or CP with packing.
+when_to_use: When enabling PackedSequenceSpecs, pack_sequences_in_batch, long-context SFT, or context parallelism combined with packed sequences.
 ---
 
 # Sequence Packing Skill

@@ -1,6 +1,7 @@
 ---
 name: multi-node-slurm
 description: Convert single-node scripts to multi-node Slurm sbatch jobs and debug common multi-node failures. Covers srun-native vs uv run torch.distributed approaches, container setup, NCCL timeouts, OOM sizing for MoE models, and interactive allocation. Use when creating Slurm scripts, scaling to multi-node, or debugging multi-node job failures.
+when_to_use: When writing or converting Slurm sbatch scripts, scaling a job to multiple nodes, or debugging multi-node launch and NCCL failures.
 ---
 
 # Multi-Node Slurm

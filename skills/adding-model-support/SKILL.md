@@ -1,6 +1,7 @@
 ---
 name: adding-model-support
 description: Guide for adding support for new LLM or VLM models in Megatron-Bridge. Covers bridge, provider, recipe, tests, docs, and examples. Use when the user asks to add, support, onboard, or integrate a new model, or when creating bridges, providers, or recipes for a new model family.
+when_to_use: When adding, onboarding, or integrating a new LLM or VLM model family; creating bridges, providers, or recipes for a new model.
 ---
 
 # Adding New Model Support in Megatron-Bridge

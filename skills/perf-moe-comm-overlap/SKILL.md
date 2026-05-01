@@ -1,6 +1,7 @@
 ---
 name: moe-comm-overlap
 description: MoE expert-parallel communication overlap in Megatron Bridge. Use when the user asks about overlap_moe_expert_parallel_comm, MoE dispatch overlap, flex dispatcher, DeepEP overlap, or expert wgrad scheduling.
+when_to_use: When tuning overlap_moe_expert_parallel_comm, MoE dispatch/combine overlap, flex dispatcher backends, or expert weight-gradient scheduling.
 ---
 
 # MoE Communication Overlap

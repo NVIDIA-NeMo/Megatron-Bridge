@@ -1,6 +1,7 @@
 ---
 name: parallelism-strategies
 description: Operational guide for choosing and combining parallelism strategies in Megatron Bridge, including sizing rules, hardware topology mapping, and combined parallelism configuration.
+when_to_use: When choosing or combining TP/DP/PP/CP/EP parallelism, sizing degrees for a given model and GPU count, or mapping parallelism to NVLink and network topology.
 ---
 
 # Parallelism Strategy Selection Skill

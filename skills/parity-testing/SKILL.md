@@ -1,6 +1,7 @@
 ---
 name: parity-testing
 description: Structured framework for verifying numerical parity of HF<->MCore weight conversions. References existing tools and the add-model-support skill. Use when debugging weight mismatches, verifying checkpoint round-trips, or choosing which verification tool to run.
+when_to_use: When debugging weight mismatches, verifying HF↔MCore checkpoint round-trips, or choosing between roundtrip, multi-GPU, logit-compare, and generation verification tools.
 ---
 
 # Parity Testing for Megatron Bridge

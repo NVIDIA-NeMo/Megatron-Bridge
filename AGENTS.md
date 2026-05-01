@@ -8,7 +8,8 @@
 
 The `skills/` directory contains structured guides for common tasks (adding
 models, running experiments, debugging multi-node jobs, performance tuning,
-etc.). Read the relevant `SKILL.md` before starting a task it covers.
+etc.). **Always read the relevant `SKILL.md` before starting any task it
+covers — skills are mandatory context, not optional background reading.**
 
 ## Boundaries
 

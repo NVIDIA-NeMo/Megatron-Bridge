@@ -1,6 +1,7 @@
 ---
 name: memory-tuning
 description: Techniques for reducing peak GPU memory in Megatron Bridge — expandable segments, parallelism resizing, activation recompute, CPU offloading constraints, and common OOM fixes.
+when_to_use: When hitting GPU OOM, diagnosing memory fragmentation, or systematically reducing peak activation or optimizer memory.
 ---
 
 # Memory Tuning
