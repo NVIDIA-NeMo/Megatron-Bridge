@@ -19,7 +19,7 @@ See @CONTRIBUTING.md for the full PR workflow, area/type labels, and DCO require
 
 ## Pipeline Structure
 
-Defined in `.github/workflows/cicd-main.yml`. Triggered by schedule, pushes
+Defined in @.github/workflows/cicd-main.yml. Triggered by schedule, pushes
 to `main` / `deploy-release/*`, merge groups, and `workflow_dispatch`.
 
 ```
