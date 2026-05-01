@@ -102,7 +102,6 @@ GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V2 = replace(
 GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_V2 = replace(
     GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_V1,
     global_batch_size=1280,
-    moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=True,
 )
 
