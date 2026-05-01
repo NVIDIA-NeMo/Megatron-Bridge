@@ -1,7 +1,7 @@
 ---
 name: cicd
 description: CI/CD reference for Megatron Bridge — pipeline structure, commit and PR workflow, CI failure investigation, and common failure patterns.
-when_to_use: Investigating a CI failure, understanding the pipeline structure, writing a commit or PR, triggering CI, 'CI is red', 'how do I trigger CI', 'PR workflow', 'where are the logs', 'cicd-wait-in-queue blocked'.
+when_to_use: Investigating a CI failure, understanding the pipeline structure, writing a commit or PR, triggering CI, 'CI is red', 'how do I trigger CI', 'PR workflow', 'where are the logs', 'CI did not run', 'copy-pr-bot', '/ok to test'.
 ---
 
 # CI/CD
@@ -12,15 +12,32 @@ when_to_use: Investigating a CI failure, understanding the pipeline structure, w
 - **Always sign commits**: `git commit -s -m "message"`.
 - **PR title format**: `[{areas}] {type}: {description}`
   (e.g., `[model] feat: Add Qwen3 model bridge`).
-- **Trigger CI**: comment `/ok to test <commit-sha>` on the PR, or set up
-  signed commits for automatic triggering.
-
 See @CONTRIBUTING.md for the full PR workflow, area/type labels, and DCO requirements.
 
-## Pipeline Structure
+## How CI Is Triggered
 
-Defined in @.github/workflows/cicd-main.yml. Triggered by schedule, pushes
-to `main` / `deploy-release/*`, merge groups, and `workflow_dispatch`.
+The workflow is defined in @.github/workflows/cicd-main.yml and is triggered
+on `push` — **not** on `pull_request`. This is intentional: a bot called
+`copy-pr-bot` controls when CI runs.
+
+**Mechanism:**
+1. When a PR is opened, `copy-pr-bot` watches for a trust signal.
+2. Trust is established in one of two ways:
+   - All commits on the PR branch are **GPG-signed** by a verified NVIDIA contributor → bot triggers automatically.
+   - An NVIDIAN posts `/ok to test <commit-sha>` as a PR comment → bot triggers manually for that SHA.
+3. Once trusted, `copy-pr-bot` copies the PR's code into the remote branch
+   `pull-request/<number>` and pushes it.
+4. That push fires the workflow's `push` trigger on `refs/heads/pull-request/<number>`,
+   launching CI.
+
+**Consequences:**
+- CI never runs on untrusted pushes — external contributors always need `/ok to test`.
+- The running workflow branch is `pull-request/<number>`, not the author's feature branch.
+- Pushing a new commit to a PR does **not** automatically re-trigger CI unless the
+  commit is signed or `/ok to test <new-sha>` is posted.
+- Concurrent runs for the same PR are cancelled automatically (concurrency group per PR number).
+
+## Pipeline Structure
 
 ```
 pre-flight
@@ -32,8 +49,6 @@ pre-flight
                     └── functional-tests (L0 always; L1 with needs-more-tests label; L2 on schedule)
 ```
 
-- CI branch `pull-request/<number>` is created automatically when a PR is opened against `main` or `deploy-release/*`.
-- Concurrent runs for the same PR are cancelled automatically (concurrency group per PR number).
 - Slack notifications are sent on completion for scheduled and nightly runs.
 
 For functional test tier semantics and job-to-directory mapping, see the `testing` skill.
@@ -76,6 +91,7 @@ gh pr checks "$PR_NUMBER" --repo NVIDIA-NeMo/Megatron-Bridge
 
 | Symptom | Likely Cause | Action |
 |---|---|---|
+| CI never started on a PR | Commits not GPG-signed and no `/ok to test` comment | Post `/ok to test <full-sha>` on the PR |
 | Lint job fails | `ruff` or `pre-commit` violation | Run `ruff check --fix` + `ruff format` locally |
 | Container build fails | Dependency conflict or stale `uv.lock` | Re-run `uv lock` inside Docker and commit updated lock |
 | Unit tests fail | Code regression or missing import | Run failing test locally; check the PR diff |
