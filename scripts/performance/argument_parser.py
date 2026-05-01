@@ -632,6 +632,11 @@ def parse_cli_args():
         action="store_true",
     )
     performance_args.add_argument(
+        "--export_nsys_sqlite",
+        help="Export a SQLite report after Nsys profiling finishes. Requires --enable_nsys.",
+        action="store_true",
+    )
+    performance_args.add_argument(
         "-pyp",
         "--pytorch_profiler",
         type=bool_arg,

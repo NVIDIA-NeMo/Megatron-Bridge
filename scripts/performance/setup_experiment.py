@@ -211,6 +211,7 @@ def main(
     enable_vboost: bool,
     lock_gpu_freq: Optional[int],
     enable_nsys: bool,
+    export_nsys_sqlite: bool,
     pytorch_profiler: bool,
     moe_a2a_overlap: bool,
     tp_size: Optional[int],
@@ -299,6 +300,9 @@ def main(
         assert wandb_project_name is not None and wandb_experiment_name is not None, (
             "both wandb_project_name and wandb_experiment_name are required for logging with WandB"
         )
+
+    if export_nsys_sqlite and not enable_nsys:
+        logger.warning("--export_nsys_sqlite was set without --enable_nsys; no Nsys SQLite export will be generated.")
 
     if use_recipes:
         script_name = ENTRYPOINT_RECIPE
@@ -439,6 +443,7 @@ def main(
                 profile_ranks=profiling_ranks,
                 nsys_trace=nsys_trace,
                 nsys_extra_args=nsys_extra_args,
+                export_sqlite=export_nsys_sqlite,
             )
         )
     if pytorch_profiler:
@@ -666,6 +671,7 @@ if __name__ == "__main__":
         enable_vboost=args.enable_vboost,
         lock_gpu_freq=args.lock_gpu_freq,
         enable_nsys=args.enable_nsys,
+        export_nsys_sqlite=args.export_nsys_sqlite,
         pytorch_profiler=args.pytorch_profiler,
         moe_a2a_overlap=args.moe_a2a_overlap,
         tp_size=args.tensor_model_parallel_size,
