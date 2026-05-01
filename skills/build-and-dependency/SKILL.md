@@ -40,20 +40,7 @@ docker run --rm -it --gpus all --shm-size=24g \
 
 ### Option 2: Build the Megatron Bridge Container
 
-```bash
-docker build \
-  -f docker/Dockerfile.ci \
-  --target megatron_bridge \
-  -t megatron-bridge:latest \
-  .
-```
-
-Key build args:
-- `BASE_IMAGE` — base PyTorch image (default: `nvcr.io/nvidia/pytorch:26.02-py3`)
-- `MCORE_TRIGGERED_TESTING` — set to `true` when testing against a non-pinned MCore commit
-- `UV_CACHE_PRUNE_ARGS` — optional args passed to `uv cache prune` during build
-
-See @docker/README.md for the full image stack and build argument reference.
+See @docker/README.md for build commands, build arguments, and the full NeMo-FW image stack.
 
 ### Running the Container
 
