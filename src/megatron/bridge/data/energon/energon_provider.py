@@ -37,6 +37,7 @@ class EnergonProvider(DatasetProvider):
     pack_sequences_in_batch: bool = False
 
     def build_datasets(self, context: DatasetBuildContext):
+        assert self.path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
         dataset = EnergonMultiModalDataModule(
             path=self.path,
             tokenizer=context.tokenizer if context.tokenizer is not None else self.tokenizer,

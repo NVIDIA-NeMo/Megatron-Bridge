@@ -616,6 +616,10 @@ def calc_convergence_and_performance(
     with open(expected_golden_values_path, "r") as f:
         expected_golden_values = json.load(f)
 
+    # Normalize: new format stores baseline data under a "baseline" key.
+    if "baseline" in expected_golden_values:
+        expected_golden_values = expected_golden_values["baseline"]
+
     steps = []
     golden_train_loss = {}
     golden_iter_time = {}
@@ -628,6 +632,8 @@ def calc_convergence_and_performance(
             continue
         if key == max_alloc_metric:
             golden_max_alloc = value
+            continue
+        if not isinstance(value, dict):
             continue
         steps.append(key)
         golden_train_loss[key] = value[loss_metric]

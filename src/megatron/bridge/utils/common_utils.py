@@ -267,6 +267,24 @@ def extract_expert_number_from_param(param_name: str) -> int:
     return int(match.group(1))
 
 
+def disable_mtp_for_inference(m: torch.nn.Module) -> None:
+    """Disable Multi-Token Prediction (MTP) on a Megatron model for inference.
+
+    MTP is only used during training. Setting ``mtp_num_layers = None`` and
+    clearing ``mtp_process`` on the language model prevents hangs on NCCL
+    collectives during inference.
+
+    Args:
+        m: A Megatron model (or DDP-wrapped model) to disable MTP on.
+    """
+    m.config.mtp_num_layers = None
+    m.config.grad_scale_func = None
+    inner = m.module if hasattr(m, "module") else m
+    lang = getattr(inner, "language_model", inner)
+    if hasattr(lang, "mtp_process"):
+        lang.mtp_process = False
+
+
 def resolve_path(path: str) -> Path:
     """Resolve a path to an absolute path."""
 

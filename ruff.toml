@@ -88,6 +88,8 @@ force-single-line = false
 "test_*.py" = ["D101", "D103"]
 "*_test.py" = ["D101", "D103"]
 "tests/*.py" = ["D101", "D103"]
+# Adapted vendor modeling files — docstrings not required
+"modeling_*.py" = ["D101", "D103"]
 
 [format]
 # Match black configuration

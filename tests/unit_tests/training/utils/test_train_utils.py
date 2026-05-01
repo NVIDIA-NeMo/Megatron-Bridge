@@ -35,6 +35,7 @@ from megatron.bridge.training.utils.train_utils import (
     report_memory,
     report_runtime,
     report_throughput,
+    start_memory_history_recording,
     training_log,
 )
 
@@ -608,6 +609,114 @@ class TestTrainingLog:
 
         # Verify memory reporting functions were called
         mock_report_theoretical.assert_called_once()
+        mock_report_memory.assert_called_once()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_theoretical_memory")
+    @mock.patch("torch.distributed.get_rank")
+    def test_memory_reporting_kept_on_second_iteration(
+        self,
+        mock_get_rank,
+        mock_report_theoretical,
+        mock_report_memory,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test memory flag is kept on the second iteration to capture optimizer state peak."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_get_rank.return_value = 0
+
+        # Iteration 1 with loaded_iteration=0: flag should be kept
+        mock_global_state.train_state.step = 1
+        mock_config.logger.log_interval = 1
+
+        result = training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=True,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+            loaded_iteration=0,
+        )
+
+        # Flag should remain True (iteration 1 <= loaded_iteration + 1)
+        assert result is True
+        mock_report_memory.assert_called_once()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_theoretical_memory")
+    @mock.patch("torch.distributed.get_rank")
+    def test_memory_reporting_checkpoint_resume(
+        self,
+        mock_get_rank,
+        mock_report_theoretical,
+        mock_report_memory,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test memory reporting after checkpoint resume reports for 2 iterations."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_get_rank.return_value = 0
+
+        # First iteration after resume from checkpoint at iteration 100
+        mock_global_state.train_state.step = 101
+        mock_config.logger.log_interval = 1
+
+        result = training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=True,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+            loaded_iteration=100,
+        )
+
+        # Flag should remain True (101 <= 100 + 1)
+        assert result is True
         mock_report_memory.assert_called_once()
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
@@ -1315,6 +1424,7 @@ class TestTrainingLog:
         # Remove loggers
         mock_global_state.tensorboard_logger = None
         mock_global_state.wandb_logger = None
+        mock_global_state.mlflow_logger = None
 
         # Set iteration to match logging intervals
         mock_global_state.train_state.step = 10
@@ -2981,3 +3091,95 @@ class TestCalcParamsL2Norm:
         # Both layers contribute: sqrt(25 + 25) = sqrt(50)
         expected_norm = math.sqrt(50)
         assert result == pytest.approx(expected_norm, rel=1e-5)
+
+
+class TestStartMemoryHistoryRecording:
+    """Tests for start_memory_history_recording.
+
+    Verifies the four guard paths (None config, disabled flag, rank not in
+    profile_ranks, happy path) and that the happy path wires up the CUDA
+    allocator trace + OOM observer as expected.
+    """
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_no_config_is_noop(self, mock_attach, mock_record):
+        start_memory_history_recording(None)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_disabled_flag_is_noop(self, mock_attach, mock_record):
+        profiling = mock.Mock()
+        profiling.record_memory_history = False
+        profiling.profile_ranks = [0]
+
+        start_memory_history_recording(profiling)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=3)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_rank_not_in_profile_ranks_is_noop(self, mock_attach, mock_record, _mock_rank):
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0, 7]
+
+        start_memory_history_recording(profiling)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=0)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_happy_path_enables_recording_and_attaches_observer(self, mock_attach, mock_record, _mock_rank):
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0]
+        profiling.memory_snapshot_path = "/nemo_run/snapshot.pickle"
+
+        start_memory_history_recording(profiling)
+
+        # Recording enabled with MLM-compatible settings
+        mock_record.assert_called_once()
+        _pos, kwargs = mock_record.call_args
+        assert _pos[0] is True
+        assert kwargs["trace_alloc_max_entries"] == 100_000
+        assert kwargs["trace_alloc_record_context"] is True
+
+        # OOM observer was attached
+        mock_attach.assert_called_once()
+        oom_cb = mock_attach.call_args.args[0]
+        assert callable(oom_cb)
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=0)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._snapshot", return_value={"x": 1})
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_oom_observer_writes_rank_tagged_path(self, mock_attach, mock_record, mock_snapshot, _mock_rank, tmp_path):
+        """OOM observer must inject the rank tag via splitext, not as a prefix,
+        so absolute memory_snapshot_path values stay absolute."""
+        snapshot_dir = tmp_path / "run"
+        snapshot_dir.mkdir()
+        snapshot_path = str(snapshot_dir / "snapshot.pickle")
+
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0]
+        profiling.memory_snapshot_path = snapshot_path
+
+        start_memory_history_recording(profiling)
+        oom_cb = mock_attach.call_args.args[0]
+
+        # Fire the observer as torch would (device, alloc, device_alloc, device_free).
+        oom_cb(0, 0, 0, 0)
+
+        expected = snapshot_dir / "snapshot_oom_rank-0.pickle"
+        assert expected.exists(), f"OOM observer should have written {expected}"
+        # The snapshot content is the mocked dict, pickled.
+        import pickle
+
+        with expected.open("rb") as f:
+            assert pickle.load(f) == {"x": 1}

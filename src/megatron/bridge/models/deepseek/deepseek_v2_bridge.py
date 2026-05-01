@@ -48,7 +48,6 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.share_embeddings_and_output_weights = False
         provider.qk_layernorm = True
@@ -63,13 +62,13 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         provider.moe_permute_fusion = True
 
         provider.apply_rope_fusion = False
+        provider.gradient_accumulation_fusion = True
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True
         provider.cross_entropy_fusion_impl = "te"
         provider.cross_entropy_loss_fusion = True
         provider.masked_softmax_fusion = True
         provider.persist_layer_norm = True
-        provider.gradient_accumulation_fusion = True
 
         provider.hidden_dropout = 0.0
         provider.attention_softmax_in_fp32 = False
@@ -84,6 +83,35 @@ class DeepSeekV2Bridge(MegatronModelBridge):
 
         return provider
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        hf_cfg = super().megatron_to_hf_config(provider)
+
+        # Megatron uses None="not set/disabled", but HF expects integers
+        hf_cfg["num_nextn_predict_layers"] = hf_cfg.get("num_nextn_predict_layers") or 0
+        hf_cfg["n_group"] = hf_cfg.get("n_group") or 1
+        hf_cfg["topk_group"] = hf_cfg.get("topk_group") or 1
+
+        # Reconstruct first_k_dense_replace from moe_layer_freq (count leading dense layers)
+        moe_layer_freq = getattr(provider, "moe_layer_freq", None)
+        if moe_layer_freq is not None and isinstance(moe_layer_freq, list):
+            first_k_dense_replace = 0
+            for val in moe_layer_freq:
+                if val == 0:
+                    first_k_dense_replace += 1
+                else:
+                    break
+            hf_cfg["first_k_dense_replace"] = first_k_dense_replace
+
+        # Reconstruct n_shared_experts from moe_shared_expert_intermediate_size / moe_ffn_hidden_size
+        shared_size = getattr(provider, "moe_shared_expert_intermediate_size", None)
+        moe_ffn = getattr(provider, "moe_ffn_hidden_size", None)
+        if shared_size is not None and moe_ffn is not None and moe_ffn > 0:
+            hf_cfg["n_shared_experts"] = shared_size // moe_ffn
+
+        return hf_cfg
+
     def mapping_registry(self) -> MegatronMappingRegistry:
-        mapping_list = get_common_mapping_list()
+        hf_config = self.hf_config
+        mapping_list = get_common_mapping_list(hf_config=hf_config)
         return MegatronMappingRegistry(*mapping_list)

@@ -135,26 +135,14 @@ def _assert_basic_config(cfg):
 @pytest.mark.parametrize("recipe_func", _GLM45_RECIPE_FUNCS)
 def test_each_glm45_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each GLM 4.5 recipe function builds a valid configuration."""
-    # Monkeypatch the provider classes to return fake model configs
-    from megatron.bridge.models.glm import glm45_provider
+    # Monkeypatch AutoBridge to return fake model configs (avoids HF I/O)
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    # Create a fake provider class that returns a fake model config
-    class FakeProvider(_FakeModelCfg):
-        def __init__(self, *args, **kwargs):
-            super().__init__()
-
-    # Monkeypatch all provider classes
-    monkeypatch.setattr(glm45_provider, "GLMMoEModelProvider", FakeProvider)
-    monkeypatch.setattr(glm45_provider, "GLM45ModelProvider355B", FakeProvider)
-    monkeypatch.setattr(glm45_provider, "GLM45AirModelProvider106B", FakeProvider)
-
-    # For SFT/PEFT recipes, also monkeypatch AutoBridge and AutoTokenizer
+    # For SFT/PEFT recipes, also monkeypatch AutoTokenizer
     is_sft_or_peft = "sft" in recipe_func.__name__.lower() or "peft" in recipe_func.__name__.lower()
     if is_sft_or_peft:
-        module_name = recipe_func.__module__
-        mod = importlib.import_module(module_name)
-        monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
-
         # Mock AutoTokenizer to avoid HF I/O
         import transformers
 

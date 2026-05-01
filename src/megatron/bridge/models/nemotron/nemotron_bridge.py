@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
+from megatron.core.activations import squared_relu
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import NemotronForCausalLM
 
@@ -24,11 +24,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-
-
-def squared_relu(x):
-    """Squared ReLU activation function."""
-    return torch.pow(torch.nn.functional.relu(x), 2)
 
 
 @MegatronModelBridge.register_bridge(
@@ -61,7 +56,6 @@ class NemotronBridge(MegatronModelBridge):
 
         provider.normalization = "LayerNorm"
         provider.activation_func = squared_relu
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.hidden_dropout = 0.0
         provider.attention_dropout = 0.0

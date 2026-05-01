@@ -27,6 +27,7 @@ import pytest
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 
+from megatron.bridge.models.common import Serializable
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
 
@@ -343,6 +344,35 @@ class TestConfigContainer_ToDict:
         assert result["items"] == ["a", "b", "c"]
         assert result["metadata"] == {"key1": 1, "key2": 2}
 
+    def test_convert_serializable_nested_in_config(self):
+        """Test that a Serializable nested inside a ConfigContainer is serialized via as_dict()."""
+
+        class NestedSerializable:
+            def __init__(self, value):
+                self.value = value
+
+            def as_dict(self) -> dict:
+                return {"_target_": "my.module.NestedSerializable", "value": self.value}
+
+            @classmethod
+            def from_dict(cls, data):
+                return cls(data["value"])
+
+        @dataclass
+        class ConfigWithSerializable(_ConfigContainerBase):
+            name: str = "ser_test"
+            nested: object = None
+
+            def __post_init__(self):
+                if self.nested is None:
+                    self.nested = NestedSerializable(99)
+
+        config = ConfigWithSerializable()
+        result = config.to_dict()
+
+        assert result["name"] == "ser_test"
+        assert result["nested"] == {"_target_": "my.module.NestedSerializable", "value": 99}
+
     def test_to_dict_excludes_private_fields(self):
         """Test that to_dict excludes fields starting with underscore."""
         config = TestConfigContainer()
@@ -418,6 +448,24 @@ class TestConfigContainer_ConvertValueToDict:
             result["nested"]["inner"]["_target_"]
             == "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass"
         )
+
+    def test_convert_serializable(self):
+        """Test converting a Serializable instance uses as_dict()."""
+
+        class MySerializable:
+            def as_dict(self) -> dict:
+                return {"_target_": "my.module.MySerializable", "x": 42}
+
+            @classmethod
+            def from_dict(cls, data):
+                return cls()
+
+        obj = MySerializable()
+        assert isinstance(obj, Serializable)  # runtime_checkable sanity check
+
+        result = TestConfigContainer._convert_value_to_dict(obj)
+
+        assert result == {"_target_": "my.module.MySerializable", "x": 42}
 
     def test_convert_primitive_types(self):
         """Test converting primitive types."""

@@ -15,13 +15,13 @@
 from typing import List, Optional, Union
 
 import torch
-from megatron.core.inference.engines.mcore_engine import MCoreEngine
+from megatron.core.inference.engines.static_engine import StaticInferenceEngine
 from megatron.core.inference.inference_request import InferenceRequest
 from megatron.core.inference.sampling_params import SamplingParams
 from PIL.Image import Image
 
 
-class VLMEngine(MCoreEngine):
+class VLMEngine(StaticInferenceEngine):
     """VLM inference engine extending MCoreEngine with image support."""
 
     # pylint: disable=C0115,C0116

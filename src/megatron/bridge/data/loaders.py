@@ -125,13 +125,21 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         # Otherwise fallback to calculating samples based on iterations and global batch size
         train_samples = cfg.train.train_iters * cfg.train.global_batch_size
 
-    eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
+    if cfg.validation.eval_interval:
+        eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
+    else:
+        eval_iters = 0
     test_iters = cfg.validation.eval_iters
 
+    eval_gbs = (
+        cfg.validation.eval_global_batch_size
+        if cfg.validation.eval_global_batch_size is not None
+        else cfg.train.global_batch_size
+    )
     return (
         train_samples,
-        eval_iters * cfg.train.global_batch_size,
-        test_iters * cfg.train.global_batch_size,
+        eval_iters * eval_gbs,
+        test_iters * eval_gbs,
     )
 
 
@@ -175,6 +183,41 @@ def build_train_valid_test_data_loaders(
     Returns:
         A tuple (train_dataloader, valid_dataloader, test_dataloader).
     """
+    # Check for MegatronMIMO path
+    from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+    if isinstance(cfg.model, MegatronMIMOProvider):
+        if not isinstance(cfg.dataset, MegatronMIMODatasetProvider):
+            raise ValueError(
+                "MegatronMIMO models require cfg.dataset to be a MegatronMIMODatasetProvider. "
+                "Use HFMegatronMIMODatasetProvider, MockMegatronMIMOProvider, or a subclass of MegatronMIMODatasetProvider."
+            )
+        from megatron.bridge.data.megatron_mimo.loaders import build_megatron_mimo_data_loaders
+
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
+        train_dataloader, valid_dataloader, test_dataloader = build_megatron_mimo_data_loaders(
+            cfg=cfg,
+            train_state=train_state,
+            megatron_mimo_provider=cfg.dataset,
+            train_samples=train_samples,
+            valid_samples=valid_samples,
+            test_samples=test_samples,
+        )
+
+        # Sync train_state flags across all ranks.
+        # Use all_reduce(MAX) since some ranks may not have loaders in heterogeneous MegatronMIMO.
+        do_train = train_dataloader is not None and cfg.train.train_iters > 0
+        do_valid = valid_dataloader is not None and cfg.validation.eval_iters > 0
+        do_test = test_dataloader is not None and cfg.validation.eval_iters > 0
+        flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
+        torch.distributed.all_reduce(flags, op=torch.distributed.ReduceOp.MAX)
+        train_state.do_train = flags[0].item()
+        train_state.do_valid = flags[1].item()
+        train_state.do_test = flags[2].item()
+
+        return train_dataloader, valid_dataloader, test_dataloader
+
     (train_dataloader, valid_dataloader, test_dataloader) = (None, None, None)
 
     print_rank_0("> building train, validation, and test datasets ...")
@@ -212,12 +255,22 @@ def build_train_valid_test_data_loaders(
         data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
     )
+    eval_gbs = (
+        cfg.validation.eval_global_batch_size
+        if cfg.validation.eval_global_batch_size is not None
+        else cfg.train.global_batch_size
+    )
+    eval_mbs = (
+        cfg.validation.eval_micro_batch_size
+        if cfg.validation.eval_micro_batch_size is not None
+        else cfg.train.micro_batch_size
+    )
     if cfg.validation.skip_train and cfg.validation.eval_iters > 0:
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
             0,
             cfg.dataset.dataloader_type,
-            cfg.train.micro_batch_size,
+            eval_mbs,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
@@ -226,7 +279,7 @@ def build_train_valid_test_data_loaders(
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=dp_rank,
             data_parallel_size=dp_size,
-            global_batch_size=cfg.train.global_batch_size,
+            global_batch_size=eval_gbs,
         )
     elif cfg.validation.eval_iters > 0:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
@@ -234,7 +287,7 @@ def build_train_valid_test_data_loaders(
             valid_ds,
             train_state.consumed_valid_samples,
             val_dataloader_type,
-            cfg.train.micro_batch_size,
+            eval_mbs,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
@@ -243,7 +296,7 @@ def build_train_valid_test_data_loaders(
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=dp_rank,
             data_parallel_size=dp_size,
-            global_batch_size=cfg.train.global_batch_size,
+            global_batch_size=eval_gbs,
         )
 
     if cfg.validation.eval_iters > 0:
@@ -251,7 +304,7 @@ def build_train_valid_test_data_loaders(
             test_ds,
             0,
             cfg.dataset.dataloader_type,
-            cfg.train.micro_batch_size,
+            eval_mbs,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
@@ -260,7 +313,7 @@ def build_train_valid_test_data_loaders(
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=dp_rank,
             data_parallel_size=dp_size,
-            global_batch_size=cfg.train.global_batch_size,
+            global_batch_size=eval_gbs,
         )
 
     # Flags to know if we need to do training/validation/testing.

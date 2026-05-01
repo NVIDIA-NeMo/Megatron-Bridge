@@ -19,6 +19,7 @@ from megatron.bridge.training.config import DatasetBuildContext
 
 class _DummyTokenizer:
     pad_token_id = 0
+    pad_token = "<pad>"
     eos_token_id = 2
     added_tokens_decoder = {}
 

@@ -13,6 +13,7 @@
 # limitations under the License.
 """Megatron Bridge - A component of the Megatron ecosystem."""
 
+import megatron.bridge.models  # noqa: F401 — triggers all bridge and HF Auto class registrations
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.package_info import (
     __contact_emails__,

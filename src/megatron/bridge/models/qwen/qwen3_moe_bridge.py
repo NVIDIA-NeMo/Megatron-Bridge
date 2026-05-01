@@ -40,13 +40,20 @@ class Qwen3MoEBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Convert Megatron provider config to HuggingFace Qwen3MoeConfig dict."""
+        hf_config = super().megatron_to_hf_config(provider)
+        hf_config["decoder_sparse_step"] = 1  # All layers are MoE in Qwen3 MoE
+        hf_config["norm_topk_prob"] = False  # Qwen3 MoE does not normalize top-k probs
+        return hf_config
+
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace Qwen3 MoE config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
 
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.add_qkv_bias = False  # Qwen3 MoE does NOT have QKV bias
         provider.hidden_dropout = 0.0

@@ -21,14 +21,14 @@ Directory structure:
 ### Import HF → Megatron
 To import the HF VL model to your desired Megatron path:
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model Qwen/Qwen3-VL-8B-Instruct \
   --megatron-path ${WORKSPACE}/models/Qwen3-VL-8B-Instruct
 ```
 
 ### Export Megatron → HF
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
   --hf-model Qwen/Qwen3-VL-8B-Instruct \
   --megatron-path ${WORKSPACE}/models/Qwen3-VL-8B-Instruct/iter_0000000 \
   --hf-path ${WORKSPACE}/models/Qwen3-VL-8B-Instruct-hf-export
@@ -39,7 +39,7 @@ python examples/conversion/convert_checkpoints.py export \
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf_to_megatron_generate_vlm.py \
+uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf_to_megatron_generate_vlm.py \
   --hf_model_path Qwen/Qwen3-VL-8B-Instruct \
   --megatron_model_path ${WORKSPACE}/models/Qwen3-VL-8B-Instruct/iter_0000000 \
   --image_path "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
@@ -106,14 +106,10 @@ Before training, ensure the following environment variables are set:
 See the [sft_unpacked.sh](sft_unpacked.sh) script for full parameter fine-tuning with configurable model parallelisms, with unpacked sequences.
 See the [sft.sh](sft.sh) script for full parameter fine-tuning with sequence-packing.
 
-W&B report coming soon.
-
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
 See the [peft_unpacked.sh](peft_unpacked.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism, with unpacked sequences.
 See the [peft.sh](peft.sh) script for LoRA fine-tuning with sequence-packing.
-
-W&B report coming soon.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
@@ -129,7 +125,11 @@ field_map:
   conversation: json
 ```
 
-Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [sft_energon.sh](sft_energon.sh) and run the script.
+Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [peft_energon.sh](peft_energon.sh) and run the script.
+
+
+### Expected Training Dynamics
+We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/lczz4ixx) for the expected loss curves and grad norms.
 
 ## Evaluation
 

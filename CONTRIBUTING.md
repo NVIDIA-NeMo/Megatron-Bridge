@@ -166,6 +166,10 @@ Format your commit messages and PR titles as:
 - `ckpt` - Checkpoint conversion, loading, export, and save paths
 - `peft` - PEFT methods (LoRA, adapters) and adapter export
 - `perf` - Performance optimizations and throughput improvements
+- `distill` - Knowledge distillation
+- `prune` - Pruning and sparsity
+- `quant` - Quantization (PTQ, QAT, FP8 recipes)
+- `diffusion` - Diffusion model implementations and training
 - `ci` - CI, automation, and workflow infrastructure
 - `docs` - Documentation, examples, and contributor guidance
 - `build` - Dependencies, packaging, and environment setup
@@ -189,6 +193,23 @@ Format your commit messages and PR titles as:
 [ci, build] chore: Update ruff version
 ```
 
+## 🏷️ Labeling Your PR
+
+When you create a pull request, **add labels immediately** so reviewers and CI can route it correctly. At minimum, apply:
+
+1. **One type label** — `bug`, `feature`, `docs`, or `ci`
+2. **One or more area labels** — `area:model`, `area:recipe`, `area:training`, `area:data`, `area:ckpt`, `area:peft`, `area:perf`, `area:distill`, `area:diffusion`, `area:prune`, `area:quant`, `area:build`, or `area:misc`
+3. **`docs-only`** — if the PR touches only documentation (no code changes); this skips most CI jobs
+4. **`needs-review`** — when the PR is ready for review
+5. **`needs-more-tests`** — if the change needs additional test coverage; triggers both L0 and L1 CI
+6. **`high-complexity`** — if the PR is large, touches many files, or is prone to merge conflicts
+
+Add risk labels when applicable:
+- `breaking-change` — if any public API, CLI argument, config key, or function signature changes
+- `needs-more-tests` — if the change needs additional test coverage (also triggers L1 CI)
+
+Properly labeled PRs get faster reviews and avoid sitting in the triage queue.
+
 ## 🏷️ Repository Labels and Triage
 
 Megatron Bridge uses a small governance taxonomy so maintainers, oncall, and automation can reason about issues and PRs consistently:
@@ -211,7 +232,7 @@ Use exactly one type label per issue or PR after triage:
 
 ### State Labels
 
-Use at most one state label from this set at a time:
+Use at most one primary state label from this set at a time (see exceptions below):
 
 | Label | Meaning |
 | --- | --- |
@@ -221,6 +242,8 @@ Use at most one state label from this set at a time:
 | `needs-follow-up` | Issue or PR has finished initial triage/review and needs further follow-up |
 | `blocked` | Work cannot move forward until an external dependency is cleared |
 | `ready-to-merge` | PR is approved, current, and only waiting for CI to pass before merge |
+
+**Allowed combinations:** `needs-author` + `needs-follow-up` and `needs-follow-up` + `blocked` can co-exist (e.g., waiting on the author but oncall should keep tracking, or a blocked item that oncall should keep watching across handoffs).
 
 ### Risk Labels
 
@@ -245,6 +268,10 @@ Use one primary area label after triage:
 | `area:ckpt` | Checkpoint conversion, loading, export, and save paths |
 | `area:peft` | PEFT methods (LoRA, adapters) and adapter export |
 | `area:perf` | Performance optimizations, kernel integration, and throughput improvements |
+| `area:distill` | Knowledge distillation |
+| `area:diffusion` | Diffusion model implementations and training |
+| `area:prune` | Pruning and sparsity |
+| `area:quant` | Quantization (PTQ, QAT, FP8 recipes) |
 | `area:build` | Dependencies, packaging, images, and environment setup |
 | `area:misc` | Cross-cutting utilities, logging, helpers, and other changes that do not fit a primary domain |
 
@@ -317,16 +344,27 @@ We use [pytest](https://docs.pytest.org/en/stable/) for writing both unit and fu
 **Unit tests** aim to test functions in isolation. They generally do not depend on artifacts like Hugging Face checkpoints or larger datasets. Exception to this is a small toy dataset consisting of tokenizers.
 Unit tests are stored at `tests/unit_tests`. Please add your test to an existing folder or create a new one if none matches.
 
+> **Preferred:** Unit tests are strongly recommended over functional tests. CI resources are limited, so every functional test slot has a real cost. Cover as much logic as possible with unit tests before reaching for a functional test.
+
 **Functional tests** are integration tests that perform model training or operate on larger artifacts. We use pytest for writing these. In some cases, it might be desired to run your test (or parts of it) in a subprocess to avoid process contamination. We use `subprocess.run` for this inside the pytest function. Please add your test into one of the predefined folders. If none of the folders matches semantically, please reach out to the `@nvidia-nemo/automation` in your PR for consultation.
+
+> **GPU limit:** Functional tests must use **at most 2 GPUs**. Do not add tests that require more than 2 GPUs — they will not fit in the CI resource budget.
 
 ### Functional Test Launcher Scripts
 
-Functional tests that take longer to run should be placed in a `L2_Launch_*.sh` launcher script inside the [`tests/functional_tests/`](tests/functional_tests/) folder. These launcher scripts allow CI to run test groups in parallel, significantly reducing overall pipeline time.
+Functional tests are placed in tiered launcher scripts inside [`tests/functional_tests/`](tests/functional_tests/). Each tier runs in a separate CI job, allowing faster PR feedback while keeping thorough coverage on nightly runs.
 
-When adding a new `L2_Launch_*.sh` file, you **must** also update [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the `cicd-functional-tests` job matrix. Add a new entry under `matrix.include`, for example:
+| Tier | Prefix | Trigger | Purpose |
+|------|--------|---------|---------|
+| **L0** | `L0_Launch_*.sh` | Every PR, main push, schedule | Core smoke tests — must be fast and stable |
+| **L1** | `L1_Launch_*.sh` | Main push + schedule; PRs labeled `needs-more-tests` | Broader model/recipe coverage |
+| **L2** | `L2_Launch_*.sh` | Schedule / `workflow_dispatch` only | VL models, checkpoint conversion, heavy quantization |
+
+When adding a new launcher script, always start with the **L0** tier so it runs on every PR. A maintainer will adjust the tier later if the test is too slow or better suited for nightly coverage. You must **also update** [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the corresponding job matrix:
 
 ```yaml
-- script: L2_Launch_your_new_test
+# Example: adding an L1 test
+- script: L1_Launch_your_new_test
 ```
 
 Without this step, your new launcher script will not be picked up by CI.
@@ -336,22 +374,40 @@ Without this step, your new launcher script will not be picked up by CI.
 We use [uv](https://docs.astral.sh/uv/) for managing dependencies. For reproducible builds, our project tracks the generated `uv.lock` file in the repository.
 On a weekly basis, the CI attempts an update of the lock file to test against upstream dependencies.
 
-New required dependencies can be added by `uv add $DEPENDENCY`.
+### Adding a New Dependency
 
-New optional dependencies can be added by `uv add --optional --extra $EXTRA $DEPENDENCY`.
+**Adding required (non-optional) dependencies is strongly discouraged** and will be strictly reviewed. Every required dependency inflates the package and container image for all downstream consumers — most of whom will not need it. Prefer **optional dependencies** under an extra group whenever possible.
+
+If your feature requires a dependency that is not already in `pyproject.toml`, **submit the dependency change as a separate PR first**. Do not bundle dependency additions with feature code — this keeps reviews focused and makes CI failures easier to diagnose.
+
+1. Add the dependency to `pyproject.toml` (either via `uv add` or by editing the file directly):
+
+```bash
+# Preferred: optional dependency under an extra group
+uv add --optional --extra $EXTRA $DEPENDENCY
+
+# Required dependency (needs strong justification — affects all downstream)
+uv add $DEPENDENCY
+```
 
 `EXTRA` refers to the subgroup of extra-dependencies to which you're adding the new dependency.
 Example: For adding a TRT-LLM specific dependency, run `uv add --optional --extra trtllm $DEPENDENCY`.
 
-Alternatively, the `pyproject.toml` file can also be modified directly.
-
-Adding a new dependency will update UV's lock-file. Please check this into your branch:
+2. Regenerate the lock file:
 
 ```bash
-git add uv.lock pyproject.toml
-git commit -m "build: Adding dependencies"
+uv lock
+```
+
+3. Commit both files and open a PR:
+
+```bash
+git add pyproject.toml uv.lock
+git commit -s -m "[build] chore: Add $DEPENDENCY"
 git push
 ```
+
+4. Once the dependency PR is merged, rebase your feature branch onto `main` and open the feature PR.
 
 ### 🧹 Linting and Formatting
 
@@ -365,9 +421,16 @@ uv run ruff format .
 Note: If `ruff` is missing, please follow the [installation](#local-workstation) guide.
 
 
-## 📄 Documentation Requirement
+## 📄 Documentation and Test Requirements
 
-**Important**: All new key features (e.g., enabling a new model, enabling a new parallelism strategy) must include documentation update (either a new doc or updating an existing one). This document update should:
+### All Features
+
+**Every feature PR must evaluate whether documentation and tests need to be added or updated.** This applies to all changes, not just large features. Before submitting a PR, check:
+
+- [ ] **Docs**: Does this change need a new doc page, or does an existing doc need updating?
+- [ ] **Tests**: Does this change need new unit or functional tests, or do existing tests need updating?
+
+For new key features (e.g., enabling a new model, enabling a new parallelism strategy), documentation is **required**. The documentation should:
 
 - Explain the motivation and purpose of the feature
 - Outline the technical approach and architecture
@@ -381,9 +444,19 @@ This ensures that all significant changes are well-thought-out and properly docu
 
 Quality documentation is essential for both the usability of Megatron-Bridge and its ability to be customized by the community.
 
+### Refactoring PRs
+
+Refactoring PRs that rename symbols, move files, or change paths are high risk for creating stale references. When a refactor changes any public name or path, you **must** check whether the following need corresponding updates:
+
+- [ ] **Docs**: Any docs that reference the old names, paths, config keys, or CLI arguments
+- [ ] **Docstrings**: Docstrings in the codebase that mention the old names or paths
+- [ ] **Scripts**: Example and training scripts under `scripts/` that import or reference the old names or paths
+
+A refactor PR that renames something without updating all references will break users silently. Reviewers should verify these are addressed before approving.
+
 ## ✨ Code Quality
 
-- Follow the existing code style and conventions (see [CODING_GUIDELINES.md](CODING_GUIDELINES.md))
+- Follow the existing code style and conventions (see [skills/code-style/SKILL.md](skills/code-style/SKILL.md))
 - Write tests for new features
 - Update documentation to reflect your changes
 - Ensure all tests pass before submitting a PR

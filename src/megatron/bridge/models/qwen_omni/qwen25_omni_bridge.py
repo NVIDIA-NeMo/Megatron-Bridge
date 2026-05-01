@@ -66,7 +66,10 @@ class Qwen25OmniBridge(MegatronModelBridge):
             head_dim=getattr(text_config, "head_dim", text_config.hidden_size // text_config.num_attention_heads),
             init_method_std=text_config.initializer_range,
             layernorm_epsilon=text_config.rms_norm_eps,
+            normalization="RMSNorm",
             gated_linear_unit=True,
+            add_bias_linear=False,
+            hidden_dropout=0.0,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(text_config.vocab_size),
             rotary_base=getattr(text_config, "rope_theta", 1000000),
             share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
@@ -75,8 +78,9 @@ class Qwen25OmniBridge(MegatronModelBridge):
             fp16=(model_dtype == torch.float16),
             bf16=(model_dtype == torch.bfloat16),
             params_dtype=model_dtype,
-            add_qkv_bias=True,  # Qwen2 always has QKV bias
-            qk_layernorm=False,  # Qwen2 has no QK layernorm
+            autocast_dtype=model_dtype,
+            add_qkv_bias=True,
+            qk_layernorm=False,
             # Token IDs from thinker config
             image_token_id=getattr(thinker_config, "image_token_index", 151655),
             video_token_id=getattr(thinker_config, "video_token_index", 151656),

@@ -59,7 +59,15 @@ HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
 def get_calib_dataloader(calib_size=512, max_sequence_length=512):
     """Return a dataloader for calibration."""
-    dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
+    # Only rank 0 downloads/prepares the dataset to avoid race conditions when multiple
+    # ranks simultaneously write to the same HuggingFace cache directory.
+    rank = torch.distributed.get_rank()
+    if rank == 0:
+        dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
+    torch.distributed.barrier()
+    if rank != 0:
+        dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
+
     text_column = "article"
 
     calib_size = min(len(dataset), calib_size)

@@ -69,7 +69,7 @@ from megatron.core.utils import get_pg_rank
 # ==============================================================================
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.data.utils import get_dataset_provider
-from megatron.bridge.models.qwen import Qwen3ModelProvider4B
+from megatron.bridge.models import AutoBridge
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -435,23 +435,22 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     # IMPORTANT: When use_decentralized_pg=True, the setup functions
     # expect pg_collection to be passed explicitly rather than reading from mpu.
 
-    model_cfg = Qwen3ModelProvider4B(
-        # Parallelism - must match what we used to create pg_collection
-        tensor_model_parallel_size=args.tp_size,
-        pipeline_model_parallel_size=args.pp_size,
-        context_parallel_size=args.cp_size,
-        sequence_parallel=(args.tp_size > 1),
-        # Model architecture (scaled down for demo)
-        num_layers=args.num_layers,
-        seq_length=args.seq_length,
-        share_embeddings_and_output_weights=False,
-        # Precision
-        pipeline_dtype=torch.bfloat16,
-        bf16=True,
-        attention_softmax_in_fp32=True,
-        make_vocab_size_divisible_by=128,
-        vocab_size=None,
-    )
+    bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B")
+    model_cfg = bridge.to_megatron_provider()
+
+    # Parallelism - must match what we used to create pg_collection
+    model_cfg.tensor_model_parallel_size = args.tp_size
+    model_cfg.pipeline_model_parallel_size = args.pp_size
+    model_cfg.context_parallel_size = args.cp_size
+    model_cfg.sequence_parallel = args.tp_size > 1
+
+    # Override for demo
+    model_cfg.num_layers = args.num_layers
+    model_cfg.seq_length = args.seq_length
+    model_cfg.pipeline_dtype = torch.bfloat16
+    model_cfg.attention_softmax_in_fp32 = True
+    model_cfg.make_vocab_size_divisible_by = 128
+    model_cfg.vocab_size = None
 
     train_cfg = TrainingConfig(
         train_iters=args.train_iters,

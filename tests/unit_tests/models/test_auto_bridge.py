@@ -405,6 +405,82 @@ class TestAutoBridge:
         with pytest.raises(ValueError, match="Model architecture not supported by AutoBridge"):
             AutoBridge.from_hf_config(config)
 
+    def test_from_auto_config_happy_path(self, tmp_path):
+        """from_auto_config synthesizes config and tags bridge with source model id."""
+        ckpt_dir = tmp_path / "ckpt"
+        ckpt_dir.mkdir()
+        (ckpt_dir / "run_config.yaml").write_text("dummy: true\n")
+
+        mock_hf_cfg = Mock()
+        mock_hf_cfg.to_dict.return_value = {"vocab_size": 32000}
+
+        first_bridge = Mock()
+        first_bridge._model_bridge.megatron_to_hf_config.return_value = {"vocab_size": 64000}
+        second_bridge = Mock()
+
+        hf_model_id = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+
+        with patch("transformers.AutoConfig.from_pretrained", return_value=mock_hf_cfg) as mock_auto_cfg:
+            with patch(
+                "megatron.bridge.training.model_load_save.load_model_config",
+                return_value=(Mock(name="megatron_cfg"), None),
+            ) as mock_load_cfg:
+                with patch(
+                    "megatron.bridge.models.conversion.utils.conform_config_to_reference",
+                    return_value={"vocab_size": 64000},
+                ) as mock_conform:
+                    with patch.object(AutoBridge, "from_hf_config", side_effect=[first_bridge, second_bridge]):
+                        bridge = AutoBridge.from_auto_config(str(ckpt_dir), hf_model_id)
+
+        assert bridge is second_bridge
+        assert second_bridge.hf_model_id == hf_model_id
+        mock_auto_cfg.assert_called_once_with(hf_model_id, trust_remote_code=False)
+        mock_load_cfg.assert_called_once_with(str(ckpt_dir))
+        mock_conform.assert_called_once_with({"vocab_size": 64000}, {"vocab_size": 32000})
+
+    def test_from_auto_config_uses_latest_iter_run_config(self, tmp_path):
+        """from_auto_config falls back to latest iter_* directory for run_config.yaml."""
+        ckpt_dir = tmp_path / "ckpt"
+        ckpt_dir.mkdir()
+        (ckpt_dir / "iter_0000001").mkdir()
+        iter_latest = ckpt_dir / "iter_0000003"
+        iter_latest.mkdir()
+        (iter_latest / "run_config.yaml").write_text("dummy: true\n")
+
+        mock_hf_cfg = Mock()
+        mock_hf_cfg.to_dict.return_value = {"vocab_size": 32000}
+        first_bridge = Mock()
+        first_bridge._model_bridge.megatron_to_hf_config.return_value = {"vocab_size": 64000}
+        second_bridge = Mock()
+
+        with patch("transformers.AutoConfig.from_pretrained", return_value=mock_hf_cfg):
+            with patch(
+                "megatron.bridge.training.model_load_save.load_model_config",
+                return_value=(Mock(name="megatron_cfg"), None),
+            ) as mock_load_cfg:
+                with patch(
+                    "megatron.bridge.models.conversion.utils.conform_config_to_reference",
+                    return_value={"vocab_size": 64000},
+                ):
+                    with patch.object(AutoBridge, "from_hf_config", side_effect=[first_bridge, second_bridge]):
+                        AutoBridge.from_auto_config(str(ckpt_dir), "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
+
+        mock_load_cfg.assert_called_once_with(str(iter_latest))
+
+    def test_from_auto_config_missing_checkpoint_path(self):
+        """from_auto_config fails with clear message for nonexistent checkpoint root."""
+        with pytest.raises(FileNotFoundError, match="Megatron checkpoint not found"):
+            AutoBridge.from_auto_config("/definitely/not/a/path", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
+
+    def test_from_auto_config_missing_run_config(self, tmp_path):
+        """from_auto_config fails if no run_config.yaml is found."""
+        ckpt_dir = tmp_path / "ckpt"
+        ckpt_dir.mkdir()
+        (ckpt_dir / "iter_0000001").mkdir()
+
+        with pytest.raises(FileNotFoundError, match="Could not find run_config.yaml"):
+            AutoBridge.from_auto_config(str(ckpt_dir), "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
+
     def test_supports_method(self):
         """Test the supports class method."""
         # Supported config
@@ -568,13 +644,21 @@ class TestAutoBridge:
                     save_every_n_ranks=1,
                 )
 
-    def test_save_hf_pretrained_config_only_raises(self):
-        """Test save_hf_pretrained raises when bridge has config only."""
-        mock_config = Mock(spec=PretrainedConfig)
-        bridge = AutoBridge(mock_config)
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_config_only(self, _mock_dist_avail, _mock_dist_init, tmp_path):
+        """Config-only save writes config.json, calls save_hf_weights, and tolerates missing hub files."""
+        bridge = AutoBridge(PretrainedConfig())
+        bridge.hf_model_id = "some-org/some-model"
 
-        with pytest.raises(ValueError, match="from_hf_pretrained"):
-            bridge.save_hf_pretrained([Mock()], "./output_dir")
+        with patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights:
+            with patch("huggingface_hub.list_repo_files", return_value=["config.json", "README.md"]):
+                with patch("huggingface_hub.hf_hub_download") as mock_download:
+                    bridge.save_hf_pretrained([Mock()], str(tmp_path))
+
+        assert (tmp_path / "config.json").exists()
+        mock_download.assert_not_called()
+        mock_save_hf_weights.assert_called_once()
 
     @patch("torch.distributed.get_rank", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
@@ -693,7 +777,12 @@ class TestAutoBridge:
             bridge._causal_lm_architecture
 
     def test_get_causal_lm_architecture_not_in_transformers(self):
-        """Test error when architecture class not found in transformers."""
+        """Test that custom-registered arch names (not in transformers) are returned as strings.
+
+        Custom models registered via AutoConfig.register / AutoModelForCausalLM.register
+        (e.g. BailingMoeV2ForCausalLM) are not present in the standard transformers module
+        but are still valid — the bridge dispatch supports string-based source matching.
+        """
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["CustomForCausalLM"]
@@ -704,14 +793,34 @@ class TestAutoBridge:
 
         # Mock transformers to not have the CustomForCausalLM attribute
         with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
-            # Configure mock to raise AttributeError when accessing CustomForCausalLM
             del mock_transformers.CustomForCausalLM
 
-            with pytest.raises(
-                ValueError,
-                match="Architecture class 'CustomForCausalLM' not found in transformers",
-            ):
-                bridge._causal_lm_architecture
+            # Falls back to string class name for custom-registered models
+            result = bridge._causal_lm_architecture
+            assert result == "CustomForCausalLM"
+
+    def test_get_causal_lm_architecture_string_registered_fallback(self):
+        """Test that a string-registered architecture resolves via the _exact_types fallback."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = Mock()
+        mock_hf_model.config.architectures = ["Qwen3ASRForConditionalGeneration"]
+        mock_hf_model.config.auto_map = None
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_hf_model
+
+        with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
+            # Architecture not available in transformers
+            del mock_transformers.Qwen3ASRForConditionalGeneration
+
+            with patch("megatron.bridge.models.conversion.auto_bridge.model_bridge") as mock_model_bridge:
+                # Simulate a registry that contains the architecture as a string key
+                mock_get_bridge = Mock()
+                mock_get_bridge._exact_types = {"Qwen3ASRForConditionalGeneration": Mock()}
+                mock_model_bridge.get_model_bridge = mock_get_bridge
+
+                arch = bridge._causal_lm_architecture
+                assert arch == "Qwen3ASRForConditionalGeneration"
 
     def test_repr(self):
         """Test string representation of AutoBridge."""
@@ -874,16 +983,6 @@ class TestAutoBridge:
                     source_path=None,
                     strict=False,
                 )
-
-    def test_export_ckpt_config_only_raises(self):
-        """Test export_ckpt raises when bridge has config only."""
-        mock_config = Mock(spec=PretrainedConfig)
-
-        bridge = AutoBridge.__new__(AutoBridge)
-        bridge.hf_pretrained = mock_config
-
-        with pytest.raises(ValueError, match="from_hf_pretrained"):
-            bridge.export_ckpt("./megatron_checkpoint", "./hf_export")
 
     def test_export_ckpt_with_kwargs(self):
         """Test export_ckpt with custom kwargs."""

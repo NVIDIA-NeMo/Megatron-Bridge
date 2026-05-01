@@ -25,10 +25,11 @@ PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen3-VL-8B-Instruct
 MODEL_NAME=qwen3_vl_8b
 DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
-TRAIN_ITERS=50
-GLOBAL_BATCH_SIZE=32
-MICRO_BATCH_SIZE=1
-EVAL_ITERS=10
+TRAIN_ITERS=100
+GLOBAL_BATCH_SIZE=16
+MICRO_BATCH_SIZE=2
+EVAL_ITERS=20
+EVAL_INTERVAL=20
 LR=0.00005
 MIN_LR=0.000005
 LR_WARMUP_ITERS=10
@@ -36,14 +37,14 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # TP/PP combinations: "TP,PP"
-PARALLELISM_CONFIGS=("2,1" "1,2")
+PARALLELISM_CONFIGS=("4,1" "2,1")
 
 for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r TP PP <<< "$config"
     
     echo "Running LoRA finetuning with TP=$TP, PP=$PP"
-    uv run python -m torch.distributed.run --nproc_per_node=2 scripts/training/run_recipe.py \
-        --recipe ${MODEL_NAME}_finetune_config \
+    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+        --recipe ${MODEL_NAME}_peft_config \
         --step_func qwen3_vl_step \
         --peft_scheme lora \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
@@ -51,7 +52,8 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         train.train_iters=$TRAIN_ITERS \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
         train.micro_batch_size=$MICRO_BATCH_SIZE \
-        train.eval_iters=$EVAL_ITERS \
+        validation.eval_iters=$EVAL_ITERS \
+        validation.eval_interval=$EVAL_INTERVAL \
         optimizer.lr=$LR \
         optimizer.min_lr=$MIN_LR \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
@@ -71,10 +73,11 @@ PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen3-VL-30B-A3B-Instruct
 MODEL_NAME=qwen3_vl_30b_a3b
 DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
-TRAIN_ITERS=50
-GLOBAL_BATCH_SIZE=32
-MICRO_BATCH_SIZE=1
-EVAL_ITERS=10
+TRAIN_ITERS=100
+GLOBAL_BATCH_SIZE=16
+MICRO_BATCH_SIZE=2
+EVAL_ITERS=20
+EVAL_INTERVAL=20
 LR=0.00005
 MIN_LR=0.000005
 LR_WARMUP_ITERS=10
@@ -82,14 +85,14 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # EP/TP/PP combinations: "EP,TP,PP" configurations
-PARALLELISM_CONFIGS=("8,1,1" "4,1,1" "2,1,1")
+PARALLELISM_CONFIGS=("8,1,1" "4,1,1")
 
 for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r EP TP PP <<< "$config"
 
     echo "Running LoRA finetuning with EP=$EP, TP=$TP, PP=$PP"
     uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-        --recipe ${MODEL_NAME}_finetune_config \
+        --recipe ${MODEL_NAME}_peft_config \
         --step_func qwen3_vl_step \
         --peft_scheme lora \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
@@ -97,7 +100,8 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         train.train_iters=$TRAIN_ITERS \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
         train.micro_batch_size=$MICRO_BATCH_SIZE \
-        train.eval_iters=$EVAL_ITERS \
+        validation.eval_iters=$EVAL_ITERS \
+        validation.eval_interval=$EVAL_INTERVAL \
         optimizer.lr=$LR \
         optimizer.min_lr=$MIN_LR \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \

@@ -21,14 +21,14 @@ Directory structure:
 ### Import HF → Megatron
 To import the HF VL model to your desired Megatron path:
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model mistralai/Ministral-3-3B-Instruct-2512-BF16 \
   --megatron-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16
 ```
 
 ### Export Megatron → HF
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
   --hf-model mistralai/Ministral-3-3B-Instruct-2512-BF16 \
   --megatron-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16/iter_0000000 \
   --hf-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16-hf-export
@@ -39,7 +39,7 @@ python examples/conversion/convert_checkpoints.py export \
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_vlm.py \
+uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
   --hf_model_path mistralai/Ministral-3-3B-Instruct-2512-BF16 \
   --megatron_model_path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16/iter_0000000 \
   --image_path "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
@@ -85,9 +85,12 @@ The current date is {today}.
 
 - See: [bridge.recipes.ministral3](../../apidocs/bridge/bridge.recipes.ministral3.md)
 - Available recipes:
-  - `ministral3_3b_finetune_config`: Finetuning for 3B VL model with PEFT support
-  - `ministral3_8b_finetune_config`: Finetuning for 8B VL model with PEFT support
-  - `ministral3_14b_finetune_config`: Finetuning for 14B VL model with PEFT support
+  - `ministral3_3b_sft_config`: Finetuning for 3B VL model
+  - `ministral3_8b_sft_config`: Finetuning for 8B VL model
+  - `ministral3_14b_sft_config`: Finetuning for 14B VL model
+  - `ministral3_3b_peft_config`: Finetuning for 3B VL model with PEFT support
+  - `ministral3_8b_peft_config`: Finetuning for 8B VL model with PEFT support
+  - `ministral3_14b_peft_config`: Finetuning for 14B VL model with PEFT support
 
 Before training, ensure the following environment variables are set:
 1. `SAVE_DIR`: checkpoint and log saving directory
@@ -101,15 +104,11 @@ Pretraining is not verified for this model.
 
 ### Supervised Fine-Tuning (SFT)
 
-See the [sft.sh](sft.sh) script for full parameter fine-tuning with configurable model parallelisms.
-
-W&B report coming soon.
+See the [sft_unpacked.sh](sft_unpacked.sh) script for full parameter fine-tuning with configurable model parallelisms.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-See the [peft.sh](peft.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism.
-
-W&B report coming soon.
+See the [peft_unpacked.sh](peft_unpacked.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism.
 
 ### Recommended Configurations
 
@@ -123,6 +122,9 @@ W&B report coming soon.
 | Ministral 3 14B | LoRA/DoRA | 2 | 1 | 32-64 | 1e-4 | 8 GPUs |
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
+
+### Expected Training Dynamics
+We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/h32cflfn) for the expected loss curves and grad norms.
 
 ## Evaluation
 

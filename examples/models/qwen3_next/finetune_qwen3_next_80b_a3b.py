@@ -48,7 +48,7 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_finetune_config
+from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_sft_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -109,10 +109,13 @@ def main() -> None:
     logger.info("Megatron-Bridge Qwen3-Next 80B-A3B Finetuning Script with YAML & CLI Overrides")
     logger.info("-----------------------------------------------------------------------")
 
-    cfg: ConfigContainer = qwen3_next_80b_a3b_finetune_config(
-        dataset_path=args.data_path,
-        pretrained_checkpoint=args.pretrained_checkpoint,
-    )
+    cfg: ConfigContainer = qwen3_next_80b_a3b_sft_config()
+    if args.pretrained_checkpoint is not None:
+        cfg.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+    if args.data_path is not None:
+        cfg.dataset.dataset_name = "json"
+        cfg.dataset.dataset_kwargs = cfg.dataset.dataset_kwargs or {}
+        cfg.dataset.dataset_kwargs["data_files"] = args.data_path
     logger.info("Loaded base configuration")
 
     if get_rank_safe() == 0:

@@ -258,7 +258,7 @@ def forward_step(
         position_ids,
         this_pg_collection,
         use_fp8_padding=True,
-        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1,
+        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
         seq_length=config.seq_length,
     )
     forward_args = {

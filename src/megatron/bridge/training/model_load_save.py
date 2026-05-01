@@ -24,9 +24,11 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.models.common import ModelConfig
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
@@ -187,7 +189,7 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
 
 def load_model_config(
     checkpoint_path: str,
-) -> tuple[TransformerConfig, Optional[argparse.Namespace]]:
+) -> tuple[TransformerConfig | ModelConfig, Optional[argparse.Namespace]]:
     """Returns the model config saved in the checkpoint.
 
     Supports checkpoints saved with either Megatron Bridge or MegatronLM.
@@ -216,6 +218,13 @@ def load_model_config(
         run_config = read_run_config(run_config_filename)
         mbridge_ckpt = True
         mlm_args = None
+
+        # For backward compatibility reasons only
+        model_dict = run_config.get("model", {})
+        if model_dict.get("hybrid_override_pattern") and not model_dict.get("hybrid_layer_pattern"):
+            model_dict["hybrid_layer_pattern"] = model_dict.pop("hybrid_override_pattern")
+        if isinstance(model_dict.get("pipeline_model_parallel_layout"), dict):
+            model_dict["pipeline_model_parallel_layout"] = None
     else:
         try:
             mlm_args = _load_args_from_checkpoint(checkpoint_path)
@@ -224,7 +233,10 @@ def load_model_config(
             raise RuntimeError(f"Checkpoint at {checkpoint_path} is not in a supported format.")
 
     if mbridge_ckpt:
-        model_cfg = instantiate(run_config["model"])
+        if "_builder_" in run_config["model"]:
+            model_cfg = ModelConfig.from_dict(run_config["model"])
+        else:
+            model_cfg = instantiate(run_config["model"])
     else:
         model_cfg = _transformer_config_from_args(mlm_args)
 
@@ -233,7 +245,7 @@ def load_model_config(
 
 def build_and_load_model(
     checkpoint_path: str,
-    model_cfg: TransformerConfig,
+    model_cfg: TransformerConfig | ModelConfig,
     model_type: Optional[Literal["gpt", "mamba"]] = None,
     megatron_args: Optional[argparse.Namespace] = None,
     return_state_dict: bool = False,
@@ -282,6 +294,21 @@ def build_and_load_model(
             if hasattr(model_cfg, "finalize"):
                 model_cfg.finalize()
             return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
+        elif isinstance(model_cfg, ModelConfig):
+            if hasattr(model_cfg, "finalize"):
+                model_cfg.finalize()
+            builder_cls = model_cfg.get_builder_cls()
+            builder = builder_cls(model_cfg)
+            # Note: `use_cpu_initialization` is not passed as an explicit kwarg here,
+            # unlike the ModelProviderMixin path which passes it directly to
+            # `provide_distributed_model`. Instead, it is handled by the
+            # `megatron_cpu_init_context` context manager (see below), which sets
+            # the flag on the config object. This is intentional — we do not want
+            # to duplicate TransformerConfig fields like `use_cpu_initialization`
+            # as kwargs on `build_distributed_models`.
+            return builder.build_distributed_models(
+                ProcessGroupCollection.use_mpu_process_groups(), wrap_with_ddp=False
+            )
         else:
             assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
@@ -382,10 +409,14 @@ def load_megatron_model(
     model_cfg.context_parallel_size = 1
     model_cfg.expert_model_parallel_size = 1
     model_cfg.expert_tensor_parallel_size = 1
+    if getattr(model_cfg, "hybrid_layer_pattern", None):
+        model_cfg.hybrid_layer_pattern = model_cfg.hybrid_layer_pattern.replace("|", "")
     model_cfg.sequence_parallel = False
     model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
     model_cfg.hierarchical_context_parallel_sizes = None
+    model_cfg.overlap_moe_expert_parallel_comm = False  # Required with EP=1
+    model_cfg.delay_wgrad_compute = False  # Required with overlap=False
     if use_cpu_init:
         model_cfg.fp8 = None
         model_cfg.fp8_param = False
@@ -395,6 +426,13 @@ def load_megatron_model(
         for key, value in mp_overrides.items():
             if hasattr(model_cfg, key) and value is not None:
                 setattr(model_cfg, key, value)
+
+    # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
+    if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
+        tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
+        ep = getattr(model_cfg, "expert_model_parallel_size", 1)
+        if tp * ep == 1:
+            model_cfg.moe_token_dispatcher_type = "allgather"
 
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
@@ -666,6 +704,7 @@ def save_megatron_model(
             num_floating_point_operations_so_far=0,
             prebuilt_state_dict=state_dict,
             pg_collection=pg_collection,
+            callback_manager=None,
         )
     else:
         # Save the checkpoint
@@ -675,6 +714,7 @@ def save_megatron_model(
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            callback_manager=None,
         )
 
     # Save tokenizer files separately if tokenizer config is provided
@@ -709,11 +749,11 @@ def dtype_from_str(dtype: str) -> torch.dtype:
     if not isinstance(dtype, str):
         raise TypeError(f"Expected str, got {type(dtype)}")
 
-    if dtype in ("float16", "fp16", "16", "16-mixed"):
-        return torch.float16
-    elif dtype in ("bfloat16", "bf16-mixed"):
-        return torch.bfloat16
-    else:
+    from megatron.bridge.utils.activation_map import str_to_dtype
+
+    try:
+        return str_to_dtype(dtype)
+    except ValueError:
         return torch.float32
 
 

@@ -32,7 +32,21 @@ def _load_args_from_checkpoint(checkpoint_path: str) -> argparse.Namespace:
     assert state_dict is not None, f"Could not load state from checkpoint at {checkpoint_path}"
     assert "args" in state_dict, "Provided checkpoint does not have arguments saved."
 
-    return state_dict["args"]
+    args = state_dict["args"]
+
+    # Backward compat: old checkpoints used hybrid_override_pattern; new ones use
+    # hybrid_layer_pattern. Mirror the conversion done in MCore's load_args_from_checkpoint.
+    if (
+        getattr(args, "hybrid_override_pattern", None) is not None
+        and getattr(args, "hybrid_layer_pattern", None) is None
+    ):
+        args.hybrid_layer_pattern = args.hybrid_override_pattern
+        # num_layers is now derived from hybrid_layer_pattern in validate_args
+        # and should not be set at the same time.
+        if hasattr(args, "num_layers"):
+            args.num_layers = None
+
+    return args
 
 
 def _tokenizer_config_from_args(args: argparse.Namespace) -> TokenizerConfig:

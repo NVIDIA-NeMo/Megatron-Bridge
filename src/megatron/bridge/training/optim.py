@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Optional, Union
 
 from megatron.core.optimizer import (
@@ -19,16 +20,33 @@ from megatron.core.optimizer import (
     OptimizerConfig,
     get_megatron_optimizer,
 )
+
+
+# TODO: Remove try/except once `get_mup_config_overrides` lands in mcore main.
+#       This guard exists because the symbol lives in mcore dev but not yet in
+#       the main branch that the submodule tracks.
+#
+#       We assign None (not a bool flag) so the module attribute always exists
+#       and tests can patch it without AttributeError.
+try:
+    from megatron.core.optimizer import get_mup_config_overrides
+except ImportError:
+    get_mup_config_overrides = None  # type: ignore[assignment]
+
 from megatron.core.optimizer.muon import get_megatron_muon_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.utils import get_model_config
 
 from megatron.bridge.training.config import (
     OptimizerConfigOverrideProvider,
     OptimizerConfigOverrideProviderContext,
     SchedulerConfig,
 )
+
+
+G_LOGGER = logging.getLogger(__name__)
 
 
 def setup_optimizer(
@@ -58,6 +76,24 @@ def setup_optimizer(
     config_overrides = optimizer_config_override_provider.build_config_overrides(
         OptimizerConfigOverrideProviderContext(scheduler_config, optimizer_config, model)
     )
+
+    # Apply μP optimizer scaling if enabled on the model config.
+    # Guard on the callable itself (None when mcore main lacks the symbol) so
+    # unit tests can patch the module attribute without hitting AttributeError.
+    model_chunks = model if isinstance(model, list) else [model]
+    model_config = get_model_config(model_chunks[0])
+    if get_mup_config_overrides is not None and getattr(model_config, "use_mup", False):
+        mup_overrides = get_mup_config_overrides(
+            config=optimizer_config,
+            mup_width_mult=model_config.mup_width_mult,
+            optimizer_type=optimizer_config.optimizer,
+        )
+        if mup_overrides:
+            config_overrides = {**(config_overrides or {}), **mup_overrides}
+            G_LOGGER.info(
+                f"μP enabled (width_mult={model_config.mup_width_mult:.4g}): "
+                f"applied {len(mup_overrides)} optimizer param-group override(s)."
+            )
 
     if hasattr(optimizer_config, "provide"):
         optimizer = optimizer_config.provide(

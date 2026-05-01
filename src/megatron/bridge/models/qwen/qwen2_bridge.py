@@ -34,7 +34,7 @@ class Qwen2Bridge(MegatronModelBridge):
     and Megatron-Core GPTModel formats, including weight mappings and
     configuration translation.
 
-    Qwen2 inherits CONFIG_MAPPING and ACTIVATION_MAPPING from MegatronModelBridge base class.
+    Qwen2 inherits CONFIG_MAPPING from MegatronModelBridge base class.
     Model-specific settings are applied in provider_bridge.
 
     Example:
@@ -49,7 +49,6 @@ class Qwen2Bridge(MegatronModelBridge):
 
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.add_qkv_bias = True
         provider.hidden_dropout = 0.0
