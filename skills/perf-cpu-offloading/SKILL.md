@@ -1,7 +1,7 @@
 ---
 name: cpu-offloading
-description: Validate and use CPU offloading in Megatron Bridge, including layer-level activation offloading and fractional optimizer state offloading with HybridDeviceOptimizer. Use when the user asks about cpu_offloading, optimizer_cpu_offload, optimizer_offload_fraction, overlap_cpu_optimizer_d2h_h2d, CPU memory offloading, or reducing GPU memory usage via offloading.
-when_to_use: When enabling cpu_offloading, optimizer_cpu_offload, optimizer_offload_fraction, or HybridDeviceOptimizer to reduce GPU memory pressure via CPU offload.
+description: Validate and use CPU offloading in Megatron Bridge, including layer-level activation offloading and fractional optimizer state offloading with HybridDeviceOptimizer.
+when_to_use: Enabling CPU offload to reduce GPU memory; 'cpu_offloading', 'optimizer_cpu_offload', 'optimizer_offload_fraction', 'HybridDeviceOptimizer', 'move optimizer to CPU'.
 ---
 
 # CPU Offloading

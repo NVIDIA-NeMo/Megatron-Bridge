@@ -1,7 +1,7 @@
 ---
 name: expert-parallel-overlap
 description: Validate and use MoE expert-parallel communication overlap in Megatron-Bridge, including overlap_moe_expert_parallel_comm, delay_wgrad_compute, and flex dispatcher backends such as DeepEP and HybridEP.
-when_to_use: When enabling overlap_moe_expert_parallel_comm, delay_wgrad_compute, or flex-dispatcher EP overlap with DeepEP or HybridEP backends.
+when_to_use: Enabling EP overlap to hide dispatch/combine latency; 'overlap_moe_expert_parallel_comm', 'delay_wgrad_compute', 'flex dispatcher', 'DeepEP overlap', 'HybridEP overlap'.
 ---
 
 # MoE Expert-Parallel Overlap Skill

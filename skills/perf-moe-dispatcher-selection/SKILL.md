@@ -1,7 +1,7 @@
 ---
 name: moe-dispatcher-selection
 description: Choose the right MoE token dispatcher (`alltoall`, DeepEP, or HybridEP) for the hardware, EP degree, and optimization stage. Summarizes patterns from DSV3, Qwen3, Qwen3-Next, and VLM bring-up work.
-when_to_use: When choosing between alltoall, DeepEP, and HybridEP token dispatchers for a given hardware platform, EP degree, or bring-up stage.
+when_to_use: Choosing a MoE token dispatcher; 'which dispatcher', 'alltoall vs DeepEP', 'HybridEP', 'MoE dispatcher', 'flex backend', 'EP dispatcher selection'.
 ---
 
 # MoE Dispatcher Selection Guide

@@ -1,7 +1,7 @@
 ---
 name: code-style
-description: Code style and quality guidelines for Megatron Bridge. Covers naming, type hints, ruff enforcement, keyword-arg safety, copyright headers, logging, and common anti-patterns. Auto-invoked during code review and when writing new code.
-when_to_use: When writing new code, reviewing PRs, or checking whether a pattern follows project conventions.
+description: Code style and quality guidelines for Megatron Bridge. Covers naming, type hints, ruff enforcement, keyword-arg safety, copyright headers, logging, and common anti-patterns.
+when_to_use: Writing new code, reviewing a PR, or checking whether a pattern is idiomatic; 'is this the right way to...', 'how should I name...', 'does this follow conventions?'
 ---
 
 # Code Style for Megatron Bridge

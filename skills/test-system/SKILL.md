@@ -1,7 +1,7 @@
 ---
 name: test-system
 description: Reference for the Megatron Bridge CI test system — directory layout, tier semantics, script conventions, and how to add, move, or disable tests.
-when_to_use: When adding, moving, disabling, or triaging CI tests; understanding L0/L1/L2 tier semantics; or investigating flaky or failing functional tests.
+when_to_use: Adding, moving, or disabling CI tests, or debugging test failures; 'add a test', 'which tier', 'L0 vs L1', 'flaky test', 'CI test layout', 'functional test'.
 ---
 
 # Megatron Bridge CI Test System

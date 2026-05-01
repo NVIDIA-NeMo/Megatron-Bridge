@@ -1,7 +1,7 @@
 ---
 name: activation-recompute
 description: Validate and use selective and full activation recompute in Megatron Bridge to reduce GPU memory usage at the cost of extra compute.
-when_to_use: When reducing GPU memory via activation recompute, tuning recompute_granularity / recompute_num_layers / recompute_modules, or choosing between selective and full recompute.
+when_to_use: Reducing GPU memory via activation recompute; 'recompute_granularity', 'recompute_num_layers', 'recompute_modules', 'selective recompute', 'full recompute', 'activation memory OOM'.
 ---
 
 # Activation Recompute

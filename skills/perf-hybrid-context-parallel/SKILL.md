@@ -1,7 +1,7 @@
 ---
 name: hybrid-context-parallel
-description: Operational guide for enabling hierarchical context parallelism in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification. Use when the user asks about hierarchical_context_parallel_sizes, a2a+p2p, CP scaling beyond KV heads, or multi-level context parallelism.
-when_to_use: When enabling hierarchical_context_parallel_sizes, a2a+p2p CP comm type, or scaling context parallelism beyond the number of KV heads.
+description: Operational guide for enabling hierarchical context parallelism in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification.
+when_to_use: Scaling context parallelism beyond KV heads; 'hierarchical_context_parallel_sizes', 'a2a+p2p', 'hybrid context parallel', 'CP beyond KV heads', 'multi-level CP'.
 ---
 
 # Hybrid / Hierarchical Context Parallel Skill

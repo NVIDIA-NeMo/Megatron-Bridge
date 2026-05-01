@@ -1,7 +1,7 @@
 ---
 name: memory-tuning
 description: Techniques for reducing peak GPU memory in Megatron Bridge — expandable segments, parallelism resizing, activation recompute, CPU offloading constraints, and common OOM fixes.
-when_to_use: When hitting GPU OOM, diagnosing memory fragmentation, or systematically reducing peak activation or optimizer memory.
+when_to_use: GPU OOM errors or reducing peak memory; 'out of memory', 'OOM', 'memory fragmentation', 'expandable_segments', 'reduce GPU memory', 'PYTORCH_CUDA_ALLOC_CONF'.
 ---
 
 # Memory Tuning
