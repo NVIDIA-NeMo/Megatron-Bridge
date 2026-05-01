@@ -169,7 +169,7 @@ CLI_OVERRIDES="\
 #   --hf_path ${WORKSPACE}/models/Qwen/${HF_MODEL_NAME}
 CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
-    --step_func vlm_step \
+    --step_func qwen3_vl_step \
     --peft_scheme lora \
     $CLI_OVERRIDES"
 
