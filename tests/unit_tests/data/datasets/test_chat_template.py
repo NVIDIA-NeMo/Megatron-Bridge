@@ -1215,9 +1215,7 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
         mock_tokenizer.eos_id = 2
 
         with patch("megatron.bridge.data.datasets.sft._safe_load_packed_npy") as mock_load:
-            mock_load.return_value = np.array(
-                [{"input_ids": [1, 2], "seq_start_id": [0], "loss_mask": [1, 1]}]
-            )
+            mock_load.return_value = np.array([{"input_ids": [1, 2], "seq_start_id": [0], "loss_mask": [1, 1]}])
 
             # Even with chat=True, should create GPTSFTPackedDataset for .npy
             dataset = create_sft_dataset(
