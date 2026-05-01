@@ -9,8 +9,9 @@ and verification steps.
 :caption: Getting Started
 :maxdepth: 1
 
-skills/developer-guide/SKILL
-skills/test-system/SKILL
+skills/build-and-dependency/SKILL
+skills/testing/SKILL
+skills/cicd/SKILL
 skills/mlm-bridge-training/SKILL
 skills/recipe-recommender/SKILL
 ```
