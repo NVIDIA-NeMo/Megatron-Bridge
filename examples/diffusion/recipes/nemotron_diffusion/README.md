@@ -64,7 +64,7 @@ torchrun --nproc_per_node=4 examples/diffusion/recipes/nemotron_diffusion/infere
     --megatron-path /path/to/checkpoints/ar_to_dlm_8b \
     --hf-model mistralai/Ministral-3-8B-Base-2512 \
     --prompts "The capital of France is" \
-    --gen-length 256 --block-length 32 --diffusion-steps 256 \
+    --gen-length 256 --block-length 32 --steps-per-block 32 \
     --tp 4
 ```
 
