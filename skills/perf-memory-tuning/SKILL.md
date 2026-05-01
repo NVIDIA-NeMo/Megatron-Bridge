@@ -39,7 +39,7 @@ When a training run OOMs or is close to the memory limit:
    fragmentation-induced OOM with zero performance cost. Most Slurm launch
    templates already include it.
 2. **Add selective activation recompute** (`recompute_modules=[core_attn]`) if
-   not already enabled. See @skills/perf-techniques/activation-recompute/SKILL.md.
+   not already enabled. See @skills/perf-activation-recompute/SKILL.md.
 3. **Avoid increasing TP** as a memory fix — doubling TP dramatically increases
    NVLink all-reduce volume and often kills throughput (-28% on Llama3 70B).
 4. **Avoid increasing PP at the cost of DP** — halving DP doubles gradient
@@ -77,11 +77,11 @@ If the model genuinely does not fit (not fragmentation), adjust parallelism:
 | Increase PP (keeping DP) | Fewer layers per stage | Moderate (~6% if DP halved) | Only if GPU count allows |
 | Increase TP | Fewer params per GPU | Severe (-28% on 70B) | Last resort |
 | Distributed optimizer | Shards optimizer state across DP ranks | ~1-2% | Recommended for large models |
-| FSDP | Shards params + grads + optimizer | Varies | See `skills/perf-techniques/megatron-fsdp/` |
+| FSDP | Shards params + grads + optimizer | Varies | See `skills/perf-megatron-fsdp/` |
 
 ### Activation recompute
 
-See @skills/perf-techniques/activation-recompute/SKILL.md for full details.
+See @skills/perf-activation-recompute/SKILL.md for full details.
 
 ### CPU offloading
 
@@ -160,7 +160,7 @@ offloading.` This approach is blocked for any model using PP > 1.
 
 Selective activation recompute with `mlp` saved ~3 GB peak memory but cost
 ~16% GPU utilization on this workload. See
-@skills/perf-techniques/activation-recompute/SKILL.md for full results.
+@skills/perf-activation-recompute/SKILL.md for full results.
 
 ## Code Anchors
 

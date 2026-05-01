@@ -255,7 +255,7 @@ parallel_state.initialize_model_parallel(
    Always profile the first iteration to check memory and communication.
 
 7. `CUDA_DEVICE_MAX_CONNECTIONS` and related env vars interact with
-   overlap settings. See @skills/perf-techniques/tp-dp-comm-overlap/SKILL.md.
+   overlap settings. See @skills/perf-tp-dp-comm-overlap/SKILL.md.
 
 8. The minimum GPU count for an MoE config is `PP * max(TP*CP, EP*ETP)`,
    not the product of all dimensions. The dense `TP*CP`-mesh and MoE

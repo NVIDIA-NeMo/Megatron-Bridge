@@ -130,7 +130,7 @@ or tightly controlled static-shape experiments.
 
 Related references:
 
-- @skills/perf-techniques/cuda-graphs/SKILL.md
+- @skills/perf-cuda-graphs/SKILL.md
 - @docs/training/cuda-graphs.md
 - @docs/training/activation-recomputation.md
 
