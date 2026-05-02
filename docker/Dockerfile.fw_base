@@ -121,6 +121,20 @@ RUN --mount=type=bind,from=trtllm_repo,source=/src/tensorrt_llm/docker/common,ta
     pip install "polygraphy==0.49.9" && \
     bash tensorrt_llm/docker/common/install_mpi4py.sh
 
+# install_tensorrt.sh installs libcublas-dev-13-1 whose headers land in
+# /usr/local/cuda-13.1/include/. When the base image CUDA version is newer
+# (e.g. 13.2), /usr/local/cuda -> /usr/local/cuda-13.2 so nvcc won't find
+# them. Symlink any missing cuBLAS headers into the active CUDA include path.
+RUN CUDA_INC=/usr/local/cuda/include && \
+    SRC_INC=/usr/local/cuda-13.1/include && \
+    if [ -d "$SRC_INC" ] && [ -d "$CUDA_INC" ] && [ "$SRC_INC" != "$CUDA_INC" ]; then \
+        find "$SRC_INC" -maxdepth 1 -name 'cublas*.h' | \
+        while read h; do \
+            base=$(basename "$h"); \
+            [ -e "$CUDA_INC/$base" ] || ln -sf "$h" "$CUDA_INC/$base"; \
+        done; \
+    fi
+
 ##############################################################################
 ##
 ## TRT-LLM wheel
