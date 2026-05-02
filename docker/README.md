@@ -11,6 +11,8 @@ container and the NeMo Framework (NeMo-FW) image stack.
 
 The full NeMo-FW stack is built in order: **fw-base → megatron-bridge → fw-final**.
 
+In production CI, this build is orchestrated by **nemo-ci**. The build arguments below map directly to variables in [`ci_build_vars.yml`](https://gitlab-master.nvidia.com/dl/JoC/nemo-ci/-/blob/main/.gitlab/workflows/ci_build_vars.yml) (`NEMO_FW_BASE_IMAGE`, `REINSTALL_NCCL`, `NCCL_VERSION`, etc.). When upgrading the base image, follow the [major-dependency-upgrade skill](https://gitlab-master.nvidia.com/dl/JoC/nemo-ci/-/blob/main/.claude/skills/major-dependency-upgrade/SKILL.md) in nemo-ci.
+
 ---
 
 ## Megatron-Bridge container
