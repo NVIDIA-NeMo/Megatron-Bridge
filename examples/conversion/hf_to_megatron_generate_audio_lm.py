@@ -47,7 +47,6 @@ Example:
 import argparse
 from io import BytesIO
 from typing import Optional
-from urllib.request import urlopen
 
 import torch
 import torch.distributed as dist
@@ -58,6 +57,7 @@ from transformers import AutoProcessor, AutoTokenizer
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
 # Try to import librosa for audio loading
@@ -165,7 +165,11 @@ def load_audio(audio_path: str, sampling_rate: int = 16000):
         raise ImportError("librosa is required for audio loading. Please install it: pip install librosa")
 
     if audio_path.startswith(("http://", "https://")):
-        audio_data, _ = librosa.load(BytesIO(urlopen(audio_path).read()), sr=sampling_rate)
+        is_safe, reason = is_safe_public_http_url(audio_path)
+        if not is_safe:
+            raise ValueError(f"Refusing to fetch audio URL ({reason}): {audio_path}")
+        with safe_url_open(audio_path) as resp:
+            audio_data, _ = librosa.load(BytesIO(resp.read()), sr=sampling_rate)
     else:
         audio_data, _ = librosa.load(audio_path, sr=sampling_rate)
 

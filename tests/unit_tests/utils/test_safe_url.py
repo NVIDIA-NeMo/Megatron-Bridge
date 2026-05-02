@@ -15,7 +15,8 @@
 """SSRF-guard tests for megatron.bridge.utils.safe_url.
 
 Covers ``is_safe_public_http_url``, ``safe_url_open``, and integration
-with ``load_image`` in ``vlm_generate_utils``.
+with ``load_image`` in ``vlm_generate_utils`` and ``load_audio`` in
+``hf_to_megatron_generate_audio_lm``.
 """
 
 import socket
@@ -229,3 +230,54 @@ class TestLoadImageSsrf:
             result = vlm_generate_utils.load_image(str(img_path))
         mocked_check.assert_not_called()
         assert isinstance(result, Image.Image)
+
+
+class TestLoadAudioSsrf:
+    """Integration tests verifying ``load_audio`` in ``hf_to_megatron_generate_audio_lm`` rejects unsafe URLs."""
+
+    @pytest.fixture(autouse=True)
+    def _import_audio_module(self):
+        """Import the audio module, skipping the entire class if dependencies are missing."""
+        try:
+            from examples.conversion import hf_to_megatron_generate_audio_lm
+
+            self.audio_module = hf_to_megatron_generate_audio_lm
+        except ImportError as exc:
+            pytest.skip(f"audio_lm module not importable: {exc}")
+
+    def test_private_url_raises_value_error(self):
+        """A URL resolving to a loopback address must raise ValueError."""
+        with mock.patch.object(self.audio_module, "HAS_LIBROSA", True):
+            with mock.patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo("127.0.0.1")):
+                with pytest.raises(ValueError, match="Refusing to fetch audio URL"):
+                    self.audio_module.load_audio("http://attacker.example.com/evil.mp3")
+
+    def test_metadata_endpoint_blocked(self):
+        """Cloud metadata endpoint (169.254.169.254) must be blocked."""
+        with mock.patch.object(self.audio_module, "HAS_LIBROSA", True):
+            with mock.patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo("169.254.169.254")):
+                with pytest.raises(ValueError, match="non-public"):
+                    self.audio_module.load_audio("http://169.254.169.254/latest/meta-data/audio.mp3")
+
+    def test_safe_url_never_called_for_unsafe_url(self):
+        """When URL validation fails, the fetch function must never be invoked."""
+        with mock.patch.object(self.audio_module, "HAS_LIBROSA", True):
+            with mock.patch.object(self.audio_module, "safe_url_open") as mocked_open:
+                with mock.patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo("10.0.0.1")):
+                    with pytest.raises(ValueError):
+                        self.audio_module.load_audio("http://internal.example.com/secret.mp3")
+            mocked_open.assert_not_called()
+
+    def test_local_file_path_not_validated(self, tmp_path):
+        """Local file paths must be loaded directly without SSRF validation."""
+        dummy_audio_path = str(tmp_path / "test.wav")
+
+        fake_audio_data = "fake_audio_array"
+        with mock.patch.object(self.audio_module, "HAS_LIBROSA", True):
+            with mock.patch.object(self.audio_module, "librosa") as mocked_librosa:
+                mocked_librosa.load.return_value = (fake_audio_data, 16000)
+                with mock.patch.object(self.audio_module, "is_safe_public_http_url") as mocked_check:
+                    result = self.audio_module.load_audio(dummy_audio_path)
+        mocked_check.assert_not_called()
+        mocked_librosa.load.assert_called_once_with(dummy_audio_path, sr=16000)
+        assert result == fake_audio_data
