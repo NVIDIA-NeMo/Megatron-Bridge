@@ -14,94 +14,28 @@
 
 import base64
 import io
-import ipaddress
 import logging
 import mimetypes
 import os
-import socket
 from typing import Dict, List
-from urllib.parse import urlparse
 
 import torch
 from PIL import Image
 from transformers.video_utils import VideoMetadata
 
+from megatron.bridge.utils.safe_url import (
+    ALLOW_PRIVATE_URL_FETCH_ENV,
+    is_safe_public_http_url,
+    safe_url_open,
+)
+
 
 logger = logging.getLogger(__name__)
 
-# Opt-out env var for the SSRF guard in ``_is_safe_public_http_url``. Set to
-# ``"1"`` when training on a trusted network where dataset URLs may legitimately
-# point at internal hosts. Defaults off — the guard blocks loopback / private /
-# link-local destinations (including cloud metadata at 169.254.169.254).
-_ALLOW_PRIVATE_URL_FETCH_ENV = "MEGATRON_BRIDGE_ALLOW_PRIVATE_URL_FETCH"
-
-
-def _is_safe_public_http_url(url: str) -> tuple[bool, str]:
-    """Check that ``url`` is a public http(s) URL safe to fetch.
-
-    Rejects non-http schemes, missing hostnames, and any hostname that
-    resolves to a loopback, private (RFC 1918), link-local, multicast,
-    reserved, or unspecified address. Used to mitigate SSRF when fetching
-    remote video URLs from untrusted dataset entries.
-
-    Set ``MEGATRON_BRIDGE_ALLOW_PRIVATE_URL_FETCH=1`` to bypass (trusted
-    networks only).
-
-    Returns:
-        Tuple of ``(is_safe, reason)``. ``reason`` is empty when safe.
-    """
-    if os.environ.get(_ALLOW_PRIVATE_URL_FETCH_ENV) == "1":
-        return True, ""
-    try:
-        parsed = urlparse(url)
-    except ValueError as exc:
-        return False, f"invalid URL: {exc}"
-    if parsed.scheme not in ("http", "https"):
-        return False, f"unsupported URL scheme: {parsed.scheme!r}"
-    host = parsed.hostname
-    if not host:
-        return False, "URL missing hostname"
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror as exc:
-        return False, f"DNS resolution failed: {exc}"
-    for info in infos:
-        ip_str = info[4][0]
-        try:
-            ip = ipaddress.ip_address(ip_str)
-        except ValueError:
-            return False, f"unparseable resolved address: {ip_str}"
-        if (
-            ip.is_loopback
-            or ip.is_private
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
-            return False, f"URL resolves to non-public address: {ip}"
-    return True, ""
-
-
-def _safe_url_open(url: str):
-    """Open ``url`` via a urllib opener that re-validates redirect targets.
-
-    Prevents SSRF via redirect: a public URL returning a 3xx to an internal
-    address would otherwise bypass :func:`_is_safe_public_http_url`. The
-    initial URL must already have been validated by the caller.
-    """
-    import urllib.error
-    import urllib.request
-
-    class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            is_safe, reason = _is_safe_public_http_url(newurl)
-            if not is_safe:
-                raise urllib.error.URLError(f"redirect blocked ({reason}): {newurl}")
-            return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-    opener = urllib.request.build_opener(_SafeRedirectHandler())
-    return opener.open(url)  # noqa: S310  -- URL validated by caller + redirect handler
+# Backward-compatible private aliases so existing callers and tests keep working.
+_ALLOW_PRIVATE_URL_FETCH_ENV = ALLOW_PRIVATE_URL_FETCH_ENV
+_is_safe_public_http_url = is_safe_public_http_url
+_safe_url_open = safe_url_open
 
 
 def encode_pil_to_jpeg_data_url(pil_image):
