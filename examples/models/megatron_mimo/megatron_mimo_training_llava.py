@@ -49,7 +49,7 @@ _PATCH_DIM = 14
 _ENCODER_SEQ_LEN = 576
 
 
-def _make_vision_config(deterministic: bool = False) -> TransformerConfig:
+def _make_vision_config(deterministic: bool = False, activation_recompute: bool = False) -> TransformerConfig:
     """CLIP ViT-L/14 vision encoder config (23 layers = penultimate layer output per HF LLaVA)."""
     cfg = TransformerConfig(
         num_layers=23,
@@ -81,6 +81,7 @@ def _make_vision_config(deterministic: bool = False) -> TransformerConfig:
     if deterministic:
         cfg.attention_backend = AttnBackend.unfused
         cfg.deterministic_mode = True
+    if activation_recompute:
         cfg.recompute_granularity = "full"
         cfg.recompute_method = "uniform"
         cfg.recompute_num_layers = 1
@@ -88,7 +89,7 @@ def _make_vision_config(deterministic: bool = False) -> TransformerConfig:
     return cfg
 
 
-def _make_language_config(deterministic: bool = False) -> TransformerConfig:
+def _make_language_config(deterministic: bool = False, activation_recompute: bool = False) -> TransformerConfig:
     """Vicuna-7B language model config (same arch as Llama-7B)."""
     cfg = TransformerConfig(
         num_layers=32,
@@ -133,6 +134,7 @@ def _make_language_config(deterministic: bool = False) -> TransformerConfig:
     if deterministic:
         cfg.attention_backend = AttnBackend.unfused
         cfg.deterministic_mode = True
+    if activation_recompute:
         cfg.recompute_granularity = "full"
         cfg.recompute_method = "uniform"
         cfg.recompute_num_layers = 1
@@ -157,10 +159,10 @@ def _make_projection_config(hidden_size: int = 4096, deterministic: bool = False
     return cfg
 
 
-def _build_model_specs(deterministic: bool = False):
+def _build_model_specs(deterministic: bool = False, activation_recompute: bool = False):
     """Return (language_model_spec, modality_submodules_spec, special_token_ids)."""
-    vision_config = _make_vision_config(deterministic=deterministic)
-    language_config = _make_language_config(deterministic=deterministic)
+    vision_config = _make_vision_config(deterministic=deterministic, activation_recompute=activation_recompute)
+    language_config = _make_language_config(deterministic=deterministic, activation_recompute=activation_recompute)
     projection_config = _make_projection_config(hidden_size=language_config.hidden_size, deterministic=deterministic)
 
     # CLIP ViT-L/14 encoder
@@ -812,6 +814,24 @@ def parse_args():
         help="Enable deterministic mode: FP32 precision, unfused attention, disabled CE-loss fusion, "
         "full activation recompute, deterministic torch/cuDNN/NCCL/TE algorithms (slower, more reproducible).",
     )
+    parser.add_argument(
+        "--deterministic-recompute",
+        type=_str2bool,
+        default=True,
+        help=(
+            "Enable full activation recompute when --deterministic is set. Disable for colocated asymmetric TP "
+            "configs unless MIMO_ALLOW_ASYMMETRIC_TP_RECOMPUTE is explicitly enabled for a no-dropout run."
+        ),
+    )
+    parser.add_argument(
+        "--activation-recompute",
+        type=_str2bool,
+        default=False,
+        help=(
+            "Enable full activation recompute independent of deterministic precision. For colocated asymmetric TP "
+            "configs, also set MIMO_ALLOW_ASYMMETRIC_TP_RECOMPUTE=True only for no-dropout/no-stochastic-forward runs."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -863,8 +883,9 @@ def main():
 
     # 2. Build model provider
     _log("building model specs")
+    activation_recompute = args.activation_recompute or (args.deterministic and args.deterministic_recompute)
     language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs(
-        deterministic=args.deterministic
+        deterministic=args.deterministic, activation_recompute=activation_recompute
     )
     megatron_mimo_parallelism_config = _build_parallelism_config()
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import logging
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Callable, ContextManager, Dict, Iterator, List, Optional, Union
@@ -46,6 +47,8 @@ from megatron.bridge.models.model_provider import ModelProviderMixin
 
 
 logger = logging.getLogger(__name__)
+
+_TRUE_ENV_VALUES = {"1", "true", "yes", "y", "on"}
 
 
 if TYPE_CHECKING:
@@ -133,6 +136,14 @@ def _seed_python_numpy_torch(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse a boolean feature flag from the environment."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in _TRUE_ENV_VALUES
 
 
 def seed_singleton_rng_tracker(
@@ -520,6 +531,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         recomputed forward draws. Long-term fix is autograd-side scope
         registration; tracked separately.
 
+        ``MIMO_ALLOW_ASYMMETRIC_TP_RECOMPUTE=1`` bypasses only this recompute
+        guard for controlled no-dropout experiments. Do not use it for generic
+        configs where recomputed forward may consume CUDA RNG.
+
         ``use_cpu_initialization=True`` is intentionally NOT rejected — CPU
         init's correctness mechanism (deterministic master weight built from
         a shared ``torch.manual_seed``, then per-module ``tp_group`` slicing)
@@ -527,6 +542,13 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         asymmetric TP. See ``_is_asymmetric_tp_colocated`` docstring.
         """
         if not self._is_asymmetric_tp_colocated():
+            return
+
+        if _env_flag("MIMO_ALLOW_ASYMMETRIC_TP_RECOMPUTE"):
+            logger.warning(
+                "MIMO_ALLOW_ASYMMETRIC_TP_RECOMPUTE is enabled; allowing colocated asymmetric TP with "
+                "activation recomputation. This is intended only for no-dropout/no-stochastic-forward runs."
+            )
             return
 
         offenders: List[str] = []
