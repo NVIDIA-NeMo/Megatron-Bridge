@@ -73,6 +73,7 @@ HAVE_TE = all(
 )
 
 MixedFusedLayerNorm, HAVE_APEX = safe_import_from("apex.normalization.fused_layer_norm", "MixedFusedLayerNorm")
+ModelOptLinear, HAVE_MODELOPT_LINEAR = safe_import_from("megatron.core.post_training.modelopt.layers", "Linear")
 
 TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParallelGroupedLinear)
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
@@ -80,8 +81,7 @@ TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 def is_modelopt_linear(m: nn.Module) -> bool:
     """Return whether a module is ModelOpt's local Megatron Linear."""
-    cls = type(m)
-    return cls.__name__ == "Linear" and cls.__module__ == "megatron.core.post_training.modelopt.layers"
+    return HAVE_MODELOPT_LINEAR and isinstance(m, ModelOptLinear)
 
 
 @dataclass(frozen=True)

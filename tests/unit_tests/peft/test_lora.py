@@ -26,6 +26,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft import canonical_lora as canonical_lora_module
 from megatron.bridge.peft import lora as lora_module
+from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.canonical_lora import CanonicalLoRA
 from megatron.bridge.peft.lora import LoRA, LoRAMerge, VLMLoRA
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
@@ -506,12 +507,24 @@ class TestLoRA:
 class TestModelOptLinear:
     """Unit tests for ModelOpt Linear LoRA routing."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_modelopt_linear_import(self):
+        with (
+            patch.object(peft_utils, "HAVE_MODELOPT_LINEAR", True),
+            patch.object(peft_utils, "ModelOptLinear", ModelOptLinear),
+        ):
+            yield
+
     def test_is_modelopt_linear_matches_only_modelopt_linear(self) -> None:
         assert is_modelopt_linear(ModelOptLinear())
 
         assert not is_modelopt_linear(WrongModuleLinear())
         assert not is_modelopt_linear(WrongNameModelOptLinear())
         assert not is_modelopt_linear(nn.Linear(4, 3))
+
+    def test_is_modelopt_linear_returns_false_when_modelopt_linear_unavailable(self) -> None:
+        with patch.object(peft_utils, "HAVE_MODELOPT_LINEAR", False):
+            assert not is_modelopt_linear(ModelOptLinear())
 
     def test_get_adapter_attributes_modelopt_linear(self) -> None:
         linear = ModelOptLinear(in_features=5, out_features=7)
