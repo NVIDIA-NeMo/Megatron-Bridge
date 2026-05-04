@@ -14,13 +14,12 @@
 
 """Unit tests for Qwen3-VL vision transformer_config (get_vision_model_config)."""
 
-from enum import Enum
 from types import SimpleNamespace
 
 import pytest
+from megatron.core.transformer.cuda_graphs import CudaGraphScope
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
-from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
 
 def _hf_config():
@@ -58,14 +57,6 @@ def _megatron_base(**overrides):
     return SimpleNamespace(**base)
 
 
-def _cuda_graph_storage(config):
-    """Return the concrete CUDA graph field used by this MCore version."""
-    modules = getattr(config, "cuda_graph_modules", None)
-    if modules is not None:
-        return modules
-    return getattr(config, "cuda_graph_scope", [])
-
-
 class TestGetVisionModelConfigVisionCudaGraph:
     """Vision encoder CUDA graph propagation from megatron_config (provider)."""
 
@@ -73,56 +64,44 @@ class TestGetVisionModelConfigVisionCudaGraph:
         megatron = _megatron_base(
             vision_cuda_graph_impl="none",
             cuda_graph_impl="local_transformer_engine",
-            cuda_graph_scope=["attn"],
+            cuda_graph_scope=[CudaGraphScope.attn],
         )
         cfg = get_vision_model_config(_hf_config(), megatron)
         assert cfg.cuda_graph_impl == "none"
-        assert cuda_graph_module_names(cfg) == []
+        assert cfg.cuda_graph_scope == []
 
     def test_vision_cuda_graph_defaults_when_attr_missing(self):
         megatron = _megatron_base(
             cuda_graph_impl="local_transformer_engine",
-            cuda_graph_scope=["attn"],
+            cuda_graph_scope=[CudaGraphScope.attn],
         )
         cfg = get_vision_model_config(_hf_config(), megatron)
         assert cfg.cuda_graph_impl == "none"
-        assert cuda_graph_module_names(cfg) == []
-
-    def test_vision_cuda_graph_ignores_language_legacy_full_iteration_when_disabled(self):
-        megatron = _megatron_base(
-            cuda_graph_impl="local",
-            cuda_graph_scope=["full_iteration"],
-        )
-        cfg = get_vision_model_config(_hf_config(), megatron)
-        assert cfg.cuda_graph_impl == "none"
-        assert cuda_graph_module_names(cfg) == []
+        assert cfg.cuda_graph_scope == []
 
     def test_vision_cuda_graph_impl_propagated_scope_empty_without_scope_attr(self):
         megatron = _megatron_base(vision_cuda_graph_impl="local_transformer_engine")
         cfg = get_vision_model_config(_hf_config(), megatron)
         assert cfg.cuda_graph_impl == "local_transformer_engine"
-        assert cuda_graph_module_names(cfg) == []
+        assert cfg.cuda_graph_scope == []
 
-    def test_vision_cuda_graph_scope_string_list_converted_to_enums(self):
+    def test_vision_cuda_graph_scope_string_list_converted_to_enum(self):
         megatron = _megatron_base(
             vision_cuda_graph_impl="local_transformer_engine",
             vision_cuda_graph_scope=["attn", "mlp"],
         )
         cfg = get_vision_model_config(_hf_config(), megatron)
-        cuda_graph_values = _cuda_graph_storage(cfg)
-
         assert cfg.cuda_graph_impl == "local_transformer_engine"
-        assert cuda_graph_module_names(cfg) == ["attn", "mlp"]
-        assert all(isinstance(value, Enum) for value in cuda_graph_values)
+        assert cfg.cuda_graph_scope == [CudaGraphScope.attn, CudaGraphScope.mlp]
 
-    def test_vision_cuda_graph_scope_list_propagated(self):
-        scopes = ["attn"]
+    def test_vision_cuda_graph_scope_enum_list_passed_through(self):
+        scopes = [CudaGraphScope.attn]
         megatron = _megatron_base(
             vision_cuda_graph_impl="local_transformer_engine",
             vision_cuda_graph_scope=scopes,
         )
         cfg = get_vision_model_config(_hf_config(), megatron)
-        assert cuda_graph_module_names(cfg) == scopes
+        assert cfg.cuda_graph_scope is scopes
 
     def test_vision_cuda_graph_scope_empty_list_clears_scope(self):
         megatron = _megatron_base(
@@ -130,7 +109,7 @@ class TestGetVisionModelConfigVisionCudaGraph:
             vision_cuda_graph_scope=[],
         )
         cfg = get_vision_model_config(_hf_config(), megatron)
-        assert cuda_graph_module_names(cfg) == []
+        assert cfg.cuda_graph_scope == []
 
     def test_max_vision_cuda_graph_seq_length_propagated(self):
         megatron = _megatron_base(

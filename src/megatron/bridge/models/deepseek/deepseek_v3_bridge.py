@@ -121,7 +121,8 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         return hf_cfg
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        mapping_list = get_common_mapping_list(hf_config=self.hf_config)
+        hf_config = self.hf_config
+        mapping_list = get_common_mapping_list(hf_config=hf_config)
         mapping_list.append(
             AutoMapping(
                 megatron_param="decoder.layers.*.mlp.router.expert_bias",

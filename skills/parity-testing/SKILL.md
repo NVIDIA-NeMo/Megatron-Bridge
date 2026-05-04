@@ -1,7 +1,6 @@
 ---
 name: parity-testing
-description: Structured framework for verifying numerical parity of HF<->MCore weight conversions. References existing tools and the add-model-support skill.
-when_to_use: Debugging weight mismatches, verifying HF↔MCore checkpoint round-trips, choosing verification tools, or investigating a commit that changed weight conversion and caused parity failures; 'weights don't match', 'parity test', 'roundtrip check', 'logit equivalence'.
+description: Structured framework for verifying numerical parity of HF<->MCore weight conversions. References existing tools and the add-model-support skill. Use when debugging weight mismatches, verifying checkpoint round-trips, or choosing which verification tool to run.
 ---
 
 # Parity Testing for Megatron Bridge

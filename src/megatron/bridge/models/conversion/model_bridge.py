@@ -1442,9 +1442,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if not isinstance(hf_pretrained, PretrainedConfig) and not has_hf_state:
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
 
-        self.hf_pretrained = hf_pretrained
-        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
-
         hf_keys: Optional[Iterable[str]] = hf_pretrained.state.source.get_all_keys() if has_hf_state else None
 
         mapping_registry = self.mapping_registry()
@@ -1911,9 +1908,7 @@ def register_bridge_implementation(
     def _get_model_bridge_impl(_, hf_config=None) -> "MegatronModelBridge":
         bridge = bridge_class()
         if hf_config is not None:
-            # `hf_config` may be a raw config or a full HF wrapper; normalize both onto the bridge.
-            bridge.hf_pretrained = hf_config
-            bridge.hf_config = hf_config.config if hasattr(hf_config, "config") else hf_config
+            bridge.hf_config = hf_config
         return bridge
 
     @stream_weights_megatron_to_hf.impl((source, target))
@@ -1928,8 +1923,7 @@ def register_bridge_implementation(
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
 
-        # allow bridge to access model config
-        bridge.hf_pretrained = hf_pretrained
+        # Allow bridge to access model config (config-only shims or raw configs lack .config)
         bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
 
         return bridge.stream_weights_megatron_to_hf(
