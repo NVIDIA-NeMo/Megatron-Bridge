@@ -503,6 +503,10 @@ class Qwen3VLModel(MegatronModule):
 
             if combined_embeddings is not None and cp_size > 1 and packed_seq_params is None:
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
+                if labels is not None:
+                    labels = split_data_cp_rank(labels, cp_size, 1, cp_rank)
+                if loss_mask is not None:
+                    loss_mask = split_data_cp_rank(loss_mask, cp_size, 1, cp_rank)
             if packed_seq_params is not None:
                 if attention_mask is None:
                     attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
@@ -641,4 +645,6 @@ class Qwen3VLModel(MegatronModule):
         if self.use_dist_train:
             if not is_pp_last_stage(self.pg_collection.pp):
                 return {"language_module": output}
+        if labels is not None and loss_mask is not None:
+            return output, loss_mask
         return output
