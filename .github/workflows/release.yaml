@@ -81,7 +81,7 @@ jobs:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@42681de2ce57c0176c67956d11867b5582aee1da
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@6420694a836745a4ecf8b0dbe83675bcf4c89e47
     needs: [pre-flight]
     if: |
       github.event_name == 'workflow_dispatch'
@@ -143,13 +143,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success")] | length') || echo 0
+          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --repo ${{ github.repository }} --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success")] | length')
 
           if [ "${FAILED_JOBS:-0}" -eq 0 ]; then
               echo "✅ All previous jobs completed successfully"
               exit 0
           else
               echo "❌ Found $FAILED_JOBS failed job(s)"
-              gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success") | .name'
+              gh run view $GITHUB_RUN_ID --repo ${{ github.repository }} --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success") | .name'
               exit 1
           fi
