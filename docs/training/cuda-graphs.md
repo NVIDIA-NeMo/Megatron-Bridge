@@ -7,7 +7,7 @@ every training step.
 This page is the stable guide for what CUDA graphs are, when they help, and
 what tradeoffs to expect. For exact enablement knobs, code anchors, and
 verification commands, see
-[skills/perf-techniques/cuda-graphs/SKILL.md](../skills/perf-techniques/cuda-graphs/SKILL.md).
+[skills/perf-cuda-graphs/SKILL.md](../skills/perf-cuda-graphs/SKILL.md).
 
 ## What It Is
 
@@ -107,7 +107,7 @@ If you choose `local` with `full_iteration`, disable the loss and gradient NaN
 checks that conflict with full capture.
 
 For exact config snippets and runnable commands, see
-[skills/perf-techniques/cuda-graphs/SKILL.md](../skills/perf-techniques/cuda-graphs/SKILL.md).
+[skills/perf-cuda-graphs/SKILL.md](../skills/perf-cuda-graphs/SKILL.md).
 
 ## Minimal Runnable Example
 
@@ -184,4 +184,4 @@ Larger MoE runs can become memory-gated before graph replay pays off:
 
 - [Performance Guide](../performance-guide.md)
 - [Communication Overlap](communication-overlap.md)
-- [skills/perf-techniques/cuda-graphs/SKILL.md](../skills/perf-techniques/cuda-graphs/SKILL.md)
+- [skills/perf-cuda-graphs/SKILL.md](../skills/perf-cuda-graphs/SKILL.md)
