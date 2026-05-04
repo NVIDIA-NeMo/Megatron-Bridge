@@ -155,6 +155,9 @@ ssm = [
     "mamba-ssm",
     "causal-conv1d",
 ]
+audio = [
+    "librosa",
+]
 
 [dependency-groups]
 docs = [
