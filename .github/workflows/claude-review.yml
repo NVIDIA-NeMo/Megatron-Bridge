@@ -97,11 +97,14 @@ jobs:
             for the affected model/GPU/precision combinations.
             If no perf/recipe configs are touched, write "No perf tests impacted."
 
-            End the review by posting it as a top-level PR comment:
-              gh pr comment <PR NUMBER> --repo <REPO> --body "<review body>"
-            Pass the body as a single --body argument. Do NOT use --body-file,
-            output redirection, or HEREDOCs — the action sandbox blocks all
-            three. Use literal "\n" inside the quoted string for newlines.
+            End the review by posting it as a top-level PR comment using
+            bash ANSI-C quoting so newlines render correctly:
+              gh pr comment <PR NUMBER> --repo <REPO> --body $'line1\nline2\n...'
+            Use $'...' (NOT plain "..."). Inside "..." the sequence \n is
+            passed to gh literally and shows up as the two characters \n in
+            the rendered comment; inside $'...' bash expands \n to a real
+            newline before gh sees it. Do NOT use --body-file, output
+            redirection, or HEREDOCs — the action sandbox blocks all three.
             The body must include the "Suggested test cases" list. If there
             is nothing to flag, the body is just "LGTM" followed by the
             test-case list. Inline comments via
@@ -157,11 +160,14 @@ jobs:
         for the affected model/GPU/precision combinations.
         If no perf/recipe configs are touched, write "No perf tests impacted."
 
-        End the review by posting it as a top-level PR comment:
-          gh pr comment <PR NUMBER> --repo <REPO> --body "<review body>"
-        Pass the body as a single --body argument. Do NOT use --body-file,
-        output redirection, or HEREDOCs — the action sandbox blocks all
-        three. Use literal "\n" inside the quoted string for newlines.
+        End the review by posting it as a top-level PR comment using
+        bash ANSI-C quoting so newlines render correctly:
+          gh pr comment <PR NUMBER> --repo <REPO> --body $'line1\nline2\n...'
+        Use $'...' (NOT plain "..."). Inside "..." the sequence \n is
+        passed to gh literally and shows up as the two characters \n in
+        the rendered comment; inside $'...' bash expands \n to a real
+        newline before gh sees it. Do NOT use --body-file, output
+        redirection, or HEREDOCs — the action sandbox blocks all three.
         The body must include the "Suggested test cases" list. If there
         is nothing to flag, the body is just "LGTM" followed by the
         test-case list. Inline comments via
