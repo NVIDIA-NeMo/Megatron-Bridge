@@ -120,6 +120,28 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # allow_hf_name_mismatch should be set to True to bypass a check in `build_conversion_tasks`
         self.allow_hf_name_mismatch = False
 
+    def set_process_groups_from_pg_collection(self, pg_collection: Any) -> None:
+        """Override snapshotted Megatron-Core globals with a ``ProcessGroupCollection``.
+
+        Used by the decentralized PG path where ``mpu`` is never initialized.
+        ``__init__`` runs at registry construction time and snapshots whatever
+        Megatron-Core globals exist then; in the decentralized path those are
+        absent, so ``tp_size`` would default to ``world_size`` and conversions
+        would compute the wrong shard sizes. ``MegatronModelBridge`` calls this
+        right before running tasks to install the user-supplied groups.
+        """
+        if pg_collection is None:
+            return
+        for attr, field in (
+            ("pp_group", "pp"),
+            ("ep_group", "ep"),
+            ("_tp_group", "tp"),
+            ("_etp_group", "expt_tp"),
+        ):
+            group = getattr(pg_collection, field, None)
+            if group is not None:
+                setattr(self, attr, group)
+
     @property
     def tp_group(self):
         """Get the tensor model parallel group."""

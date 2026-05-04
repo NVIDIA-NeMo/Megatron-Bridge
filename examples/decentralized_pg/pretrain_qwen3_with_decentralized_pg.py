@@ -70,6 +70,7 @@ from megatron.core.utils import get_pg_rank
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.models import AutoBridge
+from megatron.bridge.training.checkpointing import DefaultCheckpointManager
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -436,7 +437,11 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     # expect pg_collection to be passed explicitly rather than reading from mpu.
 
     bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B")
-    model_cfg = bridge.to_megatron_provider()
+    # This demo trains a downsized Qwen3-4B (e.g. ``--num-layers 4``) on mock
+    # data with ``NullTokenizer``, so the architecture deliberately does not
+    # match the real Qwen3-4B HF checkpoint. Skip weight loading; the model is
+    # initialized randomly, which is what the manual-PG demo needs.
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
 
     # Parallelism - must match what we used to create pg_collection
     model_cfg.tensor_model_parallel_size = args.tp_size
@@ -451,6 +456,9 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     model_cfg.attention_softmax_in_fp32 = True
     model_cfg.make_vocab_size_divisible_by = 128
     model_cfg.vocab_size = None
+    # Known issue: tied embeddings rely on Megatron-Core globals during
+    # checkpoint save, which are not populated in the decentralized PG path.
+    model_cfg.share_embeddings_and_output_weights = False
 
     train_cfg = TrainingConfig(
         train_iters=args.train_iters,
@@ -612,6 +620,7 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     print_rank_0("")
 
     # Run the training loop
+    checkpoint_manager = DefaultCheckpointManager(checkpoint_config=cfg.checkpoint)
     train(
         forward_step_func=forward_step,
         model=model,
@@ -620,7 +629,7 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
         train_data_iterator=train_data_iterator,
         valid_data_iterator=valid_data_iterator,
         global_state=state,
-        checkpointing_context={},
+        checkpoint_manager=checkpoint_manager,
         pg_collection=pg_collection,  # <-- Pass to training loop!
     )
 
