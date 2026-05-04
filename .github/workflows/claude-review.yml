@@ -78,6 +78,18 @@ jobs:
             Provide feedback using inline comments for specific code suggestions.
             Use top-level comments for general observations.
 
+            Always end the review with a "Suggested test cases" bullet list, derived
+            from the diff.
+
+            Map source changes → test-case globs using:
+            - A function `<model>_<task>_config_<gpu>` in scripts/performance/configs/<family>/...
+              impacts cases matching `<model>_*gpu_<gpu>_*_perf`.
+            - A base config `<MODEL>_..._<GPU>_<PRECISION>_V<N>` impacts that precision,
+              plus any V<N+1> / LARGE_SCALE configs derived from it via `replace(...)`.
+
+            Each bullet should be a glob, e.g. `qwen3_235b_a22b_*gpu_b300_{bf16,fp8_mx,nvfp4}_*_perf`.
+            If no perf/recipe configs are touched, write "No perf tests impacted."
+
             It's perfectly acceptable to not have anything to comment on.
             If you do not have anything to comment on, post "LGTM".
 
@@ -110,6 +122,18 @@ jobs:
 
         Provide feedback using inline comments for specific code suggestions.
         Use top-level comments for general observations.
+
+        Always end the review with a "Suggested test cases" bullet list, derived
+        from the diff.
+
+        Map source changes → test-case globs using:
+        - A function `<model>_<task>_config_<gpu>` in scripts/performance/configs/<family>/...
+          impacts cases matching `<model>_*gpu_<gpu>_*_perf`.
+        - A base config `<MODEL>_..._<GPU>_<PRECISION>_V<N>` impacts that precision,
+          plus any V<N+1> / LARGE_SCALE configs derived from it via `replace(...)`.
+
+        Each bullet should be a glob, e.g. `qwen3_235b_a22b_*gpu_b300_{bf16,fp8_mx,nvfp4}_*_perf`.
+        If no perf/recipe configs are touched, write "No perf tests impacted."
 
         It's perfectly acceptable to not have anything to comment on.
         If you do not have anything to comment on, post "LGTM".
