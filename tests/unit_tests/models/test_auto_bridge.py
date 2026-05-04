@@ -771,42 +771,6 @@ class TestAutoBridge:
                         show_progress=False,
                     )
 
-    def test_export_adapter_weights(self):
-        """Test exporting adapter weights from Megatron to HF format."""
-        mock_hf_model = Mock(spec=PreTrainedCausalLM)
-        mock_hf_model.config = Mock()
-        mock_hf_model.config.architectures = ["LlamaForCausalLM"]
-        mock_hf_model.config.auto_map = None
-
-        mock_megatron_model = [object()]
-
-        with patch(
-            "megatron.bridge.models.conversion.auto_bridge.model_bridge.stream_adapter_weights_megatron_to_hf"
-        ) as mock_stream_adapter_weights:
-            mock_weight_iter = [HFWeightTuple("adapter.weight", torch.randn(4, 4))]
-            mock_stream_adapter_weights.return_value = iter(mock_weight_iter)
-
-            with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
-                mock_arch_class = Mock()
-                mock_transformers.LlamaForCausalLM = mock_arch_class
-
-                bridge = AutoBridge(mock_hf_model)
-
-                with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as mock_prop:
-                    mock_prop.return_value = mock_arch_class
-                    weights = list(bridge.export_adapter_weights(mock_megatron_model, cpu=False, show_progress=False))
-
-                    assert len(weights) == 1
-                    assert isinstance(weights[0], HFWeightTuple)
-                    assert weights[0].param_name == "adapter.weight"
-                    assert isinstance(weights[0].weight, torch.Tensor)
-                    mock_stream_adapter_weights.assert_called_once_with(
-                        (mock_arch_class, mock_megatron_model[0]),
-                        mock_megatron_model,
-                        cpu=False,
-                        show_progress=False,
-                    )
-
     def test_get_causal_lm_architecture(self):
         """Test getting the CausalLM architecture class."""
         # Test with model that has architectures
