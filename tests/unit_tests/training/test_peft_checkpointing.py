@@ -473,6 +473,8 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_valid_samples = 0
         mock_state.train_state.step = 1000  # Set to integer for comparisons
         mock_state.train_state.floating_point_operations_so_far = 50000
+        mock_cfg.ddp = Mock()
+        mock_cfg.ddp.use_megatron_fsdp = False
 
         # Mock dist_checkpointing
         mock_dist_ckpt.load_content_metadata.return_value = {}
@@ -596,6 +598,8 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_valid_samples = 0
         mock_state.train_state.step = 1000  # Set to integer for comparisons
         mock_state.train_state.floating_point_operations_so_far = 50000
+        mock_cfg.ddp = Mock()
+        mock_cfg.ddp.use_megatron_fsdp = False
 
         # Mock dist_checkpointing
         mock_dist_ckpt.load_content_metadata.return_value = {}
@@ -734,6 +738,8 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_valid_samples = 0
         mock_state.train_state.step = 1000  # Set to integer for comparisons
         mock_state.train_state.floating_point_operations_so_far = 50000
+        mock_cfg.ddp = Mock()
+        mock_cfg.ddp.use_megatron_fsdp = False
 
         # Mock dist_checkpointing
         mock_dist_ckpt.load_content_metadata.return_value = {}

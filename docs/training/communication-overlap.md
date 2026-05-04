@@ -7,8 +7,8 @@ This page is the stable guide for what communication overlap is, when it tends
 to help, and which boundaries are durable across Megatron Bridge. For exact
 knobs, code anchors, and verification commands, see:
 
-- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
-- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
+- [skills/perf-tp-dp-comm-overlap/SKILL.md](../skills/perf-tp-dp-comm-overlap/SKILL.md)
+- [skills/perf-expert-parallel-overlap/SKILL.md](../skills/perf-expert-parallel-overlap/SKILL.md)
 
 ## What It Is
 
@@ -118,8 +118,8 @@ on the actual bottleneck.
 
 For config examples and minimal runnable commands, see:
 
-- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
-- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
+- [skills/perf-tp-dp-comm-overlap/SKILL.md](../skills/perf-tp-dp-comm-overlap/SKILL.md)
+- [skills/perf-expert-parallel-overlap/SKILL.md](../skills/perf-expert-parallel-overlap/SKILL.md)
 
 ## Expected Metric Changes
 
@@ -149,7 +149,7 @@ correct question is always "which communication path is exposed in this run?"
 - [docs/performance-guide.md](../performance-guide.md)
 - [docs/training/cuda-graphs.md](cuda-graphs.md)
 - [docs/training/hybrid-context-parallel.md](hybrid-context-parallel.md)
-- [skills/perf-techniques/tp-dp-comm-overlap/SKILL.md](../skills/perf-techniques/tp-dp-comm-overlap/SKILL.md)
-- [skills/perf-techniques/expert-parallel-overlap/SKILL.md](../skills/perf-techniques/expert-parallel-overlap/SKILL.md)
-- [skills/perf-techniques/moe-comm-overlap/SKILL.md](../skills/perf-techniques/moe-comm-overlap/SKILL.md)
-- [skills/perf-techniques/moe-comm-overlap/card.yaml](../skills/perf-techniques/moe-comm-overlap/card.yaml)
+- [skills/perf-tp-dp-comm-overlap/SKILL.md](../skills/perf-tp-dp-comm-overlap/SKILL.md)
+- [skills/perf-expert-parallel-overlap/SKILL.md](../skills/perf-expert-parallel-overlap/SKILL.md)
+- [skills/perf-moe-comm-overlap/SKILL.md](../skills/perf-moe-comm-overlap/SKILL.md)
+- [skills/perf-moe-comm-overlap/card.yaml](../skills/perf-moe-comm-overlap/card.yaml)

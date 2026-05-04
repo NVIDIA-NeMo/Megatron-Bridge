@@ -210,6 +210,31 @@ class TestCanonicalLoRA:
         with pytest.raises(AssertionError, match="does not support target 'linear_fc1'"):
             CanonicalLoRA(target_modules=["linear_fc1"])
 
+    def test_canonical_lora_warns_on_unmatched_target_module(self, caplog):
+        """Typos in CanonicalLoRA target_modules should surface a warning so misconfigurations
+        are visible without breaking recipes that use wider defaults than the model exposes."""
+        model = SimpleModel()
+        lora = CanonicalLoRA(target_modules=["linear_qb"])  # typo, no such suffix
+
+        with caplog.at_level("WARNING", logger="megatron.bridge.peft.module_matcher"):
+            lora(model, training=True)
+
+        assert any("No modules matched" in r.message and "linear_qb" in r.message for r in caplog.records)
+
+    def test_canonical_lora_respects_target_modules_mutation_after_construction(self):
+        """``canonical_mapping`` and validation aliases must reflect mutations to ``target_modules``."""
+        lora = CanonicalLoRA()  # builds canonical_mapping eagerly from defaults
+        assert "linear_qkv" in lora.canonical_mapping  # default linear_q/k/v collapse to linear_qkv
+
+        lora.target_modules = ["linear_proj"]
+
+        model = SimpleModel()
+        transformed = lora(model, training=True)
+
+        # canonical_mapping was rebuilt at apply time from the new target_modules
+        assert set(lora.canonical_mapping.keys()) == {"linear_proj"}
+        assert isinstance(transformed.linear_proj, LinearAdapter)
+
     def test_canonical_lora_wildcard_mapping(self):
         """Test wildcard pattern mapping in canonical LoRA."""
         lora = CanonicalLoRA(target_modules=["*.layers.0.*.linear_q", "*.layers.1.*.linear_k"])

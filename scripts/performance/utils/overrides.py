@@ -148,6 +148,10 @@ def _set_recompute_overrides(
     if recompute_modules is not None:
         recipe.model.recompute_modules = recompute_modules
         recipe.model.recompute_granularity = "selective"
+    # No else: if the caller has no recompute configuration to apply, leave
+    # whatever the recipe already has in place. Callers that want to *disable*
+    # recompute should set granularity=None / modules=[] at the recipe or via
+    # Hydra overrides explicitly.
 
     return recipe
 
@@ -448,6 +452,10 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     elif hasattr(recipe.model, "moe_token_dispatcher_type"):
         recipe.model.moe_token_dispatcher_type = "alltoall"
 
+    pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
+    if args.task == "lora" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
+        recipe.dist.use_tp_pp_dp_mapping = True
+
     return recipe
 
 
@@ -487,7 +495,10 @@ def set_post_overrides(
 
     default_num_gpus = workload_base_config.num_gpus
     if user_gbs is None:
-        if num_gpus != default_num_gpus:
+        # Only auto-rescale if the recipe's current GBS still equals the
+        # workload default — i.e., no one (Hydra or earlier step) has already
+        # expressed an intent. Otherwise Hydra-set GBS gets silently stomped.
+        if recipe.train.global_batch_size == workload_base_config.global_batch_size and num_gpus != default_num_gpus:
             new_gbs = int(workload_base_config.gbs_scaling_factor * num_gpus)
             recipe.train.global_batch_size = new_gbs
             logger.info(

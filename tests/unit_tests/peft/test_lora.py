@@ -229,6 +229,36 @@ class TestLoRA:
         assert isinstance(transformed_model.layers[1]["mlp"]["linear_fc1"], nn.Linear)
         assert isinstance(transformed_model.layers[1]["mlp"]["linear_fc2"], nn.Linear)
 
+    def test_lora_warns_on_unmatched_target_module(self, caplog):
+        """Typos in target_modules should surface a warning so misconfigurations are visible
+        without breaking recipes whose defaults are wider than the model exposes."""
+        model = SimpleModel()
+        lora = LoRA(target_modules=["linear_qkb"])  # typo for linear_qkv
+
+        with caplog.at_level("WARNING", logger="megatron.bridge.peft.module_matcher"):
+            lora(model, training=True)
+
+        assert any("No modules matched" in r.message and "linear_qkb" in r.message for r in caplog.records)
+
+    def test_lora_respects_target_modules_mutation_after_construction(self):
+        """Recipes commonly mutate ``target_modules`` after constructing the PEFT object.
+
+        Validation must reflect the *current* value of ``target_modules`` at apply time,
+        not the defaults captured at construction. Pre-fix this would raise because the
+        original three default targets (``linear_proj``, ``linear_fc1``, ``linear_fc2``)
+        were still tracked even after the user narrowed the list to ``["linear_qkv"]``.
+        """
+        model = SimpleModel()
+        lora = LoRA()  # defaults: ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+        lora.target_modules = ["linear_qkv"]  # user narrows targets after construction
+
+        transformed = lora(model, training=True)
+
+        assert isinstance(transformed.linear_qkv, LinearAdapter)
+        assert isinstance(transformed.linear_proj, nn.Linear)
+        assert isinstance(transformed.linear_fc1, nn.Linear)
+        assert isinstance(transformed.linear_fc2, nn.Linear)
+
     def test_lora_adapter_properties(self):
         """Test that LoRA adapters have correct properties."""
         model = SimpleModel()

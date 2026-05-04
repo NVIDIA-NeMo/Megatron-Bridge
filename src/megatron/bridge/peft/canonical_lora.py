@@ -239,11 +239,24 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         return self.dim // topk
 
     def __post_init__(self) -> None:
-        """
-        Initialize the canonical mapping and call the parent post_init.
+        """Eagerly build ``canonical_mapping`` from the initial ``target_modules``.
 
-        Construct a mapping from the target module as supported in LoRA() to the specific parts of the layer for which
-        adapter is applied.
+        ``canonical_mapping`` is also re-derived in ``_init_target_match_state`` at
+        ``PEFT.__call__`` time so post-construction mutation of ``target_modules`` is
+        respected. Building eagerly here additionally surfaces the linear_qkv /
+        linear_fc1 asserts at construction time and supports callers that inspect
+        ``canonical_mapping`` before applying the PEFT transform.
+        """
+        self._init_target_match_state()
+
+    def _init_target_match_state(self) -> None:
+        """Build the canonical mapping and validation aliases from the current ``target_modules``.
+
+        This rebuilds both ``canonical_mapping`` (used by ``match`` to drive transforms) and
+        the alias bookkeeping inherited from ``ModuleMatcher`` (used to validate that every
+        requested target matched at least one module). Running here rather than in
+        ``__post_init__`` ensures any post-construction mutation of ``self.target_modules``
+        is reflected.
 
         For example, if user specifies target_module = ['linear_q', 'linear_k', 'linear_proj', 'linear_fc1_up'], then
         canonical_lora_mapping = {
@@ -259,7 +272,12 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         }
 
         """
-        for target in self.target_modules:
+        self.canonical_mapping.clear()
+        self._pattern_to_alias.clear()
+        self._alias_to_pattern.clear()
+        self._alias_matches.clear()
+
+        for target in self.target_modules or []:
             assert not target.endswith("linear_qkv"), (
                 "Canonical LoRA does not support target 'linear_qkv'. Either use 'linear_qkv' with LoRA() or "
                 "use ['linear_q', 'linear_k', 'linear_v'] with Canonical LoRA"
@@ -269,18 +287,27 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 "use ['linear_fc1_up', 'linear_fc1_gate'] with Canonical LoRA"
             )
 
+            canonical_target = target
+            canonical_component = target
+
             if target.endswith("linear_q"):
-                self.canonical_mapping[target.replace("linear_q", "linear_qkv")].add("linear_q")
+                canonical_target = target.replace("linear_q", "linear_qkv")
+                canonical_component = "linear_q"
             elif target.endswith("linear_k"):
-                self.canonical_mapping[target.replace("linear_k", "linear_qkv")].add("linear_k")
+                canonical_target = target.replace("linear_k", "linear_qkv")
+                canonical_component = "linear_k"
             elif target.endswith("linear_v"):
-                self.canonical_mapping[target.replace("linear_v", "linear_qkv")].add("linear_v")
+                canonical_target = target.replace("linear_v", "linear_qkv")
+                canonical_component = "linear_v"
             elif target.endswith("linear_fc1_up"):
-                self.canonical_mapping[target.replace("linear_fc1_up", "linear_fc1")].add("linear_fc1_up")
+                canonical_target = target.replace("linear_fc1_up", "linear_fc1")
+                canonical_component = "linear_fc1_up"
             elif target.endswith("linear_fc1_gate"):
-                self.canonical_mapping[target.replace("linear_fc1_gate", "linear_fc1")].add("linear_fc1_gate")
-            else:
-                self.canonical_mapping[target].add(target)
+                canonical_target = target.replace("linear_fc1_gate", "linear_fc1")
+                canonical_component = "linear_fc1_gate"
+
+            self.register_target_alias(target, canonical_target)
+            self.canonical_mapping[canonical_target].add(canonical_component)
 
     def transform(self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """

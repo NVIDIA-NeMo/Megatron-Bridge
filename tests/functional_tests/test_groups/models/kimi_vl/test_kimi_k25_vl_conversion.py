@@ -80,6 +80,16 @@ class TestKimiK25VLConversion:
             if hasattr(cfg, "quantization_config"):
                 delattr(cfg, "quantization_config")
 
+        # transformers >=5.5 validates `attn_implementation` at __init__ and
+        # defaults to `flash_attention_2` when flash-attn is installed. The
+        # Kimi K2.5 vision tower (`MoonViT3dPretrainedModel`, custom remote
+        # code) does not declare flash-attention-2 support, so construction
+        # raises. Force eager attention on every sub-config that drives this
+        # check, including the vision tower.
+        for cfg in (config, text, getattr(config, "vision_config", None)):
+            if cfg is not None:
+                cfg._attn_implementation = "eager"
+
         # Patch MoonViT3dEncoder before model instantiation.
         # The HF custom code references self.use_deterministic_attn in __init__
         # before assigning it, causing an AttributeError.  Inject a class-level
@@ -117,7 +127,7 @@ class TestKimiK25VLConversion:
         except Exception:
             pass
 
-        model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_config(config, trust_remote_code=True, attn_implementation="eager")
         model = model.to(dtype=torch.bfloat16)
 
         for m in model.modules():
