@@ -1479,8 +1479,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ):
             # Broadcast embeddings and output weights from rank 0 to embedding group
             embd_group = _get_embedding_group(megatron_model)
+            if embd_group is None:
+                return
             embd_group_ranks = torch.distributed.get_process_group_ranks(embd_group)
-            if embd_group is not None and torch.distributed.get_rank() in embd_group_ranks:
+            if torch.distributed.get_rank() in embd_group_ranks:
                 # Get embeddings and output weights from rank 0
                 if hasattr(unwrapped_model, "embedding") and hasattr(unwrapped_model.embedding, "word_embeddings"):
                     embd_weights = unwrapped_model.embedding.word_embeddings.weight.data
