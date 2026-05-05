@@ -130,8 +130,11 @@ gh pr create \
 ```
 
 The `needs-more-tests` label is **mandatory** for a bump — it expands the
-matrix from L0 to L0+L1 (see @skills/testing/SKILL.md tier table). L2 is
-schedule-only and cannot be triggered by labels.
+matrix from L0 to L0+L1 (see @skills/testing/SKILL.md tier table). For a
+high-blast-radius bump (TE, MCore submodule, anything that touches CUDA
+kernels), also add `full-test-suite` to pull L2 into the PR run — L2
+covers VL models, checkpoint conversion, and heavy quantization which
+otherwise only run on schedule.
 
 `gh pr edit` is unreliable. To update a PR's title or body later, use the
 REST API directly:
