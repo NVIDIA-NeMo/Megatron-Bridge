@@ -348,14 +348,17 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             self._tensor_spec_output_cache[cache_key] = tensor_spec_output
 
         # ------------------------------------------------------------------
-        # 2.  Identify the owning rank (the only rank with a non-None spec).
+        # 2.  Identify the first owning rank (pick the lowest-ranked PP stage
+        #     that holds the tensor).  Certain architectures (MLA / DeepSeek-V3,
+        #     MTP, or models with tied embeddings) legitimately place the same
+        #     weight on more than one PP rank, so we must *not* raise on
+        #     duplicates – instead we deterministically pick the first owner
+        #     as the broadcast source.
         # ------------------------------------------------------------------
         target_tensor_spec = None
         src_rank = None  # Rank *inside* the PP group.
         for rank, spec in enumerate(tensor_spec_output):
-            if spec is not None:
-                if target_tensor_spec is not None:
-                    raise ValueError(f"Tensor exists on more than one PP rank. Found on ranks {src_rank} and {rank}.")
+            if spec is not None and target_tensor_spec is None:
                 target_tensor_spec = spec
                 src_rank = rank
 
@@ -401,7 +404,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Any: Broadcasted object on all ranks.
 
         Raises:
-            ValueError: If object exists on multiple ranks or no ranks.
+            ValueError: If object does not exist on any rank.
         """
         if self.pp_size == 1:
             return obj
@@ -418,12 +421,15 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather_object(obj_flags, has_obj, group=self.pp_group)
 
         # ------------------------------------------------------------------
-        # 2. Identify the owning rank (the only rank with True flag)
+        # 2. Identify the first owning rank (lowest PP stage with the object).
+        #    Certain architectures (MLA, MTP, tied embeddings) place the same
+        #    parameter on multiple PP ranks — pick the first owner.
         # ------------------------------------------------------------------
         src_rank = None  # Rank *inside* the PP group
         for rank, flag in enumerate(obj_flags):
             if flag:
                 src_rank = rank
+                break
 
         if src_rank is None:
             raise ValueError("Object must exist on at least one PP rank")
@@ -431,8 +437,6 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # ------------------------------------------------------------------
         # 3. Broadcast the object from the source rank to all ranks
         # ------------------------------------------------------------------
-        if src_rank is None:
-            raise ValueError("Could not determine source rank")
 
         # Use broadcast_object_list which is more robust than all_gather_object
         obj_list = [obj]
@@ -481,6 +485,51 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         global_src = torch.distributed.get_global_rank(group=self.tp_group, group_rank=src_rank)
         torch.distributed.broadcast(tensor, src=global_src, group=self.tp_group)
         return tensor
+
+    def _get_shard_spec(
+        self,
+        *,
+        shard_size: int,
+        megatron_module: nn.Module | None = None,
+        global_size: int | None = None,
+        global_size_attr: str | None = None,
+    ) -> tuple[int, int]:
+        """Get the unique TP shard count and shard rank for the current TP rank.
+
+        This supports layouts where TP ranks may contain replicated copies of a
+        smaller set of unique shards, such as KV-head sharding when
+        ``num_query_groups < tensor_model_parallel_size``.
+
+        Args:
+            shard_size: Number of elements in the local shard along the sharded axis.
+            megatron_module: Optional Megatron module carrying layout metadata.
+            global_size: Explicit global size along the sharded axis.
+            global_size_attr: Optional module attribute that stores the global
+                size along the sharded axis.
+
+        Returns:
+            Tuple of ``(shard_world_size, shard_rank)`` where ``shard_world_size``
+            is the number of unique shards and ``shard_rank`` is the current
+            rank's unique shard index.
+        """
+        resolved_global_size = shard_size * self.tp_size
+        if global_size is not None:
+            resolved_global_size = global_size
+        elif megatron_module is not None and global_size_attr is not None:
+            resolved_global_size = getattr(megatron_module, global_size_attr, resolved_global_size)
+
+        if resolved_global_size % shard_size != 0:
+            raise ValueError(f"Invalid sharded layout: global_size={resolved_global_size}, shard_size={shard_size}")
+
+        shard_world_size = resolved_global_size // shard_size
+        if self.tp_size % shard_world_size != 0:
+            raise ValueError(
+                f"Invalid replicated shard layout: tp_size={self.tp_size}, shard_world_size={shard_world_size}"
+            )
+
+        replicas = self.tp_size // shard_world_size
+        shard_rank = self.tp_rank // replicas
+        return shard_world_size, shard_rank
 
     def scatter_to_tp_ranks(
         self,

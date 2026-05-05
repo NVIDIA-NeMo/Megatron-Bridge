@@ -5,7 +5,7 @@ during training, trading throughput for the ability to train models or
 configurations that would otherwise not fit in GPU memory.
 
 For operational setup, code anchors, and verification commands, see
-[skills/perf-techniques/cpu-offloading/SKILL.md](../skills/perf-techniques/cpu-offloading/SKILL.md).
+[skills/perf-cpu-offloading/SKILL.md](../skills/perf-cpu-offloading/SKILL.md).
 
 ## What It Is
 
@@ -96,7 +96,7 @@ CPU offloading is configured through two independent config namespaces:
   `model.cpu_offloading_num_layers`, and related `model.cpu_offloading_*` fields
 
 For config examples, parameter tables, and runnable commands, see
-[skills/perf-techniques/cpu-offloading/SKILL.md](../skills/perf-techniques/cpu-offloading/SKILL.md).
+[skills/perf-cpu-offloading/SKILL.md](../skills/perf-cpu-offloading/SKILL.md).
 
 ## Common Failure Modes
 
@@ -115,4 +115,4 @@ For config examples, parameter tables, and runnable commands, see
 - [docs/training/megatron-fsdp.md](megatron-fsdp.md)
 - [docs/training/optimizer-scheduler.md](optimizer-scheduler.md)
 - [docs/training/cuda-graphs.md](cuda-graphs.md)
-- [skills/perf-techniques/cpu-offloading/SKILL.md](../skills/perf-techniques/cpu-offloading/SKILL.md)
+- [skills/perf-cpu-offloading/SKILL.md](../skills/perf-cpu-offloading/SKILL.md)

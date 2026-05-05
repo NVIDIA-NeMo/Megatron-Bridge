@@ -278,8 +278,13 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     enable_packing = getattr(cfg.dataset, "pack_sequences_in_batch", False)
 
     if not enable_packing:
-        # When using pipeline parallelism, ensure fixed shapes equal to cfg.model.seq_length
-        if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1:
+        # PP needs fixed activation shapes across stages. EP/HybridEP also needs
+        # matching token dimensions across the expert group for routing metadata.
+        requires_fixed_seq_len = (
+            getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1
+            or getattr(cfg.model, "expert_model_parallel_size", 1) > 1
+        )
+        if requires_fixed_seq_len:
             seq_len = cfg.model.seq_length
 
             tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")

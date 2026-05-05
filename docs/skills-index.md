@@ -9,8 +9,9 @@ and verification steps.
 :caption: Getting Started
 :maxdepth: 1
 
-skills/developer-guide/SKILL
-skills/test-system/SKILL
+skills/build-and-dependency/SKILL
+skills/testing/SKILL
+skills/cicd/SKILL
 skills/mlm-bridge-training/SKILL
 skills/recipe-recommender/SKILL
 ```
@@ -30,22 +31,22 @@ skills/adding-model-support/tests-and-examples
 :caption: Performance Techniques
 :maxdepth: 1
 
-skills/perf-techniques/parallelism-strategies/SKILL
-skills/perf-techniques/cuda-graphs/SKILL
-skills/perf-techniques/tp-dp-comm-overlap/SKILL
-skills/perf-techniques/megatron-fsdp/SKILL
-skills/perf-techniques/sequence-packing/SKILL
-skills/perf-techniques/hybrid-context-parallel/SKILL
-skills/perf-techniques/expert-parallel-overlap/SKILL
-skills/perf-techniques/moe-comm-overlap/SKILL
-skills/perf-techniques/activation-recompute/SKILL
-skills/perf-techniques/memory-tuning/SKILL
-skills/perf-techniques/moe-dispatcher-selection/SKILL
-skills/perf-techniques/moe-hardware-configs/SKILL
-skills/perf-techniques/moe-long-context/SKILL
-skills/perf-techniques/moe-optimization-workflow/SKILL
-skills/perf-techniques/moe-vlm-training/SKILL
-skills/perf-techniques/cpu-offloading/SKILL
+skills/perf-parallelism-strategies/SKILL
+skills/perf-cuda-graphs/SKILL
+skills/perf-tp-dp-comm-overlap/SKILL
+skills/perf-megatron-fsdp/SKILL
+skills/perf-sequence-packing/SKILL
+skills/perf-hybrid-context-parallel/SKILL
+skills/perf-expert-parallel-overlap/SKILL
+skills/perf-moe-comm-overlap/SKILL
+skills/perf-activation-recompute/SKILL
+skills/perf-memory-tuning/SKILL
+skills/perf-moe-dispatcher-selection/SKILL
+skills/perf-moe-hardware-configs/SKILL
+skills/perf-moe-long-context/SKILL
+skills/perf-moe-optimization-workflow/SKILL
+skills/perf-moe-vlm-training/SKILL
+skills/perf-cpu-offloading/SKILL
 ```
 
 ```{toctree}

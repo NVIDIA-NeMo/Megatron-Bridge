@@ -360,14 +360,9 @@ Functional tests are placed in tiered launcher scripts inside [`tests/functional
 | **L1** | `L1_Launch_*.sh` | Main push + schedule; PRs labeled `needs-more-tests` | Broader model/recipe coverage |
 | **L2** | `L2_Launch_*.sh` | Schedule / `workflow_dispatch` only | VL models, checkpoint conversion, heavy quantization |
 
-When adding a new launcher script, always start with the **L0** tier so it runs on every PR. A maintainer will adjust the tier later if the test is too slow or better suited for nightly coverage. You must **also update** [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the corresponding job matrix:
+When adding a new launcher script, always start with the **L0** tier so it runs on every PR. A maintainer will adjust the tier later if the test is too slow or better suited for nightly coverage.
 
-```yaml
-# Example: adding an L1 test
-- script: L1_Launch_your_new_test
-```
-
-Without this step, your new launcher script will not be picked up by CI.
+No workflow file changes are needed — the CI matrix is generated dynamically by scanning the launch scripts directory on every run.
 
 ## 📦 Dependencies Management
 

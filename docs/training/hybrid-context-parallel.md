@@ -5,7 +5,7 @@ parallelism, especially the `a2a+p2p` transport path and
 `hierarchical_context_parallel_sizes`.
 
 For operational setup, code anchors, and verification commands, see
-[skills/perf-techniques/hybrid-context-parallel/SKILL.md](../skills/perf-techniques/hybrid-context-parallel/SKILL.md).
+[skills/perf-hybrid-context-parallel/SKILL.md](../skills/perf-hybrid-context-parallel/SKILL.md).
 
 ## What It Is
 
@@ -109,5 +109,5 @@ all Bridge initialization modes.
 
 - [docs/performance-guide.md](../performance-guide.md)
 - [docs/training/communication-overlap.md](communication-overlap.md)
-- [skills/perf-techniques/hybrid-context-parallel/SKILL.md](../skills/perf-techniques/hybrid-context-parallel/SKILL.md)
-- [skills/perf-techniques/hybrid-context-parallel/card.yaml](../skills/perf-techniques/hybrid-context-parallel/card.yaml)
+- [skills/perf-hybrid-context-parallel/SKILL.md](../skills/perf-hybrid-context-parallel/SKILL.md)
+- [skills/perf-hybrid-context-parallel/card.yaml](../skills/perf-hybrid-context-parallel/card.yaml)
