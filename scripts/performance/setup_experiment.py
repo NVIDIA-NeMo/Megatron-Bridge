@@ -294,7 +294,12 @@ def main(
         and model_recipe_name == "nemotron_3_super"
         and compute_dtype == "bf16"
         and gpu == "b300"
-    ) or (model_family_name == "deepseek" and model_recipe_name == "deepseek_v3" and gpu == "b300"):
+    ) or (
+        model_family_name == "deepseek"
+        and model_recipe_name == "deepseek_v3"
+        and gpu == "b300"
+        and config_variant != "large_scale"
+    ):
         enable_pct_binding = False
 
     if wandb_key is not None:
