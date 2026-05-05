@@ -30,7 +30,12 @@ from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.canonical_lora import CanonicalLoRA
 from megatron.bridge.peft.lora import LoRA, LoRAMerge, VLMLoRA
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
-from megatron.bridge.peft.utils import AdapterAttributes, GroupedExpertLinearAdapter, get_adapter_attributes_from_linear, is_modelopt_linear
+from megatron.bridge.peft.utils import (
+    AdapterAttributes,
+    GroupedExpertLinearAdapter,
+    get_adapter_attributes_from_linear,
+    is_modelopt_linear,
+)
 
 
 class SimpleModel(nn.Module):
@@ -140,6 +145,8 @@ class GroupedExpertModel(nn.Module):
         grouped_linear = MockMegatronLinear(2048, 512)
         grouped_linear.num_gemms = 2
         layer.mlp.experts.linear_fc2 = grouped_linear
+
+
 G_MODEL_OPT_LINEAR_MODULE = "megatron.core.post_training.modelopt.layers"
 
 
