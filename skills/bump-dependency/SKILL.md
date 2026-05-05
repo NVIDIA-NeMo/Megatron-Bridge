@@ -32,15 +32,18 @@ Read first, then follow the steps below:
 - @CONTRIBUTING.md — PR title/label policy, DCO sign-off
 - @skills/build-and-dependency/SKILL.md — `uv lock` mechanics, container choice
 - @skills/cicd/SKILL.md — how `copy-pr-bot` and `/ok to test` work
-- @skills/testing/SKILL.md — `active/` vs `flaky/` directory layout
+- @skills/testing/SKILL.md — `active/` vs `flaky/` directory layout, `git mv` quarantine recipe
 
 ## Step 1 — Worktree and edit
 
+Create a worktree off `main` per @CLAUDE.md. Then, **before any `uv lock`**:
+
 ```bash
-# From the Megatron-Bridge repo root
-git worktree add .claude/worktrees/<slug> -b <branch-name> origin/main
-git submodule update --init 3rdparty/Megatron-LM     # required before `uv lock`
+git submodule update --init 3rdparty/Megatron-LM
 ```
+
+The submodule must be initialised in the worktree or `uv lock` errors
+with "not a Python project" on the MCore path.
 
 Edit the pin. For TE the canonical knob is the override line in
 `pyproject.toml`:
@@ -60,27 +63,24 @@ moving tip; use a full SHA for reproducibility. TE branches use
 
 ## Step 2 — Regenerate the lockfile
 
-`uv.lock` is Linux + CUDA only. Run inside the project image:
-
-```bash
-docker run --rm \
-  -v $(pwd):/opt/Megatron-Bridge \
-  -v $HOME/.cache/uv:/root/.cache/uv \
-  -w /opt/Megatron-Bridge \
-  megatron-bridge:latest \
-  bash -c 'uv lock'
-```
-
-Confirm only the intended packages moved:
+Run `uv lock` inside the project container per
+@skills/build-and-dependency/SKILL.md "Regenerating uv.lock". Then
+confirm only the intended packages moved:
 
 ```bash
 git diff --stat pyproject.toml uv.lock
 ```
 
 If the diff carries changes you didn't ask for (transitive movements you
-can't explain), stop and investigate before pushing.
+can't explain), stop and investigate before pushing. Note that
+`override-dependencies` carries CVE floors that float — unrelated
+packages bumping by a patch version is expected; accept those, don't
+revert them.
 
 ## Step 3 — Commit and push
+
+Sign-off + signed-commit + PR title format per @CONTRIBUTING.md and
+@skills/cicd/SKILL.md "Commit and PR Workflow". For a bump:
 
 ```bash
 git add pyproject.toml uv.lock
@@ -88,17 +88,24 @@ git commit -S -s -m "[build] chore: bump <package> to <ref>"
 git push -u origin <branch-name>
 ```
 
-PR title format per @CONTRIBUTING.md: `[build] chore: bump <package> to <ref>`.
-Sign-off (`-s`) is required; signed commits (`-S`) let `copy-pr-bot`
-trigger CI without needing `/ok to test` for every push.
+A signed commit (`-S`) lets `copy-pr-bot` trigger CI without manual
+`/ok to test` for the first push — but you'll still post `/ok to test`
+on every subsequent SHA in this loop (Step 5).
 
 ## Step 4 — Open the PR
 
-PR body goes through a tmpfile to preserve formatting. Wrap it in a
-`<details>` block:
+Title and labels per @CONTRIBUTING.md. Two bump-specific requirements:
 
-```bash
-cat > /tmp/pr-body.md <<'EOF'
+- Apply `needs-more-tests` — **mandatory** for a bump; expands the matrix
+  from L0 to L0+L1.
+- For a high-blast-radius bump (TE, MCore submodule, anything that
+  touches CUDA kernels), also apply `full-test-suite` to pull L2 into
+  the PR run. L2 covers VL models, checkpoint conversion, and heavy
+  quantization which otherwise only run on schedule.
+
+The PR body template — this is the durable record of the bump:
+
+```markdown
 <details><summary>Claude summary</summary>
 
 ## What
@@ -118,46 +125,19 @@ Updated <package> <old> -> <new>
 _None yet — will be appended as flakes are identified during CI iteration._
 
 </details>
-EOF
-
-gh pr create \
-  --repo NVIDIA-NeMo/Megatron-Bridge \
-  --base main \
-  --head <branch-name> \
-  --title "[build] chore: bump <package> to <ref>" \
-  --body-file /tmp/pr-body.md \
-  --label "ci,area:build,needs-review,needs-more-tests"
 ```
 
-The `needs-more-tests` label is **mandatory** for a bump — it expands the
-matrix from L0 to L0+L1 (see @skills/testing/SKILL.md tier table). For a
-high-blast-radius bump (TE, MCore submodule, anything that touches CUDA
-kernels), also add `full-test-suite` to pull L2 into the PR run — L2
-covers VL models, checkpoint conversion, and heavy quantization which
-otherwise only run on schedule.
-
-`gh pr edit` is unreliable. To update a PR's title or body later, use the
-REST API directly:
-
-```bash
-gh api -X PATCH "repos/NVIDIA-NeMo/Megatron-Bridge/pulls/<N>" \
-  -F "body=@/tmp/pr-body.md"
-
-gh api -X PATCH "repos/NVIDIA-NeMo/Megatron-Bridge/pulls/<N>" \
-  -f "title=[build] chore: bump <package> to <ref>"
-```
+To update the PR title or body later, use `gh api -X PATCH
+"repos/NVIDIA-NeMo/Megatron-Bridge/pulls/<N>" -F "body=@/tmp/pr-body.md"`
+— never `gh pr edit`.
 
 ## Step 5 — Trigger CI on the exact SHA
 
-Even with a signed commit, post `/ok to test` on the SHA you actually
-want exercised so any cached / cancelled run is re-fired:
-
-```bash
-SHA=$(git rev-parse HEAD)
-gh pr comment <N> --repo NVIDIA-NeMo/Megatron-Bridge --body "/ok to test $SHA"
-```
-
-Use the **full** SHA (`git rev-parse HEAD`), never the short form.
+Trigger mechanics live in @skills/cicd/SKILL.md "How CI Is Triggered".
+For this loop the rule is simple: **on every new SHA you push, post
+`/ok to test $(git rev-parse HEAD)`** as a PR comment, even if your
+commits are signed. This guarantees the run targets the SHA you actually
+want exercised and re-fires anything that got cancelled or cached.
 
 ## Step 6 — Attach the watchdog (always; never a cronjob)
 
@@ -265,8 +245,7 @@ once the run is green.
 
 When a `JOB <name> -> failure` event fires:
 
-1. Skim the logs to confirm it's a flake / pre-existing issue, not the
-   bump itself:
+1. **Triage the failure — is it the bump or a flake?** Skim the logs:
 
    ```bash
    RUN_ID=<from "RUN ... STARTED" event>
@@ -275,60 +254,47 @@ When a `JOB <name> -> failure` event fires:
    tail -200 /tmp/run.log
    ```
 
-   If the failure is caused by the bump (real regression, not a flake),
-   **stop quarantining** — fix the underlying issue or revert the bump.
+   This is the bump-specific judgement call: only quarantine if the
+   failure reproduces on `main` or is clearly unrelated infrastructure.
+   If the failure is caused by the bump (real regression), **stop
+   quarantining** — fix the underlying issue or revert the bump.
    Quarantining a real regression hides the very signal the bump PR
    exists to surface.
 
-2. Move the launch script to `flaky/` on the matching hardware target
-   (see @skills/testing/SKILL.md):
-
-   ```bash
-   git mv tests/functional_tests/launch_scripts/h100/active/<Tier>_<Name>.sh \
-          tests/functional_tests/launch_scripts/h100/flaky/<Tier>_<Name>.sh
-
-   # If the GB200 variant also failed:
-   git mv tests/functional_tests/launch_scripts/gb200/active/<Tier>_<Name>.sh \
-          tests/functional_tests/launch_scripts/gb200/flaky/<Tier>_<Name>.sh
-   ```
-
-   Map a CI job name (e.g. `gb200_L0_Launch_models_foo`) to its launch
-   script via:
+2. **Move the launch script to `flaky/`** per @skills/testing/SKILL.md
+   "Moving a Test to Flaky". Map a CI job name to its launch script via:
 
    - prefix `gb200_` → `gb200/active/`, otherwise `h100/active/`
    - the rest is the script's basename without `.sh`
 
-3. Append the test to the PR description's **Quarantined tests**
-   section, with a one-line reason and a follow-up tracking link if you
-   have one. This is the durable record of what this bump deferred.
+3. **Append to the PR body's Quarantined tests section** with a one-line
+   reason and a follow-up tracking link if you have one. This is the
+   durable record of what this bump deferred — the section exists
+   precisely so a reviewer can see at a glance which flakes were
+   side-stepped to land the bump.
 
-4. Commit, push, retrigger:
+4. **Commit, push, retrigger**:
 
    ```bash
    git commit -S -s -m "[ci] chore: quarantine flaky <test> for <package> bump"
    git push
-   SHA=$(git rev-parse HEAD)
-   gh pr comment <N> --repo NVIDIA-NeMo/Megatron-Bridge --body "/ok to test $SHA"
+   gh pr comment <N> --repo NVIDIA-NeMo/Megatron-Bridge \
+     --body "/ok to test $(git rev-parse HEAD)"
    ```
 
-5. Update the PR body via `gh api PATCH` so the quarantine list stays
-   current.
+5. **Update the PR body** via `gh api PATCH` so the quarantine list
+   stays current.
 
-The watchdog is persistent — it will pick up the new run automatically
-and emit `RUN <id> STARTED` for the new attempt.
+The watchdog is persistent — it picks up the new run automatically and
+emits `RUN <id> STARTED` for the new attempt. Loop back to step 1.
 
 ## Step 8 — Stop when green
 
 `RUN <id> COMPLETED conclusion=success` is the exit condition. Then:
 
 ```bash
-# Sanity check
 gh pr checks <N> --repo NVIDIA-NeMo/Megatron-Bridge | awk '{print $2}' | sort | uniq -c
-
-# Tear down
 TaskStop(<watchdog-task-id>)
-
-# Tick the boxes in the PR body
 gh api -X PATCH "repos/NVIDIA-NeMo/Megatron-Bridge/pulls/<N>" -F "body=@/tmp/pr-body.md"
 ```
 
@@ -336,13 +302,11 @@ gh api -X PATCH "repos/NVIDIA-NeMo/Megatron-Bridge/pulls/<N>" -F "body=@/tmp/pr-
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `uv lock` errors with "not a Python project" on `3rdparty/Megatron-LM` | Submodule not initialised in the worktree | `git submodule update --init 3rdparty/Megatron-LM` |
-| CI never starts on a new push | Commit not GPG-signed and no `/ok to test` for the new SHA | Post `/ok to test $(git rev-parse HEAD)` |
-| Watchdog goes silent for 30+ min | `gh` rate-limited or auth expired | Bump poll interval; `gh auth status`; restart Monitor |
-| Quarantine commit doesn't trigger a new run | Pushed but didn't post `/ok to test` for the new SHA | Always re-post on the new SHA |
-| Job name doesn't match a script in `active/` | `gb200_` prefix is the hardware indicator, not part of the filename | Strip `gb200_` and look in `gb200/active/` |
 | Wrong TE branch ref (`release/v2.15`) silently resolves nothing | TE uses `release_vX.Y` with an underscore | Verify with `git ls-remote` before locking |
 | Lockfile diff includes unrelated CVE-pinned packages | `override-dependencies` carries floors that float | Re-run lock and accept; don't try to revert those |
+| Signed first push triggers CI but later pushes don't | `copy-pr-bot` re-trusts on each new SHA only via `/ok to test` once you're past the first signed commit in this loop | Always re-post `/ok to test $(git rev-parse HEAD)` per Step 5 |
+| Watchdog goes silent for 30+ min | `gh` rate-limited or auth expired | Bump poll interval; `gh auth status`; restart Monitor |
+| Job name doesn't map to a script in `active/` | `gb200_` prefix is the hardware indicator, not part of the filename | Strip `gb200_` and look in `gb200/active/` |
 
 ## Anti-patterns
 
