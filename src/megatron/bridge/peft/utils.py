@@ -73,9 +73,15 @@ HAVE_TE = all(
 )
 
 MixedFusedLayerNorm, HAVE_APEX = safe_import_from("apex.normalization.fused_layer_norm", "MixedFusedLayerNorm")
+ModelOptLinear, HAVE_MODELOPT_LINEAR = safe_import_from("megatron.core.post_training.modelopt.layers", "Linear")
 
 TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParallelGroupedLinear)
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
+
+
+def is_modelopt_linear(m: nn.Module) -> bool:
+    """Return whether a module is ModelOpt's local Megatron Linear."""
+    return HAVE_MODELOPT_LINEAR and isinstance(m, ModelOptLinear)
 
 
 @dataclass(frozen=True)
@@ -125,6 +131,16 @@ def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) ->
     disable_tensor_parallel_comm = getattr(m, "parallel_mode", "") is None or getattr(m, "explicit_expert_comm", False)
     if disable_tensor_parallel_comm:
         disable_sequence_parallel_comm = True
+
+    if is_modelopt_linear(m):
+        return AdapterAttributes(
+            input_is_parallel=False,
+            in_features=m.in_features,
+            out_features=m.out_features,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=False,
+        )
 
     if is_expert:
         tp_size = parallel_state.get_expert_tensor_parallel_world_size()

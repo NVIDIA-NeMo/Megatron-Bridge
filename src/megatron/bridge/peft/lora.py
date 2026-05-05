@@ -42,6 +42,7 @@ from megatron.bridge.peft.utils import (
     get_effective_lora_dim,
     is_expert_linear,
     is_grouped_expert_linear,
+    is_modelopt_linear,
 )
 
 
@@ -126,7 +127,7 @@ class LoRA(PEFT, ModuleMatcher):
 
         if (ans := self.match(module, name, prefix)) is not None:
             _, full_name = ans
-            if isinstance(module, nn.Linear) or (module.__class__ == te.Linear):
+            if (isinstance(module, nn.Linear) or (module.__class__ == te.Linear)) and not is_modelopt_linear(module):
                 # Will use the `patch_linear_module` function if:
                 # - is FSDP v1
                 # - is DTensor (has _local_tensor attribute)
