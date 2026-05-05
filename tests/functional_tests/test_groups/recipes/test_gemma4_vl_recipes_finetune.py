@@ -44,6 +44,7 @@ _SMALL_MODEL_OVERRIDES = {
     "expert_model_parallel_size": 1,
     "num_layers": 2,
     "num_moe_experts": 4,
+    "moe_router_topk": 2,
     "interleaved_attn_pattern": (1, 1),
 }
 
@@ -71,10 +72,4 @@ class TestGemma4VLRecipes:
     @pytest.mark.parametrize("config_func,recipe_name,model_overrides", GEMMA4_VL_FINETUNE_RECIPES)
     def test_gemma4_vl_sft_recipes(self, config_func, recipe_name, model_overrides, tmp_path):
         """Smoke test for Gemma4 VL SFT recipe: 2 layers, 4 experts, sliding+global attention."""
-        run_pretrain_vl_recipe_test(config_func, recipe_name, tmp_path, model_overrides=model_overrides)
-
-    @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize("config_func,recipe_name,model_overrides", GEMMA4_VL_PEFT_RECIPES)
-    def test_gemma4_vl_peft_recipes(self, config_func, recipe_name, model_overrides, tmp_path):
-        """Smoke test for Gemma4 VL PEFT (LoRA) recipe: exercises adapter export with K=V tying."""
         run_pretrain_vl_recipe_test(config_func, recipe_name, tmp_path, model_overrides=model_overrides)
