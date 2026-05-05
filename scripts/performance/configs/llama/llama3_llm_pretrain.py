@@ -118,7 +118,7 @@ def llama3_70b_pretrain_config_gb200(
 
 
 def llama3_70b_pretrain_config_b300(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v2"
 ) -> ConfigContainer:
     """B300, baseline config."""
     base_cfg = get_workload_base_config(
@@ -153,7 +153,7 @@ def llama3_70b_pretrain_config_b300(
 
 
 def llama3_70b_pretrain_config_b200(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v2"
 ) -> ConfigContainer:
     """B200, baseline config."""
     base_cfg = get_workload_base_config(
