@@ -27,6 +27,7 @@ from megatron.core.utils import get_tensor_model_parallel_group_if_none
 from torch import nn
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.utils.common_utils import is_rank_0  # noqa: F401
 
 
 def thd_diag_enabled() -> bool:
