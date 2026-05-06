@@ -56,6 +56,25 @@ if TYPE_CHECKING:
     from megatron.bridge.peft.base import PEFT
 
 
+class _AbsentProjectionSentinel:
+    """Singleton sentinel returned by ``_split_qkv_linear_out_weight`` to declare that
+    a projection key has no counterpart in the HF model and should be skipped during
+    adapter export.  Example: ``v_proj`` on Gemma4 global-attention layers that use K=V
+    tying (no ``v_proj`` weight exists in HF).
+
+    Bridges that need this behaviour should return this sentinel for the absent key so
+    that the generic export code can distinguish an intentional skip from a bug.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "ABSENT_PROJECTION"
+
+
+ABSENT_PROJECTION = _AbsentProjectionSentinel()
+
+
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 
 
@@ -939,7 +958,15 @@ class MegatronPeftBridge:
                     if per_base_linear_out is not None:
                         for index, base_name in enumerate(base_hf_weight_names):
                             current_linear_out_tensor = per_base_linear_out.get(base_name)
-                            assert current_linear_out_tensor is not None, "unknown projection name"
+                            if isinstance(current_linear_out_tensor, _AbsentProjectionSentinel):
+                                # Bridge explicitly declared this projection absent (e.g.,
+                                # v_proj on Gemma4 global-attention K=V layers).  Skip it.
+                                continue
+                            assert current_linear_out_tensor is not None, (
+                                f"No linear_out slice for {base_name!r}. "
+                                "Return ABSENT_PROJECTION from _split_qkv_linear_out_weight "
+                                "to intentionally skip a projection."
+                            )
                             yield HFWeightTuple(linear_in_hf_names[index], current_linear_in_tensor)
                             yield HFWeightTuple(linear_out_hf_names[index], current_linear_out_tensor)
                         continue

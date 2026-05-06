@@ -1,3 +1,4 @@
+#!/bin/bash
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,15 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .glm_45v import (
-    glm_45v_peft_config,
-    glm_45v_sft_config,
-    set_glm_45v_pipeline_model_parallel_layout,
-)
 
+set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
-__all__ = [
-    "glm_45v_sft_config",
-    "glm_45v_peft_config",
-    "set_glm_45v_pipeline_model_parallel_layout",
-]
+export CUDA_VISIBLE_DEVICES="0,1"
+
+uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 \
+  -m coverage run --data-file=/opt/Megatron-Bridge/.coverage \
+  --source=/opt/Megatron-Bridge/ --parallel-mode \
+  -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x \
+  -m "not pleasefixme" --tb=short -rA \
+  tests/functional_tests/test_groups/recipes/test_gemma4_vl_recipes_finetune.py
+coverage combine -q
