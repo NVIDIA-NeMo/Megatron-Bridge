@@ -46,102 +46,8 @@ RUN git clone https://github.com/vllm-project/vllm.git . && \
     echo "Building vLLM version: $VLLM_VERSION" && \
     git checkout $VLLM_VERSION && \
     python use_existing_torch.py && \
-    pip install -r requirements/build.txt && \
-    sed -i "/xgrammar/d" requirements/common.txt && \
+    pip install -r requirements/build/cuda.txt && \
     pip wheel --no-deps --no-build-isolation -v .
-
-##############################################################################
-##
-## TRT-LLM repo
-##
-##############################################################################
-
-FROM base AS trtllm_repo
-
-ARG TRT_LLM_COMMIT
-ARG CUDA_VER
-ARG NVRTC_VER
-ARG TRT_VER
-
-WORKDIR /src/tensorrt_llm
-
-RUN apt-get update && apt-get install -y --no-install-recommends git-lfs && \
-    rm -rf /var/lib/apt/lists/* && \
-    apt-get clean
-
-RUN git clone https://github.com/NVIDIA/TensorRT-LLM . && \
-    git pull && \
-    git fetch origin $TRT_LLM_COMMIT && \
-    git checkout -f FETCH_HEAD && \
-    git submodule update --init --recursive && \
-    git lfs install && git lfs pull && \
-    sed -i "s/NVRTC_VER=\"[^\"]*\"/NVRTC_VER=\"${NVRTC_VER}\"/g" /src/tensorrt_llm/docker/common/install_tensorrt.sh && \
-    sed -i "s/TRT_CUDA_VERSION=\"[^\"]*\"/TRT_CUDA_VERSION=\"${CUDA_VER}\"/g" /src/tensorrt_llm/docker/common/install_tensorrt.sh && \
-    sed -i "s/CUDA_RUNTIME==\"[^\"]*\"/CUDA_RUNTIME==\"${NVRTC_VER}\"/g" /src/tensorrt_llm/docker/common/install_tensorrt.sh && \
-    sed -i "/triton/d" requirements.txt && \
-    sed -i "s/tensorrt~=[0-9.]*/tensorrt~=${TRT_VER}/g" requirements.txt && \
-    sed -i "/flashinfer-python/d" requirements.txt && \
-    sed -i "/nvidia-nccl-cu13/d" requirements.txt && \
-    sed -i "/nvidia-cuda-nvrtc/d" requirements.txt && \
-    sed -i "/torch/d" requirements.txt && \
-    sed -i "/xgrammar/d" requirements.txt;
-
-##############################################################################
-##
-## TRT-LLM builder
-##
-## When REINSTALL_TRTLLM is True, trtllm_builder will be used as new base
-## FW_DEP_BUILDER=trtllm_builder
-##
-##############################################################################
-
-FROM base AS trtllm_builder
-
-# Download & install internal TRT release
-# Install latest Polygraphy and mpi4py
-ARG TRT_VER
-ARG CUDA_VER
-ARG CUDNN_VER
-ARG NCCL_VER
-ARG CUBLAS_VER
-ARG TRT_LLM_COMMIT
-ARG TRT_LLM_VERSION
-ENV TRT_VER=$TRT_VER
-ENV NEMO_FW_TRT_LLM_COMMIT=$TRT_LLM_COMMIT
-ENV NEMO_FW_TRT_LLM_VERSION=$TRT_LLM_VERSION
-RUN --mount=type=bind,from=trtllm_repo,source=/src/tensorrt_llm/docker/common,target=tensorrt_llm/docker/common/ \
-    apt-get remove --purge -y libnvinfer* tensorrt* || true && \
-    pip3 uninstall -y tensorrt || true && \
-    bash tensorrt_llm/docker/common/install_tensorrt.sh \
-    --TRT_VER=${TRT_VER} \
-    --CUDA_VER=${CUDA_VER} \
-    --CUDNN_VER=${CUDNN_VER} \
-    --NCCL_VER=${NCCL_VER} \
-    --CUBLAS_VER=${CUBLAS_VER} && \
-    pip install "polygraphy==0.49.9" && \
-    bash tensorrt_llm/docker/common/install_mpi4py.sh
-
-##############################################################################
-##
-## TRT-LLM wheel
-##
-##############################################################################
-
-FROM trtllm_builder AS trtllm_wheel
-
-ARG BUILD_WHEEL_ARGS="--clean --trt_root /usr/local/tensorrt --benchmarks"
-
-WORKDIR /src/tensorrt_llm
-
-COPY --from=trtllm_repo /src/tensorrt_llm .
-
-RUN bash docker/common/install_base.sh && \
-    bash docker/common/install_cmake.sh && \
-    bash docker/common/install_ccache.sh
-
-ARG TARGET_ARCH
-RUN if [ "$TARGET_ARCH" = "arm" ]; then JOB_COUNT=16; else JOB_COUNT=32; fi && \
-    python3 scripts/build_wheel.py --job_count $JOB_COUNT ${BUILD_WHEEL_ARGS}
 
 ##############################################################################
 ##
@@ -218,36 +124,20 @@ RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_n
 
 ##############################################################################
 ##
-## Install TRT-LLM and vLLM
+## Install vLLM
 ##
 ##############################################################################
 
-FROM fw_toolkit_builder AS trtllm_install
-
-WORKDIR /opt/tensorrt_llm
-
 # Copy Wheels
-RUN --mount=type=bind,from=trtllm_wheel,source=/src/tensorrt_llm/build/,target=/tmp/tensorrt_llm/build/ \
-    --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
-    --mount=type=bind,source=docker/patches/vllm.patch,target=/opt/vllm.patch \
-    pip install --upgrade --ignore-installed wheel && \
-    pip install --no-deps xgrammar==0.1.25 && \
+RUN --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
     pip install /tmp/vllm/vllm*.whl && \
     pushd /usr/local/lib/python3.12/dist-packages/vllm && \
-    patch -p1 < /opt/vllm.patch && \
-    popd && \
-    pip install /tmp/tensorrt_llm/build/tensorrt_llm*.whl --extra-index-url https://pypi.nvidia.com && \
-    ln -sv $(/usr/bin/python -c 'import site; print(f"{site.getsitepackages()[0]}/tensorrt_llm/libs")') lib && \
-    test -f lib/libnvinfer_plugin_tensorrt_llm.so && \
-    ln -sv lib/libnvinfer_plugin_tensorrt_llm.so lib/libnvinfer_plugin_tensorrt_llm.so.9 && \
-    echo "/opt/tensorrt_llm/lib" > /etc/ld.so.conf.d/tensorrt_llm.conf && \
-    ldconfig
+    popd
 
 ##############################################################################
 ##
 ## Final layer of FW_BASE container
 ##
-## When TRTLLM is re-installed, FW_BASE_FINAL=trtllm_install
 ## default, FW_BASE_FINAL=fw_toolkit_builder
 ##
 ##############################################################################
