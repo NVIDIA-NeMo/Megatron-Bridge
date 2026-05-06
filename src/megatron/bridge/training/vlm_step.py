@@ -441,15 +441,14 @@ def forward_step(
     if tokens is not None:
         mbs = tokens.shape[0]
         seq_len = tokens.shape[1]
-        state._flops_seqlen_sum = getattr(state, '_flops_seqlen_sum', 0) + mbs * seq_len
-        state._flops_seqlen_sq_sum = getattr(state, '_flops_seqlen_sq_sum', 0) + mbs * seq_len ** 2
+        state._flops_seqlen_sum = getattr(state, "_flops_seqlen_sum", 0) + mbs * seq_len
+        state._flops_seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0) + mbs * seq_len**2
     if visual_inputs is not None:
         for attr in ("image_grid_thw", "video_grid_thw"):
             grid = getattr(visual_inputs, attr, None)
             if grid is not None and grid.numel() > 0:
-                state._flops_vision_patches = (
-                    getattr(state, '_flops_vision_patches', 0)
-                    + int(grid.prod(dim=-1).sum().item())
+                state._flops_vision_patches = getattr(state, "_flops_vision_patches", 0) + int(
+                    grid.prod(dim=-1).sum().item()
                 )
 
     forward_args = {

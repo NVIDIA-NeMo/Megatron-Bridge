@@ -544,9 +544,9 @@ def train(
 
         # Read accumulated FLOPS metadata from forward_step micro-batches.
         # These are per-DP-rank totals; scale by dp_size for global estimate.
-        local_seqlen_sum = getattr(global_state, '_flops_seqlen_sum', 0)
-        local_seqlen_sq_sum = getattr(global_state, '_flops_seqlen_sq_sum', 0)
-        num_vision_patches = getattr(global_state, '_flops_vision_patches', 0)
+        local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
+        local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
+        num_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
 
         if local_seqlen_sum > 0:
             seqlen_sum = local_seqlen_sum * dp_size
@@ -560,8 +560,11 @@ def train(
         num_vision_patches = num_vision_patches * dp_size if num_vision_patches > 0 else 0
 
         num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
-            config, batch_size=batch_size, seqlen_sum=seqlen_sum,
-            seqlen_squared_sum=seqlen_squared_sum, num_vision_patches=num_vision_patches,
+            config,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+            num_vision_patches=num_vision_patches,
         )
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far

@@ -1152,15 +1152,16 @@ class TestVitFlops:
             spatial_merge_size = 2
             # intentionally no out_hidden_size attribute
 
-        cfg_fallback = MockConfigContainer(
-            model=MockModelConfig(hidden_size=512, vision_config=_VisionNoOut())
-        )
+        cfg_fallback = MockConfigContainer(model=MockModelConfig(hidden_size=512, vision_config=_VisionNoOut()))
         cfg_explicit = MockConfigContainer(
             model=MockModelConfig(
                 hidden_size=512,
                 vision_config=MockVisionConfig(
-                    depth=2, hidden_size=128, intermediate_size=256,
-                    spatial_merge_size=2, out_hidden_size=512,
+                    depth=2,
+                    hidden_size=128,
+                    intermediate_size=256,
+                    spatial_merge_size=2,
+                    out_hidden_size=512,
                 ),
             )
         )
@@ -1235,14 +1236,19 @@ class TestDynamicSeqLenFlops:
         assert imbalanced_sq > equal_sq  # sanity for the test input
 
         flops_equal = num_floating_point_operations(
-            cfg, batch_size=batch_size, seqlen_sum=total_tokens, seqlen_squared_sum=equal_sq,
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=total_tokens,
+            seqlen_squared_sum=equal_sq,
         )
         flops_imbalanced = num_floating_point_operations(
-            cfg, batch_size=batch_size, seqlen_sum=total_tokens, seqlen_squared_sum=imbalanced_sq,
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=total_tokens,
+            seqlen_squared_sum=imbalanced_sq,
         )
         assert flops_imbalanced > flops_equal, (
-            "seqlen_squared_sum must feed core attention FLOPS; otherwise the accumulator "
-            "pipeline is dead code."
+            "seqlen_squared_sum must feed core attention FLOPS; otherwise the accumulator pipeline is dead code."
         )
 
     def test_attention_term_scales_linearly_with_seqlen_squared_sum(self):
@@ -1268,19 +1274,22 @@ class TestDynamicSeqLenFlops:
         sq_bumped = sq_base + 1_000_000  # arbitrary non-trivial increment
 
         flops_base = num_floating_point_operations(
-            cfg, batch_size=batch_size,
-            seqlen_sum=seqlen_sum, seqlen_squared_sum=sq_base,
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=sq_base,
         )
         flops_bumped = num_floating_point_operations(
-            cfg, batch_size=batch_size,
-            seqlen_sum=seqlen_sum, seqlen_squared_sum=sq_bumped,
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=sq_bumped,
         )
 
         query_projection_size = cfg.model.kv_channels * cfg.model.num_attention_heads
         expected_delta = 3 * 2 * cfg.model.num_layers * query_projection_size * (sq_bumped - sq_base)
         assert flops_bumped - flops_base == expected_delta, (
-            f"attention core should be linear in Σ L²: expected Δ = {expected_delta}, "
-            f"got {flops_bumped - flops_base}"
+            f"attention core should be linear in Σ L²: expected Δ = {expected_delta}, got {flops_bumped - flops_base}"
         )
 
     def test_num_vision_patches_adds_vit_flops(self):
@@ -1290,15 +1299,21 @@ class TestDynamicSeqLenFlops:
             model=MockModelConfig(
                 **{k: v for k, v in cfg_llm.model.__dict__.items() if k != "vision_config"},
                 vision_config=MockVisionConfig(
-                    depth=2, hidden_size=128, num_heads=8,
-                    intermediate_size=256, spatial_merge_size=2, out_hidden_size=128,
+                    depth=2,
+                    hidden_size=128,
+                    num_heads=8,
+                    intermediate_size=256,
+                    spatial_merge_size=2,
+                    out_hidden_size=128,
                 ),
             )
         )
         batch_size = 2
         llm_only = num_floating_point_operations(cfg_vlm, batch_size=batch_size)
         vlm_flops = num_floating_point_operations(
-            cfg_vlm, batch_size=batch_size, num_vision_patches=128,
+            cfg_vlm,
+            batch_size=batch_size,
+            num_vision_patches=128,
         )
         assert vlm_flops > llm_only
         # ViT-only path matches the delta (invoked with per-image patches)
@@ -1310,4 +1325,3 @@ class TestDynamicSeqLenFlops:
         cfg = self._llm_cfg()
         baseline = num_floating_point_operations(cfg, batch_size=2)
         assert num_floating_point_operations(cfg, batch_size=2, num_vision_patches=0) == baseline
-

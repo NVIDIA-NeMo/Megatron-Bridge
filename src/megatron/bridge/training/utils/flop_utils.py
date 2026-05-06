@@ -632,36 +632,33 @@ def num_floating_point_operations(
                 / cfg.model.hidden_size
             ) + 2 * moe_latent_size
 
-        total_floating_point_operations = (
-            seqlen_sum
+        total_floating_point_operations = seqlen_sum * (
+            # MLP
+            3
+            * 2
+            * cfg.model.hidden_size
             * (
-                # MLP
-                3
-                * 2
-                * cfg.model.hidden_size
-                * (
-                    # dense layers
-                    (cfg.model.ffn_hidden_size * ffn_expansion_factor) * num_dense_layers
-                    # routed experts
-                    + routed_expert_term * num_moe_layers
-                    # Shared Experts.
-                    + (shared_expert_ffn_hidden_size * ffn_expansion_factor) * num_moe_layers
-                )
-                # Self Attention
-                + self_attn_term
-                # MTP norms and proj
-                + 3
-                * 2
-                * mtp_num_layers
-                * (
-                    # MTP eh norm + final norm
-                    3 * cfg.model.hidden_size
-                    # MTP eh proj
-                    + 2 * cfg.model.hidden_size * cfg.model.hidden_size
-                )
-                # Logit.
-                + 3 * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
+                # dense layers
+                (cfg.model.ffn_hidden_size * ffn_expansion_factor) * num_dense_layers
+                # routed experts
+                + routed_expert_term * num_moe_layers
+                # Shared Experts.
+                + (shared_expert_ffn_hidden_size * ffn_expansion_factor) * num_moe_layers
             )
+            # Self Attention
+            + self_attn_term
+            # MTP norms and proj
+            + 3
+            * 2
+            * mtp_num_layers
+            * (
+                # MTP eh norm + final norm
+                3 * cfg.model.hidden_size
+                # MTP eh proj
+                + 2 * cfg.model.hidden_size * cfg.model.hidden_size
+            )
+            # Logit.
+            + 3 * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
         )
         return total_floating_point_operations + _compute_vit_flops()
 
