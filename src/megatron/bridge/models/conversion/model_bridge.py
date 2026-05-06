@@ -202,10 +202,12 @@ def _megatron_local_name_to_global(
                 f".{param_type}{global_expert_number}",
             )
 
-        # Handle weight and bias parameters
-        if ".weight" in param_name:
+        # Handle weight and bias parameters with expert index suffix (e.g.
+        # .weight0, .bias1). Quantizer buffers such as .weight_quantizer._amax
+        # are shared across experts and must not go through EP renumbering.
+        if re.search(r"\.weight\d+$", param_name):
             param_name = _update_expert_number(param_name, "weight")
-        elif ".bias" in param_name:
+        elif re.search(r"\.bias\d+$", param_name):
             param_name = _update_expert_number(param_name, "bias")
     return param_name
 

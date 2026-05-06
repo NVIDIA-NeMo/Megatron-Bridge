@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import os
+import re
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -496,3 +497,108 @@ class TestConvertToAmaxMapMoeWeightWildcard:
         assert out.hf_patterns == [
             "model.layers.*.mlp.experts.*.down_proj.weight_quantizer._amax",
         ]
+
+
+class TestEPRenumberRegexSkipsAmax:
+    """Regression: `_megatron_local_name_to_global` must skip amax buffers under EP renumber.
+
+    Before the regex fix, any name containing the substring ``.weight`` was sent through
+    ``_update_expert_number``. For names like
+    ``decoder.layers.0.mlp.experts.linear_fc1.weight_quantizer._amax`` the body called
+    ``int(param_name.split(".weight")[-1])`` = ``int("_quantizer._amax")`` which raises
+    ``ValueError`` and aborts quantized MoE export. The fix anchors the match to a digit
+    suffix (``\\.weight\\d+$`` / ``\\.bias\\d+$``) so quantizer buffer names skip
+    renumbering cleanly.
+    """
+
+    # Representative param names produced by Megatron-Core for grouped-MoE experts:
+    #   - .weight0 / .weight1 / ...   per-expert weight (must renumber)
+    #   - .bias0 / .bias1 / ...        per-expert bias (must renumber)
+    #   - .weight_quantizer._amax      shared quantizer buffer (must NOT renumber)
+    #   - .input_quantizer._amax       shared quantizer buffer (must NOT renumber)
+    AMAX_NAMES = [
+        "decoder.layers.0.mlp.experts.linear_fc1.weight_quantizer._amax",
+        "decoder.layers.0.mlp.experts.linear_fc1.input_quantizer._amax",
+        "decoder.layers.0.mlp.experts.linear_fc2.weight_quantizer._amax",
+        "decoder.layers.3.mlp.experts.linear_fc1.weight_quantizer._amax",
+    ]
+    EXPERT_WEIGHT_NAMES = [
+        "decoder.layers.0.mlp.experts.linear_fc1.weight0",
+        "decoder.layers.0.mlp.experts.linear_fc1.weight7",
+        "decoder.layers.0.mlp.experts.linear_fc2.weight15",
+    ]
+    EXPERT_BIAS_NAMES = [
+        "decoder.layers.0.mlp.experts.linear_fc1.bias0",
+        "decoder.layers.0.mlp.experts.linear_fc2.bias3",
+    ]
+
+    @pytest.mark.parametrize("name", AMAX_NAMES)
+    def test_regex_does_not_match_amax_buffers(self, name):
+        assert re.search(r"\.weight\d+$", name) is None
+        assert re.search(r"\.bias\d+$", name) is None
+
+    @pytest.mark.parametrize("name", EXPERT_WEIGHT_NAMES)
+    def test_regex_matches_expert_weight_indices(self, name):
+        assert re.search(r"\.weight\d+$", name) is not None
+        assert re.search(r"\.bias\d+$", name) is None
+
+    @pytest.mark.parametrize("name", EXPERT_BIAS_NAMES)
+    def test_regex_matches_expert_bias_indices(self, name):
+        assert re.search(r"\.bias\d+$", name) is not None
+        assert re.search(r"\.weight\d+$", name) is None
+
+    def _call_local_to_global(self, param_name, num_moe_experts=4, ep_size=2, ep_rank=0):
+        """Invoke the real `_megatron_local_name_to_global` with parallel_state mocked.
+
+        Mocks ``parallel_state.get_expert_model_parallel_group`` and
+        ``parallel_state.get_pipeline_model_parallel_group`` plus ``get_pg_size`` so the
+        function takes the EP-renumber branch (PP=1 to keep the test focused on EP).
+        """
+        from megatron.bridge.models.conversion import model_bridge as mb
+
+        ep_group = MagicMock()
+        ep_group.size.return_value = ep_size
+        ep_group.rank.return_value = ep_rank
+        pp_group = MagicMock()
+
+        config = SimpleNamespace(num_moe_experts=num_moe_experts)
+
+        def _pg_size(group):
+            if group is ep_group:
+                return ep_size
+            return 1  # PP=1 -> skip the PP layer-renumber branch
+
+        with (
+            patch.object(mb.parallel_state, "get_expert_model_parallel_group", return_value=ep_group),
+            patch.object(mb.parallel_state, "get_pipeline_model_parallel_group", return_value=pp_group),
+            patch.object(mb, "get_pg_size", side_effect=_pg_size),
+        ):
+            return mb._megatron_local_name_to_global(models=None, config=config, param_name=param_name)
+
+    @pytest.mark.parametrize("name", AMAX_NAMES)
+    def test_amax_name_passes_through_unchanged_under_ep(self, name):
+        """Quantizer amax buffers must NOT go through EP renumbering."""
+        out = self._call_local_to_global(name, num_moe_experts=4, ep_size=2, ep_rank=0)
+        assert out == name
+
+    def test_expert_weight_renumbered_under_ep(self):
+        """A real per-expert weight name is renumbered local -> global on a non-zero EP rank."""
+        # EP=2, num_experts=4 -> 2 experts per rank. Rank 1 owns experts {2, 3}.
+        # Local weight0 on rank 1 -> global weight2.
+        out = self._call_local_to_global(
+            "decoder.layers.0.mlp.experts.linear_fc1.weight0",
+            num_moe_experts=4,
+            ep_size=2,
+            ep_rank=1,
+        )
+        assert out == "decoder.layers.0.mlp.experts.linear_fc1.weight2"
+
+    def test_expert_bias_renumbered_under_ep(self):
+        """A real per-expert bias name is renumbered local -> global on a non-zero EP rank."""
+        out = self._call_local_to_global(
+            "decoder.layers.0.mlp.experts.linear_fc1.bias1",
+            num_moe_experts=4,
+            ep_size=2,
+            ep_rank=1,
+        )
+        assert out == "decoder.layers.0.mlp.experts.linear_fc1.bias3"
