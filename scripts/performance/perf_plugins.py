@@ -323,9 +323,12 @@ class PerfEnvPlugin(Plugin):
             # pytorch:26.04-py3 base + NCCL 2.30.4 bump (vs 26.02 / 2.29.3) tightens
             # memory headroom on H100 fp8_cs and the optimizer's
             # _copy_main_params_to_model_params spike at iter 3 (post CUDA-Graph capture)
-            # OOMs from allocator fragmentation. Same pattern as qwen3_next_80b above —
-            # expandable_segments lets the allocator reclaim fragmented physical memory.
+            # OOMs from allocator fragmentation. expandable_segments lets the allocator
+            # reclaim fragmented physical memory; NCCL_GRAPH_REGISTER=0 is its required
+            # partner under CUDA Graphs (MCore guards against the unsafe combo and asserts
+            # at cuda_graphs.py:1750 if expandable_segments:True is set without it).
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+            executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
 
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
