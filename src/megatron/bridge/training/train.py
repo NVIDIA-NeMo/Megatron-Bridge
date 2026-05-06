@@ -606,6 +606,15 @@ def train(
             if energy_monitor is not None:
                 energy_monitor.pause()
             timers("interval-time").stop()
+            if config.optimizer.reuse_grad_buf_for_mxfp8_param_ag and config.ddp.overlap_param_gather:
+                # disable_forward_pre_hook(param_sync=True) below force-syncs params for eval.
+                # MXFP8 param AG reuses the grad buffer, so repopulate it with current params
+                # before that forced AG; eval callbacks run too late for this sync.
+                for model_chunk in model:
+                    model_chunk.zero_grad_buffer()
+                for optim_instance in optimizer.chained_optimizers:
+                    if isinstance(optim_instance, DistributedOptimizer):
+                        optim_instance._copy_main_params_to_param_buffer()
             if should_toggle_forward_pre_hook:
                 disable_forward_pre_hook(model)
                 pre_hook_enabled = False
