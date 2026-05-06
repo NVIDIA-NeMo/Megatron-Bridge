@@ -24,9 +24,18 @@ import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.peft import canonical_lora as canonical_lora_module
+from megatron.bridge.peft import lora as lora_module
+from megatron.bridge.peft import utils as peft_utils
+from megatron.bridge.peft.canonical_lora import CanonicalLoRA
 from megatron.bridge.peft.lora import LoRA, LoRAMerge, VLMLoRA
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
-from megatron.bridge.peft.utils import AdapterAttributes, GroupedExpertLinearAdapter
+from megatron.bridge.peft.utils import (
+    AdapterAttributes,
+    GroupedExpertLinearAdapter,
+    get_adapter_attributes_from_linear,
+    is_modelopt_linear,
+)
 
 
 class SimpleModel(nn.Module):
@@ -136,6 +145,49 @@ class GroupedExpertModel(nn.Module):
         grouped_linear = MockMegatronLinear(2048, 512)
         grouped_linear.num_gemms = 2
         layer.mlp.experts.linear_fc2 = grouped_linear
+
+
+G_MODEL_OPT_LINEAR_MODULE = "megatron.core.post_training.modelopt.layers"
+
+
+class _ModelOptConfig:
+    sequence_parallel = False
+    use_transformer_engine_op_fuser = False
+    moe_router_topk = None
+
+
+def _init_modelopt_linear(self, in_features: int = 4, out_features: int = 3, bias: bool = False) -> None:
+    nn.Linear.__init__(self, in_features, out_features, bias=bias)
+    self.config = _ModelOptConfig()
+
+
+def _modelopt_forward(self, x: torch.Tensor) -> tuple[torch.Tensor, None]:
+    return nn.Linear.forward(self, x), None
+
+
+def _make_modelopt_linear_class(
+    class_name: str = "Linear", module_name: str = G_MODEL_OPT_LINEAR_MODULE
+) -> type[nn.Linear]:
+    return type(
+        class_name,
+        (nn.Linear,),
+        {
+            "__module__": module_name,
+            "__init__": _init_modelopt_linear,
+            "forward": _modelopt_forward,
+        },
+    )
+
+
+ModelOptLinear = _make_modelopt_linear_class()
+WrongModuleLinear = _make_modelopt_linear_class(module_name=__name__)
+WrongNameModelOptLinear = _make_modelopt_linear_class(class_name="ModelOptLinear")
+
+
+class _UnexpectedLinearAdapter(nn.Module):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__()
+        raise AssertionError("ModelOpt Linear should not use the nn.Linear adapter path")
 
 
 class TestLoRA:
@@ -457,6 +509,88 @@ class TestLoRA:
             assert isinstance(chunk.linear_proj, LinearAdapter)
             assert isinstance(chunk.linear_fc1, LinearAdapter)
             assert isinstance(chunk.linear_fc2, LinearAdapter)
+
+
+class TestModelOptLinear:
+    """Unit tests for ModelOpt Linear LoRA routing."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_modelopt_linear_import(self):
+        with (
+            patch.object(peft_utils, "HAVE_MODELOPT_LINEAR", True),
+            patch.object(peft_utils, "ModelOptLinear", ModelOptLinear),
+        ):
+            yield
+
+    def test_is_modelopt_linear_matches_only_modelopt_linear(self) -> None:
+        assert is_modelopt_linear(ModelOptLinear())
+
+        assert not is_modelopt_linear(WrongModuleLinear())
+        assert not is_modelopt_linear(WrongNameModelOptLinear())
+        assert not is_modelopt_linear(nn.Linear(4, 3))
+
+    def test_is_modelopt_linear_returns_false_when_modelopt_linear_unavailable(self) -> None:
+        with patch.object(peft_utils, "HAVE_MODELOPT_LINEAR", False):
+            assert not is_modelopt_linear(ModelOptLinear())
+
+    def test_get_adapter_attributes_modelopt_linear(self) -> None:
+        linear = ModelOptLinear(in_features=5, out_features=7)
+        linear.config.sequence_parallel = True
+        linear.parallel_mode = None
+
+        attrs = get_adapter_attributes_from_linear(linear)
+
+        assert attrs == AdapterAttributes(
+            input_is_parallel=False,
+            in_features=5,
+            out_features=7,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=False,
+        )
+
+    def test_lora_wraps_modelopt_linear_with_parallel_adapter(self) -> None:
+        linear = ModelOptLinear(in_features=5, out_features=7)
+        parallel_adapter = nn.Identity()
+        lora = LoRA(target_modules=["linear_proj"], dim=2, alpha=4)
+
+        with (
+            patch.object(lora_module, "LinearAdapter", _UnexpectedLinearAdapter),
+            patch.object(lora_module, "ParallelLinearAdapter", return_value=parallel_adapter) as mock_adapter,
+        ):
+            transformed = lora.transform(linear, name="linear_proj")
+
+        assert isinstance(linear, nn.Linear)
+        assert is_modelopt_linear(linear)
+        assert isinstance(transformed, LoRALinear)
+        assert transformed.to_wrap is linear
+        assert transformed.adapter is parallel_adapter
+        mock_adapter.assert_called_once()
+        assert mock_adapter.call_args.args[:3] == (5, 7, 2)
+        assert mock_adapter.call_args.kwargs["base_linear_is_parallel"] is False
+
+    def test_canonical_lora_wraps_modelopt_linear_with_parallel_adapter(self) -> None:
+        linear = ModelOptLinear(in_features=5, out_features=7)
+        parallel_adapter = nn.Identity()
+        lora = CanonicalLoRA(target_modules=["linear_proj"], dim=2, alpha=4)
+
+        with (
+            patch.object(canonical_lora_module, "LinearAdapter", _UnexpectedLinearAdapter),
+            patch.object(
+                canonical_lora_module, "ParallelLinearAdapter", return_value=parallel_adapter
+            ) as mock_adapter,
+        ):
+            transformed = lora.transform(linear, name="linear_proj")
+
+        assert isinstance(linear, nn.Linear)
+        assert is_modelopt_linear(linear)
+        assert isinstance(transformed, LoRALinear)
+        assert transformed.to_wrap is linear
+        assert transformed.adapter is parallel_adapter
+        mock_adapter.assert_called_once()
+        assert mock_adapter.call_args.args[:2] == (5, 7)
+        assert mock_adapter.call_args.kwargs["dim"] == 2
+        assert mock_adapter.call_args.kwargs["base_linear_is_parallel"] is False
 
 
 class TestLoRANormalizeMoE:
