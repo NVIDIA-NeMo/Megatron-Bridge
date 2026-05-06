@@ -19,6 +19,7 @@ Config naming convention:
 
 V1: GBS=2048 for Blackwell variants, GBS=8192 for H100
 V2: GBS=4096 for Blackwell variants, GBS=16384 for H100
+FSDP: FSDP-based, no PP, GBS=256 for GB300 (64 GPUs)
 
 Use --config_variant to select a variant.
 Use --list_config_variants to see available variants interactively.
@@ -260,6 +261,36 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V2 = replace(
 
 
 # =============================================================================
+# DeepSeek V3 Pretrain - FSDP (FSDP, no PP, GBS=256 for GB300)
+# =============================================================================
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=64,
+    global_batch_size=256,
+    micro_batch_size=2,
+    pipeline_model_parallel_size=1,
+    expert_model_parallel_size=32,
+    use_megatron_fsdp=True,
+    moe_flex_dispatcher_backend="hybridep",
+    moe_a2a_overlap=False,
+    cuda_graph_scope=[],
+    recompute_modules=["layernorm", "mla_up_proj", "moe_act"],
+    fine_grained_activation_offloading=True,
+    offload_modules=["core_attn", "attn_proj"],
+    fp8_param_gather=True,
+)
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP,
+    fp8_param_gather=None,
+    reuse_grad_buf_for_mxfp8_param_ag=None,
+)
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_FSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_FSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP
+
+
+# =============================================================================
 # DeepSeek V3 Pretrain - Large Scale Proxy
 # =============================================================================
 
@@ -344,6 +375,11 @@ __all__ = [
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_CS_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_MX_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_NVFP4_V2",
+    # FSDP (FSDP, GBS=256 for GB300)
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_FSDP",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_FSDP",
     # Large Scale Proxy
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE",

@@ -57,6 +57,14 @@ class WorkloadBaseConfig:
     recompute_num_layers: Optional[int] = None
     recompute_modules: Optional[List[str]] = None
 
+    # Fine-grained activation offloading
+    fine_grained_activation_offloading: Optional[bool] = None
+    offload_modules: Optional[List[str]] = None
+
+    # FP8 parameter gather settings (used with FSDP)
+    fp8_param_gather: Optional[bool] = None
+    reuse_grad_buf_for_mxfp8_param_ag: Optional[bool] = None
+
     # MoE configuration
     moe_flex_dispatcher_backend: Optional[str] = None
     moe_a2a_overlap: Optional[bool] = False

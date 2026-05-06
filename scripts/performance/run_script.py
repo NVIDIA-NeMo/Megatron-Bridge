@@ -102,6 +102,13 @@ def main():
         os.environ["NCCL_NVLS_ENABLE"] = "1"
         os.environ["NCCL_CTA_POLICY"] = "1"
 
+    if recipe.model.fine_grained_activation_offloading:
+        os.environ["NVTE_CPU_OFFLOAD_V1"] = "1"
+
+    # Set Hybrid EP env vars
+    if args.moe_flex_dispatcher_backend == "hybridep":
+        os.environ["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = recipe.model.expert_model_parallel_size
+
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"
         os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)

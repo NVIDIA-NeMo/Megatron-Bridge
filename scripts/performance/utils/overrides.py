@@ -94,9 +94,9 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
             logger.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
             recipe.comm_overlap.defer_embedding_wgrad_compute = False
 
-    if recipe.optimizer.use_precision_aware_optimizer:
-        recipe.optimizer.use_precision_aware_optimizer = False
-        logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
+    # if recipe.optimizer.use_precision_aware_optimizer:
+    #    recipe.optimizer.use_precision_aware_optimizer = False
+    #    logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
 
     recipe.checkpoint.load = None
     return recipe
@@ -234,6 +234,15 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
 
         cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
+
+    if settings.fine_grained_activation_offloading is not None:
+        cfg.model.fine_grained_activation_offloading = settings.fine_grained_activation_offloading
+    if settings.offload_modules is not None:
+        cfg.model.offload_modules = settings.offload_modules
+    if settings.fp8_param_gather is not None:
+        cfg.mixed_precision.fp8_param_gather = settings.fp8_param_gather
+    if settings.reuse_grad_buf_for_mxfp8_param_ag is not None:
+        cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = settings.reuse_grad_buf_for_mxfp8_param_ag
 
     if settings.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)
