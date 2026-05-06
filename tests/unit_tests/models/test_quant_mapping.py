@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -364,6 +365,116 @@ class TestMoeAmaxFanoutMapping:
         ):
             with pytest.raises(RuntimeError, match="must be divisible"):
                 m.megatron_to_hf(weight, None)
+
+    def test_get_num_experts_from_megatron_module_config_num_moe_experts(self):
+        """Production path: num_experts not in ctor; pulled from megatron_module.config.num_moe_experts."""
+        hf_pattern = "model.layers.0.mlp.experts.*.gate_proj.weight_quantizer._amax"
+        megatron_param = "decoder.layers.0.mlp.experts.linear_fc1.weight_quantizer._amax"
+        m = MoeAmaxFanoutMapping(megatron_param, [hf_pattern])  # no num_experts kwarg
+        assert m.num_experts is None
+
+        megatron_module = SimpleNamespace(config=SimpleNamespace(num_moe_experts=4))
+
+        rank0_weight = torch.tensor([10.0])
+        rank1_weight = torch.tensor([20.0])
+
+        def fake_all_gather(out_list, tensor, group=None):
+            out_list[0].copy_(rank0_weight)
+            out_list[1].copy_(rank1_weight)
+
+        m.ep_group = object()
+        with (
+            patch.object(ReplicatedMapping, "megatron_to_hf", return_value={hf_pattern: rank0_weight}),
+            patch.object(MoeAmaxFanoutMapping, "ep_size", new=2),
+            patch.object(MoeAmaxFanoutMapping, "broadcast_obj_from_pp_rank", side_effect=lambda obj, **_: obj),
+            patch("torch.distributed.all_gather", side_effect=fake_all_gather),
+        ):
+            result = m.megatron_to_hf(rank0_weight, megatron_module)
+
+        # rank-0 amax fanned out to experts 0, 1
+        assert torch.equal(result["model.layers.0.mlp.experts.0.gate_proj.weight_quantizer._amax"], rank0_weight)
+        assert torch.equal(result["model.layers.0.mlp.experts.1.gate_proj.weight_quantizer._amax"], rank0_weight)
+        # rank-1 amax fanned out to experts 2, 3
+        assert torch.equal(result["model.layers.0.mlp.experts.2.gate_proj.weight_quantizer._amax"], rank1_weight)
+        assert torch.equal(result["model.layers.0.mlp.experts.3.gate_proj.weight_quantizer._amax"], rank1_weight)
+
+    def test_get_num_experts_from_megatron_module_config_num_experts_fallback(self):
+        """Fallback resolution: when num_moe_experts is missing, num_experts on config is used."""
+        hf_pattern = "model.layers.0.mlp.experts.*.gate_proj.weight_quantizer._amax"
+        megatron_param = "decoder.layers.0.mlp.experts.linear_fc1.weight_quantizer._amax"
+        m = MoeAmaxFanoutMapping(megatron_param, [hf_pattern])  # no num_experts kwarg
+
+        # config has num_experts (not num_moe_experts) — exercises the fallback attribute.
+        megatron_module = SimpleNamespace(config=SimpleNamespace(num_experts=4))
+
+        rank0_weight = torch.tensor([10.0])
+        rank1_weight = torch.tensor([20.0])
+
+        def fake_all_gather(out_list, tensor, group=None):
+            out_list[0].copy_(rank0_weight)
+            out_list[1].copy_(rank1_weight)
+
+        m.ep_group = object()
+        with (
+            patch.object(ReplicatedMapping, "megatron_to_hf", return_value={hf_pattern: rank0_weight}),
+            patch.object(MoeAmaxFanoutMapping, "ep_size", new=2),
+            patch.object(MoeAmaxFanoutMapping, "broadcast_obj_from_pp_rank", side_effect=lambda obj, **_: obj),
+            patch("torch.distributed.all_gather", side_effect=fake_all_gather),
+        ):
+            result = m.megatron_to_hf(rank0_weight, megatron_module)
+
+        # Same EP=2 / 4-expert layout: rank-0 -> {0,1}, rank-1 -> {2,3}.
+        assert torch.equal(result["model.layers.0.mlp.experts.0.gate_proj.weight_quantizer._amax"], rank0_weight)
+        assert torch.equal(result["model.layers.0.mlp.experts.1.gate_proj.weight_quantizer._amax"], rank0_weight)
+        assert torch.equal(result["model.layers.0.mlp.experts.2.gate_proj.weight_quantizer._amax"], rank1_weight)
+        assert torch.equal(result["model.layers.0.mlp.experts.3.gate_proj.weight_quantizer._amax"], rank1_weight)
+
+    def test_megatron_to_hf_raises_when_num_experts_undeterminable(self):
+        """If num_experts is neither in the ctor nor on the module/config, raise RuntimeError."""
+        hf_pattern = "model.layers.0.mlp.experts.*.gate_proj.weight_quantizer._amax"
+        megatron_param = "decoder.layers.0.mlp.experts.linear_fc1.weight_quantizer._amax"
+        m = MoeAmaxFanoutMapping(megatron_param, [hf_pattern], num_experts=None)
+
+        # Config exposes none of num_moe_experts / num_experts / n_routed_experts.
+        megatron_module = SimpleNamespace(config=SimpleNamespace())
+
+        weight = torch.tensor([1.0])
+        m.ep_group = object()
+        with (
+            patch.object(ReplicatedMapping, "megatron_to_hf", return_value={hf_pattern: weight}),
+            patch.object(MoeAmaxFanoutMapping, "ep_size", new=1),
+            patch.object(MoeAmaxFanoutMapping, "broadcast_obj_from_pp_rank", side_effect=lambda obj, **_: obj),
+        ):
+            with pytest.raises(RuntimeError, match="Could not determine num_experts"):
+                m.megatron_to_hf(weight, megatron_module)
+
+
+class TestMoeQuantMappingRegistryIntegration:
+    """Registry-level resolution must produce MoeAmaxFanoutMapping for `.weight*` MoE mappings."""
+
+    @pytest.fixture
+    def moe_like_mappings(self):
+        return [
+            AutoMapping(
+                "decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                "model.layers.*.mlp.experts.*.down_proj.weight",
+            ),
+        ]
+
+    @pytest.fixture
+    def registry(self, moe_like_mappings):
+        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}, clear=False):
+            return MegatronMappingRegistry(*moe_like_mappings)
+
+    def test_moe_weight_star_resolves_to_moe_fanout(self, registry):
+        m = registry.megatron_to_hf_lookup("decoder.layers.0.mlp.experts.linear_fc2.weight_quantizer._amax")
+        assert m is not None, "registry did not resolve MoE amax mapping"
+        assert isinstance(m, MoeAmaxFanoutMapping)
+        # Layer wildcard should be resolved; expert wildcard preserved for runtime fanout.
+        assert m.megatron_param == "decoder.layers.0.mlp.experts.linear_fc2.weight_quantizer._amax"
+        assert m.hf_patterns == [
+            "model.layers.0.mlp.experts.*.down_proj.weight_quantizer._amax",
+        ]
 
 
 class TestConvertToAmaxMapMoeWeightWildcard:
