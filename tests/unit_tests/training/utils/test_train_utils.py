@@ -3183,3 +3183,116 @@ class TestStartMemoryHistoryRecording:
 
         with expected.open("rb") as f:
             assert pickle.load(f) == {"x": 1}
+
+
+class TestMoeMetricFanoutWriter:
+    """Tests for the MoE/MTP metric fanout writer (issue #2989).
+
+    MCore's `track_moe_metrics` and `track_mtp_metrics` only forward to
+    TensorBoard and W&B. The fanout writer wraps the TB writer so the same
+    `add_scalar` calls also reach MLFlow and Comet.
+    """
+
+    def test_build_returns_original_writer_when_no_fanout_targets(self):
+        """No MLFlow / Comet → no wrapping; the real TB writer is returned as-is."""
+        from megatron.bridge.training.utils.train_utils import _build_moe_metric_writer
+
+        sentinel = object()
+        result = _build_moe_metric_writer(sentinel, comet_logger=None, mlflow_logger=None)
+        assert result is sentinel
+
+    def test_build_returns_wrapper_when_only_comet_present(self):
+        """Comet alone is enough to trigger wrapping (TB may legitimately be None)."""
+        from megatron.bridge.training.utils.train_utils import (
+            _build_moe_metric_writer,
+            _MoeMetricFanoutWriter,
+        )
+
+        result = _build_moe_metric_writer(None, comet_logger=mock.MagicMock(), mlflow_logger=None)
+        assert isinstance(result, _MoeMetricFanoutWriter)
+
+    def test_build_returns_wrapper_when_only_mlflow_present(self):
+        """MLFlow alone is enough to trigger wrapping."""
+        from megatron.bridge.training.utils.train_utils import (
+            _build_moe_metric_writer,
+            _MoeMetricFanoutWriter,
+        )
+
+        result = _build_moe_metric_writer(None, comet_logger=None, mlflow_logger=mock.MagicMock())
+        assert isinstance(result, _MoeMetricFanoutWriter)
+
+    def test_add_scalar_forwards_to_all_present_sinks(self):
+        """add_scalar fans out to TB writer + Comet + MLFlow when all are present."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        tb = mock.MagicMock()
+        comet = mock.MagicMock()
+        mlflow = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb, comet_logger=comet, mlflow_logger=mlflow)
+
+        writer.add_scalar("load_balancing_loss", 1.234, 42)
+
+        tb.add_scalar.assert_called_once_with("load_balancing_loss", 1.234, 42)
+        comet.log_metrics.assert_called_once_with({"load_balancing_loss": 1.234}, step=42)
+        # MLFlow goes through the existing sanitizer; the metric and step survive.
+        mlflow_call = mlflow.log_metrics.call_args
+        assert mlflow_call.kwargs == {"step": 42}
+        assert mlflow_call.args[0] == {"load_balancing_loss": 1.234}
+
+    def test_add_scalar_works_when_tb_writer_is_none(self):
+        """No TB writer is fine — Comet / MLFlow still receive the metric."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb_writer=None, comet_logger=comet, mlflow_logger=None)
+
+        writer.add_scalar("z_loss", 0.05, 7)
+
+        comet.log_metrics.assert_called_once_with({"z_loss": 0.05}, step=7)
+
+    def test_add_scalar_sanitizes_zero_d_tensor(self):
+        """0-d torch tensors are converted to Python scalars before MLFlow / Comet."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        tb = mock.MagicMock()
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb, comet_logger=comet, mlflow_logger=None)
+
+        tensor_value = torch.tensor(2.5, dtype=torch.float32)
+        writer.add_scalar("seq_load_balancing_loss", tensor_value, 100)
+
+        # TB receives the original value untouched (TB tolerates tensors).
+        tb.add_scalar.assert_called_once_with("seq_load_balancing_loss", tensor_value, 100)
+        # Comet receives a Python float, not a torch tensor.
+        comet_call_metrics = comet.log_metrics.call_args.args[0]
+        assert isinstance(comet_call_metrics["seq_load_balancing_loss"], float)
+        assert comet_call_metrics["seq_load_balancing_loss"] == pytest.approx(2.5)
+
+    def test_add_scalar_passes_through_python_scalar_unchanged(self):
+        """Plain Python floats / ints flow through to MLFlow / Comet unchanged."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb_writer=None, comet_logger=comet, mlflow_logger=None)
+
+        writer.add_scalar("global_load_balancing_loss", 3, 1)
+
+        comet.log_metrics.assert_called_once_with({"global_load_balancing_loss": 3}, step=1)
+
+    def test_per_layer_calls_each_logged_individually(self):
+        """track_moe_metrics emits one add_scalar per layer in per_layer mode; each fans out."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb_writer=None, comet_logger=comet, mlflow_logger=None)
+
+        for i, value in enumerate([0.1, 0.2, 0.3]):
+            writer.add_scalar(f"moe/load_balancing_loss_layer_{i}", value, 200)
+
+        assert comet.log_metrics.call_count == 3
+        recorded = [(call.args[0], call.kwargs.get("step")) for call in comet.log_metrics.call_args_list]
+        assert recorded == [
+            ({"moe/load_balancing_loss_layer_0": 0.1}, 200),
+            ({"moe/load_balancing_loss_layer_1": 0.2}, 200),
+            ({"moe/load_balancing_loss_layer_2": 0.3}, 200),
+        ]
