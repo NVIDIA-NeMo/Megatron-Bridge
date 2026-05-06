@@ -32,6 +32,7 @@ from megatron.bridge.recipes.qwen_vl.qwen3_vl import Qwen3VLCommonKwargs, _qwen3
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
 # =============================================================================
@@ -176,6 +177,20 @@ def _qwen35_vl_enable_recompute(cfg: ConfigContainer) -> None:
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "uniform"
     cfg.model.recompute_num_layers = 1
+
+
+def _qwen35_vl_enable_blackwell_mxfp8(
+    cfg: ConfigContainer,
+    *,
+    fp8_param_gather: bool = False,
+) -> ConfigContainer:
+    """Enable Blackwell MXFP8 while keeping Bridge precision propagation intact."""
+    cfg.mixed_precision = get_mixed_precision_config("bf16_with_mxfp8_mixed")
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.mixed_precision.fp8_param_gather = fp8_param_gather
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = fp8_param_gather
+    cfg.ddp.grad_reduce_in_fp32 = False
+    return cfg
 
 
 def _qwen35_vl_apply_peft_scheme(cfg: ConfigContainer, peft_scheme: str | PEFT) -> None:
@@ -383,6 +398,12 @@ def qwen35_vl_35b_a3b_sft_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> Confi
     _qwen35_vl_apply_common(cfg, hf_path, tp=2, pp=1, max_lr=2e-5, min_lr=2e-6)
     _qwen35_vl_apply_moe(cfg, ep=16)
     return cfg
+
+
+def qwen35_vl_35b_a3b_sft_mxfp8_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> ConfigContainer:
+    """Return a full SFT config for Qwen3.5-VL 35B-A3B with Blackwell MXFP8."""
+    cfg = qwen35_vl_35b_a3b_sft_config(hf_path)
+    return _qwen35_vl_enable_blackwell_mxfp8(cfg, fp8_param_gather=False)
 
 
 def qwen35_vl_35b_a3b_fsdp_sft_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> ConfigContainer:
