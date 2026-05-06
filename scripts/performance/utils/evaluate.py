@@ -99,7 +99,9 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
 
     for line in all_lines:
         for metric_name, pattern in patterns.items():
-            for match in re.finditer(pattern, line):
+            if metric_name in MEMORY_METRICS_WITH_MAX_AGGREGATION:
+                metrics[metric_name].extend(float(value) for value in re.findall(pattern, line))
+            elif match := re.search(pattern, line):
                 metrics[metric_name].append(float(match.group(1)))
 
     if metric in MEMORY_METRIC_PATTERNS:
@@ -768,7 +770,7 @@ def calc_convergence_and_performance(
         missing_metrics = ", ".join(missing_golden_memory_metrics)
         if has_validation_failures:
             # There are actual validation failures - warn about them, don't suggest updating golden values
-            error_msg += "\n⚠️  WARNING: One or more validations failed!\n"
+            error_msg += "\n⚠️  WARNING: Convergence or performance validation failed!\n"
             error_msg += "Fix the validation failures above before updating golden values.\n"
             error_msg += f"\nNote: Memory metrics ({missing_metrics}) are also missing from golden values,\n"
             error_msg += "but they should only be added AFTER convergence and performance validations pass.\n"
