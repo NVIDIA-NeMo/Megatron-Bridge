@@ -6,6 +6,7 @@ This section documents Vision Language Models supported by Megatron Bridge.
 :hidden:
 
 gemma3-vl.md
+gemma4-vl.md
 glm-45v.md
 ministral3.md
 nemotron-3-omni.md
