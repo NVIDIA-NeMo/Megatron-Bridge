@@ -211,6 +211,7 @@ def main(
     enable_vboost: bool,
     lock_gpu_freq: Optional[int],
     enable_nsys: bool,
+    export_nsys_sqlite: bool,
     pytorch_profiler: bool,
     moe_a2a_overlap: bool,
     tp_size: Optional[int],
@@ -245,9 +246,11 @@ def main(
     custom_bash_cmds: List[List[str]],
     nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
+    save_dir: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
     additional_slurm_params: Optional[Dict[str, Any]],
+    enable_pct_binding: bool,
     golden_values_path: str,
     convergence_params: Dict[str, Any],
     performance_params: Dict[str, Any],
@@ -285,10 +288,27 @@ def main(
             "to the cache directory. NullTokenizer to be used soon."
         )
 
+    # Disable PCT binding for certain models on specific hardware/precision combos
+    if (
+        model_family_name == "nemotronh"
+        and model_recipe_name == "nemotron_3_super"
+        and compute_dtype == "bf16"
+        and gpu == "b300"
+    ) or (
+        model_family_name == "deepseek"
+        and model_recipe_name == "deepseek_v3"
+        and gpu == "b300"
+        and config_variant != "large_scale"
+    ):
+        enable_pct_binding = False
+
     if wandb_key is not None:
         assert wandb_project_name is not None and wandb_experiment_name is not None, (
             "both wandb_project_name and wandb_experiment_name are required for logging with WandB"
         )
+
+    if export_nsys_sqlite and not enable_nsys:
+        logger.warning("--export_nsys_sqlite was set without --enable_nsys; no Nsys SQLite export will be generated.")
 
     if use_recipes:
         script_name = ENTRYPOINT_RECIPE
@@ -323,6 +343,14 @@ def main(
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
+
+    if not dgxc_cluster and save_dir:
+        save_dir_path = Path(save_dir).resolve()
+        save_dir_path.mkdir(parents=True, exist_ok=True)
+        save_dir_mount = f"{save_dir_path}:{save_dir_path}"
+        if save_dir_mount not in custom_mounts:
+            custom_mounts.append(save_dir_mount)
+            logger.info(f"Added checkpoint save directory mount for container: {save_dir_mount}")
 
     run_script_path = SCRIPT_DIR / script_name
     logger.info(f"Run script path: {run_script_path}")
@@ -391,6 +419,7 @@ def main(
             additional_slurm_params=additional_slurm_params,
             wandb_key=wandb_key,
             packager=packager,
+            enable_pct_binding=enable_pct_binding,
         )
 
     plugins = []
@@ -428,6 +457,7 @@ def main(
                 profile_ranks=profiling_ranks,
                 nsys_trace=nsys_trace,
                 nsys_extra_args=nsys_extra_args,
+                export_sqlite=export_nsys_sqlite,
             )
         )
     if pytorch_profiler:
@@ -655,6 +685,7 @@ if __name__ == "__main__":
         enable_vboost=args.enable_vboost,
         lock_gpu_freq=args.lock_gpu_freq,
         enable_nsys=args.enable_nsys,
+        export_nsys_sqlite=args.export_nsys_sqlite,
         pytorch_profiler=args.pytorch_profiler,
         moe_a2a_overlap=args.moe_a2a_overlap,
         tp_size=args.tensor_model_parallel_size,
@@ -689,9 +720,11 @@ if __name__ == "__main__":
         custom_bash_cmds=args.custom_bash_cmds,
         nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
+        save_dir=args.save_dir,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
         additional_slurm_params=args.additional_slurm_params,
+        enable_pct_binding=args.enable_pct_binding,
         golden_values_path=args.golden_values_path,
         convergence_params={
             "correlation_threshold": args.correlation_threshold,

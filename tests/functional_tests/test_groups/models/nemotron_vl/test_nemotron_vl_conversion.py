@@ -105,6 +105,21 @@ class TestNemotronVLConversion:
             for k, v in vision_config_overrides.items():
                 setattr(config.vision_config, k, v)
 
+        # transformers >=5.5 validates `attn_implementation` at __init__ and
+        # defaults to flash-attention-2 when flash-attn is installed. The
+        # Nemotron VL custom model class does not declare flash-attn-2
+        # support, so force eager on every PretrainedConfig-shaped sub-config.
+        # Nemotron VL's custom modeling builds the language model from
+        # `config.llm_config`, so that sub-config must also be covered.
+        for cfg in (
+            config,
+            getattr(config, "vision_config", None),
+            getattr(config, "text_config", None),
+            getattr(config, "llm_config", None),
+        ):
+            if cfg is not None:
+                cfg._attn_implementation = "eager"
+
         # Create model with random weights and convert to bfloat16
         model_class_ref = config.auto_map["AutoModelForCausalLM"]
         model_class = get_class_from_dynamic_module(

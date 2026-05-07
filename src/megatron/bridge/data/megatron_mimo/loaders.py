@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Tuple
 
-import torch
 from torch.utils.data import DataLoader
 
 from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
+from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -117,33 +117,32 @@ def build_megatron_mimo_data_loaders(
         f"test={len(test_ds) if test_ds else 0}"
     )
 
-    # Build data loaders with globally consistent sampling.
-    # sampler_dp_size=1 so all data-loading ranks see the same batches.
-    # Per-module DP sub-sharding is done later by slice_batch_for_megatron_mimo.
+    # Build data loaders via the shared standard-path helper so MegatronMIMO picks up
+    # the same sampler selection logic (driven by ``dataloader_type``) and automatic
+    # consumed_samples handling on checkpoint resume. sampler_dp_size=1 means all
+    # data-loading ranks see the same global batches; per-module DP sub-sharding is
+    # deferred to slice_batch_for_megatron_mimo in the forward step.
     collate_fn = megatron_mimo_provider.get_collate_fn()
     micro_batch_size = cfg.train.micro_batch_size
 
-    def _make_loader(dataset, shuffle: bool = True) -> Optional[DataLoader]:
-        if dataset is None:
-            return None
-        sampler = torch.utils.data.DistributedSampler(
-            dataset,
-            num_replicas=sampler_dp_size,
-            rank=sampler_dp_rank,
-            shuffle=shuffle,
-        )
-        return DataLoader(
-            dataset,
-            batch_size=micro_batch_size,
-            sampler=sampler,
+    def _make_loader(dataset, consumed_samples: int) -> Optional[DataLoader]:
+        return build_pretraining_data_loader(
+            dataset=dataset,
+            consumed_samples=consumed_samples,
+            dataloader_type=megatron_mimo_provider.dataloader_type,
+            micro_batch_size=micro_batch_size,
             num_workers=megatron_mimo_provider.num_workers,
+            data_sharding=megatron_mimo_provider.data_sharding,
             collate_fn=collate_fn,
             pin_memory=megatron_mimo_provider.pin_memory,
+            persistent_workers=megatron_mimo_provider.persistent_workers,
+            data_parallel_rank=sampler_dp_rank,
+            data_parallel_size=sampler_dp_size,
             drop_last=megatron_mimo_provider.drop_last,
         )
 
-    train_loader = _make_loader(train_ds, shuffle=True)
-    valid_loader = _make_loader(valid_ds, shuffle=False)
-    test_loader = _make_loader(test_ds, shuffle=False)
+    train_loader = _make_loader(train_ds, consumed_samples=train_state.consumed_train_samples)
+    valid_loader = _make_loader(valid_ds, consumed_samples=0)
+    test_loader = _make_loader(test_ds, consumed_samples=0)
 
     return train_loader, valid_loader, test_loader

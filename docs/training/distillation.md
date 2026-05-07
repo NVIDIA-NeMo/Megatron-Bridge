@@ -17,9 +17,9 @@ The KD process involves these steps:
 
 ## Limitations
 
-* Only GPT-based checkpoints are currently supported.
 * Student and teacher models must support the same parallelism strategy.
 * If Pipeline Parallelism is enabled, intermediate-state based KD losses are only supported on the final pipeline stage.
+* Virtual pipeline parallelism is not supported.
 
 ## Configuration
 
@@ -33,57 +33,51 @@ You can configure the KD process via the `ModelOptDistillConfig` class or a YAML
 * `kd_loss_scale`: Relative scale factor for the distillation loss. The cumulative logits-and-intermediate loss gets scaled to `kd_loss_scale` times the magnitude of the LM loss. Not used if `skip_lm_loss` is `true`. Default: `1.0`
 * `logit_kl_temperature`: Temperature variable for KL Divergence loss calculation. Default: `1.0`
 
-Example YAML configuration:
+When using the provided recipe script, put KD settings under `model.kd_config` in the ConfigContainer override file:
 
 ```yaml
-logit_layers: ["output_layer", "output_layer"]
-intermediate_layer_pairs:
-  - ["decoder.final_layernorm", "decoder.final_layernorm"]
-logit_kl_temperature: 2.0
+model:
+  kd_config:
+    logit_layers: ["output_layer", "output_layer"]
+    intermediate_layer_pairs:
+      - ["decoder.final_layernorm", "decoder.final_layernorm"]
+    skip_lm_loss: true
+    kd_loss_scale: 1.0
+    logit_kl_temperature: 2.0
 ```
 
 ## Usage
 
-### Basic Usage with Default Configuration
+### Model Optimizer Script
 
-The simplest way to run knowledge distillation is to use or adapt one of the provided recipe scripts. Here's an example for distilling Llama3.2-3B into Llama3.2-1B:
+NVIDIA Model Optimizer provides a general [Megatron Bridge distillation script](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge#distillation). This is the recommended workflow for custom use cases; see the Model Optimizer repository for usage details.
+
+### Megatron Bridge Recipe
+
+You can also quickly try a knowledge distillation example for distilling Llama3.2-3B into Llama3.2-1B with:
 
 ```bash
 uv run -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py
 ```
 
-### Using a Custom YAML Config File
-
-You can provide a custom YAML configuration file to override default settings:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py \
-    --config-file my_custom_config.yaml
-```
-
-### Using CLI Overrides
-
-Megatron Bridge supports Hydra-style CLI overrides for flexible configuration:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py \
-    model.tensor_model_parallel_size=2 \
-    model.teacher.tensor_model_parallel_size=2
-```
-
-### Combining YAML and CLI Overrides
-
-CLI overrides take precedence over YAML configuration:
+You can customize this by providing a YAML configuration file to override default settings:
 
 ```bash
 uv run -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py \
-    --config-file conf/my_config.yaml \
+    --config-file my_custom_config.yaml
+```
+
+It additionally supports Hydra-style CLI overrides for flexible configuration (CLI overrides take precedence over YAML):
+
+```bash
+uv run -m torch.distributed.run --nproc_per_node=2 examples/distillation/llama/distill_llama32_3b-1b.py \
+    --config-file my_custom_config.yaml \
     train.global_batch_size=512
 ```
 
 ## Model Support
 
-Currently, distillation is supported for GPT and Mamba-based models
+Currently, distillation is supported for GPT and Mamba-based model providers.
 
 To enable distillation for a model:
 

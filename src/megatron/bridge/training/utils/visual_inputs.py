@@ -34,6 +34,7 @@ class GenericVisualInputs:
     image_grid_thw: Optional[torch.Tensor] = None
     video_grid_thw: Optional[torch.Tensor] = None
     image_sizes: Optional[torch.Tensor] = None
+    image_position_ids: Optional[torch.Tensor] = None  # Gemma4-VL: 2D patch position coords [B, N, 2]
     mm_token_type_ids: Optional[torch.Tensor] = None
 
     def as_model_kwargs(self) -> dict[str, torch.Tensor]:

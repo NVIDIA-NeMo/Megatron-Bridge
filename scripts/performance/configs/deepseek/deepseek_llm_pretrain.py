@@ -211,6 +211,8 @@ def deepseek_v3_pretrain_config_b200(
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
+    cfg.mixed_precision.fp4_param_gather = False
+
     return cfg
 
 

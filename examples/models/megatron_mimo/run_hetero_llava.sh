@@ -20,7 +20,7 @@ uv run torchrun \
     --min-lr 2.0e-5 \
     --weight-decay 0.0 \
     --wandb-project "Megatron-Bridge-MIMO" \
-    --wandb-exp-name "omni-modal-llava-hetero-e2e-test" \
+    --wandb-exp-name "mimo-llava-hetero-e2e-test" \
     --wandb-save-dir "/tmp/wandb" \
     --vision-encoder-checkpoint /path/to/clip_checkpoint \
     --language-model-checkpoint /path/to/llm_checkpoint \

@@ -156,6 +156,11 @@ class AdapterWrapper(nn.Module):
 
         return linear_output, bias, layernorm_output
 
+    def adapter_forward(self, adapter: nn.Module, x: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+        """Run an adapter with the wrapped module's forwarded arguments."""
+
+        return adapter(x, *args, **kwargs)
+
     def state_dict(
         self, destination: Optional[Dict[str, Any]] = None, prefix: str = "", keep_vars: bool = False
     ) -> Dict[str, Any]:

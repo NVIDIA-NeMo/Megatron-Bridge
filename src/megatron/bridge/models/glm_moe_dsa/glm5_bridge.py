@@ -36,18 +36,20 @@ logger = logging.getLogger(__name__)
 )
 class GLM5Bridge(MegatronModelBridge):
     """
-    Megatron Bridge for GLM-5 (MoE + MLA + DSA).
+    Megatron Bridge for GLM-5 / GLM-5.1 (MoE + MLA + DSA).
 
     This bridge handles conversion between HuggingFace GlmMoeDsaForCausalLM
-    and Megatron-Core GPTModel formats.
+    and Megatron-Core GPTModel formats. GLM-5 and GLM-5.1 share the same
+    architecture and configuration shape, so both ``zai-org/GLM-5`` and
+    ``zai-org/GLM-5.1`` are auto-detected through this bridge.
 
-    GLM-5 uses Multi-Latent Attention (MLA), Dynamic Sparse Attention (DSA)
-    indexer layers, and Mixture-of-Experts (MoE).
+    The architecture uses Multi-Latent Attention (MLA), Dynamic Sparse Attention
+    (DSA) indexer layers, and Mixture-of-Experts (MoE).
     Requires transformers>=5.2.0.
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("zai-org/GLM-5")
+        >>> bridge = AutoBridge.from_hf_pretrained("zai-org/GLM-5.1")
         >>> provider = bridge.to_megatron_provider()
     """
 
