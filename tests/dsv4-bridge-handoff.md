@@ -9,20 +9,24 @@ Top-5 token overlap: **4/5**
 
 ---
 
-## Local Changes Required
+## Code Changes
 
-### Bridge (`Megatron-Bridge`, branch: `weijia_dsv4`)
+All changes are committed and pushed.
 
-**1. `src/megatron/bridge/models/deepseek/deepseek_v4_bridge.py`** (uncommitted)
+### Bridge (`Megatron-Bridge`, branch: `weijia_dsv4`, PR #3562)
+
+**1. `src/megatron/bridge/models/deepseek/deepseek_v4_bridge.py`**
 - `provider.mscale = 1.0; provider.mscale_all_dim = 1.0` — fixes YaRN RoPE concentration factor (was 1.277x, now 1.0x)
 - `provider.use_fused_mhc = True` — enables cuTile fused HC kernels (PR #3828)
 
-**2. `src/megatron/bridge/models/conversion/model_bridge.py`** (uncommitted)
-- `if task is None or task.megatron_module is None:` at lines 924 and 1052 — guards against None tasks from unmapped MTP params during fresh import. This bypasses 5 real MTP mapping issues (see MTP Status below).
+**2. `src/megatron/bridge/models/conversion/model_bridge.py`**
+- `if task is None or task.megatron_module is None:` at lines 924 and 1052 — temporary guard for 5 unmapped MTP params. Revert when MTP mappings are fully implemented (see MTP Status below).
 
-### MCore (`Megatron-LM`, branch: `weijiac/dsv4-bridge` = `origin/dev` + PR #4518)
+### MCore (`Megatron-LM`, branch: `weijiac/dsv4-bridge`, fork: `weijiac0619/Megatron-LM`)
 
-**3. `megatron/core/transformer/experimental_attention_variant/dsa.py`** (uncommitted)
+Base: `origin/dev` + PR #4518 (merged) + 1 commit:
+
+**3. `megatron/core/transformer/experimental_attention_variant/dsa.py`**
 - `_pytorch_hadamard_transform` fallback — `fast_hadamard_transform` package unavailable on aarch64 (OCI B200)
 - `mask = mask.to(index_scores.dtype)` — fixes bf16/fp32 dtype mismatch assert in `fused_qk_topk_naive`
 
