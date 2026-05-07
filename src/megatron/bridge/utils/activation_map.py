@@ -26,6 +26,7 @@ from typing import Callable
 import torch
 import torch.nn.functional as F
 from megatron.core.activations import fast_gelu, squared_relu
+from megatron.core.fusions.fused_bias_geglu import quick_gelu
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ ACTIVATION_FUNC_MAP: dict[str, Callable] = {
     "squared_relu": squared_relu,
     "gelu_pytorch_tanh": fast_gelu,  # alias; canonical is fast_gelu (below)
     "fast_gelu": fast_gelu,
+    "quick_gelu": quick_gelu,
 }
 
 # Add fully-qualified torch.nn.functional aliases
