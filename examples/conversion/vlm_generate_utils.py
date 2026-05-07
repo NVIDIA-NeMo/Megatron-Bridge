@@ -14,11 +14,17 @@
 
 """Shared utilities for VLM generation scripts."""
 
+import io
+import logging
 from typing import Optional
 
-import requests
 import torch
 from PIL import Image
+
+from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
+
+
+logger = logging.getLogger(__name__)
 
 
 try:
@@ -109,7 +115,11 @@ def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0)
 def load_image(image_path: str) -> Image.Image:
     """Load an image from URL or file path."""
     if image_path.startswith(("http://", "https://")):
-        return Image.open(requests.get(image_path, stream=True).raw)
+        is_safe, reason = is_safe_public_http_url(image_path)
+        if not is_safe:
+            raise ValueError(f"Refusing to fetch image URL ({reason}): {image_path}")
+        with safe_url_open(image_path) as resp:
+            return Image.open(io.BytesIO(resp.read()))
     return Image.open(image_path)
 
 
@@ -127,17 +137,24 @@ def process_image_inputs(
     image_path: Optional[str],
     prompt: str,
     *,
+    is_gemma4: bool = False,
     is_kimi: bool = False,
     image_token_id: Optional[int] = None,
 ):
     """Process image + prompt into model inputs.
 
     Returns:
-        (input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids)
+        (input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids,
+         image_position_ids)
+
+        Fields not applicable to the current model are None.
     """
+    if is_gemma4:
+        return _process_gemma4_inputs(processor, image_path, prompt)
+
     if not image_path:
         inputs = processor(text=[prompt], return_tensors="pt")
-        return inputs.input_ids, None, None, None, None
+        return inputs.input_ids, None, None, None, None, None
 
     if is_kimi:
         return _process_kimi_inputs(processor, image_path, prompt, image_token_id)
@@ -191,4 +208,54 @@ def _process_default_inputs(processor, image_path, prompt):
         inputs.get("image_grid_thw"),
         inputs.get("image_sizes"),
         inputs.get("mm_token_type_ids"),
+        inputs.get("image_position_ids"),
+    )
+
+
+def _process_gemma4_inputs(processor, image_path, prompt):
+    """Process inputs for Gemma 4 (text-only or vision+text).
+
+    Uses apply_chat_template for instruction-tuned models; falls back to raw
+    processor with manual image token injection for base models.
+
+    Returns:
+        (input_ids, pixel_values, None, None, None, image_position_ids)
+    """
+    if image_path:
+        image = load_image(image_path)
+        has_chat_template = (
+            hasattr(processor, "apply_chat_template") and getattr(processor, "chat_template", None) is not None
+        )
+        if has_chat_template:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            inputs = processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+                add_generation_prompt=True,
+            )
+        else:
+            image_token = getattr(processor.tokenizer, "image_token", "<|image|>")
+            if image_token not in prompt:
+                prompt = image_token + "\n" + prompt
+            inputs = processor(text=[prompt], images=[image], return_tensors="pt")
+    else:
+        inputs = processor.tokenizer(text=[prompt], return_tensors="pt")
+
+    return (
+        inputs["input_ids"],
+        inputs.get("pixel_values"),
+        None,
+        None,
+        None,
+        inputs.get("image_position_ids"),
     )

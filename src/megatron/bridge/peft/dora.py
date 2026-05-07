@@ -68,7 +68,6 @@ class DoRA(PEFT, ModuleMatcher):
 
     def __post_init__(self):
         """Initialize attributes from parent classes and validate configuration."""
-        super().__post_init__()
         assert self.dropout_position == "pre", (
             "DoRA only supports pre-adapter dropout at this time. Please set DoRA(..., dropout_position='pre')"
         )
@@ -90,7 +89,7 @@ class DoRA(PEFT, ModuleMatcher):
             return m
 
         if (ans := self.match(m, name, prefix)) is not None:
-            (match, full_name) = ans
+            _, full_name = ans
             attrs = get_adapter_attributes_from_linear(m)
             logger.info(f"Adding DoRA to: {full_name}")
             adapter = ParallelLinearDoRAAdapter(
@@ -99,14 +98,12 @@ class DoRA(PEFT, ModuleMatcher):
                 self.dim,
                 base_linear_name=full_name,
                 activation="identity",
-                norm_type=None,
                 column_init_method=self.lora_A_init_method,
                 row_init_method=self.lora_B_init_method,
-                gather_output=False,
                 input_is_parallel=attrs.input_is_parallel,
                 dropout=self.dropout,
                 dropout_position=self.dropout_position,
-                model_parallel_config=getattr(m, "config", None),
+                model_parallel_config=m.config,
                 alpha=self.alpha,
                 disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                 disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,

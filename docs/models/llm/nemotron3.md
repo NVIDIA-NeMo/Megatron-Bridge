@@ -4,8 +4,6 @@
 NeMo Megatron Bridge supports pretraining, full parameters finetuning, and LoRA finetuning this model. The finetuned model can be converted back to the 🤗 Hugging Face format for downstream evaluation.
 
 ```{important}
-Please use the custom container `nvcr.io/nvidia/nemo:25.11.nemotron_3_nano` when working with this model.
-
 Run all commands from `/opt/Megatron-Bridge` (e.g. `docker run -w /opt/Megatron-Bridge ...`)
 ```
 

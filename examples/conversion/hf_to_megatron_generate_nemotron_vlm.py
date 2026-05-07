@@ -34,9 +34,9 @@ Examples with Nemotron Nano V2 VL:
 """
 
 import argparse
+import io
 from typing import Optional
 
-import requests
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
@@ -48,6 +48,7 @@ from transformers import AutoProcessor, AutoTokenizer
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
 class SingleBatchIterator:
@@ -130,11 +131,12 @@ def load_image(image_path: str) -> Image.Image:
         PIL Image object
     """
     if image_path.startswith(("http://", "https://")):
-        response = requests.get(image_path)
-        response.raise_for_status()
-        return Image.open(requests.get(image_path, stream=True).raw)
-    else:
-        return Image.open(image_path)
+        is_safe, reason = is_safe_public_http_url(image_path)
+        if not is_safe:
+            raise ValueError(f"Refusing to fetch image URL ({reason}): {image_path}")
+        with safe_url_open(image_path) as resp:
+            return Image.open(io.BytesIO(resp.read()))
+    return Image.open(image_path)
 
 
 def process_image_inputs(processor, image_path: Optional[str], prompt: str, system_prompt: Optional[str] = None):

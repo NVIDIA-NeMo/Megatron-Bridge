@@ -1,11 +1,13 @@
-# GLM-5 Examples
+# GLM-5 / GLM-5.1 Examples
 
-Scripts for [GLM-5](https://huggingface.co/zai-org/GLM-5) (`zai-org/GLM-5`), a large sparse MoE model with Multi-Latent Attention (MLA) and Dynamic Sparse Attention (DSA).
+Scripts for the GLM-5 family — [GLM-5](https://huggingface.co/zai-org/GLM-5) (`zai-org/GLM-5`) and [GLM-5.1](https://huggingface.co/zai-org/GLM-5.1) (`zai-org/GLM-5.1`) — large sparse MoE models with Multi-Latent Attention (MLA) and Dynamic Sparse Attention (DSA).
+
+GLM-5 and GLM-5.1 share the `GlmMoeDsaForCausalLM` architecture and identical MoE / MLA / DSA dimensions, so the same `GLM5Bridge` handles both. To run the GLM-5.1 checkpoint, replace `zai-org/GLM-5` with `zai-org/GLM-5.1` (or set `MODEL_NAME=GLM-5.1` in the slurm scripts).
 
 | Property | Value |
 |---|---|
-| HF model ID | `zai-org/GLM-5` |
-| Architecture | MoE + MLA + DSA |
+| HF model IDs | `zai-org/GLM-5`, `zai-org/GLM-5.1` |
+| Architecture | MoE + MLA + DSA (`GlmMoeDsaForCausalLM`) |
 | Layers | 78 transformer (first 3 dense, rest MoE) |
 | Routed experts | 256, top-8 per token |
 | Shared experts | 1 per MoE layer |
@@ -16,7 +18,7 @@ Scripts for [GLM-5](https://huggingface.co/zai-org/GLM-5) (`zai-org/GLM-5`), a l
 
 ## Hardware Requirements
 
-GLM-5 requires **at least 8 nodes (64 GPUs × 80 GB)** for full-model conversion and inference in BF16. Key constraints:
+Full-model conversion and inference in BF16 requires **at least 8 nodes (64 GPUs × 80 GB)**. Key constraints:
 
 - EP must divide 256 (number of routed experts). Valid: 1, 2, 4, 8, 16, 32, 64, 128, 256.
 - TP does **not** reduce expert memory — increase EP instead.
@@ -75,13 +77,14 @@ Both scripts resolve the HF model from the local cache to avoid `snapshot_downlo
 |---|---|
 | `CONTAINER_IMAGE` | Path to Singularity/SquashFS container image |
 | `BRIDGE_PATH` | Megatron-Bridge checkout on shared storage (bind-mounted as `/opt/Megatron-Bridge`) |
-| `HF_HOME` | HuggingFace cache directory (must contain the downloaded `zai-org/GLM-5` model) |
+| `HF_HOME` | HuggingFace cache directory (must contain the downloaded `zai-org/GLM-5` or `zai-org/GLM-5.1` model) |
 | `HF_TOKEN` | HuggingFace access token (for gated model access) |
+| `MODEL_NAME` | HF model name without the `zai-org/` prefix; defaults to `GLM-5`. Set to `GLM-5.1` to run the 5.1 checkpoint. |
 | `OUTPUT_DIR` | Conversion output directory (conversion script only) |
 
 ## MCore Patches Required
 
-GLM-5's DSA attention variant requires two patches to `megatron/core/models/gpt/experimental_attention_variant_module_specs.py`:
+The DSA attention variant requires two patches to `megatron/core/models/gpt/experimental_attention_variant_module_specs.py`:
 
 1. **DSA dispatch:** Add `elif config.experimental_attention_variant == "dsa"` to `get_experimental_attention_variant_module_spec` to call `get_dsa_module_spec_for_backend`.
 2. **MLA metainfo:** Add `metainfo={"fuse_input_layernorm": False}` to the `MLASelfAttention` `ModuleSpec` in `get_dsa_module_spec_for_backend`.
