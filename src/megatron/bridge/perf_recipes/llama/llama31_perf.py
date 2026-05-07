@@ -22,9 +22,8 @@ Naming convention::
     {model}_{size}_{task}_{num_gpus}gpu_{gpu}_{precision}_config
 """
 
-from megatron.bridge.recipes.common import _benchmark_common
+from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.recipes.llama.llama3 import llama31_405b_pretrain_config
-from megatron.bridge.recipes.llama.llama3_perf import _perf_precision
 from megatron.bridge.training.comm_overlap import (
     userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
     userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
@@ -515,6 +514,7 @@ def llama31_405b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = True
+    cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.train.global_batch_size = 1536
     cfg.train.micro_batch_size = 1
 
@@ -551,6 +551,7 @@ def llama31_405b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.sequence_parallel = True
+    cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.train.global_batch_size = 1536
     cfg.train.micro_batch_size = 1
 
@@ -629,6 +630,7 @@ def llama31_405b_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = 8
     cfg.model.sequence_parallel = True
+    cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.train.global_batch_size = 1536
     cfg.train.micro_batch_size = 1
 
@@ -652,6 +654,7 @@ def llama31_405b_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.sequence_parallel = True
+    cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.train.global_batch_size = 1536
     cfg.train.micro_batch_size = 1
 
@@ -730,6 +733,7 @@ def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 2
     cfg.model.virtual_pipeline_model_parallel_size = 8
     cfg.model.sequence_parallel = True
+    cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.train.global_batch_size = 1536
     cfg.train.micro_batch_size = 1
 
@@ -753,6 +757,7 @@ def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 2
     cfg.model.virtual_pipeline_model_parallel_size = 8
     cfg.model.sequence_parallel = True
+    cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.train.global_batch_size = 1536
     cfg.train.micro_batch_size = 1
 

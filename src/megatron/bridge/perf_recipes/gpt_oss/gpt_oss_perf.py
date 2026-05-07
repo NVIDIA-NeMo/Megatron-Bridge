@@ -73,6 +73,8 @@ def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_granularity = "selective"
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
 
     _benchmark_common(cfg)
     return cfg
@@ -92,10 +94,14 @@ def gpt_oss_120b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 1280
     cfg.train.micro_batch_size = 4
+
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = 32
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
@@ -118,7 +124,7 @@ def gpt_oss_120b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 1280
     cfg.train.micro_batch_size = 4

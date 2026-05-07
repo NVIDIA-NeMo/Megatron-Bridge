@@ -28,12 +28,11 @@ Precision short-names:
     nvfp4  = NVFP4
 """
 
-from megatron.bridge.recipes.common import _benchmark_common
+from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.recipes.kimi.kimi_k2 import (
     _get_kimi_k2_pipeline_layout,
     kimi_k2_pretrain_config,
 )
-from megatron.bridge.recipes.llama.llama3_perf import _perf_precision
 from megatron.bridge.training.config import ConfigContainer
 
 

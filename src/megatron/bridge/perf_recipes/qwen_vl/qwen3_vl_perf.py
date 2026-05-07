@@ -22,8 +22,7 @@ Naming convention::
     {model}_{size}_{task}_{num_gpus}gpu_{gpu}_{precision}_config
 """
 
-from megatron.bridge.recipes.common import _benchmark_common
-from megatron.bridge.recipes.llama.llama3_perf import _perf_precision
+from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.recipes.qwen.qwen3_moe import (
     qwen3_30b_a3b_pretrain_config,
     qwen3_235b_a22b_pretrain_config,

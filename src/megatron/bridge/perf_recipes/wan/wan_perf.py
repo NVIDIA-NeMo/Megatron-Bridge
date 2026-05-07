@@ -21,8 +21,7 @@ All configs use BF16 precision (diffusion training does not use FP8).
 """
 
 from megatron.bridge.diffusion.recipes.wan.wan import wan_14b_pretrain_config
-from megatron.bridge.recipes.common import _benchmark_common
-from megatron.bridge.recipes.llama.llama3_perf import _perf_precision
+from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.training.config import ConfigContainer
 
 

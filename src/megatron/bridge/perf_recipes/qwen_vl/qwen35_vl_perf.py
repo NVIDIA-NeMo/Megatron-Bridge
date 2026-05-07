@@ -28,8 +28,7 @@ Models:
 - **397B-A17B**: 8 experts, 17B active parameters
 """
 
-from megatron.bridge.recipes.common import _benchmark_common
-from megatron.bridge.recipes.llama.llama3_perf import _perf_precision
+from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.recipes.qwen_vl.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_mock_config,
     qwen35_vl_122b_a10b_pretrain_mock_config,
