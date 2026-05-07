@@ -35,6 +35,7 @@ from megatron.bridge.training.utils.train_utils import (
     report_memory,
     report_runtime,
     report_throughput,
+    start_memory_history_recording,
     training_log,
 )
 
@@ -3090,3 +3091,208 @@ class TestCalcParamsL2Norm:
         # Both layers contribute: sqrt(25 + 25) = sqrt(50)
         expected_norm = math.sqrt(50)
         assert result == pytest.approx(expected_norm, rel=1e-5)
+
+
+class TestStartMemoryHistoryRecording:
+    """Tests for start_memory_history_recording.
+
+    Verifies the four guard paths (None config, disabled flag, rank not in
+    profile_ranks, happy path) and that the happy path wires up the CUDA
+    allocator trace + OOM observer as expected.
+    """
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_no_config_is_noop(self, mock_attach, mock_record):
+        start_memory_history_recording(None)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_disabled_flag_is_noop(self, mock_attach, mock_record):
+        profiling = mock.Mock()
+        profiling.record_memory_history = False
+        profiling.profile_ranks = [0]
+
+        start_memory_history_recording(profiling)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=3)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_rank_not_in_profile_ranks_is_noop(self, mock_attach, mock_record, _mock_rank):
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0, 7]
+
+        start_memory_history_recording(profiling)
+        mock_record.assert_not_called()
+        mock_attach.assert_not_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=0)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_happy_path_enables_recording_and_attaches_observer(self, mock_attach, mock_record, _mock_rank):
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0]
+        profiling.memory_snapshot_path = "/nemo_run/snapshot.pickle"
+
+        start_memory_history_recording(profiling)
+
+        # Recording enabled with MLM-compatible settings
+        mock_record.assert_called_once()
+        _pos, kwargs = mock_record.call_args
+        assert _pos[0] is True
+        assert kwargs["trace_alloc_max_entries"] == 100_000
+        assert kwargs["trace_alloc_record_context"] is True
+
+        # OOM observer was attached
+        mock_attach.assert_called_once()
+        oom_cb = mock_attach.call_args.args[0]
+        assert callable(oom_cb)
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=0)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._snapshot", return_value={"x": 1})
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory._record_memory_history")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch._C._cuda_attach_out_of_memory_observer")
+    def test_oom_observer_writes_rank_tagged_path(self, mock_attach, mock_record, mock_snapshot, _mock_rank, tmp_path):
+        """OOM observer must inject the rank tag via splitext, not as a prefix,
+        so absolute memory_snapshot_path values stay absolute."""
+        snapshot_dir = tmp_path / "run"
+        snapshot_dir.mkdir()
+        snapshot_path = str(snapshot_dir / "snapshot.pickle")
+
+        profiling = mock.Mock()
+        profiling.record_memory_history = True
+        profiling.profile_ranks = [0]
+        profiling.memory_snapshot_path = snapshot_path
+
+        start_memory_history_recording(profiling)
+        oom_cb = mock_attach.call_args.args[0]
+
+        # Fire the observer as torch would (device, alloc, device_alloc, device_free).
+        oom_cb(0, 0, 0, 0)
+
+        expected = snapshot_dir / "snapshot_oom_rank-0.pickle"
+        assert expected.exists(), f"OOM observer should have written {expected}"
+        # The snapshot content is the mocked dict, pickled.
+        import pickle
+
+        with expected.open("rb") as f:
+            assert pickle.load(f) == {"x": 1}
+
+
+class TestMoeMetricFanoutWriter:
+    """Tests for the MoE/MTP metric fanout writer (issue #2989).
+
+    MCore's `track_moe_metrics` and `track_mtp_metrics` only forward to
+    TensorBoard and W&B. The fanout writer wraps the TB writer so the same
+    `add_scalar` calls also reach MLFlow and Comet.
+    """
+
+    def test_build_returns_original_writer_when_no_fanout_targets(self):
+        """No MLFlow / Comet → no wrapping; the real TB writer is returned as-is."""
+        from megatron.bridge.training.utils.train_utils import _build_moe_metric_writer
+
+        sentinel = object()
+        result = _build_moe_metric_writer(sentinel, comet_logger=None, mlflow_logger=None)
+        assert result is sentinel
+
+    def test_build_returns_wrapper_when_only_comet_present(self):
+        """Comet alone is enough to trigger wrapping (TB may legitimately be None)."""
+        from megatron.bridge.training.utils.train_utils import (
+            _build_moe_metric_writer,
+            _MoeMetricFanoutWriter,
+        )
+
+        result = _build_moe_metric_writer(None, comet_logger=mock.MagicMock(), mlflow_logger=None)
+        assert isinstance(result, _MoeMetricFanoutWriter)
+
+    def test_build_returns_wrapper_when_only_mlflow_present(self):
+        """MLFlow alone is enough to trigger wrapping."""
+        from megatron.bridge.training.utils.train_utils import (
+            _build_moe_metric_writer,
+            _MoeMetricFanoutWriter,
+        )
+
+        result = _build_moe_metric_writer(None, comet_logger=None, mlflow_logger=mock.MagicMock())
+        assert isinstance(result, _MoeMetricFanoutWriter)
+
+    def test_add_scalar_forwards_to_all_present_sinks(self):
+        """add_scalar fans out to TB writer + Comet + MLFlow when all are present."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        tb = mock.MagicMock()
+        comet = mock.MagicMock()
+        mlflow = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb, comet_logger=comet, mlflow_logger=mlflow)
+
+        writer.add_scalar("load_balancing_loss", 1.234, 42)
+
+        tb.add_scalar.assert_called_once_with("load_balancing_loss", 1.234, 42)
+        comet.log_metrics.assert_called_once_with({"load_balancing_loss": 1.234}, step=42)
+        # MLFlow goes through the existing sanitizer; the metric and step survive.
+        mlflow_call = mlflow.log_metrics.call_args
+        assert mlflow_call.kwargs == {"step": 42}
+        assert mlflow_call.args[0] == {"load_balancing_loss": 1.234}
+
+    def test_add_scalar_works_when_tb_writer_is_none(self):
+        """No TB writer is fine — Comet / MLFlow still receive the metric."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb_writer=None, comet_logger=comet, mlflow_logger=None)
+
+        writer.add_scalar("z_loss", 0.05, 7)
+
+        comet.log_metrics.assert_called_once_with({"z_loss": 0.05}, step=7)
+
+    def test_add_scalar_sanitizes_zero_d_tensor(self):
+        """0-d torch tensors are converted to Python scalars before MLFlow / Comet."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        tb = mock.MagicMock()
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb, comet_logger=comet, mlflow_logger=None)
+
+        tensor_value = torch.tensor(2.5, dtype=torch.float32)
+        writer.add_scalar("seq_load_balancing_loss", tensor_value, 100)
+
+        # TB receives the original value untouched (TB tolerates tensors).
+        tb.add_scalar.assert_called_once_with("seq_load_balancing_loss", tensor_value, 100)
+        # Comet receives a Python float, not a torch tensor.
+        comet_call_metrics = comet.log_metrics.call_args.args[0]
+        assert isinstance(comet_call_metrics["seq_load_balancing_loss"], float)
+        assert comet_call_metrics["seq_load_balancing_loss"] == pytest.approx(2.5)
+
+    def test_add_scalar_passes_through_python_scalar_unchanged(self):
+        """Plain Python floats / ints flow through to MLFlow / Comet unchanged."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb_writer=None, comet_logger=comet, mlflow_logger=None)
+
+        writer.add_scalar("global_load_balancing_loss", 3, 1)
+
+        comet.log_metrics.assert_called_once_with({"global_load_balancing_loss": 3}, step=1)
+
+    def test_per_layer_calls_each_logged_individually(self):
+        """track_moe_metrics emits one add_scalar per layer in per_layer mode; each fans out."""
+        from megatron.bridge.training.utils.train_utils import _MoeMetricFanoutWriter
+
+        comet = mock.MagicMock()
+        writer = _MoeMetricFanoutWriter(tb_writer=None, comet_logger=comet, mlflow_logger=None)
+
+        for i, value in enumerate([0.1, 0.2, 0.3]):
+            writer.add_scalar(f"moe/load_balancing_loss_layer_{i}", value, 200)
+
+        assert comet.log_metrics.call_count == 3
+        recorded = [(call.args[0], call.kwargs.get("step")) for call in comet.log_metrics.call_args_list]
+        assert recorded == [
+            ({"moe/load_balancing_loss_layer_0": 0.1}, 200),
+            ({"moe/load_balancing_loss_layer_1": 0.2}, 200),
+            ({"moe/load_balancing_loss_layer_2": 0.3}, 200),
+        ]

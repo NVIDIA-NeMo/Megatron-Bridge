@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from functools import partial
 
 import torch
@@ -41,9 +40,6 @@ try:
     HAVE_TE = True
 except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
-
-
-logger = logging.getLogger(__name__)
 
 
 @MegatronModelBridge.register_bridge(source=Glm4MoeForCausalLM, target=GPTModel, model_type="glm4_moe")
@@ -98,13 +94,6 @@ class GLM45Bridge(MegatronModelBridge):
         )
 
         return provider
-
-    def build_conversion_tasks(self, hf_pretrained, megatron_model):
-        """Override to store HF state source before mapping_registry is called."""
-        has_state = hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")
-        self._hf_state_source = hf_pretrained.state.source if has_state else None
-        self._hf_keys = list(self._hf_state_source.get_all_keys()) if self._hf_state_source else None
-        return super().build_conversion_tasks(hf_pretrained, megatron_model)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []
@@ -203,10 +192,7 @@ class GLM45Bridge(MegatronModelBridge):
                     ),
                 ]
             )
-        # optionally add MTP mappings
-        if self.hf_config is None:
-            logger.warning("No HF config found, skipping MTP mappings.")
-            return MegatronMappingRegistry(*mapping_list)
+        # add MTP mappings
         hf_config = self.hf_config
         num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
         num_transformer_layers = hf_config.num_hidden_layers
@@ -317,15 +303,22 @@ class GLM45Bridge(MegatronModelBridge):
 
         return MegatronMappingRegistry(*mapping_list)
 
+    def _hf_source_and_keys(self):
+        """Return HF state source and cached key order for expert-mapping helpers."""
+        hf_source = self.hf_pretrained.state.source
+        if getattr(self, "_cached_hf_state_source", None) is not hf_source:
+            self._cached_hf_state_source = hf_source
+            self._cached_hf_keys = hf_source.get_all_keys()
+        return hf_source, self._cached_hf_keys
+
     def _uses_fused_experts(self) -> bool:
-        hf_keys = getattr(self, "_hf_keys", None)
+        hf_source, hf_keys = self._hf_source_and_keys()
         if hf_keys:
             if any("mlp.experts.gate_up_proj" in key for key in hf_keys) or any(
                 "mlp.experts.down_proj" in key for key in hf_keys
             ):
                 return True
 
-        hf_source = getattr(self, "_hf_state_source", None)
         if hf_source is not None:
             return hf_source.has_glob("*mlp.experts.gate_up_proj*") or hf_source.has_glob("*mlp.experts.down_proj*")
 
@@ -334,11 +327,10 @@ class GLM45Bridge(MegatronModelBridge):
         return True
 
     def _hf_expert_suffix(self, base_name: str) -> str:
-        hf_keys = getattr(self, "_hf_keys", None) or []
+        hf_source, hf_keys = self._hf_source_and_keys()
         if any(f"{base_name}.weight" in key for key in hf_keys):
             return ".weight"
 
-        hf_source = getattr(self, "_hf_state_source", None)
         if hf_source is not None and hf_source.has_glob(f"*{base_name}.weight"):
             return ".weight"
 

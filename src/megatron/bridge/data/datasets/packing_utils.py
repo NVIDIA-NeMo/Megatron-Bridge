@@ -19,6 +19,8 @@ from typing import Dict, List, Tuple
 import numpy as np
 from tqdm import tqdm
 
+from megatron.bridge.utils.safe_pickle import safe_load_npy
+
 
 PACKING_ALGOS = ["first_fit_decreasing", "first_fit_shuffle"]
 
@@ -349,13 +351,8 @@ def calculate_avg_seqlen(
     Raises:
         ValueError: If no rows remain after applying drop_remainder, or if no sequences are found.
     """
-    # SECURITY: allow_pickle=True is required here because packed datasets store object
-    # arrays (dicts with variable-length lists). Only load datasets from trusted sources.
-    logger.warning(
-        "Loading packed dataset with allow_pickle=True from '%s'. Only load datasets from trusted sources.",
-        dataset_file,
-    )
-    data = np.load(dataset_file, allow_pickle=True)
+    with open(dataset_file, "rb") as f:
+        data = safe_load_npy(f.read())
 
     total_len_accum = 0
     seqlen_sq_accum = 0

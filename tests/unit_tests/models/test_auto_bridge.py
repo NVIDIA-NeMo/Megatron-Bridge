@@ -703,18 +703,13 @@ class TestAutoBridge:
         mock_hf_model.config.architectures = ["LlamaForCausalLM"]
         mock_hf_model.config.auto_map = None
 
-        mock_megatron_model = [Mock()]
-        mock_megatron_model[0].module = None  # No nested module
+        mock_megatron_model = [object()]
 
-        # Mock the export process
-        with patch(
-            "megatron.bridge.models.conversion.auto_bridge.model_bridge.stream_weights_megatron_to_hf"
-        ) as mock_bridge_state:
-            mock_weight_iter = [
-                ("weight1", torch.randn(10, 10)),
-                ("weight2", torch.randn(5, 5)),
-            ]
-            mock_bridge_state.return_value = iter(mock_weight_iter)
+        with patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop:
+            mock_model_bridge = Mock()
+            mock_weight_iter = [("weight1", torch.randn(10, 10)), ("weight2", torch.randn(5, 5))]
+            mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(mock_weight_iter)
+            mock_model_bridge_prop.return_value = mock_model_bridge
 
             with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
                 mock_arch_class = Mock()
@@ -732,6 +727,48 @@ class TestAutoBridge:
                     assert weights[1][0] == "weight2"
                     assert isinstance(weights[0][1], torch.Tensor)
                     assert isinstance(weights[1][1], torch.Tensor)
+                    mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
+                        mock_megatron_model,
+                        mock_hf_model,
+                        cpu=True,
+                        show_progress=True,
+                        conversion_tasks=None,
+                        merge_adapter_weights=True,
+                    )
+
+    def test_export_adapter_weights(self):
+        """Test exporting adapter weights from Megatron to HF format."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = Mock()
+        mock_hf_model.config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config.auto_map = None
+
+        mock_megatron_model = [object()]
+
+        with patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop:
+            mock_model_bridge = Mock()
+            mock_weight_iter = [("adapter.weight", torch.randn(4, 4))]
+            mock_model_bridge.stream_adapter_weights_megatron_to_hf.return_value = iter(mock_weight_iter)
+            mock_model_bridge_prop.return_value = mock_model_bridge
+
+            with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
+                mock_arch_class = Mock()
+                mock_transformers.LlamaForCausalLM = mock_arch_class
+
+                bridge = AutoBridge(mock_hf_model)
+
+                with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as mock_prop:
+                    mock_prop.return_value = mock_arch_class
+                    weights = list(bridge.export_adapter_weights(mock_megatron_model, cpu=False, show_progress=False))
+
+                    assert len(weights) == 1
+                    assert weights[0][0] == "adapter.weight"
+                    assert isinstance(weights[0][1], torch.Tensor)
+                    mock_model_bridge.stream_adapter_weights_megatron_to_hf.assert_called_once_with(
+                        mock_megatron_model,
+                        cpu=False,
+                        show_progress=False,
+                    )
 
     def test_get_causal_lm_architecture(self):
         """Test getting the CausalLM architecture class."""
@@ -1299,22 +1336,17 @@ class TestAutoBridge:
         bridge.hf_pretrained = mock_hf_model
 
         with (
-            patch.object(
-                AutoBridge,
-                "_causal_lm_architecture",
-                new_callable=PropertyMock,
-                return_value=Mock(),
-            ),
-            patch(
-                "megatron.bridge.models.conversion.auto_bridge.model_bridge.stream_weights_megatron_to_hf",
-                return_value=iter(weight_iter),
-            ),
+            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
             patch(
                 "megatron.bridge.models.conversion.auto_bridge.is_quantized",
                 return_value=True,
             ),
             patch("torch.save") as mock_torch_save,
         ):
+            mock_model_bridge = Mock()
+            mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(weight_iter)
+            mock_model_bridge_prop.return_value = mock_model_bridge
+
             # Capture what save_generator receives by consuming the generator it's passed
             saved_pairs = []
 
@@ -1329,6 +1361,13 @@ class TestAutoBridge:
             # Only the normal weight should have passed through to save_generator
             assert len(saved_pairs) == 1
             assert saved_pairs[0][0] == "model.layers.0.self_attn.q_proj.weight"
+            mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
+                mock_megatron_model,
+                mock_hf_model,
+                cpu=True,
+                show_progress=True,
+                merge_adapter_weights=True,
+            )
 
             # The quantizer tensor should have been saved via torch.save sidecar
             mock_torch_save.assert_called_once()
@@ -1364,23 +1403,25 @@ class TestAutoBridge:
         bridge.hf_pretrained = mock_hf_model
 
         with (
-            patch.object(
-                AutoBridge,
-                "_causal_lm_architecture",
-                new_callable=PropertyMock,
-                return_value=Mock(),
-            ),
-            patch(
-                "megatron.bridge.models.conversion.auto_bridge.model_bridge.stream_weights_megatron_to_hf",
-                return_value=iter(weight_iter),
-            ),
+            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
             patch(
                 "megatron.bridge.models.conversion.auto_bridge.is_quantized",
                 return_value=False,
             ),
             patch("torch.save") as mock_torch_save,
         ):
+            mock_model_bridge = Mock()
+            mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(weight_iter)
+            mock_model_bridge_prop.return_value = mock_model_bridge
+
             mock_source.save_generator = Mock()
             bridge.save_hf_weights(mock_megatron_model, "/tmp/output")
 
+            mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
+                mock_megatron_model,
+                mock_hf_model,
+                cpu=True,
+                show_progress=True,
+                merge_adapter_weights=True,
+            )
             mock_torch_save.assert_not_called()

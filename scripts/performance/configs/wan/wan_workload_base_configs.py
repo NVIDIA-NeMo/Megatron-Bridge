@@ -19,7 +19,7 @@ Config naming convention:
 
 All configs use bf16 precision (diffusion training does not use fp8).
 Parallelism settings are sourced from the per-GPU YAML perf configs in
-examples/diffusion/recipes/wan/conf/.
+examples/diffusion/models/wan/conf/.
 """
 
 from dataclasses import replace

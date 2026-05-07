@@ -342,7 +342,17 @@ class TestGLM45Conversion:
             raise
 
     @pytest.mark.run_only_on("GPU")
-    def test_glm45_autoconfig_roundtrip(self, glm45_toy_model_path, tmp_path):
+    def test_glm45_autoconfig_roundtrip(self, glm45_toy_model_path, tmp_path, monkeypatch):
+        from megatron.bridge.models.glm.glm45_bridge import GLM45Bridge
         from tests.functional_tests.utils import autoconfig_roundtrip
 
+        original_hf_source_and_keys = GLM45Bridge._hf_source_and_keys
+
+        def _hf_source_and_keys_for_config_only(self):
+            hf_state = getattr(getattr(self, "hf_pretrained", None), "state", None)
+            if hf_state is not None and hasattr(hf_state, "source"):
+                return original_hf_source_and_keys(self)
+            return None, []
+
+        monkeypatch.setattr(GLM45Bridge, "_hf_source_and_keys", _hf_source_and_keys_for_config_only)
         autoconfig_roundtrip(glm45_toy_model_path, tmp_path)

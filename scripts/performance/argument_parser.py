@@ -493,6 +493,13 @@ def parse_cli_args():
         "'none' skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.",
         required=False,
     )
+    slurm_args.add_argument(
+        "--enable_pct_binding",
+        type=bool_arg,
+        help="Enable PCT binding. Enabled by default.",
+        required=False,
+        default=True,
+    )
 
     # DGXCloud
     dgxc_args = parser.add_argument_group("DGXCloud arguments")
@@ -622,6 +629,11 @@ def parse_cli_args():
         "-en",
         "--enable_nsys",
         help="Enable Nsys profiling. Disabled by default",
+        action="store_true",
+    )
+    performance_args.add_argument(
+        "--export_nsys_sqlite",
+        help="Export a SQLite report after Nsys profiling finishes. Requires --enable_nsys.",
         action="store_true",
     )
     performance_args.add_argument(

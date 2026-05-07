@@ -21,13 +21,15 @@ the gap by applying full-partition-dimension RMSNorm inside the standard
 SelfAttention flow.
 """
 
+from collections.abc import Callable
 from typing import Dict, Optional, Tuple
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+from megatron.core.dist_checkpointing.mapping import ShardedTensor
 from megatron.core.transformer import ModuleSpec, TransformerConfig
-from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
+from megatron.core.utils import get_pg_rank, get_pg_size
 
 
 class _FullDimRMSNorm(nn.Module):
@@ -47,13 +49,15 @@ class _FullDimRMSNorm(nn.Module):
         self,
         local_dim: int,
         global_dim: int,
-        tp_group_getter,
+        shard_world_size: int,
+        tp_group_getter: Callable[[], dist.ProcessGroup | None],
         eps: float = 1e-6,
         dtype: torch.dtype | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.local_dim = local_dim
         self.global_dim = global_dim
+        self.shard_world_size = shard_world_size
         self._tp_group_getter = tp_group_getter
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(local_dim, dtype=dtype))
@@ -70,8 +74,11 @@ class _FullDimRMSNorm(nn.Module):
 
         # all-reduce across TP ranks so every rank sees the global sum-of-squares
         tp_group = self._tp_group_getter()
-        if tp_group is not None and dist.get_world_size(tp_group) > 1:
+        if tp_group is not None:
+            tp_world = dist.get_world_size(tp_group)
             dist.all_reduce(local_ss, op=dist.ReduceOp.SUM, group=tp_group)
+            replicas = tp_world // self.shard_world_size
+            local_ss = local_ss / replicas
 
         variance = local_ss / self.global_dim
         x = x_fp32 * torch.rsqrt(variance + self.eps)
@@ -82,25 +89,57 @@ class _FullDimRMSNorm(nn.Module):
         prefix: str = "",
         sharded_offsets: Tuple[Tuple[int, int, int], ...] = (),
         metadata: Optional[Dict] = None,
-    ) -> Dict[str, "ShardedTensor"]:  # noqa: F821
-        """Weight is TP-sharded along axis 0 (same as ColumnParallelLinear)."""
+    ) -> Dict[str, ShardedTensor]:
+        """Weight is sharded over unique Q/K shards and replicated across TP replicas."""
         state_dict = self.state_dict(prefix="", keep_vars=True)
         tp_group = self._tp_group_getter()
         if metadata is None:
             from megatron.core.transformer.utils import ensure_metadata_has_dp_cp_group
 
             metadata = ensure_metadata_has_dp_cp_group(metadata)
-        return make_sharded_tensors_for_checkpoint(
-            state_dict,
-            prefix,
-            {"weight": 0},
-            sharded_offsets,
-            tp_group=tp_group,
-            dp_cp_group=metadata["dp_cp_group"],
+        dp_cp_group = metadata["dp_cp_group"]
+
+        tp_world = get_pg_size(tp_group)
+        tp_rank = get_pg_rank(tp_group)
+        dp_rank = get_pg_rank(dp_cp_group)
+        replicas = tp_world // self.shard_world_size
+        shard_rank = tp_rank // replicas
+        replica_rank = tp_rank % replicas
+
+        weight_key = f"{prefix}weight"
+        prepend_axis_num = len(sharded_offsets)
+        sharded_weight = ShardedTensor.from_rank_offsets(
+            weight_key,
+            state_dict["weight"],
+            *sharded_offsets,
+            (prepend_axis_num, shard_rank, self.shard_world_size),
+            replica_id=(0, replica_rank, dp_rank),
+            prepend_axis_num=prepend_axis_num,
         )
+        return {weight_key: sharded_weight}
 
 
-def _get_tp_group():
+def _get_k_norm_layout(num_kv_heads: int, hidden_size: int, tp: int) -> tuple[int, int, int]:
+    """Return local dim, global dim, and unique shard count for full-dimension K norm."""
+    if num_kv_heads >= tp:
+        if num_kv_heads % tp != 0:
+            raise ValueError(
+                f"num_query_groups ({num_kv_heads}) must be divisible by "
+                f"tensor_model_parallel_size ({tp}) for FullDimKNorm"
+            )
+        shard_world_size = tp
+    else:
+        if tp % num_kv_heads != 0:
+            raise ValueError(
+                f"num_query_groups ({num_kv_heads}) must divide tensor_model_parallel_size ({tp}) for FullDimKNorm"
+            )
+        shard_world_size = num_kv_heads
+    global_dim = num_kv_heads * hidden_size
+    local_dim = global_dim // shard_world_size
+    return local_dim, global_dim, shard_world_size
+
+
+def _get_tp_group() -> dist.ProcessGroup | None:
     """Lazy accessor for the TP process group (not available at module init time)."""
     from megatron.core.parallel_state import get_tensor_model_parallel_group
 
@@ -116,12 +155,19 @@ class FullDimQNorm:
     full partition dimension from ``config``.
     """
 
-    def __new__(cls, hidden_size: int, config: TransformerConfig, eps: float = 1e-6):
+    def __new__(cls, hidden_size: int, config: TransformerConfig, eps: float = 1e-6) -> _FullDimRMSNorm:
         tp = config.tensor_model_parallel_size
         num_heads = config.num_attention_heads
         local_dim = (num_heads // tp) * hidden_size
         global_dim = num_heads * hidden_size
-        return _FullDimRMSNorm(local_dim, global_dim, _get_tp_group, eps, dtype=config.params_dtype)
+        return _FullDimRMSNorm(
+            local_dim,
+            global_dim,
+            tp,
+            _get_tp_group,
+            eps,
+            dtype=config.params_dtype,
+        )
 
 
 class FullDimKNorm:
@@ -131,12 +177,18 @@ class FullDimKNorm:
     instead of ``num_attention_heads``.
     """
 
-    def __new__(cls, hidden_size: int, config: TransformerConfig, eps: float = 1e-6):
+    def __new__(cls, hidden_size: int, config: TransformerConfig, eps: float = 1e-6) -> _FullDimRMSNorm:
         tp = config.tensor_model_parallel_size
         num_kv_heads = config.num_query_groups or config.num_attention_heads
-        local_dim = (num_kv_heads // tp) * hidden_size
-        global_dim = num_kv_heads * hidden_size
-        return _FullDimRMSNorm(local_dim, global_dim, _get_tp_group, eps, dtype=config.params_dtype)
+        local_dim, global_dim, shard_world_size = _get_k_norm_layout(num_kv_heads, hidden_size, tp)
+        return _FullDimRMSNorm(
+            local_dim,
+            global_dim,
+            shard_world_size,
+            _get_tp_group,
+            eps,
+            dtype=config.params_dtype,
+        )
 
 
 def minimax_m2_layer_spec(config: "GPTModelProvider") -> ModuleSpec:  # noqa: F821

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+import logging
 import math
 import os
 import time
@@ -30,7 +31,7 @@ from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
-from megatron.bridge.training.config import ConfigContainer, TrainingConfig
+from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
@@ -42,6 +43,55 @@ from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_saf
 
 if TYPE_CHECKING:
     from torch.distributed.distributed_c10d import ProcessGroup as TorchProcessGroup
+
+
+logger = logging.getLogger(__name__)
+
+
+def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
+    """Enable the CUDA caching allocator trace so memory snapshots contain history.
+
+    ``torch.cuda.memory._snapshot()`` only includes allocation/free events and
+    Python stack context after ``_record_memory_history()`` has been enabled.
+    Without this call, dumped snapshots contain only the current live
+    allocations — no timeline, no call sites.
+
+    Must be invoked before model construction so every tensor allocation is
+    captured. Guarded by ``profile_ranks`` so only ranks that will dump a
+    snapshot pay the recording overhead.
+    """
+    if profiling is None or not profiling.record_memory_history:
+        return
+    if get_rank_safe() not in profiling.profile_ranks:
+        return
+
+    torch.cuda.memory._record_memory_history(
+        True,
+        # Retain up to 100k alloc/free events.
+        trace_alloc_max_entries=100_000,
+        # Record the Python stack at each event — lets memory_viz show call sites.
+        trace_alloc_record_context=True,
+    )
+
+    def _oom_observer(device: int, alloc: int, device_alloc: int, device_free: int) -> None:
+        """Dump a snapshot on OOM so we can inspect what was live at the failure."""
+        import pickle
+
+        rank = get_rank_safe()
+        base, ext = os.path.splitext(profiling.memory_snapshot_path)
+        filename = f"{base}_oom_rank-{rank}{ext}"
+        snapshot = torch.cuda.memory._snapshot()
+        with open(filename, "wb") as f:
+            pickle.dump(snapshot, f)
+        # logger.info so the message reaches stderr on any profiled rank, not just rank 0.
+        logger.info(f"[OOM] rank {rank} saved memory snapshot to {filename}")
+
+    torch._C._cuda_attach_out_of_memory_observer(_oom_observer)
+    print_rank_0(
+        f"Memory history recording enabled (rank {get_rank_safe()}); "
+        f"snapshots will be written to '{profiling.memory_snapshot_path}'."
+    )
+
 
 try:
     from transformer_engine.pytorch.optimizers import multi_tensor_applier, multi_tensor_l2norm
@@ -332,6 +382,84 @@ def logical_and_across_model_parallel_group(input: bool, mp_group: "TorchProcess
     return bool(input.item())
 
 
+class _MoeMetricFanoutWriter:
+    """SummaryWriter-shaped adapter that fans add_scalar to MLFlow / Comet.
+
+    MCore's `track_moe_metrics` and `track_mtp_metrics` emit metrics through a
+    TensorBoard `writer.add_scalar(name, value, iteration)` call (and a separate
+    `wandb_writer.log(...)` call). They do not know about MLFlow or Comet, so
+    those backends never see MoE / MTP metrics — see issue #2989.
+
+    Rather than fork MCore, this adapter wraps the real TB writer (or stands in
+    for a missing one) and forwards every `add_scalar` to MLFlow and Comet
+    using the same per-step value. W&B is unaffected — the underlying functions
+    still receive `wandb_writer` directly so their dict-based per-layer logging
+    stays untouched.
+
+    Tensors are sanitized with `.item()` before being handed to MLFlow / Comet,
+    matching the float/int conversion the existing MoE TensorBoard path
+    implicitly relies on (TB tolerates 0-d tensors; MLFlow / Comet do not).
+    """
+
+    def __init__(
+        self,
+        tb_writer: Optional[Any],
+        comet_logger: Optional[Any],
+        mlflow_logger: Optional[Any],
+    ) -> None:
+        self._tb_writer = tb_writer
+        self._comet_logger = comet_logger
+        self._mlflow_logger = mlflow_logger
+
+    @staticmethod
+    def _sanitize(value: Any) -> Any:
+        """Convert 0-d torch tensors to Python scalars; pass other values through.
+
+        MLFlow / Comet client APIs reject torch tensors silently or raise; the
+        existing TB call accepts them. Force a scalar so all sinks behave.
+        """
+        if isinstance(value, torch.Tensor):
+            try:
+                return value.item()
+            except (RuntimeError, ValueError):
+                return value
+        return value
+
+    def add_scalar(self, name: str, value: Any, iteration: int) -> None:
+        """Forward an add_scalar call to TB (if any), MLFlow, and Comet."""
+        if self._tb_writer is not None:
+            self._tb_writer.add_scalar(name, value, iteration)
+        # Only sanitize for the MLFlow / Comet sinks — the TB writer tolerates
+        # tensors and we do not want to perturb its behavior.
+        if self._mlflow_logger is not None or self._comet_logger is not None:
+            scalar = self._sanitize(value)
+            metrics = {name: scalar}
+            if self._mlflow_logger is not None:
+                self._mlflow_logger.log_metrics(_sanitize_mlflow_metrics(metrics), step=iteration)
+            if self._comet_logger is not None:
+                self._comet_logger.log_metrics(metrics, step=iteration)
+
+
+def _build_moe_metric_writer(
+    tb_writer: Optional[Any],
+    comet_logger: Optional[Any],
+    mlflow_logger: Optional[Any],
+) -> Optional[Any]:
+    """Return a writer suitable for MCore's MoE/MTP metric helpers.
+
+    - When neither MLFlow nor Comet is wired up, the real TB writer is returned
+      unchanged (zero overhead, no behavior change).
+    - When at least one of MLFlow / Comet is wired up, return a fanout adapter
+      that forwards `add_scalar` to all configured backends. The adapter is
+      returned even when the TB writer itself is None, which is required to
+      surface MoE / MTP metrics in Comet / MLFlow on rank N-1 even if the user
+      hasn't enabled TensorBoard.
+    """
+    if comet_logger is None and mlflow_logger is None:
+        return tb_writer
+    return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
+
+
 def training_log(
     loss_dict: dict[str, torch.Tensor],
     total_loss_dict: dict[str, Any],
@@ -472,11 +600,8 @@ def training_log(
         if hasattr(timers, "write_to_comet"):
             timers.write_to_comet(timers_to_log, comet_logger, iteration, normalizer=total_iterations, reset=True)
 
-    if config.profiling:
-        if config.profiling.record_memory_history and get_rank_safe() in config.profiling.profile_ranks:
-            assert config.logger.tensorboard_dir is not None, (
-                "Tensorboard directory must be set when profiling memory history"
-            )
+    if config.profiling and config.profiling.record_memory_history:
+        if get_rank_safe() in config.profiling.profile_ranks:
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
 
@@ -711,10 +836,13 @@ def training_log(
         else:
             layers = getattr(config.model, "num_layers", None)
 
+        # Wrap the TB writer so MoE/MTP metrics also reach MLFlow / Comet (issue #2989).
+        # No-op when neither logger is configured: the original writer is returned as-is.
+        moe_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
         track_moe_metrics(
             loss_scale=moe_loss_scale,
             iteration=iteration,
-            writer=writer,
+            writer=moe_metric_writer,
             wandb_writer=wandb_writer,
             total_loss_dict=total_loss_dict,
             per_layer_logging=getattr(config.model, "moe_per_layer_logging", False),
@@ -727,7 +855,10 @@ def training_log(
         )
     if getattr(config.model, "mtp_num_layers", None) is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
-        MTPLossLoggingHelper.track_mtp_metrics(mtp_loss_scale, iteration, writer, wandb_writer, total_loss_dict)
+        mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
+        MTPLossLoggingHelper.track_mtp_metrics(
+            mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
+        )
 
     if iteration % logger_config.log_interval == 0:
         elapsed_time = timers("interval-time").elapsed(barrier=True)
