@@ -14,6 +14,12 @@ NUM_NODES=1
 # Also disables gradient clipping (clip-grad=0.0), which is non-associative under
 # distributed reductions and introduces run-to-run variance.
 DETERMINISTIC=${DETERMINISTIC:-0}
+# Set UNFREEZE_LLM=1 to train the language model
+UNFREEZE_LLM=${UNFREEZE_LLM:-0}
+FREEZE_LLM=$([[ "${UNFREEZE_LLM}" == "1" ]] && echo "false" || echo "true")
+LLM_TAG=$([[ "${UNFREEZE_LLM}" == "1" ]] && echo "unfrozen-llm" || echo "frozen-llm")
+LR=$([[ "${UNFREEZE_LLM}" == "1" ]] && echo "1.0e-4" || echo "1e-3")
+MIN_LR=$([[ "${UNFREEZE_LLM}" == "1" ]] && echo "1.0e-5" || echo "2.0e-5")
 DETERMINISTIC_FLAG=""
 EXP_SUFFIX=""
 CLIP_GRAD=1.0
@@ -49,16 +55,17 @@ uv run torchrun \
     --adam-beta2 0.95 \
     --clip-grad ${CLIP_GRAD} \
     --log-interval 1 \
-    --lr 1e-3 \
+    --lr ${LR} \
     --lr-warmup-iters 60 \
-    --min-lr 2.0e-5 \
+    --min-lr ${MIN_LR} \
     --weight-decay 0.0 \
     --wandb-project "Megatron-Bridge-MIMO" \
-    --wandb-exp-name "mimo-llava-audio-hetero-e2e-test${EXP_SUFFIX}" \
+    --wandb-exp-name "mimo-llava-audio-hetero-e2e-${LLM_TAG}-test${EXP_SUFFIX}" \
     --wandb-save-dir "/tmp/wandb" \
     --dataset-root /path/to/LLaVA-Pretrain-Audio-Augmented \
     --hf-data-files "blip_laion_cc_sbu_558k_with_audio.json" \
     --audio-column audio \
+    --freeze-llm ${FREEZE_LLM} \
     ${DETERMINISTIC_FLAG} \
     --vision-encoder-checkpoint /path/to/clip_checkpoint \
     --language-model-checkpoint /path/to/llm_checkpoint \
