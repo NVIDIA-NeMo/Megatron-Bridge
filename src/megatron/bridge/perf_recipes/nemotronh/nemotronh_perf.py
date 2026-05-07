@@ -28,8 +28,7 @@ Precision short-names:
     nvfp4  = NVFP4
 """
 
-from megatron.bridge.recipes.common import _benchmark_common
-from megatron.bridge.recipes.llama.llama3_perf import _perf_precision
+from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer

@@ -22,12 +22,11 @@ Naming convention::
     {model}_{size}_{task}_{num_gpus}gpu_{gpu}_{precision}_config
 """
 
-from megatron.bridge.recipes.common import _benchmark_common
+from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.recipes.deepseek.deepseek_v3 import (
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
-from megatron.bridge.recipes.llama.llama3_perf import _perf_precision
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -64,7 +63,7 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
     return cfg
@@ -496,7 +495,6 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
-    cfg.ddp.overlap_grad_reduce = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|(tt|)*30mL")
@@ -628,12 +626,11 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = True
-    cfg.train.global_batch_size = 8192
+    cfg.train.global_batch_size = 16384
     cfg.train.micro_batch_size = 1
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
-    cfg.ddp.overlap_grad_reduce = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|(tt|)*30mL")
