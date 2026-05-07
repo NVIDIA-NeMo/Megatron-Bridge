@@ -383,6 +383,7 @@ class Qwen3VLModel(MegatronModule):
         vision_grid_thw = None
         vision_data = None
         vision_mask = None
+        vision_embeds = None
         deepstack_feature_lists = None
 
         # position ids is computed within the model
@@ -504,7 +505,7 @@ class Qwen3VLModel(MegatronModule):
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
             if packed_seq_params is not None:
                 if attention_mask is None:
-                    attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
@@ -560,7 +561,7 @@ class Qwen3VLModel(MegatronModule):
             # convert lm_input_ids to THD format so it matches position_ids.
             if packed_seq_params is not None:
                 if attention_mask is None:
-                    attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
                 lm_input_ids, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )

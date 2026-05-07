@@ -55,7 +55,9 @@ from megatron.bridge.training.tensor_inspect import (
 )
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
+from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
+
 
 class SetupOutput(NamedTuple):
     """Represents the output of the main setup function.
@@ -191,6 +193,17 @@ def setup(
     )
 
     cfg.dataset.tokenizer = tokenizer
+
+    # Compute token_dtype_code for sequences_per_dataset support.
+    # Bridge skips MCoreGPTDatasetConfig.__post_init__() (tokenizer unavailable at
+    # finalize time), so this field must be set once the tokenizer is available.
+    if hasattr(cfg.dataset, "token_dtype_code") and cfg.dataset.token_dtype_code is None:
+        vocab_size = getattr(tokenizer, "vocab_size", None)
+        if vocab_size is not None:
+            import numpy
+
+            cfg.dataset.token_dtype_code = 4 if vocab_size > numpy.iinfo(numpy.uint16).max + 1 else 8
+
     timers("tokenizer-setup").stop()
     barrier_and_log("after tokenizer is built")
 
@@ -227,6 +240,10 @@ def setup(
             return model
 
         _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
+
+    # Enable CUDA allocator history tracing before any model tensors are allocated,
+    # so snapshots dumped later in training contain a full timeline + stack context.
+    start_memory_history_recording(cfg.profiling)
 
     model = _build_distributed_model(cfg, pg_collection)
 

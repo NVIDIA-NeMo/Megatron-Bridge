@@ -52,6 +52,9 @@ from megatron.bridge.models.gemma_vl import (
     Gemma3VLBridge,
     Gemma3VLModel,
     Gemma3VLModelProvider,
+    Gemma4VLBridge,
+    Gemma4VLModel,
+    Gemma4VLModelProvider,
 )
 from megatron.bridge.models.glm import (
     GLM45Bridge,
@@ -232,6 +235,9 @@ __all__ = [
     "Gemma3VLBridge",
     "Gemma3VLModel",
     "Gemma3VLModelProvider",
+    "Gemma4VLBridge",
+    "Gemma4VLModel",
+    "Gemma4VLModelProvider",
     "NemotronVLModel",
     "NemotronVLBridge",
     "NemotronNano12Bv2VLModelProvider",

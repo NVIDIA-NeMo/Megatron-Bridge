@@ -202,11 +202,13 @@ When you create a pull request, **add labels immediately** so reviewers and CI c
 3. **`docs-only`** — if the PR touches only documentation (no code changes); this skips most CI jobs
 4. **`needs-review`** — when the PR is ready for review
 5. **`needs-more-tests`** — if the change needs additional test coverage; triggers both L0 and L1 CI
-6. **`high-complexity`** — if the PR is large, touches many files, or is prone to merge conflicts
+6. **`full-test-suite`** — if the change has high blast radius (TE/MCore bumps, kernel changes, FP8 paths); pulls L2 into the PR run on top of L0+L1
+7. **`high-complexity`** — if the PR is large, touches many files, or is prone to merge conflicts
 
 Add risk labels when applicable:
 - `breaking-change` — if any public API, CLI argument, config key, or function signature changes
 - `needs-more-tests` — if the change needs additional test coverage (also triggers L1 CI)
+- `full-test-suite` — if the change warrants the full L2 matrix (heavy: VL models, ckpt conversion, quantization)
 
 Properly labeled PRs get faster reviews and avoid sitting in the triage queue.
 
@@ -254,6 +256,7 @@ Apply only when risk affects review or merge behavior:
 | `breaking-change` | Public behavior or API compatibility changes |
 | `high-complexity` | Harder to merge: prone to conflicts and needs additional test coverage |
 | `needs-more-tests` | Requires additional test coverage; triggers both L0 and L1 CI test tiers |
+| `full-test-suite` | Pulls the L2 functional matrix (VL models, ckpt conversion, heavy quantization) into the PR run on top of L0+L1 |
 
 ### Area Labels
 
@@ -358,16 +361,11 @@ Functional tests are placed in tiered launcher scripts inside [`tests/functional
 |------|--------|---------|---------|
 | **L0** | `L0_Launch_*.sh` | Every PR, main push, schedule | Core smoke tests — must be fast and stable |
 | **L1** | `L1_Launch_*.sh` | Main push + schedule; PRs labeled `needs-more-tests` | Broader model/recipe coverage |
-| **L2** | `L2_Launch_*.sh` | Schedule / `workflow_dispatch` only | VL models, checkpoint conversion, heavy quantization |
+| **L2** | `L2_Launch_*.sh` | Schedule / `workflow_dispatch`; PRs labeled `full-test-suite` | VL models, checkpoint conversion, heavy quantization |
 
-When adding a new launcher script, always start with the **L0** tier so it runs on every PR. A maintainer will adjust the tier later if the test is too slow or better suited for nightly coverage. You must **also update** [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the corresponding job matrix:
+When adding a new launcher script, always start with the **L0** tier so it runs on every PR. A maintainer will adjust the tier later if the test is too slow or better suited for nightly coverage.
 
-```yaml
-# Example: adding an L1 test
-- script: L1_Launch_your_new_test
-```
-
-Without this step, your new launcher script will not be picked up by CI.
+No workflow file changes are needed — the CI matrix is generated dynamically by scanning the launch scripts directory on every run.
 
 ## 📦 Dependencies Management
 

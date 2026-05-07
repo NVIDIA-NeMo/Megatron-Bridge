@@ -28,6 +28,7 @@ from megatron.core.utils import (
     get_pg_rank,
     get_pg_size,
 )
+from torch.distributed._tensor import DTensor
 
 from megatron.bridge.models.conversion.utils import (
     get_module_and_param_from_name,
@@ -43,6 +44,13 @@ import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+def _module_uses_fsdp(megatron_module: nn.Module) -> bool:
+    """Return True if the module uses Megatron-FSDP"""
+    return hasattr(megatron_module, "_parameters") and any(
+        key.startswith("weight") and isinstance(value, DTensor) for key, value in megatron_module._parameters.items()
+    )
 
 
 class MegatronParamMapping(ABC, Generic[WeightType]):
@@ -119,6 +127,28 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # if a param mapping class takes in modified HF weight name from maybe_modify_loaded_hf_weight,
         # allow_hf_name_mismatch should be set to True to bypass a check in `build_conversion_tasks`
         self.allow_hf_name_mismatch = False
+
+    def set_process_groups_from_pg_collection(self, pg_collection: Any) -> None:
+        """Override snapshotted Megatron-Core globals with a ``ProcessGroupCollection``.
+
+        Used by the decentralized PG path where ``mpu`` is never initialized.
+        ``__init__`` runs at registry construction time and snapshots whatever
+        Megatron-Core globals exist then; in the decentralized path those are
+        absent, so ``tp_size`` would default to ``world_size`` and conversions
+        would compute the wrong shard sizes. ``MegatronModelBridge`` calls this
+        right before running tasks to install the user-supplied groups.
+        """
+        if pg_collection is None:
+            return
+        for attr, field in (
+            ("pp_group", "pp"),
+            ("ep_group", "ep"),
+            ("_tp_group", "tp"),
+            ("_etp_group", "expt_tp"),
+        ):
+            group = getattr(pg_collection, field, None)
+            if group is not None:
+                setattr(self, attr, group)
 
     @property
     def tp_group(self):
@@ -340,14 +370,17 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             self._tensor_spec_output_cache[cache_key] = tensor_spec_output
 
         # ------------------------------------------------------------------
-        # 2.  Identify the owning rank (the only rank with a non-None spec).
+        # 2.  Identify the first owning rank (pick the lowest-ranked PP stage
+        #     that holds the tensor).  Certain architectures (MLA / DeepSeek-V3,
+        #     MTP, or models with tied embeddings) legitimately place the same
+        #     weight on more than one PP rank, so we must *not* raise on
+        #     duplicates – instead we deterministically pick the first owner
+        #     as the broadcast source.
         # ------------------------------------------------------------------
         target_tensor_spec = None
         src_rank = None  # Rank *inside* the PP group.
         for rank, spec in enumerate(tensor_spec_output):
-            if spec is not None:
-                if target_tensor_spec is not None:
-                    raise ValueError(f"Tensor exists on more than one PP rank. Found on ranks {src_rank} and {rank}.")
+            if spec is not None and target_tensor_spec is None:
                 target_tensor_spec = spec
                 src_rank = rank
 
@@ -393,7 +426,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Any: Broadcasted object on all ranks.
 
         Raises:
-            ValueError: If object exists on multiple ranks or no ranks.
+            ValueError: If object does not exist on any rank.
         """
         if self.pp_size == 1:
             return obj
@@ -410,12 +443,15 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather_object(obj_flags, has_obj, group=self.pp_group)
 
         # ------------------------------------------------------------------
-        # 2. Identify the owning rank (the only rank with True flag)
+        # 2. Identify the first owning rank (lowest PP stage with the object).
+        #    Certain architectures (MLA, MTP, tied embeddings) place the same
+        #    parameter on multiple PP ranks — pick the first owner.
         # ------------------------------------------------------------------
         src_rank = None  # Rank *inside* the PP group
         for rank, flag in enumerate(obj_flags):
             if flag:
                 src_rank = rank
+                break
 
         if src_rank is None:
             raise ValueError("Object must exist on at least one PP rank")
@@ -423,8 +459,6 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # ------------------------------------------------------------------
         # 3. Broadcast the object from the source rank to all ranks
         # ------------------------------------------------------------------
-        if src_rank is None:
-            raise ValueError("Could not determine source rank")
 
         # Use broadcast_object_list which is more robust than all_gather_object
         obj_list = [obj]
@@ -473,6 +507,51 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         global_src = torch.distributed.get_global_rank(group=self.tp_group, group_rank=src_rank)
         torch.distributed.broadcast(tensor, src=global_src, group=self.tp_group)
         return tensor
+
+    def _get_shard_spec(
+        self,
+        *,
+        shard_size: int,
+        megatron_module: nn.Module | None = None,
+        global_size: int | None = None,
+        global_size_attr: str | None = None,
+    ) -> tuple[int, int]:
+        """Get the unique TP shard count and shard rank for the current TP rank.
+
+        This supports layouts where TP ranks may contain replicated copies of a
+        smaller set of unique shards, such as KV-head sharding when
+        ``num_query_groups < tensor_model_parallel_size``.
+
+        Args:
+            shard_size: Number of elements in the local shard along the sharded axis.
+            megatron_module: Optional Megatron module carrying layout metadata.
+            global_size: Explicit global size along the sharded axis.
+            global_size_attr: Optional module attribute that stores the global
+                size along the sharded axis.
+
+        Returns:
+            Tuple of ``(shard_world_size, shard_rank)`` where ``shard_world_size``
+            is the number of unique shards and ``shard_rank`` is the current
+            rank's unique shard index.
+        """
+        resolved_global_size = shard_size * self.tp_size
+        if global_size is not None:
+            resolved_global_size = global_size
+        elif megatron_module is not None and global_size_attr is not None:
+            resolved_global_size = getattr(megatron_module, global_size_attr, resolved_global_size)
+
+        if resolved_global_size % shard_size != 0:
+            raise ValueError(f"Invalid sharded layout: global_size={resolved_global_size}, shard_size={shard_size}")
+
+        shard_world_size = resolved_global_size // shard_size
+        if self.tp_size % shard_world_size != 0:
+            raise ValueError(
+                f"Invalid replicated shard layout: tp_size={self.tp_size}, shard_world_size={shard_world_size}"
+            )
+
+        replicas = self.tp_size // shard_world_size
+        shard_rank = self.tp_rank // replicas
+        return shard_world_size, shard_rank
 
     def scatter_to_tp_ranks(
         self,
@@ -835,10 +914,14 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         else:
             splits = None
 
+        if isinstance(target_param, DTensor):
+            output_shape = [target_param.shape[0] // self.tp_size, *target_param.shape[1:]]
+        else:
+            output_shape = target_param.shape
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
-            target_param.shape,
+            output_shape,
             target_param.dtype,
             target_param.device,
         )
@@ -858,7 +941,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        if self.tp_size == 1:
+        if self.tp_size == 1 or _module_uses_fsdp(megatron_module):
             full_weights = megatron_weights
         else:
             # Gather from all TP ranks
@@ -940,10 +1023,14 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         else:
             splits = None
 
+        if isinstance(target_param, DTensor) and hf_weights.ndim != 1:
+            output_shape = [target_param.shape[0], target_param.shape[1] // self.tp_size, *target_param.shape[2:]]
+        else:
+            output_shape = target_param.shape
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
-            target_param.shape,
+            output_shape,
             target_param.dtype,
             target_param.device,
         )
@@ -963,7 +1050,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        if self.tp_size == 1 or len(megatron_weights.shape) == 1:
+        if self.tp_size == 1 or len(megatron_weights.shape) == 1 or _module_uses_fsdp(megatron_module):
             # bias is unsharded in row parallel, so we can just return it
             full_weights = megatron_weights
         else:
@@ -1100,6 +1187,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             "LinearCrossEntropyModule",
             "TEColumnParallelLinear",
             "TELayerNormColumnParallelLinear",
+            "InferenceLayerNormColumnParallelLinear",
             "TEColumnParallelGroupedLinear",
             "VocabParallelEmbedding",
             "DotProductAttention",  # for attention sink only
@@ -1108,6 +1196,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         "row": {
             "RowParallelLinear",
             "TERowParallelLinear",
+            "InferenceRowParallelLinear",
             "TERowParallelGroupedLinear",
         },
         "replicated": {
@@ -1119,6 +1208,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             "RMSNorm",
             "L2Norm",
             # Other non-parallel modules
+            "InferenceTopKRouter",
             "IdentityOp",
             "TopKRouter",
         },
@@ -1179,7 +1269,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Handle fused modules like TELayerNormColumnParallelLinear
         # These modules have both column-parallel weights (weight, bias)
         # and replicated layer norm weights (layer_norm_weight, layer_norm_bias)
-        if module_type == "TELayerNormColumnParallelLinear":
+        if module_type in ("TELayerNormColumnParallelLinear", "InferenceLayerNormColumnParallelLinear"):
             # Check the actual parameter name to determine the correct parallelism type
             if self.megatron_param and (
                 self.megatron_param.endswith("layer_norm_weight") or self.megatron_param.endswith("layer_norm_bias")
@@ -1264,6 +1354,9 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             else:
                 # Receive from owning rank
                 self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
+                if self._detected_type is None:
+                    # PP group likely has 1 member - skipping.
+                    return {}
 
             self._mapping = self._get_or_create_mapping(self._detected_type)
 
@@ -2150,10 +2243,14 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         else:
             splits = None
 
+        if isinstance(target_param, DTensor):
+            output_shape = [target_param.shape[0] // self.tp_size, *target_param.shape[1:]]
+        else:
+            output_shape = target_param.shape
         # Scatter the concatenated shards to each rank
         return self.scatter_to_tp_ranks(
             splits,
-            target_param.shape,
+            output_shape,
             target_param.dtype,
             target_param.device,
         )
@@ -2180,8 +2277,11 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             gate, up = torch.chunk(fused_mlp, 2, dim=0)
 
         else:
-            # Gather shards from all TP ranks
-            gathered_shards = self.gather_from_tp_ranks(megatron_weights)
+            if _module_uses_fsdp(megatron_module):
+                gathered_shards = torch.chunk(megatron_weights, self.tp_size, dim=0)
+            else:
+                # Gather shards from all TP ranks
+                gathered_shards = self.gather_from_tp_ranks(megatron_weights)
 
             # Split each shard back into gate and up parts
             gate_parts = []
