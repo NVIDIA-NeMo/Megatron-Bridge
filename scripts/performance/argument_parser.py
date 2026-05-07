@@ -323,6 +323,11 @@ def parse_cli_args():
     data_args.add_argument("--dataset_name", type=str, help="Dataset name (deprecated)")
     data_args.add_argument("--packed_sequence", action="store_true", help="Use packed sequences")
     data_args.add_argument("--head_only", action="store_true", help="Use only head data (for rp2 dataset)")
+    data_args.add_argument(
+        "--diffusion_dataset_path",
+        type=str,
+        help="WebDataset root path for diffusion recipes (FLUX, WAN). When unset, recipes fall back to mock data.",
+    )
 
     # Tokenizer configuration
     tokenizer_args = parser.add_argument_group("Tokenizer arguments")
