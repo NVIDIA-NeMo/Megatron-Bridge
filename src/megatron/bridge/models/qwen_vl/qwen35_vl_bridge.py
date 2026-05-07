@@ -177,6 +177,15 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         if provider.mtp_num_layers:
             provider.mtp_loss_scaling_factor = 0.1
 
+        # Detect MTP MoE expert weight format: Qwen3.5 stores per-expert
+        # (mtp.layers.0.mlp.experts.{i}.gate_proj.weight), Qwen3.6 stores packed
+        # (mtp.layers.0.mlp.experts.gate_up_proj). Same architecture string,
+        # different storage — must inspect HF keys.
+        self._mtp_experts_packed = False
+        if provider.mtp_num_layers and hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
+            hf_keys = set(hf_pretrained.state.source.get_all_keys())
+            if "mtp.layers.0.mlp.experts.gate_up_proj" in hf_keys:
+                self._mtp_experts_packed = True
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
@@ -405,15 +414,6 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
                     v="mtp.layers.*.self_attn.v_proj.weight",
                 ),
                 GatedMLPMapping(
-                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
-                    gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
-                    up="mtp.layers.*.mlp.experts.*.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
-                    hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
-                ),
-                GatedMLPMapping(
                     megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.shared_experts.linear_fc1.weight",
                     gate="mtp.layers.*.mlp.shared_expert.gate_proj.weight",
                     up="mtp.layers.*.mlp.shared_expert.up_proj.weight",
@@ -428,6 +428,33 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
                 ),
             ]
         )
+
+        if getattr(self, "_mtp_experts_packed", False):
+            # Qwen3.6: packed format (same as main decoder)
+            mapping_list.extend([
+                FusedGatedExpertMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
+                    hf_param="mtp.layers.*.mlp.experts.gate_up_proj",
+                ),
+                FusedExpertMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
+                    hf_param="mtp.layers.*.mlp.experts.down_proj",
+                    transpose_on_export=True,
+                ),
+            ])
+        else:
+            # Qwen3.5: per-expert format (current behavior)
+            mapping_list.extend([
+                GatedMLPMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
+                    gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
+                    up="mtp.layers.*.mlp.experts.*.up_proj.weight",
+                ),
+                AutoMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
+                    hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
+                ),
+            ])
 
         return MegatronMappingRegistry(*mapping_list)
 
