@@ -313,6 +313,22 @@ class PerfEnvPlugin(Plugin):
             # fragmented physical memory and avoids the OOM without disabling
             # any NCCL algorithms.
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        elif (
+            model_family_name in ["nemotronh"]
+            and model_recipe_name in ["nemotron_3_nano"]
+            and train_task == "pretrain"
+            and gpu in ["h100"]
+            and compute_dtype == "fp8_cs"
+        ):
+            # pytorch:26.04-py3 base + NCCL 2.30.4 bump (vs 26.02 / 2.29.3) tightens
+            # memory headroom on H100 fp8_cs and the optimizer's
+            # _copy_main_params_to_model_params spike at iter 3 (post CUDA-Graph capture)
+            # OOMs from allocator fragmentation. expandable_segments lets the allocator
+            # reclaim fragmented physical memory; NCCL_GRAPH_REGISTER=0 is its required
+            # partner under CUDA Graphs (MCore guards against the unsafe combo and asserts
+            # at cuda_graphs.py:1750 if expandable_segments:True is set without it).
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+            executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
 
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
