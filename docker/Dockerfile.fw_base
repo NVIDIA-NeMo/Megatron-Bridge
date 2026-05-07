@@ -124,54 +124,6 @@ RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_n
 
 ##############################################################################
 ##
-## Install DeepEP and nvshmem
-##
-##############################################################################
-
-ARG INSTALL_DEEPEP
-ARG DEEPEP_COMMIT
-
-ENV HYBRID_EP_MULTINODE=1
-ENV RDMA_CORE_HOME=/opt/rdma-core/build
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/:$LD_LIBRARY_PATH
-RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
-    if [ "$INSTALL_DEEPEP" = "True" ]; then \
-    # Upgrade system rdma-core to v60; libibverbs-dev supplies the unversioned
-    # libibverbs.so symlink required at link time.
-    apt-get update && apt-get install -y --allow-change-held-packages \
-        rdma-core libibverbs-dev && \
-    apt-get clean && \
-    ARCH_LIB=$(dpkg-architecture -qDEB_HOST_MULTIARCH) && \
-    # libmlx5-dev is not available in the apt sources; create the unversioned
-    # symlink from the versioned one as a fallback for the DeepEP build.
-    test -f /usr/lib/${ARCH_LIB}/libmlx5.so || \
-        ln -sf /usr/lib/${ARCH_LIB}/libmlx5.so.1 /usr/lib/${ARCH_LIB}/libmlx5.so && \
-    # Expose the system install under RDMA_CORE_HOME so DeepEP setup.py finds
-    # $RDMA_CORE_HOME/include and $RDMA_CORE_HOME/lib without a separate source build.
-    mkdir -p ${RDMA_CORE_HOME} && \
-    ln -sfn /usr/include ${RDMA_CORE_HOME}/include && \
-    ln -sfn /usr/lib/${ARCH_LIB} ${RDMA_CORE_HOME}/lib && \
-    git clone https://github.com/deepseek-ai/DeepEP.git && \
-    pushd DeepEP && \
-        git pull && \
-        git fetch origin $DEEPEP_COMMIT && \
-        git checkout FETCH_HEAD && \
-        patch -p1 < /opt/deepep.patch && \
-        pip install --no-cache-dir nvidia-nvshmem-cu13==3.4.5 && \
-        # Create symlink for libnvshmem_host.so (required for DeepEP fabric handle operations)
-        NVSHMEM_LIB_PATH=$(pip show nvidia-nvshmem-cu13 | grep "Location:" | cut -d' ' -f2)/nvidia/nvshmem/lib && \
-        ln -sf ${NVSHMEM_LIB_PATH}/libnvshmem_host.so.3 ${NVSHMEM_LIB_PATH}/libnvshmem_host.so && \
-        apt-get update && \
-        apt-get install -y --no-install-recommends libnvidia-ml-dev && \
-        TORCH_CUDA_ARCH_LIST="9.0 10.0 12.0" pip install --no-cache-dir --no-build-isolation -v . && \
-        apt-get purge -y libnvidia-ml-dev && \
-        apt-get autoremove -y && \
-        rm -rf /var/lib/apt/lists/* && \
-    popd; \
-    fi
-
-##############################################################################
-##
 ## Install vLLM
 ##
 ##############################################################################
