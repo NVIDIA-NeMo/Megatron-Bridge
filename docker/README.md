@@ -123,6 +123,8 @@ docker build \
 | `NCCL_VER` | NCCL version for the TRT-LLM install scripts |
 | `CUBLAS_VER` | cuBLAS version for the TRT-LLM install scripts |
 | `NVRTC_VER` | NVRTC version for the TRT-LLM install scripts |
+| `INSTALL_DEEPEP` | Set to `True` to build and install DeepEP and nvshmem |
+| `DEEPEP_COMMIT` | DeepEP git commit SHA |
 | `REINSTALL_NSYS` | Set to `True` to reinstall Nsight Systems from the NVIDIA apt repo |
 | `NSYS_VERSION` | Nsight Systems version (e.g. `2026.1.0.1085`) |
 | `REINSTALL_CUDNN` | Set to `True` to reinstall cuDNN from the NVIDIA apt repo |
@@ -137,8 +139,6 @@ docker build \
 | Argument | Description |
 |---|---|
 | `BASE_IMAGE` | Base container; set to the fw-base image when building the full stack |
-| `INSTALL_DEEPEP` | Set to `True` to build and install DeepEP and nvshmem |
-| `DEEPEP_COMMIT` | DeepEP git commit SHA |
 | `MCORE_TRIGGERED_TESTING` | Skip uv lockfile check for cross-version Megatron-LM testing |
 | `UV_CACHE_PRUNE_ARGS` | Extra arguments for `uv cache prune` |
 
@@ -163,5 +163,5 @@ docker build \
 | `common/install_nccl.sh` | Reinstall NCCL from the public NVIDIA CUDA apt repo |
 | `common/install_cudnn.sh` | Reinstall cuDNN from the public NVIDIA CUDA apt repo |
 | `common/install_nsys.sh` | Reinstall Nsight Systems from the public NVIDIA CUDA apt repo |
-| `patches/deepep.patch` | Patch applied to DeepEP during CI image build |
+| `patches/deepep.patch` | Patch applied to DeepEP during fw-base build |
 | `patches/vllm.patch` | Patch applied to vLLM after install in fw-base |
