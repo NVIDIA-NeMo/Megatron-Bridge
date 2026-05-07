@@ -830,6 +830,7 @@ def calc_convergence_and_performance(
             )
         elif has_validation_failures:
             error_msg += f"\nNote: Memory metric ({max_reserved_metric}) is also missing from golden values,\n"
+            error_msg += "but it should only be added AFTER convergence and performance validations pass.\n"
         else:
             error_msg += f"\n📝 Memory metric ({max_reserved_metric}) is missing from golden values.\n"
             error_msg += "All other validations passed successfully.\n"
