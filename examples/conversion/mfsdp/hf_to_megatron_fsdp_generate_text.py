@@ -128,6 +128,8 @@ def _configure_model_provider(model_provider, tp: int, cp: int, ep: int) -> None
     model_provider.tensor_model_parallel_size = tp
     model_provider.context_parallel_size = cp
     model_provider.expert_model_parallel_size = ep
+    if cp > 1:
+        model_provider.calculate_per_token_loss = True
     model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
 
