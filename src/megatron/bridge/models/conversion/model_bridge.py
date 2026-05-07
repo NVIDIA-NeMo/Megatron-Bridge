@@ -1417,6 +1417,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if not isinstance(hf_pretrained, PretrainedConfig) and not has_hf_state:
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
 
+        # Stash for subclass hooks (e.g. ``maybe_modify_loaded_hf_weight``) that need access
+        # to the source HF config to disambiguate ambiguous tensor shapes.
+        self.hf_pretrained = hf_pretrained
+
         hf_keys: Optional[Iterable[str]] = hf_pretrained.state.source.get_all_keys() if has_hf_state else None
 
         mapping_registry = self.mapping_registry()
