@@ -254,13 +254,18 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
         return super().hf_to_megatron(hf_weights[global_expert_number], megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        # Megatron stores per-expert as (hidden, intermediate); HF down_proj is
-        # (E, intermediate, hidden). Transpose each per-expert tensor so the
-        # grouped-export stack assembles in HF's layout.
+        # Megatron stores per-expert weight as (hidden, intermediate); HF down_proj
+        # weight is (E, intermediate, hidden). Transpose the last two dims so the
+        # grouped-export stack assembles in HF's layout. Under EP the parent's gather
+        # may have already cat'd across the EP group, producing a 3D (ep_size, out, in)
+        # tensor — handle that too. The bias has no orientation to align (per-expert
+        # 1-D, stacked to (E, hidden) on export), so leave bias mappings untouched.
         if megatron_weights is not None:
             megatron_weights = megatron_weights.contiguous()
         result = super().megatron_to_hf(megatron_weights, megatron_module)
-        return {k: v.t().contiguous() if v.ndim == 2 else v for k, v in result.items()}
+        if self.hf_param.endswith("_bias"):
+            return result
+        return {k: v.transpose(-1, -2).contiguous() if v.ndim >= 2 else v for k, v in result.items()}
 
 
 class GPTOSSMLPGateUpProjMapping(AutoMapping):
