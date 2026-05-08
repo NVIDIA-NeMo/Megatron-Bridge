@@ -46,6 +46,9 @@ export, and a multi-GPU HF↔Megatron round-trip verification.
   tensors (regenerated from config on the HF side):
   `sound_encoder.encoder.feature_extractor.featurizer.{fb,window}` and
   `vision_model.radio_model.input_conditioner.{norm_mean,norm_std}`.
+  `--trust-remote-code` is also required for export because the exporter
+  loads the HF config, which references the custom modeling module shipped
+  with `NemotronH_Nano_Omni_Reasoning_V3`.
 - **Round-trip** loads HF → Megatron (TP=2, EP=2) and re-exports back to HF,
   diffing every tensor; all weights should match (✅) and the same 4
   expected-missing tensors are reported on re-export. The re-exported HF
@@ -83,6 +86,14 @@ modality combinations exercised by the model:
 The default assets are pulled automatically from the public HF model card
 ([`nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16`](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16/tree/main/media))
 on the first run — `curl` must be available.
+
+> **Video prerequisite:** the video paths (rows 2 and 4) sample frames via
+> [`decord`](https://github.com/dmlc/decord), which is not pulled in by any
+> pyproject extra. Install it before running those modes:
+>
+> ```bash
+> uv pip install decord
+> ```
 Override `IMAGE_PATH` / `VIDEO_PATH` / `AUDIO_PATH` with your own assets to
 use different inputs; omit `--megatron_model_path` (set `MEGATRON_PATH=""`)
 to convert HF → Megatron on the fly instead of reusing the imported
