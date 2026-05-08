@@ -52,11 +52,21 @@ then restores train_pgs — all without touching Megatron-Core or reloading weig
 
 How to Run
 ----------
-# 8 GPUs: TP2 x PP2 x CP_train=1 x CP_eval=2
+# 8 GPUs: TP2 x PP2 x CP_train=1 x CP_eval=2 (default; shows bubble-shrink win)
 uv run python -m torch.distributed.run --nproc_per_node=8 \\
     examples/decentralized_pg/pretrain_qwen3_eval_cp.py
 
-# 4 GPUs: TP2 x PP1 x CP_train=1 x CP_eval=2
+# 8 GPUs, longer seq for the cleanest Step 7b speedup demo (~1.78x at PP=2):
+uv run python -m torch.distributed.run --nproc_per_node=8 \\
+    examples/decentralized_pg/pretrain_qwen3_eval_cp.py \\
+    --num-layers 8 --seq-length 16384
+
+# 8 GPUs at PP=4 (largest bubble win, ~1.88x):
+uv run python -m torch.distributed.run --nproc_per_node=8 \\
+    examples/decentralized_pg/pretrain_qwen3_eval_cp.py \\
+    --tp-size 1 --pp-size 4 --num-layers 8 --seq-length 16384
+
+# 4 GPUs: TP2 x PP1 x CP_train=1 x CP_eval=2 (no bubble; expect Step 7b regression)
 uv run python -m torch.distributed.run --nproc_per_node=4 \\
     examples/decentralized_pg/pretrain_qwen3_eval_cp.py \\
     --tp-size 2 --pp-size 1 --cp-train 1 --cp-eval 2
@@ -554,8 +564,19 @@ def main() -> None:
             pg_collection=eval_pgs,
         )
 
-    loss_cp_train = float(loss_cp_train_dict["lm loss"].item())
-    loss_cp_eval = float(loss_cp_eval_dict["lm loss"].item())
+    # Under PP > 1 only the last PP stage receives the reduced loss dict; broadcast
+    # the scalar across the PP group so every rank can run the assertion.
+    def _bcast_loss(loss_dict: dict, pp_group) -> float:
+        if loss_dict and "lm loss" in loss_dict:
+            t = loss_dict["lm loss"].detach().to(torch.float32).cuda()
+        else:
+            t = torch.zeros((), dtype=torch.float32, device="cuda")
+        last_pp_rank = torch.distributed.get_global_rank(pp_group, torch.distributed.get_world_size(pp_group) - 1)
+        torch.distributed.broadcast(t, src=last_pp_rank, group=pp_group)
+        return float(t.item())
+
+    loss_cp_train = _bcast_loss(loss_cp_train_dict, train_pgs.pp)
+    loss_cp_eval = _bcast_loss(loss_cp_eval_dict, eval_pgs.pp)
     abs_diff = abs(loss_cp_train - loss_cp_eval)
     rel_diff = abs_diff / max(abs(loss_cp_train), 1e-8)
     tol = 5e-3  # bf16 ring-attention numerical tolerance
@@ -578,14 +599,27 @@ def main() -> None:
     # layout. Warmup iterations let TE compile lazily-built kernels and NCCL
     # establish channels.
     #
-    # IMPORTANT — what this measures and what it does NOT:
-    #   This benchmark captures per-eval-iter wall time, which is dominated by
-    #   per-rank compute (≈T/CP) and CP communication overhead. It does NOT
-    #   capture the dominant term in the 2.3x analytical estimate, which is the
-    #   reduction in pipeline bubble at PP > 1 (see eval_cp_plan.md). With PP=1
-    #   here, you should expect CP=2 to be modestly slower or modestly faster
-    #   than CP=1 depending on whether CP comm hides behind compute on this
-    #   model size — not a 2x win.
+    # What this measures:
+    #   Per-eval-iter wall time, which folds together (a) per-rank compute (≈T/CP),
+    #   (b) CP comm overhead, and (c) at PP > 1 the pipeline-bubble fraction. With
+    #   GBS fixed and DP_eval = DP_train / (CP_eval/CP_train), CP_eval > CP_train
+    #   produces more microbatches per evaluate() schedule and shrinks the bubble
+    #   fraction (P-1)/(M+P-1).
+    #
+    # Observed on 8xH100 (Qwen3-4B downsized, GBS=4, MBS=1, CP_train=1, CP_eval=2,
+    # cf. PR #3755 step-7b microbench):
+    #   seq=1024,  layers=4, TP=2 PP=1:  CP=1  8.9 ms vs CP=2 12.4 ms -> 0.72x
+    #     (regression: short-seq, no bubble; CP comm doesn't hide)
+    #   seq=8192,  layers=8, TP=2 PP=1:  CP=1 26.3 ms vs CP=2 21.3 ms -> 1.23x
+    #   seq=8192,  layers=8, TP=2 PP=2:  CP=1 39.5 ms vs CP=2 32.2 ms -> 1.23x
+    #   seq=8192,  layers=8, TP=1 PP=4:  CP=1 53.1 ms vs CP=2 32.3 ms -> 1.64x
+    #   seq=16384, layers=8, TP=2 PP=2:  CP=1 82.5 ms vs CP=2 46.5 ms -> 1.78x
+    #   seq=16384, layers=8, TP=1 PP=4:  CP=1 117.7 ms vs CP=2 62.8 ms -> 1.88x
+    #
+    # Two compounding effects drive the win: (i) Flash-Attention is O(N^2) in
+    # compute but O(N) in CP comm, so halving per-rank seq saves > 2x of the
+    # per-micro time, and (ii) at PP > 1 the bubble shrinks because M doubles.
+    # Short-seq + PP=1 is the only regime that regresses.
     print_rank_0("\n" + "=" * 70)
     print_rank_0("Step 7b: Per-eval-iter wall time benchmark (same fixed batch)")
     print_rank_0("=" * 70)
@@ -658,9 +692,9 @@ def main() -> None:
         f"mean {speedup_mean:.2f}x  median {speedup_median:.2f}x"
     )
     print_rank_0(
-        f"  Note: PP={args.pp_size} here. The 2.3x analytical estimate in the docstring assumes\n"
-        f"  PP=4 with the bubble-shrink term included; this microbenchmark only captures\n"
-        f"  per-iter compute scaling vs CP comm overhead."
+        f"  Note: PP={args.pp_size}, seq={args.seq_length}. Speedup grows with both larger seq\n"
+        f"  (attention is O(N^2)) and larger PP (smaller bubble fraction at higher M); see the\n"
+        f"  per-shape numbers in the Step 7b docstring."
     )
 
     # =========================================================================
