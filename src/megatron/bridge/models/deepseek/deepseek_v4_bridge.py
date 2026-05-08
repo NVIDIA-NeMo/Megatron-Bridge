@@ -12,7 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bridge for DeepSeek-V4 (and V4-Flash).
+"""Bridge for DeepSeek-V4 family.
+
+Numerical parity verified for ``DeepSeek-V4-Flash`` only (last-token logit
+cosine ~0.935 vs official inference, 2026-05-07).
+
+``DeepSeek-V4-Flash-Base``, ``DeepSeek-V4-Pro``, and ``DeepSeek-V4-Pro-Base``
+share the same ``DeepseekV4ForCausalLM`` architecture and use the same FP8
+or FP8+MXFP4 dispatch; the bridge derives all dimension- and layer-dependent
+fields from the HF config (no hardcoded Flash sizes). They are expected to
+import without code changes, but end-to-end logit parity has not been
+measured. Do not assume parity until smoke-tested.
 
 Checkpoint format notes
 -----------------------
@@ -30,9 +40,22 @@ HuggingFace Transformers naming conventions:
   - hc_head_fn / hc_head_base / hc_head_scale            (global HC head, learned output contraction)
   - mtp.N.*                                               (MTP layers)
 
-All linear weights are FP8 (float8_e4m3fn) with per-128×128-block scales
-stored as float8_e8m0fnu alongside each weight tensor.  The bridge
-dequantises them to bfloat16 during import.
+Quantisation schemes
+--------------------
+Two on-disk formats coexist in this family. The bridge dispatches purely on
+tensor dtype, so the same code path handles both:
+
+  Released variant     Attn / shared experts     Routed experts
+  -------------------  ------------------------  ----------------------------
+  Flash (post-trained) FP8_E4M3 + F8_E8M0 (...)  MXFP4 packed I8 + F8_E8M0
+  Flash-Base / Pro /   FP8_E4M3 + F32  (...)     FP8_E4M3 + F32 (...)
+  Pro-Base (raw)
+
+All scale tensors are 128x128 block-tile geometry (scale.shape[i] == ceil(weight.shape[i]/128))
+except the MXFP4 expert path, where scale is per-row over 32-element K-tiles.
+``maybe_modify_loaded_hf_weight`` flattens both F8_E8M0 and F32 scales to
+F32 via ``.to(torch.float32)`` and selects the tile expansion automatically.
+All weights are dequantised to bfloat16 during import.
 
 MoE router note
 ---------------
@@ -204,62 +227,6 @@ _FP4_E2M1_TABLE = torch.tensor(
     [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0],
     dtype=torch.float32,
 )
-
-
-class _MTPEHProjMapping(ColumnParallelMapping):
-    """Map Megatron's single concatenated eh_proj (ColumnParallelLinear) to
-    V4's separate e_proj + h_proj.
-
-    V4 MTP:      out = e_proj(enorm(embed)) + h_proj(hnorm(hidden))
-    Megatron MTP: out = eh_proj(cat(enorm(embed), hnorm(hidden), dim=-1))
-
-    These are mathematically equivalent when:
-        eh_proj.weight = cat(e_proj.weight, h_proj.weight, dim=1)
-
-    eh_proj is a ColumnParallelLinear:
-      - full weight:       (hidden, 2*hidden)
-      - each TP rank gets: (hidden // TP, 2*hidden)  (split along rows)
-
-    Import: cat(e, h, dim=1) -> (hidden, 2*hidden), ColumnParallel scatter along dim=0
-    Export: ColumnParallel gather along dim=0 -> (hidden, 2*hidden), split on dim=1
-    """
-
-    def __init__(self, megatron_eh: str, hf_e: str, hf_h: str):
-        # dict hf_param causes the load loop to fetch both tensors
-        super().__init__(megatron_param=megatron_eh, hf_param={"e": hf_e, "h": hf_h})
-        self._hf_e = hf_e
-        self._hf_h = hf_h
-
-    def hf_to_megatron(
-        self,
-        hf_weights: Dict[str, torch.Tensor],
-        megatron_module,
-    ) -> torch.Tensor:
-        e = hf_weights["e"]  # (hidden, hidden)
-        h = hf_weights["h"]  # (hidden, hidden)
-        eh = torch.cat([e, h], dim=1)  # (hidden, 2*hidden)
-        # ColumnParallelMapping splits eh along dim=0 and scatters to TP ranks
-        return ColumnParallelMapping.hf_to_megatron(self, eh, megatron_module)
-
-    def megatron_to_hf(
-        self,
-        megatron_weights,
-        megatron_module,
-    ) -> Dict[str, torch.Tensor]:
-        # Broadcast from owning PP rank
-        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=self._hf_e)
-        if megatron_weights is None:
-            return {}
-        megatron_weights = self.maybe_dequantize(megatron_weights)
-        # Gather TP shards along dim=0 -> full (hidden, 2*hidden)
-        if self.tp_size == 1:
-            full_weights = megatron_weights
-        else:
-            gathered = self.gather_from_tp_ranks(megatron_weights)
-            full_weights = torch.cat(gathered, dim=0)
-        # Split back into e and h along dim=1
-        e, h = full_weights.chunk(2, dim=1)
-        return {self._hf_e: e, self._hf_h: h}
 
 
 class _ReplicatedOptional(ReplicatedMapping):
@@ -810,8 +777,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 (f"{mg_pfx}.mtp_model_layer.self_attention_hyper_connection.bias", f"{ck_pfx}.hc_attn_base"),
                 (f"{mg_pfx}.mtp_model_layer.mlp_hyper_connection.mapping_proj.weight", f"{ck_pfx}.hc_ffn_fn"),
                 (f"{mg_pfx}.mtp_model_layer.mlp_hyper_connection.bias", f"{ck_pfx}.hc_ffn_base"),
-                # MTP HC head
-                # MTP HC head: not mapped yet (MTP disabled for inference via disable_mtp_for_inference)
+                # Per-MTP-layer HC head (output contraction); mirrors decoder.hc_head_* mappings.
+                (f"{mg_pfx}.hc_head_fn", f"{ck_pfx}.hc_head_fn"),
+                (f"{mg_pfx}.hc_head_base", f"{ck_pfx}.hc_head_base"),
+                (f"{mg_pfx}.hc_head_scale", f"{ck_pfx}.hc_head_scale"),
             ]
             for mg, hf in _mtp_plain:
                 mappings.append(AutoMapping(mg, hf))
@@ -832,14 +801,13 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 )
             )
 
-            # MTP e_proj + h_proj → eh_proj (mathematical equivalence via concatenation)
-            mappings.append(
-                _MTPEHProjMapping(
-                    megatron_eh=f"{mg_pfx}.eh_proj.weight",
-                    hf_e=f"{ck_pfx}.e_proj.weight",
-                    hf_h=f"{ck_pfx}.h_proj.weight",
-                )
-            )
+            # MTP e_proj + h_proj — post-#4518 the MTP layer with hyper-connections holds two
+            # separate ColumnParallelLinear projections (eh_proj is None when enable_hyper_connections).
+            # AutoMapping auto-detects ColumnParallelLinear and shards along dim 0.
+            mappings += [
+                AutoMapping(f"{mg_pfx}.e_proj.weight", f"{ck_pfx}.e_proj.weight"),
+                AutoMapping(f"{mg_pfx}.h_proj.weight", f"{ck_pfx}.h_proj.weight"),
+            ]
 
             # MTP gated MLP (routed experts + shared expert)
             mappings += [
