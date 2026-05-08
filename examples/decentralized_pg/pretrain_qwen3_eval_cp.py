@@ -70,7 +70,9 @@ Prerequisites
 
 import argparse
 import os
+import statistics
 import tempfile
+import time
 
 import torch
 import torch.distributed
@@ -568,6 +570,98 @@ def main() -> None:
             "Either eval-CP rebinding is broken, or the eval forward path is non-deterministic."
         )
     print_rank_0(f"  PASS: CP={args.cp_train} and CP={args.cp_eval} eval agree within {tol:.0e}")
+
+    # =========================================================================
+    # Step 7b: Quick benchmark — per-eval-iter wall time at each CP layout
+    # =========================================================================
+    # Times one full evaluate() call on the SAME fixed batch under each CP
+    # layout. Warmup iterations let TE compile lazily-built kernels and NCCL
+    # establish channels.
+    #
+    # IMPORTANT — what this measures and what it does NOT:
+    #   This benchmark captures per-eval-iter wall time, which is dominated by
+    #   per-rank compute (≈T/CP) and CP communication overhead. It does NOT
+    #   capture the dominant term in the 2.3x analytical estimate, which is the
+    #   reduction in pipeline bubble at PP > 1 (see eval_cp_plan.md). With PP=1
+    #   here, you should expect CP=2 to be modestly slower or modestly faster
+    #   than CP=1 depending on whether CP comm hides behind compute on this
+    #   model size — not a 2x win.
+    print_rank_0("\n" + "=" * 70)
+    print_rank_0("Step 7b: Per-eval-iter wall time benchmark (same fixed batch)")
+    print_rank_0("=" * 70)
+
+    def _bench_evaluate(
+        label: str,
+        pg_collection: ProcessGroupCollection,
+        p2p: P2PCommunicator,
+        warmup: int,
+        timed: int,
+    ) -> list[float]:
+        """Run evaluate() `warmup + timed` times and return the timed wall-times in seconds."""
+        for _ in range(warmup):
+            evaluate(
+                state=state,
+                forward_step_func=forward_step,
+                data_iterator=_CycleBatchIterator(fixed_batch),
+                model=model,
+                process_non_loss_data_func=None,
+                config=cfg,
+                verbose=False,
+                p2p_communicator=p2p,
+                pg_collection=pg_collection,
+            )
+        torch.cuda.synchronize()
+        torch.distributed.barrier()
+        times: list[float] = []
+        for _ in range(timed):
+            torch.cuda.synchronize()
+            torch.distributed.barrier()
+            t0 = time.perf_counter()
+            evaluate(
+                state=state,
+                forward_step_func=forward_step,
+                data_iterator=_CycleBatchIterator(fixed_batch),
+                model=model,
+                process_non_loss_data_func=None,
+                config=cfg,
+                verbose=False,
+                p2p_communicator=p2p,
+                pg_collection=pg_collection,
+            )
+            torch.cuda.synchronize()
+            times.append(time.perf_counter() - t0)
+        return times
+
+    bench_warmup = 3
+    bench_iters = 10
+
+    times_cp_train = _bench_evaluate(
+        f"CP={args.cp_train}", train_pgs, p2p_train, warmup=bench_warmup, timed=bench_iters
+    )
+    with eval_cp_context(model, eval_pgs, train_pgs):
+        times_cp_eval = _bench_evaluate(
+            f"CP={args.cp_eval}", eval_pgs, p2p_eval, warmup=bench_warmup, timed=bench_iters
+        )
+
+    def _stats(xs: list[float]) -> tuple[float, float, float]:
+        return statistics.mean(xs), statistics.median(xs), statistics.stdev(xs) if len(xs) > 1 else 0.0
+
+    mean_train, median_train, std_train = _stats(times_cp_train)
+    mean_eval, median_eval, std_eval = _stats(times_cp_eval)
+    speedup_mean = mean_train / mean_eval if mean_eval > 0 else float("nan")
+    speedup_median = median_train / median_eval if median_eval > 0 else float("nan")
+    print_rank_0(
+        f"  warmup={bench_warmup}, timed={bench_iters} iters per CP setting\n"
+        f"  CP={args.cp_train}: mean={mean_train * 1e3:.1f} ms  median={median_train * 1e3:.1f} ms  std={std_train * 1e3:.1f} ms\n"
+        f"  CP={args.cp_eval}: mean={mean_eval * 1e3:.1f} ms  median={median_eval * 1e3:.1f} ms  std={std_eval * 1e3:.1f} ms\n"
+        f"  observed wall-time ratio CP={args.cp_train}/CP={args.cp_eval}: "
+        f"mean {speedup_mean:.2f}x  median {speedup_median:.2f}x"
+    )
+    print_rank_0(
+        f"  Note: PP={args.pp_size} here. The 2.3x analytical estimate in the docstring assumes\n"
+        f"  PP=4 with the bubble-shrink term included; this microbenchmark only captures\n"
+        f"  per-iter compute scaling vs CP comm overhead."
+    )
 
     # =========================================================================
     # Step 7: Interleaved train + eval, switching CP groups every iteration
