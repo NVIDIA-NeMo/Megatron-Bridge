@@ -73,6 +73,9 @@ class MockModelConfig:
     linear_value_head_dim: int = 128
     linear_num_key_heads: int = 16
     linear_num_value_heads: int = 48
+    # Hyper-Connections (mHC) — DSv4
+    enable_hyper_connections: bool = False
+    num_residual_streams: int = 4
 
     def __post_init__(self):
         import torch.nn.functional as F
@@ -1053,4 +1056,83 @@ class TestSlidingWindowAttentionFlops:
         flops_all_swa = num_floating_point_operations(cfg_all_swa, batch_size=batch_size)
         assert flops_all_swa < flops_full, (
             "window_size set with skip_freq=None should make all layers SWA (fewer FLOPs)"
+        )
+
+
+class TestHyperConnectionsFlops:
+    """Unit tests for the Hyper-Connections (mHC) FLOPs term, e.g. for DeepSeek V4."""
+
+    def _base_config(self, **overrides):
+        defaults = dict(
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=2048,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        defaults.update(overrides)
+        return MockModelConfig(**defaults)
+
+    def test_hc_flops_increase_when_enabled(self):
+        """Enabling hyper-connections must increase total FLOPs."""
+        cfg_off = MockConfigContainer(model=self._base_config(enable_hyper_connections=False))
+        cfg_on = MockConfigContainer(model=self._base_config(enable_hyper_connections=True))
+        flops_off = num_floating_point_operations(cfg_off, batch_size=1)
+        flops_on = num_floating_point_operations(cfg_on, batch_size=1)
+        assert flops_on > flops_off, "HC-enabled FLOPs should exceed HC-disabled baseline"
+
+    def test_hc_exact_overhead(self):
+        """The HC contribution must equal 3 * 2 * num_layers * 2 * H^2 * num_streams * batch * seq."""
+        batch_size = 1
+        num_layers = 4
+        hidden_size = 1024
+        seq_length = 2048
+        num_streams = 4
+
+        cfg_off = MockConfigContainer(
+            model=self._base_config(
+                num_layers=num_layers,
+                hidden_size=hidden_size,
+                seq_length=seq_length,
+                enable_hyper_connections=False,
+            )
+        )
+        cfg_on = MockConfigContainer(
+            model=self._base_config(
+                num_layers=num_layers,
+                hidden_size=hidden_size,
+                seq_length=seq_length,
+                enable_hyper_connections=True,
+                num_residual_streams=num_streams,
+            )
+        )
+
+        flops_off = num_floating_point_operations(cfg_off, batch_size=batch_size)
+        flops_on = num_floating_point_operations(cfg_on, batch_size=batch_size)
+        delta = flops_on - flops_off
+
+        # HC term per token = 3 * 2 * num_layers * (2 * H^2 * num_streams)
+        # Total = batch * seq * (per-token term)
+        expected = batch_size * seq_length * (3 * 2 * num_layers * 2 * hidden_size * hidden_size * num_streams)
+        assert delta == expected, f"HC overhead delta {delta} != expected {expected}"
+
+    def test_hc_scales_with_residual_streams(self):
+        """Doubling num_residual_streams must double the HC contribution."""
+        cfg_off = MockConfigContainer(model=self._base_config(enable_hyper_connections=False))
+        cfg_4 = MockConfigContainer(model=self._base_config(enable_hyper_connections=True, num_residual_streams=4))
+        cfg_8 = MockConfigContainer(model=self._base_config(enable_hyper_connections=True, num_residual_streams=8))
+        delta_4 = num_floating_point_operations(cfg_4, batch_size=1) - num_floating_point_operations(
+            cfg_off, batch_size=1
+        )
+        delta_8 = num_floating_point_operations(cfg_8, batch_size=1) - num_floating_point_operations(
+            cfg_off, batch_size=1
+        )
+        assert delta_8 == 2 * delta_4, (
+            f"HC FLOPs should be linear in num_residual_streams; got delta_4={delta_4}, delta_8={delta_8}"
         )
