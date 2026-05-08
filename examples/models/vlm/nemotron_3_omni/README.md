@@ -33,70 +33,9 @@ The scripts expect the following layout:
 - `${WORKSPACE}/assets/` — image / video / audio files used for `inference.sh` (auto-downloaded from the public HF model card on first run)
 - `${WORKSPACE}/results/` — training outputs (checkpoints, tensorboard logs)
 
-## Day-0 Code
-
-Use the NeMo 26.04 container as the base image: `nvcr.io/nvidia/nemo:26.04`.
-
-The Day-0 code lives on the following public branches:
-
-| Repo | Branch | Remote |
-|---|---|---|
-| Megatron-Bridge | [`nemotron_3_omni`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nemotron_3_omni) | `https://github.com/NVIDIA-NeMo/Megatron-Bridge.git` |
-| Megatron-LM (submodule at `3rdparty/Megatron-LM`) | [`nemotron_3_omni`](https://github.com/NVIDIA/Megatron-LM/tree/nemotron_3_omni) | `https://github.com/NVIDIA/Megatron-LM.git` |
-
-```bash
-cd $WORKSPACE
-git clone -b nemotron_3_omni https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
-cd Megatron-Bridge
-git submodule update --init --recursive --depth 1
-uv lock
-uv sync
-```
-
-The `.gitmodules` already points the `3rdparty/Megatron-LM` submodule at
-`https://github.com/NVIDIA/Megatron-LM.git`, and the recorded gitlink is
-the tip of its `nemotron_3_omni` branch — `git submodule update --init
---recursive --depth 1` checks it out as a shallow clone automatically; no
-extra remote/fetch step needed. The `--depth 1` flag dramatically reduces
-clone time and disk usage (avoids fetching Megatron-LM's full history).
-`uv lock` regenerates `uv.lock` so `megatron-core` resolves to the cloned
-`3rdparty/Megatron-LM/` submodule rather than any pre-installed copy from
-the container. `uv sync` then materializes the resulting environment.
-
-> **`uv lock && uv sync` are mandatory before running any script in this
-> repo.** The `uv.lock` in this repo pins `flashinfer-python==0.6.8.post1`
-> to match the `flashinfer-cubin` pre-installed in the NeMo container.
-> Skipping `uv sync` will leave a stale version installed, producing:
-> ```
-> RuntimeError: flashinfer-cubin version (0.6.8.post1) does not match flashinfer version (X).
-> ```
-> Re-run `uv sync` from `$WORKSPACE/Megatron-Bridge` to resolve it.
-
-Verify that `megatron.core` and `megatron.bridge` resolve to the cloned
-checkout (and not a pre-installed copy from the container):
-
-```bash
-uv run python -c "
-import megatron.core, megatron.bridge
-print('core:', megatron.core.__path__)
-print('bridge:', megatron.bridge.__path__)
-"
-```
-
-Expected output (replace `$WORKSPACE` with your actual value, e.g. `/workspace`):
-
-```
-core: ['$WORKSPACE/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core']
-bridge: ['$WORKSPACE/Megatron-Bridge/src/megatron/bridge']
-```
-
-If either path points elsewhere (e.g. a site-packages location inside
-the container), `uv` is resolving against a stale environment — re-run
-`uv sync` from `$WORKSPACE/Megatron-Bridge` before continuing.
-
 ## Checkpoint Conversion
 
-[conversion.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/conversion.sh) covers HF → Megatron import, Megatron → HF
+[conversion.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/nemotron_3_omni/conversion.sh) covers HF → Megatron import, Megatron → HF
 export, and a multi-GPU HF↔Megatron round-trip verification.
 
 - **Import** writes `iter_0000000/`, `latest_train_state.pt`, and
@@ -130,7 +69,7 @@ bash examples/models/vlm/nemotron_3_omni/conversion.sh
 
 ## Inference
 
-[inference.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/inference.sh) drives
+[inference.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/nemotron_3_omni/inference.sh) drives
 `examples/conversion/hf_to_megatron_generate_nemotron_omni.py` over the four
 modality combinations exercised by the model:
 
@@ -214,8 +153,8 @@ base config. Recipe base: `nemotron_omni_cord_v2_*_config` in
 
 | Mode | Script | Recipe |
 |---|---|---|
-| Full SFT | [slurm_sft_cord_v2.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_sft_cord_v2.sh) | `nemotron_omni_cord_v2_sft_config` |
-| LoRA | [slurm_peft_cord_v2.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_peft_cord_v2.sh) | `nemotron_omni_cord_v2_peft_config` |
+| Full SFT | [slurm_sft_cord_v2.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/nemotron_3_omni/slurm_sft_cord_v2.sh) | `nemotron_omni_cord_v2_sft_config` |
+| LoRA | [slurm_peft_cord_v2.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/nemotron_3_omni/slurm_peft_cord_v2.sh) | `nemotron_omni_cord_v2_peft_config` |
 
 Parallelism (both): TP=2, EP=8, CP=1, MBS=2, GBS=16, packed sequences,
 selective recompute. LoRA targets `linear_qkv`, `linear_proj`, `in_proj`,
@@ -244,8 +183,8 @@ uv run python examples/models/vlm/nemotron_3_omni/data/build_valor32k_avqa_shard
 
 | Mode | Script | Recipe |
 |---|---|---|
-| Full SFT | [slurm_sft_valor32k_avqa.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_sft_valor32k_avqa.sh) | `nemotron_omni_valor32k_sft_config` |
-| LoRA | [slurm_peft_valor32k_avqa.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_peft_valor32k_avqa.sh) | `nemotron_omni_valor32k_peft_config` |
+| Full SFT | [slurm_sft_valor32k_avqa.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/nemotron_3_omni/slurm_sft_valor32k_avqa.sh) | `nemotron_omni_valor32k_sft_config` |
+| LoRA | [slurm_peft_valor32k_avqa.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/nemotron_3_omni/slurm_peft_valor32k_avqa.sh) | `nemotron_omni_valor32k_peft_config` |
 
 Parallelism (both): TP=2, EP=8, CP=1, MBS=2, packed sequences, selective
 recompute. SFT uses GBS=16 and the recipe-default LR; LoRA uses GBS=64 and
@@ -268,8 +207,8 @@ finetuned Megatron checkpoint on the same datasets used for training:
 
 | Dataset | Script | Output |
 |---|---|---|
-| CORD-V2 | [cord_v2_inference.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/cord_v2_inference.py) | JSON of `{prompt, gold, prediction}` per sample plus image bytes for eyeballing |
-| VALOR32K-AVQA | [valor32k_avqa_inference.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/valor32k_avqa_inference.py) | Per-sample predictions and an aggregate multiple-choice accuracy |
+| CORD-V2 | [cord_v2_inference.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/nemotron_3_omni/cord_v2_inference.py) | JSON of `{prompt, gold, prediction}` per sample plus image bytes for eyeballing |
+| VALOR32K-AVQA | [valor32k_avqa_inference.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/nemotron_3_omni/valor32k_avqa_inference.py) | Per-sample predictions and an aggregate multiple-choice accuracy |
 
 Example invocations (8 GPUs, single node). The slurm scripts tag
 `OUTPUT_DIR` with the run config (`<recipe>_<sft|lora>_<RUN_TAG>`, where
