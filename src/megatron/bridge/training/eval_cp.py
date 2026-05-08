@@ -78,29 +78,38 @@ def install_pg_collection(
         _rotary_cls = ()
 
     cp_group = target.cp
+    cp_size = cp_group.size()
     cp_ranks = torch.distributed.get_process_group_ranks(cp_group)
 
-    for module in _iter_all_modules(model):
-        # RotaryEmbedding has a cp_group attribute but is intentionally skipped:
-        # the embedding-level sequence scatter at eval time produces a per-rank
-        # input of seq/(tp*cp_eval) tokens. After QKV's AllGather across TP, the
-        # query has shape [seq/cp_eval, batch, heads, head_dim]. RoPE freqs are
-        # computed at rotary_seq_len = seq/cp_eval (get_rotary_seq_len multiplies
-        # by tp_size and the config's cp_size, not the actual eval cp_size).
-        # Pre-slicing freqs by eval cp here would double-shard them — a shape
-        # mismatch in _apply_rotary_pos_emb_bshd. Clear the @lru_cache so the
-        # next forward recomputes against the current state.
-        if _rotary_cls and isinstance(module, _rotary_cls):
-            if hasattr(module, "forward") and hasattr(module.forward, "cache_clear"):
-                module.forward.cache_clear()
-            continue
+    # Mutate the (shared) TransformerConfig.context_parallel_size so that
+    # RotaryEmbedding.get_rotary_seq_len computes rotary_seq_len against the
+    # *live* CP degree. This is the single runtime read of config.cp on the
+    # standard GPT eval path; init-time reads (TEDotProductAttention,
+    # TransformerLayer, etc.) and CUDA-graph-only reads are not affected.
+    # Since install_pg_collection is called both on enter (eval_pgs) and exit
+    # (train_pgs) by eval_cp_context, the original value is restored implicitly.
+    chunks = model if isinstance(model, list) else [model]
+    for chunk in chunks:
+        cfg = getattr(chunk, "config", None)
+        if cfg is not None and hasattr(cfg, "context_parallel_size"):
+            cfg.context_parallel_size = cp_size
 
+    for module in _iter_all_modules(model):
         if hasattr(module, "pg_collection"):
             module.pg_collection = target
 
         for attr, pg_key in _GROUP_ATTRS.items():
             if hasattr(module, attr):
                 setattr(module, attr, getattr(target, pg_key, None))
+
+        # RotaryEmbedding caches forward(max_seq_len, offset, packed_seq, cp_group)
+        # via @lru_cache. The cp_group has just been swapped via _GROUP_ATTRS,
+        # but cached entries keyed on the previous cp_group would still be
+        # returned for the same rotary_seq_len. Clear so the next call
+        # recomputes against the current self.cp_group.
+        if _rotary_cls and isinstance(module, _rotary_cls):
+            if hasattr(module, "forward") and hasattr(module.forward, "cache_clear"):
+                module.forward.cache_clear()
 
         if _te_dpa_cls is not None and isinstance(module, _te_dpa_cls):
             # Lazily create the class-level CP stream if needed (created by TE the

@@ -77,13 +77,14 @@ import torch.distributed
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.hyper_comm_grid import HyperCommGrid
 from megatron.core.num_microbatches_calculator import init_num_microbatches_calculator
+from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.utils import get_model_config, get_pg_rank
 
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.models import AutoBridge
-from megatron.bridge.training.checkpointing import DefaultCheckpointManager
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -97,13 +98,14 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.eval import evaluate_and_print_results
+from megatron.bridge.training.eval import evaluate
 from megatron.bridge.training.eval_cp import eval_cp_context
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-from megatron.bridge.training.train import train
+from megatron.bridge.training.train import train_step
+from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
@@ -113,7 +115,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tp-size", type=int, default=2, help="Tensor parallel size")
     parser.add_argument("--pp-size", type=int, default=2, help="Pipeline parallel size")
     parser.add_argument("--cp-train", type=int, default=1, help="Training CP degree")
-    parser.add_argument("--cp-eval", type=int, default=2, help="Eval CP degree (must be > cp-train)")
+    parser.add_argument(
+        "--cp-eval",
+        type=int,
+        default=2,
+        help="Eval CP degree (must differ from cp-train; both directions are supported)",
+    )
     parser.add_argument("--num-layers", type=int, default=4, help="Number of transformer layers")
     parser.add_argument("--seq-length", type=int, default=1024, help="Sequence length")
     parser.add_argument("--train-iters", type=int, default=5, help="Training iterations before eval")
@@ -262,10 +269,13 @@ def main() -> None:
     initialize_torch_distributed()
     world_size = torch.distributed.get_world_size()
 
-    if args.cp_eval <= args.cp_train:
-        raise ValueError(f"cp-eval ({args.cp_eval}) must be > cp-train ({args.cp_train})")
-    if args.seq_length % (2 * args.cp_eval) != 0:
-        raise ValueError(f"seq_length ({args.seq_length}) must be divisible by 2*cp_eval ({2 * args.cp_eval})")
+    if args.cp_eval == args.cp_train:
+        raise ValueError(f"cp-eval ({args.cp_eval}) must differ from cp-train ({args.cp_train})")
+    max_cp = max(args.cp_train, args.cp_eval)
+    if args.seq_length % (2 * max_cp) != 0:
+        raise ValueError(
+            f"seq_length ({args.seq_length}) must be divisible by 2*max(cp_train, cp_eval) ({2 * max_cp})"
+        )
     if args.num_layers % args.pp_size != 0:
         raise RuntimeError(f"num_layers ({args.num_layers}) must be divisible by pp_size ({args.pp_size})")
 
@@ -469,88 +479,172 @@ def main() -> None:
     )
 
     # =========================================================================
-    # Step 7: Train (auto-eval is disabled; eval_interval > train_iters)
+    # Step 7a: Verification — same fixed batch through CP=cp_train and CP=cp_eval.
     # =========================================================================
-    print_rank_0(f"\n--- Step 7: Training for {args.train_iters} iterations (CP_train={args.cp_train}) ---")
-    checkpoint_manager = DefaultCheckpointManager(checkpoint_config=cfg.checkpoint)
-    train(
+    # The two evals must agree to ~bf16 precision. We sidestep the data iterator
+    # entirely (DP_train != DP_eval would otherwise feed different shards) and
+    # construct one rank-identical batch deterministically.
+    print_rank_0("\n" + "=" * 70)
+    print_rank_0(f"Step 7a: Verifying CP={args.cp_train} eval vs CP={args.cp_eval} eval on the SAME fixed batch")
+    print_rank_0("=" * 70)
+
+    def _make_fixed_batch(seed: int, batch_size: int, seq_length: int, vocab_size: int) -> dict:
+        gen = torch.Generator(device="cpu").manual_seed(seed)
+        tokens = torch.randint(0, vocab_size, (batch_size, seq_length), generator=gen, dtype=torch.int64)
+        labels = torch.cat([tokens[:, 1:], torch.zeros((batch_size, 1), dtype=torch.int64)], dim=1)
+        return {
+            "tokens": tokens.cuda(non_blocking=True),
+            "labels": labels.cuda(non_blocking=True),
+            "loss_mask": torch.ones((batch_size, seq_length), dtype=torch.float32).cuda(non_blocking=True),
+            "position_ids": torch.arange(seq_length, dtype=torch.int64)
+            .unsqueeze(0)
+            .expand(batch_size, -1)
+            .contiguous()
+            .cuda(non_blocking=True),
+            "attention_mask": None,
+        }
+
+    class _CycleBatchIterator:
+        """Yields deep copies of a single batch forever."""
+
+        def __init__(self, batch: dict):
+            self._batch = batch
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return {k: (v.clone() if isinstance(v, torch.Tensor) else v) for k, v in self._batch.items()}
+
+    fixed_batch = _make_fixed_batch(
+        seed=42,
+        batch_size=args.micro_batch_size,
+        seq_length=args.seq_length,
+        vocab_size=tokenizer.vocab_size,
+    )
+    p2p_train = P2PCommunicator(pp_group=train_pgs.pp, config=model_config)
+    p2p_eval = P2PCommunicator(pp_group=eval_pgs.pp, config=model_config)
+
+    # Run eval with CP=cp_train (no rebinding) on the fixed batch
+    loss_cp_train_dict, _, _ = evaluate(
+        state=state,
         forward_step_func=forward_step,
+        data_iterator=_CycleBatchIterator(fixed_batch),
         model=model,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        train_data_iterator=train_data_iterator,
-        valid_data_iterator=valid_data_iterator,
-        global_state=state,
-        checkpoint_manager=checkpoint_manager,
+        process_non_loss_data_func=None,
+        config=cfg,
+        verbose=False,
+        p2p_communicator=p2p_train,
         pg_collection=train_pgs,
     )
 
-    torch.distributed.barrier()
-    print_rank_0("\nTraining complete.")
-
-    # =========================================================================
-    # Step 8: Baseline eval with train_pgs (CP_train)
-    # =========================================================================
-    print_rank_0("\n" + "=" * 60)
-    print_rank_0(f"Step 8: Baseline eval  (CP={args.cp_train}, train_pgs)")
-    print_rank_0("=" * 60)
-    evaluate_and_print_results(
-        state,
-        prefix=f"baseline CP={args.cp_train}",
-        forward_step_func=forward_step,
-        data_iterator=valid_data_iterator,
-        model=model,
-        config=model_config,  # TransformerConfig, same pattern as train.py
-        verbose=True,
-        write_to_tensorboard=False,
-        pg_collection=train_pgs,
-    )
-
-    # =========================================================================
-    # Step 9: Eval with eval_pgs (CP_eval) via eval_cp_context
-    # =========================================================================
-    print_rank_0("\n" + "=" * 60)
-    print_rank_0(f"Step 9: Eval-CP demo  (CP={args.cp_eval}, eval_pgs)")
-    print_rank_0("=" * 60)
-    print_rank_0(
-        "  eval_cp_context() rebinds all cached CP-group references on every\n"
-        "  module to eval_pgs, runs evaluation, then restores train_pgs.\n"
-    )
+    # Run eval with CP=cp_eval (eval_cp_context active) on the same fixed batch
     with eval_cp_context(model, eval_pgs, train_pgs):
-        evaluate_and_print_results(
-            state,
-            prefix=f"eval-CP CP={args.cp_eval}",
+        loss_cp_eval_dict, _, _ = evaluate(
+            state=state,
             forward_step_func=forward_step,
-            data_iterator=valid_data_iterator,
+            data_iterator=_CycleBatchIterator(fixed_batch),
             model=model,
-            config=model_config,
-            verbose=True,
-            write_to_tensorboard=False,
+            process_non_loss_data_func=None,
+            config=cfg,
+            verbose=False,
+            p2p_communicator=p2p_eval,
             pg_collection=eval_pgs,
         )
 
-    # =========================================================================
-    # Step 10: Post-restore eval to verify train_pgs was correctly reinstalled
-    # =========================================================================
-    print_rank_0("\n" + "=" * 60)
-    print_rank_0(f"Step 10: Verify restore  (CP={args.cp_train}, train_pgs)")
-    print_rank_0("=" * 60)
-    evaluate_and_print_results(
-        state,
-        prefix=f"post-restore CP={args.cp_train}",
-        forward_step_func=forward_step,
-        data_iterator=valid_data_iterator,
-        model=model,
-        config=model_config,
-        verbose=True,
-        write_to_tensorboard=False,
-        pg_collection=train_pgs,
+    loss_cp_train = float(loss_cp_train_dict["lm loss"].item())
+    loss_cp_eval = float(loss_cp_eval_dict["lm loss"].item())
+    abs_diff = abs(loss_cp_train - loss_cp_eval)
+    rel_diff = abs_diff / max(abs(loss_cp_train), 1e-8)
+    tol = 5e-3  # bf16 ring-attention numerical tolerance
+    print_rank_0(
+        f"  CP={args.cp_train} loss = {loss_cp_train:.6f}\n"
+        f"  CP={args.cp_eval} loss = {loss_cp_eval:.6f}\n"
+        f"  |Δ| = {abs_diff:.2e}  rel = {rel_diff:.2e}  (tolerance {tol:.0e})"
     )
+    if abs_diff > tol:
+        raise AssertionError(
+            f"Eval loss mismatch between CP={args.cp_train} and CP={args.cp_eval}: |Δ|={abs_diff:.4e} > {tol:.0e}. "
+            "Either eval-CP rebinding is broken, or the eval forward path is non-deterministic."
+        )
+    print_rank_0(f"  PASS: CP={args.cp_train} and CP={args.cp_eval} eval agree within {tol:.0e}")
+
+    # =========================================================================
+    # Step 7: Interleaved train + eval, switching CP groups every iteration
+    # =========================================================================
+    # For each iteration:
+    #   1. train_step() with train_pgs (CP=cp_train) — model in train mode
+    #   2. evaluate() inside eval_cp_context(eval_pgs) (CP=cp_eval) — model in eval mode
+    # eval_cp_context entry rebinds all CP groups + mutates config.cp to cp_eval;
+    # exit restores train_pgs and config.cp to cp_train. This stress-tests the
+    # rebinding by toggling between layouts every step.
+    print_rank_0("\n" + "=" * 70)
+    print_rank_0(
+        f"Step 7: Interleaved train (CP={args.cp_train}) + eval (CP={args.cp_eval})  for {args.train_iters} iterations"
+    )
+    print_rank_0("=" * 70)
+
+    forward_backward_func = get_forward_backward_func(
+        pp_size=train_pgs.pp.size(),
+        vp_size=cfg.model.virtual_pipeline_model_parallel_size,
+    )
+    # p2p_train, p2p_eval already constructed in Step 7a
+    # Bridge's forward_step takes (state, data_iterator, model); train_step / evaluate
+    # wrap it via prepare_forward_step_func so the inner forward-backward call sees
+    # the (data_iterator, model) signature it expects.
+    wrapped_forward_step = prepare_forward_step_func(forward_step, state)
+
+    for iteration in range(1, args.train_iters + 1):
+        # --- Train step (cp_train) ---
+        for chunk in model:
+            chunk.train()
+        train_loss_dict, *_ = train_step(
+            forward_step_func=wrapped_forward_step,
+            data_iterator=train_data_iterator,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            global_state=state,
+            pg_collection=train_pgs,
+            forward_backward_func=forward_backward_func,
+            p2p_communicator=p2p_train,
+        )
+        # Bridge's train_step bumps state.train_state.step internally; record it
+        # so the next train_step uses a fresh micro-batch counter.
+        state.train_state.step = iteration
+
+        # --- Eval step inside eval_cp_context (cp_eval) ---
+        with eval_cp_context(model, eval_pgs, train_pgs):
+            eval_loss_dict, _, _ = evaluate(
+                state=state,
+                forward_step_func=forward_step,
+                data_iterator=valid_data_iterator,
+                model=model,
+                process_non_loss_data_func=None,
+                config=cfg,
+                verbose=False,
+                p2p_communicator=p2p_eval,
+                pg_collection=eval_pgs,
+            )
+
+        # Reduced losses are tensors keyed by name; print just lm loss.
+        train_lm = float(train_loss_dict.get("lm loss", torch.tensor(float("nan"))).item())
+        eval_lm = (
+            float(eval_loss_dict["lm loss"].item()) if eval_loss_dict and "lm loss" in eval_loss_dict else float("nan")
+        )
+        print_rank_0(
+            f"  iter {iteration:>3d}/{args.train_iters}  "
+            f"train(CP={args.cp_train}) lm_loss={train_lm:.6f}  |  "
+            f"eval(CP={args.cp_eval}) lm_loss={eval_lm:.6f}"
+        )
+
+    torch.distributed.barrier()
 
     print_rank_0("\n" + "=" * 70)
-    print_rank_0("SUCCESS: Eval-time CP demo completed without errors.")
+    print_rank_0("SUCCESS: Eval-time CP live-switching demo completed without errors.")
     print_rank_0(
-        f"  Trained CP={args.cp_train}, evaluated CP={args.cp_eval}, confirmed restore with CP={args.cp_train}."
+        f"  Trained for {args.train_iters} iters (CP={args.cp_train}); "
+        f"ran eval inside eval_cp_context (CP={args.cp_eval}) every step."
     )
     print_rank_0("=" * 70)
 
