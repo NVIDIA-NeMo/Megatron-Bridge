@@ -228,6 +228,9 @@ class TestPackedChatEndToEnd:
         output = fill_packing_strategy(assignments, sequences, pack_size=max_seq_length, pad_id=0)
 
         assert len(output) == 1
-        # Each sample contributed 8 tokens to the pack (input_ids minus 1).
-        assert len(output[0]["input_ids"]) == 16
-        assert len(output[0]["loss_mask"]) == 16
+        # `create_hist` keys items by `len(input_ids) - 1` (8) but
+        # `fill_packing_strategy` writes the FULL padded input_ids (length 9)
+        # for each item in the assignment, so the packed pair has length 9+9=18.
+        # `loss_mask` is rolled by 1 (`x[1:] + [False]`), preserving the same length.
+        assert len(output[0]["input_ids"]) == 18
+        assert len(output[0]["loss_mask"]) == 18
