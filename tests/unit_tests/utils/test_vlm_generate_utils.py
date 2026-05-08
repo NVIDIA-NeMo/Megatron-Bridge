@@ -71,9 +71,7 @@ class TestProcessMultiImageInputs:
         with (
             mock.patch.object(vlm_generate_utils, "_HAS_QWEN_VL_UTILS", True),
             mock.patch.object(vlm_generate_utils, "load_image", load_image_mock),
-            mock.patch.object(
-                vlm_generate_utils, "process_vision_info", process_vision_info_mock, create=True
-            ),
+            mock.patch.object(vlm_generate_utils, "process_vision_info", process_vision_info_mock, create=True),
         ):
             input_ids, pixel_values, image_grid_thw = vlm_generate_utils.process_multi_image_inputs(
                 proc, ["/a.png", "/b.png"], "describe these"
@@ -92,9 +90,7 @@ class TestProcessMultiImageInputs:
         assert {"type": "image", "image": rgb_b} in contents
         assert {"type": "text", "text": "describe these"} in contents
 
-        proc.apply_chat_template.assert_called_once_with(
-            sent_messages, tokenize=False, add_generation_prompt=True
-        )
+        proc.apply_chat_template.assert_called_once_with(sent_messages, tokenize=False, add_generation_prompt=True)
         proc.assert_called_once_with(
             text=["TEMPLATED"],
             images="IMG_INPUTS",
@@ -123,9 +119,7 @@ class TestProcessMultiImageInputs:
         with (
             mock.patch.object(vlm_generate_utils, "_HAS_QWEN_VL_UTILS", True),
             mock.patch.object(vlm_generate_utils, "load_image", load_image_mock),
-            mock.patch.object(
-                vlm_generate_utils, "process_vision_info", return_value=([], []), create=True
-            ),
+            mock.patch.object(vlm_generate_utils, "process_vision_info", return_value=([], []), create=True),
         ):
             ids, px, grid = vlm_generate_utils.process_multi_image_inputs(proc, ["/x.png"], "p")
 
