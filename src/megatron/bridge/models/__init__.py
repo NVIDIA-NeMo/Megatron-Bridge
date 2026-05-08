@@ -230,10 +230,6 @@ __all__ = [
     "NemotronVLModel",
     "NemotronVLBridge",
     "NemotronNano12Bv2VLModelProvider",
-    # ASR Models
-    "Qwen3ASRBridge",
-    "Qwen3ASRModel",
-    "Qwen3ASRModelProvider",
     # Omni Models
     "Qwen25OmniModel",
     "Qwen25OmniBridge",
