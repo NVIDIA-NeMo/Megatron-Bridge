@@ -54,8 +54,6 @@ training/cpu-offloading.md
 training/peft.md
 training/packed-sequences.md
 training/multi-token-prediction.md
-training/distillation.md
-training/pruning.md
 training/callbacks.md
 ```
 
@@ -64,6 +62,8 @@ training/callbacks.md
 :hidden:
 
 modelopt/quantization.md
+modelopt/distillation.md
+modelopt/pruning.md
 ```
 
 ```{toctree}
