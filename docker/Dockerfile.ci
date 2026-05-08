@@ -103,7 +103,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     fi && \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
 
-RUN FLASHINFER_VER=$(uv pip show flashinfer 2>/dev/null | awk '/^Version:/{print $2}') && \
+RUN FLASHINFER_VER=$(uv pip show flashinfer-python 2>/dev/null | awk '/^Version:/{print $2}') && \
     if [ -n "$FLASHINFER_VER" ]; then \
         uv pip install --no-deps "flashinfer-cubin==${FLASHINFER_VER}"; \
     fi
