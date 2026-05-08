@@ -1133,15 +1133,15 @@ wheels = [
 
 [[package]]
 name = "flashinfer-cubin"
-version = "0.6.10.post1"
+version = "0.6.8.post1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/d9/88397a871c7251d27b1b64ca2802f64476cdda1aaa0fb2800c72a36f2ef8/flashinfer_cubin-0.6.10.post1-py3-none-any.whl", hash = "sha256:d29814169a3036b8f28cfa287c0580affee1e32b80ee0cb344dba7950c9bf534", size = 340440109, upload-time = "2026-05-07T10:44:09.121Z" },
+    { url = "https://files.pythonhosted.org/packages/11/b7/5e3b1a8c67031b421a8bd29c2bc29b900a550bb3392e8bda18bb15b5e476/flashinfer_cubin-0.6.8.post1-py3-none-any.whl", hash = "sha256:43636d4cd39e694a83d76a89f87fefcdf4cecb4c4f7dd22dac25ec368c1e901f", size = 295154113, upload-time = "2026-04-18T18:28:21.738Z" },
 ]
 
 [[package]]
 name = "flashinfer-python"
-version = "0.6.10.post1"
+version = "0.6.8.post1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apache-tvm-ffi" },
@@ -1159,9 +1159,9 @@ dependencies = [
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/db/ec/c1fba0ec75b603795a0655d8b6b23bca6a6c969bbe9be3939195bb9ff9b0/flashinfer_python-0.6.10.post1.tar.gz", hash = "sha256:3656064d74cc8f27e901e402379047a50bf0cc0f3f42c170a9f6b188f8d22392", size = 9061404, upload-time = "2026-05-07T10:43:57.873Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/1e/2760fef9e74abc4480961048e5790b4c9e955872fb4d7d97900cfddced5a/flashinfer_python-0.6.8.post1.tar.gz", hash = "sha256:b18e4121baf9b93fa9a9f368ba9b981a0342895f50ab9dddc224aeb964ed346f", size = 6675885, upload-time = "2026-04-18T18:28:13.299Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/05/b01611b0fd6e24bff49ad1c8efd0c9b55ea7ff360a6d7788b076a3e4aafe/flashinfer_python-0.6.10.post1-py3-none-any.whl", hash = "sha256:cb1872b392ed388b9e1a90bf1559aa54d787688f66667fc419952fb7e37e1bce", size = 13531621, upload-time = "2026-05-07T10:43:53.942Z" },
+    { url = "https://files.pythonhosted.org/packages/73/6d/1e8a8533913e33a50a486332ce0673f4fdb860f6eb9ed450327c5c1762cb/flashinfer_python-0.6.8.post1-py3-none-any.whl", hash = "sha256:818f9b8cc2fe66c42a1f6264be4841ac8821ada703685a02cfccb2b5124a710b", size = 9385316, upload-time = "2026-04-18T18:28:10.285Z" },
 ]
 
 [[package]]
@@ -2436,8 +2436,8 @@ requires-dist = [
     { name = "diffusers", specifier = ">=0.36.0" },
     { name = "einops" },
     { name = "flash-linear-attention" },
-    { name = "flashinfer-cubin", specifier = "==0.6.10.post1" },
-    { name = "flashinfer-python", specifier = "==0.6.10.post1" },
+    { name = "flashinfer-cubin", specifier = "==0.6.8.post1" },
+    { name = "flashinfer-python", specifier = "==0.6.8.post1" },
     { name = "hydra-core", specifier = ">1.3,<=1.3.2" },
     { name = "imageio" },
     { name = "imageio-ffmpeg" },
