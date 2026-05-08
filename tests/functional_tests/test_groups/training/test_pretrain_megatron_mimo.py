@@ -285,7 +285,6 @@ def _build_config(
         global_batch_size=1,
         train_iters=train_iters,
     )
-    train_cfg.num_microbatches = 1
 
     opt_config = OptimizerConfig(
         bf16=not deterministic,
