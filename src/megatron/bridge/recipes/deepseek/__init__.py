@@ -18,7 +18,9 @@ from .deepseek_v3 import (
 
 # DeepSeek V4
 from .deepseek_v4 import (
+    deepseek_v4_peft_config,
     deepseek_v4_pretrain_config,
+    deepseek_v4_sft_config,
 )
 
 
@@ -31,4 +33,6 @@ __all__ = [
     "deepseek_v3_pretrain_config_32nodes",
     # DeepSeek V4
     "deepseek_v4_pretrain_config",
+    "deepseek_v4_sft_config",
+    "deepseek_v4_peft_config",
 ]

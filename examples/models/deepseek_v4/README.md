@@ -28,7 +28,7 @@ Until these merge to Megatron-LM `main` and the bridge submodule pin advances, p
 
 - `conversion.sh` — HF → Megatron import and Megatron → HF export (single-node, real model)
 - `inference.sh` — text generation against an HF or Megatron checkpoint
-- `slurm_sft.sh` — multi-node Slurm template for full SFT (when a DSv4 recipe is added)
-- `slurm_peft.sh` — multi-node Slurm template for PEFT/LoRA (when a DSv4 recipe is added)
+- `slurm_sft.sh` — Slurm template for full SFT, recipe `deepseek_v4_sft_config` (default 2× 4-GPU nodes for Flash, TP=1 EP=8)
+- `slurm_peft.sh` — Slurm template for LoRA / DoRA PEFT, recipe `deepseek_v4_peft_config` (default 1× 4-GPU node for Flash, TP=1 EP=4)
 
-Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each script's header comments for the expected env vars.
+Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each script's header comments for the expected env vars and `#SBATCH` directives to edit before submitting.
