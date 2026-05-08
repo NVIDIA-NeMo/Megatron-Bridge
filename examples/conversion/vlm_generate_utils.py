@@ -137,17 +137,24 @@ def process_image_inputs(
     image_path: Optional[str],
     prompt: str,
     *,
+    is_gemma4: bool = False,
     is_kimi: bool = False,
     image_token_id: Optional[int] = None,
 ):
     """Process image + prompt into model inputs.
 
     Returns:
-        (input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids)
+        (input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids,
+         image_position_ids)
+
+        Fields not applicable to the current model are None.
     """
+    if is_gemma4:
+        return _process_gemma4_inputs(processor, image_path, prompt)
+
     if not image_path:
         inputs = processor(text=[prompt], return_tensors="pt")
-        return inputs.input_ids, None, None, None, None
+        return inputs.input_ids, None, None, None, None, None
 
     if is_kimi:
         return _process_kimi_inputs(processor, image_path, prompt, image_token_id)
@@ -201,4 +208,54 @@ def _process_default_inputs(processor, image_path, prompt):
         inputs.get("image_grid_thw"),
         inputs.get("image_sizes"),
         inputs.get("mm_token_type_ids"),
+        inputs.get("image_position_ids"),
+    )
+
+
+def _process_gemma4_inputs(processor, image_path, prompt):
+    """Process inputs for Gemma 4 (text-only or vision+text).
+
+    Uses apply_chat_template for instruction-tuned models; falls back to raw
+    processor with manual image token injection for base models.
+
+    Returns:
+        (input_ids, pixel_values, None, None, None, image_position_ids)
+    """
+    if image_path:
+        image = load_image(image_path)
+        has_chat_template = (
+            hasattr(processor, "apply_chat_template") and getattr(processor, "chat_template", None) is not None
+        )
+        if has_chat_template:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            inputs = processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+                add_generation_prompt=True,
+            )
+        else:
+            image_token = getattr(processor.tokenizer, "image_token", "<|image|>")
+            if image_token not in prompt:
+                prompt = image_token + "\n" + prompt
+            inputs = processor(text=[prompt], images=[image], return_tensors="pt")
+    else:
+        inputs = processor.tokenizer(text=[prompt], return_tensors="pt")
+
+    return (
+        inputs["input_ids"],
+        inputs.get("pixel_values"),
+        None,
+        None,
+        None,
+        inputs.get("image_position_ids"),
     )

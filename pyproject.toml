@@ -31,7 +31,12 @@ dynamic = ["version"]
 license = {file = "LICENSE"}
 requires-python = ">=3.12,<3.13"
 authors = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
-maintainers = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
+maintainers = [
+    { name = "Ananth Subramaniam", email = "ansubramania@nvidia.com" },
+    { name = "Chen Cui", email = "chcui@nvidia.com" },
+    { name = "Yu Yao", email = "yuya@nvidia.com" },
+    { name = "NVIDIA", email = "nemo-toolkit@nvidia.com" },
+]
 keywords = [
     "NLP",
     "NeMo",

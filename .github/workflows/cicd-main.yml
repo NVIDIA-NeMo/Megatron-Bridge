@@ -673,7 +673,7 @@ jobs:
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
-  # L2: runs on schedule (nightly/weekly) and workflow_dispatch only
+  # L2: runs on schedule (nightly/weekly), workflow_dispatch, and PRs labeled `full-test-suite`
   cicd-functional-tests-l2:
     strategy:
       fail-fast: false

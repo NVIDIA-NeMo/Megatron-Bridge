@@ -39,6 +39,7 @@ from typing import (
 import torch
 from megatron.core import parallel_state
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import get_pg_size
@@ -167,6 +168,92 @@ class _HFNameSuffixMapping:
         return {f"{k}{self._suffix}": v for k, v in out.items()}
 
 
+def _get_pg_collection_from_model(
+    megatron_model: MegatronModule | List[MegatronModule] | None,
+):
+    """Return the ProcessGroupCollection attached to a Megatron model, if any.
+
+    Megatron-Core's ``LanguageModule`` (parent of ``GPTModel``) stores the
+    ``ProcessGroupCollection`` it was constructed with on ``self.pg_collection``.
+    When users wire process groups manually via ``HyperCommGrid`` (decentralized
+    PG path) the global ``parallel_state`` singleton is never populated, but the
+    same groups are available through the model. Return ``None`` when no model
+    is supplied or no ``pg_collection`` is reachable so callers can fall back to
+    ``parallel_state``.
+    """
+    if megatron_model is None:
+        return None
+    models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
+    if not models_list:
+        return None
+    unwrapped = unwrap_model(models_list[0])
+    # VLM wrappers expose the language model on ``.language_model``; the
+    # ``pg_collection`` lives on the inner ``LanguageModule``.
+    inner = getattr(unwrapped, "language_model", None)
+    if inner is not None:
+        unwrapped = inner
+    return getattr(unwrapped, "pg_collection", None)
+
+
+def _get_pp_group(megatron_model: MegatronModule | List[MegatronModule] | None):
+    """Return the pipeline-parallel group, preferring the model's pg_collection."""
+    pg = _get_pg_collection_from_model(megatron_model)
+    pp_group = getattr(pg, "pp", None) if pg is not None else None
+    if pp_group is not None:
+        return pp_group
+    return parallel_state.get_pipeline_model_parallel_group()
+
+
+def _get_pp_rank(megatron_model: MegatronModule | List[MegatronModule] | None) -> int:
+    """Return the pipeline-parallel rank, preferring the model's pg_collection."""
+    pg = _get_pg_collection_from_model(megatron_model)
+    pp_group = getattr(pg, "pp", None) if pg is not None else None
+    if pp_group is not None:
+        return torch.distributed.get_rank(group=pp_group)
+    return parallel_state.get_pipeline_model_parallel_rank()
+
+
+def _get_embedding_group(megatron_model: MegatronModule | List[MegatronModule] | None):
+    """Return the embedding group, preferring the model's pg_collection."""
+    pg = _get_pg_collection_from_model(megatron_model)
+    embd_group = getattr(pg, "embd", None) if pg is not None else None
+    if embd_group is not None:
+        return embd_group
+    return parallel_state.get_embedding_group()
+
+
+def _get_ep_group(megatron_model: MegatronModule | List[MegatronModule] | None):
+    """Return the expert-parallel group, preferring the model's pg_collection.
+
+    Returns ``None`` if the model has a ``pg_collection`` whose ``ep`` is ``None``
+    (typical for dense models in the decentralized PG path), so callers must
+    treat ``None`` as "EP size 1".
+    """
+    pg = _get_pg_collection_from_model(megatron_model)
+    if pg is not None:
+        return getattr(pg, "ep", None)
+    return parallel_state.get_expert_model_parallel_group()
+
+
+def _install_pg_collection_on_mappings(
+    mapping_registry: MegatronMappingRegistry,
+    megatron_model: MegatronModule | List[MegatronModule] | None,
+) -> None:
+    """Install the model's ``pg_collection`` onto every param mapping.
+
+    ``MegatronParamMapping.__init__`` snapshots Megatron-Core's ``mpu`` globals
+    when the registry is built. In the decentralized PG path those globals are
+    never populated, so the snapshot is all ``None`` and ``tp_size`` collapses
+    to ``world_size``. Re-install the user-supplied groups before running tasks
+    so per-mapping shape calculations match the actual parallelism topology.
+    """
+    pg_collection = _get_pg_collection_from_model(megatron_model)
+    if pg_collection is None:
+        return
+    for mapping in mapping_registry.get_all_mappings():
+        mapping.set_process_groups_from_pg_collection(pg_collection)
+
+
 def _megatron_local_name_to_global(
     models: MegatronModule | List[MegatronModule],
     config: TransformerConfig,
@@ -175,7 +262,7 @@ def _megatron_local_name_to_global(
 ) -> str:
     """Adjust layer number and expert number from local to global numbering."""
     # PP
-    pp_group = parallel_state.get_pipeline_model_parallel_group()
+    pp_group = _get_pp_group(models)
     if "layers." in param_name and get_pg_size(pp_group) > 1:
         match = re.match(r"^(.+?\.layers\.\d+)", param_name)
         assert match is not None
@@ -190,10 +277,12 @@ def _megatron_local_name_to_global(
                 f"layers.{global_layer_number}.",
             )
 
-    # EP
-    ep_group = parallel_state.get_expert_model_parallel_group()
-    # For now adapters are not sharded across EP ranks
-    if ".mlp.experts.linear_fc" in param_name and get_pg_size(ep_group) > 1 and not ".adapter." in param_name:
+    # EP — fetched lazily because dense models may not have an EP group at all
+    # (and for the decentralized PG path, ``pg_collection.ep`` may be ``None``).
+    # For now adapters are not sharded across EP ranks.
+    is_expert_param = ".mlp.experts.linear_fc" in param_name and not ".adapter." in param_name
+    ep_group = _get_ep_group(models) if is_expert_param else None
+    if is_expert_param and ep_group is not None and get_pg_size(ep_group) > 1:
         num_experts = config.num_moe_experts
         num_experts_per_rank = num_experts // ep_group.size()
 
@@ -661,7 +750,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             return self._cached_param_names
 
         # Compute the result
-        pp_group = parallel_state.get_pipeline_model_parallel_group()
+        pp_group = _get_pp_group(megatron_model)
         model_config = unwrap_model(megatron_model)[0].config
         global_param_names = []
 
@@ -1384,13 +1473,16 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         share_embeddings = self._share_embeddings_and_output_weights(model_config)
 
         # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
+        pp_group = _get_pp_group(megatron_model)
         if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
-            parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage()
+            is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group)
         ):
             # Broadcast embeddings and output weights from rank 0 to embedding group
-            embd_group = parallel_state.get_embedding_group()
+            embd_group = _get_embedding_group(megatron_model)
+            if embd_group is None:
+                return
             embd_group_ranks = torch.distributed.get_process_group_ranks(embd_group)
-            if embd_group is not None and torch.distributed.get_rank() in embd_group_ranks:
+            if torch.distributed.get_rank() in embd_group_ranks:
                 # Get embeddings and output weights from rank 0
                 if hasattr(unwrapped_model, "embedding") and hasattr(unwrapped_model.embedding, "word_embeddings"):
                     embd_weights = unwrapped_model.embedding.word_embeddings.weight.data
@@ -1448,10 +1540,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         hf_keys: Optional[Iterable[str]] = hf_pretrained.state.source.get_all_keys() if has_hf_state else None
 
         mapping_registry = self.mapping_registry()
+        _install_pg_collection_on_mappings(mapping_registry, megatron_model)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
-        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        pp_rank = _get_pp_rank(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
         # Filter out output_layer related parameters if embeddings are tied
@@ -1630,8 +1723,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
-        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
-        pp_group = parallel_state.get_pipeline_model_parallel_group()
+        _install_pg_collection_on_mappings(mapping_registry, megatron_model)
+        pp_rank = _get_pp_rank(megatron_model)
+        pp_group = _get_pp_group(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
         # Filter out output_layer related parameters if embeddings are tied
