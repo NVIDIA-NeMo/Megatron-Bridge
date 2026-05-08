@@ -83,8 +83,8 @@ jobs:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v1.0.0
     needs: [pre-flight]
     if: |
-      github.event_name == 'workflow_dispatch'
-      || !(needs.pre-flight.outputs.docs_only == 'true'
+      !cancelled() && !failure()
+      && !(needs.pre-flight.outputs.docs_only == 'true'
            || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     with:
       release-ref: ${{ inputs.release-ref || github.sha }}
