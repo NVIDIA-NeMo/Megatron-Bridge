@@ -131,6 +131,7 @@ RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_n
 # Copy Wheels
 RUN --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
     pip install /tmp/vllm/vllm*.whl && \
+    pip install --upgrade --no-deps "flashinfer-cubin==$(pip show flashinfer | awk '/^Version:/{print $2}')" && \
     pushd /usr/local/lib/python3.12/dist-packages/vllm && \
     popd
 
