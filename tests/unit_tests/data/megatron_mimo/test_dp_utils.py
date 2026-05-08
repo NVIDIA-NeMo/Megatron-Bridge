@@ -35,12 +35,23 @@ class FakePG:
 class FakeGrid:
     """Fake HyperCommGrid for testing."""
 
-    def __init__(self, rank_offset: int, size: int, dp_rank: int, dp_size: int, pp_rank: int, pp_size: int):
+    def __init__(
+        self,
+        rank_offset: int,
+        size: int,
+        dp_rank: int,
+        dp_size: int,
+        pp_rank: int,
+        pp_size: int,
+        cp_rank: int = 0,
+        cp_size: int = 1,
+    ):
         self.rank_offset = rank_offset
         self.size = size
         self._pgs = {
             ("dp",): FakePG(dp_rank, dp_size),
             ("pp",): FakePG(pp_rank, pp_size),
+            ("cp",): FakePG(cp_rank, cp_size),
         }
 
     def get_pg(self, dims):
@@ -490,5 +501,59 @@ class TestSliceBatchForMegatronMIMOModules:
         assert sliced["modality_inputs"]["vision"]["pixel_values"].shape == (1, 3)
         torch.testing.assert_close(
             sliced["modality_inputs"]["vision"]["pixel_values"],
+            batch["modality_inputs"]["vision"]["pixel_values"][1:2],
+        )
+
+    def test_language_cp_siblings_keep_identical_language_batch_rows(self, monkeypatch):
+        """Language CP does not affect batch slicing.
+
+        enc(TP=1,CP=1,PP=1,DP=2) x lang(TP=1,CP=2,PP=1,DP=1) puts both
+        ranks in the same language DP replica but different language CP ranks.
+        Language keys stay full-batch on both CP siblings; only the encoder
+        modality input follows encoder DP.
+        """
+        batch = _make_batch(global_size=2)
+
+        def _grids_for_rank(rank: int) -> dict:
+            return {
+                "vision": FakeGrid(
+                    0,
+                    2,
+                    dp_rank=rank,
+                    dp_size=2,
+                    pp_rank=0,
+                    pp_size=1,
+                    cp_rank=0,
+                    cp_size=1,
+                ),
+                "language": FakeGrid(
+                    0,
+                    2,
+                    dp_rank=0,
+                    dp_size=1,
+                    pp_rank=0,
+                    pp_size=1,
+                    cp_rank=rank,
+                    cp_size=2,
+                ),
+            }
+
+        monkeypatch.setattr(dist, "get_rank", lambda: 0)
+        rank0 = slice_batch_for_megatron_mimo_modules(batch, grids=_grids_for_rank(0))
+
+        monkeypatch.setattr(dist, "get_rank", lambda: 1)
+        rank1 = slice_batch_for_megatron_mimo_modules(batch, grids=_grids_for_rank(1))
+
+        for key in ("input_ids", "labels", "loss_mask", "position_ids", "attention_mask"):
+            torch.testing.assert_close(rank0[key], batch[key])
+            torch.testing.assert_close(rank1[key], batch[key])
+            torch.testing.assert_close(rank0[key], rank1[key])
+
+        torch.testing.assert_close(
+            rank0["modality_inputs"]["vision"]["pixel_values"],
+            batch["modality_inputs"]["vision"]["pixel_values"][0:1],
+        )
+        torch.testing.assert_close(
+            rank1["modality_inputs"]["vision"]["pixel_values"],
             batch["modality_inputs"]["vision"]["pixel_values"][1:2],
         )

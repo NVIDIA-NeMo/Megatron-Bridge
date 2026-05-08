@@ -258,8 +258,9 @@ class MegatronMIMOParallelismConfig:
 
         Colocated supports heterogeneous encoder and LLM TP/DP factorizations
         on the same physical rank range. Language PP>1 is supported by the
-        colocated three-phase schedule; encoder PP must remain 1. CP, EP, and
-        ETP also remain at 1 on every module. Non-colocated layouts are
+        colocated three-phase schedule; encoder PP must remain 1. Language CP>1
+        is supported for the CP-only path, while encoder CP must remain 1. EP
+        and ETP also remain at 1 on every module. Non-colocated layouts are
         unaffected.
 
         Hybrid placement (some modules overlap, others disjoint) is rejected
@@ -274,12 +275,22 @@ class MegatronMIMOParallelismConfig:
         if not self._is_colocated():
             return
 
-        language_pp = self.module_parallelisms[MIMO_LANGUAGE_MODULE_KEY].pipeline_model_parallel_size
+        language = self.module_parallelisms[MIMO_LANGUAGE_MODULE_KEY]
+        language_pp = language.pipeline_model_parallel_size
+        language_cp = language.context_parallel_size
         modality_names = [name for name in self.module_parallelisms if name != MIMO_LANGUAGE_MODULE_KEY]
 
-        if language_pp > 1 and len(modality_names) != 1:
+        if language_pp > 1 and language_cp > 1:
             raise ValueError(
-                f"Colocated MegatronMIMO with language PP>1 supports exactly one modality module in v1. "
+                f"Colocated MegatronMIMO does not support combining language PP>1 with language CP>1 yet. "
+                f"Got language pipeline_model_parallel_size={language_pp} and "
+                f"context_parallel_size={language_cp}. CP+PP support requires the MCore language-PP "
+                f"label/loss-mask sharding path."
+            )
+
+        if (language_pp > 1 or language_cp > 1) and len(modality_names) != 1:
+            raise ValueError(
+                f"Colocated MegatronMIMO with language PP>1 or CP>1 supports exactly one modality module in v1. "
                 f"Found modality modules: {modality_names}."
             )
 
@@ -291,11 +302,11 @@ class MegatronMIMOParallelismConfig:
                     f"Language PP>1 is supported by the colocated three-phase schedule, "
                     f"but encoder PP>1 is not supported in v1."
                 )
-            if p.context_parallel_size != 1:
+            if name != MIMO_LANGUAGE_MODULE_KEY and p.context_parallel_size != 1:
                 raise ValueError(
-                    f"Colocated heterogeneous MegatronMIMO requires CP=1 in this stage. "
+                    f"Colocated MegatronMIMO requires encoder CP=1. "
                     f"Module '{name}' has context_parallel_size={p.context_parallel_size}. "
-                    f"Asymmetric CP coverage is tracked as a follow-up."
+                    f"Language CP>1 is supported, but encoder CP>1 is not supported in v1."
                 )
             if p.expert_tensor_parallel_size != 1:
                 raise ValueError(

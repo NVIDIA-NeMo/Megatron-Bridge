@@ -71,6 +71,109 @@ def _tensor_summary(value: Any) -> str:
     return f"shape={tuple(value.shape)} dtype={value.dtype} sum={flat.sum().item():.6e} norm={flat.norm().item():.6e}"
 
 
+def _tensor_debug_stats(value: Any) -> dict[str, float]:
+    """Return numeric tensor checksums suitable for scalar metric logging."""
+    if not isinstance(value, torch.Tensor):
+        return {}
+    flat = value.detach().float().reshape(-1)
+    if flat.numel() == 0:
+        return {"sum": 0.0, "norm": 0.0, "max_abs": 0.0, "numel": 0.0}
+    return {
+        "sum": flat.sum().item(),
+        "norm": flat.norm().item(),
+        "max_abs": flat.abs().max().item(),
+        "numel": float(flat.numel()),
+    }
+
+
+def _metric_name_part(value: object) -> str:
+    return str(value).replace("/", "_").replace(" ", "_")
+
+
+def _add_tensor_debug_metrics(metrics: dict[str, float], prefix: str, value: Any) -> None:
+    for stat_name, stat_value in _tensor_debug_stats(value).items():
+        metrics[f"{prefix}/{stat_name}"] = stat_value
+
+
+def _tensor_collection_debug_stats(tensors: Iterable[torch.Tensor | None]) -> dict[str, float]:
+    """Aggregate tensor checksums for local/global diagnostic metrics."""
+    total_sum = 0.0
+    total_sq_norm = 0.0
+    max_abs = 0.0
+    total_numel = 0
+    tensor_count = 0
+    for tensor in tensors:
+        if not isinstance(tensor, torch.Tensor):
+            continue
+        flat = tensor.detach().float().reshape(-1)
+        if flat.numel() == 0:
+            continue
+        total_sum += flat.sum().item()
+        total_sq_norm += flat.pow(2).sum().item()
+        max_abs = max(max_abs, flat.abs().max().item())
+        total_numel += flat.numel()
+        tensor_count += 1
+    return {
+        "sum": total_sum,
+        "norm": max(total_sq_norm, 0.0) ** 0.5,
+        "max_abs": max_abs,
+        "numel": float(total_numel),
+        "tensor_count": float(tensor_count),
+    }
+
+
+def _add_debug_stats(metrics: dict[str, float], prefix: str, stats: dict[str, float]) -> None:
+    for stat_name, value in stats.items():
+        metrics[f"{prefix}/{stat_name}"] = float(value)
+
+
+def _reduce_world_debug_stats(stats: dict[str, float]) -> dict[str, float]:
+    if not (dist.is_available() and dist.is_initialized()):
+        return stats
+
+    device = torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
+    sum_tensor = torch.tensor(
+        [
+            stats.get("sum", 0.0),
+            stats.get("norm", 0.0) ** 2,
+            stats.get("numel", 0.0),
+            stats.get("tensor_count", 0.0),
+        ],
+        dtype=torch.float64,
+        device=device,
+    )
+    max_tensor = torch.tensor([stats.get("max_abs", 0.0)], dtype=torch.float64, device=device)
+    dist.all_reduce(sum_tensor, op=dist.ReduceOp.SUM)
+    dist.all_reduce(max_tensor, op=dist.ReduceOp.MAX)
+    return {
+        "sum": float(sum_tensor[0].item()),
+        "norm": max(float(sum_tensor[1].item()), 0.0) ** 0.5,
+        "max_abs": float(max_tensor[0].item()),
+        "numel": float(sum_tensor[2].item()),
+        "tensor_count": float(sum_tensor[3].item()),
+    }
+
+
+def _add_nested_tensor_debug_metrics(
+    metrics: dict[str, float],
+    prefix: str,
+    value: Any,
+    *,
+    depth_limit: int = 4,
+) -> None:
+    if isinstance(value, torch.Tensor):
+        _add_tensor_debug_metrics(metrics, prefix, value)
+        return
+    if isinstance(value, dict) and depth_limit > 0:
+        for key, nested_value in value.items():
+            _add_nested_tensor_debug_metrics(
+                metrics,
+                f"{prefix}/{_metric_name_part(key)}",
+                nested_value,
+                depth_limit=depth_limit - 1,
+            )
+
+
 def _modality_input_summary(value: Any, *, depth_limit: int = 3) -> str:
     """Recursively summarize a possibly-nested modality input dict for logging."""
     if isinstance(value, torch.Tensor):
@@ -413,6 +516,7 @@ def forward_backward_colocated_mimo_with_pp(
     forward_only: bool,
     p2p_communicator: object,
     force_all_reduce: bool = False,
+    diagnostics: dict[str, float] | None = None,
 ) -> list[dict[str, torch.Tensor]]:
     """Run Bridge's three-phase colocated MIMO schedule for language PP.
 
@@ -459,6 +563,13 @@ def forward_backward_colocated_mimo_with_pp(
         encoder_module_name=encoder_module_name,
         encoder_grid=encoder_grid,
         language_grid=language_grid,
+    )
+    _record_wandb_debug_data_slicing(
+        diagnostics=diagnostics,
+        original_batches=original_batches,
+        sliced_batches=sliced_batches,
+        encoder_module_name=encoder_module_name,
+        special_token_ids=mimo_model.special_token_ids,
     )
 
     _pp_debug_log_module_params(
@@ -509,9 +620,15 @@ def forward_backward_colocated_mimo_with_pp(
         encoder_module_name=encoder_module_name,
         special_token_ids=mimo_model.special_token_ids,
     )
+    _record_wandb_debug_encoder_split(
+        diagnostics=diagnostics,
+        detached_encoder_outputs=detached_encoder_outputs,
+        cached_language_microbatches=cached_language_microbatches,
+        encoder_module_name=encoder_module_name,
+    )
 
     schedule_kwargs = {
-        "forward_step_func": _make_inner_language_forward_step(),
+        "forward_step_func": _make_inner_language_forward_step(diagnostics=diagnostics),
         "data_iterator": iter(cached_language_microbatches),
         "model": [model],
         "num_microbatches": num_microbatches,
@@ -536,7 +653,15 @@ def forward_backward_colocated_mimo_with_pp(
     _backward_encoder_outputs(
         detached_encoder_outputs=detached_encoder_outputs,
         encoder_outputs=encoder_outputs,
+        encoder_module_name=encoder_module_name,
         pp_group=language_pg.pp,
+        diagnostics=diagnostics,
+    )
+    _record_wandb_debug_projector_grads(
+        diagnostics=diagnostics,
+        mimo_model=mimo_model,
+        encoder_module_name=encoder_module_name,
+        prefix="mimo_debug/projector_grad/post_encoder_backward",
     )
 
     _pp_debug_log_finalize_capture(finalize_capture=finalize_capture)
@@ -548,6 +673,12 @@ def forward_backward_colocated_mimo_with_pp(
             pg_collection=language_pg,
             force_all_reduce=finalize_capture.force_all_reduce,
         )
+    _record_wandb_debug_projector_grads(
+        diagnostics=diagnostics,
+        mimo_model=mimo_model,
+        encoder_module_name=encoder_module_name,
+        prefix="mimo_debug/projector_grad/post_finalize",
+    )
 
     _pp_debug_log_iteration_done()
     return losses_reduced
@@ -938,7 +1069,7 @@ def _build_cached_language_microbatches(
     return cached_microbatches
 
 
-def _make_inner_language_forward_step():
+def _make_inner_language_forward_step(diagnostics: dict[str, float] | None = None):
     microbatch_index = [0]
 
     def _inner_language_forward_step(
@@ -984,11 +1115,45 @@ def _make_inner_language_forward_step():
             if loss_mask is None:
                 logger.warning("No loss_mask provided to colocated language-PP last stage; using all-ones mask.")
                 loss_mask = torch.ones_like(output_tensor)
+            _record_wandb_debug_language_output(
+                diagnostics=diagnostics,
+                output_tensor=output_tensor,
+                loss_mask=loss_mask,
+                mb_index=mb_index,
+            )
             return output_tensor, _make_logging_loss_func(loss_mask, mb_index)
 
         return output_tensor, None
 
     return _inner_language_forward_step
+
+
+def _record_wandb_debug_language_output(
+    *,
+    diagnostics: dict[str, float] | None,
+    output_tensor: torch.Tensor,
+    loss_mask: torch.Tensor,
+    mb_index: int,
+) -> None:
+    if diagnostics is None:
+        return
+
+    prefix = f"mimo_debug/language/mb_{mb_index:02d}"
+    _add_tensor_debug_metrics(diagnostics, f"{prefix}/output_tensor", output_tensor)
+    _add_tensor_debug_metrics(diagnostics, f"{prefix}/loss_mask", loss_mask)
+
+    if not (isinstance(output_tensor, torch.Tensor) and isinstance(loss_mask, torch.Tensor)):
+        return
+    output_flat = output_tensor.detach().float().reshape(-1)
+    mask_flat = loss_mask.detach().float().reshape(-1)
+    if output_flat.numel() != mask_flat.numel():
+        return
+
+    masked_total = torch.sum(output_flat * mask_flat)
+    tokens = torch.sum(mask_flat)
+    diagnostics[f"{prefix}/masked_total"] = float(masked_total.item())
+    diagnostics[f"{prefix}/masked_tokens"] = float(tokens.item())
+    diagnostics[f"{prefix}/masked_mean"] = float((masked_total / tokens).item()) if tokens.item() else 0.0
 
 
 def _make_logging_loss_func(loss_mask: torch.Tensor, mb_index: int):
@@ -1043,14 +1208,28 @@ def _backward_encoder_outputs(
     *,
     detached_encoder_outputs: dict[str, torch.Tensor],
     encoder_outputs: dict[str, torch.Tensor],
+    encoder_module_name: str,
     pp_group: object | None,
+    diagnostics: dict[str, float] | None = None,
 ) -> None:
     if not encoder_outputs:
         return
 
+    _record_wandb_debug_encoder_output_grads(
+        diagnostics=diagnostics,
+        detached_encoder_outputs=detached_encoder_outputs,
+        encoder_module_name=encoder_module_name,
+        prefix="mimo_debug/encoder_output_grad/pre_broadcast",
+    )
     _broadcast_encoder_grads(
         detached_encoder_outputs=detached_encoder_outputs,
         pp_group=pp_group,
+    )
+    _record_wandb_debug_encoder_output_grads(
+        diagnostics=diagnostics,
+        detached_encoder_outputs=detached_encoder_outputs,
+        encoder_module_name=encoder_module_name,
+        prefix="mimo_debug/encoder_output_grad/post_broadcast",
     )
 
     outputs = []
@@ -1099,6 +1278,138 @@ def _pp_debug_log_iteration_done() -> None:
     global _PP_DEBUG_LOG_COUNT
     if _env_flag("MIMO_PP_DEBUG_LOG"):
         _PP_DEBUG_LOG_COUNT += 1
+
+
+def _record_wandb_debug_data_slicing(
+    *,
+    diagnostics: dict[str, float] | None,
+    original_batches: list[Dict[str, Any]],
+    sliced_batches: list[Dict[str, Any]],
+    encoder_module_name: str,
+    special_token_ids: dict[str, int],
+) -> None:
+    """Record per-microbatch data checksums for optional W&B diagnostics."""
+    if diagnostics is None:
+        return
+
+    special_token_id = special_token_ids.get(encoder_module_name)
+    for mb_idx, (orig, sliced) in enumerate(zip(original_batches, sliced_batches)):
+        prefix = f"mimo_debug/batch/mb_{mb_idx:02d}"
+        _add_tensor_debug_metrics(diagnostics, f"{prefix}/global_input_ids", orig.get("input_ids"))
+        _add_tensor_debug_metrics(diagnostics, f"{prefix}/local_input_ids", sliced.get("input_ids"))
+        _add_tensor_debug_metrics(diagnostics, f"{prefix}/global_labels", orig.get("labels"))
+        _add_tensor_debug_metrics(diagnostics, f"{prefix}/local_labels", sliced.get("labels"))
+        _add_tensor_debug_metrics(diagnostics, f"{prefix}/global_loss_mask", orig.get("loss_mask"))
+        _add_tensor_debug_metrics(diagnostics, f"{prefix}/local_loss_mask", sliced.get("loss_mask"))
+        _add_nested_tensor_debug_metrics(
+            diagnostics,
+            f"{prefix}/global_modality/{_metric_name_part(encoder_module_name)}",
+            (orig.get("modality_inputs") or {}).get(encoder_module_name),
+        )
+        _add_nested_tensor_debug_metrics(
+            diagnostics,
+            f"{prefix}/local_modality/{_metric_name_part(encoder_module_name)}",
+            (sliced.get("modality_inputs") or {}).get(encoder_module_name),
+        )
+        if special_token_id is not None:
+            diagnostics[f"{prefix}/modality_token_count"] = float(
+                _count_modality_tokens(orig.get("input_ids"), special_token_id=special_token_id)
+            )
+
+
+def _record_wandb_debug_encoder_split(
+    *,
+    diagnostics: dict[str, float] | None,
+    detached_encoder_outputs: dict[str, torch.Tensor],
+    cached_language_microbatches: list[dict[str, Any]],
+    encoder_module_name: str,
+) -> None:
+    """Record encoder output / per-microbatch embedding checksums for W&B diagnostics."""
+    if diagnostics is None:
+        return
+
+    module_key = _metric_name_part(encoder_module_name)
+    _add_tensor_debug_metrics(
+        diagnostics,
+        f"mimo_debug/encoder/{module_key}/gathered_output",
+        detached_encoder_outputs.get(encoder_module_name),
+    )
+    for mb_idx, cached in enumerate(cached_language_microbatches):
+        chunk = (cached.get("encoder_embeddings") or {}).get(encoder_module_name)
+        _add_tensor_debug_metrics(
+            diagnostics,
+            f"mimo_debug/encoder/{module_key}/mb_{mb_idx:02d}/chunk",
+            chunk,
+        )
+
+
+def _record_wandb_debug_encoder_output_grads(
+    *,
+    diagnostics: dict[str, float] | None,
+    detached_encoder_outputs: dict[str, torch.Tensor],
+    encoder_module_name: str | None = None,
+    prefix: str,
+) -> None:
+    """Record gradients on detached encoder outputs around the language-PP handoff."""
+    if diagnostics is None:
+        return
+
+    local_tensors: list[torch.Tensor] = []
+    module_names = [encoder_module_name] if encoder_module_name is not None else sorted(detached_encoder_outputs)
+    for module_name in module_names:
+        detached_output = detached_encoder_outputs.get(module_name)
+        if not isinstance(detached_output, torch.Tensor):
+            grad = None
+        else:
+            grad = detached_output.grad if isinstance(detached_output.grad, torch.Tensor) else None
+        if grad is not None:
+            local_tensors.append(grad)
+        local_stats = _tensor_collection_debug_stats([grad])
+        module_key = _metric_name_part(module_name)
+        _add_debug_stats(diagnostics, f"{prefix}/{module_key}/local", local_stats)
+        _add_debug_stats(diagnostics, f"{prefix}/{module_key}/global", _reduce_world_debug_stats(local_stats))
+
+    local_all_stats = _tensor_collection_debug_stats(local_tensors)
+    _add_debug_stats(diagnostics, f"{prefix}/local", local_all_stats)
+    _add_debug_stats(diagnostics, f"{prefix}/global", _reduce_world_debug_stats(local_all_stats))
+
+
+def _parameter_grad_tensor(param: torch.nn.Parameter) -> torch.Tensor | None:
+    main_grad = getattr(param, "main_grad", None)
+    if isinstance(main_grad, torch.Tensor):
+        return main_grad
+    if isinstance(param.grad, torch.Tensor):
+        return param.grad
+    return None
+
+
+def _record_wandb_debug_projector_grads(
+    *,
+    diagnostics: dict[str, float] | None,
+    mimo_model: MimoModel,
+    encoder_module_name: str,
+    prefix: str,
+) -> None:
+    """Record trainable encoder-module parameter gradients during the PP handoff."""
+    if diagnostics is None:
+        return
+
+    modality_submodules = getattr(mimo_model, "modality_submodules", None)
+    module = None
+    if modality_submodules is not None:
+        try:
+            module = modality_submodules[encoder_module_name]
+        except (KeyError, TypeError):
+            module = modality_submodules.get(encoder_module_name) if hasattr(modality_submodules, "get") else None
+    if module is None:
+        local_stats = _tensor_collection_debug_stats([])
+    else:
+        grads = [_parameter_grad_tensor(param) for param in module.parameters() if param.requires_grad]
+        local_stats = _tensor_collection_debug_stats(grads)
+
+    module_key = _metric_name_part(encoder_module_name)
+    _add_debug_stats(diagnostics, f"{prefix}/{module_key}/local", local_stats)
+    _add_debug_stats(diagnostics, f"{prefix}/{module_key}/global", _reduce_world_debug_stats(local_stats))
 
 
 def _pp_debug_global_rank() -> int:

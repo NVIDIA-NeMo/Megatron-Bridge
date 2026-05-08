@@ -406,12 +406,14 @@ def _build_parallelism_config() -> MegatronMIMOParallelismConfig:
             "language": ModuleParallelismConfig(
                 tensor_model_parallel_size=int(os.environ.get("MIMO_LLM_TP", 4)),
                 pipeline_model_parallel_size=int(os.environ.get("MIMO_LLM_PP", 1)),
+                context_parallel_size=int(os.environ.get("MIMO_LLM_CP", 1)),
                 data_parallel_size=int(os.environ.get("MIMO_LLM_DP", 1)),
                 rank_offset=int(os.environ.get("MIMO_LLM_OFFSET", 0)),
             ),
             "images": ModuleParallelismConfig(
                 tensor_model_parallel_size=int(os.environ.get("MIMO_VISION_TP", 4)),
                 pipeline_model_parallel_size=int(os.environ.get("MIMO_VISION_PP", 1)),
+                context_parallel_size=int(os.environ.get("MIMO_VISION_CP", 1)),
                 data_parallel_size=int(os.environ.get("MIMO_VISION_DP", 1)),
                 rank_offset=int(os.environ.get("MIMO_VISION_OFFSET", 4)),
             ),

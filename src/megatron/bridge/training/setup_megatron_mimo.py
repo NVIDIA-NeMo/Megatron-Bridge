@@ -73,6 +73,14 @@ def _first_scheduler_with_param_groups(
     return None
 
 
+def _needs_multimodule_pipeline_communicator(model: "MimoModel") -> bool:
+    """Return whether setup should build MCore's cross-module P2P communicator."""
+    from megatron.core.models.mimo.config.role import ModuleLayout
+
+    role = getattr(model, "role", None)
+    return getattr(role, "mode", None) is not ModuleLayout.COLOCATED
+
+
 @dataclass
 class MegatronMIMOSetupOutput:
     """Output from setup_megatron_mimo() containing all components needed for training.
@@ -81,7 +89,7 @@ class MegatronMIMOSetupOutput:
         model: MimoModel (distributed, DDP-wrapped).
         megatron_mimo_infra: MegatronMIMOInfra (grids, topology, pg_collections).
         multimodule_pg_collection: PG collection for schedule.
-        multimodule_communicator: MultiModulePipelineCommunicator for P2P.
+        multimodule_communicator: MultiModulePipelineCommunicator for P2P, or None for colocated layouts.
         module_to_grid_tuple: List of (module, grid) tuples for gradient handling.
         optimizer: MimoOptimizer.
         schedulers: Per-module LR schedulers.
@@ -93,7 +101,7 @@ class MegatronMIMOSetupOutput:
     model: "MimoModel"
     megatron_mimo_infra: "MegatronMIMOInfra"
     multimodule_pg_collection: "MultiModuleProcessGroupCollection"
-    multimodule_communicator: "MultiModulePipelineCommunicator"
+    multimodule_communicator: Optional["MultiModulePipelineCommunicator"]
     module_to_grid_tuple: List
     optimizer: "MimoOptimizer"
     schedulers: Dict[str, "OptimizerParamScheduler"]
@@ -217,8 +225,9 @@ def setup_megatron_mimo(
         bf16=getattr(cfg.model, "bf16", True),
     )
     model = model_list[0]
+    unwrapped_model = unwrap_megatron_mimo_model(model)
 
-    logger.info(f"Rank {dist.get_rank()}: Creating multimodule communicator")
+    logger.info(f"Rank {dist.get_rank()}: Configuring multimodule communicator")
 
     # Create MultiModulePipelineCommunicator
     # IMPORTANT: MimoModel produces SBH tensors (seq, batch, hidden), NOT BSH
@@ -237,13 +246,21 @@ def setup_megatron_mimo(
         else:
             model_config.pipeline_dtype = torch.float32
 
-    multimodule_communicator = MultiModulePipelineCommunicator(
-        megatron_mimo_infra.module_to_grid_map,
-        megatron_mimo_infra.topology,
-        model_config,
-        dim_mapping={"s": 0, "b": 1, "h": 2},  # SBH mapping - matches MimoModel output
-        module_output_ndim=megatron_mimo_infra.module_output_ndim,
-    )
+    if _needs_multimodule_pipeline_communicator(unwrapped_model):
+        multimodule_communicator = MultiModulePipelineCommunicator(
+            megatron_mimo_infra.module_to_grid_map,
+            megatron_mimo_infra.topology,
+            model_config,
+            dim_mapping={"s": 0, "b": 1, "h": 2},  # SBH mapping - matches MimoModel output
+            module_output_ndim=megatron_mimo_infra.module_output_ndim,
+        )
+    else:
+        # Colocated execution performs encoder->language communication inside
+        # MimoModel via ColocatedBridgeCommunicator. The training schedules use
+        # language-local P2P only, so constructing the non-colocated communicator
+        # here is unnecessary and rejects language CP>1 in MCore BridgeCommunicator.
+        logger.info(f"Rank {dist.get_rank()}: Skipping multimodule communicator for colocated MegatronMIMO")
+        multimodule_communicator = None
 
     # Build pg_collection for schedule
     multimodule_pg_collection = build_pg_collection_for_schedule(megatron_mimo_infra)
@@ -252,7 +269,6 @@ def setup_megatron_mimo(
     module_to_grid_tuple = get_module_to_grid_tuple(model, megatron_mimo_infra)
 
     # Build optimizer and per-module LR schedulers
-    unwrapped_model = unwrap_megatron_mimo_model(model)
     if megatron_mimo_infra.module_to_grid_map:
         assert unwrapped_model.mimo_config.module_to_grid_map is not None, (
             "MimoModelConfig.module_to_grid_map must be set at model construction time. "

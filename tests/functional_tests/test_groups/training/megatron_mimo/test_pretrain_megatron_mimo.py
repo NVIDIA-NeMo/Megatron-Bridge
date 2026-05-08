@@ -1043,6 +1043,84 @@ class TestMegatronMIMOTraining:
         )
 
     @pytest.mark.run_only_on("GPU")
+    def test_megatron_mimo_colocated_language_cp2_smoke(self, monkeypatch):
+        """Smoke test: colocated MegatronMIMO with language CP=2.
+
+        Minimal 2-GPU CP shape:
+
+        * vision:   TP=1, CP=1, PP=1, DP=2
+        * language: TP=1, CP=2, PP=1, DP=1
+
+        This keeps Bridge data slicing DP-only while MCore's PartitionAdapter
+        shards the language sequence. ``MIMO_CHECK_DATA_ALIGNMENT`` stays on so
+        the colocated data guard confirms CP does not affect the batch dimension.
+        """
+        from megatron.bridge.training import megatron_mimo_step as _mms
+        from megatron.bridge.training.state import GlobalState
+
+        initialize_distributed()
+
+        world_size = dist.get_world_size()
+        if world_size != 2:
+            pytest.skip(f"MegatronMIMO test requires exactly 2 GPUs, got {world_size}")
+
+        # Monkey-patch: report_theoretical_memory crashes on MegatronMIMO models.
+        import megatron.bridge.training.utils.train_utils as _tu
+
+        _tu.report_theoretical_memory = lambda *a, **kw: None
+
+        monkeypatch.setenv("MIMO_CHECK_DATA_ALIGNMENT", "true")
+        monkeypatch.setenv("MIMO_CHECK_DATA_ALIGNMENT_STEPS", "1")
+        _mms._DATA_ALIGNMENT_CHECK_COUNT = 0
+
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    context_parallel_size=2,
+                    data_parallel_size=1,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    context_parallel_size=1,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+            },
+        )
+
+        # Vision DP=2 requires MBS divisible by 2. Sequence length is 256,
+        # divisible by 2 * language_cp = 4 for MCore PartitionAdapter.
+        global_batch_size = 2
+        cfg = _build_config(
+            par_cfg,
+            micro_batch_size=2,
+            global_batch_size=global_batch_size,
+            per_token_loss=True,
+        )
+
+        state = GlobalState()
+        pretrain_megatron_mimo(
+            cfg=cfg,
+            forward_step_func=megatron_mimo_forward_step,
+            build_data_iterators_fn=_build_data_iterators,
+            global_state=state,
+        )
+
+        assert state.train_state.step == _TRAIN_ITERS, (
+            f"Training loop did not reach the configured train_iters: "
+            f"step={state.train_state.step}, expected {_TRAIN_ITERS}."
+        )
+        assert state.train_state.consumed_train_samples == _TRAIN_ITERS * global_batch_size, (
+            f"consumed_train_samples mismatch: got {state.train_state.consumed_train_samples}, "
+            f"expected {_TRAIN_ITERS * global_batch_size}."
+        )
+        assert _mms._DATA_ALIGNMENT_CHECK_COUNT == 1
+
+    @pytest.mark.run_only_on("GPU")
     def test_megatron_mimo_colocated_language_pp_smoke(self):
         """Smoke test: colocated MegatronMIMO with language PP=2.
 

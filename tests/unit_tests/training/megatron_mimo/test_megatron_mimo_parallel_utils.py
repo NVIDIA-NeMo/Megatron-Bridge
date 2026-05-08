@@ -1,6 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO parallel utilities."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -276,6 +277,89 @@ class TestFinalizeModelGradsMultimodule:
         )
         language_module.scale_gradients.assert_called_once_with(0.125)
         vision_module.scale_gradients.assert_called_once_with(0.125)
+
+    def test_language_cp_local_token_count_reduces_over_language_dp_cp(self):
+        """CP-local token counts are reduced over language DP x CP before scaling."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
+        from megatron.bridge.training.megatron_mimo_step import loss_func
+
+        full_sequence_loss_mask = torch.tensor([[1, 1, 0, 1, 0, 1, 1, 1]], dtype=torch.float)
+        cp_local_loss_mask = full_sequence_loss_mask[:, :4]
+        cp_local_losses = torch.ones_like(cp_local_loss_mask)
+        _loss, cp_local_num_tokens, _metrics = loss_func(cp_local_loss_mask, cp_local_losses)
+        assert cp_local_num_tokens.item() == 3
+
+        language_dp_size = 2
+        expected_global_tokens = int(full_sequence_loss_mask.sum().item()) * language_dp_size
+
+        language_grid = MagicMock(name="language_grid")
+        vision_grid = MagicMock(name="vision_grid")
+        language_grid.rank_offset = 0
+        language_module = MagicMock(name="language_module")
+        vision_module = MagicMock(name="vision_module")
+        language_pg = MagicMock(name="language_pg")
+        vision_pg = MagicMock(name="vision_pg")
+        language_pg.pp = MagicMock(name="language_pp")
+        language_pg.dp_cp = MagicMock(name="language_dp_cp")
+        language_pg.dp = MagicMock(name="language_dp")
+        infra = MagicMock()
+        infra.module_to_grid_map = {
+            "language": language_grid,
+            "vision": vision_grid,
+        }
+        infra.pg_collections = {
+            "language": language_pg,
+            "vision": vision_pg,
+        }
+        observed_pre_reduce_tokens = []
+
+        def all_reduce_language_dp_cp(tensor, group=None, op=None):
+            observed_pre_reduce_tokens.append(tensor.item())
+            tensor.fill_(expected_global_tokens)
+
+        with (
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils.is_current_rank_in_grid", return_value=True),
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils.get_pp_last_rank", return_value=0),
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils.dist") as mock_dist,
+            patch("megatron.bridge.training.megatron_mimo_parallel_utils._finalize_model_grads") as mock_finalize,
+            patch(
+                "megatron.bridge.training.megatron_mimo_parallel_utils.get_model_config",
+                return_value=SimpleNamespace(calculate_per_token_loss=True),
+            ),
+        ):
+            mock_dist.all_reduce.side_effect = all_reduce_language_dp_cp
+
+            finalize_model_grads_multimodule(
+                [MagicMock()],
+                num_tokens=cp_local_num_tokens,
+                force_all_reduce=True,
+                infra=infra,
+                module_to_grid_tuple=[
+                    (language_module, language_grid),
+                    (vision_module, vision_grid),
+                ],
+            )
+
+        assert observed_pre_reduce_tokens == [3]
+        assert cp_local_num_tokens.item() == 3
+        broadcast_tokens = mock_dist.broadcast.call_args.args[0]
+        assert broadcast_tokens is not cp_local_num_tokens
+        assert broadcast_tokens.item() == expected_global_tokens
+        mock_dist.broadcast.assert_called_once_with(broadcast_tokens, src=0, group=language_pg.pp)
+        mock_dist.all_reduce.assert_called_once_with(
+            broadcast_tokens,
+            group=language_pg.dp_cp,
+            op=mock_dist.ReduceOp.SUM,
+        )
+        mock_finalize.assert_has_calls(
+            [
+                call([language_module], num_tokens=None, pg_collection=language_pg, force_all_reduce=True),
+                call([vision_module], num_tokens=None, pg_collection=vision_pg, force_all_reduce=True),
+            ]
+        )
+        expected_grad_scale = 1.0 / expected_global_tokens
+        language_module.scale_gradients.assert_called_once_with(expected_grad_scale)
+        vision_module.scale_gradients.assert_called_once_with(expected_grad_scale)
 
     def test_broadcasts_language_token_scale_to_non_colocated_module(self):
         """Test disjoint encoder ranks receive the language global token count."""

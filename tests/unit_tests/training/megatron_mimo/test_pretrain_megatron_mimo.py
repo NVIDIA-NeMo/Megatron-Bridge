@@ -87,6 +87,20 @@ def test_scheduler_helpers_skip_frozen_module_optimizer_stubs():
     assert train_first_scheduler(schedulers) is real_scheduler
 
 
+def test_setup_skips_multimodule_pipeline_communicator_for_colocated_models():
+    """Colocated schedules communicate inside MimoModel, so setup must not build MCore cross-module P2P."""
+    from megatron.core.models.mimo.config.role import ModuleLayout
+
+    from megatron.bridge.training.setup_megatron_mimo import _needs_multimodule_pipeline_communicator
+
+    colocated = SimpleNamespace(role=SimpleNamespace(mode=ModuleLayout.COLOCATED))
+    non_colocated = SimpleNamespace(role=SimpleNamespace(mode=ModuleLayout.NON_COLOCATED))
+
+    assert not _needs_multimodule_pipeline_communicator(colocated)
+    assert _needs_multimodule_pipeline_communicator(non_colocated)
+    assert _needs_multimodule_pipeline_communicator(SimpleNamespace())
+
+
 def test_learning_rate_for_logging_handles_ranks_without_local_scheduler(monkeypatch):
     """Frozen-only ranks should log the globally active learning rate."""
     from megatron.bridge.training import train_megatron_mimo

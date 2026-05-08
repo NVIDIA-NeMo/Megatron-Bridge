@@ -571,13 +571,26 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         language_parallelism = par_cfg.module_parallelisms.get(MIMO_LANGUAGE_MODULE_KEY)
         return language_parallelism is not None and language_parallelism.pipeline_model_parallel_size > 1
 
-    def _walk_module_spec_for_per_token_loss(self, spec, path: str) -> List[str]:
-        """Return config paths missing ``calculate_per_token_loss=True``."""
-        offenders: List[str] = []
+    def _uses_colocated_language_cp(self) -> bool:
+        """Whether this provider is configured for colocated language CP."""
+        par_cfg = self.megatron_mimo_parallelism_config
+        if par_cfg is None or not par_cfg._is_colocated():
+            return False
+        language_parallelism = par_cfg.module_parallelisms.get(MIMO_LANGUAGE_MODULE_KEY)
+        return language_parallelism is not None and language_parallelism.context_parallel_size > 1
+
+    def _uses_colocated_language_pp_or_cp(self) -> bool:
+        """Whether colocated language PP or CP spec-level guards should run."""
+        return self._uses_colocated_language_pp() or self._uses_colocated_language_cp()
+
+    def _walk_module_spec_configs(self, spec, path: str) -> List[tuple[str, object]]:
+        """Return ``(path, TransformerConfig-like object)`` entries in ``spec``."""
+        configs: List[tuple[str, object]] = []
         params = spec.params or {}
-        cfg = params.get("config") or params.get("transformer_config")
-        if cfg is not None and not getattr(cfg, "calculate_per_token_loss", False):
-            offenders.append(path)
+        for key in ("config", "transformer_config"):
+            cfg = params.get(key)
+            if cfg is not None:
+                configs.append((path, cfg))
 
         submodules = getattr(spec, "submodules", None) or {}
 
@@ -585,7 +598,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             if node is None:
                 return
             if hasattr(node, "params") or hasattr(node, "submodules"):
-                offenders.extend(self._walk_module_spec_for_per_token_loss(node, sub_path))
+                configs.extend(self._walk_module_spec_configs(node, sub_path))
             elif isinstance(node, dict):
                 for key, child in node.items():
                     _walk(child, f"{sub_path}.{key}" if sub_path else key)
@@ -599,16 +612,94 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         else:
             _walk(submodules, path)
 
-        return offenders
+        return configs
 
-    def _validate_colocated_language_pp_spec_constraints(self) -> None:
-        """Validate spec-level constraints for colocated language PP."""
-        if not self._uses_colocated_language_pp():
+    def _walk_module_spec_for_per_token_loss(self, spec, path: str) -> List[str]:
+        """Return config paths missing ``calculate_per_token_loss=True``."""
+        return [
+            config_path
+            for config_path, cfg in self._walk_module_spec_configs(spec, path)
+            if not getattr(cfg, "calculate_per_token_loss", False)
+        ]
+
+    @staticmethod
+    def _cp_comm_type_uses_hcp(cp_comm_type) -> bool:
+        """Return whether ``cp_comm_type`` requests hierarchical CP."""
+        if cp_comm_type is None:
+            return False
+        if isinstance(cp_comm_type, str):
+            return "a2a+p2p" in cp_comm_type
+        if isinstance(cp_comm_type, (list, tuple)):
+            return any(MegatronMIMOProvider._cp_comm_type_uses_hcp(item) for item in cp_comm_type)
+        return False
+
+    def _validate_colocated_language_cp_spec_constraints(self) -> None:
+        """Validate CP-specific spec-level constraints for colocated language CP."""
+        if not self._uses_colocated_language_cp():
+            return
+
+        hcp_comm_offenders: List[str] = []
+        hcp_size_offenders: List[str] = []
+        tp_overlap_offenders: List[str] = []
+        sequence_parallel = False
+        for config_path, cfg in self._walk_module_spec_configs(self.language_model_spec, MIMO_LANGUAGE_MODULE_KEY):
+            if self._cp_comm_type_uses_hcp(getattr(cfg, "cp_comm_type", None)):
+                hcp_comm_offenders.append(config_path)
+            if getattr(cfg, "hierarchical_context_parallel_sizes", None) is not None:
+                hcp_size_offenders.append(config_path)
+            if getattr(cfg, "tp_comm_overlap", False):
+                tp_overlap_offenders.append(config_path)
+            sequence_parallel = sequence_parallel or bool(getattr(cfg, "sequence_parallel", False))
+
+        if hcp_comm_offenders:
+            raise ValueError(
+                f"Colocated MegatronMIMO with language CP>1 does not support hierarchical CP. "
+                f"Set language TransformerConfig.cp_comm_type without 'a2a+p2p'. "
+                f"Offending configs: {hcp_comm_offenders}."
+            )
+        if hcp_size_offenders:
+            raise ValueError(
+                f"Colocated MegatronMIMO with language CP>1 does not support hierarchical CP. "
+                f"Set language TransformerConfig.hierarchical_context_parallel_sizes=None. "
+                f"Offending configs: {hcp_size_offenders}."
+            )
+        if tp_overlap_offenders:
+            raise ValueError(
+                f"Colocated MegatronMIMO with language CP>1 does not support "
+                f"tp_comm_overlap=True in v1. Offending configs: {tp_overlap_offenders}."
+            )
+
+        par_cfg = self.megatron_mimo_parallelism_config
+        assert par_cfg is not None
+        language_parallelism = par_cfg.module_parallelisms[MIMO_LANGUAGE_MODULE_KEY]
+        language_params = self.language_model_spec.params or {}
+        max_sequence_length = language_params.get("max_sequence_length")
+        if max_sequence_length is None:
+            for _, cfg in self._walk_module_spec_configs(self.language_model_spec, MIMO_LANGUAGE_MODULE_KEY):
+                max_sequence_length = getattr(cfg, "max_sequence_length", None) or getattr(cfg, "seq_length", None)
+                if max_sequence_length is not None:
+                    break
+        if max_sequence_length is None:
+            return
+
+        shard_factor = 2 * language_parallelism.context_parallel_size
+        if sequence_parallel:
+            shard_factor *= language_parallelism.tensor_model_parallel_size
+        if max_sequence_length % shard_factor != 0:
+            raise ValueError(
+                f"Colocated MegatronMIMO with language CP>1 requires language max_sequence_length "
+                f"to be divisible by {shard_factor} for PartitionAdapter sharding. "
+                f"Got max_sequence_length={max_sequence_length}."
+            )
+
+    def _validate_colocated_language_pp_or_cp_spec_constraints(self) -> None:
+        """Validate shared spec-level constraints for colocated language PP or CP."""
+        if not self._uses_colocated_language_pp_or_cp():
             return
 
         if len(self.modality_submodules_spec) != 1:
             raise ValueError(
-                f"Colocated MegatronMIMO with language PP>1 supports exactly one "
+                f"Colocated MegatronMIMO with language PP>1 or CP>1 supports exactly one "
                 f"modality module in v1. Found modality modules: "
                 f"{list(self.modality_submodules_spec.keys())}."
             )
@@ -619,7 +710,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             encoders = modality_submodules.get("encoders")
             if isinstance(encoders, dict) and len(encoders) != 1:
                 raise ValueError(
-                    f"Colocated MegatronMIMO with language PP>1 supports exactly one "
+                    f"Colocated MegatronMIMO with language PP>1 or CP>1 supports exactly one "
                     f"encoder tower per modality in v1. Modality '{modality_name}' "
                     f"has encoder towers: {list(encoders.keys())}."
                 )
@@ -629,10 +720,16 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             offenders.extend(self._walk_module_spec_for_per_token_loss(spec, mod_name))
         if offenders:
             raise ValueError(
-                f"Colocated MegatronMIMO with language PP>1 requires "
+                f"Colocated MegatronMIMO with language PP>1 or CP>1 requires "
                 f"calculate_per_token_loss=True on every active module "
                 f"TransformerConfig. Offending configs: {offenders}."
             )
+
+        self._validate_colocated_language_cp_spec_constraints()
+
+    def _validate_colocated_language_pp_spec_constraints(self) -> None:
+        """Compatibility wrapper for the generalized PP-or-CP spec validator."""
+        self._validate_colocated_language_pp_or_cp_spec_constraints()
 
     def build_infra(self) -> MegatronMIMOInfra:
         """Build MegatronMIMO parallelism infrastructure.
@@ -795,8 +892,12 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         module_name: str,
         pg_collection: ProcessGroupCollection,
     ) -> ModuleSpec:
-        """Inject pg_collection into encoder specs within a modality submodule."""
+        """Inject pg_collection into a modality submodule and its encoder specs."""
         spec = copy.deepcopy(spec)
+        if spec.params is None:
+            spec.params = {}
+        spec.params["pg_collection"] = pg_collection
+
         if self.megatron_mimo_parallelism_config is not None:
             self._inject_parallelism_into_spec_configs(
                 spec,
@@ -1229,5 +1330,5 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             # After parallelism config is finalized, _is_colocated() and
             # asymmetric-TP geometry are determined. Catch v1-unsafe combos
             # (cpu init, recompute) at config-build time.
-            self._validate_colocated_language_pp_spec_constraints()
+            self._validate_colocated_language_pp_or_cp_spec_constraints()
             self._validate_asymmetric_tp_constraints()
