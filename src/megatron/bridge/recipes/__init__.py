@@ -23,6 +23,7 @@ from megatron.bridge.diffusion.recipes.wan.wan import *
 from megatron.bridge.recipes.deepseek import *
 from megatron.bridge.recipes.gemma import *
 from megatron.bridge.recipes.gemma3_vl import *
+from megatron.bridge.recipes.gemma4_vl import *
 from megatron.bridge.recipes.glm import *
 from megatron.bridge.recipes.glm_vl import *
 from megatron.bridge.recipes.gpt import *

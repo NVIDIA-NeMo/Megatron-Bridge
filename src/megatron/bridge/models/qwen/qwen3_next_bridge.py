@@ -30,6 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
@@ -82,7 +83,7 @@ class Qwen3NextBridge(MegatronModelBridge):
         # Qwen3-Next: hybrid gated delta net + standard attention
         provider.transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec
         provider.experimental_attention_variant = "gated_delta_net"
-        provider.linear_attention_freq = hf_config.full_attention_interval
+        provider.linear_attention_freq = full_attention_interval_from_hf(hf_config)
         provider.linear_conv_kernel_dim = hf_config.linear_conv_kernel_dim
         provider.linear_key_head_dim = hf_config.linear_key_head_dim
         provider.linear_value_head_dim = hf_config.linear_value_head_dim

@@ -97,7 +97,10 @@ class PEFT(ABC):
             The same type as the input model, transformed with PEFT applied.
         """
         if isinstance(self, ModuleMatcher):
-            self._reset_target_match_state()
+            # Rebuild alias/match bookkeeping from the *current* target_modules so that
+            # any post-construction mutation (common in recipes) is respected. Then walk
+            # the model once to record which aliases matched and warn on typos.
+            self._init_target_match_state()
 
             def _validate_only(
                 module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None

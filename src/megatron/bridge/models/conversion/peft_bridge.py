@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import itertools
-import re
 from collections import defaultdict
 from dataclasses import dataclass
 from string import digits
@@ -41,13 +40,39 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.peft.canonical_lora import ModuleDict
 from megatron.bridge.peft.lora import LoRAMerge
-from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
+from megatron.bridge.peft.utils import (
+    get_adapter_attributes_from_linear,
+    is_expert_linear,
+)
 
 
 if TYPE_CHECKING:
     from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-    from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronWeightTuple, WeightConversionTask
+    from megatron.bridge.models.conversion.model_bridge import (
+        HFWeightTuple,
+        MegatronWeightTuple,
+        WeightConversionTask,
+    )
     from megatron.bridge.peft.base import PEFT
+
+
+class _AbsentProjectionSentinel:
+    """Singleton sentinel returned by ``_split_qkv_linear_out_weight`` to declare that
+    a projection key has no counterpart in the HF model and should be skipped during
+    adapter export.  Example: ``v_proj`` on Gemma4 global-attention layers that use K=V
+    tying (no ``v_proj`` weight exists in HF).
+
+    Bridges that need this behaviour should return this sentinel for the absent key so
+    that the generic export code can distinguish an intentional skip from a bug.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "ABSENT_PROJECTION"
+
+
+ABSENT_PROJECTION = _AbsentProjectionSentinel()
 
 
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
@@ -82,6 +107,7 @@ class AdapterWeightConversionTask:
     dim: int
     linear_in_task: "WeightConversionTask"
     linear_out_task: "WeightConversionTask"
+    requires_expert_splits: bool = False
 
 
 @dataclass(frozen=True)
@@ -250,15 +276,15 @@ class MegatronPeftBridge:
         linear_out_tensor: torch.Tensor,
         base_weight_shape: Optional[torch.Size] = None,
     ) -> bool:
-        """Detect fused FC1 (gate/up) adapters based on names and tensor shape."""
+        """Detect fused FC1 adapters based on names and tensor shape."""
 
         names = list(base_hf_weight_names)
         has_gate_up = (
             bool(names)
             and len(names) % 2 == 0
-            and all(("gate_proj" in name or "up_proj" in name) for name in names)
-            and any("gate_proj" in name for name in names)
-            and any("up_proj" in name for name in names)
+            and all(self._is_fused_fc1_gate_proj(name) or self._is_fused_fc1_up_proj(name) for name in names)
+            and any(self._is_fused_fc1_gate_proj(name) for name in names)
+            and any(self._is_fused_fc1_up_proj(name) for name in names)
         )
         if not has_gate_up:
             return False
@@ -290,13 +316,30 @@ class MegatronPeftBridge:
                 return projection_key
         return None
 
+    def _is_fused_fc1_gate_proj(self, hf_name: str) -> bool:
+        """Return whether the HF name maps to the gate half of fused FC1."""
+
+        return "gate_proj" in hf_name or ".w1." in hf_name
+
+    def _is_fused_fc1_up_proj(self, hf_name: str) -> bool:
+        """Return whether the HF name maps to the up half of fused FC1."""
+
+        return "up_proj" in hf_name or ".w3." in hf_name
+
     def _infer_hf_expert_idx(self, hf_name: str) -> Optional[int]:
         """Return the expert index embedded in an HF MoE weight name."""
 
-        match = re.search(r"\bexperts\.(\d+)\b", hf_name)
-        if match is None:
+        parts = hf_name.split(".")
+        try:
+            experts_idx = parts.index("experts")
+        except ValueError:
             return None
-        return int(match.group(1))
+        if experts_idx + 1 >= len(parts):
+            return None
+        try:
+            return int(parts[experts_idx + 1])
+        except ValueError:
+            return None
 
     def _split_qkv_linear_out_weight(
         self,
@@ -434,11 +477,7 @@ class MegatronPeftBridge:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Split fused FC1 LoRA linear_out into gate/up with TP-aware ordering."""
 
-        tp_size = (
-            parallel_state.get_expert_tensor_parallel_world_size()
-            if is_expert
-            else parallel_state.get_tensor_model_parallel_world_size()
-        )
+        tp_size = 1 if is_expert else parallel_state.get_tensor_model_parallel_world_size()
         if tp_size <= 1:
             return torch.chunk(linear_out_weight, 2, dim=0)
 
@@ -465,8 +504,6 @@ class MegatronPeftBridge:
         ep_size = parallel_state.get_expert_model_parallel_world_size()
         if ep_size <= 1:
             return None
-        assert weight.ndim < 3
-
         gathered = [torch.empty_like(weight) for _ in range(ep_size)]
         torch.distributed.all_gather(gathered, weight, group=parallel_state.get_expert_model_parallel_group())
         return gathered
@@ -480,21 +517,23 @@ class MegatronPeftBridge:
     ) -> torch.Tensor:
         """Select the per-expert adapter weight slice if present."""
 
-        assert weight.ndim < 3
-
         ep_size = parallel_state.get_expert_model_parallel_world_size()
         if ep_size <= 1:
-            return weight
+            return weight[expert_idx] if weight.ndim > 2 else weight
 
         num_experts_per_rank = num_experts // ep_size
         rank = expert_idx // num_experts_per_rank
+        if weight.ndim > 2:
+            local_expert_idx = expert_idx % num_experts_per_rank
+            return gathered[rank][local_expert_idx]
         return gathered[rank]
 
     def _megatron_global_adapters_info_all_pp_ranks(
         self, megatron_model: Union[MegatronModel, List[MegatronModel]]
-    ) -> List[tuple[str, str, bool, bool, int, int, int, int]]:
+    ) -> List[tuple[str, str, bool, bool, bool, int, int, int, int]]:
         """Get all adapters' information tuple:
-         (global_base_name, local_base_prefix, input_is_parallel, base_linear_is_parallel, alpha, dim, pp_rank, vp_stage)
+         (global_base_name, local_base_prefix, input_is_parallel, base_linear_is_parallel,
+          requires_expert_splits, alpha, dim, pp_rank, vp_stage)
         across all pipeline parallel ranks."""
         # Cache the result after first call
         if hasattr(self, "_cached_param_objects_adapter"):
@@ -508,7 +547,7 @@ class MegatronPeftBridge:
         pp_group = parallel_state.get_pipeline_model_parallel_group()
         pp_rank = get_pg_rank(pp_group)
         model_config = unwrap_model(megatron_model)[0].config
-        global_param_objects: List[tuple[str, str, bool, bool, int, int, int, int]] = []
+        global_param_objects: List[tuple[str, str, bool, bool, bool, int, int, int, int]] = []
 
         for vp_stage, model in enumerate(megatron_model):
             for local_param_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):  # type: ignore[name-defined]
@@ -530,19 +569,26 @@ class MegatronPeftBridge:
                 if isinstance(adapter, ModuleDict):
                     adapter_name = local_param_name.removeprefix(local_base_prefix + ".adapter.").split(".")[0]
                     adapter = adapter[adapter_name]
-                if isinstance(adapter, ParallelLinearAdapter):
+                if (
+                    hasattr(adapter, "linear_in")
+                    and hasattr(adapter, "input_is_parallel")
+                    and hasattr(adapter, "base_linear_is_parallel")
+                ):
                     input_is_parallel = adapter.input_is_parallel
                     base_linear_is_parallel = True
+                    requires_expert_splits = adapter.linear_in.weight.ndim > 2
                 else:
                     attrs = get_adapter_attributes_from_linear(to_wrap)
                     input_is_parallel = attrs.input_is_parallel
                     base_linear_is_parallel = attrs.base_linear_is_parallel
+                    requires_expert_splits = False
                 global_param_objects.append(
                     (
                         global_base_name,
                         local_base_prefix,
                         input_is_parallel,
                         base_linear_is_parallel,
+                        requires_expert_splits,
                         adapter.alpha,
                         adapter.dim,
                         pp_rank,
@@ -613,6 +659,7 @@ class MegatronPeftBridge:
             local_base_prefix,
             input_is_parallel,
             base_linear_is_parallel,
+            requires_expert_splits,
             alpha,
             dim,
             pp_rank,
@@ -697,6 +744,7 @@ class MegatronPeftBridge:
                     adapter_key=adapter_key,
                     alpha=alpha,
                     dim=dim,
+                    requires_expert_splits=requires_expert_splits,
                     linear_in_task=linear_in_task,
                     linear_out_task=linear_out_task,
                 )
@@ -711,15 +759,26 @@ class MegatronPeftBridge:
 
         materialized: List[AdapterWeight] = []
         for adapter_task in adapter_tasks:
-            linear_in_dict = adapter_task.linear_in_task.mapping.megatron_to_hf(
-                adapter_task.linear_in_task.param_weight, adapter_task.linear_in_task.megatron_module
-            )
-            linear_in_tensor = next(iter(linear_in_dict.values()))
+            if adapter_task.requires_expert_splits:
+                linear_in_tp_axis = 2 if isinstance(adapter_task.linear_in_task.mapping, RowParallelMapping) else 1
+                linear_in_tensor = self._materialize_grouped_expert_adapter_tensor(
+                    adapter_task.linear_in_task,
+                    tp_axis=linear_in_tp_axis,
+                )
+                linear_out_tensor = self._materialize_grouped_expert_adapter_tensor(
+                    adapter_task.linear_out_task,
+                    tp_axis=1,
+                )
+            else:
+                linear_in_dict = adapter_task.linear_in_task.mapping.megatron_to_hf(
+                    adapter_task.linear_in_task.param_weight, adapter_task.linear_in_task.megatron_module
+                )
+                linear_in_tensor = next(iter(linear_in_dict.values()))
 
-            linear_out_dict = adapter_task.linear_out_task.mapping.megatron_to_hf(
-                adapter_task.linear_out_task.param_weight, adapter_task.linear_out_task.megatron_module
-            )
-            linear_out_tensor = next(iter(linear_out_dict.values()))
+                linear_out_dict = adapter_task.linear_out_task.mapping.megatron_to_hf(
+                    adapter_task.linear_out_task.param_weight, adapter_task.linear_out_task.megatron_module
+                )
+                linear_out_tensor = next(iter(linear_out_dict.values()))
 
             materialized.append(
                 AdapterWeight(
@@ -742,12 +801,28 @@ class MegatronPeftBridge:
 
         return materialized
 
+    def _materialize_grouped_expert_adapter_tensor(
+        self,
+        task: "WeightConversionTask",
+        *,
+        tp_axis: int,
+    ) -> torch.Tensor:
+        """Broadcast and gather grouped-expert adapter weights on their real expert-TP axis."""
+
+        mapping = task.mapping
+        tensor = mapping.broadcast_from_pp_rank(task.param_weight, cache_key=task.global_param_name)
+        assert tensor is not None, f"Expected adapter tensor for {task.global_param_name}"
+        tensor = mapping.maybe_dequantize(tensor)
+        if mapping.tp_size > 1:
+            tensor = torch.cat(mapping.gather_from_tp_ranks(tensor), dim=tp_axis)
+        return tensor
+
     def stream_adapter_weights_megatron_to_hf(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         cpu: bool = True,
         show_progress: bool = True,
-    ) -> Iterable[HFWeightTuple]:
+    ) -> Iterable["HFWeightTuple"]:
         """Stream only adapter weights without merging them into base tensors."""
 
         # Local import avoids circular dependency while ensuring runtime access.
@@ -790,7 +865,7 @@ class MegatronPeftBridge:
             # (stacked along dim 0) once per HF name instead of duplicating per expert.
             packed_expert = False
             base_hf_weight_names: List[str] = []
-            if is_grouped_expert and base_suffixes:
+            if is_grouped_expert:
                 base_hf_weight_names = self._get_base_hf_param_names_for_adapter(
                     mapping_registry,
                     adapter_task.global_base_prefix,
@@ -798,7 +873,7 @@ class MegatronPeftBridge:
                     base_suffixes[0],
                 )
                 if base_hf_weight_names and not any(
-                    re.search(r"experts\.(\d+)", name) for name in base_hf_weight_names
+                    self._infer_hf_expert_idx(name) is not None for name in base_hf_weight_names
                 ):
                     packed_expert = True
 
@@ -883,8 +958,15 @@ class MegatronPeftBridge:
                     if per_base_linear_out is not None:
                         for index, base_name in enumerate(base_hf_weight_names):
                             current_linear_out_tensor = per_base_linear_out.get(base_name)
-                            assert current_linear_out_tensor is not None, "unknown projection name"
-
+                            if isinstance(current_linear_out_tensor, _AbsentProjectionSentinel):
+                                # Bridge explicitly declared this projection absent (e.g.,
+                                # v_proj on Gemma4 global-attention K=V layers).  Skip it.
+                                continue
+                            assert current_linear_out_tensor is not None, (
+                                f"No linear_out slice for {base_name!r}. "
+                                "Return ABSENT_PROJECTION from _split_qkv_linear_out_weight "
+                                "to intentionally skip a projection."
+                            )
                             yield HFWeightTuple(linear_in_hf_names[index], current_linear_in_tensor)
                             yield HFWeightTuple(linear_out_hf_names[index], current_linear_out_tensor)
                         continue
@@ -934,9 +1016,9 @@ class MegatronPeftBridge:
             )
             per_base = {}
             for base_name in base_hf_weight_names:
-                if "gate_proj" in base_name:
+                if self._is_fused_fc1_gate_proj(base_name):
                     per_base[base_name] = gate_weight
-                elif "up_proj" in base_name:
+                elif self._is_fused_fc1_up_proj(base_name):
                     per_base[base_name] = up_weight
                 else:
                     raise ValueError(f"Unknown fused-fc1 base weight name: {base_name}")
@@ -997,7 +1079,15 @@ class MegatronPeftBridge:
                 linear_in_weight if linear_in_weight.device == base_device else linear_in_weight.to(base_device)
             )
             dummy_base = torch.zeros((fused_dim0, hidden_size), device=base_device, dtype=base_weight.dtype)
-            lora_weight = LoRAMerge().merge(dummy_base, linear_out_on_base, linear_in_on_base, alpha, dim)
+            lora_weight = LoRAMerge().merge(
+                dummy_base,
+                linear_out_on_base,
+                linear_in_on_base,
+                alpha,
+                dim,
+                tp_size=1,
+                tp_group=None,
+            )
 
             tp_size = parallel_state.get_tensor_model_parallel_world_size()
             qkvz, ba = split_gdn_linear_weights(config, lora_weight, tp_size=tp_size)
@@ -1011,7 +1101,8 @@ class MegatronPeftBridge:
                 converted_weights_dict[hf_name] = base_tensor + gdn_slices[projection_key]
 
             return converted_weights_dict
-        is_fused_fc1 = self._is_fused_fc1_gate_up(weight_names, linear_out_weight, base_weight_shape)
+        linear_out_weight_shape_view = linear_out_weight[0] if linear_out_weight.ndim > 2 else linear_out_weight
+        is_fused_fc1 = self._is_fused_fc1_gate_up(weight_names, linear_out_weight_shape_view, base_weight_shape)
         is_fused_qkv = self._is_fused_qkv(weight_names) and not is_expert
         qkv_linear_out_weights = (
             self._split_qkv_linear_out_weight(megatron_model, linear_out_weight) if is_fused_qkv else None
@@ -1047,9 +1138,9 @@ class MegatronPeftBridge:
                         current_linear_out_weight,
                         is_expert=is_expert,
                     )
-                if "gate_proj" in hf_name:
+                if self._is_fused_fc1_gate_proj(hf_name):
                     current_linear_out_weight = fc1_gate_weight
-                elif "up_proj" in hf_name:
+                elif self._is_fused_fc1_up_proj(hf_name):
                     current_linear_out_weight = fc1_up_weight
                 else:
                     raise ValueError(f"Unknown weight name: {hf_name}")
@@ -1060,7 +1151,11 @@ class MegatronPeftBridge:
                 current_linear_out_weight = qkv_linear_out_weights[projection_key]
 
             merged_weight = self._merge_single_adapter_weight(
-                base_weight, alpha, dim, current_linear_in_weight, current_linear_out_weight
+                base_weight,
+                alpha,
+                dim,
+                current_linear_in_weight,
+                current_linear_out_weight,
             )
             converted_weights_dict[hf_name] = merged_weight
 
@@ -1154,6 +1249,8 @@ class MegatronPeftBridge:
             linear_in_on_base,
             alpha,
             dim,
+            tp_size=1,
+            tp_group=None,
         )
         return merged.to(orig_dtype)
 
@@ -1245,10 +1342,151 @@ def infer_target_modules_from_adapter_weights(adapter_weight_names: Iterable[str
     return sorted(modules)
 
 
+def _split_hf_lora_weight_name(name: str) -> tuple[str, str]:
+    """Split an HF-format LoRA weight name into its base target path and LoRA suffix."""
+
+    for suffix in _HF_LORA_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)], suffix
+    raise ValueError(f"Unsupported adapter weight name: {name}")
+
+
+def _order_target_parameters(target_parameters: List[str]) -> List[str]:
+    """Return PEFT target parameters in stable per-parent order."""
+
+    grouped: Dict[str, List[str]] = defaultdict(list)
+    parent_order: List[str] = []
+    for base_name in target_parameters:
+        parent_name, _, _ = base_name.rpartition(".")
+        if parent_name not in grouped:
+            parent_order.append(parent_name)
+        grouped[parent_name].append(base_name)
+
+    ordered: List[str] = []
+    for parent_name in parent_order:
+        ordered.extend(sorted(grouped[parent_name]))
+    return ordered
+
+
+def _build_target_parameter_prefixes(target_parameters: List[str]) -> Dict[str, str]:
+    """Map PEFT target parameters to their on-disk ParamWrapper prefixes."""
+
+    parameter_prefixes: Dict[str, str] = {}
+    parameter_depth_by_parent: Dict[str, int] = defaultdict(int)
+    for base_name in target_parameters:
+        parent_name, _, _ = base_name.rpartition(".")
+        depth = parameter_depth_by_parent[parent_name]
+        parameter_prefixes[base_name] = f"base_model.model.{parent_name}" + ".base_layer" * depth
+        parameter_depth_by_parent[parent_name] += 1
+    return parameter_prefixes
+
+
+def _pack_target_parameter_adapter_weights(
+    lora_a: torch.Tensor,
+    lora_b: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Convert exported target-parameter LoRA tensors into PEFT's ParamWrapper layout."""
+
+    if lora_a.ndim == 3 and lora_b.ndim == 3:
+        packed_lora_a = torch.cat([chunk.transpose(0, 1).contiguous() for chunk in lora_b], dim=0)
+        packed_lora_b = torch.cat([chunk.transpose(0, 1).contiguous() for chunk in lora_a], dim=1)
+        return packed_lora_a, packed_lora_b
+
+    return lora_a, lora_b
+
+
+def convert_adapter_weights_to_peft_state(
+    adapter_weights: Iterable["HFWeightTuple"],
+) -> tuple[Dict[str, torch.Tensor], List[str], List[str]]:
+    """Rewrite exported adapter weights into the PEFT on-disk state-dict layout.
+
+    This follows the original adapter export flow as closely as possible: trust
+    the exported HF names, write normal 2D LoRA tensors directly under
+    ``base_model.model.*``, and only special-case 3D tensors because PEFT stores
+    packed parameter targets through ``ParamWrapper``.
+    """
+
+    adapter_weights = list(adapter_weights)
+    if all(adapter_weight.weight.ndim != 3 for adapter_weight in adapter_weights):
+        return (
+            {
+                f"base_model.model.{adapter_weight.param_name}": adapter_weight.weight
+                for adapter_weight in adapter_weights
+            },
+            [adapter_weight.param_name for adapter_weight in adapter_weights],
+            [],
+        )
+
+    adapter_state: Dict[str, torch.Tensor] = {}
+    module_weight_names: List[str] = []
+    target_parameters: List[str] = []
+    parameter_weights: Dict[str, Dict[str, torch.Tensor]] = defaultdict(dict)
+
+    for adapter_weight in adapter_weights:
+        name = adapter_weight.param_name
+        tensor = adapter_weight.weight
+        base_name, lora_suffix = _split_hf_lora_weight_name(name)
+        if tensor.ndim == 3:
+            if base_name not in target_parameters:
+                target_parameters.append(base_name)
+            parameter_weights[base_name][lora_suffix] = tensor
+            continue
+
+        adapter_state[f"base_model.model.{name}"] = tensor
+        module_weight_names.append(name)
+
+    target_parameters = _order_target_parameters(target_parameters)
+    parameter_prefixes = _build_target_parameter_prefixes(target_parameters)
+
+    for base_name in target_parameters:
+        target_prefix = parameter_prefixes[base_name]
+        if base_name in parameter_weights:
+            weights = parameter_weights[base_name]
+            if ".lora_A.weight" not in weights or ".lora_B.weight" not in weights:
+                raise ValueError(f"Incomplete adapter export for target parameter: {base_name}")
+            packed_lora_a, packed_lora_b = _pack_target_parameter_adapter_weights(
+                weights[".lora_A.weight"],
+                weights[".lora_B.weight"],
+            )
+        adapter_state[f"{target_prefix}.lora_A.weight"] = packed_lora_a
+        adapter_state[f"{target_prefix}.lora_B.weight"] = packed_lora_b
+
+    return adapter_state, module_weight_names, target_parameters
+
+
+def infer_rank_pattern_from_adapter_weights(
+    adapter_weights: Iterable["HFWeightTuple"],
+    *,
+    default_rank: int,
+) -> Dict[str, int]:
+    """Infer PEFT ``rank_pattern`` entries from exported adapter tensors."""
+
+    rank_by_target: Dict[str, int] = {}
+
+    for adapter_weight in adapter_weights:
+        name = adapter_weight.param_name
+        tensor = adapter_weight.weight
+        base_name, lora_suffix = _split_hf_lora_weight_name(name)
+        if lora_suffix != ".lora_A.weight":
+            continue
+
+        rank = tensor.shape[1] if tensor.ndim == 3 else tensor.shape[0]
+        previous_rank = rank_by_target.get(base_name)
+        if previous_rank is not None and previous_rank != rank:
+            raise ValueError(
+                f"Inconsistent LoRA ranks detected for target {base_name}: saw {previous_rank} and {rank}"
+            )
+        rank_by_target[base_name] = rank
+
+    return {target_name: rank for target_name, rank in rank_by_target.items() if rank != default_rank}
+
+
 def build_adapter_config_dict(
     peft_config: PEFT,
     target_modules: List[str],
+    target_parameters: Optional[List[str]] = None,
     base_model_name_or_path: Optional[str] = None,
+    rank_pattern: Optional[Dict[str, int]] = None,
 ) -> Dict[str, object]:
     """Build an HF PEFT-compatible ``adapter_config.json`` dictionary.
 
@@ -1268,14 +1506,16 @@ def build_adapter_config_dict(
         "inference_mode": True,
         "init_lora_weights": True,
         "lora_alpha": getattr(peft_config, "alpha", 32),
-        "lora_dropout": getattr(peft_config, "dropout", 0.0),
+        "lora_dropout": 0.0 if target_parameters else getattr(peft_config, "dropout", 0.0),
         "modules_to_save": None,
         "r": getattr(peft_config, "dim", 32),
-        "rank_pattern": {},
+        "rank_pattern": rank_pattern or {},
         "alpha_pattern": {},
         "target_modules": target_modules,
         "task_type": "CAUSAL_LM",
         "use_dora": isinstance(peft_config, DoRA),
         "use_rslora": False,
     }
+    if target_parameters:
+        config["target_parameters"] = target_parameters
     return config
