@@ -20,7 +20,8 @@ import torch.distributed as dist
 from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.training.checkpointing import CheckpointManager, create_checkpoint_manager, load_checkpoint
+from megatron.bridge.models.megatron_mimo.megatron_mimo_checkpoint import MegatronMIMORngCheckpointContext
+from megatron.bridge.training.checkpointing import CheckpointLoadContext, CheckpointManager, create_checkpoint_manager
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.megatron_mimo_parallel_utils import (
     build_pg_collection_for_schedule,
@@ -29,6 +30,8 @@ from megatron.bridge.training.megatron_mimo_parallel_utils import (
     unwrap_megatron_mimo_model,
     validate_no_stub_ranks,
 )
+from megatron.bridge.training.megatron_mimo_scheduler import make_scheduler_checkpoint_proxy
+from megatron.bridge.training.megatron_mimo_scheduler import optimizer_has_params as _optimizer_has_params
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
 
@@ -56,21 +59,6 @@ def _get_megatron_mimo_seed_kwargs(cfg: ConfigContainer) -> Dict:
     if getattr(model_cfg, "cuda_graph_impl", "none") != "none":
         seed_kwargs["use_cudagraphable_rng"] = True
     return seed_kwargs
-
-
-def _optimizer_has_params(optimizer: object) -> bool:
-    """Return whether an optimizer owns any rank-local trainable parameters."""
-    return any(group.get("params") for group in getattr(optimizer, "param_groups", ()))
-
-
-def _first_scheduler_with_param_groups(
-    schedulers: Dict[str, "OptimizerParamScheduler"],
-) -> Optional["OptimizerParamScheduler"]:
-    """Return the first scheduler backed by a non-empty optimizer."""
-    for scheduler in schedulers.values():
-        if scheduler is not None and _optimizer_has_params(scheduler.optimizer):
-            return scheduler
-    return None
 
 
 def _needs_multimodule_pipeline_communicator(model: "MimoModel") -> bool:
@@ -316,8 +304,16 @@ def setup_megatron_mimo(
     # module; the LLM is the "primary" for checkpoint bridging).
     active_module_name, local_pg_collection = get_active_module_pg(megatron_mimo_infra)
 
+    rng_checkpoint_context = MegatronMIMORngCheckpointContext(
+        infra=megatron_mimo_infra,
+        module_name=active_module_name,
+    )
+
     # Initialize checkpoint manager (owns checkpointing_context internally).
-    checkpoint_manager = create_checkpoint_manager(cfg.checkpoint)
+    checkpoint_manager = create_checkpoint_manager(
+        cfg.checkpoint,
+        rng_checkpoint_context=rng_checkpoint_context,
+    )
 
     # Bridge MegatronMIMO's per-module process groups into Megatron's global parallel
     # state.  MegatronMIMO intentionally skips global MPU init (see
@@ -340,7 +336,7 @@ def setup_megatron_mimo(
         mpu._CONTEXT_PARALLEL_GROUP = local_pg_collection.cp
 
     # Load checkpoint if one exists (persistent, pretrained, or non-persistent).
-    first_scheduler = _first_scheduler_with_param_groups(schedulers)
+    checkpoint_scheduler = make_scheduler_checkpoint_proxy(schedulers)
 
     has_persistent = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
     has_pretrained = cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(
@@ -352,26 +348,21 @@ def setup_megatron_mimo(
     if should_load:
         timers = global_state.timers
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        load_checkpoint(
-            global_state,
-            model=[model],
-            optimizer=optimizer,
-            opt_param_scheduler=first_scheduler,
-            checkpointing_context=checkpoint_manager.checkpointing_context,
-            pg_collection=local_pg_collection,
-            module_name=active_module_name,
-            megatron_mimo_infra=megatron_mimo_infra,
+        checkpoint_manager.load(
+            CheckpointLoadContext(
+                state=global_state,
+                model=[model],
+                optimizer=optimizer,
+                opt_param_scheduler=checkpoint_scheduler,
+                pg_collection=local_pg_collection,
+            )
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
 
-        # Fan out loaded scheduler state to all active module schedulers.
-        # v1: checkpoints contain a single scheduler blob (first_scheduler).
-        if first_scheduler is not None and len(schedulers) > 1:
-            loaded_state = first_scheduler.state_dict()
-            for sched in schedulers.values():
-                if sched is not first_scheduler:
-                    sched.load_state_dict(loaded_state)
+        # ``checkpoint_scheduler`` loads the shared scheduler state into every
+        # rank-local active scheduler, including non-colocated layouts where
+        # rank 0 has no trainable module.
 
     # Initialize async checkpoint worker (idempotent if already initialized).
     global_state.initialize_async_checkpoint_worker()

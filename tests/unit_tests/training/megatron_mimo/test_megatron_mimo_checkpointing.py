@@ -315,7 +315,14 @@ class TestPretrainMegatronMIMOSetup:
             assert mpu._PIPELINE_MODEL_PARALLEL_GROUP is local_pg.pp
             assert mpu._CONTEXT_PARALLEL_GROUP is local_pg.cp
 
-        mock_create_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
+        from megatron.bridge.models.megatron_mimo.megatron_mimo_checkpoint import MegatronMIMORngCheckpointContext
+
+        mock_create_ckpt_mgr.assert_called_once()
+        args, kwargs = mock_create_ckpt_mgr.call_args
+        assert args == (cfg.checkpoint,)
+        assert isinstance(kwargs["rng_checkpoint_context"], MegatronMIMORngCheckpointContext)
+        assert kwargs["rng_checkpoint_context"]._module_name == "language"
+        assert kwargs["rng_checkpoint_context"]._infra is infra
         global_state.initialize_async_checkpoint_worker.assert_called_once()
         assert result.checkpoint_manager is mock_mgr_instance
 
@@ -1130,11 +1137,11 @@ class TestSetupMegatronMIMOCheckpointLoading:
                     return_value=checkpoint_exists_return,
                 )
             )
-            m_load = stack.enter_context(patch("megatron.bridge.training.setup_megatron_mimo.load_checkpoint"))
             m_create_mgr = stack.enter_context(
                 patch("megatron.bridge.training.setup_megatron_mimo.create_checkpoint_manager")
             )
-            m_create_mgr.return_value = MagicMock(checkpointing_context={"ctx": True})
+            mock_checkpoint_manager = MagicMock(checkpointing_context={"ctx": True})
+            m_create_mgr.return_value = mock_checkpoint_manager
 
             stack.enter_context(
                 patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer)
@@ -1148,35 +1155,44 @@ class TestSetupMegatronMIMOCheckpointLoading:
 
             result = setup_megatron_mimo(state=state)
 
-            mocks["load_checkpoint"] = m_load
+            mocks["create_checkpoint_manager"] = m_create_mgr
+            mocks["checkpoint_manager"] = mock_checkpoint_manager
             mocks["checkpoint_exists"] = m_ckpt_exists
+            mocks["local_pg"] = local_pg
             mocks["result"] = result
 
         return mocks
 
     def test_load_invoked_when_persistent_checkpoint_exists(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        mocks["load_checkpoint"].assert_called_once()
+        mocks["checkpoint_manager"].load.assert_called_once()
 
     def test_load_not_invoked_when_no_checkpoint(self):
         mocks = self._run_setup(load_path=None, checkpoint_exists_return=False)
-        mocks["load_checkpoint"].assert_not_called()
+        mocks["checkpoint_manager"].load.assert_not_called()
 
     def test_load_passes_model_as_list(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert isinstance(kwargs["model"], list)
-        assert len(kwargs["model"]) == 1
+        (ctx,), _ = mocks["checkpoint_manager"].load.call_args
+        assert isinstance(ctx.model, list)
+        assert len(ctx.model) == 1
 
     def test_load_passes_pg_collection(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert kwargs["pg_collection"] is not None
+        (ctx,), _ = mocks["checkpoint_manager"].load.call_args
+        assert ctx.pg_collection is mocks["local_pg"]
 
-    def test_load_passes_module_name(self):
+    def test_checkpoint_manager_receives_rng_context(self):
+        from megatron.bridge.models.megatron_mimo.megatron_mimo_checkpoint import MegatronMIMORngCheckpointContext
+
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert kwargs["module_name"] == "language"
+        # The checkpoint manager owns module identity through the RNG context; load contexts stay generic.
+        args, kwargs = mocks["create_checkpoint_manager"].call_args
+        assert len(args) == 1
+        assert isinstance(kwargs["rng_checkpoint_context"], MegatronMIMORngCheckpointContext)
+        assert kwargs["rng_checkpoint_context"]._module_name == "language"
+        (ctx,), _ = mocks["checkpoint_manager"].load.call_args
+        assert not hasattr(ctx, "module_name")
 
 
 # ---------------------------------------------------------------------------

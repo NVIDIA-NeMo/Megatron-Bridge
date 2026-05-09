@@ -536,6 +536,9 @@ def _build_resume_config(
     per_token_loss: bool = False,
     save_rng: bool = False,
     dropout: float = 0.0,
+    freeze_language_model: bool = False,
+    freeze_modality_encoders: dict[str, bool] | None = None,
+    freeze_modality_projections: dict[str, bool] | None = None,
 ) -> ConfigContainer:
     """Config builder for the checkpoint-resume L2 test.
 
@@ -569,6 +572,9 @@ def _build_resume_config(
         topology={"vision": ["language"], "language": []},
         bf16=(dtype == "bf16"),
         fp16=False,
+        freeze_language_model=freeze_language_model,
+        freeze_modality_encoders=freeze_modality_encoders or {},
+        freeze_modality_projections=freeze_modality_projections or {},
     )
 
     train_cfg = TrainingConfig(
@@ -618,6 +624,9 @@ def _run_checkpoint_resume_param_parity(
     fully_parallel_save: bool,
     per_token_loss: bool,
     dropout: float,
+    freeze_language_model: bool = False,
+    freeze_modality_encoders: dict[str, bool] | None = None,
+    freeze_modality_projections: dict[str, bool] | None = None,
 ) -> None:
     """Compare a continuous run against save+resume with RNG state restored.
 
@@ -663,6 +672,9 @@ def _run_checkpoint_resume_param_parity(
         per_token_loss=per_token_loss,
         save_rng=True,
         dropout=dropout,
+        freeze_language_model=freeze_language_model,
+        freeze_modality_encoders=freeze_modality_encoders,
+        freeze_modality_projections=freeze_modality_projections,
     )
     state_phase0 = GlobalState()
     with _capture_post_step_params_into(phase0_params):
@@ -691,6 +703,9 @@ def _run_checkpoint_resume_param_parity(
         per_token_loss=per_token_loss,
         save_rng=True,
         dropout=dropout,
+        freeze_language_model=freeze_language_model,
+        freeze_modality_encoders=freeze_modality_encoders,
+        freeze_modality_projections=freeze_modality_projections,
     )
     # Phase 1 intentionally stops early to produce the checkpoint, but its LR
     # schedule must match the first ``save_steps`` iterations of the continuous
@@ -726,6 +741,9 @@ def _run_checkpoint_resume_param_parity(
         per_token_loss=per_token_loss,
         save_rng=True,
         dropout=dropout,
+        freeze_language_model=freeze_language_model,
+        freeze_modality_encoders=freeze_modality_encoders,
+        freeze_modality_projections=freeze_modality_projections,
     )
     cfg_resume.scheduler.override_opt_param_scheduler = True
 
@@ -1236,6 +1254,55 @@ class TestMegatronMIMOTraining:
             fully_parallel_save=True,
             per_token_loss=False,
             dropout=0.1,
+        )
+
+    @pytest.mark.run_only_on("GPU")
+    def test_megatron_mimo_checkpoint_resume_frozen_language_save_rng(self, tmp_path):
+        """Non-colocated checkpoint-resume when rank 0 owns no active scheduler.
+
+        The language module runs on rank 0 and is frozen; the vision module on
+        rank 1 remains trainable. This reproduces the L3 failure where checkpoint
+        save omitted ``opt_param_scheduler`` because rank 0 had no optimizer
+        param groups, while resume on the trainable nonzero rank expected the
+        shared scheduler state.
+        """
+        initialize_distributed()
+
+        world_size = dist.get_world_size()
+        if world_size != 2:
+            pytest.skip(f"MegatronMIMO test requires exactly 2 GPUs, got {world_size}")
+
+        import megatron.bridge.training.utils.train_utils as _tu
+
+        _tu.report_theoretical_memory = lambda *a, **kw: None
+
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                    rank_offset=1,
+                ),
+            },
+        )
+
+        _run_checkpoint_resume_param_parity(
+            tmp_path=tmp_path,
+            parallelism_config=par_cfg,
+            checkpoint_prefix="ckpt_non_colocated_frozen_language_rng",
+            micro_batch_size=1,
+            global_batch_size=1,
+            fully_parallel_save=True,
+            per_token_loss=False,
+            dropout=0.1,
+            freeze_language_model=True,
         )
 
     @pytest.mark.run_only_on("GPU")

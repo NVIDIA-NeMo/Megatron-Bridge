@@ -993,6 +993,7 @@ class TestColocatedPPScheduleAdapter:
         megatron_mimo_step._backward_encoder_outputs(
             detached_encoder_outputs={"images": detached_output},
             encoder_outputs={"images": encoder_output},
+            encoder_module_name="images",
             pp_group=pp_group,
         )
 

@@ -32,6 +32,7 @@ from megatron.core.pipeline_parallel.schedules import (
 )
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.models.megatron_mimo.megatron_mimo_checkpoint import MegatronMIMORngCheckpointContext
 from megatron.bridge.training.checkpointing import CheckpointManager, DefaultCheckpointManager
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.megatron_mimo_parallel_utils import (
@@ -40,6 +41,10 @@ from megatron.bridge.training.megatron_mimo_parallel_utils import (
     unwrap_megatron_mimo_model,
     zero_grad_buffer_for_multimodule,
 )
+from megatron.bridge.training.megatron_mimo_scheduler import (
+    first_scheduler_with_param_groups as _first_scheduler_with_param_groups,
+)
+from megatron.bridge.training.megatron_mimo_scheduler import make_scheduler_checkpoint_proxy
 from megatron.bridge.training.megatron_mimo_step import forward_backward_colocated_mimo_with_pp
 from megatron.bridge.training.profiling import (
     handle_profiling_step,
@@ -66,21 +71,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
-def _optimizer_has_params(optimizer: object) -> bool:
-    """Return whether an optimizer owns any rank-local trainable parameters."""
-    return any(group.get("params") for group in getattr(optimizer, "param_groups", ()))
-
-
-def _first_scheduler_with_param_groups(
-    schedulers: Dict[str, "OptimizerParamScheduler"],
-) -> Optional["OptimizerParamScheduler"]:
-    """Return the first scheduler backed by a non-empty optimizer."""
-    for scheduler in schedulers.values():
-        if scheduler is not None and _optimizer_has_params(scheduler.optimizer):
-            return scheduler
-    return None
 
 
 def _learning_rate_for_logging(
@@ -696,16 +686,22 @@ def train_megatron_mimo(
         )
 
     if checkpoint_manager is None:
-        checkpoint_manager = DefaultCheckpointManager(cfg.checkpoint)
+        checkpoint_manager = DefaultCheckpointManager(
+            cfg.checkpoint,
+            rng_checkpoint_context=MegatronMIMORngCheckpointContext(
+                infra=megatron_mimo_infra,
+                module_name=active_module_name,
+            ),
+        )
 
     # Initialize tracking variables
     total_loss_dict = {}
     history_wct = []
     report_memory_flag = True
 
-    # Get first scheduler for checkpoint saving.
-    # All modules share the same LR schedule, so first scheduler state is representative.
-    first_scheduler = _first_scheduler_with_param_groups(schedulers)
+    # Checkpoint a single shared LR schedule even when the active scheduler is
+    # owned by a nonzero rank in non-colocated layouts.
+    checkpoint_scheduler = make_scheduler_checkpoint_proxy(schedulers)
 
     # Profiler setup (mirrors train.py behavior)
     prof = None
@@ -838,13 +834,11 @@ def train_megatron_mimo(
             state=global_state,
             model=[model],
             optimizer=optimizer,
-            opt_param_scheduler=first_scheduler,
+            opt_param_scheduler=checkpoint_scheduler,
             num_floating_point_operations_so_far=0,
             checkpoint_manager=checkpoint_manager,
             train_data_iterator=train_data_iterator,
             pg_collection=local_pg_collection,
-            module_name=active_module_name,
-            megatron_mimo_infra=megatron_mimo_infra,
         )
         if should_exit:
             break

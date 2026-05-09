@@ -1199,8 +1199,6 @@ def save_checkpoint_and_time(
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]] = None,
     pg_collection: Optional[ProcessGroupCollection] = None,
     callback_manager: Optional[CallbackManager] = None,
-    module_name: str | None = None,
-    megatron_mimo_infra: Optional[Any] = None,
 ) -> None:
     """Saves a checkpoint and logs the timing.
 
@@ -1220,8 +1218,6 @@ def save_checkpoint_and_time(
         train_data_iterator: Optional training data iterator to save its state.
         pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
-        megatron_mimo_infra: Optional MegatronMIMO infra carrying per-module RNG
-                             tracker states for colocated asymmetric TP.
     """
     timers = state.timers
     energy_monitor = state.energy_monitor
@@ -1263,8 +1259,6 @@ def save_checkpoint_and_time(
             train_data_iterator=train_data_iterator,
             non_persistent_ckpt=non_persistent_ckpt,
             pg_collection=pg_collection,
-            module_name=module_name,
-            megatron_mimo_infra=megatron_mimo_infra,
         ),
         callback_manager,
     )
@@ -1295,8 +1289,6 @@ def checkpoint_and_decide_exit(
     train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     pg_collection: Optional[ProcessGroupCollection] = None,
     callback_manager: Optional[CallbackManager] = None,
-    module_name: str | None = None,
-    megatron_mimo_infra: Optional[Any] = None,
 ) -> bool:
     """Handles checkpointing decisions and determines if training should exit.
 
@@ -1314,8 +1306,6 @@ def checkpoint_and_decide_exit(
         train_data_iterator: Optional training data iterator to save its state.
         pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
-        megatron_mimo_infra: Optional MegatronMIMO infra carrying per-module RNG
-                             tracker states for colocated asymmetric TP.
 
     Returns:
         True if the training loop should exit, False otherwise.
@@ -1337,8 +1327,6 @@ def checkpoint_and_decide_exit(
                     train_data_iterator=train_data_iterator,
                     pg_collection=pg_collection,
                     callback_manager=callback_manager,
-                    module_name=module_name,
-                    megatron_mimo_infra=megatron_mimo_infra,
                 )
             barrier_and_log("exiting program after receiving SIGTERM.")
 
@@ -1360,8 +1348,6 @@ def checkpoint_and_decide_exit(
             train_data_iterator=train_data_iterator,
             pg_collection=pg_collection,
             callback_manager=callback_manager,
-            module_name=module_name,
-            megatron_mimo_infra=megatron_mimo_infra,
         )
         saved_checkpoint = True
 
@@ -1381,8 +1367,6 @@ def checkpoint_and_decide_exit(
             train_data_iterator=train_data_iterator,
             pg_collection=pg_collection,
             callback_manager=callback_manager,
-            module_name=module_name,
-            megatron_mimo_infra=megatron_mimo_infra,
         )
         saved_checkpoint = True
 
@@ -1404,8 +1388,6 @@ def checkpoint_and_decide_exit(
                     train_data_iterator=train_data_iterator,
                     pg_collection=pg_collection,
                     callback_manager=callback_manager,
-                    module_name=module_name,
-                    megatron_mimo_infra=megatron_mimo_infra,
                 )
             barrier_and_log(f"exiting program after {train_time} minutes")
 
@@ -1424,8 +1406,6 @@ def checkpoint_and_decide_exit(
                 train_data_iterator=train_data_iterator,
                 pg_collection=pg_collection,
                 callback_manager=callback_manager,
-                module_name=module_name,
-                megatron_mimo_infra=megatron_mimo_infra,
             )
         barrier_and_log(f"exiting program at iteration {state.train_state.step}")
 
@@ -1444,8 +1424,6 @@ def checkpoint_and_decide_exit(
                 train_data_iterator=train_data_iterator,
                 pg_collection=pg_collection,
                 callback_manager=callback_manager,
-                module_name=module_name,
-                megatron_mimo_infra=megatron_mimo_infra,
             )
         barrier_and_log("Exiting program due to straggler detection.")
         return True

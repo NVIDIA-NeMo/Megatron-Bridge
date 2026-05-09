@@ -291,8 +291,8 @@ def test_colocated_stage2_rejects_language_cp_with_multiple_modality_modules():
         cfg.finalize(world_size=2)
 
 
-def test_colocated_stage2_temporarily_allows_combined_language_pp_and_cp():
-    """CP+PP is allowed through validation for exploratory L3 expected-failure runs."""
+def test_colocated_stage2_rejects_combined_language_pp_and_cp():
+    """CP+PP is rejected until MCore language-PP CP label/loss-mask sharding lands."""
     module_parallelisms = {
         "vision": ModuleParallelismConfig(
             tensor_model_parallel_size=1,
@@ -309,7 +309,8 @@ def test_colocated_stage2_temporarily_allows_combined_language_pp_and_cp():
         ),
     }
     cfg = MegatronMIMOParallelismConfig(module_parallelisms=module_parallelisms)
-    cfg.finalize(world_size=4)
+    with pytest.raises(ValueError, match="does not support combining language PP>1 with language CP>1"):
+        cfg.finalize(world_size=4)
 
 
 def test_colocated_stage2_rejects_etp_gt_1():

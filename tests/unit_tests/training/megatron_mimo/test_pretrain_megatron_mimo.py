@@ -62,11 +62,10 @@ def _make_fake_grid(*, rank_offset: int, size: int, tp_rank: int, pp_rank: int) 
 
 def test_scheduler_helpers_skip_frozen_module_optimizer_stubs():
     """Frozen modules can create optimizer stubs that must not drive LR scheduling."""
-    from megatron.bridge.training.setup_megatron_mimo import (
-        _first_scheduler_with_param_groups as setup_first_scheduler,
-    )
-    from megatron.bridge.training.setup_megatron_mimo import (
-        _optimizer_has_params,
+    from megatron.bridge.training.megatron_mimo_scheduler import (
+        first_scheduler_with_param_groups,
+        make_scheduler_checkpoint_proxy,
+        optimizer_has_params,
     )
     from megatron.bridge.training.train_megatron_mimo import (
         _first_scheduler_with_param_groups as train_first_scheduler,
@@ -80,11 +79,16 @@ def test_scheduler_helpers_skip_frozen_module_optimizer_stubs():
     real_scheduler = SimpleNamespace(optimizer=real_optimizer)
     schedulers = {"language": stub_scheduler, "audio": empty_group_scheduler, "images": real_scheduler}
 
-    assert not _optimizer_has_params(stub_optimizer)
-    assert not _optimizer_has_params(empty_group_optimizer)
-    assert _optimizer_has_params(real_optimizer)
-    assert setup_first_scheduler(schedulers) is real_scheduler
+    assert not optimizer_has_params(stub_optimizer)
+    assert not optimizer_has_params(empty_group_optimizer)
+    assert optimizer_has_params(real_optimizer)
+    assert first_scheduler_with_param_groups(schedulers) is real_scheduler
     assert train_first_scheduler(schedulers) is real_scheduler
+
+    real_scheduler.state_dict = MagicMock(return_value={"num_steps": 3, "lr": 1e-4})
+    proxy = make_scheduler_checkpoint_proxy(schedulers)
+    assert proxy is not None
+    assert proxy.state_dict() == {"num_steps": 3, "lr": 1e-4}
 
 
 def test_setup_skips_multimodule_pipeline_communicator_for_colocated_models():
@@ -457,8 +461,8 @@ def test_module_rng_scope_can_be_re_entered():
     assert set_calls == [{"step": 0}, {"step": 1}]
 
 
-def test_get_rng_state_namespaces_key_with_module_name():
-    """get_rng_state should namespace ShardedObject key when module_name is set.
+def test_get_rng_state_namespaces_key_with_context_suffix():
+    """get_rng_state should namespace ShardedObject key when the RNG context provides a suffix.
 
     Unit test: mocks ``torch.cuda.get_rng_state`` and the Megatron CUDA RNG
     tracker so the test runs without a GPU (``get_rng_state`` otherwise calls
@@ -485,11 +489,16 @@ def test_get_rng_state_namespaces_key_with_module_name():
         result = get_rng_state(False, "torch_dist", pg_collection=pg)
         assert result.key == "rng_state"
 
-        # With module_name: key is namespaced
-        result = get_rng_state(False, "torch_dist", pg_collection=pg, module_name="language")
+        rng_checkpoint_context = MagicMock()
+        rng_checkpoint_context.collect_extra_rng_state.return_value = None
+
+        # With a context suffix: key is namespaced
+        rng_checkpoint_context.shard_key_suffix.return_value = "language"
+        result = get_rng_state(False, "torch_dist", pg_collection=pg, rng_checkpoint_context=rng_checkpoint_context)
         assert result.key == "rng_state.language"
 
-        result = get_rng_state(False, "torch_dist", pg_collection=pg, module_name="vision")
+        rng_checkpoint_context.shard_key_suffix.return_value = "vision"
+        result = get_rng_state(False, "torch_dist", pg_collection=pg, rng_checkpoint_context=rng_checkpoint_context)
         assert result.key == "rng_state.vision"
 
 
