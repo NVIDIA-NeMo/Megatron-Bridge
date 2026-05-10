@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DATA_ALIGNMENT_CHECK_COUNT = 0
-_PP_DEBUG_LOG_COUNT = 0
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -44,146 +43,6 @@ def _env_flag(name: str, *, default: bool = False) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "y", "on"}
-
-
-def _pp_debug_log_active() -> bool:
-    """Gate verbose colocated language-PP debug logging behind ``MIMO_PP_DEBUG_LOG``.
-
-    Logging is bounded to the first ``MIMO_PP_DEBUG_LOG_ITERS`` iterations
-    (default 1) so a long run does not flood the slurm log. Used to diagnose
-    encoder-embedding alignment, per-microbatch loss, and rank slicing issues.
-    """
-    if not _env_flag("MIMO_PP_DEBUG_LOG"):
-        return False
-    max_iters = int(os.environ.get("MIMO_PP_DEBUG_LOG_ITERS", "1"))
-    return _PP_DEBUG_LOG_COUNT < max_iters
-
-
-def _tensor_summary(value: Any) -> str:
-    """Compact ``shape sum norm`` string for a tensor; ``None`` / non-tensor falls through.
-
-    ``sum`` and ``norm`` are computed in fp32 to keep them stable across
-    bf16/fp16 runs; both can act as cheap order-and-content checksums.
-    """
-    if not isinstance(value, torch.Tensor):
-        return repr(value)
-    flat = value.detach().float().reshape(-1)
-    return f"shape={tuple(value.shape)} dtype={value.dtype} sum={flat.sum().item():.6e} norm={flat.norm().item():.6e}"
-
-
-def _tensor_debug_stats(value: Any) -> dict[str, float]:
-    """Return numeric tensor checksums suitable for scalar metric logging."""
-    if not isinstance(value, torch.Tensor):
-        return {}
-    flat = value.detach().float().reshape(-1)
-    if flat.numel() == 0:
-        return {"sum": 0.0, "norm": 0.0, "max_abs": 0.0, "numel": 0.0}
-    return {
-        "sum": flat.sum().item(),
-        "norm": flat.norm().item(),
-        "max_abs": flat.abs().max().item(),
-        "numel": float(flat.numel()),
-    }
-
-
-def _metric_name_part(value: object) -> str:
-    return str(value).replace("/", "_").replace(" ", "_")
-
-
-def _add_tensor_debug_metrics(metrics: dict[str, float], prefix: str, value: Any) -> None:
-    for stat_name, stat_value in _tensor_debug_stats(value).items():
-        metrics[f"{prefix}/{stat_name}"] = stat_value
-
-
-def _tensor_collection_debug_stats(tensors: Iterable[torch.Tensor | None]) -> dict[str, float]:
-    """Aggregate tensor checksums for local/global diagnostic metrics."""
-    total_sum = 0.0
-    total_sq_norm = 0.0
-    max_abs = 0.0
-    total_numel = 0
-    tensor_count = 0
-    for tensor in tensors:
-        if not isinstance(tensor, torch.Tensor):
-            continue
-        flat = tensor.detach().float().reshape(-1)
-        if flat.numel() == 0:
-            continue
-        total_sum += flat.sum().item()
-        total_sq_norm += flat.pow(2).sum().item()
-        max_abs = max(max_abs, flat.abs().max().item())
-        total_numel += flat.numel()
-        tensor_count += 1
-    return {
-        "sum": total_sum,
-        "norm": max(total_sq_norm, 0.0) ** 0.5,
-        "max_abs": max_abs,
-        "numel": float(total_numel),
-        "tensor_count": float(tensor_count),
-    }
-
-
-def _add_debug_stats(metrics: dict[str, float], prefix: str, stats: dict[str, float]) -> None:
-    for stat_name, value in stats.items():
-        metrics[f"{prefix}/{stat_name}"] = float(value)
-
-
-def _reduce_world_debug_stats(stats: dict[str, float]) -> dict[str, float]:
-    if not (dist.is_available() and dist.is_initialized()):
-        return stats
-
-    device = torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
-    sum_tensor = torch.tensor(
-        [
-            stats.get("sum", 0.0),
-            stats.get("norm", 0.0) ** 2,
-            stats.get("numel", 0.0),
-            stats.get("tensor_count", 0.0),
-        ],
-        dtype=torch.float64,
-        device=device,
-    )
-    max_tensor = torch.tensor([stats.get("max_abs", 0.0)], dtype=torch.float64, device=device)
-    dist.all_reduce(sum_tensor, op=dist.ReduceOp.SUM)
-    dist.all_reduce(max_tensor, op=dist.ReduceOp.MAX)
-    return {
-        "sum": float(sum_tensor[0].item()),
-        "norm": max(float(sum_tensor[1].item()), 0.0) ** 0.5,
-        "max_abs": float(max_tensor[0].item()),
-        "numel": float(sum_tensor[2].item()),
-        "tensor_count": float(sum_tensor[3].item()),
-    }
-
-
-def _add_nested_tensor_debug_metrics(
-    metrics: dict[str, float],
-    prefix: str,
-    value: Any,
-    *,
-    depth_limit: int = 4,
-) -> None:
-    if isinstance(value, torch.Tensor):
-        _add_tensor_debug_metrics(metrics, prefix, value)
-        return
-    if isinstance(value, dict) and depth_limit > 0:
-        for key, nested_value in value.items():
-            _add_nested_tensor_debug_metrics(
-                metrics,
-                f"{prefix}/{_metric_name_part(key)}",
-                nested_value,
-                depth_limit=depth_limit - 1,
-            )
-
-
-def _modality_input_summary(value: Any, *, depth_limit: int = 3) -> str:
-    """Recursively summarize a possibly-nested modality input dict for logging."""
-    if isinstance(value, torch.Tensor):
-        return _tensor_summary(value)
-    if isinstance(value, dict) and depth_limit > 0:
-        parts = [
-            f"{key}=<{_modality_input_summary(inner, depth_limit=depth_limit - 1)}>" for key, inner in value.items()
-        ]
-        return "{" + ", ".join(parts) + "}"
-    return repr(value)
 
 
 def _first_tensor_batch_dim(value: Any) -> int | None:
@@ -211,10 +70,9 @@ def _maybe_check_colocated_data_alignment(
     *,
     increment_count: bool = True,
 ) -> None:
-    """One-shot L3 guardrail for colocated heterogeneous-DP data slicing."""
+    """Optional data-alignment guard for colocated heterogeneous-DP slicing."""
     global _DATA_ALIGNMENT_CHECK_COUNT
 
-    # TODO(liding): to be removed after L3 data-alignment validation is no longer needed.
     if not _env_flag("MIMO_CHECK_DATA_ALIGNMENT"):
         return
     max_checks = int(os.environ.get("MIMO_CHECK_DATA_ALIGNMENT_STEPS", "1"))
@@ -351,8 +209,6 @@ def get_batch(data_iterator: Iterable) -> Optional[Dict[str, torch.Tensor]]:
     Returns dict with:
     - input_ids, labels, loss_mask, position_ids (for LLM)
     - modality_inputs: {modality_name: preprocessed_tensors} (for encoders)
-
-    Uses existing MegatronMIMODataset format from Phase 3.
 
     Args:
         data_iterator: Iterator over the dataset.
@@ -516,9 +372,8 @@ def forward_backward_colocated_mimo_with_pp(
     forward_only: bool,
     p2p_communicator: object,
     force_all_reduce: bool = False,
-    diagnostics: dict[str, float] | None = None,
 ) -> list[dict[str, torch.Tensor]]:
-    """Run Bridge's three-phase colocated MIMO schedule for language PP.
+    """Run Bridge's colocated MIMO schedule for language PP.
 
     The adapter keeps Bridge-specific contracts intact: every rank consumes the
     full global microbatch from the data iterator, module-aware DP slicing
@@ -557,26 +412,6 @@ def forward_backward_colocated_mimo_with_pp(
             increment_count=False,
         )
 
-    _pp_debug_log_data_slicing(
-        original_batches=original_batches,
-        sliced_batches=sliced_batches,
-        encoder_module_name=encoder_module_name,
-        encoder_grid=encoder_grid,
-        language_grid=language_grid,
-    )
-    _record_wandb_debug_data_slicing(
-        diagnostics=diagnostics,
-        original_batches=original_batches,
-        sliced_batches=sliced_batches,
-        encoder_module_name=encoder_module_name,
-        special_token_ids=mimo_model.special_token_ids,
-    )
-
-    _pp_debug_log_module_params(
-        mimo_model=mimo_model,
-        encoder_module_name=encoder_module_name,
-    )
-
     # Build the per-rank encoder input so that after the colocated bridge's
     # fan-in all-gather, the gathered tensor lands in microbatch-major order
     # on each language DP rank. ``_split_encoder_output`` downstream chunks
@@ -612,23 +447,8 @@ def forward_backward_colocated_mimo_with_pp(
         special_token_ids=mimo_model.special_token_ids,
     )
 
-    _pp_debug_log_encoder_split(
-        full_encoder_input=full_encoder_input,
-        detached_encoder_outputs=detached_encoder_outputs,
-        cached_language_microbatches=cached_language_microbatches,
-        sliced_batches=sliced_batches,
-        encoder_module_name=encoder_module_name,
-        special_token_ids=mimo_model.special_token_ids,
-    )
-    _record_wandb_debug_encoder_split(
-        diagnostics=diagnostics,
-        detached_encoder_outputs=detached_encoder_outputs,
-        cached_language_microbatches=cached_language_microbatches,
-        encoder_module_name=encoder_module_name,
-    )
-
     schedule_kwargs = {
-        "forward_step_func": _make_inner_language_forward_step(diagnostics=diagnostics),
+        "forward_step_func": _make_inner_language_forward_step(),
         "data_iterator": iter(cached_language_microbatches),
         "model": [model],
         "num_microbatches": num_microbatches,
@@ -642,9 +462,7 @@ def forward_backward_colocated_mimo_with_pp(
     }
 
     if forward_only:
-        result = forward_backward_pipelining_without_interleaving(**schedule_kwargs)
-        _pp_debug_log_iteration_done()
-        return result
+        return forward_backward_pipelining_without_interleaving(**schedule_kwargs)
 
     config = get_model_config(model)
     with _deferred_finalize(config) as (original_finalize, finalize_capture):
@@ -653,18 +471,8 @@ def forward_backward_colocated_mimo_with_pp(
     _backward_encoder_outputs(
         detached_encoder_outputs=detached_encoder_outputs,
         encoder_outputs=encoder_outputs,
-        encoder_module_name=encoder_module_name,
         pp_group=language_pg.pp,
-        diagnostics=diagnostics,
     )
-    _record_wandb_debug_projector_grads(
-        diagnostics=diagnostics,
-        mimo_model=mimo_model,
-        encoder_module_name=encoder_module_name,
-        prefix="mimo_debug/projector_grad/post_encoder_backward",
-    )
-
-    _pp_debug_log_finalize_capture(finalize_capture=finalize_capture)
 
     if original_finalize is not None and finalize_capture.called:
         original_finalize(
@@ -673,14 +481,6 @@ def forward_backward_colocated_mimo_with_pp(
             pg_collection=language_pg,
             force_all_reduce=finalize_capture.force_all_reduce,
         )
-    _record_wandb_debug_projector_grads(
-        diagnostics=diagnostics,
-        mimo_model=mimo_model,
-        encoder_module_name=encoder_module_name,
-        prefix="mimo_debug/projector_grad/post_finalize",
-    )
-
-    _pp_debug_log_iteration_done()
     return losses_reduced
 
 
@@ -749,7 +549,7 @@ def _build_pp_encoder_input(
     encoder_grid: object,
     language_grid: object,
 ) -> Any:
-    """Build the per-rank encoder input for the three-phase PP schedule.
+    """Build the per-rank encoder input for the colocated language-PP schedule.
 
     The colocated bridge's fan-in all-gather concatenates each rank's
     contribution along the batch dim in encoder-DP-rank order. The downstream
@@ -764,10 +564,11 @@ def _build_pp_encoder_input(
       2. concat those per-microbatch slices in microbatch order; and
       3. narrow the resulting mega-batch by the encoder DP slot.
 
-    Step 1 is a no-op when language DP is 1; step 3 is a no-op when encoder
-    DP equals language DP. The fan-out branch (encoder DP < language DP) only
-    slices per microbatch by encoder DP — the bridge narrows in forward, so
-    no all-gather ordering constraint applies.
+    The language-DP partition slice is a no-op when language DP is 1; the
+    encoder-DP slot narrow is a no-op when encoder DP equals language DP. The
+    fan-out branch (encoder DP < language DP) only slices per microbatch by
+    encoder DP — the bridge narrows in forward, so no all-gather ordering
+    constraint applies.
     """
     per_mb_inputs: list[Any] = []
     for batch in original_batches:
@@ -926,7 +727,7 @@ def _maybe_check_colocated_pp_concat_alignment(
     concatenated_input: dict[str, Any],
     encoder_module_name: str,
 ) -> None:
-    """Debug-only guardrail for colocated PP multi-microbatch aggregation."""
+    """Optional guardrail for colocated PP multi-microbatch aggregation."""
     global _DATA_ALIGNMENT_CHECK_COUNT
 
     if not _env_flag("MIMO_CHECK_DATA_ALIGNMENT"):
@@ -1069,9 +870,7 @@ def _build_cached_language_microbatches(
     return cached_microbatches
 
 
-def _make_inner_language_forward_step(diagnostics: dict[str, float] | None = None):
-    microbatch_index = [0]
-
+def _make_inner_language_forward_step():
     def _inner_language_forward_step(
         cached_iterator: Iterator[Dict[str, Any]],
         model_arg: torch.nn.Module,
@@ -1082,8 +881,6 @@ def _make_inner_language_forward_step(diagnostics: dict[str, float] | None = Non
         role = mimo_model.role
         is_first_stage = role is None or role.is_first_stage(MIMO_LANGUAGE_MODULE_KEY)
         is_last_stage = role is None or role.is_last_stage(MIMO_LANGUAGE_MODULE_KEY)
-        mb_index = microbatch_index[0]
-        microbatch_index[0] += 1
 
         kwargs: dict[str, Any] = {
             "input_ids": cached["input_ids"] if is_first_stage else None,
@@ -1094,13 +891,6 @@ def _make_inner_language_forward_step(diagnostics: dict[str, float] | None = Non
             "modality_inputs": None,
             "encoder_embeddings": cached["encoder_embeddings"] if is_first_stage else None,
         }
-
-        _pp_debug_log_first_stage_inputs(
-            mb_index=mb_index,
-            is_first_stage=is_first_stage,
-            cached=cached,
-            kwargs=kwargs,
-        )
 
         output = model_arg(**kwargs)
         loss_mask = kwargs["loss_mask"]
@@ -1115,60 +905,11 @@ def _make_inner_language_forward_step(diagnostics: dict[str, float] | None = Non
             if loss_mask is None:
                 logger.warning("No loss_mask provided to colocated language-PP last stage; using all-ones mask.")
                 loss_mask = torch.ones_like(output_tensor)
-            _record_wandb_debug_language_output(
-                diagnostics=diagnostics,
-                output_tensor=output_tensor,
-                loss_mask=loss_mask,
-                mb_index=mb_index,
-            )
-            return output_tensor, _make_logging_loss_func(loss_mask, mb_index)
+            return output_tensor, partial(loss_func, loss_mask)
 
         return output_tensor, None
 
     return _inner_language_forward_step
-
-
-def _record_wandb_debug_language_output(
-    *,
-    diagnostics: dict[str, float] | None,
-    output_tensor: torch.Tensor,
-    loss_mask: torch.Tensor,
-    mb_index: int,
-) -> None:
-    if diagnostics is None:
-        return
-
-    prefix = f"mimo_debug/language/mb_{mb_index:02d}"
-    _add_tensor_debug_metrics(diagnostics, f"{prefix}/output_tensor", output_tensor)
-    _add_tensor_debug_metrics(diagnostics, f"{prefix}/loss_mask", loss_mask)
-
-    if not (isinstance(output_tensor, torch.Tensor) and isinstance(loss_mask, torch.Tensor)):
-        return
-    output_flat = output_tensor.detach().float().reshape(-1)
-    mask_flat = loss_mask.detach().float().reshape(-1)
-    if output_flat.numel() != mask_flat.numel():
-        return
-
-    masked_total = torch.sum(output_flat * mask_flat)
-    tokens = torch.sum(mask_flat)
-    diagnostics[f"{prefix}/masked_total"] = float(masked_total.item())
-    diagnostics[f"{prefix}/masked_tokens"] = float(tokens.item())
-    diagnostics[f"{prefix}/masked_mean"] = float((masked_total / tokens).item()) if tokens.item() else 0.0
-
-
-def _make_logging_loss_func(loss_mask: torch.Tensor, mb_index: int):
-    """Wrap ``loss_func`` to log per-microbatch loss / token counts on the last PP stage."""
-
-    def _loss_func_with_logging(output_tensor: torch.Tensor):
-        result = loss_func(loss_mask, output_tensor)
-        _pp_debug_log_last_stage_loss(
-            mb_index=mb_index,
-            loss_mask=loss_mask,
-            result=result,
-        )
-        return result
-
-    return _loss_func_with_logging
 
 
 class _DeferredFinalizeCapture:
@@ -1208,28 +949,14 @@ def _backward_encoder_outputs(
     *,
     detached_encoder_outputs: dict[str, torch.Tensor],
     encoder_outputs: dict[str, torch.Tensor],
-    encoder_module_name: str,
     pp_group: object | None,
-    diagnostics: dict[str, float] | None = None,
 ) -> None:
     if not encoder_outputs:
         return
 
-    _record_wandb_debug_encoder_output_grads(
-        diagnostics=diagnostics,
-        detached_encoder_outputs=detached_encoder_outputs,
-        encoder_module_name=encoder_module_name,
-        prefix="mimo_debug/encoder_output_grad/pre_broadcast",
-    )
     _broadcast_encoder_grads(
         detached_encoder_outputs=detached_encoder_outputs,
         pp_group=pp_group,
-    )
-    _record_wandb_debug_encoder_output_grads(
-        diagnostics=diagnostics,
-        detached_encoder_outputs=detached_encoder_outputs,
-        encoder_module_name=encoder_module_name,
-        prefix="mimo_debug/encoder_output_grad/post_broadcast",
     )
 
     outputs = []
@@ -1263,397 +990,3 @@ def _broadcast_encoder_grads(
             grad = torch.zeros_like(detached_output)
             dist.broadcast(grad, src=src_rank, group=pp_group)
             detached_output.grad = grad
-
-
-# ---------------------------------------------------------------------------
-# Colocated language-PP debug logging
-#
-# Gated behind ``MIMO_PP_DEBUG_LOG=1`` and bounded to the first
-# ``MIMO_PP_DEBUG_LOG_ITERS`` iterations (default 1). Log lines are prefixed
-# with ``mimo_pp_debug`` so they are easy to grep out of slurm output.
-# ---------------------------------------------------------------------------
-
-
-def _pp_debug_log_iteration_done() -> None:
-    global _PP_DEBUG_LOG_COUNT
-    if _env_flag("MIMO_PP_DEBUG_LOG"):
-        _PP_DEBUG_LOG_COUNT += 1
-
-
-def _record_wandb_debug_data_slicing(
-    *,
-    diagnostics: dict[str, float] | None,
-    original_batches: list[Dict[str, Any]],
-    sliced_batches: list[Dict[str, Any]],
-    encoder_module_name: str,
-    special_token_ids: dict[str, int],
-) -> None:
-    """Record per-microbatch data checksums for optional W&B diagnostics."""
-    if diagnostics is None:
-        return
-
-    special_token_id = special_token_ids.get(encoder_module_name)
-    for mb_idx, (orig, sliced) in enumerate(zip(original_batches, sliced_batches)):
-        prefix = f"mimo_debug/batch/mb_{mb_idx:02d}"
-        _add_tensor_debug_metrics(diagnostics, f"{prefix}/global_input_ids", orig.get("input_ids"))
-        _add_tensor_debug_metrics(diagnostics, f"{prefix}/local_input_ids", sliced.get("input_ids"))
-        _add_tensor_debug_metrics(diagnostics, f"{prefix}/global_labels", orig.get("labels"))
-        _add_tensor_debug_metrics(diagnostics, f"{prefix}/local_labels", sliced.get("labels"))
-        _add_tensor_debug_metrics(diagnostics, f"{prefix}/global_loss_mask", orig.get("loss_mask"))
-        _add_tensor_debug_metrics(diagnostics, f"{prefix}/local_loss_mask", sliced.get("loss_mask"))
-        _add_nested_tensor_debug_metrics(
-            diagnostics,
-            f"{prefix}/global_modality/{_metric_name_part(encoder_module_name)}",
-            (orig.get("modality_inputs") or {}).get(encoder_module_name),
-        )
-        _add_nested_tensor_debug_metrics(
-            diagnostics,
-            f"{prefix}/local_modality/{_metric_name_part(encoder_module_name)}",
-            (sliced.get("modality_inputs") or {}).get(encoder_module_name),
-        )
-        if special_token_id is not None:
-            diagnostics[f"{prefix}/modality_token_count"] = float(
-                _count_modality_tokens(orig.get("input_ids"), special_token_id=special_token_id)
-            )
-
-
-def _record_wandb_debug_encoder_split(
-    *,
-    diagnostics: dict[str, float] | None,
-    detached_encoder_outputs: dict[str, torch.Tensor],
-    cached_language_microbatches: list[dict[str, Any]],
-    encoder_module_name: str,
-) -> None:
-    """Record encoder output / per-microbatch embedding checksums for W&B diagnostics."""
-    if diagnostics is None:
-        return
-
-    module_key = _metric_name_part(encoder_module_name)
-    _add_tensor_debug_metrics(
-        diagnostics,
-        f"mimo_debug/encoder/{module_key}/gathered_output",
-        detached_encoder_outputs.get(encoder_module_name),
-    )
-    for mb_idx, cached in enumerate(cached_language_microbatches):
-        chunk = (cached.get("encoder_embeddings") or {}).get(encoder_module_name)
-        _add_tensor_debug_metrics(
-            diagnostics,
-            f"mimo_debug/encoder/{module_key}/mb_{mb_idx:02d}/chunk",
-            chunk,
-        )
-
-
-def _record_wandb_debug_encoder_output_grads(
-    *,
-    diagnostics: dict[str, float] | None,
-    detached_encoder_outputs: dict[str, torch.Tensor],
-    encoder_module_name: str | None = None,
-    prefix: str,
-) -> None:
-    """Record gradients on detached encoder outputs around the language-PP handoff."""
-    if diagnostics is None:
-        return
-
-    local_tensors: list[torch.Tensor] = []
-    module_names = [encoder_module_name] if encoder_module_name is not None else sorted(detached_encoder_outputs)
-    for module_name in module_names:
-        detached_output = detached_encoder_outputs.get(module_name)
-        if not isinstance(detached_output, torch.Tensor):
-            grad = None
-        else:
-            grad = detached_output.grad if isinstance(detached_output.grad, torch.Tensor) else None
-        if grad is not None:
-            local_tensors.append(grad)
-        local_stats = _tensor_collection_debug_stats([grad])
-        module_key = _metric_name_part(module_name)
-        _add_debug_stats(diagnostics, f"{prefix}/{module_key}/local", local_stats)
-        _add_debug_stats(diagnostics, f"{prefix}/{module_key}/global", _reduce_world_debug_stats(local_stats))
-
-    local_all_stats = _tensor_collection_debug_stats(local_tensors)
-    _add_debug_stats(diagnostics, f"{prefix}/local", local_all_stats)
-    _add_debug_stats(diagnostics, f"{prefix}/global", _reduce_world_debug_stats(local_all_stats))
-
-
-def _parameter_grad_tensor(param: torch.nn.Parameter) -> torch.Tensor | None:
-    main_grad = getattr(param, "main_grad", None)
-    if isinstance(main_grad, torch.Tensor):
-        return main_grad
-    if isinstance(param.grad, torch.Tensor):
-        return param.grad
-    return None
-
-
-def _record_wandb_debug_projector_grads(
-    *,
-    diagnostics: dict[str, float] | None,
-    mimo_model: MimoModel,
-    encoder_module_name: str,
-    prefix: str,
-) -> None:
-    """Record trainable encoder-module parameter gradients during the PP handoff."""
-    if diagnostics is None:
-        return
-
-    modality_submodules = getattr(mimo_model, "modality_submodules", None)
-    module = None
-    if modality_submodules is not None:
-        try:
-            module = modality_submodules[encoder_module_name]
-        except (KeyError, TypeError):
-            module = modality_submodules.get(encoder_module_name) if hasattr(modality_submodules, "get") else None
-    if module is None:
-        local_stats = _tensor_collection_debug_stats([])
-    else:
-        grads = [_parameter_grad_tensor(param) for param in module.parameters() if param.requires_grad]
-        local_stats = _tensor_collection_debug_stats(grads)
-
-    module_key = _metric_name_part(encoder_module_name)
-    _add_debug_stats(diagnostics, f"{prefix}/{module_key}/local", local_stats)
-    _add_debug_stats(diagnostics, f"{prefix}/{module_key}/global", _reduce_world_debug_stats(local_stats))
-
-
-def _pp_debug_global_rank() -> int:
-    if dist.is_available() and dist.is_initialized():
-        return dist.get_rank()
-    return 0
-
-
-def _pp_debug_log_data_slicing(
-    *,
-    original_batches: list[Dict[str, Any]],
-    sliced_batches: list[Dict[str, Any]],
-    encoder_module_name: str,
-    encoder_grid: object,
-    language_grid: object,
-) -> None:
-    """Log per-rank language/vision DP-TP-PP coords and per-microbatch checksums."""
-    if not _pp_debug_log_active():
-        return
-
-    enc_dp = _get_grid_pg(encoder_grid, "dp")
-    enc_tp = _get_grid_pg(encoder_grid, "tp")
-    lm_dp = _get_grid_pg(language_grid, "dp")
-    lm_tp = _get_grid_pg(language_grid, "tp")
-    try:
-        lm_pp = _get_grid_pg(language_grid, "pp")
-        lm_pp_str = f"{_process_group_rank(lm_pp)}/{_process_group_size(lm_pp)}"
-    except Exception:
-        lm_pp_str = "n/a"
-
-    rank = _pp_debug_global_rank()
-    logger.info(
-        "mimo_pp_debug data_slicing rank=%d enc(dp=%d/%d,tp=%d/%d) lm(dp=%d/%d,tp=%d/%d,pp=%s) num_microbatches=%d",
-        rank,
-        _process_group_rank(enc_dp),
-        _process_group_size(enc_dp),
-        _process_group_rank(enc_tp),
-        _process_group_size(enc_tp),
-        _process_group_rank(lm_dp),
-        _process_group_size(lm_dp),
-        _process_group_rank(lm_tp),
-        _process_group_size(lm_tp),
-        lm_pp_str,
-        len(original_batches),
-    )
-
-    for mb_idx, (orig, sliced) in enumerate(zip(original_batches, sliced_batches)):
-        orig_input_ids = orig.get("input_ids")
-        sliced_input_ids = sliced.get("input_ids")
-        orig_modality = (orig.get("modality_inputs") or {}).get(encoder_module_name)
-        sliced_modality = (sliced.get("modality_inputs") or {}).get(encoder_module_name)
-        logger.info(
-            "mimo_pp_debug data_slicing rank=%d mb=%d "
-            "global_input_ids=%s local_input_ids=%s "
-            "global_modality=%s local_modality=%s",
-            rank,
-            mb_idx,
-            _tensor_summary(orig_input_ids),
-            _tensor_summary(sliced_input_ids),
-            _modality_input_summary(orig_modality),
-            _modality_input_summary(sliced_modality),
-        )
-
-
-def _pp_debug_log_encoder_split(
-    *,
-    full_encoder_input: Any,
-    detached_encoder_outputs: dict[str, torch.Tensor],
-    cached_language_microbatches: list[dict[str, Any]],
-    sliced_batches: list[Dict[str, Any]],
-    encoder_module_name: str,
-    special_token_ids: dict[str, int],
-) -> None:
-    """Log gathered encoder output shape, token counts, and per-microbatch chunk checksums."""
-    if not _pp_debug_log_active():
-        return
-
-    rank = _pp_debug_global_rank()
-    encoder_output = detached_encoder_outputs.get(encoder_module_name)
-    special_token_id = special_token_ids.get(encoder_module_name)
-
-    token_counts = []
-    for batch in sliced_batches:
-        input_ids = batch.get("input_ids")
-        token_counts.append(
-            0 if special_token_id is None else _count_modality_tokens(input_ids, special_token_id=special_token_id)
-        )
-
-    logger.info(
-        "mimo_pp_debug encoder_split rank=%d encoder_module=%s per_rank_input=<%s> gathered_output=%s token_counts=%s",
-        rank,
-        encoder_module_name,
-        _modality_input_summary(full_encoder_input),
-        _tensor_summary(encoder_output),
-        token_counts,
-    )
-
-    for mb_idx, cached in enumerate(cached_language_microbatches):
-        chunk = (cached.get("encoder_embeddings") or {}).get(encoder_module_name)
-        logger.info(
-            "mimo_pp_debug encoder_split rank=%d mb=%d chunk=%s",
-            rank,
-            mb_idx,
-            _tensor_summary(chunk),
-        )
-
-
-def _pp_debug_log_first_stage_inputs(
-    *,
-    mb_index: int,
-    is_first_stage: bool,
-    cached: dict[str, Any],
-    kwargs: dict[str, Any],
-) -> None:
-    """Log per-microbatch language input + encoder embedding alignment on first PP stage."""
-    if not _pp_debug_log_active():
-        return
-    if not is_first_stage:
-        return
-
-    rank = _pp_debug_global_rank()
-    input_ids = kwargs.get("input_ids")
-    encoder_embeddings = kwargs.get("encoder_embeddings") or {}
-    embedding_summary = {module_name: _tensor_summary(tensor) for module_name, tensor in encoder_embeddings.items()}
-    logger.info(
-        "mimo_pp_debug first_stage_inputs rank=%d mb=%d input_ids=%s encoder_embeddings=%s",
-        rank,
-        mb_index,
-        _tensor_summary(input_ids),
-        embedding_summary,
-    )
-
-
-def _pp_debug_log_last_stage_loss(
-    *,
-    mb_index: int,
-    loss_mask: torch.Tensor,
-    result: tuple,
-) -> None:
-    """Log per-microbatch loss / token count on the last PP stage."""
-    if not _pp_debug_log_active():
-        return
-
-    rank = _pp_debug_global_rank()
-    total_loss = result[0] if len(result) > 0 else None
-    total_tokens = result[1] if len(result) > 1 else None
-    loss_value = float(total_loss.detach().item()) if isinstance(total_loss, torch.Tensor) else None
-    tokens_value = int(total_tokens.detach().item()) if isinstance(total_tokens, torch.Tensor) else None
-    mean_loss = (loss_value / tokens_value) if (loss_value is not None and tokens_value) else None
-    mask_sum = float(loss_mask.detach().float().sum().item()) if isinstance(loss_mask, torch.Tensor) else None
-    logger.info(
-        "mimo_pp_debug last_stage_loss rank=%d mb=%d loss_mask_sum=%s total_loss=%s num_tokens=%s mean_loss=%s",
-        rank,
-        mb_index,
-        mask_sum,
-        loss_value,
-        tokens_value,
-        mean_loss,
-    )
-
-
-def _pp_debug_log_module_params(*, mimo_model: object, encoder_module_name: str) -> None:
-    """Log per-rank parameter checksums for the vision and language modules.
-
-    Diagnoses cross-rank weight divergence — specifically the
-    ``_get_global_seed_and_module`` (megatron_mimo_provider.py) seed-source
-    behavior, which seeds CPU init with ``base_seed + 100 * lm_pp_rank``. In
-    colocated PP=2 that splits the vision projector's CPU init RNG between LM
-    PP stages, so vision-DP siblings on different LM PP stages end up with
-    different randomly initialized projector weights even though the colocated
-    layout intends a single vision-DP=4 group.
-
-    The expected pattern when the divergence is present:
-      - Trainable vision parameters (projector) cluster into two checksums —
-        one for ranks at LM PP stage 0, another for ranks at LM PP stage 1.
-      - Frozen vision parameters (CLIP encoder) match across all ranks
-        (loaded from a single checkpoint, no random init).
-      - Language parameters match within each LM PP stage and differ between
-        stages by design (each stage owns different layer indices).
-    """
-    if not _pp_debug_log_active():
-        return
-
-    rank = _pp_debug_global_rank()
-
-    vision_submodule = None
-    modality_submodules = getattr(mimo_model, "modality_submodules", None)
-    if modality_submodules is not None:
-        try:
-            vision_submodule = modality_submodules[encoder_module_name]
-        except (KeyError, TypeError):
-            vision_submodule = None
-
-    if vision_submodule is not None:
-        for name, param in vision_submodule.named_parameters():
-            if not isinstance(param, torch.Tensor):
-                continue
-            flat = param.detach().float().reshape(-1)
-            logger.info(
-                "mimo_pp_debug module_param rank=%d module=%s requires_grad=%s name=%s shape=%s sum=%.6e norm=%.6e",
-                rank,
-                encoder_module_name,
-                param.requires_grad,
-                name,
-                tuple(param.shape),
-                flat.sum().item(),
-                flat.norm().item(),
-            )
-
-    language_model = getattr(mimo_model, "language_model", None)
-    if language_model is not None:
-        # Language LM has many parameters; cap at ~10 representative entries
-        # so the log stays readable. The first 10 entries cover the embedding
-        # and the first decoder layer's main weights, which is enough to
-        # confirm checkpoint loading is symmetric inside each LM PP stage.
-        language_param_cap = int(os.environ.get("MIMO_PP_DEBUG_LM_PARAM_CAP", "10"))
-        for idx, (name, param) in enumerate(language_model.named_parameters()):
-            if idx >= language_param_cap:
-                break
-            if not isinstance(param, torch.Tensor):
-                continue
-            flat = param.detach().float().reshape(-1)
-            logger.info(
-                "mimo_pp_debug module_param rank=%d module=language requires_grad=%s name=%s shape=%s "
-                "sum=%.6e norm=%.6e",
-                rank,
-                param.requires_grad,
-                name,
-                tuple(param.shape),
-                flat.sum().item(),
-                flat.norm().item(),
-            )
-
-
-def _pp_debug_log_finalize_capture(*, finalize_capture: "_DeferredFinalizeCapture") -> None:
-    if not _pp_debug_log_active():
-        return
-    rank = _pp_debug_global_rank()
-    num_tokens = finalize_capture.num_tokens
-    tokens_value = int(num_tokens.detach().item()) if isinstance(num_tokens, torch.Tensor) else num_tokens
-    logger.info(
-        "mimo_pp_debug finalize_capture rank=%d called=%s num_tokens=%s force_all_reduce=%s",
-        rank,
-        finalize_capture.called,
-        tokens_value,
-        finalize_capture.force_all_reduce,
-    )

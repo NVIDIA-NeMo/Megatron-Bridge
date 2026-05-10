@@ -18,7 +18,6 @@ Note: Stub ranks are disallowed - validated at setup time.
 from __future__ import annotations
 
 import logging
-import os
 from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Tuple
 
 import torch
@@ -115,289 +114,6 @@ def _needs_colocated_language_pp(model: "MimoModel") -> bool:
     return megatron_mimo_model.role.mode is ModuleLayout.COLOCATED and megatron_mimo_model.lm_has_pp
 
 
-def _env_flag(name: str, *, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.lower() in {"1", "true", "yes", "y", "on"}
-
-
-def _mimo_wandb_debug_enabled() -> bool:
-    """Return whether per-iteration L3 resume diagnostics should be logged to W&B."""
-    return _env_flag("MIMO_WANDB_DEBUG_METRICS")
-
-
-def _metric_name_part(value: object) -> str:
-    return str(value).replace("/", "_").replace(" ", "_")
-
-
-def _iter_debug_modules(model: "MimoModel") -> Iterator[tuple[str, torch.nn.Module]]:
-    mimo_model = unwrap_megatron_mimo_model(model)
-    language_model = getattr(mimo_model, "language_model", None)
-    if language_model is not None:
-        yield MIMO_LANGUAGE_MODULE_KEY, language_model
-
-    modality_submodules = getattr(mimo_model, "modality_submodules", None)
-    if modality_submodules is None:
-        return
-    if hasattr(modality_submodules, "items"):
-        for name, module in modality_submodules.items():
-            if module is not None:
-                yield str(name), module
-
-
-def _iter_trainable_params(model: "MimoModel") -> Iterator[tuple[str, str, torch.nn.Parameter]]:
-    for module_name, module in _iter_debug_modules(model):
-        for param_name, param in module.named_parameters():
-            if param.requires_grad:
-                yield module_name, param_name, param
-
-
-def _grad_tensor(param: torch.nn.Parameter) -> torch.Tensor | None:
-    main_grad = getattr(param, "main_grad", None)
-    if isinstance(main_grad, torch.Tensor):
-        return main_grad
-    if isinstance(param.grad, torch.Tensor):
-        return param.grad
-    return None
-
-
-def _summarize_tensors(tensors: Iterator[torch.Tensor | None]) -> dict[str, float]:
-    total_sum = 0.0
-    total_sq_norm = 0.0
-    max_abs = 0.0
-    total_numel = 0
-    tensor_count = 0
-    for tensor in tensors:
-        if not isinstance(tensor, torch.Tensor):
-            continue
-        flat = tensor.detach().float().reshape(-1)
-        if flat.numel() == 0:
-            continue
-        total_sum += flat.sum().item()
-        total_sq_norm += flat.pow(2).sum().item()
-        max_abs = max(max_abs, flat.abs().max().item())
-        total_numel += flat.numel()
-        tensor_count += 1
-    return {
-        "sum": total_sum,
-        "norm": max(total_sq_norm, 0.0) ** 0.5,
-        "max_abs": max_abs,
-        "numel": float(total_numel),
-        "tensor_count": float(tensor_count),
-    }
-
-
-def _add_stats(metrics: dict[str, float], prefix: str, stats: dict[str, float]) -> None:
-    for stat_name, value in stats.items():
-        metrics[f"{prefix}/{stat_name}"] = float(value)
-
-
-def _reduce_world_stats(stats: dict[str, float]) -> dict[str, float]:
-    if not (dist.is_available() and dist.is_initialized()):
-        return stats
-
-    device = torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
-    sum_tensor = torch.tensor(
-        [
-            stats.get("sum", 0.0),
-            stats.get("norm", 0.0) ** 2,
-            stats.get("numel", 0.0),
-            stats.get("tensor_count", 0.0),
-        ],
-        dtype=torch.float64,
-        device=device,
-    )
-    max_tensor = torch.tensor([stats.get("max_abs", 0.0)], dtype=torch.float64, device=device)
-    dist.all_reduce(sum_tensor, op=dist.ReduceOp.SUM)
-    dist.all_reduce(max_tensor, op=dist.ReduceOp.MAX)
-    return {
-        "sum": float(sum_tensor[0].item()),
-        "norm": max(float(sum_tensor[1].item()), 0.0) ** 0.5,
-        "max_abs": float(max_tensor[0].item()),
-        "numel": float(sum_tensor[2].item()),
-        "tensor_count": float(sum_tensor[3].item()),
-    }
-
-
-def _add_trainable_param_metrics(metrics: dict[str, float], model: "MimoModel", prefix: str) -> None:
-    named_params = list(_iter_trainable_params(model))
-    local_param_stats = _summarize_tensors(param for _, _, param in named_params)
-    _add_stats(metrics, f"{prefix}/local_trainable_params", local_param_stats)
-    _add_stats(metrics, f"{prefix}/global_trainable_params", _reduce_world_stats(local_param_stats))
-
-    modules = sorted({module_name for module_name, _, _ in named_params})
-    for module_name in modules:
-        module_stats = _summarize_tensors(param for mod, _, param in named_params if mod == module_name)
-        _add_stats(metrics, f"{prefix}/local_module/{_metric_name_part(module_name)}/params", module_stats)
-
-
-def _add_trainable_grad_metrics(metrics: dict[str, float], model: "MimoModel", prefix: str) -> None:
-    named_params = list(_iter_trainable_params(model))
-    local_grad_stats = _summarize_tensors(_grad_tensor(param) for _, _, param in named_params)
-    _add_stats(metrics, f"{prefix}/local_trainable_grads", local_grad_stats)
-    _add_stats(metrics, f"{prefix}/global_trainable_grads", _reduce_world_stats(local_grad_stats))
-
-    modules = sorted({module_name for module_name, _, _ in named_params})
-    for module_name in modules:
-        module_stats = _summarize_tensors(_grad_tensor(param) for mod, _, param in named_params if mod == module_name)
-        _add_stats(metrics, f"{prefix}/local_module/{_metric_name_part(module_name)}/grads", module_stats)
-
-
-def _iter_optimizer_objects(optimizer: object) -> Iterator[object]:
-    seen: set[int] = set()
-    stack = [optimizer]
-    while stack:
-        current = stack.pop()
-        if current is None or id(current) in seen:
-            continue
-        seen.add(id(current))
-        yield current
-        inner = getattr(current, "optimizer", None)
-        if inner is not None:
-            stack.append(inner)
-        stack.extend(getattr(current, "chained_optimizers", ()) or ())
-
-
-def _is_debug_optimizer_tensor(name: str) -> bool:
-    lowered = name.lower()
-    return (
-        lowered in {"exp_avg", "exp_avg_sq", "momentum", "variance", "step"}
-        or "exp_avg" in lowered
-        or "fp32" in lowered
-        or "main_param" in lowered
-    )
-
-
-def _add_optimizer_state_metrics(metrics: dict[str, float], optimizer: "MimoOptimizer", prefix: str) -> None:
-    module_infos = getattr(optimizer, "module_infos", {})
-    state_tensors_by_name: dict[str, list[torch.Tensor]] = {}
-    step_values: list[float] = []
-
-    for module_name, info in sorted(module_infos.items()):
-        module_optimizer = getattr(info, "optimizer", None)
-        if not getattr(info, "is_active", False) or module_optimizer is None:
-            continue
-        if getattr(module_optimizer, "is_stub_optimizer", False):
-            continue
-
-        for opt_obj in _iter_optimizer_objects(module_optimizer):
-            state = getattr(opt_obj, "state", None)
-            if not isinstance(state, dict):
-                continue
-            for state_entry in state.values():
-                if not isinstance(state_entry, dict):
-                    continue
-                for state_name, state_value in state_entry.items():
-                    if state_name == "step":
-                        if isinstance(state_value, torch.Tensor):
-                            step_values.append(float(state_value.detach().float().max().item()))
-                        elif isinstance(state_value, (int, float)):
-                            step_values.append(float(state_value))
-                        continue
-                    if isinstance(state_value, torch.Tensor) and _is_debug_optimizer_tensor(str(state_name)):
-                        key = f"{_metric_name_part(module_name)}/{_metric_name_part(state_name)}"
-                        state_tensors_by_name.setdefault(key, []).append(state_value)
-
-    for name, tensors in sorted(state_tensors_by_name.items()):
-        _add_stats(metrics, f"{prefix}/local_optimizer_state/{name}", _summarize_tensors(iter(tensors)))
-    if step_values:
-        metrics[f"{prefix}/local_optimizer_state/max_step"] = max(step_values)
-        metrics[f"{prefix}/local_optimizer_state/min_step"] = min(step_values)
-
-
-def _iter_optimizer_param_tensors(optimizer: object) -> Iterator[torch.Tensor]:
-    seen: set[int] = set()
-    for opt_obj in _iter_optimizer_objects(optimizer):
-        for group in getattr(opt_obj, "param_groups", ()) or ():
-            if not isinstance(group, dict):
-                continue
-            for param in group.get("params", ()) or ():
-                if not isinstance(param, torch.Tensor):
-                    continue
-                tensor_id = id(param)
-                if tensor_id in seen:
-                    continue
-                seen.add(tensor_id)
-                yield param
-
-
-def _add_optimizer_param_metrics(metrics: dict[str, float], optimizer: "MimoOptimizer", prefix: str) -> None:
-    """Log optimizer-owned parameter tensors.
-
-    With MCore DistributedOptimizer these are the local FP32 master parameter
-    shards that drive the next optimizer update, distinct from BF16 model
-    parameters and from Adam moment tensors.
-    """
-    module_infos = getattr(optimizer, "module_infos", {})
-    local_tensors: list[torch.Tensor] = []
-
-    for module_name, info in sorted(module_infos.items()):
-        module_optimizer = getattr(info, "optimizer", None)
-        if not getattr(info, "is_active", False) or module_optimizer is None:
-            continue
-        if getattr(module_optimizer, "is_stub_optimizer", False):
-            continue
-
-        module_tensors = list(_iter_optimizer_param_tensors(module_optimizer))
-        local_tensors.extend(module_tensors)
-        _add_stats(
-            metrics,
-            f"{prefix}/local_optimizer_master_params/{_metric_name_part(module_name)}",
-            _summarize_tensors(iter(module_tensors)),
-        )
-
-    local_stats = _summarize_tensors(iter(local_tensors))
-    _add_stats(metrics, f"{prefix}/local_optimizer_master_params", local_stats)
-    _add_stats(metrics, f"{prefix}/global_optimizer_master_params", _reduce_world_stats(local_stats))
-
-
-def _add_loss_debug_metrics(
-    metrics: dict[str, float],
-    *,
-    losses_reduced: list[dict[str, torch.Tensor]],
-    infra: "MegatronMIMOInfra",
-) -> None:
-    if not losses_reduced:
-        return
-    language_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY) if infra.pg_collections else None
-
-    for mb_idx, loss_entry in enumerate(losses_reduced):
-        for loss_name, value in loss_entry.items():
-            if not isinstance(value, torch.Tensor):
-                continue
-            flat = value.detach().float().view(-1)
-            if flat.numel() == 2:
-                reduced = flat.clone()
-                if language_pg is not None and language_pg.dp_cp is not None:
-                    dist.all_reduce(reduced, group=language_pg.dp_cp)
-                total_loss = float(reduced[0].item())
-                num_tokens = float(reduced[1].item())
-                mean_loss = total_loss / num_tokens if num_tokens else 0.0
-                loss_prefix = f"mimo_debug/loss/{_metric_name_part(loss_name)}/mb_{mb_idx:02d}"
-                metrics[f"{loss_prefix}/total"] = total_loss
-                metrics[f"{loss_prefix}/tokens"] = num_tokens
-                metrics[f"{loss_prefix}/mean"] = mean_loss
-            elif flat.numel() == 1:
-                metrics[f"mimo_debug/loss/{_metric_name_part(loss_name)}/mb_{mb_idx:02d}/mean"] = float(flat.item())
-
-
-def _log_wandb_debug_metrics(
-    global_state: GlobalState,
-    metrics: dict[str, float],
-    *,
-    iteration: int,
-) -> None:
-    if not metrics:
-        return
-    wandb_writer = global_state.wandb_logger
-    if wandb_writer is None:
-        return
-    metrics = {key: value for key, value in metrics.items() if isinstance(value, (int, float))}
-    if metrics:
-        wandb_writer.log(metrics, iteration)
-
-
 def train_step_megatron_mimo(
     forward_step_func: Callable,
     data_iterator: Iterator,
@@ -434,36 +150,25 @@ def train_step_megatron_mimo(
         Tuple of (loss_dict, skipped_iter, grad_norm, num_zeros_in_grad).
     """
     timers = global_state.timers
-    debug_metrics: dict[str, float] | None = {} if _mimo_wandb_debug_enabled() else None
-    if debug_metrics is not None:
-        debug_metrics["mimo_debug/train_state/step_before"] = float(global_state.train_state.step)
-        debug_metrics["mimo_debug/train_state/consumed_samples_before"] = float(
-            global_state.train_state.consumed_train_samples
-        )
-        debug_metrics["mimo_debug/checkpoint/save_rng"] = float(bool(global_state.cfg.checkpoint.save_rng))
-        debug_metrics["mimo_debug/checkpoint/load_rng"] = float(bool(global_state.cfg.checkpoint.load_rng))
-        _add_trainable_param_metrics(debug_metrics, model, "mimo_debug/pre_step")
-        _add_optimizer_state_metrics(debug_metrics, optimizer, "mimo_debug/pre_step")
-        _add_optimizer_param_metrics(debug_metrics, optimizer, "mimo_debug/pre_step")
 
     # Zero gradients for all modules
     zero_grad_buffer_for_multimodule(module_to_grid_tuple)
 
-    # Schedule dispatch: the colocated path with LLM PP>1 needs the three-phase
-    # schedule (encoder full-batch forward → LLM 1F1B pipeline → encoder
-    # backward) to avoid deadlocking encoder collectives inside the pipeline
-    # staggering. Other cases — non-colocated (any PP layout) and colocated
-    # with LLM PP=1 — use the standard schedule; colocated PP=1 works because
-    # MimoModel._forward_all_modules runs encoder+communicate+LLM in a single
-    # forward on every rank, which is what the standard schedule expects.
+    # Colocated language PP uses a Bridge adapter that runs encoder
+    # forward/communication outside the inner language pipeline, then runs
+    # encoder backward after language gradients are available. This avoids
+    # deadlocking encoder collectives inside the pipeline staggering. Other
+    # cases use the standard schedule; colocated PP=1 works because
+    # MimoModel._forward_all_modules runs encoder+communicate+language in a
+    # single forward on every rank, which is what the standard schedule expects.
     megatron_mimo_model = unwrap_megatron_mimo_model(model)
     is_colocated = megatron_mimo_model.role.mode is ModuleLayout.COLOCATED
-    needs_three_phase = _needs_colocated_language_pp(model)
+    needs_colocated_pp_adapter = _needs_colocated_language_pp(model)
 
     # Run forward-backward schedule
     timers("forward-backward", log_level=1).start(barrier=False)
 
-    if needs_three_phase:
+    if needs_colocated_pp_adapter:
         language_pg = infra.pg_collections[MIMO_LANGUAGE_MODULE_KEY]
         if language_pg is None:
             raise RuntimeError("Colocated language-PP schedule requires an active language pg_collection.")
@@ -481,14 +186,12 @@ def train_step_megatron_mimo(
             micro_batch_size=micro_batch_size,
             forward_only=False,
             p2p_communicator=language_p2p_communicator,
-            diagnostics=debug_metrics,
         )
     elif is_colocated:
         # Colocated LLM-PP=1: encoder→language flows through
         # MimoModel._forward_all_modules via ColocatedBridgeCommunicator —
         # no cross-module P2P at the schedule level. Use the no-pipelining
-        # schedule with the language module's pg_collection. Matches mcore's
-        # test_mimo_colocated_correctness.py:_run_forward_backward pattern.
+        # schedule with the language module's pg_collection.
         language_pg = infra.pg_collections[MIMO_LANGUAGE_MODULE_KEY]
         losses_reduced = forward_backward_no_pipelining(
             forward_step_func=forward_step_func,
@@ -517,22 +220,12 @@ def train_step_megatron_mimo(
 
     timers("forward-backward").stop()
 
-    if debug_metrics is not None:
-        _add_trainable_grad_metrics(debug_metrics, model, "mimo_debug/post_backward")
-        _add_optimizer_state_metrics(debug_metrics, optimizer, "mimo_debug/pre_optimizer")
-        _add_optimizer_param_metrics(debug_metrics, optimizer, "mimo_debug/pre_optimizer")
-
     # Optimizer step - MimoOptimizer handles all modules and computes global grad norm
     timers("optimizer", log_level=1).start(barrier=False)
 
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
 
     timers("optimizer").stop()
-
-    if debug_metrics is not None:
-        _add_trainable_param_metrics(debug_metrics, model, "mimo_debug/post_optimizer")
-        _add_optimizer_state_metrics(debug_metrics, optimizer, "mimo_debug/post_optimizer")
-        _add_optimizer_param_metrics(debug_metrics, optimizer, "mimo_debug/post_optimizer")
 
     # Step learning rate schedulers
     if update_successful:
@@ -555,8 +248,6 @@ def train_step_megatron_mimo(
             is_last_stage = megatron_mimo_model.role.is_last_stage(MIMO_LANGUAGE_MODULE_KEY)
 
         if is_last_stage:
-            if debug_metrics is not None:
-                _add_loss_debug_metrics(debug_metrics, losses_reduced=losses_reduced, infra=infra)
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY) if infra.pg_collections else None
             for key in losses_reduced[0].keys():
                 val = [x[key].view(-1) for x in losses_reduced]
@@ -591,14 +282,6 @@ def train_step_megatron_mimo(
             # Tensors inside the received dict carry the source rank's CUDA device;
             # move them to this rank's device so training_log arithmetic works.
             loss_dict = {k: v.cuda() if isinstance(v, torch.Tensor) else v for k, v in received.items()}
-
-    if debug_metrics is not None:
-        debug_metrics["mimo_debug/train_state/step_after"] = float(global_state.train_state.step + 1)
-        debug_metrics["mimo_debug/train_state/consumed_samples_after"] = float(
-            global_state.train_state.consumed_train_samples
-            + num_microbatches * micro_batch_size * global_state.cfg.data_parallel_size
-        )
-        _log_wandb_debug_metrics(global_state, debug_metrics, iteration=global_state.train_state.step + 1)
 
     return loss_dict, skipped_iter, grad_norm, num_zeros_in_grad
 

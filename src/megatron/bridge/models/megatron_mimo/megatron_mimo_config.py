@@ -186,15 +186,6 @@ class MegatronMIMOParallelismConfig:
                         f"Encoder DP must be >= LLM DP for embedding alignment across batches."
                     )
 
-        # Colocated heterogeneous TP/DP is supported: per-key per-module batch
-        # slicing in ``slice_batch_for_megatron_mimo_modules`` handles asymmetric
-        # DP, and module-scoped CUDA RNG tracker swap (Step 3 — ``MimoModel``'s
-        # ``module_rng_scopes`` kwarg threaded through ``MegatronMIMOProvider``)
-        # handles asymmetric TP. Provider-level guards in
-        # ``_validate_asymmetric_tp_constraints`` reject the residual unsafe
-        # activation recomputation case where the module-scoped RNG plumbing
-        # doesn't reach.
-
     def validate_static(self) -> None:
         """Run validation that doesn't depend on world_size or distributed state.
 
@@ -237,8 +228,8 @@ class MegatronMIMOParallelismConfig:
     def _is_colocated(self) -> bool:
         """True iff every module shares the same ``(rank_offset, total_ranks)``.
 
-        Used by ``_validate_colocated_stage2_constraints`` to gate the
-        colocated-only stage-2 rules. Assumes ``data_parallel_size`` has been
+        Used by ``_validate_colocated_constraints`` to gate the colocated-only
+        rules. Assumes ``data_parallel_size`` has been
         finalized for every module (so ``total_ranks`` is well-defined).
 
         Defensive: returns ``False`` for fewer than two modules. Single-module
@@ -246,31 +237,29 @@ class MegatronMIMOParallelismConfig:
         path shouldn't be reachable in normal use, but keeping the invariant
         here means a future caller that bypasses the required-modules check
         (e.g. an ad-hoc test) doesn't accidentally treat a one-module config
-        as colocated and fall into stage-2 rules with the wrong error message.
+        as colocated and fall into colocated-only rules with the wrong error message.
         """
         if len(self.module_parallelisms) < 2:
             return False
         placement = {(p.rank_offset, p.total_ranks) for p in self.module_parallelisms.values()}
         return len(placement) == 1
 
-    def _validate_colocated_stage2_constraints(self) -> None:
+    def _validate_colocated_constraints(self) -> None:
         """Validate colocated heterogeneous constraints.
 
         Colocated supports heterogeneous encoder and LLM TP/DP factorizations
         on the same physical rank range. Language PP>1 is supported by the
-        colocated three-phase schedule; encoder PP must remain 1. Language CP>1
-        is supported for the CP-only path, while encoder CP must remain 1. EP
+        colocated language-PP adapter; encoder PP must remain 1. Language CP>1
+        is supported without language PP, while encoder CP must remain 1. EP
         and ETP also remain at 1 on every module. Non-colocated layouts are
         unaffected.
 
         Hybrid placement (some modules overlap, others disjoint) is rejected
         upstream by ``_validate_module_placement``.
 
-        The asymmetric-DP and asymmetric-TP short-term guards live in
-        ``_validate_parallelism_constraints``; this method does not duplicate
-        them. They will be removed once module-scoped CUDA RNG and per-key
-        per-module batch slicing land (Step 3 / Step 2 of the heterogeneous
-        TP/DP plan).
+        The asymmetric-TP recompute guard lives in
+        ``MegatronMIMOProvider._validate_asymmetric_tp_constraints``; this
+        method does not duplicate provider-level spec checks.
         """
         if not self._is_colocated():
             return
@@ -299,7 +288,7 @@ class MegatronMIMOParallelismConfig:
                 raise ValueError(
                     f"Colocated MegatronMIMO requires encoder PP=1. Module '{name}' has "
                     f"pipeline_model_parallel_size={p.pipeline_model_parallel_size}. "
-                    f"Language PP>1 is supported by the colocated three-phase schedule, "
+                    f"Language PP>1 is supported by the colocated language-PP adapter, "
                     f"but encoder PP>1 is not supported in v1."
                 )
             if name != MIMO_LANGUAGE_MODULE_KEY and p.context_parallel_size != 1:
@@ -334,7 +323,7 @@ class MegatronMIMOParallelismConfig:
 
         self._validate_module_placement()
         self._validate_parallelism_constraints()
-        self._validate_colocated_stage2_constraints()
+        self._validate_colocated_constraints()
 
         expected = self.total_world_size
         if expected and world_size != expected:

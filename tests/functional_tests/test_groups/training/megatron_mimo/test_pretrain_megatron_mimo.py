@@ -143,9 +143,9 @@ def _make_language_config(
     ``per_token_loss`` flips ``calculate_per_token_loss`` on the
     TransformerConfig. The heterogeneous-DP smoke must use ``True`` to exercise
     the production-supported path (pure-SUM DDP + ``1/N_global`` finalize math
-    that Step 4 ships); ``False`` makes mcore's schedule do its own local
+    for MegatronMIMO); ``False`` makes mcore's schedule do its own local
     averaging and ``finalize_model_grads_multimodule`` skips the per-token
-    divisor — a different code path from what production runs.
+    divisor.
 
     ``dropout`` controls both hidden and attention dropout for the language
     stack, matching the vision config's test knob.
@@ -193,7 +193,7 @@ def _build_model_specs(
     ``per_token_loss=True`` exercises the production-supported pure-SUM DDP +
     ``1/N_global`` finalize path; required for the heterogeneous smoke and
     parity tests (where DDP's default ``1/dp_size`` averaging on asymmetric
-    DP would silently skip the path Step 4 ships).
+    DP would use a different scaling path).
     """
     vision_encoder = ModuleSpec(
         module=CLIPViTModel,
@@ -403,7 +403,7 @@ class _IndexTaggedDataset(torch.utils.data.Dataset):
     """Wrap a Dataset so each sample carries its global index separately.
 
     Used by the checkpoint-resume L2 test to trace which samples were consumed
-    across save/resume phases without modifying model inputs.
+    across save/resume runs without modifying model inputs.
     """
 
     def __init__(self, inner: torch.utils.data.Dataset):
@@ -630,11 +630,12 @@ def _run_checkpoint_resume_param_parity(
 ) -> None:
     """Compare a continuous run against save+resume with RNG state restored.
 
-    Phase 0 trains ``total_steps`` continuously and captures the final
-    parameters. Phase 1 trains ``save_steps`` and writes a checkpoint. Phase 2
-    loads that checkpoint and trains to ``total_steps``. With ``save_rng=True``
-    and dropout enabled, phase 2 only matches phase 0 if the checkpoint restores
-    the same CUDA RNG stream(s) that phase 0 would have used for later steps.
+    A continuous run trains ``total_steps`` and captures the final parameters.
+    A save run trains ``save_steps`` and writes a checkpoint. A resume run loads
+    that checkpoint and trains to ``total_steps``. With ``save_rng=True`` and
+    dropout enabled, the resume run only matches the continuous run if the
+    checkpoint restores the same CUDA RNG stream(s) that the continuous run
+    would have used for later steps.
     """
     from megatron.bridge.training.state import GlobalState
 
@@ -643,28 +644,28 @@ def _run_checkpoint_resume_param_parity(
     dtype = "fp32"
 
     # Use tmp_path on rank 0 and broadcast so all ranks share the same dirs.
-    # Phase 0 needs its own dir even though it never saves, because
+    # The continuous run needs its own dir even though it never saves, because
     # CheckpointConfig.save is a required field; setting save_interval >
     # train_iters means no actual write.
     rank_zero_dirs = (
-        [str(tmp_path / f"{checkpoint_prefix}_phase0"), str(tmp_path / f"{checkpoint_prefix}_phase12")]
+        [str(tmp_path / f"{checkpoint_prefix}_continuous"), str(tmp_path / f"{checkpoint_prefix}_resume")]
         if dist.get_rank() == 0
         else [None, None]
     )
     dist.broadcast_object_list(rank_zero_dirs, src=0)
-    phase0_dir, phase12_dir = rank_zero_dirs
+    continuous_dir, resume_dir = rank_zero_dirs
 
-    # ── Phase 0: continuous run, no save (parity baseline) ──────────────
+    # Continuous run, no save: parity baseline.
     _RESUME_TEST_CONSUMED_INDICES.clear()
-    phase0_params: dict = {}
-    cfg_phase0 = _build_resume_config(
+    continuous_params: dict = {}
+    cfg_continuous = _build_resume_config(
         parallelism_config,
         train_iters=total_steps,
         # save_interval > train_iters means no checkpoint write during the
-        # run — phase 0 must not leave a checkpoint that would mask phase 2's
+        # run. The continuous run must not leave a checkpoint that would mask the resume run's
         # actual load behavior.
         save_interval=total_steps + 100,
-        ckpt_save_dir=phase0_dir,
+        ckpt_save_dir=continuous_dir,
         micro_batch_size=micro_batch_size,
         global_batch_size=global_batch_size,
         fully_parallel_save=fully_parallel_save,
@@ -676,26 +677,26 @@ def _run_checkpoint_resume_param_parity(
         freeze_modality_encoders=freeze_modality_encoders,
         freeze_modality_projections=freeze_modality_projections,
     )
-    state_phase0 = GlobalState()
-    with _capture_post_step_params_into(phase0_params):
+    state_continuous = GlobalState()
+    with _capture_post_step_params_into(continuous_params):
         pretrain_megatron_mimo(
-            cfg=cfg_phase0,
+            cfg=cfg_continuous,
             forward_step_func=megatron_mimo_forward_step,
             build_data_iterators_fn=_build_tracing_data_iterators,
-            global_state=state_phase0,
+            global_state=state_continuous,
         )
-    phase0_indices = list(_RESUME_TEST_CONSUMED_INDICES)
-    assert state_phase0.train_state.step == total_steps
-    assert len(phase0_params) > 0, "phase 0 captured no parameters"
+    continuous_indices = list(_RESUME_TEST_CONSUMED_INDICES)
+    assert state_continuous.train_state.step == total_steps
+    assert len(continuous_params) > 0, "continuous run captured no parameters"
     dist.barrier()
 
-    # ── Phase 1: train SAVE_STEPS iters, save checkpoint ────────────────
+    # Save run: train SAVE_STEPS iters, save checkpoint.
     _RESUME_TEST_CONSUMED_INDICES.clear()
     cfg_save = _build_resume_config(
         parallelism_config,
         train_iters=save_steps,
         save_interval=save_steps,
-        ckpt_save_dir=phase12_dir,
+        ckpt_save_dir=resume_dir,
         micro_batch_size=micro_batch_size,
         global_batch_size=global_batch_size,
         fully_parallel_save=fully_parallel_save,
@@ -707,7 +708,7 @@ def _run_checkpoint_resume_param_parity(
         freeze_modality_encoders=freeze_modality_encoders,
         freeze_modality_projections=freeze_modality_projections,
     )
-    # Phase 1 intentionally stops early to produce the checkpoint, but its LR
+    # The save run intentionally stops early to produce the checkpoint, but its LR
     # schedule must match the first ``save_steps`` iterations of the continuous
     # ``total_steps`` run. Otherwise the saved weights are already on a
     # different optimizer trajectory before resume starts.
@@ -719,21 +720,21 @@ def _run_checkpoint_resume_param_parity(
         build_data_iterators_fn=_build_tracing_data_iterators,
         global_state=state_save,
     )
-    phase1_indices = list(_RESUME_TEST_CONSUMED_INDICES)
-    phase1_consumed = state_save.train_state.consumed_train_samples
+    save_indices = list(_RESUME_TEST_CONSUMED_INDICES)
+    saved_consumed = state_save.train_state.consumed_train_samples
     assert state_save.train_state.step == save_steps
-    assert phase1_consumed > 0
+    assert saved_consumed > 0
     dist.barrier()
 
-    # ── Phase 2: resume from checkpoint, train to TOTAL_STEPS ────────────
+    # Resume run: load checkpoint, train to TOTAL_STEPS.
     _RESUME_TEST_CONSUMED_INDICES.clear()
-    phase2_params: dict = {}
+    resume_params: dict = {}
     cfg_resume = _build_resume_config(
         parallelism_config,
         train_iters=total_steps,
         save_interval=total_steps + 100,
-        ckpt_save_dir=phase12_dir,
-        ckpt_load_dir=phase12_dir,
+        ckpt_save_dir=resume_dir,
+        ckpt_load_dir=resume_dir,
         micro_batch_size=micro_batch_size,
         global_batch_size=global_batch_size,
         fully_parallel_save=fully_parallel_save,
@@ -748,54 +749,54 @@ def _run_checkpoint_resume_param_parity(
     cfg_resume.scheduler.override_opt_param_scheduler = True
 
     state_resume = GlobalState()
-    with _capture_post_step_params_into(phase2_params):
+    with _capture_post_step_params_into(resume_params):
         pretrain_megatron_mimo(
             cfg=cfg_resume,
             forward_step_func=megatron_mimo_forward_step,
             build_data_iterators_fn=_build_tracing_data_iterators,
             global_state=state_resume,
         )
-    phase2_indices = list(_RESUME_TEST_CONSUMED_INDICES)
+    resume_indices = list(_RESUME_TEST_CONSUMED_INDICES)
 
     assert state_resume.train_state.step == total_steps, (
-        f"Step continuity broken: phase 2 ended at step={state_resume.train_state.step}, expected {total_steps}"
+        f"Step continuity broken: resume run ended at step={state_resume.train_state.step}, expected {total_steps}"
     )
 
-    expected_consumed = phase1_consumed + (total_steps - save_steps) * cfg_resume.train.global_batch_size
+    expected_consumed = saved_consumed + (total_steps - save_steps) * cfg_resume.train.global_batch_size
     assert state_resume.train_state.consumed_train_samples == expected_consumed, (
-        f"consumed_train_samples not restored correctly: phase 1 saved {phase1_consumed}, "
-        f"phase 2 ended at {state_resume.train_state.consumed_train_samples}, "
+        f"consumed_train_samples not restored correctly: save run saved {saved_consumed}, "
+        f"resume run ended at {state_resume.train_state.consumed_train_samples}, "
         f"expected {expected_consumed}"
     )
 
-    overlap = set(phase1_indices) & set(phase2_indices)
+    overlap = set(save_indices) & set(resume_indices)
     assert not overlap, (
         f"Resume regression: resumed loader re-consumed samples {sorted(overlap)} "
-        f"(phase 1 saw {phase1_indices}, phase 2 saw {phase2_indices})"
+        f"(save run saw {save_indices}, resume run saw {resume_indices})"
     )
 
-    # Phase 0 saw the whole sample sequence; phase 1 + phase 2 must replay the
+    # The continuous run saw the whole sample sequence; save + resume must replay the
     # exact same ordered trajectory. Set equality is insufficient because
     # different sample order changes the optimizer trajectory.
-    assert phase0_indices == phase1_indices + phase2_indices, (
-        f"Phase-0 indices {phase0_indices} != phase1 {phase1_indices} + phase2 {phase2_indices}; "
+    assert continuous_indices == save_indices + resume_indices, (
+        f"Continuous-run indices {continuous_indices} != save {save_indices} + resume {resume_indices}; "
         f"resumed dataloader saw a different sample trajectory than the continuous run."
     )
 
-    assert phase0_params.keys() == phase2_params.keys(), (
-        f"Parameter key sets diverge between phase 0 and phase 2 — set difference: "
-        f"{set(phase0_params) ^ set(phase2_params)}"
+    assert continuous_params.keys() == resume_params.keys(), (
+        f"Parameter key sets diverge between continuous and resume runs — set difference: "
+        f"{set(continuous_params) ^ set(resume_params)}"
     )
 
-    # With fp32 and restored RNG, phase 0 and phase 2 should match well below
+    # With fp32 and restored RNG, continuous and resume runs should match well below
     # the optimizer-state-reset signature (~1e-3). If RNG restore is wrong,
     # dropout masks diverge and this blows past the tolerance.
     atol = 1e-5
     max_diff = 0.0
     worst_param = None
-    for name in phase0_params:
-        p0 = phase0_params[name]
-        p2 = phase2_params[name]
+    for name in continuous_params:
+        p0 = continuous_params[name]
+        p2 = resume_params[name]
         assert p0.shape == p2.shape, f"shape mismatch on {name}: {p0.shape} vs {p2.shape}"
         diff = (p0.float() - p2.float()).abs().max().item()
         if diff > max_diff:
@@ -980,13 +981,12 @@ class TestMegatronMIMOTraining:
         TP-parallel, both colocated on the same 2 ranks. ``_TRAIN_ITERS`` iters
         with synthetic data, MBS=2/GBS=2 (encoder DP=2 requires MBS divisibility).
 
-        Cheapest end-to-end signal that Steps 1-6 wired up correctly. Failures
+        Cheapest end-to-end signal that colocated heterogeneous TP/DP is wired up correctly. Failures
         here point at, in order:
         - ``align_embeddings_by_token_positions`` shape mismatch → per-key
-          per-module slicing (Step 2) is wrong.
+          per-module slicing is wrong.
         - DDP wrap / MimoOptimizer construction errors → provider's
-          heterogeneous-TP path (Step 3 module-scoped RNG, asymmetric-TP
-          construction) is wrong.
+          heterogeneous-TP path is wrong.
         - Crash inside ``ColocatedBridgeCommunicator`` fan-in/fan-out adjoint
           → mcore-side communicator regression.
 
@@ -1030,7 +1030,7 @@ class TestMegatronMIMOTraining:
         global_batch_size = 2
         # ``per_token_loss=True`` is required to exercise the production-supported
         # heterogeneous-DP path: pure-SUM DDP + ``1/N_global`` finalize math
-        # (Step 4). Without it, mcore's schedule applies its own local averaging
+        # for MegatronMIMO. Without it, mcore's schedule applies its own local averaging
         # and ``finalize_model_grads_multimodule`` skips the per-token divisor —
         # a code path that doesn't match what production runs at this shape.
         cfg = _build_config(
@@ -1142,7 +1142,7 @@ class TestMegatronMIMOTraining:
     def test_megatron_mimo_colocated_language_pp_smoke(self):
         """Smoke test: colocated MegatronMIMO with language PP=2.
 
-        This is the minimal end-to-end signal for the three-phase colocated PP
+        This is the minimal end-to-end signal for the colocated language-PP
         adapter: encoder forward over colocated ranks, language non-interleaved
         pipeline schedule, encoder backward, and deferred multimodule gradient
         finalization. The shape fits on two GPUs:
@@ -1359,8 +1359,8 @@ class TestMegatronMIMOTraining:
         Uses ``save_rng=True`` with dropout enabled. This is the load-bearing
         end-to-end proof for per-module CUDA RNG checkpoint save/load: the
         encoder and language module use different TP/DP layouts on the same
-        physical ranks, so phase 2 only matches phase 0 if the module-keyed RNG
-        tracker states are saved and restored correctly.
+        physical ranks, so the resume run only matches the continuous run if
+        the module-keyed RNG tracker states are saved and restored correctly.
         """
         initialize_distributed()
 

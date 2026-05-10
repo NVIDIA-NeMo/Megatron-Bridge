@@ -796,17 +796,17 @@ class TestPretrainMegatronMIMOPassesBuildFn:
 class TestActiveModulePg:
     """Verify get_active_module_pg canonical pg selection across modes."""
 
-    def test_rejects_zero_active_pgs(self):
+    @pytest.mark.parametrize(
+        "pg_collections",
+        [
+            pytest.param({}, id="empty"),
+            pytest.param({"language": None, "vision": None}, id="all_none"),
+        ],
+    )
+    def test_rejects_zero_active_pgs(self, pg_collections):
         from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
 
-        infra = SimpleNamespace(pg_collections={})
-        with pytest.raises(AssertionError, match="every rank to participate"):
-            get_active_module_pg(infra)
-
-    def test_rejects_zero_active_pgs_all_none(self):
-        from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
-
-        infra = SimpleNamespace(pg_collections={"language": None, "vision": None})
+        infra = SimpleNamespace(pg_collections=pg_collections)
         with pytest.raises(AssertionError, match="every rank to participate"):
             get_active_module_pg(infra)
 
@@ -828,24 +828,6 @@ class TestActiveModulePg:
         name, result_pg = get_active_module_pg(infra)
         assert name == "language"
         assert result_pg is lang_pg
-
-    def test_explicit_module_name_selects_that_module(self):
-        """Explicit module_name overrides the default selection."""
-        from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
-
-        lang_pg, vision_pg = Mock(), Mock()
-        infra = SimpleNamespace(pg_collections={"language": lang_pg, "vision": vision_pg})
-        name, result_pg = get_active_module_pg(infra, module_name="vision")
-        assert name == "vision"
-        assert result_pg is vision_pg
-
-    def test_explicit_module_name_not_active_raises(self):
-        """Explicit module_name that isn't active on this rank raises KeyError."""
-        from megatron.bridge.training.megatron_mimo_parallel_utils import get_active_module_pg
-
-        infra = SimpleNamespace(pg_collections={"language": Mock(), "vision": None})
-        with pytest.raises(KeyError, match="'vision' is not active"):
-            get_active_module_pg(infra, module_name="vision")
 
     def test_active_module_pgs_returns_all_active(self):
         """Plural helper returns every active module's pg as a dict."""

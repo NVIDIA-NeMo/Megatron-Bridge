@@ -257,11 +257,10 @@ def seed_per_module_rng_tracker(
 def module_rng_scope(module_name: str, infra: "MegatronMIMOInfra") -> Iterator[None]:
     """Swap the singleton CUDA RNG tracker into ``module_name``'s saved state.
 
-    Implements Step 3b of the colocated heterogeneous TP/DP plan: each per-module
-    construction and forward boundary inside ``MimoModel`` is bracketed by a
-    fresh invocation of this scope (via a factory bound in ``provide()``), so
-    asymmetric-TP encoder and language modules each draw from their own
-    TP-region RNG tracker state.
+    Each per-module construction and forward boundary inside ``MimoModel`` is
+    bracketed by a fresh invocation of this scope (via a factory bound in
+    ``provide()``), so asymmetric-TP encoder and language modules each draw from
+    their own TP-region RNG tracker state.
 
     Semantics:
       * On entry: load ``module_name``'s saved tracker state into the live
@@ -456,14 +455,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         per-module ``module_rng_scope`` context, so each module's CUDA RNG
         state isn't restored when the recomputed forward draws.
 
-        ``use_cpu_initialization=True`` was previously rejected here too, but
-        that was over-conservative — CPU init builds the full master weight
-        deterministically across ranks (every rank shares the same
-        ``torch.manual_seed`` state) and slices using each module's own
-        ``tp_group``, so per-module TP shards are correct without any
-        CUDA-tracker involvement. The standard Bridge path uses the same
-        single-``torch.manual_seed`` mechanism for CPU init across arbitrarily
-        complex TP/PP layouts.
+        CPU init is valid here: it builds the full master weight
+        deterministically across ranks and slices using each module's own
+        ``tp_group``, so per-module TP shards are correct without CUDA-tracker
+        involvement.
         """
         par_cfg = self.megatron_mimo_parallelism_config
         return get_megatron_mimo_rng_mode(par_cfg) == MegatronMIMORNGMode.PER_MODULE
@@ -523,13 +518,12 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         return offenders
 
     def _validate_asymmetric_tp_constraints(self) -> None:
-        """Block v1-unsafe combinations with asymmetric TP under colocated.
+        """Block unsupported combinations with asymmetric TP under colocated.
 
         Currently rejects only activation recomputation: recompute re-runs
         forward inside backward, outside the per-module ``module_rng_scope``
         context, so each module's CUDA RNG state isn't restored when the
-        recomputed forward draws. Long-term fix is autograd-side scope
-        registration; tracked separately.
+        recomputed forward draws.
 
         ``MIMO_ALLOW_ASYMMETRIC_TP_RECOMPUTE=1`` bypasses only this recompute
         guard for controlled no-dropout experiments. Do not use it for generic
@@ -1112,14 +1106,6 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         else:
             self.finalize()
 
-        # Note: the asymmetric-TP guard runs inside finalize() (and
-        # transitively from initialize_model_parallel above). We previously
-        # re-ran it here to catch the use_cpu_initialization kwarg override,
-        # but CPU init is no longer rejected — it's safe under asymmetric TP
-        # by construction (deterministic master weight + per-module tp_group
-        # slicing). Recompute, the only remaining guard, is fixed at spec
-        # construction time so finalize-time alone is sufficient.
-
         # Build infrastructure
         infra = self.build_infra()
 
@@ -1327,8 +1313,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                 )
             self._validate_specs_static()
             self.megatron_mimo_parallelism_config.finalize(dist.get_world_size())
-            # After parallelism config is finalized, _is_colocated() and
-            # asymmetric-TP geometry are determined. Catch v1-unsafe combos
-            # (cpu init, recompute) at config-build time.
+            # Finalized geometry is needed before colocated and asymmetric-TP
+            # spec validation.
             self._validate_colocated_language_pp_or_cp_spec_constraints()
             self._validate_asymmetric_tp_constraints()

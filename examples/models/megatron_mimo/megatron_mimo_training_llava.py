@@ -871,9 +871,6 @@ def main():
         handlers=[logging.FileHandler(f"{log_dir}/rank_{rank}_full.log", mode="w"), logging.StreamHandler(sys.stderr)],
         force=True,
     )
-    # Enable debug logging for bridge communicator to trace P2P ops
-    logging.getLogger("megatron.core.pipeline_parallel.bridge_communicator").setLevel(logging.DEBUG)
-    logging.getLogger("megatron.core.pipeline_parallel.multimodule_communicator").setLevel(logging.DEBUG)
 
     _log(f"distributed initialized (world_size={dist.get_world_size()})")
 

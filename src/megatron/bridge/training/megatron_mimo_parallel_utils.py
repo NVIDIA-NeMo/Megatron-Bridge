@@ -346,14 +346,6 @@ def finalize_model_grads_multimodule(
                 # The schedule chooses based on ``overlap_grad_reduce`` and
                 # ``use_distributed_optimizer`` settings. Forwarding it
                 # unchanged respects that choice.
-                #
-                # Regression footnote: an earlier version dropped this kwarg.
-                # Under ``overlap_grad_reduce=False`` that turned
-                # ``finish_grad_sync`` into a no-op (no in-flight async ops to
-                # wait on, no forced all-reduce to fire), and grads stayed
-                # un-synced across DP. The kwarg is load-bearing for that
-                # configuration; the per-token-loss oracle is what surfaced
-                # the original miss.
                 _finalize_model_grads(
                     [module],
                     num_tokens=module_num_tokens,

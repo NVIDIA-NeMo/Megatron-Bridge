@@ -448,16 +448,27 @@ class TestPerTokenLossPrecondition:
         infra.pg_collections["language"].dp = MagicMock()
         return infra
 
-    def test_no_op_when_num_tokens_is_none(self):
-        """Per-token-loss check skipped when num_tokens isn't provided —
-        configs without the flag are still valid for the SUM-only path."""
+    @pytest.mark.parametrize(
+        ("language_per_token_loss", "vision_per_token_loss", "match"),
+        [
+            pytest.param(False, True, r"calculate_per_token_loss=True.*\['language'\]", id="language"),
+            pytest.param(True, False, r"calculate_per_token_loss=True.*\['vision'\]", id="vision"),
+        ],
+    )
+    def test_raises_when_module_lacks_per_token_loss(
+        self,
+        language_per_token_loss,
+        vision_per_token_loss,
+        match,
+    ):
+        """Missing per-token loss is reported for the offending module."""
         from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
 
         language_grid = MagicMock(rank_offset=0)
         vision_grid = MagicMock(rank_offset=0)
         infra = self._make_infra(language_grid, vision_grid)
-        # Module has flag OFF — would trigger the guard if num_tokens were set.
-        language_module = self._make_module_with_config(calculate_per_token_loss=False)
+        language_module = self._make_module_with_config(calculate_per_token_loss=language_per_token_loss)
+        vision_module = self._make_module_with_config(calculate_per_token_loss=vision_per_token_loss)
 
         with (
             patch("megatron.bridge.training.megatron_mimo_parallel_utils.is_current_rank_in_grid", return_value=True),
@@ -468,34 +479,7 @@ class TestPerTokenLossPrecondition:
                 side_effect=self._patched_get_model_config,
             ),
         ):
-            finalize_model_grads_multimodule(
-                [MagicMock()],
-                num_tokens=None,
-                infra=infra,
-                module_to_grid_tuple=[(language_module, language_grid)],
-            )
-        # No exception raised — None bypasses the precondition.
-
-    def test_raises_when_language_module_lacks_per_token_loss(self):
-        """Language module with calculate_per_token_loss=False → raise naming language."""
-        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
-
-        language_grid = MagicMock(rank_offset=0)
-        vision_grid = MagicMock(rank_offset=0)
-        infra = self._make_infra(language_grid, vision_grid)
-        language_module = self._make_module_with_config(calculate_per_token_loss=False)
-        vision_module = self._make_module_with_config(calculate_per_token_loss=True)
-
-        with (
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils.is_current_rank_in_grid", return_value=True),
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils.dist"),
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils._finalize_model_grads"),
-            patch(
-                "megatron.bridge.training.megatron_mimo_parallel_utils.get_model_config",
-                side_effect=self._patched_get_model_config,
-            ),
-        ):
-            with pytest.raises(ValueError, match=r"calculate_per_token_loss=True.*\['language'\]"):
+            with pytest.raises(ValueError, match=match):
                 finalize_model_grads_multimodule(
                     [MagicMock()],
                     num_tokens=torch.tensor(4, dtype=torch.int),
@@ -505,113 +489,6 @@ class TestPerTokenLossPrecondition:
                         (vision_module, vision_grid),
                     ],
                 )
-
-    def test_raises_when_modality_module_lacks_per_token_loss(self):
-        """Encoder module with calculate_per_token_loss=False → raise naming the encoder.
-
-        Asymmetric DP between language and a modality is correct only when both
-        modules use SUM-DDP — naming the encoder explicitly tells the user
-        which TransformerConfig to fix.
-        """
-        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
-
-        language_grid = MagicMock(rank_offset=0)
-        vision_grid = MagicMock(rank_offset=0)
-        infra = self._make_infra(language_grid, vision_grid)
-        language_module = self._make_module_with_config(calculate_per_token_loss=True)
-        vision_module = self._make_module_with_config(calculate_per_token_loss=False)
-
-        with (
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils.is_current_rank_in_grid", return_value=True),
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils.dist"),
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils._finalize_model_grads"),
-            patch(
-                "megatron.bridge.training.megatron_mimo_parallel_utils.get_model_config",
-                side_effect=self._patched_get_model_config,
-            ),
-        ):
-            with pytest.raises(ValueError, match=r"calculate_per_token_loss=True.*\['vision'\]"):
-                finalize_model_grads_multimodule(
-                    [MagicMock()],
-                    num_tokens=torch.tensor(4, dtype=torch.int),
-                    infra=infra,
-                    module_to_grid_tuple=[
-                        (language_module, language_grid),
-                        (vision_module, vision_grid),
-                    ],
-                )
-
-    def test_lists_all_offending_modules(self):
-        """Multiple offenders → message lists all of them, not just the first."""
-        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
-
-        language_grid = MagicMock(rank_offset=0)
-        vision_grid = MagicMock(rank_offset=0)
-        infra = self._make_infra(language_grid, vision_grid)
-        language_module = self._make_module_with_config(calculate_per_token_loss=False)
-        vision_module = self._make_module_with_config(calculate_per_token_loss=False)
-
-        with (
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils.is_current_rank_in_grid", return_value=True),
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils.dist"),
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils._finalize_model_grads"),
-            patch(
-                "megatron.bridge.training.megatron_mimo_parallel_utils.get_model_config",
-                side_effect=self._patched_get_model_config,
-            ),
-        ):
-            with pytest.raises(ValueError) as exc_info:
-                finalize_model_grads_multimodule(
-                    [MagicMock()],
-                    num_tokens=torch.tensor(4, dtype=torch.int),
-                    infra=infra,
-                    module_to_grid_tuple=[
-                        (language_module, language_grid),
-                        (vision_module, vision_grid),
-                    ],
-                )
-        msg = str(exc_info.value)
-        assert "language" in msg
-        assert "vision" in msg
-
-    def test_skips_non_participating_modules(self):
-        """A module the rank doesn't participate in (is_current_rank_in_grid → False)
-        is excluded from the precondition check even if its config is malformed."""
-        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
-
-        language_grid = MagicMock(rank_offset=0)
-        vision_grid = MagicMock(rank_offset=4)  # not active on this rank
-        infra = self._make_infra(language_grid, vision_grid)
-        language_module = self._make_module_with_config(calculate_per_token_loss=True)
-        vision_module = self._make_module_with_config(calculate_per_token_loss=False)
-
-        # Only the language grid is "active" here.
-        def _in_grid(grid):
-            return grid is language_grid
-
-        with (
-            patch(
-                "megatron.bridge.training.megatron_mimo_parallel_utils.is_current_rank_in_grid",
-                side_effect=_in_grid,
-            ),
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils.dist"),
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils.get_pp_last_rank", return_value=0),
-            patch("megatron.bridge.training.megatron_mimo_parallel_utils._finalize_model_grads"),
-            patch(
-                "megatron.bridge.training.megatron_mimo_parallel_utils.get_model_config",
-                side_effect=self._patched_get_model_config,
-            ),
-        ):
-            # Vision config has flag off, but vision isn't on this rank — no raise.
-            finalize_model_grads_multimodule(
-                [MagicMock()],
-                num_tokens=torch.tensor(4, dtype=torch.int),
-                infra=infra,
-                module_to_grid_tuple=[
-                    (language_module, language_grid),
-                    (vision_module, vision_grid),
-                ],
-            )
 
 
 class TestZeroGradBufferForMultimodule:

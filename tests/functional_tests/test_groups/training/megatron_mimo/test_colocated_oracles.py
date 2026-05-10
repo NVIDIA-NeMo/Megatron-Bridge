@@ -11,30 +11,38 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Colocated MegatronMIMO heterogeneous parallelism oracles.
+"""Colocated MegatronMIMO numerical correctness oracles.
 
-This file contains two small 2-GPU functional oracles:
+This file contains the colocated oracle coverage for the supported v1 surface:
 
+* Equal DP:
+  ``vision(tp=1, dp=2) x language(tp=1, dp=2)`` compared to a bare reference
+  model at gradient level.
 * Heterogeneous TP/DP:
   ``vision(tp=1, dp=2) x language(tp=2, dp=1)`` compared to
   ``vision(tp=1, dp=2) x language(tp=1, dp=2)`` at encoder-gradient level.
 * Language CP:
   ``vision(tp=1, dp=2) x language(cp=2, dp=1)`` compared to
   ``vision(tp=1, dp=2) x language(cp=1, dp=2)`` at post-step encoder weights.
+* Language PP:
+  ``vision(tp=2, dp=4) x language(tp=2, pp=2, dp=2)`` compared to a PP=1
+  reference at gradient level.
+* Language PP force-all-reduce:
+  focused 2-GPU regression for colocated language PP when overlap grad reduce
+  is disabled.
 
-Both references keep the same encoder TP/DP layout as dist, so encoder shards
-and per-rank image batches line up 1:1. The dist side uses the real Megatron
-Bridge setup path, DDP wrapping, colocated forward step, and
-``finalize_model_grads_multimodule``.
+The dist side uses the real Megatron Bridge setup path, DDP wrapping,
+colocated forward step, and ``finalize_model_grads_multimodule``.
 
 Run:
     torchrun --nproc_per_node=2 -m pytest -v -s -x \\
-        tests/functional_tests/test_groups/training/megatron_mimo/test_colocated_heterogeneous_tp_dp_oracle.py
+        tests/functional_tests/test_groups/training/megatron_mimo/test_colocated_oracles.py
 """
 
 from __future__ import annotations
 
 import os
+import re
 from functools import partial
 from typing import Any, Iterator
 
@@ -58,6 +66,7 @@ from megatron.core.models.mimo.optimizer import get_mimo_optimizer
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.vision.clip_vit_model import CLIPViTModel
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_local_spec
+from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.pipeline_parallel.schedules import forward_backward_no_pipelining
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -79,10 +88,16 @@ from megatron.bridge.training.config import (
     megatron_mimo_runtime_config_update,
 )
 from megatron.bridge.training.megatron_mimo_parallel_utils import (
+    get_active_module_pg,
     unwrap_megatron_mimo_model,
     zero_grad_buffer_for_multimodule,
 )
-from megatron.bridge.training.megatron_mimo_step import forward_step as megatron_mimo_forward_step
+from megatron.bridge.training.megatron_mimo_step import (
+    forward_backward_colocated_mimo_with_pp,
+)
+from megatron.bridge.training.megatron_mimo_step import (
+    forward_step as megatron_mimo_forward_step,
+)
 from megatron.bridge.training.setup_megatron_mimo import _update_megatron_mimo_model_config_funcs, setup_megatron_mimo
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -102,13 +117,21 @@ _ENCODER_SEQ_LEN = (_IMG_SIZE // _PATCH_DIM) ** 2 + 1
 _SPECIAL_TOKEN_ID = 999
 _GLOBAL_BATCH_SIZE = 2
 _MICRO_BATCH_SIZE = 2
+_PP_MICRO_BATCH_SIZE = 4
+_PP_NUM_MICROBATCHES = 2
+_PP_GLOBAL_BATCH_SIZE = _PP_MICRO_BATCH_SIZE * _PP_NUM_MICROBATCHES
+_LANGUAGE_PP_SIZE = 2
 
 _LANGUAGE = "language"
 _VISION = "vision"
 _VISION_ENCODER = "clip"
+_LANGUAGE_LAYER_RE = re.compile(r"^(language_model\.decoder\.layers\.)(\d+)(\..*)$")
 
 
 def _set_torch_deterministic() -> None:
+    os.environ.setdefault("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    os.environ.setdefault("NVTE_ALLOW_NONDETERMINISTIC_ALGO", "0")
     torch.use_deterministic_algorithms(True)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
@@ -193,9 +216,7 @@ def _build_model_specs(
         params={
             "config": _make_language_config(bf16=bf16),
             "transformer_layer_spec": (
-                get_gpt_layer_with_transformer_engine_spec()
-                if use_te_language
-                else get_gpt_layer_local_spec()
+                get_gpt_layer_with_transformer_engine_spec() if use_te_language else get_gpt_layer_local_spec()
             ),
             "vocab_size": _VOCAB_SIZE,
             "max_sequence_length": _SEQ_LENGTH,
@@ -231,13 +252,16 @@ def _build_dist_config(
     bf16: bool = False,
     overlap_grad_reduce: bool = False,
     use_te_language: bool = False,
+    micro_batch_size: int = _MICRO_BATCH_SIZE,
+    global_batch_size: int = _GLOBAL_BATCH_SIZE,
+    num_microbatches: int = 1,
 ) -> ConfigContainer:
     train_cfg = TrainingConfig(
-        micro_batch_size=_MICRO_BATCH_SIZE,
-        global_batch_size=_GLOBAL_BATCH_SIZE,
+        micro_batch_size=micro_batch_size,
+        global_batch_size=global_batch_size,
         train_iters=1,
     )
-    train_cfg.num_microbatches = 1
+    train_cfg.num_microbatches = num_microbatches
 
     cfg = ConfigContainer(
         train=train_cfg,
@@ -344,6 +368,71 @@ def _batch_iterator(batch: dict[str, Any]) -> Iterator[dict[str, Any]]:
         }
 
 
+def _generate_pp_global_microbatch(seed: int, *, microbatch_index: int) -> dict[str, Any]:
+    if dist.get_rank() == 0:
+        gen = torch.Generator(device="cpu").manual_seed(seed)
+        text_len = _SEQ_LENGTH - _ENCODER_SEQ_LEN
+        image_tokens = torch.full((_PP_MICRO_BATCH_SIZE, _ENCODER_SEQ_LEN), _SPECIAL_TOKEN_ID, dtype=torch.long)
+        text_tokens = torch.randint(1, _SPECIAL_TOKEN_ID, (_PP_MICRO_BATCH_SIZE, text_len), generator=gen)
+        input_ids = torch.cat([image_tokens, text_tokens], dim=1)
+
+        labels = input_ids.clone()
+        labels[input_ids == _SPECIAL_TOKEN_ID] = -100
+
+        loss_mask = torch.zeros(_PP_MICRO_BATCH_SIZE, _SEQ_LENGTH, dtype=torch.float32)
+        mask_starts = [0, text_len // 3, 2 * text_len // 3, text_len // 2]
+        for sample_idx in range(_PP_MICRO_BATCH_SIZE):
+            start = mask_starts[(sample_idx + microbatch_index) % len(mask_starts)]
+            loss_mask[sample_idx, _ENCODER_SEQ_LEN + start :] = 1.0
+
+        position_ids = torch.arange(_SEQ_LENGTH).unsqueeze(0).expand(_PP_MICRO_BATCH_SIZE, -1).contiguous()
+        pixel_values = torch.randn(_PP_MICRO_BATCH_SIZE, 3, _IMG_SIZE, _IMG_SIZE, generator=gen)
+    else:
+        input_ids = torch.empty(_PP_MICRO_BATCH_SIZE, _SEQ_LENGTH, dtype=torch.long)
+        labels = torch.empty(_PP_MICRO_BATCH_SIZE, _SEQ_LENGTH, dtype=torch.long)
+        loss_mask = torch.empty(_PP_MICRO_BATCH_SIZE, _SEQ_LENGTH, dtype=torch.float32)
+        position_ids = torch.empty(_PP_MICRO_BATCH_SIZE, _SEQ_LENGTH, dtype=torch.long)
+        pixel_values = torch.empty(_PP_MICRO_BATCH_SIZE, 3, _IMG_SIZE, _IMG_SIZE, dtype=torch.float32)
+
+    for tensor in (input_ids, labels, loss_mask, position_ids, pixel_values):
+        cuda_tensor = tensor.cuda(non_blocking=False)
+        dist.broadcast(cuda_tensor, src=0)
+        tensor.copy_(cuda_tensor.cpu())
+
+    device = torch.cuda.current_device()
+    return {
+        "input_ids": input_ids.to(device, non_blocking=False),
+        "labels": labels.to(device, non_blocking=False),
+        "loss_mask": loss_mask.to(device, non_blocking=False),
+        "position_ids": position_ids.to(device, non_blocking=False),
+        "modality_inputs": {
+            _VISION: {_VISION_ENCODER: {"x": pixel_values.to(device, non_blocking=False)}},
+        },
+        "attention_mask": None,
+    }
+
+
+def _generate_pp_global_microbatches(seed: int) -> list[dict[str, Any]]:
+    return [
+        _generate_pp_global_microbatch(seed + microbatch_index, microbatch_index=microbatch_index)
+        for microbatch_index in range(_PP_NUM_MICROBATCHES)
+    ]
+
+
+def _microbatch_iterator(batches: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    for batch in batches:
+        yield {
+            **batch,
+            "modality_inputs": {
+                _VISION: {
+                    _VISION_ENCODER: {
+                        **batch["modality_inputs"][_VISION][_VISION_ENCODER],
+                    },
+                },
+            },
+        }
+
+
 def _ref_forward_backward_local(ref_model: torch.nn.Module, local_batch: dict[str, Any]) -> None:
     output = ref_model(
         input_ids=local_batch["input_ids"],
@@ -365,6 +454,44 @@ def _pg_rank(pg: dist.ProcessGroup) -> int:
 
 def _pg_size(pg: dist.ProcessGroup) -> int:
     return pg.size() if hasattr(pg, "size") else dist.get_world_size(pg)
+
+
+def _install_global_parallel_state_for_mimo(infra: Any) -> None:
+    """Mirror setup's canonical MIMO PG bridge before running a schedule."""
+    from megatron.core import parallel_state as mpu
+
+    _, local_pg_collection = get_active_module_pg(infra)
+    data_parallel_with_cp_group = getattr(local_pg_collection, "dp_cp", local_pg_collection.dp)
+    context_parallel_group = getattr(local_pg_collection, "cp", None)
+
+    mpu._TENSOR_MODEL_PARALLEL_GROUP = local_pg_collection.tp
+    mpu._DATA_PARALLEL_GROUP = local_pg_collection.dp
+    mpu._DATA_PARALLEL_GROUP_WITH_CP = data_parallel_with_cp_group
+    mpu._PIPELINE_MODEL_PARALLEL_GROUP = local_pg_collection.pp
+    mpu._CONTEXT_PARALLEL_GROUP = context_parallel_group
+
+    for name in (
+        "_TENSOR_AND_DATA_PARALLEL_GROUP",
+        "_TENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP",
+        "_EXPERT_MODEL_PARALLEL_GROUP",
+        "_EXPERT_TENSOR_PARALLEL_GROUP",
+        "_EXPERT_TENSOR_AND_MODEL_PARALLEL_GROUP",
+        "_EXPERT_TENSOR_MODEL_PIPELINE_PARALLEL_GROUP",
+        "_EXPERT_DATA_PARALLEL_GROUP",
+        "_VIRTUAL_PIPELINE_MODEL_PARALLEL_RANK",
+        "_VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE",
+    ):
+        setattr(mpu, name, None)
+
+    assert mpu.get_tensor_model_parallel_group() is local_pg_collection.tp
+    assert mpu.get_data_parallel_group() is local_pg_collection.dp
+    assert mpu.get_data_parallel_group(with_context_parallel=True) is data_parallel_with_cp_group
+    assert mpu.get_pipeline_model_parallel_group() is local_pg_collection.pp
+    assert mpu.get_context_parallel_group(check_initialized=False) is context_parallel_group
+    assert mpu.get_tensor_and_data_parallel_group(check_initialized=False) is None
+    assert mpu.get_tensor_and_data_parallel_group(check_initialized=False, with_context_parallel=True) is None
+    assert mpu.get_expert_model_parallel_group(check_initialized=False) is None
+    assert mpu.get_virtual_pipeline_model_parallel_rank() is None
 
 
 def _param_module_kind(name: str) -> str:
@@ -415,28 +542,73 @@ def _infer_shard_axis(ref_param: torch.nn.Parameter, dist_param: torch.nn.Parame
     return axis
 
 
+def _language_ref_name_for_dist_name(name: str, *, language_pp_rank: int) -> str:
+    match = _LANGUAGE_LAYER_RE.match(name)
+    if match is None:
+        return name
+    layers_per_pp_stage = _NUM_LAYERS // _LANGUAGE_PP_SIZE
+    ref_layer = language_pp_rank * layers_per_pp_stage + int(match.group(2))
+    return f"{match.group(1)}{ref_layer}{match.group(3)}"
+
+
 def _copy_ref_weights_to_dist(
     ref_model: torch.nn.Module,
     dist_model: torch.nn.Module,
     *,
-    language_tp_rank: int,
-    language_tp_size: int,
+    language_tp_rank: int = 0,
+    language_tp_size: int = 1,
+    language_pp_rank: int | None = None,
 ) -> None:
     ref_params = _named_params_unwrapped(ref_model)
     dist_params = _named_params_unwrapped(dist_model)
-    assert set(ref_params) == set(dist_params), (
+    if language_pp_rank is None:
+        assert set(ref_params) == set(dist_params), (
+            "Ref/dist parameter names differ:\n"
+            f"  ref_only={sorted(set(ref_params) - set(dist_params))[:10]}\n"
+            f"  dist_only={sorted(set(dist_params) - set(ref_params))[:10]}"
+        )
+    else:
+        dist_mapped_names = {
+            _language_ref_name_for_dist_name(name, language_pp_rank=language_pp_rank)
+            if _param_module_kind(name) == _LANGUAGE
+            else name
+            for name in dist_params
+        }
+        assert dist_mapped_names.issubset(set(ref_params)), (
+            "Reference model is missing parameters needed by the PP dist model:\n"
+            f"  missing={sorted(dist_mapped_names - set(ref_params))[:10]}"
+        )
+
+    assert not (language_pp_rank is not None and language_tp_size != 1), (
+        "PP oracle expects matching language TP between dist and ref; do not combine PP layer remap with TP slicing."
+    )
+
+    assert set(ref_params) == set(dist_params) or language_pp_rank is not None, (
         "Ref/dist parameter names differ:\n"
         f"  ref_only={sorted(set(ref_params) - set(dist_params))[:10]}\n"
         f"  dist_only={sorted(set(dist_params) - set(ref_params))[:10]}"
     )
 
     with torch.no_grad():
-        for name, ref_param in ref_params.items():
-            dist_param = dist_params[name]
-            if _param_module_kind(name) == _VISION:
+        for dist_name, dist_param in dist_params.items():
+            ref_name = (
+                _language_ref_name_for_dist_name(dist_name, language_pp_rank=language_pp_rank)
+                if language_pp_rank is not None and _param_module_kind(dist_name) == _LANGUAGE
+                else dist_name
+            )
+            ref_param = ref_params[ref_name]
+            if _param_module_kind(dist_name) == _VISION:
                 assert ref_param.shape == dist_param.shape, (
-                    f"Encoder parameter {name} should have identical shape, "
+                    f"Encoder parameter {dist_name} should have identical shape, "
                     f"got ref={tuple(ref_param.shape)} dist={tuple(dist_param.shape)}"
+                )
+                dist_param.data.copy_(ref_param.data.to(device=dist_param.device, dtype=dist_param.dtype))
+                continue
+
+            if language_pp_rank is not None:
+                assert ref_param.shape == dist_param.shape, (
+                    f"Shape mismatch copying {ref_name} -> {dist_name}: "
+                    f"ref={tuple(ref_param.shape)}, dist={tuple(dist_param.shape)}"
                 )
                 dist_param.data.copy_(ref_param.data.to(device=dist_param.device, dtype=dist_param.dtype))
                 continue
@@ -449,7 +621,8 @@ def _copy_ref_weights_to_dist(
             shard_size = ref_param.shape[shard_axis] // language_tp_size
             shard = ref_param.data.narrow(shard_axis, language_tp_rank * shard_size, shard_size).contiguous()
             assert shard.shape == dist_param.shape, (
-                f"Language shard shape mismatch for {name}: shard={tuple(shard.shape)}, dist={tuple(dist_param.shape)}"
+                f"Language shard shape mismatch for {dist_name}: "
+                f"shard={tuple(shard.shape)}, dist={tuple(dist_param.shape)}"
             )
             dist_param.data.copy_(shard.to(device=dist_param.device, dtype=dist_param.dtype))
 
@@ -565,6 +738,167 @@ def _assert_encoder_grads_match(
     assert not mismatches, (
         f"Encoder gradient elementwise mismatch in {len(mismatches)} of {compared} params "
         f"(global rel_l2={rel_l2:.3e}, projected_scale={projected_scale:.3e}):\n  " + "\n  ".join(mismatches[:10])
+    )
+
+
+def _assert_all_grads_match(
+    ref_model: torch.nn.Module,
+    dist_model: torch.nn.Module,
+    *,
+    rtol: float = 1e-4,
+    atol: float = 5e-6,
+) -> None:
+    ref_params = _named_params_unwrapped(ref_model)
+    dist_params = _named_params_unwrapped(dist_model)
+    assert set(ref_params) == set(dist_params), "Ref/dist parameter names differ"
+
+    mismatches: list[str] = []
+    one_sided: list[str] = []
+    compared = 0
+    for name, ref_param in ref_params.items():
+        ref_grad = ref_param.grad
+        dist_grad = _dist_grad(dist_params[name])
+        if ref_grad is None and dist_grad is None:
+            continue
+        if (ref_grad is None) != (dist_grad is None):
+            one_sided.append(name)
+            continue
+
+        assert ref_grad is not None
+        assert dist_grad is not None
+        ref_compare = ref_grad.detach().float().to(dist_grad.device)
+        dist_compare = dist_grad.detach().float()
+        compared += 1
+        if not torch.allclose(dist_compare, ref_compare, rtol=rtol, atol=atol):
+            diff = (dist_compare - ref_compare).abs()
+            mismatches.append(
+                f"{name}: max_abs_diff={diff.max().item():.3e}, "
+                f"mean_abs_diff={diff.mean().item():.3e}, shape={tuple(dist_compare.shape)}"
+            )
+
+    assert compared > 0, "No gradients were compared"
+    assert not one_sided, "One-sided gradients: " + ", ".join(one_sided[:10])
+    assert not mismatches, f"Gradient mismatches in {len(mismatches)} of {compared} params:\n  " + "\n  ".join(
+        mismatches[:10]
+    )
+
+
+def _assert_language_grads_match(
+    ref_model: torch.nn.Module,
+    dist_model: torch.nn.Module,
+    *,
+    language_pp_rank: int,
+    rtol: float = 1e-3,
+    atol: float = 3e-3,
+) -> None:
+    ref_params = _named_params_unwrapped(ref_model)
+    dist_params = _named_params_unwrapped(dist_model)
+
+    mismatches: list[str] = []
+    one_sided: list[str] = []
+    compared = 0
+    local_ref_sq = torch.tensor(0.0, device=torch.cuda.current_device())
+    local_diff_sq = torch.tensor(0.0, device=torch.cuda.current_device())
+    local_ref_max = torch.tensor(0.0, device=torch.cuda.current_device())
+    local_diff_max = torch.tensor(0.0, device=torch.cuda.current_device())
+
+    for dist_name, dist_param in dist_params.items():
+        if _param_module_kind(dist_name) != _LANGUAGE:
+            continue
+
+        ref_name = _language_ref_name_for_dist_name(dist_name, language_pp_rank=language_pp_rank)
+        assert ref_name in ref_params, f"Missing reference parameter for dist param {dist_name!r}: {ref_name!r}"
+        ref_grad = _dist_grad(ref_params[ref_name])
+        dist_grad = _dist_grad(dist_param)
+        if ref_grad is None and dist_grad is None:
+            continue
+        if (ref_grad is None) != (dist_grad is None):
+            one_sided.append(f"{dist_name} -> {ref_name}")
+            continue
+
+        assert ref_grad is not None
+        assert dist_grad is not None
+        ref_compare = ref_grad.detach().float().to(dist_grad.device)
+        dist_compare = dist_grad.detach().float()
+        assert ref_compare.shape == dist_compare.shape, (
+            f"Language grad shape mismatch for {dist_name} -> {ref_name}: "
+            f"ref={tuple(ref_compare.shape)}, dist={tuple(dist_compare.shape)}"
+        )
+
+        diff = dist_compare - ref_compare
+        local_ref_sq += torch.sum(ref_compare.square())
+        local_diff_sq += torch.sum(diff.square())
+        local_ref_max = torch.maximum(local_ref_max, ref_compare.abs().max())
+        local_diff_max = torch.maximum(local_diff_max, diff.abs().max())
+        compared += 1
+
+        if not torch.allclose(dist_compare, ref_compare, rtol=rtol, atol=atol):
+            mismatches.append(
+                f"{dist_name} -> {ref_name}: max_abs_diff={diff.abs().max().item():.3e}, "
+                f"mean_abs_diff={diff.abs().mean().item():.3e}, "
+                f"ref_max={ref_compare.abs().max().item():.3e}, "
+                f"dist_max={dist_compare.abs().max().item():.3e}"
+            )
+
+    assert compared > 0, "No language gradients were compared"
+    assert not one_sided, "One-sided language gradients: " + ", ".join(one_sided[:10])
+
+    for tensor, op in (
+        (local_ref_sq, dist.ReduceOp.SUM),
+        (local_diff_sq, dist.ReduceOp.SUM),
+        (local_ref_max, dist.ReduceOp.MAX),
+        (local_diff_max, dist.ReduceOp.MAX),
+    ):
+        dist.all_reduce(tensor, op=op, group=dist.group.WORLD)
+
+    ref_l2 = torch.sqrt(local_ref_sq).item()
+    diff_l2 = torch.sqrt(local_diff_sq).item()
+    rel_l2 = diff_l2 / max(ref_l2, 1e-12)
+    assert ref_l2 > 1e-8, (
+        f"Language gradient signal is too small for a schedule oracle: "
+        f"ref_l2={ref_l2:.3e}, ref_max={local_ref_max.item():.3e}"
+    )
+    assert not mismatches, (
+        f"Language gradient mismatch in {len(mismatches)} of {compared} params "
+        f"(global rel_l2={rel_l2:.3e}, diff_l2={diff_l2:.3e}, "
+        f"max_abs_diff={local_diff_max.item():.3e}, ref_max={local_ref_max.item():.3e}):\n  "
+        + "\n  ".join(mismatches[:10])
+    )
+
+
+def _flatten_module_grads(model: torch.nn.Module, module_kind: str) -> torch.Tensor:
+    grads: list[torch.Tensor] = []
+    for name, param in _named_params_unwrapped(model).items():
+        if _param_module_kind(name) != module_kind:
+            continue
+        grad = _dist_grad(param)
+        if grad is not None:
+            grads.append(grad.detach().float().reshape(-1))
+    assert grads, f"No gradients found for module kind {module_kind!r}"
+    return torch.cat(grads)
+
+
+def _assert_module_dp_grads_synchronized(
+    model: torch.nn.Module,
+    *,
+    module_kind: str,
+    dp_group: dist.ProcessGroup,
+    atol: float = 1e-6,
+) -> None:
+    local_grads = _flatten_module_grads(model, module_kind)
+    local_norm = torch.linalg.vector_norm(local_grads)
+    assert local_norm.item() > 1e-8, f"{module_kind} gradient signal is too small for force-all-reduce check"
+
+    gathered = [torch.empty_like(local_grads) for _ in range(_pg_size(dp_group))]
+    dist.all_gather(gathered, local_grads, group=dp_group)
+    reference = gathered[0]
+    max_diff = torch.tensor(0.0, device=local_grads.device)
+    for other in gathered[1:]:
+        max_diff = torch.maximum(max_diff, torch.max(torch.abs(other - reference)))
+
+    assert max_diff.item() <= atol, (
+        f"{module_kind} gradients are not synchronized across DP group after force_all_reduce=True: "
+        f"max_abs_diff={max_diff.item():.3e}, local_norm={local_norm.item():.3e}"
     )
 
 
@@ -703,8 +1037,7 @@ def _assert_encoder_weights_match(
 
         dist_param = dist_params[name]
         assert ref_param.shape == dist_param.shape, (
-            f"Encoder weight shape mismatch for {name}: "
-            f"ref={tuple(ref_param.shape)}, dist={tuple(dist_param.shape)}"
+            f"Encoder weight shape mismatch for {name}: ref={tuple(ref_param.shape)}, dist={tuple(dist_param.shape)}"
         )
         ref_value = ref_param.detach().float().to(dist_param.device)
         dist_value = dist_param.detach().float()
@@ -732,11 +1065,7 @@ def _run_one_forward_backward(
     *,
     capture: _CPForwardCapture | None = None,
 ) -> None:
-    forward_step = (
-        partial(_capturing_forward_step, capture)
-        if capture is not None
-        else megatron_mimo_forward_step
-    )
+    forward_step = partial(_capturing_forward_step, capture) if capture is not None else megatron_mimo_forward_step
     wrapped_forward_step = prepare_forward_step_func(forward_step, global_state)
     forward_backward_no_pipelining(
         forward_step_func=wrapped_forward_step,
@@ -757,6 +1086,85 @@ def _step_and_assert_nonzero_grad_norm(optimizer: Any, label: str) -> None:
         f"{label} grad_norm={grad_norm}; encoder grads may have been silently zeroed "
         "by wrong CP scaling or a broken bridge-backward path."
     )
+
+
+class TestColocatedEqualDpOracle:
+    """Numerical correctness oracle for colocated equal-DP training on exactly 2 GPUs."""
+
+    @pytest.mark.run_only_on("GPU")
+    def test_equal_dp_grads_match_full_replica_reference(self) -> None:
+        initialize_distributed()
+        if dist.get_world_size() != 2:
+            pytest.skip(f"Requires exactly 2 GPUs, got {dist.get_world_size()}")
+
+        _set_torch_deterministic()
+
+        import megatron.bridge.training.utils.train_utils as train_utils
+
+        train_utils.report_theoretical_memory = lambda *args, **kwargs: None
+
+        from megatron.core import parallel_state
+
+        if parallel_state._GLOBAL_MEMORY_BUFFER is None:
+            parallel_state._set_global_memory_buffer()
+
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                _LANGUAGE: ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+                _VISION: ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+            },
+        )
+
+        dist_cfg = _build_dist_config(par_cfg)
+        megatron_mimo_runtime_config_update(dist_cfg)
+        global_state = GlobalState()
+        global_state.cfg = dist_cfg
+        setup_output = setup_megatron_mimo(
+            state=global_state,
+            build_data_iterators_fn=_build_data_iterators_fn,
+        )
+
+        ref_model, ref_infra = _build_ref_model_and_infra(par_cfg)
+        _copy_ref_weights_to_dist(ref_model, setup_output.model)
+
+        batch = _generate_global_batch(seed=67890)
+
+        zero_grad_buffer_for_multimodule(setup_output.module_to_grid_tuple)
+        wrapped_forward_step = prepare_forward_step_func(megatron_mimo_forward_step, global_state)
+        infra = setup_output.megatron_mimo_infra
+        forward_backward_no_pipelining(
+            forward_step_func=wrapped_forward_step,
+            data_iterator=_batch_iterator(batch),
+            model=[setup_output.model],
+            num_microbatches=1,
+            seq_length=_SEQ_LENGTH,
+            micro_batch_size=_MICRO_BATCH_SIZE,
+            forward_only=False,
+            pg_collection=infra.pg_collections[_LANGUAGE],
+            force_all_reduce=True,
+        )
+
+        ref_local_batch = slice_batch_for_megatron_mimo_modules(batch, grids=ref_infra.module_to_grid_map)
+        ref_model.zero_grad(set_to_none=True)
+        _ref_forward_backward_local(ref_model, ref_local_batch)
+        _allreduce_and_scale_ref_grads(
+            ref_model,
+            language_dp_group=ref_infra.pg_collections[_LANGUAGE].dp,
+            vision_dp_group=ref_infra.pg_collections[_VISION].dp,
+            global_num_tokens=int(batch["loss_mask"].sum().item()),
+        )
+
+        _assert_all_grads_match(ref_model, setup_output.model)
 
 
 class TestColocatedHeterogeneousTpDpOracle:
@@ -1003,3 +1411,225 @@ class TestColocatedHeterogeneousTpDpOracle:
         _step_and_assert_nonzero_grad_norm(ref_setup.optimizer, "Ref")
 
         _assert_encoder_weights_match(ref_setup.model, dist_setup.model, rtol=1e-3, atol=1e-3)
+
+
+class TestColocatedHeterogeneousTpDpPpOracle:
+    """Functional oracle for colocated heterogeneous TP/DP/PP on exactly 8 GPUs."""
+
+    @pytest.mark.run_only_on("GPU")
+    def test_language_pp_dist_matches_pp1_reference_grads(self) -> None:
+        initialize_distributed()
+        if dist.get_world_size() != 8:
+            pytest.skip(f"Requires exactly 8 GPUs, got {dist.get_world_size()}")
+
+        _set_torch_deterministic()
+
+        import megatron.bridge.training.utils.train_utils as train_utils
+
+        train_utils.report_theoretical_memory = lambda *args, **kwargs: None
+
+        from megatron.core import parallel_state
+
+        if parallel_state._GLOBAL_MEMORY_BUFFER is None:
+            parallel_state._set_global_memory_buffer()
+
+        dist_par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                _LANGUAGE: ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=2,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+                _VISION: ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=4,
+                    rank_offset=0,
+                ),
+            },
+        )
+        ref_par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                _LANGUAGE: ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=4,
+                    rank_offset=0,
+                ),
+                _VISION: ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=4,
+                    rank_offset=0,
+                ),
+            },
+        )
+
+        dist_cfg = _build_dist_config(
+            dist_par_cfg,
+            micro_batch_size=_PP_MICRO_BATCH_SIZE,
+            global_batch_size=_PP_GLOBAL_BATCH_SIZE,
+            num_microbatches=_PP_NUM_MICROBATCHES,
+        )
+        megatron_mimo_runtime_config_update(dist_cfg)
+        dist_state = GlobalState()
+        dist_state.cfg = dist_cfg
+        dist_setup = setup_megatron_mimo(
+            state=dist_state,
+            build_data_iterators_fn=_build_data_iterators_fn,
+        )
+
+        ref_cfg = _build_dist_config(
+            ref_par_cfg,
+            micro_batch_size=_PP_MICRO_BATCH_SIZE,
+            global_batch_size=_PP_GLOBAL_BATCH_SIZE,
+            num_microbatches=_PP_NUM_MICROBATCHES,
+        )
+        megatron_mimo_runtime_config_update(ref_cfg)
+        ref_state = GlobalState()
+        ref_state.cfg = ref_cfg
+        ref_setup = setup_megatron_mimo(
+            state=ref_state,
+            build_data_iterators_fn=_build_data_iterators_fn,
+        )
+
+        ref_infra = ref_setup.megatron_mimo_infra
+        dist_infra = dist_setup.megatron_mimo_infra
+        language_pg = dist_infra.pg_collections[_LANGUAGE]
+        assert language_pg is not None
+        assert _pg_size(language_pg.tp) == 2
+        assert _pg_size(language_pg.pp) == _LANGUAGE_PP_SIZE
+        assert _pg_size(language_pg.dp) == 2
+
+        language_pp_rank = _pg_rank(language_pg.pp)
+        _copy_ref_weights_to_dist(
+            ref_setup.model,
+            dist_setup.model,
+            language_pp_rank=language_pp_rank,
+        )
+
+        batches = _generate_pp_global_microbatches(seed=67890)
+
+        _install_global_parallel_state_for_mimo(dist_infra)
+        zero_grad_buffer_for_multimodule(dist_setup.module_to_grid_tuple)
+        p2p_communicator = P2PCommunicator(pp_group=language_pg.pp, config=get_model_config(dist_setup.model))
+        forward_backward_colocated_mimo_with_pp(
+            model=dist_setup.model,
+            data_iterator=_microbatch_iterator(batches),
+            infra=dist_infra,
+            encoder_module_name=_VISION,
+            num_microbatches=_PP_NUM_MICROBATCHES,
+            seq_length=_SEQ_LENGTH,
+            micro_batch_size=_PP_MICRO_BATCH_SIZE,
+            forward_only=False,
+            p2p_communicator=p2p_communicator,
+            force_all_reduce=True,
+        )
+
+        _install_global_parallel_state_for_mimo(ref_infra)
+        zero_grad_buffer_for_multimodule(ref_setup.module_to_grid_tuple)
+        ref_forward_step = prepare_forward_step_func(megatron_mimo_forward_step, ref_state)
+        forward_backward_no_pipelining(
+            forward_step_func=ref_forward_step,
+            data_iterator=_microbatch_iterator(batches),
+            model=[ref_setup.model],
+            num_microbatches=_PP_NUM_MICROBATCHES,
+            seq_length=_SEQ_LENGTH,
+            micro_batch_size=_PP_MICRO_BATCH_SIZE,
+            forward_only=False,
+            pg_collection=ref_infra.pg_collections[_LANGUAGE],
+            force_all_reduce=True,
+        )
+
+        _assert_encoder_grads_match(ref_setup.model, dist_setup.model)
+        _assert_language_grads_match(
+            ref_setup.model,
+            dist_setup.model,
+            language_pp_rank=language_pp_rank,
+        )
+
+
+class TestColocatedPpForceAllReduceRegression:
+    """Functional regression for force_all_reduce in colocated language PP."""
+
+    @pytest.mark.run_only_on("GPU")
+    def test_force_all_reduce_syncs_encoder_dp_grads_when_overlap_disabled(self) -> None:
+        initialize_distributed()
+        if dist.get_world_size() != 2:
+            pytest.skip(f"Requires exactly 2 GPUs, got {dist.get_world_size()}")
+
+        _set_torch_deterministic()
+
+        import megatron.bridge.training.utils.train_utils as train_utils
+
+        train_utils.report_theoretical_memory = lambda *args, **kwargs: None
+
+        from megatron.core import parallel_state
+
+        if parallel_state._GLOBAL_MEMORY_BUFFER is None:
+            parallel_state._set_global_memory_buffer()
+
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                _LANGUAGE: ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=2,
+                    data_parallel_size=1,
+                    rank_offset=0,
+                ),
+                _VISION: ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=2,
+                    rank_offset=0,
+                ),
+            },
+        )
+        cfg = _build_dist_config(
+            par_cfg,
+            micro_batch_size=_PP_MICRO_BATCH_SIZE,
+            global_batch_size=_PP_GLOBAL_BATCH_SIZE,
+            num_microbatches=_PP_NUM_MICROBATCHES,
+        )
+        cfg.ddp.use_distributed_optimizer = True
+        cfg.ddp.overlap_grad_reduce = False
+        megatron_mimo_runtime_config_update(cfg)
+        state = GlobalState()
+        state.cfg = cfg
+        setup = setup_megatron_mimo(
+            state=state,
+            build_data_iterators_fn=_build_data_iterators_fn,
+        )
+
+        infra = setup.megatron_mimo_infra
+        language_pg = infra.pg_collections[_LANGUAGE]
+        vision_pg = infra.pg_collections[_VISION]
+        assert language_pg is not None
+        assert vision_pg is not None
+        assert _pg_size(language_pg.pp) == 2
+        assert _pg_size(vision_pg.dp) == 2
+
+        batches = _generate_pp_global_microbatches(seed=98765)
+
+        _install_global_parallel_state_for_mimo(infra)
+        zero_grad_buffer_for_multimodule(setup.module_to_grid_tuple)
+        p2p_communicator = P2PCommunicator(pp_group=language_pg.pp, config=get_model_config(setup.model))
+        forward_backward_colocated_mimo_with_pp(
+            model=setup.model,
+            data_iterator=_microbatch_iterator(batches),
+            infra=infra,
+            encoder_module_name=_VISION,
+            num_microbatches=_PP_NUM_MICROBATCHES,
+            seq_length=_SEQ_LENGTH,
+            micro_batch_size=_PP_MICRO_BATCH_SIZE,
+            forward_only=False,
+            p2p_communicator=p2p_communicator,
+            force_all_reduce=True,
+        )
+
+        _assert_module_dp_grads_synchronized(
+            setup.model,
+            module_kind=_VISION,
+            dp_group=vision_pg.dp,
+        )

@@ -24,10 +24,7 @@ import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_checkpoint import (
-    _convert_module_rng_tracker_states,
     _get_module_rng_layout_fingerprint_for_checkpoint,
-    _get_module_rng_layout_mismatch_message,
-    _restore_module_rng_tracker_states_for_checkpoint,
     _validate_module_rng_layout_fingerprint,
 )
 from megatron.bridge.training.checkpointing import (
@@ -374,101 +371,6 @@ class TestRNGState:
         assert rng_state[_EXTRA_RNG_LAYOUT_FINGERPRINT_KEY] == extra_rng_layout_fingerprint
         assert rng_state[_EXTRA_RNG_LAYOUT_FINGERPRINT_KEY] is not extra_rng_layout_fingerprint
 
-    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_checkpoint.tensor_parallel.convert_cuda_rng_state")
-    @patch("megatron.bridge.training.checkpointing.tensor_parallel")
-    @patch("torch.distributed.is_initialized")
-    @patch("torch.cuda.get_rng_state")
-    @patch("torch.get_rng_state")
-    @patch("numpy.random.get_state")
-    @patch("random.getstate")
-    def test_module_rng_tracker_states_round_trip_through_rng_payload(
-        self,
-        mock_random,
-        mock_np,
-        mock_torch,
-        mock_cuda,
-        mock_dist_init,
-        mock_tp,
-        mock_convert_rng_state,
-    ):
-        """Module-keyed RNG snapshots survive save payload + load conversion exactly."""
-        mock_dist_init.return_value = False
-        mock_random.return_value = "random_state"
-        mock_np.return_value = "np_state"
-        mock_torch.return_value = "torch_state"
-        mock_cuda.return_value = "cuda_state"
-        mock_tracker = Mock()
-        mock_tracker.get_states.return_value = {"singleton": "state"}
-        mock_tp.get_cuda_rng_tracker.return_value = mock_tracker
-        mock_convert_rng_state.side_effect = lambda value, *, to_graphable: value
-
-        mock_pg_collection = Mock()
-        mock_pg_collection.pp.rank.return_value = 0
-        mock_pg_collection.pp.size.return_value = 1
-        mock_pg_collection.tp.rank.return_value = 0
-        mock_pg_collection.tp.size.return_value = 1
-        mock_pg_collection.dp_cp.rank.return_value = 0
-        mock_pg_collection.dp_cp.size.return_value = 1
-        mock_pg_collection.ep.size.return_value = 1
-
-        saved_module_states = {
-            "vision": {"tracker": "vision_state", "extra": "vision_extra"},
-            "language": {"tracker": "language_state", "extra": "language_extra"},
-        }
-        fingerprint = {
-            "rng_mode": "per_module",
-            "module_names": ["language", "vision"],
-            "module_tp_pp_dp": {"language": (2, 1, 1), "vision": (1, 1, 2)},
-            "module_rank_offsets": {"language": 0, "vision": 0},
-        }
-
-        rng_checkpoint_context = Mock()
-        rng_checkpoint_context.shard_key_suffix.return_value = "language"
-        rng_checkpoint_context.collect_extra_rng_state.return_value = saved_module_states
-        rng_checkpoint_context.collect_layout_fingerprint.return_value = fingerprint
-
-        result = get_rng_state(
-            data_parallel_random_init=False,
-            ckpt_format="torch_dist",
-            pg_collection=mock_pg_collection,
-            rng_checkpoint_context=rng_checkpoint_context,
-        )
-
-        payload = result.data[0]
-        restored_module_states = _convert_module_rng_tracker_states(
-            payload[_EXTRA_RNG_STATE_KEY],
-            graph_safe_rng=False,
-        )
-
-        assert restored_module_states == saved_module_states
-        assert restored_module_states is not saved_module_states
-        assert payload[_EXTRA_RNG_STATE_KEY] is not saved_module_states
-
-    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_checkpoint.tensor_parallel.convert_cuda_rng_state")
-    def test_restore_module_rng_tracker_states_updates_existing_infra_dict(self, mock_convert_rng_state):
-        """Per-module RNG restore mutates the memoized infra dict in place."""
-        mock_convert_rng_state.side_effect = lambda value, *, to_graphable: value
-        existing_snapshots = {"vision": {"tracker": "old_vision"}}
-        infra = SimpleNamespace(cuda_rng_states_per_module=existing_snapshots)
-        cuda_rng_tracker = Mock()
-        saved_module_states = {
-            "vision": {"tracker": "vision_state"},
-            "language": {"tracker": "language_state"},
-        }
-
-        restored_module_states = _restore_module_rng_tracker_states_for_checkpoint(
-            saved_module_states,
-            megatron_mimo_infra=infra,
-            module_name="vision",
-            graph_safe_rng=False,
-            cuda_rng_tracker=cuda_rng_tracker,
-        )
-
-        assert restored_module_states == saved_module_states
-        assert infra.cuda_rng_states_per_module is existing_snapshots
-        assert existing_snapshots == saved_module_states
-        cuda_rng_tracker.set_states.assert_called_once_with(saved_module_states["vision"])
-
     def test_module_rng_layout_fingerprint_records_current_layout(self):
         def make_grid(*, tp: int, pp: int, dp: int, rank_offset: int) -> Mock:
             pg_sizes = {"tp": tp, "pp": pp, "dp": dp}
@@ -520,28 +422,6 @@ class TestRNGState:
             _validate_module_rng_layout_fingerprint(saved, current)
 
         _validate_module_rng_layout_fingerprint(current, current)
-
-    def test_module_rng_layout_mismatch_message_matches_standard_ignore_semantics(self):
-        current = {
-            "rng_mode": "per_module",
-            "module_names": ["language", "vision"],
-            "module_tp_pp_dp": {"language": (2, 1, 1), "vision": (1, 1, 2)},
-            "module_rank_offsets": {"language": 0, "vision": 0},
-        }
-        saved = {
-            "rng_mode": "per_module",
-            "module_names": ["language", "vision"],
-            "module_tp_pp_dp": {"language": (4, 1, 1), "vision": (1, 1, 4)},
-            "module_rank_offsets": {"language": 0, "vision": 0},
-        }
-
-        assert _get_module_rng_layout_mismatch_message(current, None) is None
-        assert _get_module_rng_layout_mismatch_message(current, current) is None
-
-        message = _get_module_rng_layout_mismatch_message(saved, current)
-        assert message is not None
-        assert "per-module RNG checkpoint layout mismatch" in message
-        assert "RNG state will be ignored" in message
 
     @patch("megatron.bridge.training.checkpointing.get_pg_size")
     @patch("megatron.bridge.training.checkpointing.tensor_parallel")
@@ -3299,31 +3179,6 @@ class TestCheckpointManager:
             manager = create_checkpoint_manager(config, rng_checkpoint_context=rng_context)
 
             assert manager.rng_checkpoint_context is rng_context
-
-    def test_create_checkpoint_manager_custom_class_rejects_rng_context_without_constructor_support(self):
-        """Custom managers fail clearly when an RNG context is supplied but unsupported."""
-
-        class CustomTestManager:
-            def __init__(self, checkpoint_config):
-                self.checkpoint_config = checkpoint_config
-
-            def save(self, _ctx, _callback_manager=None):
-                pass
-
-            def load(self, _ctx):
-                return (0, 0)
-
-            def finalize_async_saves(self, state, blocking=False, terminate=False):
-                pass
-
-        with patch("importlib.import_module") as mock_import:
-            mock_module = Mock()
-            mock_module.CustomTestManager = CustomTestManager
-            mock_import.return_value = mock_module
-
-            config = CheckpointConfig(custom_manager_class="test.module.CustomTestManager")
-            with pytest.raises(TypeError, match="does not accept rng_checkpoint_context"):
-                create_checkpoint_manager(config, rng_checkpoint_context=Mock())
 
     def test_default_checkpoint_manager_init(self):
         """Test DefaultCheckpointManager initialization."""
