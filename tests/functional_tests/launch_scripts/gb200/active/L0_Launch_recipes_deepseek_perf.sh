@@ -1,4 +1,4 @@
-# CI_RUNNER=nemo-ci-gcp-gpu-x4
+# GPU_COUNT=x4
 #!/bin/bash
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
