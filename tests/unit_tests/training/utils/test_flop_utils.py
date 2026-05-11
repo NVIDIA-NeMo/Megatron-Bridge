@@ -1331,6 +1331,8 @@ class TestDynamicSeqLenFlops:
         cfg = self._llm_cfg()
         baseline = num_floating_point_operations(cfg, batch_size=2)
         assert num_floating_point_operations(cfg, batch_size=2, num_vision_patches=0) == baseline
+
+
 @pytest.mark.unit
 class TestMLAFlops:
     """Tests for Multi-Latent Attention (MLA) FLOPs in transformer_flops path.
