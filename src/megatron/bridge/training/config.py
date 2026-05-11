@@ -29,7 +29,7 @@ from megatron.core.optimizer import (
     ParamKey,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
+from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
@@ -1022,10 +1022,6 @@ class ConfigContainer(Container):
         """
         if not getattr(self.model, "deterministic_mode", False):
             return
-
-        # Disallow flash attention when running deterministically
-        if getattr(self.model, "attention_backend", None) == AttnBackend.flash:
-            raise AssertionError("Flash attention can not be used in deterministic mode.")
 
         # Disallow cross-entropy loss fusion as it is not deterministic
         assert not getattr(self.model, "cross_entropy_loss_fusion", False), (
