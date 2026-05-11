@@ -289,7 +289,7 @@ class PerfEnvPlugin(Plugin):
             and train_task == "pretrain"
             and gpu in ["gb200", "gb300"]
         ):
-            if compute_dtype in ["fp8_cs", "fp8_mx"]:
+            if compute_dtype in ["fp8_cs", "fp8_mx", "nvfp4"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                 executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         elif (
