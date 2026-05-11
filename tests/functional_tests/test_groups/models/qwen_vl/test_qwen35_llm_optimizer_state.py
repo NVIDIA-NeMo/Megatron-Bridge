@@ -34,6 +34,11 @@ import torch.distributed as dist
 
 HF_PATH = os.environ.get("HF_PATH", "Qwen/Qwen3.5-0.8B")
 TRAIN_ITERS = int(os.environ.get("TRAIN_ITERS", "3"))
+# Peak-memory ceiling for the 0.8B LLM-only path. The reference measurement
+# was ~17.3 GB; 25 GB leaves headroom for kernel/dtype drift but still trips
+# if vision params or optimizer state for them are accidentally allocated
+# (the full Qwen3.5-VL model would push well past 30 GB on the same setup).
+PEAK_MEM_GB_CEILING = float(os.environ.get("PEAK_MEM_GB_CEILING", "25.0"))
 
 
 def main():
@@ -102,17 +107,37 @@ def main():
         print(f"  Vision params (present)    : {len(vision_present)}")
         print(f"  Peak GPU memory (GB)       : {peak_mem_gb:.3f}")
 
+        failed = []
+
         if vision_present:
-            print("\n  FAIL — vision params are present in the model (should not exist):")
+            failed.append("vision params are present in the model (should not exist):")
             for n in vision_present[:10]:
-                print(f"    {n}")
-            sys.exit(1)
+                failed.append(f"    {n}")
 
         if not lm_trainable:
-            print("\n  FAIL — no LM params are trainable (recipe misconfigured)")
+            failed.append("no LM params are trainable (recipe misconfigured)")
+
+        # Regression guard: peak memory must stay under the ceiling. A breach
+        # almost always means vision params (or their optimizer state) leaked
+        # back into the model.
+        if peak_mem_gb != peak_mem_gb:  # NaN — torch.cuda.max_memory_allocated unavailable
+            failed.append("peak_mem_gb is NaN; CUDA stats unavailable")
+        elif peak_mem_gb > PEAK_MEM_GB_CEILING:
+            failed.append(
+                f"peak GPU memory {peak_mem_gb:.3f} GB exceeds ceiling {PEAK_MEM_GB_CEILING:.3f} GB — "
+                "possible reintroduction of vision params"
+            )
+
+        if failed:
+            print("\n  FAIL:")
+            for msg in failed:
+                print(f"    {msg}")
             sys.exit(1)
 
-        print("\n  PASS — vision tower not instantiated; only LM params present and trainable")
+        print(
+            f"\n  PASS — vision tower not instantiated; LM params trainable; "
+            f"peak {peak_mem_gb:.3f} GB ≤ {PEAK_MEM_GB_CEILING:.3f} GB ceiling"
+        )
         print("=" * 70)
 
 
