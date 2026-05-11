@@ -263,7 +263,7 @@ class PerfEnvPlugin(Plugin):
             model_family_name in ["llama"]
             and model_recipe_name in ["llama31_405b"]
             and train_task == "pretrain"
-            and gpu in ["gb200", "gb300"]
+            and gpu in ["gb200", "gb300", "b200", "b300"]
         ):
             if compute_dtype in ["fp8_cs", "fp8_mx", "nvfp4"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
