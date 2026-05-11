@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Dict, Mapping
+from typing import Dict, Mapping, Union
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -34,6 +34,29 @@ try:
     HAVE_TE = True
 except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
+
+
+_FP8_BLOCK_SIZE = 128
+
+
+def _dequant_fp8_blockwise(weight: torch.Tensor, scale_inv: torch.Tensor) -> torch.Tensor:
+    """Block-wise FP8 dequantization: ``out = fp8_val * scale_inv`` per 128x128 block.
+
+    DeepSeek-V3 stores linear weights as ``float8_e4m3fn`` with a separate
+    ``weight_scale_inv`` tensor holding per-block scales. The true bf16 weight is
+    recovered by multiplying each 128x128 weight block by the matching scale.
+    """
+    M, N = weight.shape
+    B = _FP8_BLOCK_SIZE
+    w = weight.float()
+    out = torch.empty_like(w)
+    sM, sN = scale_inv.shape
+    for bi in range(sM):
+        for bj in range(sN):
+            r0, r1 = bi * B, min((bi + 1) * B, M)
+            c0, c1 = bj * B, min((bj + 1) * B, N)
+            out[r0:r1, c0:c1] = w[r0:r1, c0:c1] * scale_inv[bi, bj]
+    return out.to(torch.bfloat16)
 
 
 @MegatronModelBridge.register_bridge(
@@ -129,6 +152,47 @@ class DeepSeekV3Bridge(MegatronModelBridge):
             )
         )
         return MegatronMappingRegistry(*mapping_list)
+
+    def maybe_modify_loaded_hf_weight(
+        self,
+        hf_param: Union[str, dict[str, str]],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Union[torch.Tensor, dict[str, torch.Tensor]]:
+        """Load HF weights and dequantize FP8 tensors on the fly.
+
+        DeepSeek-V3 ships linear weights as ``float8_e4m3fn`` with per-block scale
+        factors stored in ``<key>_scale_inv`` (128x128 blocks). The true bf16 weight is::
+
+            w_bf16 = fp8_weight.float() * scale_inv_block
+
+        Without this override the bridge would do a bare ``.to(bf16)`` cast in
+        ``ColumnParallelMapping.hf_to_megatron`` (param_mapping.py:905), discarding the
+        per-block scales — the resulting model produces random-looking logits.
+        """
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+
+        if isinstance(hf_weights, dict):
+            # Compound params (QKV / GatedMLP): dequantize each component individually.
+            return {
+                key: self._maybe_dequantize_fp8(tensor, hf_param[key], hf_state_dict)
+                for key, tensor in hf_weights.items()
+            }
+        return self._maybe_dequantize_fp8(hf_weights, hf_param, hf_state_dict)
+
+    @staticmethod
+    def _maybe_dequantize_fp8(
+        weight: torch.Tensor,
+        param_name: str,
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Dequantize ``weight`` if it is stored as FP8 with a matching ``*_scale_inv``."""
+        if weight.dtype not in (torch.float8_e4m3fn, torch.float8_e5m2):
+            return weight
+        scale_key = param_name + "_scale_inv"
+        if weight.ndim == 2 and scale_key in hf_state_dict:
+            return _dequant_fp8_blockwise(weight, hf_state_dict[scale_key])
+        # No scale found (e.g. activation scales for non-linear params) — fall back to bare cast.
+        return weight.float().to(torch.bfloat16)
 
     def maybe_modify_converted_hf_weight(
         self,
