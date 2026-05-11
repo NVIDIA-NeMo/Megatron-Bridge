@@ -30,6 +30,7 @@ from utils.datasets import (
 )
 from utils.utils import get_library_recipe
 
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.utils.common_utils import get_rank_safe
 
 
@@ -176,10 +177,7 @@ def set_user_overrides(config, args):
     if args.wandb_save_dir:
         config.logger.wandb_save_dir = args.wandb_save_dir
 
-    # Determinism overrides
     if args.deterministic:
-        from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
-
         apply_determinism_overrides(config)
 
     # Handle convergence mode configuration

@@ -761,9 +761,8 @@ def parse_cli_args():
     )
     performance_args.add_argument(
         "--deterministic",
-        help="Enable deterministic training. Sets NCCL_ALGO=Ring, "
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO=0, and CUBLAS_WORKSPACE_CONFIG env vars, "
-        "and disables non-deterministic model ops.",
+        help="Enable bit-exact deterministic training. Sets NCCL/cuBLAS/TE env vars "
+        "and disables fused cross-entropy loss and TP comm overlap.",
         action="store_true",
     )
 
