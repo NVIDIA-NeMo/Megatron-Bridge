@@ -90,7 +90,7 @@ See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning with 
 
 ### LLM-only fine-tuning (SQuAD, HF weights without vision)
 
-The `qwen35_llm_*_sft_config` recipes in `megatron.bridge.recipes` load **language-model weights only** from a Qwen3.5-VL HuggingFace checkpoint. The vision tower is never instantiated (`init_vision_model=False`), so vision parameters are not allocated on GPU and not loaded from the checkpoint — peak memory reflects the language model only. The language model is the standard `GPTModel` (mRoPE-augmented), wrapped under `model.language_model`. Training uses the default SQuAD setup from `_sft_common` and **`vlm_step`** so the hybrid stack runs on text-only batches.
+The `qwen35_llm_*_sft_config` recipes in `megatron.bridge.recipes` load **language-model weights only** from a Qwen3.5-VL HuggingFace checkpoint. The vision tower is never instantiated (`add_encoder=False`), so vision parameters are not allocated on GPU and not loaded from the checkpoint — peak memory reflects the language model only. The language model is the standard `GPTModel` (mRoPE-augmented), wrapped under `model.language_model`. Training uses the default SQuAD setup from `_sft_common` and **`vlm_step`** so the hybrid stack runs on text-only batches.
 
 Run from the Bridge repo root with the generic driver [`scripts/training/run_recipe.py`](../../../../scripts/training/run_recipe.py):
 

@@ -47,7 +47,7 @@ class _FakeModelCfg:
         self.freeze_vision_model = True
         self.freeze_vision_projection = True
         self.mtp_num_layers = None
-        self.init_vision_model = True
+        self.add_encoder = True
 
     def finalize(self):
         return None
@@ -74,7 +74,7 @@ def _assert_basic_config(cfg):
     assert cfg.model.freeze_vision_projection is True
     assert cfg.model.mtp_num_layers is None
     # Vision tower is not instantiated — peak memory reflects the LLM only.
-    assert cfg.model.init_vision_model is False
+    assert cfg.model.add_encoder is False
 
 
 @pytest.mark.parametrize("recipe_func", _LLM_SFT_FUNCS)

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""T2.2: ``init_vision_model=False`` keeps vision parameters out of the model.
+"""T2.2: ``add_encoder=False`` keeps vision parameters out of the model.
 
 Builds the Qwen3.5 LLM-only recipe end-to-end on a real HuggingFace checkpoint
 (Qwen/Qwen3.5-0.8B, a VLM) and verifies that:

@@ -14,7 +14,7 @@
 
 """T2.5: Vision tower is not instantiated; only LLM params are present.
 
-The recipe sets ``init_vision_model=False`` on the provider, so the Megatron
+The recipe sets ``add_encoder=False`` on the provider, so the Megatron
 model has no ``vision_model.*`` or ``visual.*`` parameters at all. This test
 verifies that and reports peak memory.
 

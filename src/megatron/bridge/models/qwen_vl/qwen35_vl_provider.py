@@ -178,7 +178,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
     # When False, the vision tower is not instantiated. Used by LLM-only SFT
     # recipes that load language-model weights from a Qwen3.5-VL checkpoint —
     # vision parameters are never allocated, so peak memory reflects the LLM only.
-    init_vision_model: bool = True
+    # Matches the field name on Qwen3VLModelProvider for consistency.
+    add_encoder: bool = True
 
     def __post_init__(self):
         _check_qwen3_5_available()
@@ -208,7 +209,7 @@ class Qwen35VLModelProvider(GPTModelProvider):
             vision_transformer_config=hf_vision_config,
             pre_process=pre_process,
             post_process=post_process,
-            add_encoder=self.init_vision_model,
+            add_encoder=self.add_encoder,
             pg_collection=self._pg_collection,
             mtp_block_spec=mtp_spec,
             vp_stage=vp_stage,
@@ -351,7 +352,8 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     # When False, the vision tower is not instantiated. Used by LLM-only SFT
     # recipes that load language-model weights from a Qwen3.5-VL checkpoint —
     # vision parameters are never allocated, so peak memory reflects the LLM only.
-    init_vision_model: bool = True
+    # Matches the field name on Qwen3VLModelProvider for consistency.
+    add_encoder: bool = True
 
     def __post_init__(self):
         _check_qwen3_5_moe_available()
@@ -404,7 +406,7 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
             vision_transformer_config=hf_vision_config,
             pre_process=pre_process,
             post_process=post_process,
-            add_encoder=self.init_vision_model,
+            add_encoder=self.add_encoder,
             pg_collection=self._pg_collection,
             mtp_block_spec=mtp_spec,
             vp_stage=vp_stage,

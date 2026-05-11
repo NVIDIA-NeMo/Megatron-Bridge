@@ -15,12 +15,12 @@
 """Qwen3.5 text-only (LLM) SFT recipes for Qwen3.5-VL checkpoints.
 
 Loads **language-model weights only** from a HuggingFace Qwen3.5-VL checkpoint.
-The vision tower is never instantiated (``init_vision_model=False``), so the
-vision parameters are absent from the Megatron model — they are neither
-allocated on GPU nor loaded from the checkpoint. The language model is the
-standard ``GPTModel`` (specifically ``Qwen3VLGPTModel``, a ``GPTModel`` subclass
-that adds mRoPE) wrapped under ``model.language_model``; the wrapper has no
-vision attribute.
+The vision tower is never instantiated (``add_encoder=False``), so the vision
+parameters are absent from the Megatron model — they are neither allocated on
+GPU nor loaded from the checkpoint. The language model is the standard
+``GPTModel`` (specifically ``Qwen3VLGPTModel``, a ``GPTModel`` subclass that
+adds mRoPE) wrapped under ``model.language_model``; the wrapper has no vision
+attribute.
 
 Train with ``megatron.bridge.training.vlm_step.forward_step``.
 """
@@ -58,7 +58,7 @@ def _qwen35_llm_sft_apply_common(
     # Skip instantiation of the vision tower entirely. Tasks for vision
     # parameters never reach the loader because those parameters are absent
     # from the Megatron model.
-    cfg.model.init_vision_model = False
+    cfg.model.add_encoder = False
 
     cfg.model.tensor_model_parallel_size = tp
     cfg.model.pipeline_model_parallel_size = pp

@@ -17,7 +17,7 @@
 # Functional tests for the Qwen3.5 LLM-only SFT recipe.
 #
 # Covers:
-#   T2.2  init_vision_model=False yields no vision params/buffers in the model (1 GPU)
+#   T2.2  add_encoder=False yields no vision params/buffers in the model (1 GPU)
 #   T2.5  Optimizer state contains only LM params; peak memory check (1 GPU)
 #   T2.6  LM weight parity vs HF checkpoint (1 GPU)
 #   T2.7  Checkpoint save-and-resume (1 GPU)
@@ -26,7 +26,7 @@
 set -xeuo pipefail
 
 # ---------------------------------------------------------------------------
-# T2.2 — init_vision_model=False: no vision params/buffers in the Megatron model
+# T2.2 — add_encoder=False: no vision params/buffers in the Megatron model
 # ---------------------------------------------------------------------------
 export CUDA_VISIBLE_DEVICES="0"
 

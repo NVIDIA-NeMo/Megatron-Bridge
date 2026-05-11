@@ -14,7 +14,7 @@
 
 """T2.6: LM weights loaded by qwen35_llm recipe match the HF source weights.
 
-Verifies that with ``init_vision_model=False`` the LLM-only loader is not
+Verifies that with ``add_encoder=False`` the LLM-only loader is not
 over-eager: LM parameters in the Megatron model must be bitwise-identical to
 the corresponding HF checkpoint weights (via the bridge mapping).
 
