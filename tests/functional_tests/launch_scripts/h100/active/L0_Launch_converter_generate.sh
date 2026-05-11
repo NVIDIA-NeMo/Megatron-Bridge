@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,6 +19,6 @@ export CUDA_VISIBLE_DEVICES="0,1"
 
 uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/converter/test_checkpoint_conversion.py \
-  tests/functional_tests/test_groups/converter/test_multi_gpu_conversion.py
+  tests/functional_tests/test_groups/converter/test_generate_from_hf.py \
+  tests/functional_tests/test_groups/converter/test_generate_vlm_from_hf.py
 coverage combine -q
