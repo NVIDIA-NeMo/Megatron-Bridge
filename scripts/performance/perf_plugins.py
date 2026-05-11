@@ -284,13 +284,17 @@ class PerfEnvPlugin(Plugin):
             model_family_name in ["qwen"]
             and model_recipe_name in ["qwen3_next_80b_a3b"]
             and train_task == "pretrain"
-            and gpu in ["h100"]
-            and compute_dtype == "fp8_cs"
+            and (
+                (gpu == "h100" and compute_dtype == "fp8_cs")
+                or (gpu == "gb300" and compute_dtype in ["bf16", "fp8_mx"])
+            )
         ):
             # NCCL 2.29.7 increases memory pressure on H100, causing allocator
             # fragmentation OOM. expandable_segments lets the allocator reclaim
             # fragmented physical memory and avoids the OOM without disabling
-            # any NCCL algorithms.
+            # any NCCL algorithms. The GB300 BF16/FP8_MX path hits the same
+            # fragmentation pattern at MBS=4 under HybridEP + TE-scoped CUDA
+            # graphs (attn/moe_router/moe_preprocess), so the same fix applies.
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
         if model_family_name in ["deepseek"]:

@@ -1,0 +1,57 @@
+From ee89aa5b4b14bf45feda7611eee09bfe42bb3620 Mon Sep 17 00:00:00 2001
+From: Russell Bryant <rbryant@redhat.com>
+Date: Thu, 5 Mar 2026 17:51:50 -0500
+Subject: [PATCH] [Security] Respect user trust_remote_code setting in
+ NemotronVL and KimiK25
+
+Replace hardcoded trust_remote_code=True with the user's configured
+trust_remote_code setting from model_config in both nemotron_vl.py and
+kimi_k25.py. This prevents bypassing the user's explicit
+--trust-remote-code=False security opt-out when loading sub-components.
+
+GHSA-7972-pg2x-xr59
+
+Signed-off-by: Russell Bryant <rbryant@redhat.com>
+---
+ vllm/model_executor/models/kimi_k25.py    | 3 ++-
+ vllm/model_executor/models/nemotron_vl.py | 6 +++++-
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/vllm/model_executor/models/kimi_k25.py b/vllm/model_executor/models/kimi_k25.py
+index 248339337fa9..35c7576c4394 100644
+--- a/vllm/model_executor/models/kimi_k25.py
++++ b/vllm/model_executor/models/kimi_k25.py
+@@ -174,7 +174,8 @@ def __init__(self, ctx: InputProcessingContext) -> None:
+         self.hf_config = self.get_hf_config()
+         self.media_token_id = self.hf_config.media_placeholder_token_id
+         media_processor = cached_get_image_processor(
+-            self.ctx.model_config.model, trust_remote_code=True
++            self.ctx.model_config.model,
++            trust_remote_code=self.ctx.model_config.trust_remote_code,
+         )
+         self.media_processor = media_processor
+         self.hf_processor = MoonshotKimiVAutoProcessor(
+diff --git a/vllm/model_executor/models/nemotron_vl.py b/vllm/model_executor/models/nemotron_vl.py
+index b033437d6c46..a7e4e972e67b 100644
+--- a/vllm/model_executor/models/nemotron_vl.py
++++ b/vllm/model_executor/models/nemotron_vl.py
+@@ -402,6 +402,7 @@ def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
+         multimodal_config = vllm_config.model_config.multimodal_config
+ 
+         self.config = config
++        self.model_config = vllm_config.model_config
+         self.multimodal_config = multimodal_config
+         self._patch_quant_config(config, quant_config)
+ 
+@@ -456,7 +457,10 @@ def _init_vision_model(
+         *,
+         prefix: str,
+     ):
+-        return AutoModel.from_config(config.vision_config, trust_remote_code=True)
++        return AutoModel.from_config(
++            config.vision_config,
++            trust_remote_code=self.model_config.trust_remote_code,
++        )
+ 
+     def _init_mlp1(
+         self,

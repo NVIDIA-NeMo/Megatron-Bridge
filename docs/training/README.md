@@ -22,7 +22,7 @@ This directory contains comprehensive documentation for training and customizing
 → Explore [Performance Guide](../performance-guide.md) and [Performance Summary](../performance-summary.md)
 
 **🔧 Customize training**
-→ See [PEFT](peft.md), [Distillation](distillation.md), [Entry Points](entry-points.md), and [Callbacks](callbacks.md)
+→ See [PEFT](peft.md), [Distillation](../modelopt/distillation.md), [Entry Points](entry-points.md), and [Callbacks](callbacks.md)
 
 ## Core Training Documentation
 
@@ -61,7 +61,7 @@ This directory contains comprehensive documentation for training and customizing
 | **[PEFT](peft.md)** | Parameter-Efficient Fine-Tuning (LoRA, etc.) | Fine-tuning with limited resources |
 | **[Packed Sequences](packed-sequences.md)** | Sequence packing for efficiency | Optimizing data loading |
 | **[Megatron FSDP](megatron-fsdp.md)** | Stable overview of Megatron FSDP | Choosing an FSDP path |
-| **[Distillation](distillation.md)** | Knowledge distillation techniques | Transferring knowledge between models |
+| **[Distillation](../modelopt/distillation.md)** | Knowledge distillation techniques | Transferring knowledge between models |
 | **[Checkpointing](checkpointing.md)** | Checkpoint saving, loading, and resuming | Managing training state |
 | **[Callbacks](callbacks.md)** | Inject custom logic into training loop | Custom logging, metrics, third-party integrations |
 
@@ -114,7 +114,7 @@ A typical training workflow involves:
 ### 🔧 Customization
 
 1. [PEFT](peft.md) - Parameter-efficient fine-tuning
-2. [Distillation](distillation.md) - Knowledge distillation
+2. [Distillation](../modelopt/distillation.md) - Knowledge distillation
 3. [Entry Points](entry-points.md) - Custom training workflows
 4. [Callbacks](callbacks.md) - Inject custom logic (third-party integrations)
 
