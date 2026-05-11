@@ -444,11 +444,12 @@ def main(
         )
 
     if enable_nsys:
-        if nsys_trace is None:
-            logger.warning("Using `cuda-sw` trace mode for profiling")
-            logger.warning("Profiling results might not be accurate due to software tracing limitations.")
-            # TODO: Remove this once the associated functional issues are resolved.
-            nsys_trace = ["cuda-sw", "nvtx"]
+        profiling_start_step = 45
+        profiling_stop_step = 50
+        nsys_trace = ["cuda", "nvtx"]
+        nsys_extra_args = (nsys_extra_args or []) + ["--nvtx-domain-include=NCCL"]
+        profiling_gpu_metrics = True
+        profiling_ranks = list(range(num_gpus))
         plugins.append(
             NsysPlugin(
                 profile_step_start=profiling_start_step,
