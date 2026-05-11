@@ -389,7 +389,6 @@ class AutoBridge(Generic[MegatronModelT]):
         model: list[MegatronModelT],
         hf_path: str | Path | None = None,
         allowed_mismatched_params: list[str] | None = None,
-        skip_megatron_param_globs: list[str] | None = None,
     ) -> None:
         """
         Load HuggingFace weights into a Megatron model.
@@ -404,8 +403,6 @@ class AutoBridge(Generic[MegatronModelT]):
                 from the bridge's hf_pretrained instance
             allowed_mismatched_params: Optional list of parameter names or patterns
                 to allow mismatch (skip instead of raise error).
-            skip_megatron_param_globs: Optional :mod:`fnmatch` patterns for Megatron
-                parameter names to skip loading (see :meth:`MegatronModelBridge.load_weights_hf_to_megatron`).
 
         Returns:
             The input model with loaded weights
@@ -441,7 +438,6 @@ class AutoBridge(Generic[MegatronModelT]):
             pre_trained,
             model,
             allowed_mismatched_params=allowed_mismatched_params,
-            skip_megatron_param_globs=skip_megatron_param_globs,
         )
         # Get unquantized_state_dict from the bridge instance that was used for optimizer reload
         self.unquantized_state_dict = getattr(bridge, "unquantized_state_dict", None)
@@ -1286,10 +1282,9 @@ class AutoBridge(Generic[MegatronModelT]):
         self,
         load_weights: bool = True,
         hf_path: str | Path | None = None,
-        skip_megatron_param_globs: list[str] | None = None,
         **kwargs: Unpack[GetModelKwargs],
     ) -> list[MegatronModelT]:
-        provider = self.to_megatron_provider(load_weights, hf_path, skip_megatron_param_globs)
+        provider = self.to_megatron_provider(load_weights, hf_path)
 
         # Finalize the provider before creating models
         if hasattr(provider, "finalize"):
@@ -1301,7 +1296,6 @@ class AutoBridge(Generic[MegatronModelT]):
         self,
         load_weights: bool = True,
         hf_path: str | Path | None = None,
-        skip_megatron_param_globs: list[str] | None = None,
     ) -> GPTModelProvider:
         """
         Convert to a Megatron model provider.
@@ -1317,8 +1311,6 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_path: Optional path to load weights from. If None, uses weights
                 from the bridge's hf_pretrained instance. Useful for loading
                 weights from a different checkpoint.
-            skip_megatron_param_globs: When ``load_weights`` is True, optional
-                :mod:`fnmatch` patterns for Megatron parameters to skip (e.g. vision-only weights).
 
         Returns:
             GPTModelProvider: A configured model provider ready to create
@@ -1354,20 +1346,15 @@ class AutoBridge(Generic[MegatronModelT]):
                 )
             # Skip weights initialization since we are going to load weights
             provider.perform_initialization = False
-            load_kw = {}
-            if skip_megatron_param_globs is not None:
-                load_kw["skip_megatron_param_globs"] = skip_megatron_param_globs
             if hf_path is None:
                 provider.register_pre_wrap_hook(
-                    partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained, **load_kw)
+                    partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained)
                 )
             else:
                 # Load from specified path
                 trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
                 pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
-                provider.register_pre_wrap_hook(
-                    partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained, **load_kw)
-                )
+                provider.register_pre_wrap_hook(partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained))
 
         hf_identifier: str | None = None
         if hf_path is not None:
