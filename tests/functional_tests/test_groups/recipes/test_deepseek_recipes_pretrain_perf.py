@@ -132,7 +132,7 @@ class TestDeepSeekRecipesPerf:
         os.environ["NVTE_NORM_BWD_USE_CUDNN"] = "1"
         os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
         # os.environ["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
-        os.environ["NCCL_ALGO"] = "Tree"
+        os.environ["NCCL_ALGO"] = "Ring"
 
         run_pretrain_recipe_perf_test(
             config_func,
