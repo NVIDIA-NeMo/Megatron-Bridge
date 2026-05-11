@@ -275,6 +275,12 @@ class TestLlamaNemotronConversion:
             print(f"Error during Llama-Nemotron {test_name} conversion test: {e}")
             raise
 
+    @pytest.mark.run_only_on("GPU")
+    def test_llama_nemotron_autoconfig_roundtrip(self, llama_nemotron_toy_model_path, tmp_path):
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(llama_nemotron_toy_model_path, tmp_path)
+
 
 class TestLlamaNemotronHeterogeneousRoundtrip:
     """

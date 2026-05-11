@@ -63,7 +63,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model Qwen/Qwen3-Next-80B-A3B-Instruct \
   --megatron-path /checkpoints/qwen3_next_80b_megatron
 ```
@@ -86,7 +86,7 @@ bridge.export_ckpt(
 #### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path Qwen/Qwen3-Next-80B-A3B-Instruct \
   --megatron_model_path /checkpoints/qwen3_next_80b_megatron \
   --prompt "What is artificial intelligence?" \
@@ -173,7 +173,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model Qwen/Qwen3-30B-A3B \
   --megatron-path /checkpoints/qwen3_30b_a3b_megatron
 ```
@@ -196,7 +196,7 @@ bridge.export_ckpt(
 #### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path Qwen/Qwen3-30B-A3B \
   --megatron_model_path /checkpoints/qwen3_30b_a3b_megatron \
   --prompt "What is artificial intelligence?" \
@@ -322,7 +322,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model Qwen/Qwen3-8B \
   --megatron-path /checkpoints/qwen3_8b_megatron
 ```
@@ -345,7 +345,7 @@ bridge.export_ckpt(
 #### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path Qwen/Qwen3-8B \
   --megatron_model_path /checkpoints/qwen3_8b_megatron \
   --prompt "What is artificial intelligence?" \
@@ -452,7 +452,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model Qwen/Qwen2.5-7B \
   --megatron-path /checkpoints/qwen25_7b_megatron
 ```
@@ -475,7 +475,7 @@ bridge.export_ckpt(
 #### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path Qwen/Qwen2.5-7B \
   --megatron_model_path /checkpoints/qwen25_7b_megatron \
   --prompt "What is artificial intelligence?" \

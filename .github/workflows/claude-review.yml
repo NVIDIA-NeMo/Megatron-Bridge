@@ -1,6 +1,8 @@
 name: Claude Code Review
 
 on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
   issue_comment:
     types: [created]
 
@@ -11,11 +13,117 @@ permissions:
   id-token: write
 
 jobs:
-  claude-review:
-    if: github.event.issue.pull_request != null && contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_claude_review.yml@v0.79.0
+  pre-flight:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
+    with:
+      default_runner_prefix: ubuntu-latest
+      sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
+    secrets:
+      NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
+
+  auto-review:
+    name: Claude Review (auto)
+    needs: [pre-flight]
+    # Auto-review non-draft PRs from NVIDIA authors on open / reopen / ready-for-review.
+    # Subsequent commits do not re-trigger; re-request a review by commenting
+    # "/claude review" (handled by the manual-review job below).
+    # Skip bot-generated PRs: dependency bumps (`bump-ci-container-*`) and
+    # auto cherry-picks (`cherry-pick-*`).
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.pre-flight.outputs.is_member == 'true' &&
+      github.event.pull_request.draft == false &&
+      !startsWith(github.event.pull_request.head.ref, 'bump-ci-container-') &&
+      !startsWith(github.event.pull_request.head.ref, 'cherry-pick-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Read"
+            --model "claude-opus-4-6"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Mandatory workflow — never skip or reorder:
+            1. Read the PR diff first (gh pr diff).
+            2. Based on the changed files and areas, identify relevant skills from skills/<name>/SKILL.md.
+               Common skill names: linting-and-formatting, testing, cicd, build-and-dependency,
+               adding-model-support, perf-activation-recompute, perf-memory-tuning, etc.
+            3. Read the SKILL.md files for all relevant areas using the Read tool.
+            4. Only then perform the review using the skill context.
+
+            You are doing a light code review. Keep it concise and actionable.
+
+            Focus ONLY on:
+            - Critical bugs or logic errors
+            - Typos in code, comments, or strings
+            - Missing or insufficient test coverage for changed code
+            - Outdated or inaccurate documentation affected by the changes
+
+            Do NOT comment on:
+            - Style preferences or formatting
+            - Minor naming suggestions
+            - Architectural opinions or refactoring ideas
+            - Performance unless there is a clear, measurable issue
+
+            Provide feedback using inline comments for specific code suggestions.
+            Use top-level comments for general observations.
+
+            Always end the review with a "Suggested test cases" bullet list, derived
+            from the diff.
+
+            Map source changes → test-case globs using:
+            - A function `<model>_<task>_config_<gpu>` in scripts/performance/configs/<family>/...
+              impacts cases matching `<model>_*gpu_<gpu>_*_perf`.
+            - A base config `<MODEL>_..._<GPU>_<PRECISION>_V<N>` impacts that precision,
+              plus any V<N+1> / LARGE_SCALE configs derived from it via `replace(...)`.
+
+            Each bullet must be an explicit test case name — do NOT use globs
+            or brace expansion. Enumerate every relevant combination, e.g.
+            `qwen3_235b_a22b_512gpu_b300_bf16_perf`,
+            `qwen3_235b_a22b_512gpu_b300_fp8_cs_perf`,
+            `qwen3_235b_a22b_512gpu_b300_fp8_mx_perf`,
+            `qwen3_235b_a22b_512gpu_b300_nvfp4_perf`. Discover the exact names
+            by grepping the diff and the `scripts/performance/configs/` tree
+            for the affected model/GPU/precision combinations.
+            If no perf/recipe configs are touched, write "No perf tests impacted."
+
+            End the review by posting it as a top-level PR comment using
+            bash ANSI-C quoting so newlines render correctly:
+              gh pr comment <PR NUMBER> --repo <REPO> --body $'line1\nline2\n...'
+            Use $'...' (NOT plain "..."). Inside "..." the sequence \n is
+            passed to gh literally and shows up as the two characters \n in
+            the rendered comment; inside $'...' bash expands \n to a real
+            newline before gh sees it. Do NOT use --body-file, output
+            redirection, or HEREDOCs — the action sandbox blocks all three.
+            The body must include the "Suggested test cases" list. If there
+            is nothing to flag, the body is just "LGTM" followed by the
+            test-case list. Inline comments via
+            mcp__github_inline_comment__create_inline_comment are optional —
+            use them only for specific code suggestions.
+
+  manual-review:
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null && contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_claude_review.yml@v0.88.0
     with:
       prompt: |
+        Mandatory workflow — never skip or reorder:
+        1. Read the PR diff first.
+        2. Based on the changed files and areas, identify relevant skills from skills/<name>/SKILL.md.
+           Common skill names: linting-and-formatting, testing, cicd, build-and-dependency,
+           adding-model-support, perf-activation-recompute, perf-memory-tuning, etc.
+        3. Read the SKILL.md files for all relevant areas using the Read tool.
+        4. Only then perform the review using the skill context.
+
         You are doing a light code review. Keep it concise and actionable.
 
         Focus ONLY on:
@@ -33,7 +141,37 @@ jobs:
         Provide feedback using inline comments for specific code suggestions.
         Use top-level comments for general observations.
 
-        It's perfectly acceptable to not have anything to comment on.
-        If you do not have anything to comment on, post "LGTM".
+        Always end the review with a "Suggested test cases" bullet list, derived
+        from the diff.
+
+        Map source changes → test-case globs using:
+        - A function `<model>_<task>_config_<gpu>` in scripts/performance/configs/<family>/...
+          impacts cases matching `<model>_*gpu_<gpu>_*_perf`.
+        - A base config `<MODEL>_..._<GPU>_<PRECISION>_V<N>` impacts that precision,
+          plus any V<N+1> / LARGE_SCALE configs derived from it via `replace(...)`.
+
+        Each bullet must be an explicit test case name — do NOT use globs
+        or brace expansion. Enumerate every relevant combination, e.g.
+        `qwen3_235b_a22b_512gpu_b300_bf16_perf`,
+        `qwen3_235b_a22b_512gpu_b300_fp8_cs_perf`,
+        `qwen3_235b_a22b_512gpu_b300_fp8_mx_perf`,
+        `qwen3_235b_a22b_512gpu_b300_nvfp4_perf`. Discover the exact names
+        by grepping the diff and the `scripts/performance/configs/` tree
+        for the affected model/GPU/precision combinations.
+        If no perf/recipe configs are touched, write "No perf tests impacted."
+
+        End the review by posting it as a top-level PR comment using
+        bash ANSI-C quoting so newlines render correctly:
+          gh pr comment <PR NUMBER> --repo <REPO> --body $'line1\nline2\n...'
+        Use $'...' (NOT plain "..."). Inside "..." the sequence \n is
+        passed to gh literally and shows up as the two characters \n in
+        the rendered comment; inside $'...' bash expands \n to a real
+        newline before gh sees it. Do NOT use --body-file, output
+        redirection, or HEREDOCs — the action sandbox blocks all three.
+        The body must include the "Suggested test cases" list. If there
+        is nothing to flag, the body is just "LGTM" followed by the
+        test-case list. Inline comments via
+        mcp__github_inline_comment__create_inline_comment are optional —
+        use them only for specific code suggestions.
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

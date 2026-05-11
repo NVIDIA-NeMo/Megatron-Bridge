@@ -18,7 +18,13 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoTokenizer, DeepseekV3Config, DeepseekV3ForCausalLM
+from transformers import (
+    AutoTokenizer,
+    DeepseekV2Config,
+    DeepseekV2ForCausalLM,
+    DeepseekV3Config,
+    DeepseekV3ForCausalLM,
+)
 
 
 HF_DEEPSEEK_V3_TOY_MODEL_CONFIG = {
@@ -32,8 +38,8 @@ HF_DEEPSEEK_V3_TOY_MODEL_CONFIG = {
     "kv_lora_rank": 512,
     "max_position_embeddings": 163840,
     "moe_intermediate_size": 768,
-    "n_group": 4,
-    "n_routed_experts": 4,
+    "n_group": 2,
+    "n_routed_experts": 8,
     "n_shared_experts": 1,
     "num_attention_heads": 32,
     "num_experts_per_tok": 4,
@@ -41,9 +47,34 @@ HF_DEEPSEEK_V3_TOY_MODEL_CONFIG = {
     "num_key_value_heads": 4,
     "num_nextn_predict_layers": 0,
     "q_lora_rank": 512,
-    "topk_group": 4,
+    "topk_group": 2,
     "vocab_size": 129280,
     "torch_dtype": "bfloat16",
+}
+
+
+HF_DEEPSEEK_V2_TOY_MODEL_CONFIG = {
+    "architectures": ["DeepseekV2ForCausalLM"],
+    "model_type": "deepseek_v2",
+    "first_k_dense_replace": 1,
+    "hidden_act": "silu",
+    "hidden_size": 2048,
+    "initializer_range": 0.02,
+    "intermediate_size": 6144,
+    "kv_lora_rank": 512,
+    "max_position_embeddings": 4096,
+    "moe_intermediate_size": 768,
+    "n_routed_experts": 8,
+    "n_shared_experts": 1,
+    "num_attention_heads": 32,
+    "num_experts_per_tok": 4,
+    "num_hidden_layers": 2,
+    "num_key_value_heads": 4,
+    "q_lora_rank": 512,
+    "vocab_size": 32000,
+    "torch_dtype": "bfloat16",
+    "scoring_func": "softmax",
+    "topk_method": "greedy",
 }
 
 
@@ -150,7 +181,7 @@ class TestDeepSeekConversion:
         assert saved["model_type"] == "deepseek_v3", "Model type should be deepseek_v3"
         assert saved["vocab_size"] == 129280
         assert saved["hidden_size"] == 2048
-        assert saved["n_routed_experts"] == 4
+        assert saved["n_routed_experts"] == 8
         assert saved["num_experts_per_tok"] == 4
         assert saved["num_hidden_layers"] == 2
         assert saved["moe_intermediate_size"] == 768
@@ -160,3 +191,40 @@ class TestDeepSeekConversion:
         print(
             f"MoE parameters preserved: {saved['n_routed_experts']} experts, {saved['num_experts_per_tok']} per token"
         )
+
+    @pytest.fixture(scope="class")
+    def deepseek_v2_toy_model_path(self, tmp_path_factory):
+        temp_dir = tmp_path_factory.mktemp("deepseek_v2_toy_model")
+        model_dir = temp_dir / "deepseek_v2_toy"
+
+        config = DeepseekV2Config(**HF_DEEPSEEK_V2_TOY_MODEL_CONFIG)
+        config.torch_dtype = torch.bfloat16
+
+        model = DeepseekV2ForCausalLM(config)
+        model = model.bfloat16()
+
+        try:
+            tokenizer = AutoTokenizer.from_pretrained("gpt2")
+            tokenizer.save_pretrained(model_dir)
+        except Exception:
+            pass
+
+        model.save_pretrained(model_dir, safe_serialization=True)
+
+        config_path = model_dir / "config.json"
+        with open(config_path, "w") as f:
+            json.dump(model.config.to_dict(), f, indent=2)
+
+        return str(model_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_deepseek_v3_autoconfig_roundtrip(self, deepseek_toy_model_path, tmp_path):
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(deepseek_toy_model_path, tmp_path)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_deepseek_v2_autoconfig_roundtrip(self, deepseek_v2_toy_model_path, tmp_path):
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(deepseek_v2_toy_model_path, tmp_path)

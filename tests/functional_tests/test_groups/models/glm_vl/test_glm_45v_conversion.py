@@ -114,6 +114,9 @@ class TestGLM45VConversion:
         temp_dir = tmp_path_factory.mktemp("glm_45v_toy_model")
         model_dir = temp_dir / "glm_45v_toy"
 
+        # Ensure model_dir exists before saving any files
+        model_dir.mkdir(parents=True, exist_ok=True)
+
         # Create config from the toy model config
         config_dict = HF_GLM_45V_TOY_MODEL_CONFIG.copy()
 

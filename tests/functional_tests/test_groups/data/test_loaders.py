@@ -219,28 +219,34 @@ class TestDataLoaders:
         assert test_dataloader is None
 
     @mock.patch("torch.distributed.broadcast")
-    def test_build_train_valid_test_data_loaders_specialized_dispatch_updates_flags(self, mock_broadcast):
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader")
+    @mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
+    def test_build_train_valid_test_data_loaders_specialized_dispatch_updates_flags(
+        self, mock_build_datasets, mock_build_loader, mock_dp_rank, mock_dp_size, mock_broadcast
+    ):
         cfg = create_simple_test_config()
         train_state = TrainState()
         dp_group = object()
         dataset_provider = mock.Mock()
 
-        fake_builder = mock.Mock(return_value=(object(), None, None))
+        fake_train_ds = mock.Mock()
+        fake_train_ds.collate_fn = None
+        mock_build_datasets.return_value = (fake_train_ds, None, None)
+        fake_train_loader = object()
+        # Return a loader for train (non-None dataset), None for valid/test (None dataset)
+        mock_build_loader.side_effect = (
+            lambda dataset, *args, **kwargs: fake_train_loader if dataset is not None else None
+        )
 
-        with mock.patch("megatron.bridge.data.loaders._resolve_data_loader_builder", return_value=fake_builder):
-            train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
-                cfg=cfg,
-                train_state=train_state,
-                build_train_valid_test_datasets_provider=dataset_provider,
-                dp_group=dp_group,
-            )
-
-        fake_builder.assert_called_once_with(
+        train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
             cfg=cfg,
             train_state=train_state,
             build_train_valid_test_datasets_provider=dataset_provider,
             dp_group=dp_group,
         )
+
         mock_broadcast.assert_called_once_with(mock.ANY, 0)
         actual_flags = mock_broadcast.call_args[0][0]
         expected_flags = torch.tensor([1, 0, 0], dtype=torch.long, device="cuda")

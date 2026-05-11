@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 import datetime
+import inspect
 import os
 import time
 import warnings
+from copy import copy
 from typing import Callable, Optional
 
 import torch
@@ -31,6 +34,7 @@ from megatron.core.num_microbatches_calculator import (
     destroy_num_microbatches_calculator,
     init_num_microbatches_calculator,
 )
+from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.moe.router import MoEAuxLossAutoScaler
 from megatron.core.utils import (
@@ -46,6 +50,7 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
+from megatron.bridge.training.utils.pg_utils import DistTrainProcessGroupCollection
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
     get_master_addr_safe,
@@ -217,7 +222,7 @@ def torch_dist_init(
     if skip_mpu_initialization:
         return None
 
-    if dist_config.lazy_init:
+    if dist_config.lazy_mpu_init:
         # delayed initialization of DDP-related stuff
         # We only set basic DDP globals
         parallel_state.set_tensor_model_parallel_world_size(model_config.tensor_model_parallel_size)
@@ -398,9 +403,22 @@ def _create_pg_collection(
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
+    world_size: int = None,
+    rank_offset: int = None,
+    save_grid: bool = False,
 ) -> ProcessGroupCollection:
     """Create all process groups via HyperCommGrid and return a ProcessGroupCollection."""
-    world_size = torch.distributed.get_world_size()
+    hcp_sizes = getattr(model_config, "hierarchical_context_parallel_sizes", None)
+    if hcp_sizes is not None:
+        raise NotImplementedError(
+            "Decentralized process groups (use_decentralized_pg=True) do not support "
+            "hierarchical_context_parallel_sizes. Use cp_comm_type='a2a' or 'p2p' instead, "
+            "or set use_decentralized_pg=False to use the MPU path which supports 'a2a+p2p'."
+        )
+    if world_size is None:
+        world_size = torch.distributed.get_world_size()
+    if rank_offset is None:
+        rank_offset = 0
     tp_size = int(model_config.tensor_model_parallel_size)
     pp_size = int(model_config.pipeline_model_parallel_size)
     cp_size = int(model_config.context_parallel_size) if getattr(model_config, "context_parallel_size", 1) else 1
@@ -412,7 +430,7 @@ def _create_pg_collection(
     grid = HyperCommGrid(
         shape=[tp_size, cp_size, dp_size, pp_size],
         dim_names=["tp", "cp", "dp", "pp"],
-        rank_offset=0,
+        rank_offset=rank_offset,
         backend="nccl",
     )
     # Core groups
@@ -452,7 +470,7 @@ def _create_pg_collection(
         expert_grid = HyperCommGrid(
             shape=[expert_tp_size, ep_size, inner_expt_dp_size, num_distributed_optimizer_instances, pp_size],
             dim_names=["tp", "ep", "inner_dp", "outer_dp", "pp"],
-            rank_offset=0,
+            rank_offset=rank_offset,
             backend="nccl",
         )
         dp_group_dims: list[str] = ["inner_dp", "outer_dp"]
@@ -462,7 +480,7 @@ def _create_pg_collection(
         expert_grid = HyperCommGrid(
             shape=[expert_tp_size, ep_size, expt_dp_size, pp_size],
             dim_names=["tp", "ep", "dp", "pp"],
-            rank_offset=0,
+            rank_offset=rank_offset,
             backend="nccl",
         )
         dp_group_dims = ["dp"]
@@ -534,6 +552,101 @@ def _create_pg_collection(
         inter_dist_opt=inter_dist_opt_pg,
         intra_dist_opt=intra_dist_opt_pg,
     )
+    if save_grid:
+        model_config.grid = grid
+    return pg_collection
+
+
+def _create_dist_train_pgs(
+    model_config: TransformerConfig,
+    num_distributed_optimizer_instances: int,
+    get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
+    get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
+) -> DistTrainProcessGroupCollection:
+    """Create process group collections for vision and language models for dist train."""
+    vision_model_config = copy(model_config)
+    vision_model_config.world_size = model_config.dist_train.vision_world_size
+    vision_model_config.rank_offset = 0
+    vision_model_config.tensor_model_parallel_size = model_config.dist_train.vision_tensor_model_parallel_size
+    vision_model_config.pipeline_model_parallel_size = model_config.dist_train.vision_pipeline_model_parallel_size
+    vision_model_config.context_parallel_size = model_config.dist_train.vision_context_parallel_size
+    vision_model_config.expert_tensor_parallel_size = model_config.dist_train.vision_expert_tensor_parallel_size
+    vision_model_config.expert_model_parallel_size = model_config.dist_train.vision_expert_model_parallel_size
+    language_model_config = copy(model_config)
+    language_model_config.world_size = model_config.dist_train.language_world_size
+    language_model_config.rank_offset = model_config.dist_train.vision_world_size
+    vision_pg_collection = _create_pg_collection(
+        vision_model_config,
+        num_distributed_optimizer_instances,
+        get_embedding_ranks=get_embedding_ranks,
+        get_position_embedding_ranks=get_position_embedding_ranks,
+        world_size=model_config.dist_train.vision_world_size,
+        rank_offset=0,
+        save_grid=True,
+    )
+    language_pg_collection = _create_pg_collection(
+        language_model_config,
+        num_distributed_optimizer_instances,
+        get_embedding_ranks=get_embedding_ranks,
+        get_position_embedding_ranks=get_position_embedding_ranks,
+        world_size=model_config.dist_train.language_world_size,
+        rank_offset=model_config.dist_train.vision_world_size,
+        save_grid=True,
+    )
+    grid_dict = {"vision_module": vision_model_config.grid, "language_module": language_model_config.grid}
+
+    if is_rank_in_pg(vision_pg_collection):
+        assert not is_rank_in_pg(language_pg_collection), (
+            f"Rank {get_rank_safe()} should not be in both the vision and language process group collection."
+        )
+        pg_collection = vision_pg_collection
+        model_config.add_encoder = True
+        model_config.add_decoder = False
+        model_config.dist_train.has_language_module = False
+        pg_collection = DistTrainProcessGroupCollection(vision_pg_collection, language_model_module_name=None)
+    elif is_rank_in_pg(language_pg_collection):
+        assert not is_rank_in_pg(vision_pg_collection), (
+            f"Rank {get_rank_safe()} should not be in both the vision and language process group collection."
+        )
+        pg_collection = language_pg_collection
+        model_config.add_encoder = False
+        model_config.add_decoder = True
+        pg_collection = DistTrainProcessGroupCollection(
+            language_pg_collection, language_model_module_name="language_module"
+        )
+    else:
+        assert False, f"Rank {get_rank_safe()} should be in either the language or vision process group collection."
+
+    topology = {
+        "vision_module": ["language_module"],  # vision_module sends forward results to language_module
+        "language_module": [],  # language_module is the last stage here
+    }
+    # Create multimodule communicator
+    p2p_communicator = MultiModulePipelineCommunicator(
+        grid_dict, topology, model_config, dim_mapping={"b": 0, "s": 1, "h": 2}
+    )
+    model_config._p2p_communicator = p2p_communicator
+
+    if get_rank_safe() == 0:
+        tp = int(vision_model_config.tensor_model_parallel_size)
+        pp = int(vision_model_config.pipeline_model_parallel_size)
+        cp = (
+            int(vision_model_config.context_parallel_size)
+            if getattr(vision_model_config, "context_parallel_size", 1)
+            else 1
+        )
+        dp = vision_model_config.dist_train.vision_world_size // (tp * pp * cp)
+        print(f"> initialized HyperCommGrid for vision model with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
+        tp = int(language_model_config.tensor_model_parallel_size)
+        pp = int(language_model_config.pipeline_model_parallel_size)
+        cp = (
+            int(language_model_config.context_parallel_size)
+            if getattr(language_model_config, "context_parallel_size", 1)
+            else 1
+        )
+        dp = language_model_config.dist_train.language_world_size // (tp * pp * cp)
+        print(f"> initialized HyperCommGrid for language model with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
+
     return pg_collection
 
 
@@ -650,6 +763,14 @@ def _initialize_distributed(
         # Use HyperCommGrid to create local parallel groups passed through functions
         # instead of relying on mcore's global parallel state (mpu) variables.
         parallel_state._set_global_memory_buffer()
+        if hasattr(model_config, "dist_train") and getattr(model_config.dist_train, "use_dist_train", False) is True:
+            pg_collection = _create_dist_train_pgs(
+                model_config,
+                num_distributed_optimizer_instances,
+                get_embedding_ranks=get_embedding_ranks,
+                get_position_embedding_ranks=get_position_embedding_ranks,
+            )
+            return pg_collection
         pg_collection = _create_pg_collection(
             model_config,
             num_distributed_optimizer_instances,
@@ -668,6 +789,13 @@ def _initialize_distributed(
         if parallel_state.model_parallel_is_initialized():
             print("model parallel is already initialized")
         else:
+            # Guard for main/dev branch submodule compat: hybrid_context_parallel was added in the dev branch.
+            # TODO: remove guard once the addition lands in main and Bridge pins the new main commit.
+            _init_mp_params = set(inspect.signature(parallel_state.initialize_model_parallel).parameters)
+            _optional_kwargs = {}
+            if "hybrid_context_parallel" in _init_mp_params:
+                _optional_kwargs["hybrid_context_parallel"] = model_config.hybrid_context_parallel
+
             parallel_state.initialize_model_parallel(
                 tensor_model_parallel_size=model_config.tensor_model_parallel_size,
                 pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
@@ -687,6 +815,7 @@ def _initialize_distributed(
                 use_sharp=dist_config.use_sharp,
                 high_priority_stream_groups=dist_config.high_priority_stream_groups,
                 sharp_enabled_group=dist_config.sharp_enabled_group,
+                **_optional_kwargs,
             )
             if get_rank_safe() == 0:
                 print(
@@ -833,3 +962,13 @@ def force_nccl_backend_init(device_id: torch.device) -> None:
     tensor = torch.ones(128, device=device_id)
     torch.distributed.all_reduce(tensor)
     torch.cuda.synchronize()
+
+
+def is_rank_in_pg(pg_collection: ProcessGroupCollection) -> bool:
+    """Check if the current rank is in the process group collection."""
+    current_rank = get_rank_safe()
+    for field in dataclasses.fields(pg_collection):
+        pg = getattr(pg_collection, field.name, None)
+        if pg and current_rank in torch.distributed.get_process_group_ranks(pg):
+            return True
+    return False

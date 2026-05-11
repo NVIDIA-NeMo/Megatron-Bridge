@@ -69,6 +69,7 @@ class FluxProvider(TransformerConfig, ModelProviderMixin[VisionModule]):
     attention_dropout: float = 0
 
     # FLUX-specific layer configuration
+    qk_layernorm: bool = True
     num_joint_layers: int = 19
     num_single_layers: int = 38
 

@@ -28,7 +28,7 @@ See [conversion.sh](conversion.sh) for checkpoint conversion examples.
 ### Import HF → Megatron
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model sarvamai/sarvam-30b \
     --megatron-path ${WORKSPACE}/models/sarvam-30b \
     --trust-remote-code
@@ -37,7 +37,7 @@ python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model sarvamai/sarvam-30b \
     --megatron-path ${WORKSPACE}/models/sarvam-30b/iter_0000000 \
     --hf-path ${WORKSPACE}/models/sarvam-30b-hf-export
@@ -46,7 +46,7 @@ python examples/conversion/convert_checkpoints.py export \
 ### Round-trip Validation
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=8 \
+uv run python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
     --hf-model-id sarvamai/sarvam-30b \
     --megatron-load-path ${WORKSPACE}/models/sarvam-30b/iter_0000000 \

@@ -194,3 +194,9 @@ class TestMiniMaxM2Conversion:
         assert saved_config["model_type"] == "minimax_m2"
         assert saved_config["hidden_size"] == 512
         assert saved_config["num_local_experts"] == 4
+
+    @pytest.mark.run_only_on("GPU")
+    def test_minimax_m2_autoconfig_roundtrip(self, toy_model_path, tmp_path):
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(toy_model_path, tmp_path)

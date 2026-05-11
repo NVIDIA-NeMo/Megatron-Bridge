@@ -75,6 +75,14 @@ class TestGPTOSSFinetuneRecipes:
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
         model = model.bfloat16() if hasattr(model, "bfloat16") else model
 
+        # Transpose down_proj expert weights to match real GPT-OSS checkpoint layout.
+        # Real checkpoints store down_proj as [num_experts, hidden, intermediate] but
+        # HF model init produces [num_experts, intermediate, hidden].
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if ".mlp.experts.down_proj" in name and param.ndim == 3:
+                    param.data = param.data.transpose(-1, -2).contiguous()
+
         # Download and save tokenizer from the reference GPT-OSS model
         try:
             tokenizer = AutoTokenizer.from_pretrained(HF_GPT_OSS_REFERENCE_MODEL, trust_remote_code=True)

@@ -264,3 +264,9 @@ class TestMistralConversion:
         except Exception as e:
             print(f"Error during Mistral {test_name} conversion test: {e}")
             raise
+
+    @pytest.mark.run_only_on("GPU")
+    def test_mistral_autoconfig_roundtrip(self, mistral_toy_model_path, tmp_path):
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(mistral_toy_model_path, tmp_path)

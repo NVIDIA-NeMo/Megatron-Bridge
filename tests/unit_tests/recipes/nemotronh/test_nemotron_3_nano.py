@@ -111,8 +111,8 @@ class TestNemotron3NanoPretrain:
         # Verify optimizer configuration
         assert config.optimizer.lr == 1.6e-3
         assert config.optimizer.weight_decay == 0.1
-        assert config.scheduler.min_lr == 1.6e-5
-        assert config.scheduler.warmup_iters == 333
+        assert config.optimizer.min_lr == 1.6e-5
+        assert config.scheduler.lr_warmup_iters == 333
 
         # Verify precision settings
         assert config.optimizer.use_precision_aware_optimizer is False

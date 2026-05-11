@@ -65,6 +65,9 @@ class WorkloadBaseConfig:
     # Pipeline parallelism layout
     pp_layout: Optional[str] = None
 
+    # TransformerEngine per-module precision overrides
+    te_precision_config_file: Optional[str] = None
+
     @property
     def sequence_parallel(self) -> bool:
         """Get the sequence parallel flag."""

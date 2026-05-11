@@ -21,14 +21,14 @@ Directory structure:
 ### Import HF → Megatron
 To import the HF VL model to your desired Megatron path:
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
 --hf-model google/gemma-3-4b-it \
 --megatron-path /models/gemma-3-4b-it
 ```
 
 ### Export Megatron → HF
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
 --hf-model google/gemma-3-4b-it \
 --megatron-path /results/gemma3_vl_4b/checkpoints/iter_00001000 \
 --hf-path ./gemma3-vl-hf-export
@@ -42,7 +42,7 @@ See the [conversion.sh](conversion.sh) script for more examples including:
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_vlm.py \
+uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 --hf_model_path google/gemma-3-4b-it \
 --megatron_model_path /models/gemma-3-4b-it \
 --image_path <example image path> \

@@ -97,7 +97,9 @@ class TestChatPreprocess:
         mock_tokenizer.eos_id = 2
 
         # Mock chat template
-        mock_hf_tokenizer.chat_template = "{% for message in messages %}{{ message.content }}{% endfor %}"
+        mock_hf_tokenizer.chat_template = (
+            "{% for message in messages %}{% generation %}{{ message.content }}{% endgeneration %}{% endfor %}"
+        )
         mock_hf_tokenizer.apply_chat_template.return_value = {
             "input_ids": [1, 10, 20, 30, 2],
             "assistant_masks": [0, 0, 1, 1, 1],
@@ -128,7 +130,7 @@ class TestChatPreprocess:
         mock_hf_tokenizer.apply_chat_template.assert_called_once()
 
     def test_chat_preprocess_without_generation_keyword(self):
-        """Test chat preprocessing when template lacks generation keyword."""
+        """Test chat preprocessing raises when template lacks generation keyword."""
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
         mock_tokenizer = mock_hf_tokenizer
@@ -137,16 +139,11 @@ class TestChatPreprocess:
 
         # Chat template without generation keyword
         mock_hf_tokenizer.chat_template = "{{ messages }}"
-        mock_hf_tokenizer.apply_chat_template.return_value = {
-            "input_ids": [1, 10, 20, 30, 2],
-        }
 
         source = {"conversations": [{"from": "User", "value": "Test"}]}
 
-        result = _chat_preprocess(source, mock_tokenizer)
-
-        # Should default to all 1s for loss mask
-        assert result["loss_mask"].tolist() == [1, 1, 1, 1, 1]
+        with pytest.raises(ValueError, match="does not contain a .* generation .* block"):
+            _chat_preprocess(source, mock_tokenizer)
 
     def test_chat_preprocess_trusts_template_eos(self):
         """Test that _chat_preprocess does not append eos_id when template uses a different end token."""
@@ -156,9 +153,10 @@ class TestChatPreprocess:
         mock_tokenizer.eos_id = 999
         mock_tokenizer.legacy = False
 
-        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
         mock_hf_tokenizer.apply_chat_template.return_value = {
             "input_ids": [1, 10, 20, 888],  # Ends with 888, not eos_id 999
+            "assistant_masks": [0, 0, 1, 1],
         }
 
         source = {"conversations": [{"from": "User", "value": "Test"}]}
@@ -175,9 +173,10 @@ class TestChatPreprocess:
         mock_tokenizer.eos_id = 2
         mock_tokenizer.legacy = False
 
-        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
         mock_hf_tokenizer.apply_chat_template.return_value = {
             "input_ids": [1, 10, 20, 2],
+            "assistant_masks": [0, 0, 1, 1],
         }
 
         source = {"conversations": [{"from": "User", "value": "Test"}]}
@@ -313,7 +312,7 @@ class TestGPTSFTChatDataset:
         mock_tokenizer._tokenizer = mock_hf_tokenizer
         mock_tokenizer.eos_id = 2
 
-        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
         mock_hf_tokenizer.apply_chat_template.return_value = {
             "input_ids": [1, 10, 20, 2],
             "assistant_masks": [0, 1, 1, 1],
@@ -447,6 +446,142 @@ class TestCreateSFTDataset:
         # Verify GPTSFTPackedDataset was called (not GPTSFTChatDataset)
         mock_packed_class.assert_called_once()
 
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_create_packed_parquet_dataset_idx_parquet(self, mock_parquet_class):
+        """Test that .idx.parquet files create GPTSFTPackedParquetDataset."""
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("test.idx.parquet"),
+            tokenizer=mock_tokenizer,
+        )
+
+        # Verify GPTSFTPackedParquetDataset was called
+        mock_parquet_class.assert_called_once()
+
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_create_packed_parquet_dataset_idx_pq(self, mock_parquet_class):
+        """Test that .idx.pq files create GPTSFTPackedParquetDataset."""
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("test.idx.pq"),
+            tokenizer=mock_tokenizer,
+        )
+
+        # Verify GPTSFTPackedParquetDataset was called
+        mock_parquet_class.assert_called_once()
+
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_create_packed_parquet_dataset_priority_over_chat(self, mock_parquet_class):
+        """Test that packed Parquet files take precedence over chat=True."""
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("test.idx.parquet"),
+            tokenizer=mock_tokenizer,
+            chat=True,  # Should be ignored for packed Parquet files
+            use_hf_tokenizer_chat_template=True,
+        )
+
+        # Verify GPTSFTPackedParquetDataset was called (not GPTSFTChatDataset)
+        mock_parquet_class.assert_called_once()
+
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_regular_parquet_also_routed_to_packed(self, mock_parquet_class):
+        """Test that all .parquet files route to GPTSFTPackedParquetDataset.
+
+        is_packed_parquet_spec matches any .parquet/.pq file; schema validation
+        inside GPTSFTPackedParquetDataset fast-fails if columns don't match.
+        """
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("test.parquet"),  # No .idx. prefix — still routed to packed
+            tokenizer=mock_tokenizer,
+            chat=True,
+            use_hf_tokenizer_chat_template=True,
+        )
+
+        # All .parquet files go through GPTSFTPackedParquetDataset
+        mock_parquet_class.assert_called_once()
+
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_create_packed_parquet_glob_pattern(self, mock_parquet_class):
+        """Test that glob patterns like data*.idx.parquet route to GPTSFTPackedParquetDataset."""
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("data/shard_*.idx.parquet"),  # Glob pattern
+            tokenizer=mock_tokenizer,
+        )
+
+        # Verify GPTSFTPackedParquetDataset was called
+        mock_parquet_class.assert_called_once()
+
+
+class TestIsPackedParquetFile:
+    """Test cases for is_packed_parquet_file utility function."""
+
+    def test_single_file_idx_parquet(self):
+        """Test detection of single .idx.parquet file."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("data.idx.parquet") is True
+        assert is_packed_parquet_file("/path/to/data.idx.parquet") is True
+
+    def test_single_file_idx_pq(self):
+        """Test detection of single .idx.pq file."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("data.idx.pq") is True
+        assert is_packed_parquet_file("/path/to/data.idx.pq") is True
+
+    def test_glob_pattern_idx_parquet(self):
+        """Test detection of glob patterns for .idx.parquet."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("data*.idx.parquet") is True
+        assert is_packed_parquet_file("shard_?.idx.parquet") is True
+        assert is_packed_parquet_file("/path/to/data*.idx.parquet") is True
+
+    def test_glob_pattern_idx_pq(self):
+        """Test detection of glob patterns for .idx.pq."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("data*.idx.pq") is True
+        assert is_packed_parquet_file("shard_?.idx.pq") is True
+
+    def test_regular_parquet_not_detected(self):
+        """Test that regular .parquet files are not detected as packed."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("data.parquet") is False
+        assert is_packed_parquet_file("data*.parquet") is False
+        assert is_packed_parquet_file("/path/to/data.parquet") is False
+
+    def test_case_insensitive(self):
+        """Test case-insensitive detection."""
+        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+        assert is_packed_parquet_file("DATA.IDX.PARQUET") is True
+        assert is_packed_parquet_file("Data.Idx.Pq") is True
+
 
 class TestPackedDatasetNaNFix:
     """Test cases for NaN fix in packed dataset collate_fn."""
@@ -498,9 +633,10 @@ class TestOutputOriginalText:
         mock_tokenizer._tokenizer = mock_hf_tokenizer
         mock_tokenizer.eos_id = 2
 
-        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
         mock_hf_tokenizer.apply_chat_template.return_value = {
             "input_ids": [1, 10, 20, 2],
+            "assistant_masks": [0, 1, 1, 1],
         }
 
         dataset = GPTSFTChatDataset(
@@ -539,9 +675,10 @@ class TestOutputOriginalText:
         mock_tokenizer._tokenizer = mock_hf_tokenizer
         mock_tokenizer.eos_id = 2
 
-        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
         mock_hf_tokenizer.apply_chat_template.return_value = {
             "input_ids": [1, 10, 20, 2],
+            "assistant_masks": [0, 1, 1, 1],
         }
 
         dataset = GPTSFTChatDataset(
@@ -608,9 +745,10 @@ class TestToolSchemasEdgeCases:
         global_schemas = [{"type": "function", "function": {"name": "global"}}]
         source_schemas = [{"type": "function", "function": {"name": "source"}}]
 
-        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
         mock_hf_tokenizer.apply_chat_template.return_value = {
             "input_ids": [1, 10, 20, 2],
+            "assistant_masks": [0, 1, 1, 1],
         }
 
         source = {
@@ -660,9 +798,10 @@ class TestTruncationWithChatTemplates:
 
         # Simulate long sequence
         long_input_ids = list(range(1, 600))  # 599 tokens
-        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
         mock_hf_tokenizer.apply_chat_template.return_value = {
             "input_ids": long_input_ids,
+            "assistant_masks": [1] * len(long_input_ids),
         }
 
         dataset = GPTSFTChatDataset(
@@ -793,26 +932,20 @@ class TestContextAnswerSplit:
         # Answer should be remaining tokens
         assert result["answer_ids"].tolist() == [30, 40, 2]
 
-    def test_context_answer_split_no_mask(self):
-        """Test that when no mask, all is considered answer."""
+    def test_context_answer_split_no_mask_raises(self):
+        """Test that when template lacks generation keyword, ValueError is raised."""
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
         mock_tokenizer._tokenizer = mock_hf_tokenizer
         mock_tokenizer.eos_id = 2
 
-        # No generation keyword means all 1s for mask
+        # No generation keyword should raise
         mock_hf_tokenizer.chat_template = "{{ messages }}"
-        mock_hf_tokenizer.apply_chat_template.return_value = {
-            "input_ids": [1, 10, 20, 2],
-        }
 
         source = {"conversations": [{"from": "User", "value": "Test"}]}
 
-        result = _chat_preprocess(source, mock_tokenizer)
-
-        # When all is masked as answer, context_ids should be everything
-        assert len(result["context_ids"]) == len(result["input_ids"])
-        assert result["answer_ids"].tolist() == []
+        with pytest.raises(ValueError, match="does not contain a .* generation .* block"):
+            _chat_preprocess(source, mock_tokenizer)
 
 
 class TestLegacyPreprocessReturnsLossMask:
@@ -1081,7 +1214,7 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_id = 2
 
-        with patch("numpy.load") as mock_load:
+        with patch("megatron.bridge.data.datasets.sft._safe_load_packed_npy") as mock_load:
             mock_load.return_value = np.array([{"input_ids": [1, 2], "seq_start_id": [0], "loss_mask": [1, 1]}])
 
             # Even with chat=True, should create GPTSFTPackedDataset for .npy

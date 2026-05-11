@@ -1,8 +1,11 @@
 # Nemotron 3 Examples
 
-This directory contains example scripts for Nemotron 3 language models.
+This directory contains example scripts for Nemotron 3 language models:
 
-For model introduction and architecture details, see the Nemotron 3 documentation.
+| Model | Parameters | Active Parameters | Subdirectory |
+|-------|-----------|-------------------|--------------|
+| Nemotron 3 Nano | 30B | A3B | [nano/](nano/) |
+| Nemotron 3 Super | 120B | A12B | [super/](super/) |
 
 ## Workspace Configuration
 
@@ -18,47 +21,21 @@ Directory structure:
 
 ## Checkpoint Conversion
 
-See the [conversion.sh](conversion.sh) script for checkpoint conversion examples.
-
-### Import HF → Megatron
-
-To import the HF model to your desired Megatron path:
-
-```bash
-python examples/conversion/convert_checkpoints.py import \
-    --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16 \
-    --megatron-path ${WORKSPACE}/models/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16 \
-    --trust-remote-code
-```
-
-### Export Megatron → HF
-
-```bash
-python examples/conversion/convert_checkpoints.py export \
-    --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16 \
-    --megatron-path ${WORKSPACE}/models/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16/iter_0000000 \
-    --hf-path ${WORKSPACE}/models/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16-hf-export
-```
-
-### Round-trip Validation
-
-Multi-GPU round-trip validation between formats:
-
-```bash
-python -m torch.distributed.run --nproc_per_node=8 \
-    examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-    --hf-model-id nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16 \
-    --megatron-load-path ${WORKSPACE}/models/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16/iter_0000000 \
-    --tp 2 --pp 2 \
-    --trust-remote-code
-```
+Each model has its own conversion script: [nano/conversion.sh](nano/conversion.sh), [super/conversion.sh](super/conversion.sh).
 
 ## Training Recipes
 
-- See: [bridge.recipes.nemotronh](../../../src/megatron/bridge/recipes/nemotronh/nemotron_3_nano.py)
-- Available recipes:
-  - `nemotron_3_nano_pretrain_config`: Pretraining configuration
-  - `nemotron_3_nano_finetune_config`: Finetuning configuration with PEFT support
+Available recipes:
+
+**Nano** ([source](../../../src/megatron/bridge/recipes/nemotronh/nemotron_3_nano.py)):
+- `nemotron_3_nano_pretrain_config`: Pretraining
+- `nemotron_3_nano_sft_config`: Supervised fine-tuning
+- `nemotron_3_nano_peft_config`: PEFT with LoRA support
+
+**Super** ([source](../../../src/megatron/bridge/recipes/nemotronh/nemotron_3_super.py)):
+- `nemotron_3_super_pretrain_config`: Pretraining
+- `nemotron_3_super_sft_config`: Supervised fine-tuning
+- `nemotron_3_super_peft_config`: PEFT with LoRA support
 
 Before training, ensure the following are configured:
 1. **Container Image**: Set `CONTAINER_IMAGE` in the SLURM scripts to your container path
@@ -70,23 +47,13 @@ Before training, ensure the following are configured:
 
 All training scripts use SLURM for containerized multi-node training.
 
-### Pretrain
+### Nano
 
-See the [slurm_pretrain.sh](slurm_pretrain.sh) script for pretraining with configurable model parallelisms.
+See the SLURM scripts in [nano/](nano/): [slurm_pretrain.sh](nano/slurm_pretrain.sh), [slurm_sft.sh](nano/slurm_sft.sh), [slurm_peft.sh](nano/slurm_peft.sh).
 
-W&B report coming soon.
+### Super
 
-### Supervised Fine-Tuning (SFT)
-
-See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning.
-
-W&B report coming soon.
-
-### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
-
-See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning.
-
-W&B report coming soon.
+See the SLURM scripts in [super/](super/): [slurm_pretrain.sh](super/slurm_pretrain.sh), [slurm_sft.sh](super/slurm_sft.sh), [slurm_peft.sh](super/slurm_peft.sh).
 
 ## Evaluation
 

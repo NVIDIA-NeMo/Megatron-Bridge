@@ -134,8 +134,14 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"  # Default from DeepSeekModelProvider
 
-    # Memory saving (recompute & offloading) - selective recompute for V3
-    cfg.model.recompute_granularity = "selective"
+    # Memory saving (recompute & offloading) — no recompute by default.
+    # Setting granularity="selective" with modules=None would cause MCore's
+    # post-init default-fill (transformer_config.py) to silently fill
+    # recompute_modules with ["core_attn"], giving a surprise recompute
+    # across all layers. Workloads that want recompute install it via
+    # their perf-config (scripts/performance/configs/...), or users can
+    # enable it via argparse (--recompute_modules ...) or Hydra.
+    cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None

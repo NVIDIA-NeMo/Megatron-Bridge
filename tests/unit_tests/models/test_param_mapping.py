@@ -22,6 +22,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
     DirectMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     KVMapping,
     QKVMapping,
@@ -504,6 +506,22 @@ class TestGatedMLPMapping:
 class TestMappingEdgeCases:
     """Test edge cases and error handling in param mappings."""
 
+    def test_get_shard_spec_handles_replicated_tp_shards(self, mock_distributed_env):
+        mock_distributed_env(tp_size=4, tp_rank=3)
+        mapping = DirectMapping("weight", "weight")
+
+        megatron_module = torch.nn.Module()
+        megatron_module.global_dim = 8
+
+        shard_world_size, shard_rank = mapping._get_shard_spec(
+            shard_size=4,
+            megatron_module=megatron_module,
+            global_size_attr="global_dim",
+        )
+
+        assert shard_world_size == 2
+        assert shard_rank == 1
+
     def test_wildcard_pattern_validation(self):
         """Test that wildcard patterns are validated correctly."""
         # Valid patterns - should not raise
@@ -592,6 +610,95 @@ class TestMappingEdgeCases:
 
             with pytest.raises(ValueError, match="Object must exist on at least one PP rank"):
                 mapping.broadcast_from_pp_rank(None)
+
+    def test_broadcast_from_pp_rank_multi_owner(self, mock_distributed_env):
+        """Test PP broadcast handles tensors present on multiple PP ranks.
+
+        MLA (Multi-Latent Attention) architectures such as DeepSeek-V3 and
+        MTP models can place the same weight tensor on more than one PP stage.
+        broadcast_from_pp_rank must pick the first owner deterministically
+        rather than raising ValueError.
+        """
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
+        mapping = DirectMapping("weight", "weight")
+
+        tensor = torch.randn(16, 16)
+        spec = (tensor.shape, tensor.dtype, None, None)
+
+        # Simulate both PP ranks owning the tensor
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [spec, spec]
+        )
+        mock_dist.broadcast.side_effect = lambda t, src, group: None
+
+        # Must not raise — should pick rank 0 as source
+        result = mapping.broadcast_from_pp_rank(tensor)
+        assert result is not None
+
+        # Verify broadcast was called with src=rank 0
+        mock_dist.broadcast.assert_called_once()
+        call_kwargs = mock_dist.broadcast.call_args
+        assert call_kwargs[1]["src"] == 0 or call_kwargs[0][1] == 0
+
+    def test_broadcast_from_pp_rank_multi_owner_with_cache(self, mock_distributed_env):
+        """Test PP broadcast with cache_key when tensor exists on multiple ranks.
+
+        Every real mapping calls broadcast_from_pp_rank with
+        cache_key=str(self.hf_param). Verify that the cached path also
+        handles multi-owner tensors correctly and that the second call
+        skips the all_gather_object collective.
+        """
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
+        mapping = DirectMapping("weight", "weight")
+
+        tensor = torch.randn(16, 16)
+        spec = (tensor.shape, tensor.dtype, None, None)
+
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [spec, spec]
+        )
+        mock_dist.broadcast.side_effect = lambda t, src, group: None
+
+        cache_key = "model.layers.0.self_attn.kv_b_proj.weight"
+
+        # First call — populates cache
+        result1 = mapping.broadcast_from_pp_rank(tensor, cache_key=cache_key)
+        assert result1 is not None
+        assert mock_dist.all_gather_object.call_count == 1
+
+        # Second call with same cache_key — must reuse cached spec
+        result2 = mapping.broadcast_from_pp_rank(tensor, cache_key=cache_key)
+        assert result2 is not None
+        # all_gather_object should NOT be called again
+        assert mock_dist.all_gather_object.call_count == 1
+        # broadcast should be called twice (once per call)
+        assert mock_dist.broadcast.call_count == 2
+
+    def test_broadcast_obj_from_pp_rank_multi_owner(self, mock_distributed_env):
+        """Test PP object broadcast handles objects present on multiple PP ranks.
+
+        Similar to tensor broadcast, shared objects must not cause errors and
+        the first owning rank must be selected deterministically.
+        """
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
+        mapping = DirectMapping("weight", "weight")
+
+        test_obj = {"config": "value"}
+
+        # Simulate both PP ranks owning the object
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [True, True]
+        )
+        mock_dist.broadcast_object_list.side_effect = lambda obj_list, src, group: None
+
+        # Must not raise — should pick rank 0 as source
+        result = mapping.broadcast_obj_from_pp_rank(test_obj)
+        assert result == test_obj
+
+        # Verify broadcast_object_list was called with src=rank 0
+        mock_dist.broadcast_object_list.assert_called_once()
+        call_args = mock_dist.broadcast_object_list.call_args
+        assert call_args[1].get("src", call_args[0][1] if len(call_args[0]) > 1 else None) == 0
 
     def test_tp_aware_unknown_module_error(self, transformer_config):
         """Test AutoMapping error for unknown module types."""
@@ -846,3 +953,125 @@ class TestAutoMappingWithPermute:
             # Without permute_dims, tensor should be passed unchanged
             passed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
             assert torch.equal(passed_tensor, hf_weight)
+
+
+class TestFusedGatedExpertMapping:
+    """Tests for FusedGatedExpertMapping.hf_to_megatron with TP > 1.
+
+    Regression: with TP=2 the target_param shape is already TP-sharded
+    (e.g. (512, 2048) for moe_ffn=512, hidden=2048).  The old code compared
+    the full HF gate_up_proj weight (1024, 2048) against that sharded shape
+    and raised ValueError.  The fix computes the full (unsharded) shape before
+    calling _align_expert_weight_to_shape so that _gated_mapping handles the
+    TP scatter.
+    """
+
+    # Model dims matching Qwen3.5-35B-A3B: hidden=2048, moe_ffn=512
+    HIDDEN = 2048
+    MOE_FFN = 512
+    NUM_EXPERTS = 4
+
+    def _make_mapping(self):
+        return FusedGatedExpertMapping(
+            megatron_param="decoder.layers.0.mlp.experts.linear_fc1.weight3",
+            hf_param="model.layers.0.mlp.experts.gate_up_proj",
+        )
+
+    def _make_hf_weights(self):
+        """Fused gate_up_proj: [num_experts, 2*moe_ffn, hidden]."""
+        return torch.randn(self.NUM_EXPERTS, 2 * self.MOE_FFN, self.HIDDEN)
+
+    @pytest.mark.parametrize("tp_size", [1, 2, 4])
+    def test_hf_to_megatron_tp_gt_1(self, mock_distributed_env, transformer_config, tp_size):
+        """gate and up passed to _gated_mapping must be full (unsharded) tensors."""
+        mock_mpu, _ = mock_distributed_env(tp_size=tp_size, tp_rank=0)
+
+        # Expert weights use the expert TP group (etp_group) for tp_size/tp_rank.
+        # Set etp_group to the same size as tp_group to match the test scenario.
+        class _MockGroup:
+            def __init__(self, size, rank):
+                self._size, self._rank = size, rank
+
+            def size(self):
+                return self._size
+
+            def rank(self):
+                return self._rank
+
+        mock_mpu.get_expert_tensor_parallel_group.return_value = _MockGroup(tp_size, 0)
+        mapping = self._make_mapping()
+        hf_weights = self._make_hf_weights()
+
+        # Megatron linear_fc1.weight shape on one TP rank: (2*moe_ffn/tp, hidden)
+        tp_sharded_shape = (2 * self.MOE_FFN // tp_size, self.HIDDEN)
+        target_param = torch.nn.Parameter(torch.empty(tp_sharded_shape))
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.param_mapping.get_module_and_param_from_name",
+                return_value=(None, target_param),
+            ),
+            patch.object(mapping, "_gated_mapping") as mock_gated,
+        ):
+            mock_gated.hf_to_megatron.return_value = torch.zeros(tp_sharded_shape)
+            mapping.hf_to_megatron(hf_weights, megatron_module=None)
+
+        call_kwargs = mock_gated.hf_to_megatron.call_args
+        gate = call_kwargs[0][0]["gate"]
+        up = call_kwargs[0][0]["up"]
+
+        # gate and up must be the full (unsharded) intermediate size
+        expected_gate_shape = (self.MOE_FFN, self.HIDDEN)
+        assert gate.shape == expected_gate_shape, (
+            f"gate.shape={gate.shape} but expected {expected_gate_shape} "
+            f"(TP={tp_size}; _gated_mapping is responsible for TP scatter)"
+        )
+        assert up.shape == expected_gate_shape, f"up.shape={up.shape} but expected {expected_gate_shape}"
+
+
+class TestFusedExpertMapping:
+    """Tests for FusedExpertMapping.hf_to_megatron with TP > 1.
+
+    Regression: with TP=2 the target_param shape (linear_fc2.weight) is already
+    TP-sharded (e.g. (2048, 256) for hidden=2048, moe_ffn=512).  The old code
+    compared the full HF down_proj weight (2048, 512) against that sharded shape
+    and raised ValueError.  The fix removes the _align call and passes the full
+    expert weight directly to AutoMapping which handles TP scatter.
+    """
+
+    HIDDEN = 2048
+    MOE_FFN = 512
+    NUM_EXPERTS = 4
+
+    def _make_mapping(self):
+        return FusedExpertMapping(
+            megatron_param="decoder.layers.0.mlp.experts.linear_fc2.weight3",
+            hf_param="model.layers.0.mlp.experts.down_proj",
+        )
+
+    def _make_hf_weights(self):
+        """Fused down_proj: [num_experts, hidden, moe_ffn]."""
+        return torch.randn(self.NUM_EXPERTS, self.HIDDEN, self.MOE_FFN)
+
+    @pytest.mark.parametrize("tp_size", [1, 2, 4])
+    def test_hf_to_megatron_tp_gt_1(self, mock_distributed_env, transformer_config, tp_size):
+        """Weight passed to AutoMapping.hf_to_megatron must be the full (unsharded) expert tensor."""
+        mock_mpu, _ = mock_distributed_env(tp_size=tp_size, tp_rank=0)
+        mapping = self._make_mapping()
+        hf_weights = self._make_hf_weights()
+
+        captured = {}
+
+        def _capture_super(hf_w, megatron_module):
+            captured["expert_weight"] = hf_w
+            return torch.zeros(self.HIDDEN, self.MOE_FFN // tp_size)
+
+        with patch.object(AutoMapping, "hf_to_megatron", side_effect=_capture_super):
+            mapping.hf_to_megatron(hf_weights, megatron_module=None)
+
+        expert_weight = captured["expert_weight"]
+        expected_shape = (self.HIDDEN, self.MOE_FFN)
+        assert expert_weight.shape == expected_shape, (
+            f"expert_weight.shape={expert_weight.shape} but expected {expected_shape} "
+            f"(TP={tp_size}; AutoMapping is responsible for TP scatter)"
+        )

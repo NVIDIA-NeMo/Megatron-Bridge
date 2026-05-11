@@ -20,7 +20,6 @@ from megatron.bridge.data.datasets.packing_utils import (
     create_hist,
     create_packing_strategy,
     fill_packing_strategy,
-    find_first_bin_that_fits,
     first_fit,
     first_fit_decreasing,
     first_fit_shuffle,
@@ -28,24 +27,6 @@ from megatron.bridge.data.datasets.packing_utils import (
 
 
 class TestDataPackingUtils:
-    def test_find_first_bin_that_fits(self):
-        bins = [
-            [1111, 2, 3],
-            [17, 11, 0, -5],
-            [100, 200],
-        ]
-        bin_sums = list(map(sum, bins))
-        bin_size = 1
-        s = 11
-        first_bin_that_fits = find_first_bin_that_fits(bin_sums, s, bin_size)
-
-        assert first_bin_that_fits == -1
-
-        bin_size = 1000
-        first_bin_that_fits = find_first_bin_that_fits(bin_sums, s, bin_size)
-
-        assert first_bin_that_fits == 1
-
     def test_first_fit(self):
         bs = 128
         seqlens = [4096 for i in range(bs)]

@@ -110,21 +110,30 @@ class QwenVLTextGenerationController(VLMTextGenerationController):
         self.processor = processor
 
     def tokenize_prompt(self, prompt: str, image):
-        """Tokenize prompt and process image following the VLM controller API"""
-        inputs = self.processor(
-            text=[prompt],
-            images=image,
-            padding=True,
-            return_tensors="pt",
-        )
+        """Tokenize with the HF processor (image + text; same idea as hf_to_megatron_generate_vlm)."""
+        if image is None:
+            inputs = self.processor(text=[prompt], return_tensors="pt")
+        else:
+            inputs = self.processor(
+                text=[prompt],
+                images=image,
+                padding=True,
+                return_tensors="pt",
+            )
 
         tokens = inputs["input_ids"][0]
 
-        if "pixel_values" in inputs:
-            image_dict = {
-                "pixel_values": inputs["pixel_values"],
-                "image_grid_thw": inputs["image_grid_thw"],
-            }
-        else:
-            image_dict = None
-        return tokens.tolist(), image_dict
+        def _field(name: str):
+            v = inputs.get(name) if hasattr(inputs, "get") else getattr(inputs, name, None)
+            return v
+
+        image_dict = {}
+        if _field("pixel_values") is not None:
+            image_dict["pixel_values"] = _field("pixel_values")
+            image_dict["image_grid_thw"] = _field("image_grid_thw")
+        for key in ("image_sizes", "mm_token_type_ids"):
+            val = _field(key)
+            if val is not None:
+                image_dict[key] = val
+
+        return tokens.tolist(), image_dict if image_dict else None

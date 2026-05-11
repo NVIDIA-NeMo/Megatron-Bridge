@@ -22,6 +22,17 @@ from megatron.bridge.recipes.glm_vl.glm_45v import (
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
 
+def _skip_if_model_unavailable(config_func):
+    """Call config_func and skip the test if the HF model config is not available (e.g. offline CI)."""
+    try:
+        return config_func()
+    except (ValueError, OSError) as e:
+        err = str(e).lower()
+        if "couldn't connect" in err or "cached files" in err or "failed to load configuration" in err:
+            pytest.skip(f"Model config not available (offline?): {e}")
+        raise
+
+
 GLM_45V_FINETUNE_RECIPES = [
     # Small model, only use 2 layers for quick functional test
     (
@@ -69,6 +80,7 @@ class TestGLM45VRecipes:
     @pytest.mark.parametrize("config_func,recipe_name,model_overrides", GLM_45V_FINETUNE_RECIPES)
     def test_glm_45v_finetune_recipes(self, config_func, recipe_name, model_overrides, tmp_path):
         """Functional test for GLM 4.5V recipes with appropriate parallelism configurations."""
+        _skip_if_model_unavailable(config_func)  # early check before distributed setup
         run_pretrain_vl_recipe_test(config_func, recipe_name, tmp_path, model_overrides=model_overrides)
 
     @pytest.mark.run_only_on("GPU")
@@ -79,6 +91,7 @@ class TestGLM45VRecipes:
         self, config_func, recipe_name, model_overrides, dataset_overrides, tmp_path
     ):
         """Functional test for GLM 4.5V recipes with packed sequences enabled."""
+        _skip_if_model_unavailable(config_func)  # early check before distributed setup
         run_pretrain_vl_recipe_test(
             config_func,
             recipe_name,

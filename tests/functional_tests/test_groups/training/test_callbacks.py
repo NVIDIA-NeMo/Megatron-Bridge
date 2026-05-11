@@ -98,6 +98,9 @@ class TrackingCallback(Callback):
     def on_test_end(self, context: CallbackContext) -> None:
         self._record("on_test_end", context)
 
+    def on_checkpoint_save(self, context: CallbackContext):
+        self._record("on_checkpoint_save", context)
+
     def get_event_count(self, event_name: str) -> int:
         return sum(1 for e in self.events if e == event_name)
 
@@ -135,7 +138,8 @@ class TestCallbacksEndToEnd:
     """Functional tests for callbacks in the training loop."""
 
     @pytest.mark.run_only_on("GPU")
-    def test_callbacks(self):
+    @pytest.mark.parametrize("async_save", [False, True])
+    def test_callbacks(self, async_save, tmp_checkpoint_dir):
         """Comprehensive test of callback system with both registration patterns.
 
         Tests in a single training run:
@@ -250,7 +254,11 @@ class TestCallbacksEndToEnd:
                 tokenizer_type="NullTokenizer",
                 vocab_size=10000,
             ),
-            checkpoint=CheckpointConfig(save=None),
+            checkpoint=CheckpointConfig(
+                save=tmp_checkpoint_dir,
+                save_interval=train_iters - 1,
+                async_save=async_save,
+            ),
             rng=RNGConfig(seed=1234),
         )
 
@@ -276,6 +284,8 @@ class TestCallbacksEndToEnd:
         assert tracking_callback.get_event_count("on_train_end") == 1
         assert tracking_callback.get_event_count("on_train_step_start") == train_iters
         assert tracking_callback.get_event_count("on_train_step_end") == train_iters
+        # we should have two checkpoints: before the end iteration and after the training finish
+        assert tracking_callback.get_event_count("on_checkpoint_save") == 2
 
         # Eval runs: 1 during training (step 5 only) + 1 post-training validation
         in_training_eval_runs = train_iters // eval_interval  # 8 // 5 = 1

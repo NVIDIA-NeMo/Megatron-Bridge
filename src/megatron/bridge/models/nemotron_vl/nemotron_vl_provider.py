@@ -88,6 +88,9 @@ class NemotronNano12Bv2VLModelProvider(MambaModelProvider):
         vision_cfg.recompute_granularity = None
         vision_cfg.recompute_method = None
         vision_cfg.recompute_num_layers = None
+        # Vision model does not use MTP; set to None so TransformerBlock respects
+        # post_process=False when deciding whether to create final_layernorm.
+        vision_cfg.mtp_num_layers = None
         vision_cfg.num_layers = 32
         vision_cfg.num_attention_heads = 16
         vision_cfg.add_bias_linear = True

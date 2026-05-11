@@ -123,8 +123,8 @@ class TestQwen2AudioModelProvider:
         assert hasattr(provider, "provide_language_model")
         assert callable(provider.provide_language_model)
 
-    def test_inherit_from_qwen2_provider(self):
-        """Test that Qwen2AudioModelProvider inherits Qwen2 configurations correctly."""
+    def test_inherit_from_gpt_provider(self):
+        """Test that Qwen2AudioModelProvider inherits GPTModelProvider configurations correctly."""
         provider = Qwen2AudioModelProvider(
             num_layers=32,
             hidden_size=4096,
@@ -138,12 +138,6 @@ class TestQwen2AudioModelProvider:
         assert provider.seq_length == 8192
         assert provider.vocab_size == 152064
         assert provider.rotary_base == 500000.0
-
-        # Qwen2 defaults should be inherited
-        assert provider.normalization == "RMSNorm"
-        assert provider.gated_linear_unit is True
-        assert provider.add_qkv_bias is True
-        assert provider.add_bias_linear is False
 
         # Audio-specific overrides should still work
         assert provider.scatter_embedding_sequence_parallel is False
@@ -185,11 +179,11 @@ class TestQwen2AudioModelProviderInheritance:
 
         assert issubclass(Qwen2AudioModelProvider, GPTModelProvider)
 
-    def test_inherits_from_qwen2_provider(self):
-        """Test that Qwen2AudioModelProvider inherits from Qwen2ModelProvider."""
-        from megatron.bridge.models.qwen.qwen_provider import Qwen2ModelProvider
+    def test_inherits_from_gpt_provider_only(self):
+        """Test that Qwen2AudioModelProvider inherits from GPTModelProvider directly."""
+        from megatron.bridge.models.gpt_provider import GPTModelProvider
 
-        assert issubclass(Qwen2AudioModelProvider, Qwen2ModelProvider)
+        assert issubclass(Qwen2AudioModelProvider, GPTModelProvider)
 
     def test_provider_method_inheritance(self):
         """Test that inherited methods work correctly."""

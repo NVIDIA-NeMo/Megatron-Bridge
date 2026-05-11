@@ -52,13 +52,13 @@ Usage:
 
     Diffusion pretrain:
         uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe wan_1_3B_pretrain_config \
+            --recipe wan_1_3b_pretrain_config \
             --step_func wan_step \
             dataset.path=/data/energon
 
     Diffusion SFT (full finetuning):
         uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe wan_1_3B_sft_config \
+            --recipe wan_1_3b_sft_config \
             --step_func wan_step
             dataset.path=/data/energon
 
@@ -118,6 +118,7 @@ from megatron.bridge.recipes.utils.dataset_utils import (
     apply_dataset_override,
     infer_mode_from_dataset,
 )
+from megatron.bridge.training.audio_lm_step import forward_step as audio_lm_forward_step
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
@@ -128,6 +129,7 @@ from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 
 
 STEP_FUNCTIONS: dict[str, Callable] = {
+    "audio_lm_step": audio_lm_forward_step,
     "gpt_step": gpt_forward_step,
     "vlm_step": vlm_forward_step,
     "qwen3_vl_step": qwen3_vl_forward_step,

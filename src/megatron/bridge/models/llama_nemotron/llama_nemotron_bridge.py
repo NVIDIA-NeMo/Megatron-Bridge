@@ -23,6 +23,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_scaling_factor_from_hf, rope_theta_from_hf
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
 
@@ -110,11 +111,32 @@ class LlamaNemotronBridge(MegatronModelBridge):
         # Handle rope scaling for Llama 3.1/3.3
         if hasattr(hf_config, "rope_scaling") and hf_config.rope_scaling:
             if hf_config.rope_scaling.get("rope_type") == "llama3":
+                provider_kwargs["rope_scaling"] = True
                 provider_kwargs["rope_scaling_factor"] = rope_scaling_factor_from_hf(hf_config, default=8.0)
 
         provider_kwargs["heterogeneous_layers_config_encoded_json"] = hf_config.to_json_string()
         provider = LlamaNemotronHeterogeneousProvider(**provider_kwargs)
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
+        """Convert Megatron provider config to HuggingFace config dict.
+
+        Uses base class implementation, then adds RoPE scaling for Llama 3.1/3.3.
+        """
+        hf_config = super(LlamaNemotronBridge, cls).megatron_to_hf_config(provider)
+
+        # Handle RoPE scaling for Llama 3.1/3.3 models
+        if getattr(provider, "rope_scaling", False):
+            hf_config["rope_scaling"] = {
+                "rope_type": "llama3",
+                "factor": provider.rope_scaling_factor,
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
+            }
+
+        return hf_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

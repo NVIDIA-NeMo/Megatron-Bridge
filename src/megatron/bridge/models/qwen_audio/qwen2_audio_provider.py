@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING, Any, Optional
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.qwen.qwen_provider import Qwen2ModelProvider
 
 
 if TYPE_CHECKING:
@@ -45,7 +44,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class Qwen2AudioModelProvider(Qwen2ModelProvider):
+class Qwen2AudioModelProvider(GPTModelProvider):
     """
     Base model provider for Qwen2-Audio Models.
 
@@ -61,6 +60,9 @@ class Qwen2AudioModelProvider(Qwen2ModelProvider):
     - Supports variable-length audio inputs via mel spectrograms
     - Multi-turn conversation with audio context
     """
+
+    # Qwen2-Audio uses RoPE, not learned position embeddings
+    position_embedding_type: str = "rope"
 
     # Audio-Language models shouldn't scatter embeddings across sequence parallel regions
     # because audio embeddings are inserted into language embeddings
@@ -81,6 +83,7 @@ class Qwen2AudioModelProvider(Qwen2ModelProvider):
     freeze_language_model: bool = False
     freeze_audio_model: bool = False
     freeze_audio_projection: bool = False
+    gradient_accumulation_fusion: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "Qwen2AudioModel":
         """

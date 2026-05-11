@@ -1463,8 +1463,8 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
         for k in list(overrides):
             if k.startswith("model.cuda_graph_scope."):
                 consumed.add(k)
-        scope_names = [overrides[k] for k in scope_name_keys]
-        result.add_arg("cuda-graph-scope", " ".join(scope_names))
+        scope_names = [str(overrides[k]) for k in scope_name_keys]
+        result.add_arg("cuda-graph-scope", scope_names)
         impl = cuda_impl or "transformer_engine"
         result.add_arg("cuda-graph-impl", impl)
         if cuda_impl is not None:
@@ -1475,13 +1475,13 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
         # or a plain string/list of strings (from a simple CLI override).
         if isinstance(cuda_scope, (list, tuple)) and cuda_scope and isinstance(cuda_scope[0], dict):
             # Extract _name_ from each enum-dict entry (Hydra serialised CudaGraphScope)
-            names = [item["_name_"] for item in cuda_scope if "_name_" in item]
-            scope_str = " ".join(names)
+            scope_vals = [str(item["_name_"]) for item in cuda_scope if "_name_" in item]
         elif isinstance(cuda_scope, (list, tuple)):
-            scope_str = " ".join(str(s) for s in cuda_scope)
+            scope_vals = [str(s) for s in cuda_scope]
         else:
-            scope_str = str(cuda_scope)
-        result.add_arg("cuda-graph-scope", scope_str)
+            # Accept either a single token or a space-separated string.
+            scope_vals = shlex.split(str(cuda_scope))
+        result.add_arg("cuda-graph-scope", scope_vals)
         impl = cuda_impl or "transformer_engine"
         result.add_arg("cuda-graph-impl", impl)
         if cuda_impl is not None:

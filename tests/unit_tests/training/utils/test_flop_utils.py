@@ -61,6 +61,16 @@ class MockModelConfig:
     group_query_attention: bool = True
     gated_linear_unit: bool = True
     activation_func: object = field(default=None)
+    attention_output_gate: bool = False
+    # MLA (Multi-Latent Attention) settings — DeepSeek-V2/V3 style
+    q_lora_rank: int | None = None
+    kv_lora_rank: int = 0
+    qk_head_dim: int = 64
+    qk_pos_emb_head_dim: int = 0
+    v_head_dim: int = 64
+    # Sliding window attention settings
+    window_size: tuple | list | int | None = None
+    window_attn_skip_freq: int | list | None = None
     # GDN (Gated DeltaNet) settings
     experimental_attention_variant: str | None = None
     linear_attention_freq: int | list | None = None
@@ -290,6 +300,8 @@ class TestHybridLayerCounting:
             ("****", 4, 0, 0, 0),
             ("EEEE", 0, 0, 0, 4),
             ("M-*E-*M", 2, 2, 2, 1),
+            ("MG*E", 1, 1, 0, 1),
+            ("GGGG", 0, 0, 0, 0),
         ],
     )
     def test_layer_counting_patterns(self, pattern, expected_attn, expected_mamba, expected_mlp, expected_moe):
@@ -556,16 +568,19 @@ class TestGDNLayerFlops:
         gdn_flops = num_floating_point_operations(cfg, batch_size=batch_size)
 
         # Compute expected manually
-        expansion_factor = 3 * 2 * 2  # 12
-        # Standard attention per-layer (MHA, num_query_groups==num_attention_heads so ratio=1)
+        # Standard attention per-layer (MHA, num_query_groups==num_attention_heads)
         kv_channels = 128
-        query_projection_size = kv_channels * 8
-        query_projection_to_hidden_size_ratio = query_projection_size / hidden_size
+        q_proj_size = kv_channels * 8
+        k_proj_size = kv_channels * 8
+        v_proj_size = kv_channels * 8
         standard_attn_per_layer = (
-            expansion_factor
-            * hidden_size
-            * hidden_size
-            * ((1 + 8 / 8 + seq_length / hidden_size / 2) * query_projection_to_hidden_size_ratio)
+            3
+            * 2
+            * (
+                hidden_size * (q_proj_size + k_proj_size + v_proj_size)
+                + q_proj_size * seq_length / 2 * 2
+                + q_proj_size * hidden_size
+            )
         )
         # GDN per-layer
         gdn_per_layer = (
@@ -580,8 +595,8 @@ class TestGDNLayerFlops:
         )
         # freq=2: pattern = [1, 0, 1, 0] -> 2 GDN, 2 standard
         expected_self_attn = gdn_per_layer * 2 + standard_attn_per_layer * 2
-        # MLP: gated_linear_unit=False -> gated_linear_multiplier=1
-        expected_mlp = expansion_factor * num_layers * hidden_size * ffn_hidden_size * 1
+        # MLP: gated_linear_unit=False -> ffn_expansion_factor=2
+        expected_mlp = 3 * 2 * hidden_size * (ffn_hidden_size * 2) * num_layers
         # Logit
         padded_vocab = vocab_size  # 32000 is already divisible by 128
         expected_logit = 3 * 2 * hidden_size * padded_vocab * 1
@@ -644,3 +659,735 @@ class TestHybridMtpPatternParsing:
         expected_delta = 2 * batch_size * seq_len * hidden_size * vocab_size * 2 * 3
         actual_delta = flops_inferred - flops_explicit_zero
         assert actual_delta == expected_delta, f"Expected logits delta {expected_delta:.2e} but got {actual_delta:.2e}"
+
+
+@pytest.mark.unit
+class TestHybridGDNFlops:
+    """Tests for GDN ('G') layer support in the hybrid FLOPs path."""
+
+    def test_gdn_hybrid_pattern_positive_flops(self):
+        """A hybrid pattern containing G layers should produce positive FLOPs."""
+        batch_size = 1
+        model_cfg = MockModelConfig(
+            is_hybrid_model=True,
+            hybrid_layer_pattern="G*G*",
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=512,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            gated_linear_unit=False,
+            linear_key_head_dim=64,
+            linear_value_head_dim=64,
+            linear_num_key_heads=8,
+            linear_num_value_heads=16,
+            linear_conv_kernel_dim=4,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+        flops = num_floating_point_operations(cfg, batch_size=batch_size)
+        assert flops > 0, "Hybrid pattern with G layers should produce positive FLOPs"
+
+    def test_gdn_hybrid_exact_flops(self):
+        """Verify exact GDN FLOPs in hybrid path match the gdn_layer_flops formula."""
+        batch_size = 1
+        seq_len = 512
+        hidden_size = 1024
+        vocab_size = 32000
+        qk_head_dim = 64
+        v_head_dim = 64
+        num_qk_heads = 8
+        num_v_heads = 16
+        conv_kernel_dim = 4
+
+        model_cfg = MockModelConfig(
+            is_hybrid_model=True,
+            hybrid_layer_pattern="GG",
+            num_layers=2,
+            hidden_size=hidden_size,
+            seq_length=seq_len,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=vocab_size,
+            gated_linear_unit=False,
+            linear_key_head_dim=qk_head_dim,
+            linear_value_head_dim=v_head_dim,
+            linear_num_key_heads=num_qk_heads,
+            linear_num_value_heads=num_v_heads,
+            linear_conv_kernel_dim=conv_kernel_dim,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+        flops = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        qk_dim = qk_head_dim * num_qk_heads
+        v_dim = v_head_dim * num_v_heads
+        gdn_per_layer = (
+            2
+            * batch_size
+            * seq_len
+            * (
+                hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                + conv_kernel_dim * (2 * qk_dim + v_dim)
+                + num_v_heads * (v_head_dim**2) * 4
+                + hidden_size * v_dim
+            )
+        )
+        logit = 2 * batch_size * seq_len * hidden_size * vocab_size
+        expected = (2 * gdn_per_layer + logit) * 3
+
+        assert flops == expected, f"Expected {expected:.2e} but got {flops:.2e}"
+
+    def test_gdn_differs_from_attention_in_hybrid(self):
+        """G layers should produce different FLOPs than * layers in hybrid path."""
+        batch_size = 1
+        base = dict(
+            is_hybrid_model=True,
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=512,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            gated_linear_unit=False,
+        )
+        cfg_gdn = MockConfigContainer(model=MockModelConfig(**base, hybrid_layer_pattern="GGGG"))
+        cfg_attn = MockConfigContainer(model=MockModelConfig(**base, hybrid_layer_pattern="****"))
+        flops_gdn = num_floating_point_operations(cfg_gdn, batch_size=batch_size)
+        flops_attn = num_floating_point_operations(cfg_attn, batch_size=batch_size)
+        assert flops_gdn != flops_attn, "G layers and * layers should have different FLOPs"
+
+
+@pytest.mark.unit
+class TestAttentionOutputGateFlops:
+    """Tests for attention_output_gate FLOPs in transformer_flops path."""
+
+    def test_gate_increases_flops(self):
+        """attention_output_gate=True should add extra FLOPs for the gate projection."""
+        batch_size = 1
+        base = dict(
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=512,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_no_gate = MockConfigContainer(model=MockModelConfig(**base, attention_output_gate=False))
+        cfg_gate = MockConfigContainer(model=MockModelConfig(**base, attention_output_gate=True))
+        flops_no_gate = num_floating_point_operations(cfg_no_gate, batch_size=batch_size)
+        flops_gate = num_floating_point_operations(cfg_gate, batch_size=batch_size)
+        assert flops_gate > flops_no_gate, "attention_output_gate should increase FLOPs"
+
+    def test_gate_exact_delta(self):
+        """Verify the exact FLOPs delta from attention_output_gate matches the gate projection formula."""
+        batch_size = 1
+        num_layers = 4
+        hidden_size = 1024
+        seq_length = 512
+        kv_channels = 128
+        num_attention_heads = 8
+        vocab_size = 32000
+
+        base = dict(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            seq_length=seq_length,
+            ffn_hidden_size=4096,
+            num_attention_heads=num_attention_heads,
+            num_query_groups=4,
+            kv_channels=kv_channels,
+            vocab_size=vocab_size,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_no_gate = MockConfigContainer(model=MockModelConfig(**base, attention_output_gate=False))
+        cfg_gate = MockConfigContainer(model=MockModelConfig(**base, attention_output_gate=True))
+        flops_no_gate = num_floating_point_operations(cfg_no_gate, batch_size=batch_size)
+        flops_gate = num_floating_point_operations(cfg_gate, batch_size=batch_size)
+
+        query_projection_size = kv_channels * num_attention_heads
+        expected_delta = batch_size * seq_length * 3 * 2 * num_layers * hidden_size * query_projection_size
+        actual_delta = flops_gate - flops_no_gate
+
+        assert actual_delta == expected_delta, f"Expected gate delta {expected_delta:.2e} but got {actual_delta:.2e}"
+
+
+@pytest.mark.unit
+class TestMoELatentTransformerPath:
+    """Tests for moe_latent_size handling in the transformer_flops path (non-hybrid)."""
+
+    def test_latent_reduces_flops(self):
+        """MoE with latent compression should produce fewer FLOPs than without (when latent < hidden)."""
+        batch_size = 1
+        hidden_size = 2048
+        moe_ffn_hidden = 4096
+        latent_size = 512
+
+        base = dict(
+            num_layers=4,
+            hidden_size=hidden_size,
+            seq_length=1024,
+            ffn_hidden_size=8192,
+            num_attention_heads=16,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=moe_ffn_hidden,
+            moe_shared_expert_intermediate_size=0,
+            gated_linear_unit=False,
+        )
+        cfg_no_latent = MockConfigContainer(model=MockModelConfig(**base, moe_latent_size=None))
+        cfg_latent = MockConfigContainer(model=MockModelConfig(**base, moe_latent_size=latent_size))
+        flops_no_latent = num_floating_point_operations(cfg_no_latent, batch_size=batch_size)
+        flops_latent = num_floating_point_operations(cfg_latent, batch_size=batch_size)
+        assert flops_latent < flops_no_latent, (
+            "Latent MoE (latent < hidden) should produce fewer FLOPs in transformer path"
+        )
+
+    def test_latent_exact_moe_term(self):
+        """Verify exact MoE FLOPs with latent compression in transformer_flops path."""
+        batch_size = 1
+        num_layers = 2
+        hidden_size = 1024
+        seq_length = 512
+        moe_ffn_hidden = 2048
+        latent_size = 256
+        topk = 1
+        vocab_size = 32000
+
+        model_cfg = MockModelConfig(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            seq_length=seq_length,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=8,
+            kv_channels=128,
+            vocab_size=vocab_size,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=topk,
+            moe_ffn_hidden_size=moe_ffn_hidden,
+            moe_shared_expert_intermediate_size=0,
+            moe_latent_size=latent_size,
+            gated_linear_unit=False,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+        actual_flops = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        # ffn_expansion_factor = 2 (non-SwiGLU)
+        ffn_exp = 2
+        routed_term = (moe_ffn_hidden * topk * ffn_exp * latent_size / hidden_size) + 2 * latent_size
+        # All layers are MoE (moe_layer_freq=1), num_dense_layers=0
+        expected_mlp = 3 * 2 * hidden_size * routed_term * num_layers
+
+        # Standard attention: 3 * 2 * num_layers * (...) -- compute per-layer
+        kv_channels = 128
+        q_proj = kv_channels * 8  # = 1024 = hidden_size
+        k_proj = kv_channels * 8
+        v_proj = kv_channels * 8
+        attn_per_layer = hidden_size * (q_proj + k_proj + v_proj) + q_proj * seq_length / 2 * 2 + q_proj * hidden_size
+        expected_attn = 3 * 2 * num_layers * attn_per_layer
+
+        expected_logit = 3 * 2 * hidden_size * vocab_size
+
+        expected_total = batch_size * seq_length * (expected_mlp + expected_attn + expected_logit)
+
+        assert actual_flops == expected_total, f"Expected {expected_total:.2e} but got {actual_flops:.2e}"
+
+
+@pytest.mark.unit
+class TestSlidingWindowAttentionFlops:
+    """Tests for sliding window attention (SWA) FLOPs in transformer_flops path."""
+
+    def test_swa_reduces_flops(self):
+        """SWA layers should produce fewer FLOPs than full attention when window < seq_length."""
+        batch_size = 1
+        base = dict(
+            num_layers=8,
+            hidden_size=1024,
+            seq_length=4096,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_full = MockConfigContainer(model=MockModelConfig(**base))
+        cfg_swa = MockConfigContainer(model=MockModelConfig(**base, window_size=(511, 0), window_attn_skip_freq=2))
+        flops_full = num_floating_point_operations(cfg_full, batch_size=batch_size)
+        flops_swa = num_floating_point_operations(cfg_swa, batch_size=batch_size)
+        assert flops_swa < flops_full, "SWA should reduce FLOPs when window < seq_length"
+
+    def test_swa_no_effect_when_window_ge_seq(self):
+        """SWA should have no effect when effective window >= seq_length."""
+        batch_size = 1
+        seq_length = 512
+        base = dict(
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=seq_length,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_full = MockConfigContainer(model=MockModelConfig(**base))
+        cfg_swa = MockConfigContainer(
+            model=MockModelConfig(**base, window_size=(seq_length, 0), window_attn_skip_freq=2)
+        )
+        flops_full = num_floating_point_operations(cfg_full, batch_size=batch_size)
+        flops_swa = num_floating_point_operations(cfg_swa, batch_size=batch_size)
+        assert flops_swa == flops_full, "SWA with window >= seq should equal full attention FLOPs"
+
+    def test_swa_exact_delta(self):
+        """Verify the exact FLOPs reduction from SWA matches the core attention formula difference."""
+        batch_size = 1
+        num_layers = 4
+        hidden_size = 1024
+        seq_length = 4096
+        kv_channels = 128
+        num_attention_heads = 8
+        window_left = 511
+        vocab_size = 32000
+
+        base = dict(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            seq_length=seq_length,
+            ffn_hidden_size=4096,
+            num_attention_heads=num_attention_heads,
+            num_query_groups=4,
+            kv_channels=kv_channels,
+            vocab_size=vocab_size,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_full = MockConfigContainer(model=MockModelConfig(**base))
+        cfg_swa = MockConfigContainer(
+            model=MockModelConfig(**base, window_size=(window_left, 0), window_attn_skip_freq=2)
+        )
+        flops_full = num_floating_point_operations(cfg_full, batch_size=batch_size)
+        flops_swa = num_floating_point_operations(cfg_swa, batch_size=batch_size)
+
+        # skip_freq=2: layers [0,2] are SWA, layers [1,3] are full → 2 SWA layers
+        num_swa_layers = 2
+        query_projection_size = kv_channels * num_attention_heads
+        effective_window = window_left + 0 + 1  # 512
+
+        # Core attention difference per SWA layer: Q * (S - W) (the /2 *2 cancels)
+        core_diff_per_layer = query_projection_size * (seq_length - effective_window)
+        expected_delta = batch_size * seq_length * 3 * 2 * num_swa_layers * core_diff_per_layer
+        actual_delta = flops_full - flops_swa
+
+        assert actual_delta == expected_delta, f"Expected SWA delta {expected_delta:.2e} but got {actual_delta:.2e}"
+
+    def test_swa_list_pattern(self):
+        """Test SWA with a list pattern for window_attn_skip_freq."""
+        batch_size = 1
+        base = dict(
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=4096,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        # List [1,1,0,1] means 3 SWA layers, 1 full layer
+        cfg_list = MockConfigContainer(
+            model=MockModelConfig(**base, window_size=(511, 0), window_attn_skip_freq=[1, 1, 0, 1])
+        )
+        # Int freq=4 gives pattern [1,1,1,0] → 3 SWA, 1 full (same counts, different order)
+        cfg_int = MockConfigContainer(model=MockModelConfig(**base, window_size=(511, 0), window_attn_skip_freq=4))
+        flops_list = num_floating_point_operations(cfg_list, batch_size=batch_size)
+        flops_int = num_floating_point_operations(cfg_int, batch_size=batch_size)
+        assert flops_list == flops_int, "Same SWA/full split should produce same FLOPs regardless of order"
+
+    def test_swa_all_layers_when_skip_freq_none(self):
+        """When window_size is set but window_attn_skip_freq is None, all layers should be SWA."""
+        batch_size = 1
+        base = dict(
+            num_layers=4,
+            hidden_size=1024,
+            seq_length=4096,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        cfg_no_window = MockConfigContainer(model=MockModelConfig(**base))
+        cfg_all_swa = MockConfigContainer(
+            model=MockModelConfig(**base, window_size=(511, 0), window_attn_skip_freq=None)
+        )
+        flops_full = num_floating_point_operations(cfg_no_window, batch_size=batch_size)
+        flops_all_swa = num_floating_point_operations(cfg_all_swa, batch_size=batch_size)
+        assert flops_all_swa < flops_full, (
+            "window_size set with skip_freq=None should make all layers SWA (fewer FLOPs)"
+        )
+
+
+@pytest.mark.unit
+class TestMLAFlops:
+    """Tests for Multi-Latent Attention (MLA) FLOPs in transformer_flops path.
+
+    MLA is the attention variant used in DeepSeek-V2/V3. Q and KV projections
+    are low-rank-factored to compress the KV cache. Per-layer FLOPs follow
+    the closed form in flop_utils.py (lines 343-398):
+
+        self_attn_term = 3 * 2 * num_layers * (
+            q_term
+          + kv_lora_rank * (hidden + n_heads * (qk_head_dim + v_head_dim) + 1)
+          + hidden * qk_pos_emb_head_dim
+          + n_heads * v_head_dim * hidden
+          + seq_length * n_heads * (qk_head_dim + qk_pos_emb_head_dim) / 2
+          + seq_length * n_heads * v_head_dim / 2
+        )
+
+    where ``q_term`` switches form when ``q_lora_rank`` is set.
+    """
+
+    @staticmethod
+    def _mla_inner(
+        hidden: int,
+        n_heads: int,
+        seq_length: int,
+        q_lora_rank: int | None,
+        kv_lora_rank: int,
+        qk_head_dim: int,
+        qk_pos_emb_head_dim: int,
+        v_head_dim: int,
+    ) -> float:
+        """Mirror flop_utils.py MLA formula — kept here for regression coverage."""
+        if q_lora_rank is None:
+            q_term = hidden * n_heads * (qk_head_dim + qk_pos_emb_head_dim)
+        else:
+            q_term = q_lora_rank * (hidden + n_heads * (qk_head_dim + qk_pos_emb_head_dim) + 1)
+        return (
+            q_term
+            + kv_lora_rank * (hidden + n_heads * (qk_head_dim + v_head_dim) + 1)
+            + hidden * qk_pos_emb_head_dim
+            + n_heads * v_head_dim * hidden
+            + seq_length * n_heads * (qk_head_dim + qk_pos_emb_head_dim) / 2
+            + seq_length * n_heads * v_head_dim / 2
+        )
+
+    def _base_mla_kwargs(self, **overrides):
+        """Small DeepSeek-V3-shaped MLA config (dense, no MoE/MTP) — clean math."""
+        defaults = dict(
+            num_layers=2,
+            hidden_size=256,
+            seq_length=128,
+            ffn_hidden_size=512,
+            num_attention_heads=8,
+            num_query_groups=8,
+            kv_channels=32,
+            vocab_size=32000,  # already divisible by 128 → padded == vocab
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,  # ffn_expansion_factor = 2, simpler MLP math
+            multi_latent_attention=True,
+            q_lora_rank=64,
+            kv_lora_rank=32,
+            qk_head_dim=32,
+            qk_pos_emb_head_dim=16,
+            v_head_dim=32,
+        )
+        defaults.update(overrides)
+        return defaults
+
+    def test_mla_with_q_lora_exact_formula(self):
+        """MLA with q_lora_rank (DeepSeek-V3 style) matches the closed-form FLOPs exactly."""
+        batch_size = 1
+        kw = self._base_mla_kwargs()
+        cfg = MockConfigContainer(model=MockModelConfig(**kw))
+        actual = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        inner = self._mla_inner(
+            hidden=kw["hidden_size"],
+            n_heads=kw["num_attention_heads"],
+            seq_length=kw["seq_length"],
+            q_lora_rank=kw["q_lora_rank"],
+            kv_lora_rank=kw["kv_lora_rank"],
+            qk_head_dim=kw["qk_head_dim"],
+            qk_pos_emb_head_dim=kw["qk_pos_emb_head_dim"],
+            v_head_dim=kw["v_head_dim"],
+        )
+        expected_self_attn = 3 * 2 * kw["num_layers"] * inner
+        # MLP: ffn_expansion_factor = 2 (non-SwiGLU), all layers dense.
+        expected_mlp = 3 * 2 * kw["hidden_size"] * (kw["ffn_hidden_size"] * 2) * kw["num_layers"]
+        # Logit term: padded_vocab == vocab when already divisible by 128.
+        expected_logit = 3 * 2 * kw["hidden_size"] * kw["vocab_size"] * 1
+        # No MTP in baseline config.
+        expected_total = batch_size * kw["seq_length"] * (expected_mlp + expected_self_attn + expected_logit)
+
+        assert actual == expected_total, f"Expected {expected_total:.6e} but got {actual:.6e}"
+
+    def test_mla_without_q_lora_exact_formula(self):
+        """MLA without q_lora_rank uses the direct projection q_term (hidden * n_heads * head_dims)."""
+        batch_size = 1
+        kw = self._base_mla_kwargs(q_lora_rank=None)
+        cfg = MockConfigContainer(model=MockModelConfig(**kw))
+        actual = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        inner = self._mla_inner(
+            hidden=kw["hidden_size"],
+            n_heads=kw["num_attention_heads"],
+            seq_length=kw["seq_length"],
+            q_lora_rank=None,
+            kv_lora_rank=kw["kv_lora_rank"],
+            qk_head_dim=kw["qk_head_dim"],
+            qk_pos_emb_head_dim=kw["qk_pos_emb_head_dim"],
+            v_head_dim=kw["v_head_dim"],
+        )
+        expected_self_attn = 3 * 2 * kw["num_layers"] * inner
+        expected_mlp = 3 * 2 * kw["hidden_size"] * (kw["ffn_hidden_size"] * 2) * kw["num_layers"]
+        expected_logit = 3 * 2 * kw["hidden_size"] * kw["vocab_size"] * 1
+        expected_total = batch_size * kw["seq_length"] * (expected_mlp + expected_self_attn + expected_logit)
+
+        assert actual == expected_total, f"Expected {expected_total:.6e} but got {actual:.6e}"
+
+    def test_q_lora_reduces_q_projection_flops(self):
+        """Adding q_lora_rank should reduce q-projection FLOPs when q_lora_rank < n_heads * (qk_h + qk_pos)."""
+        batch_size = 1
+        # With these dims, the un-compressed Q projection is hidden * n_heads * 48 = 256 * 8 * 48 = 98304.
+        # The Q-LoRA path uses q_lora_rank * (hidden + n_heads * 48 + 1) = 64 * (256 + 384 + 1) = 41024.
+        # So enabling Q-LoRA reduces self-attn FLOPs.
+        kw_q_lora = self._base_mla_kwargs(q_lora_rank=64)
+        kw_no_q_lora = self._base_mla_kwargs(q_lora_rank=None)
+        flops_q_lora = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw_q_lora)), batch_size=batch_size
+        )
+        flops_no_q_lora = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw_no_q_lora)), batch_size=batch_size
+        )
+        assert flops_q_lora < flops_no_q_lora, (
+            "Q-LoRA compression should reduce attention FLOPs when q_lora_rank * (h + ...) < h * n_heads * (qk + qk_pos)"
+        )
+
+    def test_mla_differs_from_standard_attention(self):
+        """An MLA config and a same-shape MHA config should produce different FLOPs."""
+        batch_size = 1
+        kw_mla = self._base_mla_kwargs()
+        kw_mha = self._base_mla_kwargs(multi_latent_attention=False)
+        flops_mla = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw_mla)), batch_size=batch_size
+        )
+        flops_mha = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw_mha)), batch_size=batch_size
+        )
+        assert flops_mla != flops_mha, "MLA and standard attention paths should produce different FLOPs"
+        assert flops_mla > 0 and flops_mha > 0
+
+    def test_mla_batch_size_scales_linearly(self):
+        """FLOPs must scale linearly with batch_size for MLA."""
+        kw = self._base_mla_kwargs()
+        cfg = MockConfigContainer(model=MockModelConfig(**kw))
+        f_b1 = num_floating_point_operations(cfg, batch_size=1)
+        f_b4 = num_floating_point_operations(cfg, batch_size=4)
+        assert f_b4 == 4 * f_b1, f"Linear scaling violated: f(B=4)={f_b4:.6e} vs 4*f(B=1)={4 * f_b1:.6e}"
+
+    def test_mla_seq_length_quadratic_growth(self):
+        """Doubling seq_length should grow MLA FLOPs by more than 2x (core attn term is O(s^2))."""
+        kw_short = self._base_mla_kwargs(seq_length=128)
+        kw_long = self._base_mla_kwargs(seq_length=256)
+        f_short = num_floating_point_operations(MockConfigContainer(model=MockModelConfig(**kw_short)), batch_size=1)
+        f_long = num_floating_point_operations(MockConfigContainer(model=MockModelConfig(**kw_long)), batch_size=1)
+        # The core-attention component scales as B*s^2; total grows super-linearly.
+        assert f_long > 2 * f_short, (
+            f"Expected superlinear seq scaling but got f(s=256)={f_long:.6e} vs 2*f(s=128)={2 * f_short:.6e}"
+        )
+
+
+@pytest.mark.unit
+class TestMLAWithMoE:
+    """Sanity tests for MLA combined with MoE (DeepSeek-V3 architecture shape)."""
+
+    def test_mla_moe_combination_positive_and_distinct(self):
+        """MLA + MoE config should produce positive FLOPs distinct from MLA-only and MHA+MoE."""
+        batch_size = 1
+        base = dict(
+            num_layers=2,
+            hidden_size=256,
+            seq_length=128,
+            ffn_hidden_size=512,
+            num_attention_heads=8,
+            num_query_groups=8,
+            kv_channels=32,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+            q_lora_rank=64,
+            kv_lora_rank=32,
+            qk_head_dim=32,
+            qk_pos_emb_head_dim=16,
+            v_head_dim=32,
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=512,
+            moe_shared_expert_intermediate_size=0,
+        )
+        flops_mla_moe = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**base, multi_latent_attention=True)),
+            batch_size=batch_size,
+        )
+        flops_mha_moe = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**base, multi_latent_attention=False)),
+            batch_size=batch_size,
+        )
+        assert flops_mla_moe > 0
+        assert flops_mha_moe > 0
+        assert flops_mla_moe != flops_mha_moe, "MLA+MoE and MHA+MoE should differ in self-attention term"
+
+
+@pytest.mark.unit
+class TestExplicitMtpInTransformerPath:
+    """Tests for explicit cfg.model.mtp_num_layers in the transformer_flops (non-hybrid) path.
+
+    DeepSeek-V3 uses MTP. The current functional tests cover only Llama / Qwen3-MoE
+    (no MTP), and the unit tests cover the inferred-from-pattern path through
+    `hybrid_flops`. The transformer_flops branch where mtp_num_layers is set
+    explicitly was previously uncovered.
+    """
+
+    def _base_kwargs(self, **overrides):
+        defaults = dict(
+            num_layers=4,
+            hidden_size=512,
+            seq_length=256,
+            ffn_hidden_size=1024,
+            num_attention_heads=8,
+            num_query_groups=8,
+            kv_channels=64,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,
+        )
+        defaults.update(overrides)
+        return defaults
+
+    def test_explicit_mtp_increases_flops(self):
+        """Explicit mtp_num_layers > 0 must add MTP norms/proj FLOPs and grow logits."""
+        kw = self._base_kwargs()
+        f_no_mtp = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw, mtp_num_layers=None)), batch_size=1
+        )
+        f_mtp_2 = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw, mtp_num_layers=2)), batch_size=1
+        )
+        assert f_mtp_2 > f_no_mtp, (
+            f"Explicit mtp_num_layers should grow FLOPs: got mtp=2 → {f_mtp_2:.6e} vs none → {f_no_mtp:.6e}"
+        )
+
+    def test_explicit_mtp_exact_delta(self):
+        """Verify the exact FLOPs delta from explicit mtp_num_layers in non-MoE transformer path.
+
+        For non-MoE: each MTP layer is added as a dense layer, contributing one
+        extra layer worth of MLP and self-attention. The MTP norms/proj term
+        and the logit factor (mtp+1) are also added.
+        """
+        batch_size = 1
+        mtp = 2
+        kw = self._base_kwargs()
+        f_no_mtp = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw, mtp_num_layers=None)), batch_size=batch_size
+        )
+        f_mtp = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw, mtp_num_layers=mtp)), batch_size=batch_size
+        )
+
+        hidden = kw["hidden_size"]
+        seq = kw["seq_length"]
+        ffn = kw["ffn_hidden_size"]
+        n_heads = kw["num_attention_heads"]
+        n_query_groups = kw["num_query_groups"]  # MHA → equal to n_heads
+        kv_ch = kw["kv_channels"]
+        vocab = kw["vocab_size"]  # already padded for divisor 128
+
+        # Per-layer MLP contribution to the inner sum (ffn_expansion=2 for non-SwiGLU).
+        mlp_per_layer = 3 * 2 * hidden * (ffn * 2)
+        # Per-layer attention contribution (MHA: n_query_groups == n_heads).
+        q_proj = kv_ch * n_heads
+        k_proj = kv_ch * n_query_groups
+        v_proj = kv_ch * n_query_groups
+        attn_per_layer = 3 * 2 * (hidden * (q_proj + k_proj + v_proj) + q_proj * seq / 2 * 2 + q_proj * hidden)
+        # MTP norms+proj fixed term (added once when mtp_num_layers > 0).
+        mtp_norms = 3 * 2 * mtp * (3 * hidden + 2 * hidden * hidden)
+        # Extra logit factor: (mtp+1) - 1 = mtp.
+        extra_logit = 3 * 2 * hidden * vocab * mtp
+
+        # Each MTP layer adds one dense layer of MLP + self-attention.
+        expected_delta = batch_size * seq * (mtp * mlp_per_layer + mtp * attn_per_layer + mtp_norms + extra_logit)
+
+        actual_delta = f_mtp - f_no_mtp
+        assert actual_delta == expected_delta, f"Expected MTP delta {expected_delta:.6e} but got {actual_delta:.6e}"
+
+
+@pytest.mark.unit
+class TestProviderOverride:
+    """Tests for the `_get_num_floating_point_operations` model-provider override path.
+
+    Some bridges (e.g., diffusion or MoE families with custom accounting) implement
+    `_get_num_floating_point_operations` on the model config to bypass the generic
+    calculator. The early-return at the top of `num_floating_point_operations`
+    must call that method exactly once and return its result without entering
+    the calculator.
+    """
+
+    def test_provider_override_short_circuits(self):
+        """When the model exposes _get_num_floating_point_operations, it short-circuits."""
+        sentinel = 1234567
+        captured: list[int] = []
+
+        m = MockModelConfig()
+
+        def custom(batch_size):
+            captured.append(batch_size)
+            return sentinel * batch_size
+
+        # Attach as instance attribute — `hasattr(cfg.model, "...")` becomes True.
+        m._get_num_floating_point_operations = custom
+
+        cfg = MockConfigContainer(model=m)
+        assert num_floating_point_operations(cfg, batch_size=1) == sentinel
+        assert num_floating_point_operations(cfg, batch_size=4) == sentinel * 4
+        # Override must have been invoked twice with the right batch_size args.
+        assert captured == [1, 4], f"Override call log mismatch: {captured}"

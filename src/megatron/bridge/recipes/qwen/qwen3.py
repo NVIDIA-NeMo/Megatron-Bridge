@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Optional
+
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
@@ -626,6 +629,93 @@ def qwen3_600m_sft_128k_config() -> ConfigContainer:
     # Fewer warmup steps for long-context SFT
     cfg.scheduler.lr_warmup_iters = 10
     cfg.scheduler.lr_warmup_init = 1.0e-11
+
+    return cfg
+
+
+def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
+    """Return a 128K full SFT config for Qwen3 600M with YaRN scaling.
+
+    This recipe uses the ``math`` subset of
+    ``nvidia/Nemotron-Cascade-2-SFT-Data`` with the Hugging Face chat
+    template from ``Qwen/Qwen3-0.6B``.
+
+    Recommended parallelism: TP=1, CP=8 (minimum 8 GPUs).
+    """
+    cfg = qwen3_600m_sft_config()
+    hf_path = "Qwen/Qwen3-0.6B"
+
+    def process_hf_chat_messages_example(
+        example: dict[str, Any], tokenizer: Optional[Any] = None
+    ) -> dict[str, list[dict[str, str]]]:
+        """Return HF chat-format messages unchanged for chat-template SFT."""
+        del tokenizer
+        return {"messages": example["messages"]}
+
+    # Model and tokenizer use the same HF checkpoint so the chat template matches the dataset.
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.tokenizer.tokenizer_model = hf_path
+
+    # 128K context parallelism.
+    cfg.model.context_parallel_size = 8
+
+    # 128K sequence length with chat-format HF dataset input.
+    cfg.model.seq_length = 128 * 1024
+    cfg.dataset = HFDatasetConfig(
+        dataset_name="nvidia/Nemotron-Cascade-2-SFT-Data",
+        dataset_subset="math",
+        process_example_fn=process_hf_chat_messages_example,
+        split="train",
+        hf_kwargs={
+            "data_files": {"train": "math/math_notool.jsonl"},
+        },
+        seq_length=cfg.model.seq_length,
+        seed=5678,
+        memmap_workers=8,
+        dataloader_type="batch",
+        do_validation=True,
+        do_test=False,
+        val_proportion=0.001,
+        num_workers=2,
+        data_sharding=True,
+        pin_memory=True,
+        persistent_workers=False,
+        packed_sequence_specs=None,
+        dataset_kwargs={
+            "chat": True,
+            "use_hf_tokenizer_chat_template": True,
+            "pad_to_max_length": True,
+        },
+        rewrite=False,
+    )
+
+    # Apply YaRN RoPE scaling from the model's native 40K context window to 128K.
+    cfg.model.position_embedding_type = "yarn"
+    cfg.model.yarn_original_max_position_embeddings = 40960
+    cfg.model.yarn_rotary_scaling_factor = cfg.model.seq_length / cfg.model.yarn_original_max_position_embeddings
+    cfg.model.yarn_beta_fast = 32.0
+    cfg.model.yarn_beta_slow = 1.0
+    cfg.model.yarn_mscale = 1.0
+    cfg.model.yarn_mscale_all_dim = 1.0
+    cfg.model.yarn_correction_range_round_to_int = False
+
+    # Smaller batch size to fit long sequences.
+    cfg.train.global_batch_size = 8
+
+    # Required for CP > 1 in long-context SFT.
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.calculate_per_token_loss = True
+    cfg.ddp.average_in_collective = False
+
+    # Long-context SFT stability overrides.
+    cfg.optimizer.lr = 1.0e-6
+    cfg.optimizer.min_lr = 1.0e-6
+    cfg.optimizer.use_distributed_optimizer = False
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_warmup_init = 1.0e-11
+
+    # Timeout for distributed training to avoid timeout errors in dataset loading.
+    cfg.dist.distributed_timeout_minutes = 30
 
     return cfg
 

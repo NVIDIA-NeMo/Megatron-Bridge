@@ -22,6 +22,7 @@ Tests the full adapter verification pipeline:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,15 @@ from megatron.bridge.training.model_load_save import temporary_distributed_conte
 
 
 peft = pytest.importorskip("peft", reason="peft library not installed")
+
+
+def _find_free_port() -> int:
+    """Return a port that is currently free on localhost."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
 
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent.parent
@@ -146,6 +156,13 @@ def adapter_and_checkpoint(qwen3_toy_model_dir, tmp_path_factory):
 class TestVerifyAdapter:
     """End-to-end tests for examples/conversion/adapter/verify_adapter.py."""
 
+    @pytest.fixture(autouse=True)
+    def _cleanup_distributed(self):
+        """Destroy any lingering process group after each test to release ports."""
+        yield
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
+
     def test_cpu_peft_only(self, qwen3_toy_model_dir, adapter_and_checkpoint):
         """verify_adapter.py --cpu without --lora-checkpoint (PEFT-only check)."""
         adapter_dir, _ = adapter_and_checkpoint
@@ -160,7 +177,8 @@ class TestVerifyAdapter:
             "--cpu",
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
+        env = {**os.environ, "MASTER_PORT": str(_find_free_port())}
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, env=env)
         print(result.stdout)
         if result.returncode != 0:
             print(result.stderr)
@@ -183,7 +201,8 @@ class TestVerifyAdapter:
             "--cpu",
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
+        env = {**os.environ, "MASTER_PORT": str(_find_free_port())}
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, env=env)
         print(result.stdout)
         if result.returncode != 0:
             print(result.stderr)
@@ -221,7 +240,8 @@ class TestVerifyAdapter:
             str(pp),
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
+        env = {**os.environ, "MASTER_PORT": str(_find_free_port())}
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, env=env)
         print(result.stdout)
         if result.returncode != 0:
             print(result.stderr)

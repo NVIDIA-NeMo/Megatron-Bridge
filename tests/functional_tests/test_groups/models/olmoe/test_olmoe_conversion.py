@@ -283,3 +283,9 @@ class TestOlMoEConversion:
         except Exception as e:
             print(f"Error during OLMoE {test_name} conversion test: {e}")
             raise
+
+    @pytest.mark.run_only_on("GPU")
+    def test_olmoe_autoconfig_roundtrip(self, olmoe_toy_model_path, tmp_path):
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(olmoe_toy_model_path, tmp_path)

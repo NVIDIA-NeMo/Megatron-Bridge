@@ -57,7 +57,8 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
-    "skills/perf-techniques/README.md",
+    "skills/linting-and-formatting/SKILL.md",
+    "skills/parity-testing/SKILL.md",
 ]
 
 suppress_warnings = [
@@ -135,4 +136,7 @@ html_extra_path = ["project.json", "versions1.json"]
 linkcheck_ignore = [
     ".*github\\.com.*",
     ".*githubusercontent\\.com.*",
+    ".*sched\\.com.*",
 ]
+linkcheck_retries = 10
+linkcheck_rate_limit_timeout = 600

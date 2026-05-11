@@ -168,7 +168,7 @@ def create_config(
         scheduler=scheduler_config,
         dataset=dataset_config,
         logger=LoggerConfig(log_interval=10, tensorboard_dir=None),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=model_config.padded_vocab_size),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=model_config.vocab_size),
         checkpoint=CheckpointConfig(save=None, load=None, save_interval=None),
         rng=RNGConfig(seed=1234),
         ddp=ddp_config,

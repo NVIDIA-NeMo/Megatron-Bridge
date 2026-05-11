@@ -40,7 +40,7 @@ See [conversion.sh](conversion.sh) for checkpoint conversion examples.
 ### Import HF → Megatron
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model Qwen/Qwen2.5-Omni-7B \
     --megatron-path ${WORKSPACE}/models/Qwen2.5-Omni-7B
 ```
@@ -48,7 +48,7 @@ python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model Qwen/Qwen2.5-Omni-7B \
     --megatron-path ${WORKSPACE}/models/Qwen2.5-Omni-7B/iter_0000000 \
     --hf-path ${WORKSPACE}/models/Qwen2.5-Omni-7B-hf-export
@@ -57,7 +57,7 @@ python examples/conversion/convert_checkpoints.py export \
 ### Round-trip Validation
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=2 \
+uv run python -m torch.distributed.run --nproc_per_node=2 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
     --hf-model-id Qwen/Qwen2.5-Omni-7B \
     --megatron-load-path ${WORKSPACE}/models/Qwen2.5-Omni-7B/iter_0000000 \
@@ -73,7 +73,7 @@ See [inference.sh](inference.sh) for multimodal generation with:
 
 The default parallelism for 7B is `--tp 2` (2 GPUs). For larger variants scale TP accordingly.
 
-### Example: Video only
+### Example: Video + Audio
 
 ```bash
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
@@ -81,22 +81,25 @@ uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     --hf_model_path Qwen/Qwen2.5-Omni-7B \
     --video_url "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/cookbook/audio_visual.mp4" \
     --prompt "What was the first sentence the boy said when he met the girl?" \
-    --max_new_tokens 64 \
-    --tp 2
-```
-
-### Example: Video + Audio (requires ffmpeg and a local file)
-
-```bash
-# Download the video first
-wget -O /path/to/video.mp4 "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/cookbook/audio_visual.mp4"
-
-uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
-    examples/conversion/hf_to_megatron_generate_omni_lm.py \
-    --hf_model_path Qwen/Qwen2.5-Omni-7B \
-    --video_path /path/to/video.mp4 \
-    --prompt "What was the first sentence the boy said when he met the girl?" \
     --use_audio_in_video \
     --max_new_tokens 64 \
-    --tp 2
+    --tp 2 \
+    --trust_remote_code
+```
+
+> **Note:** When using `--video_url`, `decord` may fail to stream directly; the script falls back to `torchvision` automatically. For reliable audio extraction, download the video first and use `--video_path` instead.
+
+**Expected output:**
+```
+======== GENERATED TEXT OUTPUT ========
+Video: https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/cookbook/audio_visual.mp4
+Use audio in video: True
+Prompt: What was the first sentence the boy said when he met the girl?
+Generated: system
+You are a helpful assistant.
+user
+What was the first sentence the boy said when he met the girl?
+assistant
+The first sentence the boy said when he met the girl was, 'Hey, it's cold out here.'
+=======================================
 ```
