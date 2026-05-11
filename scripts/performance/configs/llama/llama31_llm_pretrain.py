@@ -44,7 +44,11 @@ def set_llama31_common_configs(cfg: ConfigContainer) -> None:
 
 
 def disable_param_gather_overlap(cfg: ConfigContainer) -> None:
-    """Disable parameter-gather overlap to reduce training peak memory."""
+    """
+    Disable parameter-gather overlap to reduce training peak memory and avoid OOM.
+    Note: This is a workaround and should be removed once the issue is fixed.
+    See: https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/3714
+    """
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
     cfg.comm_overlap.overlap_param_gather = False
