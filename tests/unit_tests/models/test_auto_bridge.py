@@ -23,7 +23,7 @@ import torch
 from transformers import LlamaConfig
 from transformers.configuration_utils import PretrainedConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge, canonicalize_hf_architecture
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -426,6 +426,22 @@ class TestAutoBridge:
         # Missing architectures attribute
         config_no_arch = Mock(spec=[])
         assert AutoBridge.supports(config_no_arch) is False
+
+    def test_nemotron_omni_architecture_aliases(self):
+        """Test EA and GA Nemotron Omni architecture names resolve to the GA bridge key."""
+        config = Mock()
+
+        assert canonicalize_hf_architecture("NemotronH_Nano_VL_V2") == "NemotronH_Nano_Omni_Reasoning_V3"
+        assert (
+            canonicalize_hf_architecture("NemotronH_Nano_Omni_Reasoning_V3")
+            == "NemotronH_Nano_Omni_Reasoning_V3"
+        )
+
+        config.architectures = ["NemotronH_Nano_VL_V2"]
+        assert AutoBridge.supports(config) is True
+
+        config.architectures = ["NemotronH_Nano_Omni_Reasoning_V3"]
+        assert AutoBridge.supports(config) is True
 
     def test_list_supported_models(self):
         """Test listing supported models."""
