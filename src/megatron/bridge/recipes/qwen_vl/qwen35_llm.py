@@ -68,8 +68,8 @@ def _qwen35_llm_sft_apply_common(
     cfg.model.sequence_parallel = False
 
     cfg.model.freeze_language_model = False
-    cfg.model.freeze_vision_model = True
-    cfg.model.freeze_vision_projection = True
+    # No vision tower exists (add_encoder=False), so freeze_vision_model /
+    # freeze_vision_projection are no-ops — omit them.
 
     cfg.model.mtp_num_layers = None
 

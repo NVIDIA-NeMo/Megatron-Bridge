@@ -70,10 +70,10 @@ def _assert_basic_config(cfg):
     assert cfg.model is not None
     assert cfg.train is not None
     assert cfg.tokenizer.tokenizer_model is not None
-    assert cfg.model.freeze_vision_model is True
-    assert cfg.model.freeze_vision_projection is True
     assert cfg.model.mtp_num_layers is None
     # Vision tower is not instantiated — peak memory reflects the LLM only.
+    # freeze_vision_model / freeze_vision_projection are intentionally not set
+    # by the recipe: with no vision module they would be no-ops.
     assert cfg.model.add_encoder is False
 
 
