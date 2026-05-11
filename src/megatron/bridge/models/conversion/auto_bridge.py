@@ -45,11 +45,20 @@ DataclassT = TypeVar("DataclassT")
 SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForCausalLM",
     "ForConditionalGeneration",
-    "NemotronH_Nano_VL_V2",
+    "NemotronH_Nano_Omni_Reasoning_V3",
 )
+
+HF_ARCHITECTURE_ALIASES: dict[str, str] = {
+    "NemotronH_Nano_VL_V2": "NemotronH_Nano_Omni_Reasoning_V3",
+}
 
 # Preformatted display string for error/help messages
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
+
+
+def canonicalize_hf_architecture(architecture: str) -> str:
+    """Return the canonical architecture name used for bridge dispatch."""
+    return HF_ARCHITECTURE_ALIASES.get(architecture, architecture)
 
 
 class AutoBridge(Generic[MegatronModelT]):
@@ -142,7 +151,10 @@ class AutoBridge(Generic[MegatronModelT]):
         architectures = getattr(config, "architectures", [])
         if not architectures:
             return False
-        return any(arch.endswith(SUPPORTED_HF_ARCHITECTURES) for arch in architectures)
+        return any(
+            canonicalize_hf_architecture(arch).endswith(SUPPORTED_HF_ARCHITECTURES)
+            for arch in architectures
+        )
 
     @classmethod
     def from_hf_config(cls, config: PretrainedConfig) -> "AutoBridge":
@@ -906,8 +918,9 @@ class AutoBridge(Generic[MegatronModelT]):
         causal_lm_arch = None
         for architecture_name in architectures:
             # TODO: Can we improve this?
-            if architecture_name.endswith(SUPPORTED_HF_ARCHITECTURES):
-                causal_lm_arch = architecture_name
+            canonical_architecture_name = canonicalize_hf_architecture(architecture_name)
+            if canonical_architecture_name.endswith(SUPPORTED_HF_ARCHITECTURES):
+                causal_lm_arch = canonical_architecture_name
                 break
 
         if not causal_lm_arch:
@@ -923,7 +936,7 @@ class AutoBridge(Generic[MegatronModelT]):
         cls_name = get_causal_lm_class_name_via_auto_map(config=config)
         if cls_name is not None:
             # For auto_map models, return the class name as a string
-            return cls_name
+            return canonicalize_hf_architecture(cls_name)
 
         try:
             return getattr(transformers, causal_lm_arch)
@@ -955,8 +968,9 @@ class AutoBridge(Generic[MegatronModelT]):
         # Check if we have an implementation for this specific architecture
         architecture = None
         for arch_name in config.architectures:
-            if arch_name.endswith(SUPPORTED_HF_ARCHITECTURES):
-                architecture = arch_name
+            canonical_arch_name = canonicalize_hf_architecture(arch_name)
+            if canonical_arch_name.endswith(SUPPORTED_HF_ARCHITECTURES):
+                architecture = canonical_arch_name
                 break
 
         if architecture:
@@ -964,7 +978,7 @@ class AutoBridge(Generic[MegatronModelT]):
             arch_name = get_causal_lm_class_name_via_auto_map(config=config)
             if arch_name is not None:
                 # For auto_map models, use class-name string
-                arch_key = arch_name
+                arch_key = canonicalize_hf_architecture(arch_name)
             else:
                 try:
                     arch_class = getattr(transformers, architecture)

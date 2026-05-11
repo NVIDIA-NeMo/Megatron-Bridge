@@ -27,8 +27,10 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
 
-
-@MegatronModelBridge.register_bridge(source="NemotronH_Nano_VL_V2", target=NemotronOmniModel)
+@MegatronModelBridge.register_bridge(
+    source="NemotronH_Nano_Omni_Reasoning_V3",
+    target=NemotronOmniModel,
+)
 class NemotronOmniBridge(NemotronVLBridge):
     """Bridge for Nemotron Omni (VL + sound) models.
 
