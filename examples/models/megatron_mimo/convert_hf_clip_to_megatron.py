@@ -70,9 +70,7 @@ def convert_hf_clip_to_megatron(
 
     # transformers >= 5.6 dropped the "vision_model." prefix from CLIPVisionModel
     # state_dict keys. Normalize both old and new layouts to the prefixed form.
-    state_dict = {
-        (k if k.startswith("vision_model.") else f"vision_model.{k}"): v for k, v in state_dict.items()
-    }
+    state_dict = {(k if k.startswith("vision_model.") else f"vision_model.{k}"): v for k, v in state_dict.items()}
 
     new_state_dicts = [{"model": {}} for _ in range(tensor_parallel_size)]
 
