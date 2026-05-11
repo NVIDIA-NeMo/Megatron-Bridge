@@ -221,7 +221,7 @@ class PerfEnvPlugin(Plugin):
         executor.env_vars["NCCL_ALGO"] = "Ring"
         executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
         executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        logger.info("Deterministic mode enabled: NCCL_ALGO=Ring, NVTE_ALLOW_NONDETERMINISTIC_ALGO=0")
+        logger.info("Deterministic mode enabled")
 
     def _set_num_cuda_device_max_connections(
         self,

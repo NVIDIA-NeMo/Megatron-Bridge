@@ -24,6 +24,19 @@ def apply_determinism_overrides(cfg: ConfigContainer) -> None:
     disables TP comm overlap (which uses non-deterministic NCCL collectives).
     Attention backend selection is a separate concern and is not touched here.
 
+    The matching validator that enforces these flags at training time is
+    :meth:`megatron.bridge.training.config.ConfigContainer._validate_and_apply_deterministic_mode`.
+
+    This function is idempotent and is safe to call on configs with
+    ``comm_overlap = None``.
+
+    Note:
+        Bit-exact reproducibility additionally requires runtime env vars
+        (``NCCL_ALGO=Ring``, ``NVTE_ALLOW_NONDETERMINISTIC_ALGO=0``,
+        ``CUBLAS_WORKSPACE_CONFIG=:4096:8``). The performance launcher sets
+        these via ``PerfEnvPlugin(deterministic=True)``; callers outside that
+        launcher must set them themselves.
+
     Args:
         cfg: Recipe config to modify.
     """
