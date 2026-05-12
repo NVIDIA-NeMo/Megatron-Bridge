@@ -45,6 +45,8 @@ PERF_ENV_VARS = {
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
     "HF_HUB_OFFLINE": "0",  # Keep HF Hub online by default; --offline flips this to 1.
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "NCCL_GRAPH_REGISTER": "0",
 }
 
 
@@ -248,6 +250,7 @@ def dgxc_executor(
         "NVTE_DP_AMAX_REDUCE_INTERVAL": "0",
         "NVTE_ASYNC_AMAX_REDUCTION": "1",
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "NCCL_GRAPH_REGISTER": "0",
         "TOKENIZERS_PARALLELISM": "False",
         "TRANSFORMERS_OFFLINE": "1",
         "HF_HOME": "/nemo-workspace/pagaray/hf_cache",
