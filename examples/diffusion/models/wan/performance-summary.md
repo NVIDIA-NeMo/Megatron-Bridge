@@ -1,7 +1,5 @@
 # Performance
 
-As part of the NVIDIA NeMo Framework, DFM, provides the most recent training techniques for training advanced generative AI models, such as model parallelization, optimized attention mechanisms, and more, to achieve high training throughput.
-
 This page provides the current performance benchmarks for models using DFM across different GPU systems and configurations as we continue to optimize the model for optimal performance. Please refer to `examples/megatron/recipes/wan/conf` for updated YAML configurations.
 
 ## Nomenclature
