@@ -4,29 +4,46 @@ End-to-end conversion and inference scripts for the DeepSeek V4 family on Megatr
 
 The bridge supports four published variants out of the same code path. The on-disk quantisation differs between post-trained (Flash, Pro) and pretrained-only (Flash-Base, Pro-Base) models — see [`docs/models/llm/deepseek-v4.md`](../../../docs/models/llm/deepseek-v4.md) for the per-variant scheme.
 
-| Variant | HF path | Quant scheme | TP | EP | Min GPUs |
-|---------|---------|--------------|---:|---:|---------:|
-| DeepSeek-V4-Flash | `deepseek-ai/DeepSeek-V4-Flash` | FP8 attn + MXFP4 experts | 1 | 4 | 4 × B200 192 GB |
-| DeepSeek-V4-Flash-Base | `deepseek-ai/DeepSeek-V4-Flash-Base` | uniform FP8 (F32 scales) | 1 | 4 | 4 × B200 192 GB |
-| DeepSeek-V4-Pro | `deepseek-ai/DeepSeek-V4-Pro` | FP8 attn + MXFP4 experts | 1 | 16 | 16 × B200 192 GB |
-| DeepSeek-V4-Pro-Base | `deepseek-ai/DeepSeek-V4-Pro-Base` | uniform FP8 (F32 scales) | 1 | 16 | 16 × B200 192 GB |
+| Variant | HF path | Quant scheme | TP | EP | Min GPUs | Parity status |
+|---------|---------|--------------|---:|---:|---------:|---------------|
+| DeepSeek-V4-Flash | `deepseek-ai/DeepSeek-V4-Flash` | FP8 attn + MXFP4 experts | 1 | 4 | 4 × B200 192 GB | Verified, last-real-token logit cosine ~0.97-0.99 vs official inference |
+| DeepSeek-V4-Flash-Base | `deepseek-ai/DeepSeek-V4-Flash-Base` | uniform FP8 (F32 scales) | 1 | 4 | 4 × B200 192 GB | Verified, last-real-token logit cosine 0.9866-0.9930, mean 0.9907 vs official inference |
+| DeepSeek-V4-Pro | `deepseek-ai/DeepSeek-V4-Pro` | FP8 attn + MXFP4 experts | 1 | 16 | 16 × B200 192 GB | Algorithmic dequant validated; end-to-end unmeasured |
+| DeepSeek-V4-Pro-Base | `deepseek-ai/DeepSeek-V4-Pro-Base` | uniform FP8 (F32 scales) | 1 | 16 | 16 × B200 192 GB | Algorithmic dequant validated; end-to-end unmeasured |
 
-DSv4 currently requires **TP=1**; scale via expert and pipeline parallelism. The model does not fit on A100 80 GB at TP=1.
+## Examples
 
-## MCore prerequisites
+- `conversion.sh` imports HF weights into Megatron Bridge and exports Megatron checkpoints back to HF format.
+- `inference.sh` runs text generation against an HF or Megatron checkpoint.
 
-DSv4 imports require the following MCore commits, none of which are on a tagged release yet:
+Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each script's header comments for the expected environment variables and `#SBATCH` directives to edit before submitting.
 
-- PR [#3430](https://github.com/NVIDIA/Megatron-LM/pull/3430) (Hyper-Connections)
-- PR [#4458](https://github.com/NVIDIA/Megatron-LM/pull/4458) (DSv4 hybrid attention / CSA / DSA indexer)
-- PR [#4481](https://github.com/NVIDIA/Megatron-LM/pull/4481) (hash MoE + SwiGLU clamp)
-- PR [#4518](https://github.com/NVIDIA/Megatron-LM/pull/4518) (separate `e_proj` / `h_proj` for MTP with hyper-connections)
+The bridge's `maybe_modify_loaded_hf_weight` hook dispatches dequantisation by tensor dtype:
 
-Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at a fork branch that includes them.
+- `int8` -> MXFP4 packed nibbles -> `bfloat16` via the E2M1 lookup table and per-row 16-K-tile E8M0 scales
+- `float8_e4m3fn` with companion `.scale` -> `bfloat16` via 128x128 block-scale expansion, handling both E8M0 and F32 scale dtypes
 
-## Files
+No external dequantisation script is required.
 
-- `conversion.sh` — HF → Megatron import and Megatron → HF export (single-node, real model)
-- `inference.sh` — text generation against an HF or Megatron checkpoint
+## Parallelism Configurations
 
-Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each script's header comments for the expected env vars and `#SBATCH` directives to edit before submitting.
+DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported alongside the DSv4 hybrid attention path. Scale via expert and pipeline parallelism instead.
+
+| Model | TP | PP | EP | Min GPUs | GPU Type | Use Case |
+|-------|---:|---:|---:|---------:|----------|----------|
+| DeepSeek-V4-Flash | 1 | 1 | 4 | 4 | B200 192 GB | Smoke / single-node inference |
+| DeepSeek-V4-Flash-Base | 1 | 1 | 4 | 4 | B200 192 GB | Smoke / single-node inference |
+| DeepSeek-V4-Pro | 1 | 1+ | 16 | 16 | B200 192 GB | Multi-node inference or conversion |
+| DeepSeek-V4-Pro-Base | 1 | 1+ | 16 | 16 | B200 192 GB | Multi-node inference or conversion |
+
+The model does not fit on A100 80 GB at TP=1; use B200 192 GB or larger.
+
+## Known Limitations
+
+- **MCore prerequisites are not yet on a tagged release.** DSv4 imports require PR [#3430](https://github.com/NVIDIA/Megatron-LM/pull/3430), PR [#4458](https://github.com/NVIDIA/Megatron-LM/pull/4458), PR [#4481](https://github.com/NVIDIA/Megatron-LM/pull/4481), and PR [#4518](https://github.com/NVIDIA/Megatron-LM/pull/4518). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch.
+
+- **MTP is disabled for inference** via `disable_mtp_for_inference()`. MTP weights are mapped end-to-end and loaded into the Megatron model.
+
+- **`fast_hadamard_transform` is optional.** When unavailable, DSA falls back to a PyTorch hadamard implementation. Throughput is lower but numerical behavior is unchanged.
+
+- **Logit parity is verified for Flash and Flash-Base** against the official inference stack at last-real-token logits. The remaining gap is structural, from different attention/HC kernel decompositions and accumulation precisions between MCore and official inference.
