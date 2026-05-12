@@ -61,15 +61,3 @@ The performance data includes:
 | Model | #-GPUs | GBS | MBS | Sequence Length | FSDP | TP | SP | PP | CP | VP | EP | Model TFLOP / sec / GPU |
 |-------|--------|-----|-----|-----------------|------|----|----|----|----|----|----|-------------------------|
 |Wan 2.1 14B|128|128|1|37440|0|2|1|1|4|0|0|325.77|
-
-
-## NeMo Automodel Pre-Training Performance
-The following table summarizes the performance leveraging the NeMo Automodel backend.
-
-#### System: DGX-H100
-
-| Model | #-GPUs | GBS | MBS | Sequence Length | FSDP | DP | TP | SP | PP | CP | VP | EP | Model TFLOP / sec / GPU |
-|-------|--------|-----|-----|-----------------|------|----|----|----|----|----|----|----|-------------------------|
-|Wan 2.1 14B|8|8|1|37440|1|8|1|1|1|1|0|0|175.88|
-|Wan 2.1 14B|64|64|1|37440|1|64|1|1|1|1|0|0|228.85|
-
