@@ -1,0 +1,13 @@
+{
+  "description": "Fixed prompts for DeepSeek parity testing. Keep this file stable across runs so HF and Megatron-Bridge artifacts are directly comparable.",
+  "prompts": [
+    {"id": "factual_short", "text": "The capital of France is"},
+    {"id": "factual_long", "text": "Albert Einstein was born in 1879 in the German city of"},
+    {"id": "code", "text": "def fibonacci(n):\n    if n <= 1:\n        return n\n    return"},
+    {"id": "math", "text": "The derivative of x squared with respect to x is"},
+    {"id": "chat_user", "text": "User: What is 2+2?\nAssistant:"},
+    {"id": "multilingual", "text": "Translate to French: 'Hello, how are you?' ->"},
+    {"id": "edge_repeat", "text": "the the the the the the the"},
+    {"id": "edge_long_context", "text": "Once upon a time, in a kingdom far far away, there lived a young prince who dreamed of adventure. Every day he would gaze out from the castle towers wondering what lay beyond the distant mountains. One morning he decided to"}
+  ]
+}
