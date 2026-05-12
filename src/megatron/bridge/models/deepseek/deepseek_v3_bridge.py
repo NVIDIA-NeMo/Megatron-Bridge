@@ -19,6 +19,7 @@ import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
@@ -36,27 +37,10 @@ except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
 
-_FP8_BLOCK_SIZE = 128
+__all__ = ["DeepSeekV3Bridge", "_dequant_fp8_blockwise"]
 
 
-def _dequant_fp8_blockwise(weight: torch.Tensor, scale_inv: torch.Tensor) -> torch.Tensor:
-    """Block-wise FP8 dequantization: ``out = fp8_val * scale_inv`` per 128x128 block.
-
-    DeepSeek-V3 stores linear weights as ``float8_e4m3fn`` with a separate
-    ``weight_scale_inv`` tensor holding per-block scales. The true bf16 weight is
-    recovered by multiplying each 128x128 weight block by the matching scale.
-    """
-    M, N = weight.shape
-    B = _FP8_BLOCK_SIZE
-    w = weight.float()
-    out = torch.empty_like(w)
-    sM, sN = scale_inv.shape
-    for bi in range(sM):
-        for bj in range(sN):
-            r0, r1 = bi * B, min((bi + 1) * B, M)
-            c0, c1 = bj * B, min((bj + 1) * B, N)
-            out[r0:r1, c0:c1] = w[r0:r1, c0:c1] * scale_inv[bi, bj]
-    return out.to(torch.bfloat16)
+_dequant_fp8_blockwise = quantization_utils.dequantize_fp8_blockwise
 
 
 @MegatronModelBridge.register_bridge(
@@ -186,13 +170,8 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> torch.Tensor:
         """Dequantize ``weight`` if it is stored as FP8 with a matching ``*_scale_inv``."""
-        if weight.dtype not in (torch.float8_e4m3fn, torch.float8_e5m2):
-            return weight
         scale_key = param_name + "_scale_inv"
-        if weight.ndim == 2 and scale_key in hf_state_dict:
-            return _dequant_fp8_blockwise(weight, hf_state_dict[scale_key])
-        # No scale found (e.g. activation scales for non-linear params) — fall back to bare cast.
-        return weight.float().to(torch.bfloat16)
+        return quantization_utils.maybe_dequantize_fp8_blockwise(weight, hf_state_dict.get(scale_key))
 
     def maybe_modify_converted_hf_weight(
         self,
