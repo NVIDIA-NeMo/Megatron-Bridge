@@ -82,6 +82,7 @@ apidocs/index.rst
 :hidden:
 
 releases/release-process.md
+releases/cherrypick-policy.md
 releases/software-versions.md
 releases/changelog.md
 releases/known-issues.md
