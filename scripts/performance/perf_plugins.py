@@ -296,6 +296,15 @@ class PerfEnvPlugin(Plugin):
             # fragmentation pattern at MBS=4 under HybridEP + TE-scoped CUDA
             # graphs (attn/moe_router/moe_preprocess), so the same fix applies.
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        elif (
+            model_family_name in ["nemotronh"]
+            and model_recipe_name in ["nemotron_3_super"]
+            and train_task == "pretrain"
+            and gpu in ["gb300"]
+            and compute_dtype in ["nvfp4"]
+        ):
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+            executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
 
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
