@@ -1,5 +1,10 @@
 #!/bin/bash
-# Heterogeneous MIMO LLaVA training — LLM on ranks 0-3, CLIP on ranks 4-7.
+# Heterogeneous MIMO LLaVA smoke test against the mini audio-augmented dataset.
+# LLM on ranks 0-3 (TP=4), CLIP on ranks 4-5 (TP=2), Whisper on ranks 6-7 (TP=2).
+#
+# Assumes ./prepare_llava_pretrain_audio.sh has been run.
+
+set -euo pipefail
 
 GPUS_PER_NODE=8
 NUM_NODES=1
@@ -42,7 +47,7 @@ fi
 uv run torchrun \
     --nproc_per_node "$GPUS_PER_NODE" \
     --nnodes "$NUM_NODES" \
-    examples/models/megatron_mimo/megatron_mimo_training_llava.py \
+    examples/models/megatron_mimo/megatron_mimo_training_llava_audio.py \
     --micro-batch-size 4 \
     --global-batch-size 96 \
     --train-iters 100 \
@@ -55,7 +60,13 @@ uv run torchrun \
     --min-lr ${MIN_LR} \
     --weight-decay 0.0 \
     --wandb-project "Megatron-Bridge-MIMO" \
-    --wandb-exp-name "mimo-llava-hetero-e2e-${LLM_TAG}-test${EXP_SUFFIX}" \
+    --wandb-exp-name "mimo-llava-audio-hetero-e2e-${LLM_TAG}-test${EXP_SUFFIX}" \
     --wandb-save-dir "/tmp/wandb" \
-    ${DETERMINISTIC_FLAG} \
+    --dataset-root /path/to/LLaVA-Pretrain-Audio-Augmented \
+    --hf-data-files "blip_laion_cc_sbu_558k_with_audio.json" \
+    --audio-column audio \
     --freeze-llm ${FREEZE_LLM} \
+    ${DETERMINISTIC_FLAG} \
+    --vision-encoder-checkpoint /path/to/clip_checkpoint \
+    --language-model-checkpoint /path/to/llm_checkpoint \
+    --audio-encoder-checkpoint /path/to/whisper_checkpoint
