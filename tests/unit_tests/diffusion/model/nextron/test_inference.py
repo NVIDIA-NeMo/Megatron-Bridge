@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for NemotronDiffusion inference utilities."""
+"""Unit tests for NexTron inference utilities."""
 
 import pytest
 import torch
 
-from megatron.bridge.diffusion.models.nemotron_diffusion.inference_nemotron_diffusion import (
+from megatron.bridge.diffusion.models.nextron.inference_nextron import (
     add_gumbel_noise,
     get_num_transfer_tokens,
     get_transfer_index,
@@ -191,8 +191,8 @@ class TestGetTransferIndex:
 
 from unittest.mock import MagicMock, patch
 
-import megatron.bridge.diffusion.models.nemotron_diffusion.inference_nemotron_diffusion as _inf_mod
-from megatron.bridge.diffusion.models.nemotron_diffusion.inference_nemotron_diffusion import (
+import megatron.bridge.diffusion.models.nextron.inference_nextron as _inf_mod
+from megatron.bridge.diffusion.models.nextron.inference_nextron import (
     _clear_kv_cache,
     _get_core_attentions,
     _model_forward,
@@ -205,7 +205,7 @@ from megatron.bridge.diffusion.models.nemotron_diffusion.inference_nemotron_diff
 
 
 def _make_mock_model(num_layers=2, vocab_size=50, seq_len=None):
-    """Build a mock Megatron GPT-like model with NemotronDiffusionAttention layers."""
+    """Build a mock Megatron GPT-like model with NexTronAttention layers."""
     mock_attn = MagicMock()
     layer = MagicMock()
     layer.self_attention.core_attention = mock_attn
@@ -458,7 +458,7 @@ class TestModelForward:
 # ---------------------------------------------------------------------------
 
 
-_MODULE = "megatron.bridge.diffusion.models.nemotron_diffusion.inference_nemotron_diffusion"
+_MODULE = "megatron.bridge.diffusion.models.nextron.inference_nextron"
 
 
 class TestGenerateAr:
@@ -651,7 +651,7 @@ class TestGenerateDllm:
 # TestTpSendCmd
 # ---------------------------------------------------------------------------
 
-import megatron.bridge.diffusion.models.nemotron_diffusion.inference_nemotron_diffusion as inf_mod
+import megatron.bridge.diffusion.models.nextron.inference_nextron as inf_mod
 
 
 class TestTpSendCmd:

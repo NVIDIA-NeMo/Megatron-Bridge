@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NemotronDiffusion model provider: text-only GPTModel + NemotronDiffusionAttention for sbd_block_diff."""
+"""NexTron model provider: text-only GPTModel + NexTronAttention for sbd_block_diff."""
 
 import inspect
 from dataclasses import dataclass
 
-from megatron.bridge.diffusion.models.common.nemotron_diffusion_attention import NemotronDiffusionAttention
+from megatron.bridge.diffusion.models.common.nextron_attention import NexTronAttention
 from megatron.bridge.models import Ministral3ModelProvider
 from megatron.bridge.models.gpt_provider import ModuleSpec
 
 
 @dataclass
-class NemotronDiffusionModelProvider(Ministral3ModelProvider):
-    """Text-only diffusion LM with NemotronDiffusionAttention (sbd_block_diff) for dLLM training."""
+class NexTronModelProvider(Ministral3ModelProvider):
+    """Text-only diffusion LM with NexTronAttention (sbd_block_diff) for dLLM training."""
 
     mask_token_id: int = 100
     dlm_paradigm: str = "sbd_block_diff"
@@ -44,7 +44,7 @@ class NemotronDiffusionModelProvider(Ministral3ModelProvider):
                 transformer_layer_spec = transformer_layer_spec(self)
 
         if hasattr(transformer_layer_spec, "submodules"):
-            transformer_layer_spec.submodules.self_attention.submodules.core_attention = NemotronDiffusionAttention
+            transformer_layer_spec.submodules.self_attention.submodules.core_attention = NexTronAttention
 
         original_spec = self.transformer_layer_spec
         self.transformer_layer_spec = transformer_layer_spec

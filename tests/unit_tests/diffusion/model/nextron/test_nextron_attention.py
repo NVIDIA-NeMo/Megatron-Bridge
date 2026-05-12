@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for NemotronDiffusionAttention and its helper functions."""
+"""Unit tests for NexTronAttention and its helper functions."""
 
 import math
 import types
@@ -23,7 +23,7 @@ import torch
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.diffusion.models.common.nemotron_diffusion_attention import (
+from megatron.bridge.diffusion.models.common.nextron_attention import (
     Ministral3RotaryEmbedding,
     _get_llama_4_attn_scale,
     apply_rotary_pos_emb,
@@ -49,7 +49,7 @@ def _make_config(
     apply_llama4: bool = True,
     apply_qk_scaling: bool = False,
 ) -> TransformerConfig:
-    """Build a minimal TransformerConfig for NemotronDiffusionAttention."""
+    """Build a minimal TransformerConfig for NexTronAttention."""
     hf_text_config = types.SimpleNamespace(
         max_position_embeddings=seq_len,
         rope_parameters={
@@ -99,7 +99,7 @@ def _make_attention(
     apply_llama4: bool = True,
     apply_qk_scaling: bool = False,
 ):
-    """Instantiate NemotronDiffusionAttention with compute_block_mask mocked."""
+    """Instantiate NexTronAttention with compute_block_mask mocked."""
     cfg = _make_config(
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
@@ -109,15 +109,15 @@ def _make_attention(
         apply_llama4=apply_llama4,
         apply_qk_scaling=apply_qk_scaling,
     )
-    from megatron.bridge.diffusion.models.common.nemotron_diffusion_attention import (
-        NemotronDiffusionAttention,
+    from megatron.bridge.diffusion.models.common.nextron_attention import (
+        NexTronAttention,
     )
 
     with patch(
-        "megatron.bridge.diffusion.models.common.nemotron_diffusion_attention.compute_block_mask",
+        "megatron.bridge.diffusion.models.common.nextron_attention.compute_block_mask",
         return_value=MagicMock(),
     ):
-        return NemotronDiffusionAttention(
+        return NexTronAttention(
             cfg,
             layer_number,
             AttnMaskType.causal,
@@ -296,11 +296,11 @@ class TestMinistral3RotaryEmbedding:
 
 
 # ---------------------------------------------------------------------------
-# TestNemotronDiffusionAttentionInit
+# TestNexTronAttentionInit
 # ---------------------------------------------------------------------------
 
 
-class TestNemotronDiffusionAttentionInit:
+class TestNexTronAttentionInit:
     def test_softmax_scale_computed_correctly(self):
         head_dim = 8
         attn = _make_attention(head_dim=head_dim)
@@ -358,12 +358,12 @@ class TestNemotronDiffusionAttentionInit:
 
 
 # ---------------------------------------------------------------------------
-# TestNemotronDiffusionAttentionInferenceForward
+# TestNexTronAttentionInferenceForward
 # ---------------------------------------------------------------------------
 
 
-class TestNemotronDiffusionAttentionInferenceForward:
-    """Tests for NemotronDiffusionAttention._inference_forward via forward()."""
+class TestNexTronAttentionInferenceForward:
+    """Tests for NexTronAttention._inference_forward via forward()."""
 
     NUM_HEADS = 4
     NUM_KV_HEADS = 2

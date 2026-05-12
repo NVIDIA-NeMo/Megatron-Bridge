@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Generation utilities for Megatron GPTModel with NemotronDiffusionAttention inference support.
+Generation utilities for Megatron GPTModel with NexTronAttention inference support.
 
 Supports:
   - AR (autoregressive) generation with KV cache
   - dLLM (block diffusion) generation with prefix cache + iterative denoising
 
-The KV cache lives inside each layer's NemotronDiffusionAttention via its
+The KV cache lives inside each layer's NexTronAttention via its
 _inference_mode / _kv_cache_* attributes. No Megatron InferenceContext is used.
 """
 
@@ -116,7 +116,7 @@ def _unwrap(model):
 
 
 def _get_core_attentions(model):
-    """Return list of NemotronDiffusionAttention modules from the Megatron GPT model."""
+    """Return list of NexTronAttention modules from the Megatron GPT model."""
     m = _unwrap(model)
     attns = []
     for layer in m.decoder.layers:
@@ -290,7 +290,7 @@ def generate_dllm(
     """Block-diffusion generation with prefix KV cache.
 
     Replicates generate_with_prefix_cache_block_diff_sbd from the original eval.py
-    but uses NemotronDiffusionAttention's inference mode instead of HF past_key_values.
+    but uses NexTronAttention's inference mode instead of HF past_key_values.
 
     Args:
         model: Megatron GPTModel on CUDA.

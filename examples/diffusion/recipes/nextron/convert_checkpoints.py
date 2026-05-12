@@ -13,20 +13,20 @@
 # limitations under the License.
 #!/usr/bin/env python3
 """
-NemotronDiffusion HF <-> Megatron-Bridge checkpoint conversion.
+NexTron HF <-> Megatron-Bridge checkpoint conversion.
 
-Uses NemotronDiffusionAutoBridge, a thin AutoBridge subclass that bypasses
+Uses NexTronAutoBridge, a thin AutoBridge subclass that bypasses
 architecture name validation (MinistralDiffEncoderModel doesn't end in
-ForCausalLM/ForConditionalGeneration) and routes directly to NemotronDiffusionBridge.
+ForCausalLM/ForConditionalGeneration) and routes directly to NexTronBridge.
 
 Usage:
   # HF -> Megatron-Bridge
-  python examples/diffusion/recipes/nemotron_diffusion/convert_checkpoints.py import \
+  python examples/diffusion/recipes/nextron/convert_checkpoints.py import \
     --hf-model /path/to/hf_model \
     --megatron-path /path/to/mb_checkpoint
 
   # Megatron-Bridge -> HF
-  python examples/diffusion/recipes/nemotron_diffusion/convert_checkpoints.py export \
+  python examples/diffusion/recipes/nextron/convert_checkpoints.py export \
     --hf-model /path/to/hf_model \
     --megatron-path /path/to/mb_checkpoint \
     --hf-path /path/to/output_hf
@@ -41,24 +41,24 @@ import torch
 from huggingface_hub import split_torch_state_dict_into_shards
 from safetensors.torch import save_file
 
-from megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge import (
-    NemotronDiffusionBridge,
+from megatron.bridge.diffusion.conversion.nextron.nextron_bridge import (
+    NexTronBridge,
 )
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 
 
-class NemotronDiffusionAutoBridge(AutoBridge):
+class NexTronAutoBridge(AutoBridge):
     """AutoBridge subclass for MinistralDiffEncoderModel.
 
     AutoBridge rejects architectures not ending in ForCausalLM/ForConditionalGeneration
     in three places: _validate_config, _model_bridge (_causal_lm_architecture), and
     save_hf_weights (_causal_lm_architecture). We override all three to route directly
-    to NemotronDiffusionBridge.
+    to NexTronBridge.
     """
 
     def __init__(self, hf_pretrained):
         super().__init__(hf_pretrained)
-        self._nemotron_bridge = NemotronDiffusionBridge()
+        self._nemotron_bridge = NexTronBridge()
 
     @classmethod
     def _validate_config(cls, config, path):
@@ -101,7 +101,7 @@ class NemotronDiffusionAutoBridge(AutoBridge):
 
 def main():
     """Entry point for HF<->Megatron checkpoint conversion."""
-    parser = argparse.ArgumentParser(description="NemotronDiffusion checkpoint conversion")
+    parser = argparse.ArgumentParser(description="NexTron checkpoint conversion")
     subparsers = parser.add_subparsers(dest="command")
 
     import_parser = subparsers.add_parser("import", help="HF -> Megatron-Bridge")
@@ -128,7 +128,7 @@ def main():
         device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
         torch_dtype = dtype_map[args.torch_dtype]
         print(f"Importing {args.hf_model} -> {args.megatron_path}")
-        NemotronDiffusionAutoBridge.import_ckpt(
+        NexTronAutoBridge.import_ckpt(
             hf_model_id=args.hf_model,
             megatron_path=args.megatron_path,
             device=device,
@@ -139,7 +139,7 @@ def main():
 
     elif args.command == "export":
         print(f"Exporting {args.megatron_path} -> {args.hf_path}")
-        bridge = NemotronDiffusionAutoBridge.from_hf_pretrained(args.hf_model, trust_remote_code=True)
+        bridge = NexTronAutoBridge.from_hf_pretrained(args.hf_model, trust_remote_code=True)
         bridge.export_ckpt(
             megatron_path=args.megatron_path,
             hf_path=args.hf_path,

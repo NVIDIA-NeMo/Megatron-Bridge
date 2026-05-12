@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.diffusion.conversion.nemotron_diffusion.nemotron_diffusion_bridge import NemotronDiffusionBridge
+from megatron.bridge.diffusion.conversion.nextron.nextron_bridge import NexTronBridge
 
 
-__all__ = ["NemotronDiffusionBridge"]
+__all__ = ["NexTronBridge"]

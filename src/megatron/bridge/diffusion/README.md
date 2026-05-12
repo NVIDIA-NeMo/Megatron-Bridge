@@ -2,7 +2,7 @@
 
 Diffusion Foundation Models (DFM) integrated into Megatron-Bridge. This module provides
 Megatron-based implementations of diffusion models including DiT, FLUX, WAN, and
-diffusion language models (dLLM) such as NemotronDiffusion.
+diffusion language models (dLLM) such as NexTron.
 
 ## Directory Structure
 
@@ -13,11 +13,11 @@ diffusion/
 │   ├── dit/          # DiT model (with EDM pipeline)
 │   ├── flux/         # FLUX model (MMDiT, flow matching)
 │   ├── wan/          # WAN model (video generation, flow matching, inference)
-│   └── nemotron_diffusion/   # NemotronDiffusion dLLM (sbd_block_diff, NemotronDiffusionAttention)
+│   └── nextron/   # NexTron dLLM (sbd_block_diff, NexTronAttention)
 ├── conversion/       # HF ↔ Megatron checkpoint conversion bridges
 │   ├── flux/         # FLUX bridge and HF pretrained adapter
 │   ├── wan/          # WAN bridge and HF pretrained adapter
-│   └── nemotron_diffusion/   # NemotronDiffusion bridge (MinistralDiffEncoderModel ↔ GPTModel)
+│   └── nextron/   # NexTron bridge (MinistralDiffEncoderModel ↔ GPTModel)
 ├── data/             # Data loading and task encoders
 │   ├── common/       # Shared data modules (energon, diffusion samples, sequence packing)
 │   ├── dit/          # DiT task encoder and mock data
@@ -36,7 +36,7 @@ diffusion/
 - **DiT**: Diffusion Transformer with EDM (Elucidating Diffusion Models) pipeline
 - **FLUX**: State-of-the-art text-to-image model using MMDiT-style transformer blocks
 - **WAN**: Video generation model with 3D rotary embeddings and flow matching
-- **NemotronDiffusion**: Diffusion language model (dLLM) using block attention
+- **NexTron**: Diffusion language model (dLLM) using block attention
 
 ## Examples
 
