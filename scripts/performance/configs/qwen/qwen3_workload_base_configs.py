@@ -169,6 +169,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     expert_model_parallel_size=32,
     global_batch_size=2048,
     moe_a2a_overlap=True,
+    moe_flex_dispatcher_backend="hybridep",
 )
 
 
@@ -181,6 +182,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     expert_model_parallel_size=32,
     global_batch_size=2048,
     moe_a2a_overlap=True,
+    moe_flex_dispatcher_backend="hybridep",
 )
 
 
