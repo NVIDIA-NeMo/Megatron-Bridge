@@ -268,7 +268,7 @@ class PerfEnvPlugin(Plugin):
             and train_task == "pretrain"
             and gpu in ["gb200", "gb300"]
         ):
-            if compute_dtype in ["fp8_cs", "fp8_mx"]:
+            if (compute_dtype in ["fp8_cs", "fp8_mx"]) or (compute_dtype == "nvfp4" and gpu == "gb200"):
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                 executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         elif (
@@ -296,6 +296,15 @@ class PerfEnvPlugin(Plugin):
             # fragmentation pattern at MBS=4 under HybridEP + TE-scoped CUDA
             # graphs (attn/moe_router/moe_preprocess), so the same fix applies.
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        elif (
+            model_family_name in ["nemotronh"]
+            and model_recipe_name in ["nemotron_3_super"]
+            and train_task == "pretrain"
+            and gpu in ["gb300"]
+            and compute_dtype in ["nvfp4"]
+        ):
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+            executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
 
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
@@ -305,6 +314,10 @@ class PerfEnvPlugin(Plugin):
                     if gpu in ["gb300", "gb200", "h100"]:
                         executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                         executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
+            elif compute_dtype == "fp8_mx" and train_task == "pretrain" and gpu == "gb300":
+                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+                executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
+
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
