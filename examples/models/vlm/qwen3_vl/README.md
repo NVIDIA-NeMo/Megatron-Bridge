@@ -131,7 +131,7 @@ Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [peft
 Three independent CLI-overridable controls bound a sample's GPU cost. They compose:
 - **`dataset.min_pixels` / `dataset.max_pixels`** — image/frame resolutions lower and upper bound (defaults `200704` / `1003520`). 
 - **`dataset.max_num_images` / `dataset.max_num_frames`** - limit count of images/frames (defaults `10` / `60`). Too many images → sample is dropped. Too many frames → frame list truncated.
-- **`dataset.max_visual_tokens`** — limit total visual tokens across all images and frames in a sample, computed post-rescaling as `prod(T,H,W) // merge_size²` (default `None` = disabled). Catches cases the other two miss (few images at high resolution, or many at low resolution). Exceeding samples are dropped.
+- **`dataset.max_visual_tokens`** — limit total visual tokens across all images and frames in a sample, computed post-rescaling as `prod(T,H,W) // merge_size²` (default `16384`; set to `None` to disable). Catches cases the other two miss (few images at high resolution, or many at low resolution). Exceeding samples are dropped.
 
 ### Expected Training Dynamics
 We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/lczz4ixx) for the expected loss curves and grad norms.

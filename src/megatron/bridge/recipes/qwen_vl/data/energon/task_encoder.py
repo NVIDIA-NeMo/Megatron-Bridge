@@ -232,9 +232,6 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                         self.max_num_frames,
                         sample.__key__,
                     )
-                    print(
-                        f"[DEBUG] (task_encoder.py) Truncating {len(v)} frames to max_num_frames={self.max_num_frames} for sample {sample.__key__}"
-                    )
                     clipped.append(v[: self.max_num_frames])
                 else:
                     clipped.append(v)
@@ -253,12 +250,8 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         flattened_videos = processed_vision["video_inputs"]
 
         merge_length = self.merge_size**2
-        image_tokens = (
-            int(image_thw_grids.prod(dim=-1).sum().item()) // merge_length if image_thw_grids is not None else 0
-        )
-        video_tokens = (
-            int(video_thw_grids.prod(dim=-1).sum().item()) // merge_length if video_thw_grids is not None else 0
-        )
+        image_tokens = int(image_thw_grids.prod(-1).sum()) // merge_length if image_thw_grids is not None else 0
+        video_tokens = int(video_thw_grids.prod(-1).sum()) // merge_length if video_thw_grids is not None else 0
         total_visual_tokens = image_tokens + video_tokens
         if self.max_visual_tokens is not None:
             if total_visual_tokens > self.max_visual_tokens:
@@ -345,9 +338,20 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         if target_length > self.seq_len:
             if total_visual_tokens > self.seq_len:
                 logging.warning(
-                    f"Long sequence with length {target_length} and visual tokens {total_visual_tokens} exceeds seq_len={self.seq_len}, truncation will affect visual tokens, dropping sample."
+                    "Sample %s: target_length=%d with visual_tokens=%d exceeds seq_len=%d; "
+                    "truncation would corrupt visual tokens, dropping sample.",
+                    sample.__key__,
+                    target_length,
+                    total_visual_tokens,
+                    self.seq_len,
                 )
                 raise SkipSample()
+            logging.warning(
+                "Sample %s: target_length=%d exceeds seq_len=%d; text will be truncated.",
+                sample.__key__,
+                target_length,
+                self.seq_len,
+            )
         final_input_ids = np.zeros(target_length, dtype=input_ids.dtype)
         final_input_masks = final_input_ids.copy()
 
