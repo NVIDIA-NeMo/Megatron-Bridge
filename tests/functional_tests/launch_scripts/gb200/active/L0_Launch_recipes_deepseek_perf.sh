@@ -27,5 +27,5 @@ coverage combine -q
 
 #golden_values_path="/opt/Megatron-Bridge/tests/functional_tests/test_groups/recipes/golden_values/test_deepseek_recipes_pretrain_perf_gb200.json"
 golden_values_path="/lustre/fsw/portfolios/coreai/projects/coreai_dlalgo_llm/users/gkollu/Megatron-Bridge/tests/functional_tests/test_groups/recipes/test_deepseek_recipes_pretrain_perf_gb200.json"
-python scripts/performance/utils/evaluate.py --log_paths $output_log_file --golden_values_path $golden_values_path --assets_dir /tmp \
+uv run python scripts/performance/utils/evaluate.py --log_paths $output_log_file --golden_values_path $golden_values_path --assets_dir /tmp \
   --model_family_name deepseek --model_recipe_name deepseek_fsdp_1node_gb200

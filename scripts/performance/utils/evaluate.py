@@ -22,8 +22,11 @@ import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from scripts.performance.argument_parser import _testing_args
 
+try:
+    from scripts.performance.argument_parser import _testing_args
+except (ImportError, ModuleNotFoundError):
+    from .scripts.performance.argument_parser import _testing_args
 
 try:
     import numpy as np
