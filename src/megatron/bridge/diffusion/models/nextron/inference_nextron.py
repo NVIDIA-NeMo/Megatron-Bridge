@@ -182,6 +182,7 @@ def _broadcast_tensor(tensor, src, group):
     torch.distributed.broadcast(shape_t, src=src, group=group)
     if rank != src:
         tensor = torch.zeros(shape_t.tolist(), dtype=torch.long, device="cuda")
+    tensor = tensor.contiguous()
     torch.distributed.broadcast(tensor, src=src, group=group)
     return tensor
 

@@ -153,7 +153,7 @@ def parse_args():
 
 def load_model(args):
     """Load the NexTron model from a Megatron checkpoint via AutoBridge."""
-    hf_pretrained = PreTrainedCausalLM.from_pretrained(args.hf_model, torch_dtype=torch.bfloat16)
+    hf_pretrained = PreTrainedCausalLM.from_pretrained(args.hf_model, torch_dtype=torch.bfloat16, trust_remote_code=True)
     bridge = NexTronBridge()
     model_provider = bridge.provider_bridge(hf_pretrained)
     model_provider.tensor_model_parallel_size = args.tp
@@ -189,7 +189,7 @@ def main():
         dist.init_process_group(backend="nccl", init_method="env://", rank=rank, world_size=world_size)
 
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model)
+    tokenizer = AutoTokenizer.from_pretrained(args.hf_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 

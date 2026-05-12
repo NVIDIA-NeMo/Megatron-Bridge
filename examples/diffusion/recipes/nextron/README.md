@@ -55,12 +55,12 @@ torchrun --nproc_per_node=8 examples/diffusion/recipes/nextron/ar_to_dlm.py \
 
 ## Inference
 
-The script [`inference_nemotron.py`](inference_nemotron.py) runs text generation from a trained Megatron-format NexTron checkpoint. Both dLLM (block diffusion) and AR modes are supported.
+The script [`inference_nextron.py`](inference_nextron.py) runs text generation from a trained Megatron-format NexTron checkpoint. Both dLLM (block diffusion) and AR modes are supported.
 
 ### dLLM mode (default)
 
 ```bash
-torchrun --nproc_per_node=4 examples/diffusion/recipes/nextron/inference_nemotron.py \
+torchrun --nproc_per_node=4 examples/diffusion/recipes/nextron/inference_nextron.py \
     --megatron-path /path/to/checkpoints/ar_to_dlm_8b \
     --hf-model mistralai/Ministral-3-8B-Base-2512 \
     --prompts "The capital of France is" \
@@ -71,7 +71,7 @@ torchrun --nproc_per_node=4 examples/diffusion/recipes/nextron/inference_nemotro
 ### AR mode
 
 ```bash
-python examples/diffusion/recipes/nextron/inference_nemotron.py \
+python examples/diffusion/recipes/nextron/inference_nextron.py \
     --megatron-path /path/to/checkpoints/ar_to_dlm_3b \
     --hf-model mistralai/Ministral-3-3B-Base-2512 \
     --mode ar \
