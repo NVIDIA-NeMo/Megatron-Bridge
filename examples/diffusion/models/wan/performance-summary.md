@@ -1,6 +1,6 @@
 # Performance
 
-This page provides the current performance benchmarks for models using DFM across different GPU systems and configurations as we continue to optimize the model for optimal performance. Please refer to `examples/megatron/recipes/wan/conf` for updated YAML configurations.
+This page provides the current performance benchmarks for Wan model across different GPU systems and configurations as we continue to optimize the model for optimal performance.
 
 ## Nomenclature
 
