@@ -111,7 +111,7 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.eval import evaluate
-from megatron.bridge.training.eval_cp import eval_cp_context
+from megatron.bridge.training.eval_context_parallel_rebinding import eval_cp_context
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
@@ -478,8 +478,8 @@ def main() -> None:
     state = GlobalState()
     state.cfg = cfg
     # Store both pg_collections on state for downstream access if needed.
-    state.train_pgs = train_pgs
-    state.eval_pgs = eval_pgs
+    state._train_pgs = train_pgs
+    state._eval_pgs = eval_pgs
 
     dataset_provider = get_dataset_provider(cfg.dataset)
     train_data_iterator, valid_data_iterator, _ = setup_data_iterators(

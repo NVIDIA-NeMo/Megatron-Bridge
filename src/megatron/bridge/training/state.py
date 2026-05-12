@@ -152,9 +152,10 @@ class GlobalState:
         self._energy_monitor: Optional[Any] = None
         self._energy_monitor_created: bool = False
         # Eval-time context parallelism: set by the caller when eval_context_parallel_size
-        # differs from the training CP degree. eval_cp.eval_cp_context reads these.
-        self.train_pgs: Optional[ProcessGroupCollection] = None
-        self.eval_pgs: Optional[ProcessGroupCollection] = None
+        # differs from the training CP degree. ``eval_context_parallel_rebinding.eval_cp_context``
+        # reads these.
+        self._train_pgs: Optional[ProcessGroupCollection] = None
+        self._eval_pgs: Optional[ProcessGroupCollection] = None
 
     @property
     def cfg(self) -> Optional[ConfigContainer]:

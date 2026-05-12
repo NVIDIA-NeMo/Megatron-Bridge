@@ -144,8 +144,8 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     """If set and different from model.context_parallel_size, validation runs with this CP
     degree instead of the training CP degree. Requires use_decentralized_pg=True. The caller
     is responsible for constructing a separate eval ProcessGroupCollection and wiring it
-    through GlobalState or the evaluate() call. See eval_cp.py and the
-    examples/decentralized_pg/pretrain_qwen3_eval_cp.py showcase."""
+    through GlobalState or the evaluate() call. See eval_context_parallel_rebinding.py
+    and the examples/decentralized_pg/pretrain_qwen3_eval_cp.py showcase."""
 
     @property
     def lazy_init(self) -> bool:
