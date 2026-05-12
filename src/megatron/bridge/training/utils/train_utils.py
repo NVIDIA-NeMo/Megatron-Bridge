@@ -382,6 +382,61 @@ def logical_and_across_model_parallel_group(input: bool, mp_group: "TorchProcess
     return bool(input.item())
 
 
+def reduce_max_memory_across_pp_group(
+    memory_report: dict[str, Union[int, float]],
+    pp_group: "TorchProcessGroup",
+) -> dict[str, Union[int, float]]:
+    """Reduce per-rank memory metrics across the PP group with MAX.
+
+    With pipeline parallelism, peak GPU memory is typically dominated by the
+    first PP stage (activation buildup). The TensorBoard / W&B / MLFlow / Comet
+    writers, however, only initialize on the last rank (``world_size - 1``), so
+    without aggregation the logged values reflect only the last PP stage and
+    under-report true peak headroom.
+
+    This helper performs a single bulk all-reduce with MAX over the PP group
+    so that the writer rank emits the per-metric peak across the pipeline.
+    Counter-style integer keys (e.g. ``alloc_retries``) are preserved as
+    ``int`` so dashboards continue to render them correctly.
+
+    No-op when distributed is uninitialized, the PP group has a single rank,
+    or the report is empty.
+
+    Args:
+        memory_report: Mapping of metric name to per-rank value.
+        pp_group: The pipeline-parallel process group to reduce across.
+
+    Returns:
+        A new dict with values replaced by the per-metric MAX across the PP
+        group, or the input report unchanged when no reduction is needed.
+    """
+    if not memory_report:
+        return memory_report
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return memory_report
+    pp_size_attr = getattr(pp_group, "size", None)
+    if not callable(pp_size_attr) or pp_size_attr() <= 1:
+        return memory_report
+
+    keys = list(memory_report.keys())
+    values = torch.tensor(
+        [memory_report[k] for k in keys],
+        dtype=torch.float64,
+        device=torch.cuda.current_device(),
+    )
+    torch.distributed.all_reduce(values, op=torch.distributed.ReduceOp.MAX, group=pp_group)
+
+    reduced: dict[str, Union[int, float]] = {}
+    for key, max_val in zip(keys, values.tolist()):
+        original = memory_report[key]
+        # Preserve int type for counter-style metrics; floats stay as floats.
+        if not isinstance(original, bool) and isinstance(original, int):
+            reduced[key] = int(max_val)
+        else:
+            reduced[key] = max_val
+    return reduced
+
+
 class _MoeMetricFanoutWriter:
     """SummaryWriter-shaped adapter that fans add_scalar to MLFlow / Comet.
 
@@ -611,6 +666,17 @@ def training_log(
                 dump(snapshot, f)
                 print_rank_0(f"Saved memory snapshot to {filename}")
 
+    # Memory metrics must be aggregated across the PP group BEFORE the
+    # writer-gated block below. The TensorBoard / W&B / MLFlow / Comet writers
+    # only initialize on the last rank, but peak GPU memory typically lives on
+    # the first PP stage. Compute and reduce on all ranks so the writer rank
+    # emits the per-metric peak across the pipeline (issue #3167).
+    memory_report: Optional[dict[str, Union[int, float]]] = None
+    if logger_config.log_memory_to_tensorboard and iteration % logger_config.tensorboard_log_interval == 0:
+        memory_report = report_memory(memory_keys=logger_config.memory_keys)
+        memory_report = reduce_max_memory_across_pp_group(memory_report, pg_collection.pp)
+        memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
+
     if loggers_exist and iteration % logger_config.tensorboard_log_interval == 0:
         if logger_config.log_throughput_to_tensorboard:
             throughput_report = report_throughput(
@@ -629,9 +695,7 @@ def training_log(
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(throughput_report), step=iteration)
             if comet_logger:
                 comet_logger.log_metrics(throughput_report, step=iteration)
-        if logger_config.log_memory_to_tensorboard:
-            memory_report = report_memory(memory_keys=logger_config.memory_keys)
-            memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
+        if logger_config.log_memory_to_tensorboard and memory_report is not None:
             if writer:
                 for metric, value in memory_report.items():
                     writer.add_scalar(metric, value, iteration)

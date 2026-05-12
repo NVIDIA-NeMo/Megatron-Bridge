@@ -20,6 +20,7 @@ OpenMathInstruct-2 contains math problems with generated solutions. Each example
 has ``problem``, ``generated_solution``, and ``expected_answer`` fields.
 """
 
+import re
 from typing import Any, Optional
 
 from megatron.bridge.data.builders.hf_dataset import ProcessExampleOutput
@@ -56,3 +57,82 @@ def process_openmathinstruct2_example(
     expected_answer = example["expected_answer"]
 
     return ProcessExampleOutput(input=_input, output=_output, original_answers=[expected_answer])
+
+
+def _strip_intermediate_boxed(text: str) -> str:
+    """Replace all \\boxed{content} occurrences in text with just content.
+
+    Uses brace-depth counting to handle nested braces correctly
+    (e.g. \\boxed{\\frac{1}{2}} → \\frac{1}{2}).
+    """
+    marker = r"\boxed{"
+    result = []
+    i = 0
+    while i < len(text):
+        idx = text.find(marker, i)
+        if idx == -1:
+            result.append(text[i:])
+            break
+        result.append(text[i:idx])
+        depth = 0
+        end = -1
+        for j in range(idx + len(marker) - 1, len(text)):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end == -1:
+            # malformed \boxed{, keep as-is
+            result.append(text[idx:])
+            break
+        result.append(text[idx + len(marker) : end])
+        i = end + 1
+    return "".join(result)
+
+
+def process_openmathinstruct2_thinking_packed_example(example: dict, _tokenizer=None) -> dict:
+    """Process OpenMathInstruct-2 example into analysis+final channel format.
+
+    Puts the CoT reasoning (generated_solution without the trailing \\boxed{N}) into
+    the 'thinking' field (rendered as <|channel|>analysis by the GPT-OSS chat template)
+    and the final answer as '#### N' in the 'content' field (rendered as <|channel|>final).
+
+    This separates the reasoning chain from the answer delivery, matching the intended
+    GPT-OSS channel structure for math problem solving.
+    """
+    solution = example["generated_solution"]
+    expected_answer = str(example["expected_answer"])
+
+    # Extract the reasoning prefix: everything before the final \boxed{N}
+    marker = r"\boxed{"
+    idx = solution.rfind(marker)
+    if idx != -1:
+        depth = 0
+        end = -1
+        for i in range(idx + len(marker) - 1, len(solution)):
+            if solution[i] == "{":
+                depth += 1
+            elif solution[i] == "}":
+                depth -= 1
+            if depth == 0:
+                end = i
+                break
+        thinking = re.sub(r"\$?\s*$", "", solution[:idx]).rstrip() if end != -1 else solution.rstrip()
+    else:
+        thinking = solution.rstrip()
+
+    # Strip any intermediate \boxed{} from the reasoning (replace with just content)
+    thinking = _strip_intermediate_boxed(thinking)
+
+    return {
+        "input": "",
+        "output": "",
+        "messages": [
+            {"role": "user", "content": example["problem"]},
+            {"role": "assistant", "thinking": thinking, "content": f"#### {expected_answer}"},
+        ],
+        "original_answers": [expected_answer],
+    }

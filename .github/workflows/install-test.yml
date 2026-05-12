@@ -214,15 +214,8 @@ jobs:
         shell: bash
         run: bash docker/common/install.sh --base-image pytorch --use-uv
 
-      - name: Checkout check-imports
-        uses: actions/checkout@v6
-        with:
-          repository: NVIDIA-NeMo/FW-CI-templates
-          ref: v0.80.1
-          path: FW-CI-templates
-
       - name: Check imports for megatron-bridge
-        uses: ./FW-CI-templates/.github/actions/check-imports
+        uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/check-imports@v0.80.1
         with:
           package-name: megatron.bridge
           python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
