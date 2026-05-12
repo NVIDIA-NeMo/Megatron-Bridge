@@ -10,7 +10,6 @@ NVIDIA ModelOpt provides a suite of model optimization techniques for improving 
 - **Distillation** - Transfer knowledge from a pre-trained teacher model to a smaller, faster student model
 - **Pruning** - Reduce model size by removing layers (depth) or reducing dimensions (width) such as attention heads and hidden sizes
 
-
 ## Quick Navigation
 
 ### I want to
@@ -21,7 +20,12 @@ NVIDIA ModelOpt provides a suite of model optimization techniques for improving 
 **🏋️ Train with quantization**
 → Check the [Quantization-Aware Training section](quantization.md#quantization-aware-training-qat) for QAT workflows
 
+**🎓 Distill a teacher model into a smaller student**
+→ See [Knowledge Distillation](distillation.md) for the KD configuration and recipe workflow
+
+**✂️ Prune a model to reduce size**
+→ See [Pruning](pruning.md) for Minitron-based pruning to a target parameter count or fixed architecture
 
 ## References
 
-- [NVIDIA ModelOpt](https://github.com/NVIDIA/TensorRT-Model-Optimizer)
+- [NVIDIA ModelOpt](https://github.com/NVIDIA/Model-Optimizer)
