@@ -182,7 +182,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             # Include the pattern at least once so the MTP block (and its weights)
             # are created even when mtp_num_layers=0.
             if self.mtp_use_repeated_layer:
-                num_pattern_copies = max(1, self.mtp_num_layers)
+                num_pattern_copies = max(1, self.mtp_num_layers or 0)
             else:
                 num_pattern_copies = self.mtp_num_layers
             self.hybrid_layer_pattern = (
