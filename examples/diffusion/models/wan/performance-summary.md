@@ -24,11 +24,6 @@ Performance is measured using:
 - **Tokens/sec/GPU**: Throughput per GPU
 - **Model TFLOP/sec/GPU**: Model floating-point operations per second per GPU
 
-```{contents}
-:local:
-:depth: 2
-```
-
 ## Performance Summary for Models
 
 Below are performance benchmarks for various models using DFM framework.
