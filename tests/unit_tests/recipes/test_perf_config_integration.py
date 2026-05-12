@@ -25,8 +25,9 @@ import sys
 from pathlib import Path
 
 
-# Add the performance scripts to the path for testing
-SCRIPTS_PERF_PATH = Path(__file__).parents[4] / "scripts" / "performance"
+# Add the performance scripts to the path for testing.
+# parents: [0]=recipes  [1]=unit_tests  [2]=tests  [3]=repo root
+SCRIPTS_PERF_PATH = Path(__file__).parents[3] / "scripts" / "performance"
 sys.path.insert(0, str(SCRIPTS_PERF_PATH))
 
 
