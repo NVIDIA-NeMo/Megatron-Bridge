@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.12.*"
 resolution-markers = [
     "platform_machine != 's390x'",
@@ -16,7 +16,7 @@ overrides = [
     { name = "langchain", specifier = ">=0.3.28" },
     { name = "langchain-core", specifier = ">=0.3.80" },
     { name = "mlflow", specifier = ">=3.9.0" },
-    { name = "nvidia-modelopt", specifier = ">=0.42.0a0", index = "https://pypi.nvidia.com/" },
+    { name = "nvidia-modelopt", specifier = "==0.44.0rc4", index = "https://pypi.nvidia.com/" },
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
@@ -3140,7 +3140,7 @@ wheels = [
 
 [[package]]
 name = "nvidia-modelopt"
-version = "0.44.0rc3"
+version = "0.44.0rc4"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
     { name = "ninja" },
@@ -3160,7 +3160,7 @@ dependencies = [
     { name = "tqdm" },
 ]
 wheels = [
-    { url = "https://pypi.nvidia.com/nvidia-modelopt/nvidia_modelopt-0.44.0rc3-py3-none-any.whl", hash = "sha256:4b349d4c29e47469a53803df971ddd4280a7e9b952ccb307261dfbf52e08870d" },
+    { url = "https://pypi.nvidia.com/nvidia-modelopt/nvidia_modelopt-0.44.0rc4-py3-none-any.whl", hash = "sha256:2544415cc1ef23b42eee5b9009899dcc79bcf3937d3cbc9c72ad3e11025ef26b" },
 ]
 
 [[package]]
