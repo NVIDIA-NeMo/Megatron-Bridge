@@ -1,4 +1,4 @@
-name: Remove needs-author label
+name: Remove waiting-on-customer label
 
 on:
   issue_comment:
@@ -16,7 +16,7 @@ jobs:
     if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     steps:
-      - name: Remove needs-author if author commented
+      - name: Remove waiting-on-customer if author commented
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -27,20 +27,20 @@ jobs:
             if (commenter !== prAuthor) return;
 
             const labels = context.payload.issue.labels.map(l => l.name);
-            if (!labels.includes('needs-author')) return;
+            if (!labels.includes('waiting-on-customer')) return;
 
             await github.rest.issues.removeLabel({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.issue.number,
-              name: 'needs-author',
+              name: 'waiting-on-customer',
             });
 
   remove-label-on-push:
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
-      - name: Remove needs-author if author pushed commits
+      - name: Remove waiting-on-customer if author pushed commits
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -51,11 +51,11 @@ jobs:
             if (pusher !== prAuthor) return;
 
             const labels = context.payload.pull_request.labels.map(l => l.name);
-            if (!labels.includes('needs-author')) return;
+            if (!labels.includes('waiting-on-customer')) return;
 
             await github.rest.issues.removeLabel({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
-              name: 'needs-author',
+              name: 'waiting-on-customer',
             });
