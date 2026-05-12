@@ -100,8 +100,6 @@ DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported
 | Model | TP | PP | EP | Min GPUs | GPU Type | Use Case |
 |-------|---:|---:|---:|---------:|---------|----------|
 | **DeepSeek-V4-Flash** | 1 | 1 | 4 | 4 | B200 192 GB | Smoke / single-node inference |
-| **DeepSeek-V4-Flash** | 1 | 4 | 8 | 32 | B200 192 GB | Multi-node SFT |
-| **DeepSeek-V4-Pro** | 1 | 8 | 16 | 128 | B200 192 GB | Multi-node SFT |
 
 The model does not fit on A100 80 GB at TP=1 — use B200 192 GB or larger.
 
@@ -115,7 +113,7 @@ The model does not fit on A100 80 GB at TP=1 — use B200 192 GB or larger.
 
   Until these merge to Megatron-LM `main` and the bridge submodule pin advances, you must build against a fork branch that includes them (e.g. `weijiac0619/Megatron-LM` `weijiac/dsv4-bridge`).
 
-- **MTP is disabled for inference** via `disable_mtp_for_inference()`. MTP weights are mapped end-to-end (HC head, e/h projections, transformer block, experts, norms) and loaded into the Megatron model, so re-enabling MTP for training is supported once your training pipeline expects it.
+- **MTP is disabled for inference** via `disable_mtp_for_inference()`. MTP weights are mapped end-to-end (HC head, e/h projections, transformer block, experts, norms) and loaded into the Megatron model.
 
 - **`fast_hadamard_transform` package is optional.** When unavailable (e.g. on aarch64 NeMo containers), DSA falls back to a PyTorch hadamard implementation. Throughput is lower but numerical behavior is unchanged.
 
@@ -133,6 +131,4 @@ The model does not fit on A100 80 GB at TP=1 — use B200 192 GB or larger.
 - GitHub Repository: https://github.com/deepseek-ai/DeepSeek-V4
 
 ## Related Docs
-- Recipe usage: [Recipe usage](../../recipe-usage.md)
-- Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
-- Training entry points: [Entry points](../../training/entry-points.md)
+- DeepSeek V4 examples: [examples/models/deepseek_v4/README.md](../../../examples/models/deepseek_v4/README.md)

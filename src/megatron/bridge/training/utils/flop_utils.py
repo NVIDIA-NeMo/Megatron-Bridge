@@ -505,19 +505,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 gdn_self_attn_per_layer * num_gdn_layers + standard_self_attn_per_layer * num_standard_attn_layers
             )
 
-        # Hyper-Connections (mHC) per-layer overhead, e.g. for DeepSeek V4.
-        # Each layer with HC enabled adds two `mapping_proj` matmuls (one before
-        # attention, one before the MLP) of shape hidden -> hidden * num_residual_streams.
-        # Sinkhorn iterations and alpha scalars are negligible by comparison.
-        # Note: this adds the HC overhead but does not reduce the base attention
-        # term for CSA layers (which would be a smaller correction in the
-        # opposite direction). The net effect is a slight overestimate of FLOPs,
-        # which is the safe direction for throughput reporting.
-        if getattr(cfg.model, "enable_hyper_connections", False):
-            num_residual_streams = getattr(cfg.model, "num_residual_streams", 4)
-            hc_per_layer = 2 * cfg.model.hidden_size * cfg.model.hidden_size * num_residual_streams
-            self_attn_term += 3 * 2 * num_layers * hc_per_layer
-
         padded_vocab_size = calculate_padded_vocab_size(
             cfg.model.vocab_size,
             cfg.model.make_vocab_size_divisible_by,
