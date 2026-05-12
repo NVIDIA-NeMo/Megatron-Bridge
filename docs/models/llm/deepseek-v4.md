@@ -10,7 +10,7 @@ Megatron Bridge supports the following DeepSeek V4 model variants:
 
 | Variant | Hidden Layers | Hidden Size | Routed Experts | Quant Scheme | Parity Status |
 |---------|--------------:|------------:|---------------:|--------------|---------------|
-| **DeepSeek-V4-Flash** | 43 | 4096 | 256 | FP8 attn + MXFP4 experts (E8M0 scales) | Verified, last-token logit cosine ~0.935 vs official inference |
+| **DeepSeek-V4-Flash** | 43 | 4096 | 256 | FP8 attn + MXFP4 experts (E8M0 scales) | Verified, last-token logit cosine ~0.97-0.99 vs official inference |
 | **DeepSeek-V4-Flash-Base** | 43 | 4096 | 256 | Uniform FP8 (F32 block scales) | Imports cleanly; logit parity unmeasured |
 | **DeepSeek-V4-Pro** | 61 | 7168 | 384 | FP8 attn + MXFP4 experts (E8M0 scales) | Algorithmic dequant validated; end-to-end unmeasured |
 | **DeepSeek-V4-Pro-Base** | 61 | 7168 | 384 | Uniform FP8 (F32 block scales) | Algorithmic dequant validated; end-to-end unmeasured |
@@ -28,35 +28,9 @@ The bridge dispatches purely on tensor dtype and reads every dimension- and laye
 - **Sigmoid Gating with Expert Bias**: `noaux_tc` load balancing, `sqrtsoftplus` scoring, expert bias enabled
 - **`o_groups` Output Projection**: `o_lora_rank` low-rank output projection split into `o_groups` parallel groups
 
-## Conversion with 🤗 Hugging Face
+## Examples
 
-### Load HF → Megatron
-
-```python
-from megatron.bridge import AutoBridge
-
-# Example: DeepSeek-V4-Flash-Base
-bridge = AutoBridge.from_hf_pretrained(
-    "deepseek-ai/DeepSeek-V4-Flash-Base",
-    trust_remote_code=True,
-)
-provider = bridge.to_megatron_provider()
-
-# DSv4 currently requires TP=1 (no MLA TP support yet); scale via EP and PP.
-provider.tensor_model_parallel_size = 1
-provider.expert_model_parallel_size = 8
-
-model = provider.provide_distributed_model(wrap_with_ddp=False)
-```
-
-### Import Checkpoint from HF
-
-```bash
-uv run python examples/conversion/convert_checkpoints.py import \
-  --hf-model deepseek-ai/DeepSeek-V4-Flash-Base \
-  --megatron-path /checkpoints/deepseek_v4_megatron \
-  --trust-remote-code
-```
+For checkpoint conversion and inference scripts, see the [DeepSeek V4 Examples](../../../examples/models/deepseek_v4/README.md).
 
 The bridge's `maybe_modify_loaded_hf_weight` hook dispatches dequantisation by tensor dtype:
 
@@ -64,34 +38,6 @@ The bridge's `maybe_modify_loaded_hf_weight` hook dispatches dequantisation by t
 - `float8_e4m3fn` with companion `.scale` → `bfloat16` via 128×128 block-scale expansion (handles both E8M0 and F32 scale dtypes)
 
 No external dequantisation script is required.
-
-### Export Megatron → HF
-
-```python
-from megatron.bridge import AutoBridge
-
-bridge = AutoBridge.from_hf_pretrained(
-    "deepseek-ai/DeepSeek-V4-Flash-Base",
-    trust_remote_code=True,
-)
-bridge.export_ckpt(
-    megatron_path="/results/deepseek_v4/checkpoints/iter_0000500",
-    hf_path="/exports/deepseek_v4_hf",
-)
-```
-
-### Run Inference on Converted Checkpoint
-
-```bash
-uv run python examples/conversion/hf_to_megatron_generate_text.py \
-  --hf_model_path deepseek-ai/DeepSeek-V4-Flash-Base \
-  --megatron_model_path /checkpoints/deepseek_v4_megatron \
-  --prompt "Explain hyper-connections in transformer models." \
-  --max_new_tokens 100 \
-  --tp 1 \
-  --ep 8 \
-  --trust-remote-code
-```
 
 ## Parallelism Configurations
 
@@ -111,13 +57,13 @@ The model does not fit on A100 80 GB at TP=1 — use B200 192 GB or larger.
   - PR [#4481](https://github.com/NVIDIA/Megatron-LM/pull/4481) (hash MoE + SwiGLU clamp)
   - PR [#4518](https://github.com/NVIDIA/Megatron-LM/pull/4518) (separate `e_proj` / `h_proj` for MTP with hyper-connections)
 
-  Until these merge to Megatron-LM `main` and the bridge submodule pin advances, you must build against a fork branch that includes them (e.g. `weijiac0619/Megatron-LM` `weijiac/dsv4-bridge`).
+  Until these merge to Megatron-LM `main` and the bridge submodule pin advances, build against the Megatron-LM `dev` branch.
 
 - **MTP is disabled for inference** via `disable_mtp_for_inference()`. MTP weights are mapped end-to-end (HC head, e/h projections, transformer block, experts, norms) and loaded into the Megatron model.
 
 - **`fast_hadamard_transform` package is optional.** When unavailable (e.g. on aarch64 NeMo containers), DSA falls back to a PyTorch hadamard implementation. Throughput is lower but numerical behavior is unchanged.
 
-- **Logit parity is verified for Flash only** (~0.935 last-token cosine vs official `sparse_attn` tilelang reference). The remaining gap is structural — different attention/HC kernel decompositions and accumulation precisions between MCore and the official inference stack — and not a Bridge-level issue. The model still selects the correct top-1 token in practice.
+- **Logit parity is verified for Flash only** (~0.97-0.99 last-token cosine vs official `sparse_attn` tilelang reference). The remaining gap is structural — different attention/HC kernel decompositions and accumulation precisions between MCore and the official inference stack — and not a Bridge-level issue. The model still selects the correct top-1 token in practice.
 
 ## Hugging Face Model Cards & References
 
