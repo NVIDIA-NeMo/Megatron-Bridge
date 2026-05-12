@@ -287,7 +287,10 @@ class PerfEnvPlugin(Plugin):
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
 
-        if model_family_name == "llama" and workload_base_config.use_megatron_fsdp is True:
+        remove_allocator_env_vars = workload_base_config.nccl_ub is True or (
+            model_family_name == "llama" and workload_base_config.use_megatron_fsdp is True
+        )
+        if remove_allocator_env_vars:
             for env_var in ("PYTORCH_CUDA_ALLOC_CONF", "NCCL_GRAPH_REGISTER"):
                 executor.env_vars.pop(env_var, None)
 
