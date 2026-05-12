@@ -551,11 +551,19 @@ def train(
         local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
         local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
         num_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
+        # Coerce to int — getattr on MagicMock test doubles returns a MagicMock
+        # (not the default), which breaks the numeric comparisons below.
+        if not isinstance(local_seqlen_sum, int):
+            local_seqlen_sum = 0
+        if not isinstance(local_seqlen_sq_sum, int):
+            local_seqlen_sq_sum = 0
+        if not isinstance(num_vision_patches, int):
+            num_vision_patches = 0
 
         # Correct for VPP over-counting: each microbatch's seqlen is accumulated
         # once per virtual stage, but FLOPS formula already covers all stages.
-        vp_size = config.model.virtual_pipeline_model_parallel_size or 1
-        if vp_size > 1:
+        vp_size = config.model.virtual_pipeline_model_parallel_size
+        if isinstance(vp_size, int) and vp_size > 1:
             local_seqlen_sum = local_seqlen_sum // vp_size
             local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
             num_vision_patches = num_vision_patches // vp_size
