@@ -13,6 +13,7 @@ glm45.md
 gpt-oss.md
 llama3.md
 llama-nemotron.md
+ministral3.md
 mistral.md
 moonlight.md
 nemotron3.md

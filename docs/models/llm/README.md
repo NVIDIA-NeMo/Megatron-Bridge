@@ -17,6 +17,7 @@ Megatron Bridge supports the following LLM families:
 | **MiniMax-M2** | — | MiniMax-M2 / M2.5 / M2.7 (456B MoE, FP8) |
 | **LLaMA 3** | [llama3.md](llama3.md) | Meta LLaMA 3 models |
 | **LLaMA Nemotron** | [llama-nemotron.md](llama-nemotron.md) | NVIDIA LLaMA Nemotron models |
+| **Ministral 3** | [ministral3.md](ministral3.md) | Mistral AI Ministral 3 (3B/8B/14B) edge-optimized VLMs |
 | **Mistral** | [mistral.md](mistral.md) | Mistral AI models |
 | **Moonlight** | [moonlight.md](moonlight.md) | Moonlight model family |
 | **Nemotron-3** | [nemotron3.md](nemotron3.md) | NVIDIA Nemotron-3 models |
