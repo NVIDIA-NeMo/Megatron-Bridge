@@ -28,7 +28,6 @@ from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_trans
 
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
-from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
 
 
 @dataclass
@@ -200,6 +199,8 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
 
     def _build_sound_encoder(self):
         """Build BridgeSoundEncoder from sound_config dict."""
+        from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
+
         sc = self.sound_config
         config = SimpleNamespace(
             hidden_size=sc["hidden_size"],

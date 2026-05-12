@@ -38,10 +38,8 @@ class NemotronOmniModel(NemotronVLModel):
             freeze_vision_projection=freeze_vision_projection,
         )
         if freeze_sound_model and self.llava_model.sound_model is not None:
-            for name, param in self.llava_model.sound_model.named_parameters():
-                print(f"Freezing sound_model.{name}")
+            for param in self.llava_model.sound_model.parameters():
                 param.requires_grad = False
         if freeze_sound_projection and self.llava_model.sound_projection is not None:
-            for name, param in self.llava_model.sound_projection.named_parameters():
-                print(f"Freezing sound_projection.{name}")
+            for param in self.llava_model.sound_projection.parameters():
                 param.requires_grad = False

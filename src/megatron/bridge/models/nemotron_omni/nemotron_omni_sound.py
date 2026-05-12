@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -62,9 +62,7 @@ class BridgeSoundEncoder(MegatronModule):
 
     def forward(self, sound_clips, sound_length):
         max_frames = sound_clips.size(1)
-        attention_mask = (
-            torch.arange(max_frames, device=sound_clips.device)[None, :] < sound_length[:, None]
-        )
+        attention_mask = torch.arange(max_frames, device=sound_clips.device)[None, :] < sound_length[:, None]
         output = self.encoder(
             input_features=sound_clips,
             attention_mask=attention_mask,

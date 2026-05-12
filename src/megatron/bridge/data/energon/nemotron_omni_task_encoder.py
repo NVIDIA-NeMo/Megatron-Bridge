@@ -501,7 +501,6 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             # microbatch. TE attention kernels use cu_seqlens for per-sample
             # masking; no attention_mask needed.
             lengths = [int(s.input_ids.size(0)) for s in samples]
-            total_len = sum(lengths)
             cu_seqlens = [0]
             for L in lengths:
                 cu_seqlens.append(cu_seqlens[-1] + L)
@@ -510,9 +509,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             labels_flat = torch.cat([s.labels for s in samples], dim=0)
             loss_mask_flat = torch.cat([s.loss_mask for s in samples], dim=0)
             # Per-sample resetting position ids: [0..L1-1, 0..L2-1, ...]
-            position_ids_flat = torch.cat(
-                [torch.arange(L, dtype=torch.long) for L in lengths], dim=0
-            )
+            position_ids_flat = torch.cat([torch.arange(L, dtype=torch.long) for L in lengths], dim=0)
 
             tokens = tokens_flat.unsqueeze(0)
             tokens[tokens == pad_id] = 0
@@ -658,6 +655,10 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             "imgs_sizes": batch.imgs_sizes,
             "num_frames": batch.num_frames,
             "num_image_tiles": batch.num_image_tiles,
+            "cu_seqlens": batch.cu_seqlens,
+            "cu_seqlens_unpadded": batch.cu_seqlens_unpadded,
+            "cu_seqlens_argmin": batch.cu_seqlens_argmin,
+            "max_seqlen": batch.max_seqlen,
         }
 
         vt = batch.visual_tensors if batch.visual_tensors else {}

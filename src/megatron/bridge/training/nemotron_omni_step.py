@@ -26,7 +26,6 @@ import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import get_packed_seq_params
@@ -268,9 +267,6 @@ def forward_step(
         forward_args["imgs_sizes"] = imgs_sizes
     if num_frames is not None:
         forward_args["num_frames"] = num_frames
-    import os as _os
-    if _os.environ.get("NOMNI_DEBUG_TILES") == "1":
-        print(f"[DEBUG step] num_image_tiles={num_image_tiles if num_image_tiles is None else (num_image_tiles.shape, num_image_tiles.tolist()[:10])}", flush=True)
     if num_image_tiles is not None:
         forward_args["num_image_tiles"] = num_image_tiles
     if vision_packed_seq_params is not None:

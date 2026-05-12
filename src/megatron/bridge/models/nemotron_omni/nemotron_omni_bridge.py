@@ -58,6 +58,8 @@ class NemotronOmniBridge(NemotronVLBridge):
     """Bridge for Nemotron-3 Omni (MoE LLM + vision + optional sound) models."""
 
     CONFIG_MAPPING = NemotronVLBridge.CONFIG_MAPPING + [
+        # HF public Omni config uses layer_norm_epsilon instead of rms_norm_eps.
+        ("layer_norm_epsilon", "layernorm_epsilon"),
         # Mamba-specific (same as NemotronHBridge)
         ("mamba_head_dim", "mamba_head_dim"),
         ("mamba_num_heads", "mamba_num_heads"),

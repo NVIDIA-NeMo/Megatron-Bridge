@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -183,9 +183,7 @@ def _align_sound_tokens(input_ids: torch.Tensor, sound_token_id: int, desired_co
         raise ValueError("Sound tokens are not contiguous; cannot safely re-align")
     prefix = input_ids[:, :start]
     suffix = input_ids[:, end:]
-    middle = torch.full(
-        (1, desired_count), sound_token_id, dtype=input_ids.dtype, device=input_ids.device
-    )
+    middle = torch.full((1, desired_count), sound_token_id, dtype=input_ids.dtype, device=input_ids.device)
     return torch.cat([prefix, middle, suffix], dim=1)
 
 
@@ -322,12 +320,7 @@ def _patchify_pixel_values(pv: torch.Tensor, patch_dim: int = _VISION_PATCH_DIM)
     for i in range(pv.shape[0]):
         _, H, W = pv[i].shape
         py, px = H // P, W // P
-        p = (
-            pv[i : i + 1]
-            .reshape(1, 3, py, P, px, P)
-            .permute(0, 2, 4, 1, 3, 5)
-            .reshape(1, py * px, 3 * P * P)
-        )
+        p = pv[i : i + 1].reshape(1, 3, py, P, px, P).permute(0, 2, 4, 1, 3, 5).reshape(1, py * px, 3 * P * P)
         patches_list.append(p)
         sizes.append([H, W])
     packed = torch.cat(patches_list, dim=1)
@@ -432,9 +425,7 @@ def process_video_inputs(
     # the math clean and match SFT, round down to a multiple of tps.
     usable = (len(frames) // tps) * tps
     if usable == 0:
-        raise ValueError(
-            f"Need at least {tps} frames for temporal video embedder inference; got {len(frames)}"
-        )
+        raise ValueError(f"Need at least {tps} frames for temporal video embedder inference; got {len(frames)}")
     if usable != len(frames):
         print_rank_0(f"Trimming {len(frames) - usable} trailing frames to match tps={tps}")
         frames = frames[:usable]
@@ -447,9 +438,7 @@ def process_video_inputs(
     video_prompt_lines = ["This is a video:"]
     for i in range(0, len(frames), tps):
         group = frames[i : i + tps]
-        ts_parts = [
-            f"frame {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds" for j in range(len(group))
-        ]
+        ts_parts = [f"frame {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds" for j in range(len(group))]
         video_prompt_lines.append(" and ".join(ts_parts) + ": <image>")
         paired_images.append(group[0])
 
@@ -565,9 +554,7 @@ def process_video_audio_inputs(
 
     usable = (len(frames) // tps) * tps
     if usable == 0:
-        raise ValueError(
-            f"Need at least {tps} frames for temporal video embedder inference; got {len(frames)}"
-        )
+        raise ValueError(f"Need at least {tps} frames for temporal video embedder inference; got {len(frames)}")
     if usable != len(frames):
         print_rank_0(f"Trimming {len(frames) - usable} trailing frames to match tps={tps}")
         frames = frames[:usable]
@@ -577,9 +564,7 @@ def process_video_audio_inputs(
     video_prompt_lines = ["This is a video:"]
     for i in range(0, len(frames), tps):
         group = frames[i : i + tps]
-        ts_parts = [
-            f"frame {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds" for j in range(len(group))
-        ]
+        ts_parts = [f"frame {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds" for j in range(len(group))]
         video_prompt_lines.append(" and ".join(ts_parts) + ": <image>")
         paired_images.append(group[0])
 
@@ -612,8 +597,7 @@ def process_video_audio_inputs(
     input_ids = _align_sound_tokens(proc_output.input_ids, sound_token_id, expected_sound_tokens)
 
     print_rank_0(
-        f"Audio: {audio_path}, sound_clips shape: {sound_clips.shape}, "
-        f"expected_sound_tokens: {expected_sound_tokens}"
+        f"Audio: {audio_path}, sound_clips shape: {sound_clips.shape}, expected_sound_tokens: {expected_sound_tokens}"
     )
 
     num_patches = torch.ones(len(paired_images), dtype=torch.long)
@@ -845,9 +829,7 @@ def main(args) -> None:
             # shift on every step and eventually drive cu_seqlens past the end of
             # the embedded patch tensor, causing an async CUDA illegal memory
             # access in attention.
-            vision_packed_seq_params = (
-                _build_vision_packed_seq_params(imgs_sizes) if imgs_sizes is not None else None
-            )
+            vision_packed_seq_params = _build_vision_packed_seq_params(imgs_sizes) if imgs_sizes is not None else None
 
             fwd_bwd_function = get_forward_backward_func()
             iterator = SingleBatchIterator(

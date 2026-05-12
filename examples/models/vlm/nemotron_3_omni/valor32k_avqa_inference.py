@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ Usage:
 
 import argparse
 import json
-import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -112,7 +111,10 @@ def _build_vision_packed_seq_params(imgs_sizes: Optional[torch.Tensor]) -> Optio
 # Forward step (same as hf_to_megatron_generate_nemotron_omni.py)
 # ---------------------------------------------------------------------------
 
+
 class SingleBatchIterator:
+    """Iterator that yields one prepared inference batch."""
+
     def __init__(self, input_ids, position_ids, attention_mask, **kwargs):
         self.batch = dict(tokens=input_ids, position_ids=position_ids, attention_mask=attention_mask)
         if kwargs.get("images") is not None:
@@ -141,6 +143,8 @@ class SingleBatchIterator:
 
 
 def vlm_forward_step(data_iterator, model, **kwargs):
+    """Run one VLM forward pass for audio-visual generation."""
+
     batch = next(data_iterator)
     forward_args = {
         "input_ids": batch["tokens"],
@@ -175,6 +179,7 @@ def vlm_forward_step(data_iterator, model, **kwargs):
 # ---------------------------------------------------------------------------
 # Data processing
 # ---------------------------------------------------------------------------
+
 
 def build_video_id_map(videos_dir: Path) -> dict:
     """Map video_id → filename stem (files are {youtube_id}_{start}_{end}.mp4)."""
@@ -220,7 +225,10 @@ def process_sample(
 
     # Extract video frames
     image_urls, metadata = maybe_path_or_url_to_data_urls(
-        str(video_path), fps=max(0, int(video_fps)), nframe=max(0, video_nframes), nframe_max=-1,
+        str(video_path),
+        fps=max(0, int(video_fps)),
+        nframe=max(0, video_nframes),
+        nframe_max=-1,
     )
     frames = [pil_image_from_base64(url) for url in image_urls]
     fps = metadata.fps if metadata and metadata.fps else video_fps
@@ -299,11 +307,13 @@ def process_sample(
     sound_length = None
     if audio_path.exists():
         import soundfile as sf
+
         waveform, sr = sf.read(str(audio_path), dtype="float32")
         if waveform.ndim > 1:
             waveform = waveform.mean(axis=1)
         if sr != 16000:
             import librosa
+
             waveform = librosa.resample(waveform, orig_sr=sr, target_sr=16000)
         waveform = waveform[: int(10.0 * 16000)]  # max 10s
 
@@ -361,6 +371,8 @@ _LETTER_RE = re.compile(r"^\s*([A-D])(?:[\.\)\:\-\s]|$)")
 
 
 def grade_prediction(prediction: str, options: list, correct_answer: str) -> bool:
+    """Grade a model prediction against the VALOR32K-AVQA answer."""
+
     m = _LETTER_RE.match(prediction)
     if m and options:
         idx = ord(m.group(1)) - ord("A")
@@ -390,9 +402,14 @@ def generate(model, tokenizer, sample, max_new_tokens=50):
             vision_packed_seq_params = _build_vision_packed_seq_params(imgs_sizes)
             fwd_bwd_function = get_forward_backward_func()
             iterator = SingleBatchIterator(
-                input_ids, position_ids, attention_mask,
-                images=images, sound_clips=sound_clips, sound_length=sound_length,
-                imgs_sizes=imgs_sizes, num_frames=num_frames,
+                input_ids,
+                position_ids,
+                attention_mask,
+                images=images,
+                sound_clips=sound_clips,
+                sound_length=sound_length,
+                imgs_sizes=imgs_sizes,
+                num_frames=num_frames,
                 vision_packed_seq_params=vision_packed_seq_params,
             )
             output = fwd_bwd_function(
@@ -431,7 +448,7 @@ def generate(model, tokenizer, sample, max_new_tokens=50):
 
     # Decode: return both a cleaned prediction (for grading) and the full raw
     # decode (with special tokens and prompt) for inspection.
-    gen_ids = generated_ids[0, sample["input_ids"].size(1):]
+    gen_ids = generated_ids[0, sample["input_ids"].size(1) :]
     cleaned = tokenizer.decode(gen_ids.tolist(), skip_special_tokens=True).strip()
     full_text = tokenizer.decode(generated_ids[0].tolist(), skip_special_tokens=False)
     return cleaned, full_text
@@ -441,11 +458,18 @@ def generate(model, tokenizer, sample, max_new_tokens=50):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
+    """Run VALOR32K-AVQA inference."""
+
     parser = argparse.ArgumentParser(description="VALOR32K-AVQA Inference")
     parser.add_argument("--hf_model_path", type=str, required=True)
-    parser.add_argument("--megatron_model_path", type=str, default=None,
-                        help="Megatron checkpoint path. If omitted, converts from HF on the fly.")
+    parser.add_argument(
+        "--megatron_model_path",
+        type=str,
+        default=None,
+        help="Megatron checkpoint path. If omitted, converts from HF on the fly.",
+    )
     parser.add_argument("--data_root", type=str, required=True)
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--max_samples", type=int, default=10)
@@ -536,10 +560,15 @@ def main():
     for i in range(max_samples):
         qa = qa_pairs[i]
         sample = process_sample(
-            qa, vid_map, data_root, tokenizer, processor, feature_extractor,
+            qa,
+            vid_map,
+            data_root,
+            tokenizer,
+            processor,
+            feature_extractor,
         )
         if sample is None:
-            print_rank_0(f"[{i+1}/{max_samples}] Skipped: video not found for {qa['video_id']}")
+            print_rank_0(f"[{i + 1}/{max_samples}] Skipped: video not found for {qa['video_id']}")
             continue
 
         prediction, prediction_full = generate(model, tokenizer, sample, max_new_tokens=args.max_new_tokens)
@@ -562,16 +591,16 @@ def main():
         results.append(result)
 
         print_rank_0(
-            f"[{i+1}/{max_samples}] Q: {sample['question'][:60]}... "
+            f"[{i + 1}/{max_samples}] Q: {sample['question'][:60]}... "
             f"| GT: {sample['correct_answer']} | Pred: {prediction[:60]} "
             f"| {'OK' if is_correct else 'WRONG'}"
         )
 
     # Summary
     acc = correct / total * 100 if total > 0 else 0
-    print_rank_0(f"\n{'='*60}")
+    print_rank_0(f"\n{'=' * 60}")
     print_rank_0(f"Results: {correct}/{total} correct ({acc:.1f}%)")
-    print_rank_0(f"{'='*60}")
+    print_rank_0(f"{'=' * 60}")
 
     # Save results
     if args.output and dist.get_rank() == 0:

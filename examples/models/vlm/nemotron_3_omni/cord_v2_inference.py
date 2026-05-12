@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ from megatron.bridge.data.vlm_datasets.hf_dataset_makers import make_cord_v2_dat
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
+
 _VISION_PATCH_DIM = 16
 
 
@@ -68,6 +69,8 @@ def _build_vision_packed_seq_params(imgs_sizes: Optional[torch.Tensor]) -> Optio
 
 
 class SingleBatchIterator:
+    """Iterator that yields one prepared inference batch."""
+
     def __init__(self, input_ids, position_ids, attention_mask, **kwargs):
         self.batch = dict(tokens=input_ids, position_ids=position_ids, attention_mask=attention_mask)
         for key in ("images", "imgs_sizes", "num_frames", "vision_packed_seq_params"):
@@ -86,6 +89,8 @@ class SingleBatchIterator:
 
 
 def vlm_forward_step(data_iterator, model, **_):
+    """Run one VLM forward pass for text generation."""
+
     batch = next(data_iterator)
     forward_args = {
         "input_ids": batch["tokens"],
@@ -95,9 +100,7 @@ def vlm_forward_step(data_iterator, model, **_):
     if "images" in batch:
         forward_args["images"] = batch["images"]
     else:
-        forward_args["images"] = torch.tensor(
-            [], dtype=torch.bfloat16, device=batch["tokens"].device
-        ).reshape(0, 0, 0)
+        forward_args["images"] = torch.tensor([], dtype=torch.bfloat16, device=batch["tokens"].device).reshape(0, 0, 0)
     for key in ("imgs_sizes", "num_frames", "vision_packed_seq_params"):
         if key in batch:
             forward_args[key] = batch[key]
@@ -152,6 +155,8 @@ def prepare_image_sample(tokenizer, processor, image, prompt, system_prompt=None
 
 @torch.no_grad()
 def generate(model, tokenizer, input_ids, images, imgs_sizes, num_frames, max_new_tokens=200):
+    """Generate tokens for one CORD-V2 sample."""
+
     prompt_len = input_ids.size(1)
     input_ids = input_ids.cuda()
     images = images.cuda()
@@ -159,9 +164,7 @@ def generate(model, tokenizer, input_ids, images, imgs_sizes, num_frames, max_ne
     num_frames = num_frames.cuda()
 
     position_ids = (
-        torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device)
-        .unsqueeze(0)
-        .expand_as(input_ids)
+        torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
     )
     attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
     generated_ids = input_ids.clone()
@@ -173,8 +176,12 @@ def generate(model, tokenizer, input_ids, images, imgs_sizes, num_frames, max_ne
         # so reusing the same object would cause cu_seqlens to grow by class_token_len each step.
         vision_packed_seq_params = _build_vision_packed_seq_params(imgs_sizes)
         iterator = SingleBatchIterator(
-            input_ids, position_ids, attention_mask,
-            images=images, imgs_sizes=imgs_sizes, num_frames=num_frames,
+            input_ids,
+            position_ids,
+            attention_mask,
+            images=images,
+            imgs_sizes=imgs_sizes,
+            num_frames=num_frames,
             vision_packed_seq_params=vision_packed_seq_params,
         )
         output = fwd_bwd(
@@ -233,6 +240,8 @@ def extract_gt_text_from_conversation(conv):
 
 
 def main():
+    """Run CORD-V2 inference."""
+
     parser = argparse.ArgumentParser(description="CORD-V2 inference for Nemotron Omni")
     parser.add_argument("--hf_model_path", type=str, required=True)
     parser.add_argument("--megatron_model_path", type=str, default=None)
@@ -243,8 +252,9 @@ def main():
     parser.add_argument("--pp", type=int, default=1)
     parser.add_argument("--ep", type=int, default=2)
     parser.add_argument("--etp", type=int, default=1)
-    parser.add_argument("--output", type=str, required=True,
-                        help="Output JSON path (images saved next to it under cord_v2_images/)")
+    parser.add_argument(
+        "--output", type=str, required=True, help="Output JSON path (images saved next to it under cord_v2_images/)"
+    )
     parser.add_argument("--prompt", type=str, default="Describe this image.")
     args = parser.parse_args()
 
@@ -327,12 +337,15 @@ def main():
             except Exception as e:
                 print_rank_0(f"WARN: could not save sample image {i}: {e}")
 
-        input_ids, pv_patched, imgs_sizes, num_frames = prepare_image_sample(
-            tokenizer, processor, image, args.prompt
-        )
+        input_ids, pv_patched, imgs_sizes, num_frames = prepare_image_sample(tokenizer, processor, image, args.prompt)
 
         cleaned, prediction_full = generate(
-            model, tokenizer, input_ids, pv_patched, imgs_sizes, num_frames,
+            model,
+            tokenizer,
+            input_ids,
+            pv_patched,
+            imgs_sizes,
+            num_frames,
             max_new_tokens=args.max_new_tokens,
         )
 
