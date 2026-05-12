@@ -250,7 +250,6 @@ def dgxc_executor(
         "NVTE_DP_AMAX_REDUCE_INTERVAL": "0",
         "NVTE_ASYNC_AMAX_REDUCTION": "1",
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "NCCL_GRAPH_REGISTER": "0",
         "TOKENIZERS_PARALLELISM": "False",
         "TRANSFORMERS_OFFLINE": "1",
         "HF_HOME": "/nemo-workspace/pagaray/hf_cache",
