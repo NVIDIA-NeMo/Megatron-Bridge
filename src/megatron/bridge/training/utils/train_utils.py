@@ -938,10 +938,21 @@ def training_log(
             # (batch_size * seq_length) only when no accumulation happened.
             # This keeps the per-step TFLOP/s/GPU shown here consistent with the
             # `floating_point_operations_so_far` accumulated by the main loop.
+            #
+            # VPP correction: forward_step_func is called once per virtual-stage
+            # per microbatch, so the accumulators over-count by vp_size. Divide
+            # them back so the FLOPS formula (which already covers all layers)
+            # receives the correct per-microbatch totals.
             local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
             local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
             local_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
             num_vision_patches = local_vision_patches * config.data_parallel_size if local_vision_patches > 0 else 0
+
+            vp_size = getattr(config.model, "virtual_pipeline_model_parallel_size", None) or 1
+            if vp_size > 1:
+                local_seqlen_sum = local_seqlen_sum // vp_size
+                local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
+                num_vision_patches = num_vision_patches // vp_size
 
             if local_seqlen_sum > 0:
                 seqlen_sum = local_seqlen_sum * config.data_parallel_size

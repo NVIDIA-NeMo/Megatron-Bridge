@@ -544,9 +544,21 @@ def train(
 
         # Read accumulated FLOPS metadata from forward_step micro-batches.
         # These are per-DP-rank totals; scale by dp_size for global estimate.
+        # In VPP (interleaved pipeline) mode, forward_step_func is called once per
+        # virtual-stage per microbatch (i.e. num_microbatches * vp_size times), but
+        # the FLOPS formula already accounts for ALL layers in the full model.
+        # Therefore we must divide the accumulator by vp_size to avoid over-counting.
         local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
         local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
         num_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
+
+        # Correct for VPP over-counting: each microbatch's seqlen is accumulated
+        # once per virtual stage, but FLOPS formula already covers all stages.
+        vp_size = config.model.virtual_pipeline_model_parallel_size or 1
+        if vp_size > 1:
+            local_seqlen_sum = local_seqlen_sum // vp_size
+            local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
+            num_vision_patches = num_vision_patches // vp_size
 
         if local_seqlen_sum > 0:
             seqlen_sum = local_seqlen_sum * dp_size
