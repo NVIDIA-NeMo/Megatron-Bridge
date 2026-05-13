@@ -229,7 +229,7 @@ def build_train_valid_test_data_loaders(
     )
 
     # Check that the train dataset has at least one global batch of samples.
-    if len(train_ds) < cfg.train.global_batch_size:
+    if cfg.dataset.dataloader_type != "external" and len(train_ds) < cfg.train.global_batch_size:
         raise RuntimeError(
             f"Not enough train samples for a single global batch: "
             f"train dataset size ({len(train_ds)}) < global batch size ({cfg.train.global_batch_size})."
