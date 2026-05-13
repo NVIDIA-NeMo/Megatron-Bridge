@@ -113,10 +113,11 @@ def patch_modelopt_te_linear_tuple_output() -> None:
         modelopt_te._assert_te_fp8_enabled()
         # `replace_function` stores the original forward as `_forward` while the
         # patch is active. The `_forward` path receives no leading autograd ctx
-        # placeholder, while the `_apply` path does, so the positional indices
-        # need the same offset convention as ModelOpt's TE plugin.
-        orig_forward = getattr(te_linear._Linear, "_forward", te_linear._Linear.forward)
-        names = list(inspect.signature(orig_forward).parameters)
+    orig_forward = getattr(te_linear._Linear, "_forward", te_linear._Linear.forward)
+    names = list(inspect.signature(orig_forward).parameters)
+
+    def te_quantized_linear_fn(package, func_name, self, *args, **kwargs):
+        modelopt_te._assert_te_fp8_enabled()
         ctx_offset = 0 if func_name == "_forward" else 1
         weight_pos = names.index("weight") - ctx_offset
         inp_pos = names.index("inp") - ctx_offset
