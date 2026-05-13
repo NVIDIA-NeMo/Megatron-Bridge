@@ -25,4 +25,7 @@ def build_tokenizer(config, **kwargs) -> MegatronTokenizer:
         "Please, use `megatron.core.tokenizers.utils.build_tokenizer` instead."
     )
 
+    # Don't pad vocab size since MBridge does it's own padding
+    config.pad_vocab_size = False
+
     return build_mcore_tokenizer(config, **kwargs)

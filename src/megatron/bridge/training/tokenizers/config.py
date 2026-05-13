@@ -60,7 +60,7 @@ class TokenizerConfig(MTrainTokenizerConfig):
 
     force_system_message: Optional[bool] = False
 
-    def finalize(self) -> None:
+    def __post_init__(self) -> None:
         """Sync with MCore values"""
         # HuggingFace tokenizer kwargs
         self.tokenizer_hf_no_use_fast = not self.hf_tokenizer_kwargs.get("use_fast", True)
