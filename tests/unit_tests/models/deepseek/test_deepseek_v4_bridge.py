@@ -14,8 +14,8 @@
 
 """Unit tests for the DeepSeek-V4 bridge mapping registry.
 
-Locks in the post-#4518 MTP layout: per-MTP-layer HC head, separate e_proj
-and h_proj. The deprecated ``eh_proj`` concatenated path must not appear.
+Locks in the MTP mapping layout: per-MTP-layer HC head, separate ``e_proj``
+and ``h_proj`` mappings, and no deprecated concatenated ``eh_proj`` path.
 """
 
 from types import SimpleNamespace
@@ -86,7 +86,7 @@ class TestMTPHCHeadMappings:
 
 
 class TestMTPEHProjSplit:
-    """Post-MCore #4518: e_proj and h_proj are separate ColumnParallelLinear modules.
+    """MTP e_proj and h_proj are separate ColumnParallelLinear modules.
 
     The bridge must use two AutoMappings (which auto-detect column parallelism),
     not the deprecated concatenated eh_proj path.

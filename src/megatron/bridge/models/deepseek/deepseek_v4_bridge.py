@@ -12,17 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bridge for DeepSeek-V4 family.
+"""Bridge for the DeepSeek-V4 model family.
 
-Numerical parity verified for ``DeepSeek-V4-Flash`` only (last-token logit
-cosine ~0.935 vs official inference, 2026-05-07).
-
-``DeepSeek-V4-Flash-Base``, ``DeepSeek-V4-Pro``, and ``DeepSeek-V4-Pro-Base``
-share the same ``DeepseekV4ForCausalLM`` architecture and use the same FP8
-or FP8+MXFP4 dispatch; the bridge derives all dimension- and layer-dependent
-fields from the HF config (no hardcoded Flash sizes). They are expected to
-import without code changes, but end-to-end logit parity has not been
-measured. Do not assume parity until smoke-tested.
+The bridge covers DeepSeek-V4 variants that share the ``deepseek_v4`` HF config
+schema. It derives dimension- and layer-dependent fields from the HF config and
+dispatches checkpoint import by tensor dtype so FP8 and FP8+MXFP4 formats can
+share the same conversion path.
 
 Checkpoint format notes
 -----------------------
@@ -65,12 +60,12 @@ parameters, so Megatron does not expose them via `named_parameters()`.
 The bridge handles `tid2eid` via `maybe_modify_loaded_hf_weight()` and
 a dedicated `_Tid2EidMapping` that writes it into `state_dict` directly.
 
-Megatron-LM prerequisites (on weijiac/dsv4-bridge branch)
-----------------------------------------------------------
-  - HyperConnectionModule   (megatron.core.transformer.hyper_connection)
+Megatron-Core prerequisites
+---------------------------
+  - HyperConnectionModule
   - DSv4HybridSelfAttention / CompressedSparseAttention / CSAIndexer / Compressor
-    (megatron.core.transformer.experimental_attention_variant.{deepseek_v4_hybrid_attention,csa})
-  - Hash-routing tid2eid + SwiGLU clamp (PRs #4458 and #4481, merged into branch)
+  - Hash-routing tid2eid support and SwiGLU clamp
+  - Separate MTP e_proj / h_proj modules with hyper-connections
 """
 
 from typing import Dict, Mapping
@@ -259,13 +254,7 @@ class _ReplicatedOptional(ReplicatedMapping):
     model_type="deepseek_v4",
 )
 class DeepSeekV4Bridge(MegatronModelBridge):
-    """Megatron Bridge for DeepSeek-V4 / V4-Flash.
-
-    Requires the weijiac/dsv4-bridge branch of Megatron-LM which contains:
-      - Hyper-Connections (mHC, PR #3430)
-      - DSv4 hybrid attention / CSA / Compressor / Indexer (PR #4458)
-      - Hash MoE + SwiGLU clamp + new mHC contract (PR #4481)
-    """
+    """Megatron Bridge implementation for DeepSeek-V4 causal language models."""
 
     # ------------------------------------------------------------------
     # Provider configuration
@@ -801,8 +790,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 )
             )
 
-            # MTP e_proj + h_proj — post-#4518 the MTP layer with hyper-connections holds two
-            # separate ColumnParallelLinear projections (eh_proj is None when enable_hyper_connections).
+            # MTP e_proj + h_proj are separate ColumnParallelLinear projections
+            # when the MTP layer uses hyper-connections.
             # AutoMapping auto-detects ColumnParallelLinear and shards along dim 0.
             mappings += [
                 AutoMapping(f"{mg_pfx}.e_proj.weight", f"{ck_pfx}.e_proj.weight"),

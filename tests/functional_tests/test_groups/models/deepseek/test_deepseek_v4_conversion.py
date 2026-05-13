@@ -12,22 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional toy-model conversion test for DeepSeek V4.
+"""Functional toy-model conversion test scaffold for DeepSeek V4.
 
-This test is currently skipped because DSv4 has two upstream dependencies that
-are not yet on tagged releases:
-
-1. ``transformers`` does not yet ship ``DeepseekV4ForCausalLM`` — only
-   ``DeepseekV4Config`` is registered (by the bridge module itself). Building a
-   random-weight toy model the way ``test_deepseek_conversion.py`` does for
-   V2/V3 requires the modeling class to be importable.
-
-2. ``megatron-core`` requires PRs #3430 / #4458 / #4481 / #4518 for the DSv4
-   prerequisites (HC, CSA, DSA, hash MoE, separate e_proj/h_proj). These are
-   merged on the user fork branch ``weijiac0619/Megatron-LM weijiac/dsv4-bridge``
-   but not on the bridge's pinned upstream commit yet.
-
-The skipif markers below auto-enable the test when both prerequisites land.
+The test is skipped until the required DeepSeek V4 modeling classes are
+available from Transformers and Megatron-Core in the test environment.
 """
 
 import importlib.util
@@ -117,16 +105,11 @@ HF_DEEPSEEK_V4_TOY_MODEL_CONFIG = {
 
 
 class TestDeepSeekV4Conversion:
-    """Toy HF↔Megatron roundtrip for DeepSeek V4. Skipped until prereqs land upstream."""
+    """Toy HF-to-Megatron roundtrip coverage for DeepSeek V4."""
 
     def test_placeholder(self):
-        """Sentinel test that fails closed if neither skipif fires.
-
-        When transformers + megatron-core both ship DSv4, this should be
-        replaced with a real roundtrip test mirroring
-        ``test_deepseek_conversion.py::test_deepseek_conversion_parallelism``.
-        """
+        """Sentinel test that fails closed once the skip conditions no longer apply."""
         pytest.fail(
             "DSv4 prerequisites are now available — replace this placeholder with a real toy "
-            "HF↔Megatron roundtrip using HF_DEEPSEEK_V4_TOY_MODEL_CONFIG (max 2 GPUs per CLAUDE.md)."
+            "HF-to-Megatron roundtrip using HF_DEEPSEEK_V4_TOY_MODEL_CONFIG."
         )

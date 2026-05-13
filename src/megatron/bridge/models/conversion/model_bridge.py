@@ -920,6 +920,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         _hf_import_cache: Dict[str, torch.Tensor] = {}
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
+            # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
             # 1) Fetch source tensor(s) from HF state dict, with caching for grouped mappings
@@ -1047,6 +1048,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
 
         for task in conversion_tasks:
+            # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
             hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state
