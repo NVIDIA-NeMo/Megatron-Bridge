@@ -1277,7 +1277,9 @@ class ConfigContainer(Container):
                 # If using distributed optimizer, must use distributed checkpointing.
                 # Legacy checkpointing uses Gloo process groups to collect full distributed
                 # optimizer state in the CPU memory of DP rank 0.
-                assert self.checkpoint.ckpt_format == "torch_dist"
+                assert self.checkpoint.ckpt_format in ["torch_dist", "fsdp_dtensor"], (
+                    "Legacy checkpointing requires ckpt_format='torch_dist' or 'fsdp_dtensor'"
+                )
 
         # Cross-validation between training and scheduler configs
         self._validate_training_scheduler_compatibility()
