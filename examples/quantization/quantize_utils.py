@@ -21,6 +21,7 @@ scripts (LLM and VLM) to avoid code duplication.
 
 import argparse
 import copy
+import inspect
 
 import modelopt.torch.quantization as mtq
 from rich.console import Console
@@ -89,6 +90,50 @@ def get_modelopt_torch_quantization_config(
         mtq_config["quant_cfg"].append({"quantizer_name": "*input_quantizer", "enable": False})
 
     return mtq_config
+
+
+def patch_modelopt_te_linear_tuple_output() -> None:
+    """Patch ModelOpt TE Linear quantization for TE 2.15 tuple outputs."""
+    try:
+        import modelopt.torch.quantization.plugins.transformer_engine as modelopt_te
+        import transformer_engine.pytorch.module.linear as te_linear
+    except ImportError:
+        return
+
+    quant_te_linear = getattr(modelopt_te, "_QuantTELinear", None)
+    if quant_te_linear is None or getattr(quant_te_linear, "_bridge_tuple_output_patch", False):
+        return
+
+    # Temporary compatibility shim for nvidia-modelopt==0.44.0rc4 with TE 2.15.
+    # ModelOpt rc4 already handles TE's changed Linear functional signature by
+    # locating `weight` and `inp` by name. It still assumes the TE functional
+    # returns a tensor, while TE 2.15 returns `(output, weight_workspace)` in this
+    # path. Remove this patch once ModelOpt ships the tuple-output fix upstream.
+    def te_quantized_linear_fn(package, func_name, self, *args, **kwargs):
+        modelopt_te._assert_te_fp8_enabled()
+        # `replace_function` stores the original forward as `_forward` while the
+        # patch is active. The `_forward` path receives no leading autograd ctx
+        # placeholder, while the `_apply` path does, so the positional indices
+        # need the same offset convention as ModelOpt's TE plugin.
+        orig_forward = getattr(te_linear._Linear, "_forward", te_linear._Linear.forward)
+        names = list(inspect.signature(orig_forward).parameters)
+        ctx_offset = 0 if func_name == "_forward" else 1
+        weight_pos = names.index("weight") - ctx_offset
+        inp_pos = names.index("inp") - ctx_offset
+        new_args = list(args)
+        new_args[weight_pos] = self.weight_quantizer(args[weight_pos])
+        new_args[inp_pos] = self.input_quantizer(args[inp_pos])
+        output = getattr(package, func_name)(*new_args, **kwargs)
+        if isinstance(output, tuple):
+            # TE returns auxiliary workspace metadata in later tuple elements.
+            # Only the activation tensor participates in output quantization.
+            quantized_output = self.output_quantizer(output[0])
+            return (quantized_output, *output[1:])
+        return self.output_quantizer(output)
+
+    quant_te_linear.te_quantized_linear_fn = staticmethod(te_quantized_linear_fn)
+    quant_te_linear._quantized_linear_fn = staticmethod(te_quantized_linear_fn)
+    quant_te_linear._bridge_tuple_output_patch = True
 
 
 def create_quantization_stats_table() -> Table:

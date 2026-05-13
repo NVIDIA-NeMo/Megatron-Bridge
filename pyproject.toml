@@ -130,7 +130,7 @@ override-dependencies = [
     "mlflow>=3.9.0",    # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
-    "nvidia-modelopt>=0.42.0a0",
+    "nvidia-modelopt==0.44.0rc4",
     "urllib3>=2.6.3",    # To address CVE-2026-21441
     "langchain>=0.3.28",       # To address CVE-2025-65106
     "langchain-core>=0.3.80",  # To address CVE-2025-65106
