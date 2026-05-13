@@ -113,6 +113,7 @@ def patch_modelopt_te_linear_tuple_output() -> None:
         modelopt_te._assert_te_fp8_enabled()
         # `replace_function` stores the original forward as `_forward` while the
         # patch is active. The `_forward` path receives no leading autograd ctx
+
     orig_forward = getattr(te_linear._Linear, "_forward", te_linear._Linear.forward)
     names = list(inspect.signature(orig_forward).parameters)
 
