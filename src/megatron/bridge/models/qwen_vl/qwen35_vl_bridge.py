@@ -432,30 +432,34 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
 
         if mtp_experts_packed:
             # Qwen3.6: packed format (same as main decoder)
-            mapping_list.extend([
-                FusedGatedExpertMapping(
-                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
-                    hf_param="mtp.layers.*.mlp.experts.gate_up_proj",
-                ),
-                FusedExpertMapping(
-                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
-                    hf_param="mtp.layers.*.mlp.experts.down_proj",
-                    transpose_on_export=True,
-                ),
-            ])
+            mapping_list.extend(
+                [
+                    FusedGatedExpertMapping(
+                        megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
+                        hf_param="mtp.layers.*.mlp.experts.gate_up_proj",
+                    ),
+                    FusedExpertMapping(
+                        megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
+                        hf_param="mtp.layers.*.mlp.experts.down_proj",
+                        transpose_on_export=True,
+                    ),
+                ]
+            )
         else:
             # Qwen3.5: per-expert format (current behavior)
-            mapping_list.extend([
-                GatedMLPMapping(
-                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
-                    gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
-                    up="mtp.layers.*.mlp.experts.*.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
-                    hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
-                ),
-            ])
+            mapping_list.extend(
+                [
+                    GatedMLPMapping(
+                        megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
+                        gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
+                        up="mtp.layers.*.mlp.experts.*.up_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
+                        hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
+                    ),
+                ]
+            )
 
         return MegatronMappingRegistry(*mapping_list)
 
