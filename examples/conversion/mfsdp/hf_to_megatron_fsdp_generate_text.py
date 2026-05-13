@@ -128,8 +128,7 @@ def _configure_model_provider(model_provider, tp: int, cp: int, ep: int) -> None
         )
     if world_size % expert_mp_size != 0:
         raise ValueError(
-            f"WORLD_SIZE ({world_size}) must be divisible by ep ({expert_mp_size}). "
-            f"Got tp={tp}, cp={cp}, ep={ep}."
+            f"WORLD_SIZE ({world_size}) must be divisible by ep ({expert_mp_size}). Got tp={tp}, cp={cp}, ep={ep}."
         )
 
     model_provider.tensor_model_parallel_size = tp
