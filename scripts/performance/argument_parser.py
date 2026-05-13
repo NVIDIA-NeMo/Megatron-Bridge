@@ -759,6 +759,12 @@ def parse_cli_args():
         required=False,
         default=-1,
     )
+    performance_args.add_argument(
+        "--deterministic",
+        help="Enable bit-exact deterministic training. Sets NCCL/cuBLAS/TE env vars "
+        "and disables fused cross-entropy loss and TP comm overlap.",
+        action="store_true",
+    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")

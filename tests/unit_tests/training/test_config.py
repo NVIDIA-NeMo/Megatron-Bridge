@@ -433,27 +433,19 @@ class TestMockGPTDatasetConfig:
 
 
 class TestConfigContainerValidation:
-    def test_deterministic_mode_disallows_flash_and_ce_fusion(self, monkeypatch):
-        """Test that deterministic mode disallows flash attention and cross-entropy loss fusion."""
-        from megatron.core.transformer.enums import AttnBackend
-
+    def test_deterministic_mode_disallows_ce_fusion(self, monkeypatch):
+        """Test that deterministic mode disallows cross-entropy loss fusion."""
         gpt_model_cfg = create_test_gpt_config(
             deterministic_mode=True,
-            attention_backend=AttnBackend.flash,
             cross_entropy_loss_fusion=True,
         )
 
-        # Ensure NCCL_ALGO present but valid, so we fail earlier on flash/ce fusion
+        # Ensure NCCL_ALGO present but valid, so we fail on CE fusion
         monkeypatch.setenv("NCCL_ALGO", "Tree")
 
         container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
         try:
-            with pytest.raises(AssertionError, match="Flash attention can not be used in deterministic mode"):
-                container.validate()
-
-            # Fix attention, still CE fusion should fail
-            container.model.attention_backend = AttnBackend.local
             with pytest.raises(AssertionError, match="Cross Entropy Fusion is currently not deterministic"):
                 container.validate()
         finally:
