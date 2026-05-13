@@ -647,6 +647,43 @@ class CheckpointConfig(MTrainCheckpointConfig):
     dist_ckpt_workers: int = 1
     """Specifies the number of distributed checkpoint workers for asynchronous saving."""
 
+    save_weight_format: Literal["megatron", "hf"] = "megatron"
+    """Storage format for model weights when saving checkpoints.
+
+    - ``"megatron"`` (default): weights are saved together with optimizer / RNG / scheduler / rerun
+      state in a single distributed checkpoint, following the format specified by ``ckpt_format``.
+    - ``"hf"``: weights are saved as HuggingFace ``*.safetensors`` directly under each ``iter_*/``
+      directory together with HF ``config.json`` / tokenizer / (optional) custom modeling files.
+      Optimizer, RNG, scheduler and rerun state are still serialized with ``torch_dist`` under the
+      ``iter_*/megatron_state/`` sub-directory so that training can be resumed losslessly.
+
+    When ``cfg.peft`` is configured, ``save_weight_format='hf'`` writes a HuggingFace
+    PEFT-compatible ``adapter_model.safetensors`` + ``adapter_config.json`` instead of the
+    full base weights.
+    """
+
+    hf_source_path: Optional[str] = None
+    """Override for the HuggingFace model identifier (or local path) used as a template when
+    saving/loading checkpoints with ``save_weight_format='hf'`` (or when ``pretrained_checkpoint``
+    points to a HuggingFace directory).
+
+    When unset, the source is resolved in this order:
+      1. ``cfg.tokenizer.tokenizer_model`` (recommended; recipes set this to the HF model id);
+      2. ``cfg.model.hf_model_id`` (set by ``AutoBridge.to_megatron_provider``).
+    """
+
+    hf_trust_remote_code: bool = False
+    """Whether to trust remote code when constructing the ``AutoBridge`` for HF save/load.
+    Required for models with custom modeling files."""
+
+    hf_distributed_save: bool = False
+    """When ``save_weight_format='hf'``, enable distributed weights saving where multiple ranks
+    share the safetensors write workload. See ``SafeTensorsStateSource.save_generator``."""
+
+    hf_save_every_n_ranks: int = 1
+    """Interval for saving HF safetensors shards across ranks in distributed mode.
+    Only effective when ``hf_distributed_save=True``."""
+
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
         if self.pretrained_checkpoint is not None:
@@ -662,6 +699,22 @@ class CheckpointConfig(MTrainCheckpointConfig):
         if self.async_save:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
             assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
+
+        if self.save_weight_format not in ("megatron", "hf"):
+            raise ValueError(
+                f"save_weight_format must be 'megatron' or 'hf', got '{self.save_weight_format}'"
+            )
+        if self.save_weight_format == "hf":
+            if self.ckpt_format == "fsdp_dtensor":
+                raise ValueError(
+                    "save_weight_format='hf' is not supported together with ckpt_format='fsdp_dtensor'. "
+                    "Optimizer/RNG state needs to be stored as torch_dist alongside HF weights."
+                )
+            if self.non_persistent_ckpt_type == "local":
+                raise ValueError(
+                    "save_weight_format='hf' is not compatible with local non-persistent checkpoints. "
+                    "Use non_persistent_ckpt_type='global' or disable non-persistent saving."
+                )
 
         # Validate ckpt_step if specified
         if self.ckpt_step is not None:
