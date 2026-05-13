@@ -41,7 +41,7 @@ tar xf /path/to/VALOR32K_videos.tar \
 ```shell
 cd /path/to/megatron-bridge
 
-uv run python examples/models/vlm/nemotron_3_omni/data/prepare_valor32k_avqa.py \
+uv run python tutorials/data/valor32k-avqa/prepare_valor32k_avqa.py \
   --output_dir /data/valor32k_avqa
 ```
 
@@ -74,7 +74,7 @@ Audio files are named after the full video stem, preserving timestamps: `{youtub
 ## Step 3: Build the Energon dataset
 
 ```shell
-uv run python examples/models/vlm/nemotron_3_omni/data/build_valor32k_avqa_shards.py \
+uv run python tutorials/data/valor32k-avqa/build_valor32k_avqa_shards.py \
   --data_root /data/valor32k_avqa \
   --output_dir /data/valor32k_avqa/energon \
   --samples_per_shard 100

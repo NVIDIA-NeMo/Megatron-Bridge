@@ -318,7 +318,7 @@ def make_valor32k_avqa_dataset(
 ) -> List[Dict[str, Any]]:
     """Load Valor32k-AVQA v2.0 dataset for audio-visual QA finetuning.
 
-    Expects a directory produced by ``prepare_valor32k_avqa.py``::
+    Expects a directory produced by ``tutorials/data/valor32k-avqa/prepare_valor32k_avqa.py``::
 
         data_root/
         ├── videos/                                  # 10s MP4 clips
@@ -336,7 +336,9 @@ def make_valor32k_avqa_dataset(
     split_name = "val" if split == "validation" else split
     qa_file = root / f"combined_dataset_{split_name}_flattened.json"
     if not qa_file.exists():
-        raise FileNotFoundError(f"QA file not found: {qa_file}. Run prepare_valor32k_avqa.py first.")
+        raise FileNotFoundError(
+            f"QA file not found: {qa_file}. Run tutorials/data/valor32k-avqa/prepare_valor32k_avqa.py first."
+        )
 
     with open(qa_file) as f:
         qa_pairs = json.load(f)

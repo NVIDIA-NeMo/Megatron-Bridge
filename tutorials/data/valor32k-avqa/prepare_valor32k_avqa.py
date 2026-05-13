@@ -38,11 +38,11 @@ Usage:
     #    files in /data/valor32k_avqa/videos/ (a subset is fine, QA pairs without
     #    a matching video will simply be reported as "not usable")
     # 2. Run this script to fetch QA annotations and extract audio:
-    python examples/models/vlm/nemotron_3_omni/data/prepare_valor32k_avqa.py \\
+    python tutorials/data/valor32k-avqa/prepare_valor32k_avqa.py \\
         --output_dir /data/valor32k_avqa
 
     # Optional: limit the number of videos processed (useful for testing):
-    python examples/models/vlm/nemotron_3_omni/data/prepare_valor32k_avqa.py \\
+    python tutorials/data/valor32k-avqa/prepare_valor32k_avqa.py \\
         --output_dir /data/valor32k_avqa --max_videos 100
 """
 

@@ -185,10 +185,11 @@ embedder: frames are fused in pairs (`temporal_patch_dim=2`,
 `separate_video_embedder=True`) and audio is fed through the Parakeet
 encoder. Recipe base: `nemotron_omni_valor32k_*_config`.
 
-Prepare the Energon shards once:
+Prepare the Energon shards once. For the full walkthrough, see
+[`tutorials/data/valor32k-avqa/data-preparation.md`](../../../../tutorials/data/valor32k-avqa/data-preparation.md).
 
 ```bash
-uv run python examples/models/vlm/nemotron_3_omni/data/build_valor32k_avqa_shards.py \
+uv run python tutorials/data/valor32k-avqa/build_valor32k_avqa_shards.py \
   --output_dir ${WORKSPACE}/datasets/valor32k_avqa
 ```
 

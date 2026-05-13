@@ -21,14 +21,15 @@ Runs the full pipeline in one shot:
   3. Create all Energon metadata (.info.yaml, index.sqlite, index.uuid, split.yaml)
 
 After this script finishes, only one manual step remains: write .nv-meta/dataset.yaml
-to declare the sample type and field mapping (see data-preparation.md Step 6).
+to declare the sample type and field mapping
+(see tutorials/data/valor32k-avqa/data-preparation.md Step 4).
 
 Note: energon prepare deadlocks in all modes on this version of megatron-energon due to
 a bug in AggregatorPool.close() (aggregator_process.join() never returns). This script
 bypasses energon prepare entirely by indexing the tar files directly with stdlib tarfile.
 
 Usage:
-    uv run python examples/models/vlm/nemotron_3_omni/data/build_valor32k_avqa_shards.py \\
+    uv run python tutorials/data/valor32k-avqa/build_valor32k_avqa_shards.py \\
         --data_root /data/valor32k_avqa \\
         --output_dir /data/valor32k_avqa/energon \\
         --samples_per_shard 100
@@ -264,7 +265,8 @@ def main():
 
     logger.info(
         f"Done. Energon dataset at: {output_dir}\n"
-        "Remaining: write .nv-meta/dataset.yaml (see data-preparation.md Step 4)"
+        "Remaining: write .nv-meta/dataset.yaml "
+        "(see tutorials/data/valor32k-avqa/data-preparation.md Step 4)"
     )
 
 

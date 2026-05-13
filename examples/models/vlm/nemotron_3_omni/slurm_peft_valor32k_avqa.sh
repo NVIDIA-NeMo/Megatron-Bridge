@@ -28,7 +28,7 @@
 #
 # Prerequisite:
 #   Build the VALOR32K-AVQA Energon shards (one-time):
-#     python examples/models/vlm/nemotron_3_omni/data/build_valor32k_avqa_shards.py \
+#     python tutorials/data/valor32k-avqa/build_valor32k_avqa_shards.py \
 #       --output_dir ${WORKSPACE}/datasets/valor32k_avqa
 #
 # Override TP/EP/CP/PACKED_SEQ via environment, e.g.:
