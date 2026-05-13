@@ -50,7 +50,6 @@ from quantize_utils import (
     console,
     create_quantization_stats_table,
     get_modelopt_torch_quantization_config,
-    patch_modelopt_te_linear_tuple_output,
 )
 from qwen_vl_utils import process_vision_info
 from tqdm import tqdm
@@ -327,7 +326,6 @@ def main(
 
         # Get quantization configuration
         mtq_config = get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_quant, weight_only)
-        patch_modelopt_te_linear_tuple_output()
 
         # Disable quantization for entire vision_model (all HuggingFace vision components)
         mtq_config["quant_cfg"].append({"quantizer_name": "*vision_model*", "enable": False})

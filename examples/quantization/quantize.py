@@ -44,7 +44,6 @@ from quantize_utils import (
     console,
     create_quantization_stats_table,
     get_modelopt_torch_quantization_config,
-    patch_modelopt_te_linear_tuple_output,
 )
 from tqdm import tqdm
 
@@ -164,7 +163,6 @@ def main(
 
         # Get quantization configuration
         mtq_config = get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_quant, weight_only)
-        patch_modelopt_te_linear_tuple_output()
 
         # Define forward loop function for calibration
         ptq_forward_loop_func = lambda model: _hf_dataset_forward_loop_func(
