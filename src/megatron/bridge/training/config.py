@@ -139,6 +139,13 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     global parallel state (mpu) variables. When True, parallel groups are obtained from
     the pg_collection object rather than the global megatron.core.parallel_state module."""
 
+    eval_context_parallel_size: int | None = None
+    """If set and different from model.context_parallel_size, validation runs with this CP
+    degree instead of the training CP degree. Requires use_decentralized_pg=True. The caller
+    is responsible for constructing a separate eval ProcessGroupCollection and wiring it
+    through GlobalState or the evaluate() call. See eval_context_parallel_rebinding.py
+    and the examples/decentralized_pg/pretrain_qwen3_eval_cp.py showcase."""
+
     @property
     def lazy_init(self) -> bool:
         return self.lazy_mpu_init
