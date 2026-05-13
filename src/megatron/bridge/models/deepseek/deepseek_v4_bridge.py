@@ -271,7 +271,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         # override the default transformer_engine_layer_spec with the experimental
         # attention variant block spec builder.
         # GPTModelProvider IS the TransformerConfig (not cfg.transformer)
-        provider.transformer_layer_spec = lambda cfg, vp_stage=None: _get_exp_attn_spec(config=cfg, vp_stage=vp_stage)
+        provider.transformer_layer_spec = _get_exp_attn_spec
         provider.qk_layernorm = True
         provider.normalization = "RMSNorm"
         provider.add_bias_linear = False
