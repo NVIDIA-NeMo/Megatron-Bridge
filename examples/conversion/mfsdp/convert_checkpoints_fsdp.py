@@ -75,42 +75,34 @@ def _check_distributed() -> None:
         sys.exit(1)
 
 
-def _check_world_size(tp: int, cp: int, ep: int, etp: int) -> None:
+def _check_world_size(tp: int, cp: int, ep: int) -> None:
     try:
         world_size = int(os.environ.get("WORLD_SIZE", "1"))
     except ValueError as err:
         raise ValueError("Invalid WORLD_SIZE environment variable.") from err
 
     non_expert_mp_size = tp * cp
-    expert_mp_size = etp * ep
+    expert_mp_size = ep
     if non_expert_mp_size <= 0 or expert_mp_size <= 0:
-        raise ValueError(f"Invalid parallel sizes: tp={tp}, cp={cp}, ep={ep}, etp={etp}")
+        raise ValueError(f"Invalid parallel sizes: tp={tp}, cp={cp}, ep={ep}")
     if world_size % non_expert_mp_size != 0:
         raise ValueError(
             f"WORLD_SIZE ({world_size}) must be divisible by tp*cp ({non_expert_mp_size}). "
-            f"Got tp={tp}, cp={cp}, ep={ep}, etp={etp}."
+            f"Got tp={tp}, cp={cp}, ep={ep}."
         )
     if world_size % expert_mp_size != 0:
         raise ValueError(
-            f"WORLD_SIZE ({world_size}) must be divisible by etp*ep ({expert_mp_size}). "
-            f"Got tp={tp}, cp={cp}, ep={ep}, etp={etp}."
+            f"WORLD_SIZE ({world_size}) must be divisible by ep ({expert_mp_size}). "
+            f"Got tp={tp}, cp={cp}, ep={ep}."
         )
 
 
-def _build_fsdp_distributed_model(
-    bridge: AutoBridge,
-    tp: int,
-    cp: int,
-    ep: int,
-    etp: int,
-    dtype: torch.dtype,
-):
+def _build_fsdp_distributed_model(bridge: AutoBridge, tp: int, cp: int, ep: int, dtype: torch.dtype):
     """Build and return a Megatron-FSDP wrapped model list."""
     model_provider = bridge.to_megatron_provider(load_weights=False)
     model_provider.tensor_model_parallel_size = tp
     model_provider.context_parallel_size = cp
     model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = dtype
     model_provider.params_dtype = dtype
     model_provider.gradient_accumulation_fusion = False
@@ -140,7 +132,6 @@ def import_hf_to_megatron_fsdp(
     tp: int = 1,
     cp: int = 1,
     ep: int = 1,
-    etp: int = 1,
     torch_dtype: str = "bfloat16",
     trust_remote_code: bool = False,
     low_memory_save: bool = True,
@@ -148,13 +139,11 @@ def import_hf_to_megatron_fsdp(
 ) -> None:
     """Import a HuggingFace model and save it as a DTensor checkpoint."""
     _check_distributed()
-    _check_world_size(tp=tp, cp=cp, ep=ep, etp=etp)
+    _check_world_size(tp=tp, cp=cp, ep=ep)
     dtype = _parse_dtype(torch_dtype)
 
     print_rank_0(f"Importing: {hf_model} -> {megatron_path}")
-    print_rank_0(
-        f"  TP={tp}  CP={cp}  EP={ep}  ETP={etp}  dtype={torch_dtype}  ckpt_format={ckpt_format}"
-    )
+    print_rank_0(f"  TP={tp}  CP={cp}  EP={ep}  dtype={torch_dtype}  ckpt_format={ckpt_format}")
 
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
@@ -162,14 +151,7 @@ def import_hf_to_megatron_fsdp(
         torch_dtype=dtype,
     )
 
-    _, _, megatron_model = _build_fsdp_distributed_model(
-        bridge,
-        tp=tp,
-        cp=cp,
-        ep=ep,
-        etp=etp,
-        dtype=dtype,
-    )
+    _, _, megatron_model = _build_fsdp_distributed_model(bridge, tp=tp, cp=cp, ep=ep, dtype=dtype)
 
     bridge.load_hf_weights(megatron_model)
 
@@ -205,7 +187,6 @@ def export_megatron_to_hf(
     tp: int = 1,
     cp: int = 1,
     ep: int = 1,
-    etp: int = 1,
     torch_dtype: str = "bfloat16",
     trust_remote_code: bool = False,
     ckpt_format: str = "fsdp_dtensor",
@@ -216,11 +197,11 @@ def export_megatron_to_hf(
 ) -> None:
     """Export Megatron checkpoint to HuggingFace format."""
     _check_distributed()
-    _check_world_size(tp=tp, cp=cp, ep=ep, etp=etp)
+    _check_world_size(tp=tp, cp=cp, ep=ep)
     dtype = _parse_dtype(torch_dtype)
 
     print_rank_0(f"Exporting: {megatron_path} -> {hf_path}")
-    print_rank_0(f"  TP={tp}  CP={cp}  EP={ep}  ETP={etp}  dtype={torch_dtype}  ckpt_format={ckpt_format}")
+    print_rank_0(f"  TP={tp}  CP={cp}  EP={ep}  dtype={torch_dtype}  ckpt_format={ckpt_format}")
     print_rank_0(f"  distributed_save={distributed_save}  save_every_n_ranks={save_every_n_ranks}")
 
     bridge = AutoBridge.from_hf_pretrained(
@@ -233,7 +214,7 @@ def export_megatron_to_hf(
     if ckpt_format == "fsdp_dtensor":
         # Build an FSDP-wrapped model and load with the training checkpoint loader.
         model_provider, ddp_config, megatron_model = _build_fsdp_distributed_model(
-            bridge, tp=tp, cp=cp, ep=ep, etp=etp, dtype=dtype
+            bridge, tp=tp, cp=cp, ep=ep, dtype=dtype
         )
 
         state = GlobalState()
@@ -267,7 +248,6 @@ def export_megatron_to_hf(
             "tensor_model_parallel_size": tp,
             "context_parallel_size": cp,
             "expert_model_parallel_size": ep,
-            "expert_tensor_parallel_size": etp,
             "pipeline_dtype": dtype,
         }
         megatron_model = bridge.load_megatron_model(
@@ -294,7 +274,6 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--cp", type=int, default=1, help="Context parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
-    parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     parser.add_argument(
         "--torch-dtype",
         choices=list(DTYPE_MAP),
@@ -329,6 +308,7 @@ def main() -> None:
         action="store_true",
         help="Disable low-memory save mode (keeps model alive after save)",
     )
+
     export_parser = subparsers.add_parser("export", help="Export DTensor checkpoint to HuggingFace format")
     _add_common_args(export_parser)
     export_parser.add_argument("--megatron-path", required=True, help="Directory containing the DTensor checkpoint")
@@ -361,7 +341,6 @@ def main() -> None:
             tp=args.tp,
             cp=args.cp,
             ep=args.ep,
-            etp=args.etp,
             torch_dtype=args.torch_dtype,
             trust_remote_code=args.trust_remote_code,
             low_memory_save=not args.no_low_memory_save,
@@ -375,7 +354,6 @@ def main() -> None:
             tp=args.tp,
             cp=args.cp,
             ep=args.ep,
-            etp=args.etp,
             torch_dtype=args.torch_dtype,
             trust_remote_code=args.trust_remote_code,
             ckpt_format=args.ckpt_format,
