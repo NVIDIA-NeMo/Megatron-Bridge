@@ -1,26 +1,26 @@
 #!/bin/bash
-# Run heterogeneous MIMO LLaVA E2E test with various parallelism configurations
-# Usage: ./run_hetero_llava_parallelism_tests.sh [--gpus N] [--config CONFIG_NAME] [--deterministic]
+# Run heterogeneous MIMO LLaVA+audio E2E test with various parallelism configurations
+# Usage: ./run_hetero_llava_audio_parallelism_tests.sh [--gpus N] [--config CONFIG_NAME] [--deterministic]
 #
 # Set DETERMINISTIC=1 (env var) or pass --deterministic to enable deterministic mode:
 # exports deterministic NCCL/CUBLAS/cuDNN/TE env vars AND passes --deterministic
 # to the training script (FP32 precision, unfused attention, full recompute, etc.).
 #
 # Examples:
-#   ./run_hetero_llava_parallelism_tests.sh                    # Run all configs with 8 GPUs
-#   ./run_hetero_llava_parallelism_tests.sh --gpus 4           # Run all configs with 4 GPUs
-#   ./run_hetero_llava_parallelism_tests.sh --config tp2_dp2   # Run only tp2_dp2 config
-#   ./run_hetero_llava_parallelism_tests.sh --deterministic    # Run in deterministic mode
+#   ./run_hetero_llava_audio_parallelism_tests.sh                              # Run all configs with 8 GPUs
+#   ./run_hetero_llava_audio_parallelism_tests.sh --config tp4_llm_tp2_vis_tp2_aud  # Run a single config
+#   ./run_hetero_llava_audio_parallelism_tests.sh --deterministic              # Run in deterministic mode
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEST_FILE="${SCRIPT_DIR}/megatron_mimo_training_llava.py"
+TEST_FILE="${SCRIPT_DIR}/megatron_mimo_training_llava_audio.py"
 
 # Default values
 NUM_GPUS=${NUM_GPUS:-8}
 SINGLE_CONFIG=""
 DETERMINISTIC=${DETERMINISTIC:-0}
+
 
 # Training defaults (can be overridden via env vars)
 # MBS is set per-config (must be divisible by every module's DP size).
@@ -36,14 +36,20 @@ ADAM_BETA2=${ADAM_BETA2:-0.95}
 LOG_INTERVAL=${LOG_INTERVAL:-1}
 WANDB_PROJECT=${WANDB_PROJECT:-"Megatron-Bridge-MIMO"}
 WANDB_SAVE_DIR=${WANDB_SAVE_DIR:-"/tmp/wandb"}
-DATASET_ROOT=${DATASET_ROOT:-"/path/to/llava/pretrain/dataset"}
+DATASET_ROOT=${DATASET_ROOT:-"/path/to/LLaVA-Pretrain-Audio-Augmented"}
 UV_CACHE_DIR=${UV_CACHE_DIR:-/workspace/uv_cache/}
 
 # HuggingFace source models for checkpoint conversion
 HF_VISION_MODEL=${HF_VISION_MODEL:-"openai/clip-vit-large-patch14-336"}
 HF_LLM_MODEL=${HF_LLM_MODEL:-"lmsys/vicuna-7b-v1.5"}
+HF_AUDIO_MODEL=${HF_AUDIO_MODEL:-"openai/whisper-base"}
 MEGATRON_VOCAB_SIZE=${MEGATRON_VOCAB_SIZE:-32256}
 CHECKPOINT_BASE_DIR=${CHECKPOINT_BASE_DIR:-/workspace/megatron_mimo_checkpoints}
+
+# Audio-augmented dataset (set by prepare_llava_pretrain_audio.sh). The audio
+# encoder is only exercised when AUDIO_COLUMN is non-empty.
+HF_DATA_FILES=${HF_DATA_FILES:-blip_laion_cc_sbu_558k_with_audio.json}
+AUDIO_COLUMN=${AUDIO_COLUMN:-audio}
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -102,46 +108,39 @@ echo "GPUs: ${NUM_GPUS}"
 echo "Deterministic: ${DETERMINISTIC}"
 echo "=========================================="
 
-# Define configurations as: "name|llm_tp|llm_pp|llm_dp|llm_offset|vision_tp|vision_pp|vision_dp|vision_offset|mbs"
-# Note: Vision encoder (CLIPViT) does not support PP > 1, only LLM can use PP
-# Heterogeneous: LLM and vision occupy non-overlapping GPU sets
-# MBS must be divisible by every module's DP size (enforced by build_megatron_mimo_data_loaders)
+# Define configurations as:
+#   "name|llm_tp|llm_pp|llm_dp|llm_offset|vision_tp|vision_pp|vision_dp|vision_offset|audio_tp|audio_pp|audio_dp|audio_offset|mbs"
+# Notes:
+#   - Vision encoder (CLIPViT) and audio encoder (Whisper) do not support PP > 1
+#   - Modules occupy non-overlapping GPU sets; offsets are the first rank of each module
+#   - MBS must be divisible by every module's DP size (enforced by build_megatron_mimo_data_loaders)
+#   - Encoder DP must be >= LLM DP (required for embedding alignment across batches)
+#   - Total GPUs = llm_tp*llm_pp*llm_dp + vision_tp*vision_pp*vision_dp + audio_tp*audio_pp*audio_dp
 
 declare -a CONFIGS_8GPU=(
-    # 4+4 split
-    "tp4_both|4|1|1|0|4|1|1|4|4"
-    "tp2_dp2_both|2|1|2|0|2|1|2|4|4"
-    "tp2_pp2_llm_tp4_vision|2|2|1|0|4|1|1|4|4"
-    "tp1_dp4_both|1|1|4|0|1|1|4|4|4"
-    "pp4_llm_tp4_vision|1|4|1|0|4|1|1|4|4"
-    "pp4_llm_dp4_vision|1|4|1|0|1|1|4|4|4"
-    "pp2_dp2_llm_tp2_dp2|1|2|2|0|2|1|2|4|4"
-    "tp4_llm_dp4_vision|4|1|1|0|1|1|4|4|4"
-    "tp2_pp2_llm_tp2_dp2_vision|2|2|1|0|2|1|2|4|4"
-    "tp2_dp2_llm_dp4_vision|2|1|2|0|1|1|4|4|4"
-    # Asymmetric configs
-    "asymmetric_2_6_pp2|1|2|1|0|2|1|3|2|3"
-    "asymmetric_2_6_tp2|2|1|1|0|2|1|3|2|3"
+    # LLM on 4 GPUs + vision/audio 2+2 split on remaining 4 (offsets: LLM=0, vision=4, audio=6)
+    "tp4_llm_tp2_vis_tp2_aud|4|1|1|0|2|1|1|4|2|1|1|6|4"
+    "tp4_llm_dp2_vis_dp2_aud|4|1|1|0|1|1|2|4|1|1|2|6|2"
+    "tp2_dp2_llm_dp2_vis_dp2_aud|2|1|2|0|1|1|2|4|1|1|2|6|2"
+    "tp2_pp2_llm_tp2_vis_tp2_aud|2|2|1|0|2|1|1|4|2|1|1|6|4"
+    "pp4_llm_tp2_vis_tp2_aud|1|4|1|0|2|1|1|4|2|1|1|6|4"
+    "pp4_llm_dp2_vis_dp2_aud|1|4|1|0|1|1|2|4|1|1|2|6|2"
+    "pp2_dp2_llm_dp2_vis_dp2_aud|1|2|2|0|1|1|2|4|1|1|2|6|2"
+    # Asymmetric: LLM on 2 GPUs + vision/audio share remaining 6 (LLM=0, vision=2, audio=2+vision_size)
+    # LLM tp2
+    "asym_tp2_llm_tp4_vis_tp2_aud|2|1|1|0|4|1|1|2|2|1|1|6|4"
+    "asym_tp2_llm_tp2_vis_tp4_aud|2|1|1|0|2|1|1|2|4|1|1|4|4"
+    "asym_tp2_llm_dp3_vis_dp3_aud|2|1|1|0|1|1|3|2|1|1|3|5|3"
+    "asym_tp2_llm_dp4_vis_tp2_aud|2|1|1|0|1|1|4|2|2|1|1|6|4"
+    "asym_tp2_llm_dp2_vis_dp4_aud|2|1|1|0|1|1|2|2|1|1|4|4|4"
+    # LLM pp2
+    "asym_pp2_llm_tp4_vis_tp2_aud|1|2|1|0|4|1|1|2|2|1|1|6|4"
+    "asym_pp2_llm_tp2_vis_tp4_aud|1|2|1|0|2|1|1|2|4|1|1|4|4"
+    "asym_pp2_llm_dp3_vis_dp3_aud|1|2|1|0|1|1|3|2|1|1|3|5|3"
+    "asym_pp2_llm_dp4_vis_tp2_aud|1|2|1|0|1|1|4|2|2|1|1|6|4"
 )
 
-declare -a CONFIGS_4GPU=(
-    # 2+2 split
-    "tp2_both|2|1|1|0|2|1|1|2|4"
-    "tp1_dp2_both|1|1|2|0|1|1|2|2|4"
-)
-
-declare -a CONFIGS_2GPU=(
-    "tp1_both|1|1|1|0|1|1|1|1|4"
-)
-
-# Select configs based on GPU count
-if [[ $NUM_GPUS -ge 8 ]]; then
-    CONFIGS=("${CONFIGS_8GPU[@]}")
-elif [[ $NUM_GPUS -ge 4 ]]; then
-    CONFIGS=("${CONFIGS_4GPU[@]}")
-else
-    CONFIGS=("${CONFIGS_2GPU[@]}")
-fi
+CONFIGS=("${CONFIGS_8GPU[@]}")
 
 # Track results
 declare -a RESULTS=()
@@ -152,9 +151,11 @@ PASSED=0
 convert_checkpoints() {
     local vision_tp="$1"
     local llm_tp="$2"
+    local audio_tp="$3"
 
     local clip_ckpt_dir="${CHECKPOINT_BASE_DIR}/clip_tp${vision_tp}"
     local llm_ckpt_dir="${CHECKPOINT_BASE_DIR}/llm_tp${llm_tp}"
+    local whisper_ckpt_dir="${CHECKPOINT_BASE_DIR}/whisper_tp${audio_tp}"
 
     # Convert CLIP checkpoint if not already cached for this TP size
     if [[ ! -d "${clip_ckpt_dir}/tp_rank_00" ]]; then
@@ -181,34 +182,59 @@ convert_checkpoints() {
         echo "  Using cached LLM checkpoint: ${llm_ckpt_dir}"
     fi
 
+    # Convert Whisper checkpoint if not already cached for this TP size
+    if [[ ! -d "${whisper_ckpt_dir}/tp_rank_00" ]]; then
+        echo "  Converting Whisper checkpoint (TP=${audio_tp})..."
+        uv run python "${SCRIPT_DIR}/whisper/convert_hf_whisper_to_megatron.py" \
+            --hf-model "${HF_AUDIO_MODEL}" \
+            --output "${whisper_ckpt_dir}" \
+            --tensor-parallel-size "${audio_tp}" \
+            --use-te
+    else
+        echo "  Using cached Whisper checkpoint: ${whisper_ckpt_dir}"
+    fi
+
     # Return paths via global variables
     CONVERTED_CLIP_CKPT="${clip_ckpt_dir}"
     CONVERTED_LLM_CKPT="${llm_ckpt_dir}"
+    CONVERTED_WHISPER_CKPT="${whisper_ckpt_dir}"
 }
 
 build_wandb_exp_name() {
     local name="$1"
     local llm_tp="$2" llm_pp="$3" llm_dp="$4"
     local vision_tp="$5" vision_pp="$6" vision_dp="$7"
-    local mbs="$8"
+    local audio_tp="$8" audio_pp="$9" audio_dp="${10}"
+    local mbs="${11}"
 
-    echo "hetero-llava-${name}-${NUM_GPUS}gpu-llm_tp${llm_tp}_pp${llm_pp}_dp${llm_dp}-vis_tp${vision_tp}_pp${vision_pp}_dp${vision_dp}-mbs${mbs}"
+    echo "hetero-llava-${name}-${NUM_GPUS}gpu-llm_tp${llm_tp}_pp${llm_pp}_dp${llm_dp}-vis_tp${vision_tp}_pp${vision_pp}_dp${vision_dp}-aud_tp${audio_tp}_pp${audio_pp}_dp${audio_dp}-mbs${mbs}"
 }
 
 run_config() {
     local config="$1"
-    local name llm_tp llm_pp llm_dp llm_offset vision_tp vision_pp vision_dp vision_offset mbs
+    local name llm_tp llm_pp llm_dp llm_offset
+    local vision_tp vision_pp vision_dp vision_offset
+    local audio_tp audio_pp audio_dp audio_offset mbs
 
-    IFS='|' read -r name llm_tp llm_pp llm_dp llm_offset vision_tp vision_pp vision_dp vision_offset mbs <<< "$config"
+    IFS='|' read -r name \
+        llm_tp llm_pp llm_dp llm_offset \
+        vision_tp vision_pp vision_dp vision_offset \
+        audio_tp audio_pp audio_dp audio_offset \
+        mbs <<< "$config"
 
     local exp_name
-    exp_name=$(build_wandb_exp_name "${name}" "${llm_tp}" "${llm_pp}" "${llm_dp}" "${vision_tp}" "${vision_pp}" "${vision_dp}" "${mbs}")
+    exp_name=$(build_wandb_exp_name "${name}" \
+        "${llm_tp}" "${llm_pp}" "${llm_dp}" \
+        "${vision_tp}" "${vision_pp}" "${vision_dp}" \
+        "${audio_tp}" "${audio_pp}" "${audio_dp}" \
+        "${mbs}")
 
     echo ""
     echo "----------------------------------------"
     echo "Running: ${name}"
     echo "  LLM:    TP=${llm_tp}, PP=${llm_pp}, DP=${llm_dp}, offset=${llm_offset}"
     echo "  Vision: TP=${vision_tp}, PP=${vision_pp}, DP=${vision_dp}, offset=${vision_offset}"
+    echo "  Audio:  TP=${audio_tp}, PP=${audio_pp}, DP=${audio_dp}, offset=${audio_offset}"
     echo "  MBS:    ${mbs}"
     echo "  W&B:    ${exp_name}"
     echo "----------------------------------------"
@@ -216,7 +242,7 @@ run_config() {
     TOTAL=$((TOTAL + 1))
 
     # Convert checkpoints for this config's TP sizes
-    convert_checkpoints "${vision_tp}" "${llm_tp}"
+    convert_checkpoints "${vision_tp}" "${llm_tp}" "${audio_tp}"
 
     local start_time=$(date +%s)
 
@@ -228,6 +254,10 @@ run_config() {
        MIMO_VISION_PP="${vision_pp}" \
        MIMO_VISION_DP="${vision_dp}" \
        MIMO_VISION_OFFSET="${vision_offset}" \
+       MIMO_AUDIO_TP="${audio_tp}" \
+       MIMO_AUDIO_PP="${audio_pp}" \
+       MIMO_AUDIO_DP="${audio_dp}" \
+       MIMO_AUDIO_OFFSET="${audio_offset}" \
        UV_CACHE_DIR="${UV_CACHE_DIR}" \
        uv run torchrun \
            --nproc_per_node "${NUM_GPUS}" \
@@ -248,8 +278,11 @@ run_config() {
            --wandb-exp-name "${exp_name}${EXP_SUFFIX}" \
            --wandb-save-dir "${WANDB_SAVE_DIR}" \
            --dataset-root "${DATASET_ROOT}" \
+           --hf-data-files "${HF_DATA_FILES}" \
+           --audio-column "${AUDIO_COLUMN}" \
            --vision-encoder-checkpoint "${CONVERTED_CLIP_CKPT}" \
            --language-model-checkpoint "${CONVERTED_LLM_CKPT}" \
+           --audio-encoder-checkpoint "${CONVERTED_WHISPER_CKPT}" \
            ${DETERMINISTIC_FLAG} \
            2>&1; then
         local end_time=$(date +%s)
