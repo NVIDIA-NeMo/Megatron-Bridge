@@ -553,29 +553,10 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         shard_rank = self.tp_rank // replicas
         return shard_world_size, shard_rank
 
-    def _broadcast_tp_split_shape(
-        self,
-        splits: Optional[List[torch.Tensor]],
-        src_rank: int = 0,
-    ) -> torch.Size:
-        """Broadcast the actual tensor shard shape from the TP scatter source."""
-        shape = tuple(splits[0].shape) if self.tp_rank == src_rank and splits else None
-        shape_list = [shape]
-        global_src = torch.distributed.get_global_rank(group=self.tp_group, group_rank=src_rank)
-
-        torch.distributed.broadcast_object_list(
-            shape_list,
-            src=global_src,
-            group=self.tp_group,
-        )
-        if shape_list[0] is None:
-            raise RuntimeError("Failed to broadcast tensor-parallel split shape")
-        return torch.Size(shape_list[0])
-
     def scatter_to_tp_ranks(
         self,
         splits: Optional[List[torch.Tensor]],
-        output_shape: Optional[torch.Size],
+        output_shape: torch.Size,
         dtype: torch.dtype,
         device: torch.device,
         src_rank: int = 0,
@@ -597,10 +578,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         if self.tp_size == 1:
             return splits[0].to(device=device, dtype=dtype) if splits else None
 
-        if output_shape is None:
-            output_shape = self._broadcast_tp_split_shape(splits, src_rank)
-
-        output = torch.empty(torch.Size(output_shape), dtype=dtype, device=device)
+        output = torch.empty(output_shape, dtype=dtype, device=device)
         global_src = torch.distributed.get_global_rank(group=self.tp_group, group_rank=src_rank)
 
         scatter_list = None
@@ -936,7 +914,10 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         else:
             splits = None
 
-        output_shape = None if isinstance(target_param, DTensor) else target_param.shape
+        if isinstance(target_param, DTensor):
+            output_shape = target_param.orig_param.shape
+        else:
+            output_shape = target_param.shape
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
@@ -1042,7 +1023,10 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         else:
             splits = None
 
-        output_shape = None if isinstance(target_param, DTensor) else target_param.shape
+        if isinstance(target_param, DTensor):
+            output_shape = target_param.orig_param.shape
+        else:
+            output_shape = target_param.shape
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
@@ -2259,7 +2243,10 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         else:
             splits = None
 
-        output_shape = None if isinstance(target_param, DTensor) else target_param.shape
+        if isinstance(target_param, DTensor):
+            output_shape = target_param.orig_param.shape
+        else:
+            output_shape = target_param.shape
         # Scatter the concatenated shards to each rank
         return self.scatter_to_tp_ranks(
             splits,
