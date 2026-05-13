@@ -38,8 +38,10 @@ class EnergonProvider(DatasetProvider):
 
     def build_datasets(self, context: DatasetBuildContext):
         assert self.path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
-        if self.pack_sequences_in_batch and self.task_encoder is not None and hasattr(
-            self.task_encoder, "pack_sequences"
+        if (
+            self.pack_sequences_in_batch
+            and self.task_encoder is not None
+            and hasattr(self.task_encoder, "pack_sequences")
         ):
             self.task_encoder.pack_sequences = True
         dataset = EnergonMultiModalDataModule(

@@ -38,28 +38,28 @@ Vision backbone config is modality-dependent:
 
 Examples:
   # Single image:
-  uv run python examples/conversion/hf_to_megatron_generate_nemotron_omni.py \
+  uv run python examples/models/vlm/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py \
     --hf_model_path="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16" \
     --image_path="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
     --prompt="Describe this image." \
     --max_new_tokens 300
 
   # Multiple images:
-  uv run python examples/conversion/hf_to_megatron_generate_nemotron_omni.py \
+  uv run python examples/models/vlm/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py \
     --hf_model_path="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16" \
     --image_path="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/example1a.jpeg,https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/example1b.jpeg" \
     --prompt="Describe the two images in detail." \
     --max_new_tokens 300
 
   # Video description:
-  uv run python examples/conversion/hf_to_megatron_generate_nemotron_omni.py \
+  uv run python examples/models/vlm/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py \
     --hf_model_path="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16" \
     --video_path="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/demo.mp4" \
     --prompt="Describe what you see." \
     --max_new_tokens 300
 
   # Audio transcription:
-  uv run python examples/conversion/hf_to_megatron_generate_nemotron_omni.py \
+  uv run python examples/models/vlm/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py \
     --hf_model_path="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16" \
     --audio_path="/path/to/audio.wav" \
     --prompt="Transcribe the audio." \
@@ -299,9 +299,9 @@ def load_image(image_path: str) -> Image.Image:
         PIL Image object
     """
     if image_path.startswith(("http://", "https://")):
-        response = requests.get(image_path)
+        response = requests.get(image_path, stream=True)
         response.raise_for_status()
-        return Image.open(requests.get(image_path, stream=True).raw)
+        return Image.open(response.raw)
     else:
         return Image.open(image_path)
 

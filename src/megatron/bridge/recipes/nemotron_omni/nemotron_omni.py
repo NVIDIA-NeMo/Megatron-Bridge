@@ -26,7 +26,9 @@ from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
+
 _DEFAULT_HF_PATH = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
+
 
 def nemotron_omni_cord_v2_sft_config(hf_path: str = _DEFAULT_HF_PATH) -> ConfigContainer:
     """Return a VL SFT config for Nemotron Omni on CORD v2.
@@ -231,6 +233,7 @@ def nemotron_omni_valor32k_sft_config(
     )
 
     return cfg
+
 
 def nemotron_omni_valor32k_peft_config(
     hf_path: str = _DEFAULT_HF_PATH,

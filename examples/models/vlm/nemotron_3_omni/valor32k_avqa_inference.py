@@ -108,7 +108,7 @@ def _build_vision_packed_seq_params(imgs_sizes: Optional[torch.Tensor]) -> Optio
 
 
 # ---------------------------------------------------------------------------
-# Forward step (same as hf_to_megatron_generate_nemotron_omni.py)
+# Forward step (same as examples/models/vlm/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py)
 # ---------------------------------------------------------------------------
 
 

@@ -499,9 +499,7 @@ def nemotron_omni_collate_fn(
                     pad_id = processor.tokenizer.eos_token_id or 0
                 ids_list = [b["input_ids"][0] for b in per_ex_batches]
                 max_len = max(t.shape[0] for t in ids_list)
-                padded_ids = torch.full(
-                    (len(per_ex_batches), max_len), pad_id, dtype=ids_list[0].dtype
-                )
+                padded_ids = torch.full((len(per_ex_batches), max_len), pad_id, dtype=ids_list[0].dtype)
                 for i, ids in enumerate(ids_list):
                     padded_ids[i, : ids.shape[0]] = ids
                 pv_list: list[torch.Tensor] = []
@@ -645,9 +643,7 @@ def nemotron_omni_collate_fn(
                 n_imgs = int(pv_ref.shape[0])
             num_tiles_for_adjust = torch.ones(n_imgs, dtype=torch.long)
         else:
-            num_tiles_for_adjust = batch.get(
-                "num_patches", torch.zeros(len(examples), dtype=torch.long)
-            )
+            num_tiles_for_adjust = batch.get("num_patches", torch.zeros(len(examples), dtype=torch.long))
         adjusted_batch = adjust_image_tokens(
             {"input_ids": batch["input_ids"], "loss_mask": torch.tensor(loss_mask)},
             num_tiles_for_adjust,
@@ -685,8 +681,10 @@ def nemotron_omni_collate_fn(
         # out variable per-image token counts. Handles both the uniform-4D
         # case (mbs=1 or all images same shape) and the list-of-tensors case
         # (mbs>1 with mixed shapes).
-        if (not is_video) and is_dynamic_res_processor and (
-            isinstance(pv_raw, list) or (torch.is_tensor(pv_raw) and pv_raw.dim() == 4 and pv_raw.shape[0] > 0)
+        if (
+            (not is_video)
+            and is_dynamic_res_processor
+            and (isinstance(pv_raw, list) or (torch.is_tensor(pv_raw) and pv_raw.dim() == 4 and pv_raw.shape[0] > 0))
         ):
             P = 16  # RADIO patch_dim
             if isinstance(pv_raw, list):
@@ -703,12 +701,7 @@ def nemotron_omni_collate_fn(
                 assert H % P == 0 and W % P == 0, f"Image {H}x{W} not divisible by patch_dim {P}"
                 py, px = H // P, W // P
                 # [3, H, W] → [py, P, px, P, 3] → [py*px, 3*P*P]
-                patched = (
-                    img.reshape(3, py, P, px, P)
-                    .permute(1, 3, 0, 2, 4)
-                    .reshape(py * px, 3 * P * P)
-                    .contiguous()
-                )
+                patched = img.reshape(3, py, P, px, P).permute(1, 3, 0, 2, 4).reshape(py * px, 3 * P * P).contiguous()
                 patch_seqs.append(patched)
                 sizes.append([H, W])
                 num_tiles.append((py * px) // 4)

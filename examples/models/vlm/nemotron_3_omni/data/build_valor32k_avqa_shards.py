@@ -21,7 +21,7 @@ Runs the full pipeline in one shot:
   3. Create all Energon metadata (.info.yaml, index.sqlite, index.uuid, split.yaml)
 
 After this script finishes, only one manual step remains: write .nv-meta/dataset.yaml
-to declare the sample type and field mapping (see data_preparation.md Step 6).
+to declare the sample type and field mapping (see data-preparation.md Step 6).
 
 Note: energon prepare deadlocks in all modes on this version of megatron-energon due to
 a bug in AggregatorPool.close() (aggregator_process.join() never returns). This script
@@ -45,6 +45,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import yaml
+
 
 try:
     from tqdm import tqdm
@@ -214,8 +215,7 @@ def build_energon_index(output_dir: Path, split_shards: dict[str, list[str]]) ->
             rows.append((tar_file_id, sample_key, sample_index, byte_offset, byte_size))
 
         conn.executemany(
-            "INSERT INTO samples (tar_file_id, sample_key, sample_index, byte_offset, byte_size)"
-            " VALUES (?,?,?,?,?)",
+            "INSERT INTO samples (tar_file_id, sample_key, sample_index, byte_offset, byte_size) VALUES (?,?,?,?,?)",
             rows,
         )
         conn.commit()
@@ -264,7 +264,7 @@ def main():
 
     logger.info(
         f"Done. Energon dataset at: {output_dir}\n"
-        "Remaining: write .nv-meta/dataset.yaml (see data_preparation.md Step 4)"
+        "Remaining: write .nv-meta/dataset.yaml (see data-preparation.md Step 4)"
     )
 
 

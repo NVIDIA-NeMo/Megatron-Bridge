@@ -309,7 +309,6 @@ def make_default_audio_dataset(
     return [format_example(example) for example in dataset]
 
 
-
 def make_valor32k_avqa_dataset(
     data_root: str,
     split: str = "train",

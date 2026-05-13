@@ -68,6 +68,7 @@ logger = logging.getLogger(__name__)
 QA_ZIP_URL = "https://github.com/inesriahi/valor32k-avqa-2/raw/refs/heads/main/data.zip"
 VALOR_ANNOTATIONS_URL = "https://casia-iva-group.github.io/projects/VALOR/static/files/VALOR-32K-annotations.zip"
 
+
 def download_qa_annotations(output_dir: Path):
     """Download and extract QA JSON files from the GitHub repo."""
     logger.info(f"Downloading QA annotations from {QA_ZIP_URL}...")
@@ -220,7 +221,9 @@ def main():
     logger.info(f"Usable videos: {len(available)}/{len(video_ids)}")
     if len(available) < len(video_ids):
         missing = len(video_ids) - len(available)
-        logger.info(f"{missing} videos missing. For full coverage, download from YouTube or BaiduPan. See instructions in https://github.com/CASIA-IVA-Lab/VALOR for more details.")
+        logger.info(
+            f"{missing} videos missing. For full coverage, download from YouTube or BaiduPan. See instructions in https://github.com/CASIA-IVA-Lab/VALOR for more details."
+        )
     logger.info("=" * 60)
 
 

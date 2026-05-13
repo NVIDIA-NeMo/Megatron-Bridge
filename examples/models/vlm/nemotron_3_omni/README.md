@@ -73,7 +73,7 @@ bash examples/models/vlm/nemotron_3_omni/conversion.sh
 ## Inference
 
 [inference.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/nemotron_3_omni/inference.sh) drives
-`examples/conversion/hf_to_megatron_generate_nemotron_omni.py` over the four
+`examples/models/vlm/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py` over the four
 modality combinations exercised by the model:
 
 | # | Modality | GPUs | Parallelism |
