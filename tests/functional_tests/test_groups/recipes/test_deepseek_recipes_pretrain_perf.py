@@ -139,32 +139,3 @@ class TestDeepSeekRecipesPerf:
             recipe_name,
             config_overrides=config_overrides,
         )
-
-        # if torch.distributed.get_rank() == 0:
-        #         print(tmp_file.name)
-        #         # calc_convergence_and_performance(
-        #         #     model_family_name="deepseek",
-        #         #     model_recipe_name=recipe_name,
-        #         #     assets_dir= "/tmp",
-        #         #     log_paths=[tmp_file.name],
-        #         #     loss_metric="loss",
-        #         #     timing_metric="time",
-        #         #     alloc_metric="alloc",
-        #         #     max_alloc_metric="max_alloc",
-        #         #     golden_values_path= CURR_DIR + "golden_values/test_deepseek_recipes_pretrain_perf_gb200.json",
-        #         #     convergence_config={
-        #         #         "correlation_threshold": 0.99,
-        #         #         "high_loss_tolerance": 0.05,
-        #         #         "medium_loss_tolerance": 0.1,
-        #         #         "low_loss_tolerance": 0.15,
-        #         #         "final_loss_tolerance": 0.2,
-        #         #         "max_outlier_ratio": 0.05,
-        #         #     },
-        #         #     performance_config={
-        #         #         "performance_threshold": 0.05,
-        #         #     },
-        #         #     memory_config={
-        #         #         "memory_threshold": 0.05,
-        #         #     },
-        #         #     wandb_run=None,
-        #         # )
