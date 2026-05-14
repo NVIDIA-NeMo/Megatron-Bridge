@@ -16,7 +16,7 @@ import abc
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, Iterable, Mapping, TypedDict, TypeVar, Union
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -31,14 +31,9 @@ except ImportError:
 
         Unpack = MagicMock()
 
-
-from typing import Callable
-
 import torch
 from megatron.core import parallel_state, tensor_parallel
-from megatron.core.distributed import (
-    DistributedDataParallelConfig,
-)
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
@@ -103,6 +98,53 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             ModelT: The Megatron model instance.
         """
         pass
+
+    def configure(
+        self,
+        *,
+        dtype: torch.dtype | None = None,
+        overrides: Mapping[str, object] | None = None,
+        pre_finalize_hooks: Iterable[Callable[[object], None]] = (),
+    ):
+        """Apply integration settings and finalize this provider.
+
+        Args:
+            dtype: Optional parameter dtype. Also sets ``fp16`` and ``bf16``.
+            overrides: Provider attributes to set before finalization.
+            pre_finalize_hooks: Mutations that must run before ``finalize()``.
+
+        Returns:
+            This provider.
+        """
+        if dtype is not None:
+            self.params_dtype = dtype
+            self.fp16 = dtype == torch.float16
+            self.bf16 = dtype == torch.bfloat16
+
+        provider_overrides = {}
+        if parallel_state.is_initialized():
+            provider_overrides.update(
+                {
+                    "tensor_model_parallel_size": parallel_state.get_tensor_model_parallel_world_size(),
+                    "pipeline_model_parallel_size": parallel_state.get_pipeline_model_parallel_world_size(),
+                    "expert_model_parallel_size": parallel_state.get_expert_model_parallel_world_size(),
+                    "expert_tensor_parallel_size": parallel_state.get_expert_tensor_parallel_world_size(),
+                    "virtual_pipeline_model_parallel_size": (
+                        parallel_state.get_virtual_pipeline_model_parallel_world_size()
+                    ),
+                    "context_parallel_size": parallel_state.get_context_parallel_world_size(),
+                }
+            )
+        provider_overrides.update(overrides or {})
+
+        for name, value in provider_overrides.items():
+            setattr(self, name, value)
+
+        for hook in pre_finalize_hooks:
+            hook(self)
+
+        self.finalize()
+        return self
 
     def provide_distributed_model(
         self,
