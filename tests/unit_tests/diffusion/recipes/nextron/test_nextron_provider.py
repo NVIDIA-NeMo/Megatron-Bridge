@@ -96,7 +96,7 @@ class TestNexTronModelProviderDefaults:
         assert self.provider.position_embedding_type == "none"
 
     def test_freeze_vision_model_default(self):
-        assert self.provider.freeze_vision_model is True
+        assert self.provider.freeze_vision_model is False
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ class TestNexTronProvideMethod:
         """Call provider.provide() with a mocked transformer_layer_spec and parent provide()."""
         provider.transformer_layer_spec = lambda cfg: spec
 
-        with patch.object(Ministral3ModelProvider, "provide", return_value=MagicMock()) as mock_parent:
+        with patch.object(Ministral3ModelProvider, "provide_language_model", return_value=MagicMock()) as mock_parent:
             result = provider.provide()
 
         return result, mock_parent, spec
@@ -177,12 +177,19 @@ class TestNexTronProvideMethod:
         _, mock_parent, _ = self._run_provide(provider, spec)
         mock_parent.assert_called_once()
 
-    def test_transformer_layer_spec_updated_on_provider(self):
-        """After provide(), self.transformer_layer_spec should be the resolved ModuleSpec."""
+    def test_transformer_layer_spec_restored_after_provide(self):
+        """provide() temporarily resolves transformer_layer_spec for the parent call,
+        then restores the original. After provide() returns, the field must be the
+        original callable, not the resolved ModuleSpec."""
         provider = _make_provider()
         spec = _make_submodules_spec()
-        self._run_provide(provider, spec)
-        assert provider.transformer_layer_spec is spec
+        original = lambda cfg: spec  # noqa: E731
+        provider.transformer_layer_spec = original
+
+        with patch.object(Ministral3ModelProvider, "provide_language_model", return_value=MagicMock()):
+            provider.provide()
+
+        assert provider.transformer_layer_spec is original
 
     def test_provide_with_already_resolved_modulespec(self):
         """When transformer_layer_spec is already a ModuleSpec, it must not be called again."""
@@ -200,7 +207,7 @@ class TestNexTronProvideMethod:
             real_spec.submodules = spec.submodules
             provider.transformer_layer_spec = real_spec
 
-            with patch.object(Ministral3ModelProvider, "provide", return_value=MagicMock()):
+            with patch.object(Ministral3ModelProvider, "provide_language_model", return_value=MagicMock()):
                 provider.provide()
 
         assert real_spec.submodules.self_attention.submodules.core_attention is NexTronAttention
@@ -211,7 +218,7 @@ class TestNexTronProvideMethod:
         spec = _make_submodules_spec()
         provider.transformer_layer_spec = lambda cfg: spec
 
-        with patch.object(Ministral3ModelProvider, "provide", return_value=MagicMock()) as mock_parent:
+        with patch.object(Ministral3ModelProvider, "provide_language_model", return_value=MagicMock()) as mock_parent:
             provider.provide(pre_process=True, post_process=False)
 
         mock_parent.assert_called_once_with(True, False, None)
@@ -221,7 +228,7 @@ class TestNexTronProvideMethod:
         spec = _make_submodules_spec()
         provider.transformer_layer_spec = lambda cfg: spec
 
-        with patch.object(Ministral3ModelProvider, "provide", return_value=MagicMock()) as mock_parent:
+        with patch.object(Ministral3ModelProvider, "provide_language_model", return_value=MagicMock()) as mock_parent:
             provider.provide(vp_stage=2)
 
         mock_parent.assert_called_once_with(None, None, 2)
@@ -238,7 +245,7 @@ class TestNexTronProvideMethod:
 
         provider.transformer_layer_spec = layer_spec_fn
 
-        with patch.object(Ministral3ModelProvider, "provide", return_value=MagicMock()):
+        with patch.object(Ministral3ModelProvider, "provide_language_model", return_value=MagicMock()):
             provider.provide(vp_stage=3)
 
         assert received_kwargs["vp_stage"] == 3
@@ -255,7 +262,7 @@ class TestNexTronProvideMethod:
 
         provider.transformer_layer_spec = layer_spec_fn
 
-        with patch.object(Ministral3ModelProvider, "provide", return_value=MagicMock()):
+        with patch.object(Ministral3ModelProvider, "provide_language_model", return_value=MagicMock()):
             provider.provide(vp_stage=1)
 
         assert call_count["n"] == 1
@@ -267,5 +274,5 @@ class TestNexTronProvideMethod:
 
         provider.transformer_layer_spec = lambda cfg: spec_no_submodules
 
-        with patch.object(Ministral3ModelProvider, "provide", return_value=MagicMock()):
+        with patch.object(Ministral3ModelProvider, "provide_language_model", return_value=MagicMock()):
             provider.provide()  # must not raise

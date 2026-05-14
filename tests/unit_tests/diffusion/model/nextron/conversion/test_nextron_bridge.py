@@ -59,45 +59,31 @@ class TestNexTronBridgeMappingRegistry:
     def test_registry_is_not_none(self):
         assert self.registry is not None
 
-    def test_has_language_model_prefix_on_megatron_keys(self):
-        """All LM megatron param keys must use language_model. prefix."""
+    def test_megatron_keys_are_bare(self):
+        """Megatron-side keys must be bare (no 'language_model.' prefix).
+
+        NexTron targets a bare GPTModel, not a VLM wrapper, so Megatron keys are
+        'embedding.*', 'decoder.*', 'output_layer.*'.
+        """
         mappings = list(self.registry)
-        lm_mappings = [
-            m for m in mappings if hasattr(m, "megatron_param") and "decoder" in getattr(m, "megatron_param", "")
-        ]
+        lm_mappings = [m for m in mappings if hasattr(m, "megatron_param")]
         assert len(lm_mappings) > 0
         for m in lm_mappings:
-            assert m.megatron_param.startswith("language_model."), (
-                f"Expected 'language_model.' prefix, got: {m.megatron_param}"
+            assert not m.megatron_param.startswith("language_model."), (
+                f"Unexpected 'language_model.' prefix on Megatron key: {m.megatron_param}"
             )
 
-    def test_has_vision_tower_replicated_mapping(self):
-        """Registry must contain a ReplicatedMapping for vision_tower.**"""
-        from megatron.bridge.models.conversion.param_mapping import ReplicatedMapping
-
+    def test_no_vision_tower_mapping(self):
+        """Vision tower weights are intentionally not mapped (Megatron is text-only)."""
         mappings = list(self.registry)
-        vision_mappings = [
-            m
-            for m in mappings
-            if isinstance(m, ReplicatedMapping) and "vision_tower" in getattr(m, "megatron_param", "")
-        ]
-        assert len(vision_mappings) == 1
-        assert vision_mappings[0].megatron_param == "vision_tower.**"
-        assert vision_mappings[0].hf_param == "vision_tower.**"
+        vision_mappings = [m for m in mappings if "vision_tower" in getattr(m, "megatron_param", "")]
+        assert len(vision_mappings) == 0
 
-    def test_has_multi_modal_projector_replicated_mapping(self):
-        """Registry must contain a ReplicatedMapping for multi_modal_projector.**"""
-        from megatron.bridge.models.conversion.param_mapping import ReplicatedMapping
-
+    def test_no_multi_modal_projector_mapping(self):
+        """Multi-modal projector weights are intentionally not mapped (Megatron is text-only)."""
         mappings = list(self.registry)
-        proj_mappings = [
-            m
-            for m in mappings
-            if isinstance(m, ReplicatedMapping) and "multi_modal_projector" in getattr(m, "megatron_param", "")
-        ]
-        assert len(proj_mappings) == 1
-        assert proj_mappings[0].megatron_param == "multi_modal_projector.**"
-        assert proj_mappings[0].hf_param == "multi_modal_projector.**"
+        proj_mappings = [m for m in mappings if "multi_modal_projector" in getattr(m, "megatron_param", "")]
+        assert len(proj_mappings) == 0
 
     def test_has_qkv_mapping(self):
         """Registry must contain a QKVMapping for the attention QKV."""
@@ -126,7 +112,7 @@ class TestNexTronBridgeMappingRegistry:
             m for m in mappings if isinstance(m, AutoMapping) and "word_embeddings" in getattr(m, "megatron_param", "")
         ]
         assert len(embed_mappings) == 1
-        assert embed_mappings[0].hf_param == "language_model.model.embed_tokens.weight"
+        assert embed_mappings[0].hf_param == "encoder.embed_tokens.weight"
 
     def test_output_layer_mapping_present(self):
         """output_layer mapping must be present with correct HF key."""
@@ -137,7 +123,7 @@ class TestNexTronBridgeMappingRegistry:
             m for m in mappings if isinstance(m, AutoMapping) and "output_layer" in getattr(m, "megatron_param", "")
         ]
         assert len(out_mappings) == 1
-        assert out_mappings[0].hf_param == "language_model.lm_head.weight"
+        assert out_mappings[0].hf_param == "diffusion_head.weight"
 
 
 class TestNexTronBridgeProviderBridge:
@@ -212,3 +198,37 @@ class TestNexTronBridgeProviderBridge:
         # SimpleNamespace doesn't have text_config, getattr falls back to hf_config itself
         provider = bridge.provider_bridge(hf)
         assert provider.hidden_size == 768
+
+
+class TestNexTronBridgeMappingRegistryVLM:
+    """Tests for the VLM-format mapping registry (HF keys use language_model.* prefix)."""
+
+    def setup_method(self):
+        self.bridge = NexTronBridge()
+        # provider_bridge sets _is_text_only based on whether hf_config has text_config
+        hf = DummyHFPretrained(_make_hf_config())  # has text_config -> VLM mode
+        self.bridge.provider_bridge(hf)
+        self.registry = self.bridge.mapping_registry()
+
+    def test_is_vlm_mode(self):
+        assert self.bridge._is_text_only is False
+
+    def test_vlm_embedding_mapping_uses_language_model_prefix(self):
+        from megatron.bridge.models.conversion.param_mapping import AutoMapping
+
+        mappings = list(self.registry)
+        embed_mappings = [
+            m for m in mappings if isinstance(m, AutoMapping) and "word_embeddings" in getattr(m, "megatron_param", "")
+        ]
+        assert len(embed_mappings) == 1
+        assert embed_mappings[0].hf_param == "language_model.model.embed_tokens.weight"
+
+    def test_vlm_output_layer_mapping_uses_lm_head(self):
+        from megatron.bridge.models.conversion.param_mapping import AutoMapping
+
+        mappings = list(self.registry)
+        out_mappings = [
+            m for m in mappings if isinstance(m, AutoMapping) and "output_layer" in getattr(m, "megatron_param", "")
+        ]
+        assert len(out_mappings) == 1
+        assert out_mappings[0].hf_param == "language_model.lm_head.weight"
