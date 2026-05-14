@@ -53,6 +53,7 @@ Usage examples:
 """
 
 import argparse
+import datetime
 import os
 import sys
 
@@ -84,6 +85,20 @@ def _check_distributed():
         sys.exit(1)
 
 
+def _ensure_distributed_initialized(timeout_minutes: int | None):
+    _check_distributed()
+    if timeout_minutes is None:
+        return
+    if torch.distributed.is_initialized():
+        return
+
+    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
+    torch.distributed.init_process_group(
+        "nccl",
+        timeout=datetime.timedelta(minutes=timeout_minutes),
+    )
+
+
 @torchrun_main
 def import_hf_to_megatron(
     hf_model: str,
@@ -94,9 +109,10 @@ def import_hf_to_megatron(
     etp: int = 1,
     torch_dtype: str = "bfloat16",
     trust_remote_code: bool = False,
+    distributed_timeout_minutes: int | None = None,
 ) -> None:
     """Import a HuggingFace model and save it as a distributed Megatron checkpoint."""
-    _check_distributed()
+    _ensure_distributed_initialized(distributed_timeout_minutes)
     dtype = _parse_dtype(torch_dtype)
 
     print_rank_0(f"Importing: {hf_model} -> {megatron_path}")
@@ -151,9 +167,10 @@ def export_megatron_to_hf(
     show_progress: bool = True,
     distributed_save: bool = False,
     save_every_n_ranks: int = 1,
+    distributed_timeout_minutes: int | None = None,
 ) -> None:
     """Export a distributed Megatron checkpoint to HuggingFace format."""
-    _check_distributed()
+    _ensure_distributed_initialized(distributed_timeout_minutes)
     dtype = _parse_dtype(torch_dtype)
 
     print_rank_0(f"Exporting: {megatron_path} -> {hf_path}")
@@ -218,6 +235,12 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         help="Model precision (default: bfloat16)",
     )
     parser.add_argument("--trust-remote-code", action="store_true", help="Allow custom model code execution")
+    parser.add_argument(
+        "--distributed-timeout-minutes",
+        type=int,
+        default=None,
+        help="Initialize the distributed process group with this timeout before model setup",
+    )
 
 
 def main():
@@ -255,7 +278,6 @@ def main():
         default=1,
         help="Only every N-th rank writes files (reduces I/O, only with --distributed-save)",
     )
-
     args = parser.parse_args()
 
     if not args.command:
@@ -272,6 +294,7 @@ def main():
             etp=args.etp,
             torch_dtype=args.torch_dtype,
             trust_remote_code=args.trust_remote_code,
+            distributed_timeout_minutes=args.distributed_timeout_minutes,
         )
     elif args.command == "export":
         export_megatron_to_hf(
@@ -288,6 +311,7 @@ def main():
             show_progress=not args.no_progress,
             distributed_save=args.distributed_save,
             save_every_n_ranks=args.save_every_n_ranks,
+            distributed_timeout_minutes=args.distributed_timeout_minutes,
         )
 
 

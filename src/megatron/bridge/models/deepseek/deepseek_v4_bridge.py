@@ -97,33 +97,76 @@ except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
 
-# ---------------------------------------------------------------------------
-# Config class — registers "deepseek_v4" with transformers AutoConfig
-# ---------------------------------------------------------------------------
-from transformers import AutoConfig
-from transformers.configuration_utils import PretrainedConfig
+_DSV4_LAYER_TYPE_TO_COMPRESS_RATIO = {
+    "sliding_attention": 0,
+    "compressed_sparse_attention": 4,
+    "heavily_compressed_attention": 128,
+}
+
+_DSV4_COMPRESS_RATIO_TO_LAYER_TYPE = {
+    ratio: layer_type for layer_type, ratio in _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO.items()
+}
 
 
-class DeepseekV4Config(PretrainedConfig):
-    """Minimal config stub for DeepSeek-V4 / V4-Flash.
+def _dsv4_num_hash_layers(hf_config) -> int:
+    num_hash_layers = getattr(hf_config, "num_hash_layers", None)
+    if num_hash_layers is not None:
+        return int(num_hash_layers)
 
-    Registers the ``deepseek_v4`` model_type with HuggingFace AutoConfig so
-    that :func:`AutoConfig.from_pretrained` can load the checkpoint config.
-    """
+    mlp_layer_types = getattr(hf_config, "mlp_layer_types", None)
+    if mlp_layer_types is None:
+        return 0
 
-    model_type = "deepseek_v4"
+    n_hash = 0
+    for layer_type in mlp_layer_types:
+        if layer_type != "hash_moe":
+            break
+        n_hash += 1
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    if any(layer_type == "hash_moe" for layer_type in mlp_layer_types[n_hash:]):
+        raise ValueError("DeepSeek-V4 hash MoE layers must be a contiguous prefix.")
+
+    return n_hash
 
 
-# Register at import time so AutoConfig.from_pretrained works before any bridge
-# method is called.
-try:
-    AutoConfig.register("deepseek_v4", DeepseekV4Config)
-except ValueError as e:
-    if "already registered" not in str(e):
-        raise
+def _dsv4_compress_ratios(hf_config) -> list[int]:
+    num_hidden_layers = int(hf_config.num_hidden_layers)
+    num_mtp_layers = int(getattr(hf_config, "num_nextn_predict_layers", 0) or 0)
+    expected_len = num_hidden_layers + num_mtp_layers
+
+    compress_ratios = getattr(hf_config, "compress_ratios", None)
+    if compress_ratios is not None:
+        ratios = [int(ratio) for ratio in compress_ratios]
+    else:
+        layer_types = getattr(hf_config, "layer_types", None)
+        compress_rates = getattr(hf_config, "compress_rates", None)
+        if layer_types is None or compress_rates is None:
+            raise ValueError(
+                "HF config missing 'compress_ratios' and native 'layer_types'/'compress_rates'. "
+                "DeepSeek-V4 requires per-layer compression ratios."
+            )
+
+        ratios = []
+        for layer_type in layer_types:
+            if layer_type == "sliding_attention":
+                ratios.append(0)
+            elif layer_type in compress_rates:
+                ratios.append(int(compress_rates[layer_type]))
+            elif layer_type in _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO:
+                ratios.append(_DSV4_LAYER_TYPE_TO_COMPRESS_RATIO[layer_type])
+            else:
+                raise ValueError(f"Unsupported DeepSeek-V4 attention layer type: {layer_type!r}")
+
+    if len(ratios) == num_hidden_layers and num_mtp_layers:
+        ratios.extend([0] * num_mtp_layers)
+
+    if len(ratios) < expected_len:
+        raise ValueError(
+            f"DeepSeek-V4 compression ratios length ({len(ratios)}) is shorter than "
+            f"num_hidden_layers + num_nextn_predict_layers ({expected_len})."
+        )
+
+    return ratios[:expected_len]
 
 
 # ---------------------------------------------------------------------------
@@ -289,32 +332,32 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         # Two separate RoPE bases in V4:
         #   - compress_rope_theta for compressed-KV layers
         #   - rope_theta for pure sliding-window layers (layers 0,1)
-        # Megatron uses a single rotary_base; we set it to the YaRN base.
+        # Megatron keeps the regular and compressed CSA RoPE bases separately.
         provider.apply_rope_fusion = True
         provider.rope_type = "yarn"
-        provider.rotary_base = float(hf_config.rope_theta)  # 10000
-        # Handle both transformers <5 (flat) and >=5 (nested 'main'/'compress') rope_scaling
-        rs = hf_config.rope_scaling
-        if "factor" not in rs and "main" in rs:
-            rs = rs["main"]  # transformers 5.x nests under 'main'
-        provider.rotary_scaling_factor = float(rs["factor"])  # 16
-        provider.original_max_position_embeddings = int(rs["original_max_position_embeddings"])  # 65536
-        provider.beta_fast = float(rs.get("beta_fast", 32))
-        provider.beta_slow = float(rs.get("beta_slow", 1))
+        rope_params = getattr(hf_config, "rope_scaling", None) or getattr(hf_config, "rope_parameters", None) or {}
+        if "compress" in rope_params:
+            main_rope_params = rope_params.get("main", {})
+            compress_rope_params = rope_params["compress"]
+        else:
+            main_rope_params = rope_params
+            compress_rope_params = rope_params
+        provider.rotary_base = float(main_rope_params.get("rope_theta", hf_config.rope_theta))  # 10000
+        provider.csa_compress_rotary_base = float(
+            compress_rope_params.get("rope_theta", getattr(hf_config, "compress_rope_theta", provider.rotary_base))
+        )  # 160000
+        provider.rotary_scaling_factor = float(compress_rope_params["factor"])  # 16
+        provider.original_max_position_embeddings = int(compress_rope_params["original_max_position_embeddings"])  # 65536
+        provider.beta_fast = float(compress_rope_params.get("beta_fast", 32))
+        provider.beta_slow = float(compress_rope_params.get("beta_slow", 1))
         # DSv4 has no mscale in HF config; Set both equal to cancel out (like DSv3).
         provider.mscale = 1.0
         provider.mscale_all_dim = 1.0
 
         # ---- CSA (Compressed Sparse Attention) ----
-        # compress_ratios has num_hidden_layers + num_nextn_predict_layers entries in HF config.
-        # Merged code validates len == num_layers + mtp_num_layers.
-        _cr = getattr(hf_config, "compress_ratios", None) or getattr(hf_config, "compress_rates", None)
-        if _cr is None:
-            raise ValueError(
-                "HF config missing both 'compress_ratios' and 'compress_rates'. "
-                "DeepSeek-V4 requires per-layer compression ratios."
-            )
-        _cr = list(_cr)
+        # Legacy configs ship compress_ratios, while native Transformers configs
+        # expose layer_types + compress_rates. MCore consumes the flattened list.
+        _cr = _dsv4_compress_ratios(hf_config)
         _mtp = getattr(hf_config, "num_nextn_predict_layers", None)
         if _mtp is None:
             import logging
@@ -356,7 +399,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.moe_router_topk_scaling_factor = hf_config.routed_scaling_factor  # 1.5
 
         # Hash routing
-        provider.moe_n_hash_layers = hf_config.num_hash_layers  # 3
+        provider.moe_n_hash_layers = _dsv4_num_hash_layers(hf_config)  # 3 for DSv4 Flash
         provider.actual_vocab_size = hf_config.vocab_size  # 129280
 
         # SwiGLU activation clamp
@@ -393,13 +436,29 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         hf_cfg = super(DeepSeekV4Bridge, cls).megatron_to_hf_config(provider)
 
         hf_cfg["num_nextn_predict_layers"] = getattr(provider, "mtp_num_layers", None) or 0
-        hf_cfg["num_hash_layers"] = getattr(provider, "moe_n_hash_layers", 0)
+        num_hidden_layers = hf_cfg.get("num_hidden_layers", getattr(provider, "num_layers", 0))
+        num_hash_layers = getattr(provider, "moe_n_hash_layers", 0)
+        hf_cfg["num_hash_layers"] = num_hash_layers
+        hf_cfg["mlp_layer_types"] = ["hash_moe"] * min(num_hidden_layers, num_hash_layers) + ["moe"] * max(
+            0, num_hidden_layers - num_hash_layers
+        )
         hf_cfg["swiglu_limit"] = getattr(provider, "activation_func_clamp_value", 0.0)
 
         compress_ratios = getattr(provider, "csa_compress_ratios", None)
         if compress_ratios is not None:
             num_mtp = hf_cfg.get("num_nextn_predict_layers", 0)
-            hf_cfg["compress_ratios"] = list(compress_ratios) + [0] * num_mtp
+            expected_len = num_hidden_layers + num_mtp
+            compress_ratios = list(compress_ratios)
+            if len(compress_ratios) == num_hidden_layers and num_mtp:
+                compress_ratios = compress_ratios + [0] * num_mtp
+            hf_cfg["compress_ratios"] = compress_ratios[:expected_len]
+            hf_cfg["layer_types"] = [
+                _DSV4_COMPRESS_RATIO_TO_LAYER_TYPE[ratio] for ratio in hf_cfg["compress_ratios"][:num_hidden_layers]
+            ]
+            hf_cfg["compress_rates"] = {
+                "compressed_sparse_attention": _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO["compressed_sparse_attention"],
+                "heavily_compressed_attention": _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO["heavily_compressed_attention"],
+            }
 
         hf_cfg["sliding_window"] = getattr(provider, "csa_window_size", 128)
         hf_cfg["hc_mult"] = getattr(provider, "num_residual_streams", 4)
