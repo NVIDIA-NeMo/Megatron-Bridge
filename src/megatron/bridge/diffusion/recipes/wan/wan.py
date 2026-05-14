@@ -81,6 +81,7 @@ def wan_1_3b_pretrain_config(optimizer_type: str = "adam") -> ConfigContainer:
             lr_warmup_iters=lr_warmup_iters,
             lr_decay_iters=train_iters,
             max_lr=lr,
+            muon_split_kv=False,
         )
     else:
         raise ValueError(f"Invalid optimizer type: {optimizer_type}")

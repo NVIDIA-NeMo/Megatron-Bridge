@@ -229,7 +229,7 @@ class WanModel(VisionModule):
         if torch.distributed.get_rank() == 0:
             for name, param in self.named_parameters():
                 print(f"{name:80s}  mean={param.data.float().mean():.4f}  std={param.data.float().std():.4f}  shape={list(param.shape)}")
-            print(stop_here)
+            # print(stop_here)
 
     def forward(
         self,
