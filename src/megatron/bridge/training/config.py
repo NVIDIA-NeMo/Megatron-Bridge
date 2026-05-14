@@ -667,9 +667,11 @@ class CheckpointConfig(MTrainCheckpointConfig):
     saving/loading checkpoints with ``save_weight_format='hf'`` (or when ``pretrained_checkpoint``
     points to a HuggingFace directory).
 
-    When unset, the source is resolved in this order:
-      1. ``cfg.tokenizer.tokenizer_model`` (recommended; recipes set this to the HF model id);
-      2. ``cfg.model.hf_model_id`` (set by ``AutoBridge.to_megatron_provider``).
+    When unset, Bridge resolves a source in this order (see training checkpointing helpers):
+      1. ``cfg.model.hf_model_id`` (preferred when populated by recipes / AutoBridge);
+      2. ``cfg.tokenizer.tokenizer_model`` (fallback; may refer to tokenizer assets rather than model ids).
+
+    Explicit ``hf_source_path`` always overrides both when set.
     """
 
     hf_trust_remote_code: bool = False

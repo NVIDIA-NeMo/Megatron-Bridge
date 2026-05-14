@@ -526,6 +526,15 @@ class AutoBridge(Generic[MegatronModelT]):
         bridge = self._model_bridge
         return bridge.stream_adapter_weights_megatron_to_hf(model, cpu=cpu, show_progress=show_progress)
 
+    def load_hf_adapter(self, model: list[MegatronModelT], adapter_dir: str | Path) -> None:
+        """Load PEFT ``adapter_model.safetensors`` from a directory into Megatron adapter modules.
+
+        Must be called collectively (all ranks participate).  The base model weights should
+        already be loaded into ``model`` — this only hydrates LoRA / DoRA tensors.
+        """
+
+        self._model_bridge.load_peft_adapter_weights_from_hf_dir(model, adapter_dir)
+
     def save_hf_adapter(
         self,
         model: list[MegatronModelT],

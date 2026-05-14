@@ -831,3 +831,24 @@ class TestCheckpointUtils:
         (ckpt_dir / f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}").touch()
 
         assert checkpoint_exists(str(ckpt_dir)) is True
+
+
+class TestHFPeftAdapterDetection:
+    def test_adapter_only_vs_full_hf_layout(self, tmp_path):
+        from megatron.bridge.training.utils.checkpoint_utils import (
+            is_hf_checkpoint_dir,
+            is_hf_peft_adapter_only_dir,
+        )
+
+        d = tmp_path / "peft_dir"
+        d.mkdir()
+        (d / "adapter_config.json").write_text("{}")
+        (d / "adapter_model.safetensors").write_bytes(b"xy")
+
+        assert is_hf_checkpoint_dir(str(d))
+        assert is_hf_peft_adapter_only_dir(str(d))
+
+        (d / "model.safetensors").write_bytes(b"full")
+
+        assert is_hf_checkpoint_dir(str(d))
+        assert not is_hf_peft_adapter_only_dir(str(d))

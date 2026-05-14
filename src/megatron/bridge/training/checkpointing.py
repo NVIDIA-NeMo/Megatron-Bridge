@@ -79,6 +79,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_train_state_filename,
     is_checkpoint_iteration_directory,
     is_hf_checkpoint_dir,
+    is_hf_peft_adapter_only_dir,
     read_run_config,
     read_train_state,
 )
@@ -361,20 +362,17 @@ def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dic
 
 @dataclass
 class HFAsyncSave:
-    """Tracks an in-flight HuggingFace safetensors background save.
+    """Tracks an in-flight HuggingFace PEFT adapter background save (rank 0 only).
 
-    When ``save_weight_format='hf'`` and ``async_save=True``, rank 0 spawns a
-    Python thread to write safetensors / ``config.json`` / tokenizer files in
-    parallel with the optimizer's distributed checkpoint save.  This object
-    lives on :class:`GlobalState` so subsequent saves and training shutdown
-    can wait for it via :func:`maybe_finalize_async_save`.
+    Full-model HuggingFace checkpoints use ``save_generator`` on the main training
+    thread (collective-safe, shard-buffered).  When ``save_weight_format='hf'``,
+    ``cfg.peft`` is set, and ``async_save=True``, the small ``adapter_model.safetensors``
+    disk write may be offloaded to a background thread after collective export finishes.
 
     Attributes:
-        thread: Background writer thread (rank 0 only).  ``None`` on other ranks.
-        finalize_fns: Hooks to invoke *after* the writer thread has terminated.
-            Mirrors ``AsyncRequest.finalize_fns`` semantics (run on rank 0 only).
-        error: Captured exception from the writer thread (if any).  Re-raised
-            when the request is finalized.
+        thread: Background writer thread (rank 0 only).
+        finalize_fns: Hooks to invoke after the writer thread has joined.
+        error: Captured exception from the writer thread (if any).
     """
 
     thread: Optional[threading.Thread] = None
@@ -864,8 +862,9 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
 
     Resolution order (first non-empty wins):
       1. ``cfg.checkpoint.hf_source_path`` — explicit override.
-      2. ``cfg.tokenizer.tokenizer_model`` — recipes set this to the HF model id.
-      3. ``cfg.model.hf_model_id`` — populated by ``AutoBridge.to_megatron_provider``.
+      2. ``cfg.model.hf_model_id`` — populated by ``AutoBridge.to_megatron_provider`` (preferred).
+      3. ``cfg.tokenizer.tokenizer_model`` — may be a tokenizer file path; only used as fallback when
+         the above are unset (recipes that point this at an HF model id still work).
 
     Returns ``None`` when no source could be determined.
     """
@@ -874,18 +873,27 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
     ckpt_cfg = getattr(cfg, "checkpoint", None)
     if ckpt_cfg is not None and getattr(ckpt_cfg, "hf_source_path", None):
         return ckpt_cfg.hf_source_path
-    tokenizer_cfg = getattr(cfg, "tokenizer", None)
-    if tokenizer_cfg is not None and getattr(tokenizer_cfg, "tokenizer_model", None):
-        return tokenizer_cfg.tokenizer_model
     model_cfg = getattr(cfg, "model", None)
     if model_cfg is not None:
         hf_id = getattr(model_cfg, "hf_model_id", None)
         if hf_id:
             return hf_id
+    tokenizer_cfg = getattr(cfg, "tokenizer", None)
+    if tokenizer_cfg is not None and getattr(tokenizer_cfg, "tokenizer_model", None):
+        return tokenizer_cfg.tokenizer_model
     return None
 
 
 _AUTO_BRIDGE_CACHE: dict[tuple[str, bool], Any] = {}
+
+
+def clear_hf_auto_bridge_cache() -> None:
+    """Drop cached :class:`~megatron.bridge.models.conversion.auto_bridge.AutoBridge` instances.
+
+    Useful in tests or single-process multi-run jobs to avoid retaining large HF templates in memory.
+    """
+
+    _AUTO_BRIDGE_CACHE.clear()
 
 
 def _build_auto_bridge_for_save(
@@ -902,8 +910,9 @@ def _build_auto_bridge_for_save(
     if not source:
         raise ValueError(
             "save_weight_format='hf' requires an HF source to template config/tokenizer files. "
-            "Set cfg.checkpoint.hf_source_path, cfg.tokenizer.tokenizer_model, "
-            "or use a recipe that records cfg.model.hf_model_id."
+            "Set cfg.checkpoint.hf_source_path, cfg.model.hf_model_id "
+            "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
+            "an HF model id."
         )
     trust_remote_code = bool(getattr(cfg.checkpoint, "hf_trust_remote_code", False))
     cache_key = (str(source), bool(trust_remote_code))
@@ -937,20 +946,15 @@ def _save_hf_weights(
 ) -> None:
     """Save model weights as a HuggingFace directory under ``iter_dir``.
 
-    Behavior:
-        - All ranks participate in the bridge's streaming export generator
-          because it issues distributed collectives to gather TP/PP/EP shards.
-          Tensors are gathered to CPU on rank 0 (or distributed across ranks
-          when ``hf_distributed_save=True``).
-        - When ``async_save`` is True, the actual safetensors write is dispatched
-          to a background thread on rank 0 (tracked via ``state.hf_async_save``).
-          Other ranks return immediately after exhausting the generator.
-        - When ``async_save`` is False, the write completes synchronously before
-          returning.
+    All ranks participate in the bridge's streaming export generator (collectives).
+    Rank 0 performs streaming safetensors I/O via ``SafeTensorsStateSource.save_generator``.
+    When ``hf_distributed_save=True``, writes are spread across ranks synchronously.
+
+    The ``async_save`` flag only affects PEFT adapter exports (see :func:`_save_hf_adapter_weights`);
+    full checkpoints always complete HF weight I/O on the main thread for collective safety.
 
     PEFT-aware: when ``cfg.peft is not None`` this delegates to
-    :func:`_save_hf_adapter_weights` which emits ``adapter_model.safetensors``
-    + ``adapter_config.json`` instead of full model weights.
+    :func:`_save_hf_adapter_weights`.
     """
     cfg = state.cfg
     ckpt_cfg = cfg.checkpoint
@@ -1007,50 +1011,18 @@ def _save_hf_weights(
             torch.distributed.barrier()
         return
 
-    # Non-distributed save: rank 0 buffers all tensors, other ranks just drain
-    # the generator (which issues the necessary collectives), then rank 0 does
-    # the disk write.
+    # Non-distributed save: rank 0 runs streaming safetensors I/O inside ``save_generator`` (which
+    # buffers only one shard at a time).  Other ranks drain the streaming export generator so TP/PP/EP
+    # collectives complete.  We intentionally do **not** buffer the entire model into CPU RAM nor
+    # offload disk writes to a background thread — both would violate collective/threading rules or
+    # double peak memory.
     if rank != 0:
         for _ in raw_generator:
             pass
-        # Save tokenizer / config is rank0 only; nothing else to do here.
         return
 
-    buffered: dict[str, torch.Tensor] = {}
-    for name, tensor in raw_generator:
-        buffered[name] = tensor.contiguous()
-
-    def _do_write() -> None:
-        # Important: rerun ``save_generator`` with an iterator over the buffered
-        # dict (rank 0 only) so the same sharding logic is reused.
-        def gen():
-            for name, tensor in buffered.items():
-                yield name, tensor
-
-        state_source.save_generator(gen(), iter_dir, strict=False)
-        bridge.hf_pretrained.save_artifacts(iter_dir, original_source_path=hf_source)
-
-    if not async_save:
-        _do_write()
-        return
-
-    # Async path: spawn a background thread and stash the handle on GlobalState.
-    hf_async = HFAsyncSave()
-
-    def _runner() -> None:
-        try:
-            _do_write()
-        except BaseException as exc:  # pragma: no cover - propagated on finalize
-            hf_async.error = exc
-
-    thread = threading.Thread(
-        target=_runner,
-        name="hf-weight-save",
-        daemon=True,
-    )
-    hf_async.thread = thread
-    state.hf_async_save = hf_async
-    thread.start()
+    state_source.save_generator(raw_generator, iter_dir, strict=False)
+    bridge.hf_pretrained.save_artifacts(iter_dir, original_source_path=hf_source)
 
 
 def _save_hf_adapter_weights(
@@ -1070,9 +1042,16 @@ def _save_hf_adapter_weights(
     """
     cfg = state.cfg
 
+    _finalize_hf_async_save(state, blocking=True)
+
     bridge = _build_auto_bridge_for_save(cfg)
     peft_config = cfg.peft
     base_model_name_or_path = _resolve_hf_source(cfg)
+    if not base_model_name_or_path:
+        base_model_name_or_path = str(
+            getattr(bridge.hf_pretrained, "model_name_or_path", "")
+            or getattr(bridge.hf_pretrained, "name_or_path", "")
+        )
 
     is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
     rank = torch.distributed.get_rank() if is_distributed else 0
@@ -1090,13 +1069,13 @@ def _save_hf_adapter_weights(
         # Pre-compute the rank0-only state from save_hf_adapter so that we can
         # offload the disk write to a thread.  We reimplement the small subset
         # here to keep the collective part on the main thread.
+        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
         from megatron.bridge.models.conversion.peft_bridge import (
             build_adapter_config_dict,
             convert_adapter_weights_to_peft_state,
             infer_rank_pattern_from_adapter_weights,
             infer_target_modules_from_adapter_weights,
         )
-        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 
         raw = [
             HFWeightTuple(w.param_name, w.weight.clone().float())
@@ -1394,8 +1373,6 @@ def save_checkpoint(
         if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
             # TODO Handle non-empty directories (e.g., after a crash during saving).
             ensure_directory_exists(checkpoint_name, check_parent=False)
-            if is_hf_save:
-                ensure_directory_exists(dist_save_target, check_parent=False)
 
         if ckpt_cfg.ckpt_format == "fsdp_dtensor":
             if not model:
@@ -2482,10 +2459,40 @@ def _load_hf_iter_checkpoint(
     cfg = state.cfg
     ckpt_cfg = cfg.checkpoint
 
+    def _model_has_adapter_parameters() -> bool:
+        for stage in model:
+            for name, _ in stage.named_parameters():
+                if ".adapter." in name:
+                    return True
+        return False
+
     if not skip_load_to_model_and_opt:
         bridge = _build_auto_bridge_for_save(cfg)
-        # bridge.load_hf_weights is a collective and handles TP/PP/EP scatter.
-        bridge.load_hf_weights(model, hf_path=iter_dir)
+        if is_hf_peft_adapter_only_dir(iter_dir):
+            import json
+
+            adapter_cfg_path = os.path.join(iter_dir, "adapter_config.json")
+            with open(adapter_cfg_path, encoding="utf-8") as f:
+                adapter_json = json.load(f)
+            base_path = (adapter_json.get("base_model_name_or_path") or "").strip()
+            if not base_path:
+                base_path = (ckpt_cfg.hf_source_path or _resolve_hf_source(cfg) or "").strip()
+            if not base_path:
+                raise ValueError(
+                    "HF PEFT adapter checkpoint is missing base weights. Set base_model_name_or_path in "
+                    "adapter_config.json, or set cfg.checkpoint.hf_source_path / cfg.model.hf_model_id."
+                )
+            bridge.load_hf_weights(model, hf_path=base_path)
+            if cfg.peft is not None or _model_has_adapter_parameters():
+                bridge.load_hf_adapter(model, iter_dir)
+            else:
+                print_rank_0(
+                    "WARNING: HuggingFace adapter weights were not loaded because no PEFT adapters are present "
+                    "on the model yet. If you are resuming PEFT training, load this checkpoint after adapters "
+                    "are applied."
+                )
+        else:
+            bridge.load_hf_weights(model, hf_path=iter_dir)
 
     # Resume optimizer / RNG / scheduler / rerun from megatron_state/ if present.
     megatron_state_dir = _hf_megatron_state_dir(iter_dir)
