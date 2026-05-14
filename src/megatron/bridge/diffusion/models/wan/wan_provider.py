@@ -14,7 +14,7 @@
 
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import torch
@@ -72,12 +72,30 @@ class WanModelProvider(TransformerConfig, ModelProviderMixin[VisionModule]):  # 
     text_len: int = 512
     text_dim: int = 4096
 
+    # DEBUGGING (test MUON for non-2D params)
+    muon_non_2d_params: bool = False
+    muon_non_2d_params_mode: list[str] = field(default_factory=lambda: ["patch_embedding", "modulation"])
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> WanModel:
         vp_size = self.virtual_pipeline_model_parallel_size
         if vp_size:
             p_size = self.pipeline_model_parallel_size
             assert (self.num_layers // p_size) % vp_size == 0, (
                 "Make sure the number of model chunks is the same across all pipeline stages."
+            )
+
+        # DEBUGGING (test MUON for non-2D params)
+        if self.muon_non_2d_params:
+            if torch.distributed.get_rank() == 0:
+                print("[DEBUG] Testing MUON for non-2D params. muon_non_2d_params_mode: ", self.muon_non_2d_params_mode)
+            from megatron.bridge.diffusion.models.wan.wan_model_params2dflatten import WanModel as WanModel_Params2DFlatten
+            model = WanModel_Params2DFlatten
+            return model(
+                self,
+                pre_process=parallel_state.is_pipeline_first_stage(),
+                post_process=parallel_state.is_pipeline_last_stage(),
+                fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+                parallel_output=self.parallel_output,
             )
 
         model = WanModel

@@ -1,0 +1,505 @@
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# pylint: disable=C0115,C0116,C0301
+
+import math
+from typing import Dict, Optional, Tuple
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from diffusers.models.embeddings import Timesteps
+from megatron.core import parallel_state, tensor_parallel
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.models.common.vision_module.vision_module import VisionModule
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer.enums import ModelType
+from megatron.core.transformer.transformer_block import TransformerBlock
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.models.common.embeddings.rope_utils import get_pos_emb_on_this_cp_rank
+from megatron.core.utils import make_sharded_tensor_for_checkpoint
+from torch import Tensor
+
+from megatron.bridge.diffusion.models.common.dit_embeddings import ParallelTimestepEmbedding
+from megatron.bridge.diffusion.models.wan.wan_layer_spec_params2dflatten import (
+    get_wan_block_with_transformer_engine_spec as WanLayerWithAdaLNspec,
+)
+
+from .rope_utils import Wan3DRopeEmbeddings
+
+
+def sinusoidal_embedding_1d(dim, position):  # noqa: D103
+    # preprocess
+    assert dim % 2 == 0
+    half = dim // 2
+    position = position
+
+    # calculation
+    sinusoid = torch.outer(position, torch.pow(10000, -torch.arange(half).to(position).div(half)))
+    x = torch.cat([torch.cos(sinusoid), torch.sin(sinusoid)], dim=1)
+    return x
+
+
+class Head(nn.Module):  # noqa: D101
+    def __init__(self, dim, out_dim, patch_size, eps=1e-6, muon_non_2d_params_mode: list = []):
+        super().__init__()
+        self.dim = dim
+        self.out_dim = out_dim
+        self.patch_size = patch_size
+        self.eps = eps
+
+        # layers
+        out_dim = math.prod(patch_size) * out_dim
+        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
+        self.head = nn.Linear(dim, out_dim)
+
+        # modulation: [2, dim] (2D, MUON-compatible) or original [1, 2, dim].
+        # Both produce [B, 2, dim] in forward via broadcasting with e.unsqueeze(1) [B, 1, dim].
+        if "modulation" in muon_non_2d_params_mode:
+            self.modulation = nn.Parameter(torch.randn(2, dim) / dim**0.5)
+        else:
+            self.modulation = nn.Parameter(torch.randn(1, 2, dim) / dim**0.5)
+
+    def forward(self, x, e):
+        r"""
+        Args:
+            x(Tensor): Shape [B, L1, C]
+            e(Tensor): Shape [B, C]
+        """
+        e = (self.modulation + e.unsqueeze(1)).chunk(2, dim=1)
+        x = self.head(self.norm(x) * (1 + e[1]) + e[0])
+        return x
+
+
+class FlatConv3d(nn.Module):
+    """Conv3d whose weight is stored as a 2D matrix for MUON optimizer compatibility.
+
+    Numerically identical to nn.Conv3d(kernel_size=stride=patch_size) applied to a single
+    patch. The 2D weight [out_channels, in_channels * kD * kH * kW] can be reshaped back to
+    the standard 5D Conv3d shape [out_channels, in_channels, kD, kH, kW] for HF checkpoint
+    round-trips.
+
+    Because MUON only handles parameters with ndim == 2, this avoids the fallback to AdamW
+    that nn.Conv3d would otherwise trigger.
+    """
+
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: tuple[int, int, int]):
+        super().__init__()
+        kD, kH, kW = kernel_size
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        fan_in = in_channels * kD * kH * kW
+        # 2D weight: MUON handles this instead of AdamW
+        self.weight = nn.Parameter(torch.empty(out_channels, fan_in))
+        # Bias init matches nn.Conv3d default: uniform(-1/sqrt(fan_in), 1/sqrt(fan_in))
+        self.bias = nn.Parameter(torch.empty(out_channels))
+        nn.init.uniform_(self.bias, -1.0 / math.sqrt(fan_in), 1.0 / math.sqrt(fan_in))
+
+    def forward(self, x: Tensor) -> Tensor:
+        # x: [N, in_channels, kD, kH, kW] — same interface as nn.Conv3d with stride=kernel_size
+        return F.conv3d(
+            x,
+            self.weight.view(self.out_channels, self.in_channels, *self.kernel_size),
+            self.bias,
+            stride=self.kernel_size,
+        )
+
+
+class WanModel(VisionModule):
+    """
+    WanModel is a VisionModule that implements a Wan model.
+    Attributes:
+        config (TransformerConfig): Configuration for the transformer.
+        pre_process (bool): Whether to apply pre-processing steps.
+        post_process (bool): Whether to apply post-processing steps.
+        fp16_lm_cross_entropy (bool): Whether to use fp16 for cross-entropy loss.
+        parallel_output (bool): Whether to use parallel output.
+        transformer_decoder_layer_spec (WanLayerWithAdaLNspec): Specification for the transformer decoder layer.
+        model_type (ModelType): Type of the model.
+    """
+
+    def __init__(
+        self,
+        config: TransformerConfig,
+        pre_process: bool = True,
+        post_process: bool = True,
+        fp16_lm_cross_entropy: bool = False,
+        parallel_output: bool = True,
+        transformer_decoder_layer_spec=WanLayerWithAdaLNspec,
+        **kwargs,
+    ):
+        super(WanModel, self).__init__(config=config)
+
+        self.config: TransformerConfig = config
+
+        self.transformer_decoder_layer_spec = transformer_decoder_layer_spec(qkv_format=config.qkv_format)
+        self.pre_process = pre_process
+        self.post_process = post_process
+        self.fp16_lm_cross_entropy = fp16_lm_cross_entropy
+        self.parallel_output = parallel_output
+
+        # megatron core pipelining currently depends on model type
+        # TODO: remove this dependency ?
+        self.model_type = ModelType.encoder_or_decoder
+
+        self.num_heads = self.config.num_attention_heads
+        self.freq_dim = self.config.freq_dim
+        self.in_channels = self.config.in_channels
+        self.out_channels = self.config.out_channels
+        self.patch_spatial = self.config.patch_spatial
+        self.patch_temporal = self.config.patch_temporal
+        self.patch_size = (self.patch_temporal, self.patch_spatial, self.patch_spatial)
+
+        # these attributes are unused for images/videos, we just set because bridge training requires for LLMs
+        self.share_embeddings_and_output_weights = False
+
+        # Which non-2D params to flatten to 2D for MUON compatibility.
+        # Supported values: "patch_embedding", "modulation".
+        # Set via model.muon_non_2d_params_mode=["patch_embedding","modulation"] in the recipe.
+        muon_non_2d_params_mode = config.muon_non_2d_params_mode
+
+        ######################################
+        ########## Wan architecture ##########
+
+        # embeddings
+        if self.pre_process:
+            if "patch_embedding" in muon_non_2d_params_mode:
+                # FlatConv3d stores weight as 2D [hidden_size, in_c*pF*pH*pW] so MUON can optimize
+                # it. Numerically equivalent to nn.Conv3d(kernel_size=stride=patch_size).
+                # For HF checkpoint conversion: reshape weight ↔ [hidden_size, in_c, pF, pH, pW].
+                self.patch_embedding = FlatConv3d(
+                    self.in_channels, self.config.hidden_size, kernel_size=self.patch_size
+                )
+            else:
+                self.patch_embedding = nn.Conv3d(
+                    self.in_channels, self.config.hidden_size, kernel_size=self.patch_size, stride=self.patch_size
+                )
+
+        self.text_embedding = nn.Sequential(
+            nn.Linear(self.config.text_dim, self.config.crossattn_emb_size),
+            nn.GELU(approximate="tanh"),
+            nn.Linear(self.config.crossattn_emb_size, self.config.crossattn_emb_size),
+        )
+
+        # As in diffuser's Wan implementation
+        self.timesteps_proj = Timesteps(num_channels=self.freq_dim, flip_sin_to_cos=True, downscale_freq_shift=0)
+        self.time_embedder = ParallelTimestepEmbedding(
+            in_channels=self.freq_dim, time_embed_dim=self.config.hidden_size
+        )
+        self.time_proj_act_fn = nn.SiLU()
+        self.time_proj = nn.Linear(self.config.hidden_size, self.config.hidden_size * 6)
+
+        self.rope_embeddings = Wan3DRopeEmbeddings(
+            dim_head=self.config.hidden_size // self.num_heads, max_position_len=1024
+        )
+
+        # DEBUGGING (init following original Wan2.1)
+        # Use xavier_uniform_ for decoder TE layers to match original Wan2.1 init.
+        # Must be set before TransformerBlock is built since TE layers read init_method at construction.
+        self.config.init_method = nn.init.xavier_uniform_
+        self.config.output_layer_init_method = nn.init.xavier_uniform_
+
+        # decoder blocks
+        self.decoder = TransformerBlock(
+            config=self.config,
+            spec=self.transformer_decoder_layer_spec,
+            pre_process=self.pre_process,
+            post_process=self.post_process,
+            post_layer_norm=False,
+        )
+
+        # output head
+        if self.post_process:
+            self.head = Head(
+                self.config.hidden_size,
+                self.out_channels,
+                self.patch_size,
+                eps=1e-6,
+                muon_non_2d_params_mode=muon_non_2d_params_mode,
+            )
+
+        # set attributes "average_gradients_across_tp_domain" for nn.Parameter objects
+        # this is used for gradient averaging across TP domain with sequence parallelism
+        self._mark_trainable_params_for_tp_grad_avg(
+            [
+                self.patch_embedding,
+                self.text_embedding,
+                self.time_embedder,
+                self.time_proj,
+                self.head,
+            ]
+        )
+
+        # Initialize weights
+        self.init_weights()
+
+    # DEBUGGING (init following original Wan2.1)
+    def init_weights(self):
+        """Initialize non-decoder parameters to match original Wan2.1 init_weights().
+
+        Decoder TE layers (TEColumnParallelLinear / TERowParallelLinear) are already
+        initialized with xavier_uniform_ via config.init_method set in __init__.
+
+        - All plain nn.Linear: xavier_uniform_ weight, zeros bias
+        - patch_embedding (FlatConv3d): xavier_uniform_ directly on the 2D weight
+        - patch_embedding (nn.Conv3d): xavier_uniform_ on flattened weight
+        - text_embedding linears: normal(std=0.02)  [matches original]
+        - time_embedder linears + time_proj: normal(std=0.02)  [matches original]
+        - head output linear: zeros weight
+        """
+        # xavier for all plain nn.Linear (text_embedding, time_embedder, time_proj, head.head)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+        # patch_embedding: FlatConv3d weight is already 2D; nn.Conv3d weight needs flattening first
+        if isinstance(self.patch_embedding, FlatConv3d):
+            nn.init.xavier_uniform_(self.patch_embedding.weight)
+        else:
+            nn.init.xavier_uniform_(self.patch_embedding.weight.flatten(1))
+
+        # text_embedding: override to normal(std=0.02) matching original
+        for m in self.text_embedding.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=0.02)
+
+        # time_embedder + time_proj: override to normal(std=0.02) matching original
+        for m in self.time_embedder.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=0.02)
+        nn.init.xavier_normal_(self.time_proj.weight)
+
+        # output head: zero-init so predictions start near zero
+        nn.init.zeros_(self.head.head.weight)
+
+        # DEBUGGING (init following original Wan2.1)
+        # print param stats for comparison with original Wan2.1
+        if torch.distributed.get_rank() == 0:
+            for name, param in self.named_parameters():
+                print(f"{name:80s}  mean={param.data.float().mean():.4f}  std={param.data.float().std():.4f}  shape={list(param.shape)}")
+            # print(stop_here)
+
+    def forward(
+        self,
+        x: Tensor,
+        grid_sizes: list[Tuple[int, int, int]],
+        t: Tensor,
+        context: Tensor,
+        packed_seq_params: PackedSeqParams = None,
+        attention_mask: Optional[Tensor] = None,
+        context_mask: Optional[Tensor] = None,
+        **kwargs,
+    ) -> Tensor:
+        """Forward pass.
+
+        Args:
+            x List[Tensor]: list of vae encoded data (in_channel, f, h, w)
+            grid_sizes List[Tuple[int, int, int]]: list of grid sizes (f, h, w)
+            t Tensor: timesteps
+            context List[Tensor]: list of context (text_len, hidden_size)
+            packed_seq_params PackedSeqParams: packed sequence parameters
+
+        Returns:
+            Tensor: output tensor (still patchified) of shape [seq_len, batch_size, hidden_size]
+        """
+        #################################
+        ########## Wan forward ##########
+
+        # DEBUGGING (enable sbhd)
+        if torch.distributed.get_rank() == 0:
+            print("[DEBUG] DEBUGGING (enable sbhd)")
+            print("[DEBUG] x.shape: ", x.shape)
+            print("[DEBUG] grid_sizes[:4]: ", grid_sizes[:4])
+            print("[DEBUG] t.shape: ", t.shape)
+            print("[DEBUG] context.shape: ", context.shape)
+            print("[DEBUG] packed_seq_params: ", packed_seq_params)
+
+        # ============= embedders =============
+
+        # run input embedding
+        if self.pre_process:
+            # x.shape [s, b, c * pF * pH * pW]
+            seq_len, batch_size, _ = x.shape
+            c = self.out_channels
+            pF, pH, pW = self.patch_size
+            x = x.reshape(seq_len * batch_size, pF, pH, pW, c)  # output: x.shape [s * b, pF, pH, pW, c]
+            x = x.permute(0, 4, 1, 2, 3)  # output: x.shape [s * b, c, pF, pH, pW]
+            x = self.patch_embedding(x)  # output: x.shape [s * b, hidden_size, 1, 1, 1]
+            x = x.flatten(1)  # output: x.shape [s * b, hidden_size]
+            x = x.reshape(seq_len, batch_size, -1)  # output: x.shape [s, b, hidden_size]
+
+            # split sequence for sequence_parallel
+            # TODO: for PP, do we move scatter_to_sequence_parallel_region here or after "x = self.decoder.input_tensor" ???
+            if self.config.sequence_parallel:
+                x = tensor_parallel.scatter_to_sequence_parallel_region(
+                    x
+                )  # output: x.shape [s * b // tp_size, hidden_size]
+
+        else:
+            # intermediate stage of pipeline
+            x = self.decoder.input_tensor
+
+        # time embeddings
+        e = self.time_embedder(self.timesteps_proj(t).to(x.dtype))
+        e0 = self.time_proj(self.time_proj_act_fn(e)).unflatten(1, (6, self.config.hidden_size))
+
+        # context embeddings
+        context = self.text_embedding(context)  # shape [text_len, b, hidden_size]
+
+        # ============= decoder =============
+        # calculate rotary pos emb
+        n_head, dim_head = self.num_heads, self.config.hidden_size // self.num_heads
+        if packed_seq_params is not None:
+            # THD mode: cu_seqlens_q_padded comes from packed sequence parameters.
+            cu_seqlens_q_padded = packed_seq_params["self_attention"].cu_seqlens_q_padded
+            qkv_format = "thd"
+        else:
+            # SBHD mode: x.shape[0] has already been divided by CP, so multiply back to
+            # recover the full per-sample padded length (max_seq_q).
+            cp_size = parallel_state.get_context_parallel_world_size()
+            seq_len_sbhd = x.shape[0] * cp_size  # = max_seq_q
+            batch_size_sbhd = x.shape[1]
+            cu_seqlens_q_padded = (
+                torch.arange(batch_size_sbhd + 1, dtype=torch.int32, device=t.device) * seq_len_sbhd
+            )
+            qkv_format = "sbhd"
+
+        rotary_pos_emb = self.rope_embeddings(
+            n_head, dim_head, cu_seqlens_q_padded, grid_sizes, t.device, qkv_format=qkv_format
+        )  # THD: [total_s, 1, 1, dim_head]  SBHD: [s, 1, 1, dim_head]
+        # Note: In the sbhd case, we assume all samples in the batch share the same grid_size
+
+        # For SBHD + CP: transpose to BSHD, split with get_batch_on_this_cp_rank, transpose back.
+        # For THD + CP: no need to slice, mcore rope_utils will take care of it.
+        if qkv_format == "sbhd" and parallel_state.get_context_parallel_world_size() > 1:
+            rotary_pos_emb = get_pos_emb_on_this_cp_rank(
+                pos_emb=rotary_pos_emb,
+                seq_dim=0,
+                cp_group=parallel_state.get_context_parallel_group(),
+            )
+
+        # run decoder
+        x = self.decoder(
+            hidden_states=x,
+            attention_mask=None,
+            context=context,
+            context_mask=None,
+            rotary_pos_emb=rotary_pos_emb,
+            rotary_pos_cos=None,
+            rotary_pos_sin=None,
+            conditions_embeddings=e0,
+            packed_seq_params=packed_seq_params,
+        )
+
+        # return if not post_process
+        if not self.post_process:
+            return x
+
+        # head
+        x = x.transpose(0, 1)  # head expects shape [b, s, hidden_size]
+        x = self.head(x, e)  # output: x.shape [b, s, c * pF * pH * pW]
+        x = x.transpose(0, 1).contiguous()  # reshape back to shape [s, b, c * pF * pH * pW]; .contiguous() is critical: without it, torch.empty_like(x) in the CP all_gather creates a non-contiguous tensor (strides match the transposed layout), causing the gathered data to be interpreted in batch-major order while the sent data is seq-major, scrambling batch items across sequence positions.
+
+        # gather outputs for sequence_parallel
+        # Note: in GPT models, because the vocab projection matrix is ColumnParallelLinear, the sequence is
+        #   automatically gathered in ColumnParallelLinear forward pass.
+        #   However, in Wan models, we need to gather the outputs manually.
+        if self.config.sequence_parallel:
+            x = tensor_parallel.gather_from_sequence_parallel_region(x)
+        return x  # output: x.shape [s, b, c * pF * pH * pW]
+
+    def set_input_tensor(self, input_tensor: Tensor) -> None:
+        """Sets input tensor to the model.
+
+        See megatron.model.transformer.set_input_tensor()
+
+        Args:
+            input_tensor (Tensor): Sets the input tensor for the model.
+        """
+        # This is usually handled in schedules.py but some inference code still
+        # gives us non-lists or None
+        if not isinstance(input_tensor, list):
+            input_tensor = [input_tensor]
+
+        assert len(input_tensor) == 1, "input_tensor should only be length 1 for gpt/bert"
+        self.decoder.set_input_tensor(input_tensor[0])
+
+    def sharded_state_dict(
+        self, prefix: str = "module.", sharded_offsets: tuple = (), metadata: Optional[Dict] = None
+    ) -> ShardedStateDict:
+        """Sharded state dict implementation for GPTModel backward-compatibility (removing extra state).
+
+        Args:
+            prefix (str): Module name prefix.
+            sharded_offsets (tuple): PP related offsets, expected to be empty at this module level.
+            metadata (Optional[Dict]): metadata controlling sharded state dict creation.
+
+        Returns:
+            ShardedStateDict: sharded state dict for the GPTModel
+        """
+        sharded_state_dict = super().sharded_state_dict(prefix, sharded_offsets, metadata)
+
+        # Ensure replica ids for non-transformer embedder weights include pipeline dimension
+        for module in ["text_embedding", "time_embedding", "time_projection"]:
+            if hasattr(self, module):
+                for param_name, param in getattr(self, module).named_parameters():
+                    weight_key = f"{prefix}{module}.{param_name}"
+                    if weight_key in sharded_state_dict:
+                        self._set_embedder_weights_replica_id(param, sharded_state_dict, weight_key)
+
+        return sharded_state_dict
+
+    def _mark_trainable_params_for_tp_grad_avg(self, modules: Optional[list] = None) -> None:
+        """Mark selected modules' trainable parameters to average gradients across TP domain."""
+        target_modules = modules if modules is not None else [self]
+        for module in target_modules:
+            for _name, param in module.named_parameters(recurse=True):
+                if isinstance(param, nn.Parameter) and param.requires_grad:
+                    setattr(param, "average_gradients_across_tp_domain", True)
+
+    def _set_embedder_weights_replica_id(
+        self, tensor: Tensor, sharded_state_dict: ShardedStateDict, embedder_weight_key: str
+    ) -> None:
+        """set replica ids of the weights in t_embedder for sharded state dict.
+
+        Args:
+            sharded_state_dict (ShardedStateDict): state dict with the weight to tie
+            weight_key (str): key of the weight in the state dict.
+                This entry will be replaced with a tied version
+
+        Returns: None, acts in-place
+        """
+        tp_rank = parallel_state.get_tensor_model_parallel_rank()
+        vpp_rank = parallel_state.get_virtual_pipeline_model_parallel_rank()
+        vpp_rank = vpp_rank if vpp_rank else 0
+        vpp_world = parallel_state.get_virtual_pipeline_model_parallel_world_size()
+        vpp_world = vpp_world if vpp_world else 1
+        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        del sharded_state_dict[embedder_weight_key]
+        replica_id = (
+            tp_rank,
+            (vpp_rank + pp_rank * vpp_world),
+            parallel_state.get_data_parallel_rank(with_context_parallel=True),
+        )
+
+        sharded_state_dict[embedder_weight_key] = make_sharded_tensor_for_checkpoint(
+            tensor=tensor,
+            key=embedder_weight_key,
+            replica_id=replica_id,
+            allow_shape_mismatch=False,
+        )
