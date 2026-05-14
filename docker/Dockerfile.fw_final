@@ -35,13 +35,7 @@ ARG NEMO_EVAL_COMMIT
 ARG NEMO_RUN_COMMIT
 
 # Update FW repository commit
-RUN pushd /opt/NeMo && \
-        git pull && \
-        git fetch origin $NEMO_COMMIT && \
-        git checkout FETCH_HEAD && \
-        echo "Container built with NeMo commit hash: $NEMO_COMMIT" && \
-    popd && \
-    pushd /opt/Export-Deploy && \
+RUN    pushd /opt/Export-Deploy && \
         git pull && \
         git fetch origin $NEMO_EXPORT_DEPLOY_COMMIT && \
         git checkout FETCH_HEAD && \
@@ -63,6 +57,7 @@ RUN pushd /opt/NeMo && \
 # Sync environment
 COPY --chmod=644 docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
 COPY --chmod=644 docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
+COPY --chmod=644 docker/common/stubs/ /opt/NeMo-FW/stubs/
 RUN \
     cd /opt/NeMo-FW && \
     uv sync --no-cache-dir --all-groups --inexact && \

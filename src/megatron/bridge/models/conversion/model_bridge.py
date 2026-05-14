@@ -38,13 +38,13 @@ from typing import (
 
 import torch
 from megatron.core import parallel_state
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.utils import (
-    get_pg_size,
-    unwrap_model,
-)
+from megatron.core.utils import get_pg_size
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+from torch.distributed._tensor import DTensor
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_utils import PreTrainedModel
 
@@ -52,7 +52,11 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
 )
-from megatron.bridge.models.conversion.peft_bridge import AdapterWeightConversionTask, MegatronPeftBridge
+from megatron.bridge.models.conversion.peft_bridge import (
+    AdapterWeight,
+    AdapterWeightConversionTask,
+    MegatronPeftBridge,
+)
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_theta_from_hf,
 )
@@ -60,6 +64,7 @@ from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
     get_module_and_param_from_name,
     persistent_buffers,
+    unwrap_model,
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -163,6 +168,92 @@ class _HFNameSuffixMapping:
         return {f"{k}{self._suffix}": v for k, v in out.items()}
 
 
+def _get_pg_collection_from_model(
+    megatron_model: MegatronModule | List[MegatronModule] | None,
+):
+    """Return the ProcessGroupCollection attached to a Megatron model, if any.
+
+    Megatron-Core's ``LanguageModule`` (parent of ``GPTModel``) stores the
+    ``ProcessGroupCollection`` it was constructed with on ``self.pg_collection``.
+    When users wire process groups manually via ``HyperCommGrid`` (decentralized
+    PG path) the global ``parallel_state`` singleton is never populated, but the
+    same groups are available through the model. Return ``None`` when no model
+    is supplied or no ``pg_collection`` is reachable so callers can fall back to
+    ``parallel_state``.
+    """
+    if megatron_model is None:
+        return None
+    models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
+    if not models_list:
+        return None
+    unwrapped = unwrap_model(models_list[0])
+    # VLM wrappers expose the language model on ``.language_model``; the
+    # ``pg_collection`` lives on the inner ``LanguageModule``.
+    inner = getattr(unwrapped, "language_model", None)
+    if inner is not None:
+        unwrapped = inner
+    return getattr(unwrapped, "pg_collection", None)
+
+
+def _get_pp_group(megatron_model: MegatronModule | List[MegatronModule] | None):
+    """Return the pipeline-parallel group, preferring the model's pg_collection."""
+    pg = _get_pg_collection_from_model(megatron_model)
+    pp_group = getattr(pg, "pp", None) if pg is not None else None
+    if pp_group is not None:
+        return pp_group
+    return parallel_state.get_pipeline_model_parallel_group()
+
+
+def _get_pp_rank(megatron_model: MegatronModule | List[MegatronModule] | None) -> int:
+    """Return the pipeline-parallel rank, preferring the model's pg_collection."""
+    pg = _get_pg_collection_from_model(megatron_model)
+    pp_group = getattr(pg, "pp", None) if pg is not None else None
+    if pp_group is not None:
+        return torch.distributed.get_rank(group=pp_group)
+    return parallel_state.get_pipeline_model_parallel_rank()
+
+
+def _get_embedding_group(megatron_model: MegatronModule | List[MegatronModule] | None):
+    """Return the embedding group, preferring the model's pg_collection."""
+    pg = _get_pg_collection_from_model(megatron_model)
+    embd_group = getattr(pg, "embd", None) if pg is not None else None
+    if embd_group is not None:
+        return embd_group
+    return parallel_state.get_embedding_group()
+
+
+def _get_ep_group(megatron_model: MegatronModule | List[MegatronModule] | None):
+    """Return the expert-parallel group, preferring the model's pg_collection.
+
+    Returns ``None`` if the model has a ``pg_collection`` whose ``ep`` is ``None``
+    (typical for dense models in the decentralized PG path), so callers must
+    treat ``None`` as "EP size 1".
+    """
+    pg = _get_pg_collection_from_model(megatron_model)
+    if pg is not None:
+        return getattr(pg, "ep", None)
+    return parallel_state.get_expert_model_parallel_group()
+
+
+def _install_pg_collection_on_mappings(
+    mapping_registry: MegatronMappingRegistry,
+    megatron_model: MegatronModule | List[MegatronModule] | None,
+) -> None:
+    """Install the model's ``pg_collection`` onto every param mapping.
+
+    ``MegatronParamMapping.__init__`` snapshots Megatron-Core's ``mpu`` globals
+    when the registry is built. In the decentralized PG path those globals are
+    never populated, so the snapshot is all ``None`` and ``tp_size`` collapses
+    to ``world_size``. Re-install the user-supplied groups before running tasks
+    so per-mapping shape calculations match the actual parallelism topology.
+    """
+    pg_collection = _get_pg_collection_from_model(megatron_model)
+    if pg_collection is None:
+        return
+    for mapping in mapping_registry.get_all_mappings():
+        mapping.set_process_groups_from_pg_collection(pg_collection)
+
+
 def _megatron_local_name_to_global(
     models: MegatronModule | List[MegatronModule],
     config: TransformerConfig,
@@ -171,7 +262,7 @@ def _megatron_local_name_to_global(
 ) -> str:
     """Adjust layer number and expert number from local to global numbering."""
     # PP
-    pp_group = parallel_state.get_pipeline_model_parallel_group()
+    pp_group = _get_pp_group(models)
     if "layers." in param_name and get_pg_size(pp_group) > 1:
         match = re.match(r"^(.+?\.layers\.\d+)", param_name)
         assert match is not None
@@ -186,10 +277,12 @@ def _megatron_local_name_to_global(
                 f"layers.{global_layer_number}.",
             )
 
-    # EP
-    ep_group = parallel_state.get_expert_model_parallel_group()
-    # For now adapters are not sharded across EP ranks
-    if ".mlp.experts.linear_fc" in param_name and get_pg_size(ep_group) > 1 and not ".adapter." in param_name:
+    # EP — fetched lazily because dense models may not have an EP group at all
+    # (and for the decentralized PG path, ``pg_collection.ep`` may be ``None``).
+    # For now adapters are not sharded across EP ranks.
+    is_expert_param = ".mlp.experts.linear_fc" in param_name and not ".adapter." in param_name
+    ep_group = _get_ep_group(models) if is_expert_param else None
+    if is_expert_param and ep_group is not None and get_pg_size(ep_group) > 1:
         num_experts = config.num_moe_experts
         num_experts_per_rank = num_experts // ep_group.size()
 
@@ -657,7 +750,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             return self._cached_param_names
 
         # Compute the result
-        pp_group = parallel_state.get_pipeline_model_parallel_group()
+        pp_group = _get_pp_group(megatron_model)
         model_config = unwrap_model(megatron_model)[0].config
         global_param_names = []
 
@@ -888,14 +981,18 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
+        use_megatron_fsdp = isinstance(megatron_model[0], FullyShardedDataParallel)
+        if use_megatron_fsdp:
+            original_megatron_model = megatron_model
+        unwrapped_model_list = unwrap_model(megatron_model)
         # [ModelOpt]: Hide extra parameters registered in Distillation mode
         with contextlib.ExitStack() as stack:
-            if hasattr(megatron_model[0], "hide_teacher_model"):
-                stack.enter_context(megatron_model[0].hide_teacher_model())
-            if hasattr(megatron_model[0], "hide_loss_modules"):
-                stack.enter_context(megatron_model[0].hide_loss_modules())
+            if hasattr(unwrapped_model_list[0], "hide_teacher_model"):
+                stack.enter_context(unwrapped_model_list[0].hide_teacher_model())
+            if hasattr(unwrapped_model_list[0], "hide_loss_modules"):
+                stack.enter_context(unwrapped_model_list[0].hide_loss_modules())
 
-            hf_to_megatron_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+            hf_to_megatron_tasks = self.build_conversion_tasks(hf_pretrained, unwrapped_model_list)
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         description = f"Loading from {hf_pretrained.model_name_or_path}"
@@ -912,8 +1009,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         _hf_import_cache: Dict[str, torch.Tensor] = {}
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
-            if task is None:
-                continue
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
@@ -934,6 +1029,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             if converted_weights is not None:
                 # Assert that param_weight is not None for HF->Megatron tasks
                 assert task.param_weight is not None, "param_weight is required for HF->Megatron conversion"
+                if isinstance(task.param_weight, DTensor):
+                    sliced_converted_weights = converted_weights.reshape(-1)[task.param_weight.megatron_fsdp_slice]
+                    task.param_weight._local_tensor.reshape(-1).copy_(sliced_converted_weights)
+                    continue
 
                 # Check shape compatibility before copying
                 if converted_weights.shape != task.param_weight.shape:
@@ -972,6 +1071,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 with torch.no_grad():
                     task.param_weight.copy_(converted_weights)
         self._broadcast_shared_embeddings(megatron_model)
+        if use_megatron_fsdp:
+            for m in original_megatron_model:
+                m.module.install_optimized_model_weights()
+            return original_megatron_model
         if capture_unquantized_state_dict:
             # Keep Megatron's single-chunk convention: "model" instead of "model0".
             if len(megatron_model) == 1:
@@ -1034,8 +1137,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
 
         for task in conversion_tasks:
-            if task is None:
-                continue
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
@@ -1113,17 +1214,19 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
+        unwrapped_model_list = unwrap_model(megatron_model)
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
-            conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+            conversion_tasks = self.build_conversion_tasks(hf_pretrained, unwrapped_model_list)
 
         # Collect adapter conversion tasks when merge is requested
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
         if merge_adapter_weights:
-            adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
+            adapter_tasks_by_base = self.build_adapter_conversion_tasks(unwrapped_model_list)
+        materialized_adapter_weights_cache: Dict[str, List[AdapterWeight]] = {}
 
         megatron_to_hf_tasks = conversion_tasks
-        unwrapped_model = unwrap_model(megatron_model)[0]
+        unwrapped_model = unwrapped_model_list[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
 
@@ -1138,16 +1241,39 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
-            megatron_weights = task.param_weight
+            if isinstance(task.param_weight, DTensor):
+                from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
+                    uneven_dtensor_to_full_tensor,
+                )
+
+                megatron_weights = uneven_dtensor_to_full_tensor(task.param_weight)
+            else:
+                megatron_weights = task.param_weight
             megatron_module = task.megatron_module
             if self._should_skip_mtp_duplicate_embedding_export(task, megatron_model):
                 megatron_weights = None
                 megatron_module = None
 
             converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, megatron_module)
+            adapter_tasks = None
+            task_global_base_prefix = None
+            if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
+                task_global_base_prefix, _, _ = task.global_param_name.partition(".to_wrap.weight")
+                adapter_tasks = adapter_tasks_by_base.get(task_global_base_prefix)
 
             # --- Grouped export path: accumulate per-expert weights, yield when complete ---
             if getattr(task.mapping, "is_grouped_export", False):
+                if merge_adapter_weights and adapter_tasks:
+                    adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
+                    if adapter_weights is None:
+                        adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                        materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
+                    converted_weights_dict = self._merge_grouped_export_adapter_weights(
+                        task,
+                        converted_weights_dict,
+                        adapter_weights,
+                        model_config.num_moe_experts,
+                    )
                 merged_result = self._accumulate_grouped_export(
                     task, converted_weights_dict, model_config, _grouped_buffers, hf_state_dict
                 )
@@ -1164,12 +1290,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             )  # dict will be none except for one expert;
             # All ranks get the full tensor
 
-            adapter_tasks = None
-            if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
-                task_global_base_prefix, _, _ = task.global_param_name.partition(".to_wrap.weight")
-                adapter_tasks = adapter_tasks_by_base.get(task_global_base_prefix)
             if merge_adapter_weights and adapter_tasks:
-                adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
+                if adapter_weights is None:
+                    adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                    materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
                 # Merge LoRA adapter weights back into the base tensor for HF export
                 converted_weights_dict = self._merge_lora_adapter_weights(
                     megatron_model,
@@ -1348,13 +1473,16 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         share_embeddings = self._share_embeddings_and_output_weights(model_config)
 
         # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
+        pp_group = _get_pp_group(megatron_model)
         if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
-            parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage()
+            is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group)
         ):
             # Broadcast embeddings and output weights from rank 0 to embedding group
-            embd_group = parallel_state.get_embedding_group()
+            embd_group = _get_embedding_group(megatron_model)
+            if embd_group is None:
+                return
             embd_group_ranks = torch.distributed.get_process_group_ranks(embd_group)
-            if embd_group is not None and torch.distributed.get_rank() in embd_group_ranks:
+            if torch.distributed.get_rank() in embd_group_ranks:
                 # Get embeddings and output weights from rank 0
                 if hasattr(unwrapped_model, "embedding") and hasattr(unwrapped_model.embedding, "word_embeddings"):
                     embd_weights = unwrapped_model.embedding.word_embeddings.weight.data
@@ -1406,13 +1534,17 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if not isinstance(hf_pretrained, PretrainedConfig) and not has_hf_state:
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
 
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+
         hf_keys: Optional[Iterable[str]] = hf_pretrained.state.source.get_all_keys() if has_hf_state else None
 
         mapping_registry = self.mapping_registry()
+        _install_pg_collection_on_mappings(mapping_registry, megatron_model)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
-        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        pp_rank = _get_pp_rank(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
         # Filter out output_layer related parameters if embeddings are tied
@@ -1591,8 +1723,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
-        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
-        pp_group = parallel_state.get_pipeline_model_parallel_group()
+        _install_pg_collection_on_mappings(mapping_registry, megatron_model)
+        pp_rank = _get_pp_rank(megatron_model)
+        pp_group = _get_pp_group(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
         # Filter out output_layer related parameters if embeddings are tied
@@ -1872,7 +2005,9 @@ def register_bridge_implementation(
     def _get_model_bridge_impl(_, hf_config=None) -> "MegatronModelBridge":
         bridge = bridge_class()
         if hf_config is not None:
-            bridge.hf_config = hf_config
+            # `hf_config` may be a raw config or a full HF wrapper; normalize both onto the bridge.
+            bridge.hf_pretrained = hf_config
+            bridge.hf_config = hf_config.config if hasattr(hf_config, "config") else hf_config
         return bridge
 
     @stream_weights_megatron_to_hf.impl((source, target))
@@ -1887,7 +2022,8 @@ def register_bridge_implementation(
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
 
-        # Allow bridge to access model config (config-only shims or raw configs lack .config)
+        # allow bridge to access model config
+        bridge.hf_pretrained = hf_pretrained
         bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
 
         return bridge.stream_weights_megatron_to_hf(

@@ -112,6 +112,5 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         return hf_cfg
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        hf_config = self.hf_config
-        mapping_list = get_common_mapping_list(hf_config=hf_config)
+        mapping_list = get_common_mapping_list(hf_config=self.hf_config)
         return MegatronMappingRegistry(*mapping_list)

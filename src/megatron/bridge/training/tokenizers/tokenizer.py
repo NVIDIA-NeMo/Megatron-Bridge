@@ -74,8 +74,30 @@ def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
         tokenizer_library = "sft"
         tokenizer_path = config.tokenizer_model
         kwargs["prompt_format"] = config.tokenizer_prompt_format
-    elif config.tokenizer_type in ["NullTokenizer", "NullMultimodalTokenizer"]:
-        tokenizer_library = "null-text" if config.tokenizer_type == "NullTokenizer" else "null-multimodal"
+    elif config.tokenizer_type == "NullTokenizer":
+        tokenizer_library = "null-text"
+        if config.vocab_size:
+            kwargs["vocab_size"] = config.vocab_size
+        # TODO(mcore-guard): Remove try/except once mcore main and dev both support
+        # "null-text"/"null-multimodal" tokenizer library names (dev renamed "null" → split names).
+        try:
+            metadata = {"library": tokenizer_library}
+            tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
+        except AssertionError:
+            # Legacy mcore exposed NullTokenizer under library "null" and internally reserved the
+            # top id for the pad token, requiring callers to pass vocab_size - 1 to obtain the
+            # requested effective vocab size.
+            metadata = {"library": "null"}
+            if "vocab_size" in kwargs:
+                kwargs["vocab_size"] = kwargs["vocab_size"] - 1
+            tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
+
+        return tokenizer
+    elif config.tokenizer_type == "NullMultimodalTokenizer":
+        # NullMultimodalTokenizer still reserves the top id for the pad token, so the effective
+        # vocab size is passed as vocab_size - 1 under both the new "null-multimodal" and the
+        # legacy "null" library names.
+        tokenizer_library = "null-multimodal"
         if config.vocab_size:
             kwargs["vocab_size"] = config.vocab_size - 1
         # TODO(mcore-guard): Remove try/except once mcore main and dev both support

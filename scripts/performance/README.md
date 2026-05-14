@@ -12,29 +12,27 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
 ## Setup Instructions
 
-### Step 1. Virtual Environment
+Follow the steps below on a Slurm based login node to launch Megatron-Bridge experiments.
 
-- Create a virtual env at your preferred location on login node on a Slurm cluster and install the NeMo-Run package-
+### Step 1. Clone Megatron-Bridge Repo
 
-  ```
-  pip install git+https://github.com/NVIDIA-NeMo/Run.git
-  ```
+We need to clone the repo to access and run performance benchmarking experiments using `Megatron-Bridge/scripts/performance/setup_experiment.py` (more details in Step 2.).
 
-- The YAML config files are resolved on compute node inside the container.
+`setup_experiment.py` uses [NeMo/Run](https://github.com/NVIDIA-NeMo/Run) to launch experiments. This script generates and runs a sbatch script. The experiment is ultimately run on compute node(s) inside a container specified by the user. The experiment uses Megatron-Bridge code that comes pre-packaged with the container.
 
-### Step 2. Clone the Repo and Pick the corresponding release branch to the container
+```
+git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+```
 
-  ```
-  git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
-  git switch <branch> 
-  Example: If using 25.11 Container ```git switch r0.2.0
-  ```
-  
-  To find out which branch is used to build the container, refer <https://docs.nvidia.com/nemo-framework/user-guide/latest/softwarecomponentversions.html>
+Next, we need to switch to a branch that was used to build the container you want to use for your experiments.
 
-  Why? This is required because when running a job the version of Megatron-Bridge in the setup and the one built into the container should match.
+```
+cd Megatron-Bridge
+git switch <branch> 
+```
+Example: If using 26.04 container, then execute- `git switch r0.4.0`
 
-### Step 3. Run instructions
+### Step 2. Run instructions
 
 #### <ins>Examples</ins>
 
@@ -45,7 +43,7 @@ The following line shows an example of how you can launch a pre-training benchma
 You can also create a bash file to define the experiment arguments and launch it. For e.g. The bash file will look as follows-
 
 ```
-CONTAINER="nvcr.io/nvidia/nemo:25.11.01"
+CONTAINER="nvcr.io/nvidia/nemo:26.04"
 MBRIDGE_PATH="</path/to/mbridge>"
 
 JOB_NAME="dsv3_gb300"
@@ -82,7 +80,7 @@ uv run python scripts/performance/setup_experiment.py \
 ##### Container Image
 
 - `-i/--container_image`: NeMo container image to launch. For release container XX.YY use nvcr.io/nvidia/nemo:XX.YY.
-  For 25.09, use nvcr.io/nvidia/nemo:25.09. For the complete list of NGC containers refer <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags>.
+  For 26.04, use nvcr.io/nvidia/nemo:26.04. For the complete list of NGC containers refer <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags>.
   Defaults to `nvcr.io/nvidia/nemo:dev`.
 
 ##### General arguments
@@ -265,3 +263,62 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 - `--max_outlier_ratio`: Maximum ratio of outliers allowed. Default `0.1`.
 - `--outlier_threshold`: Outlier detection threshold (sigma). Default `3.0`.
 - `--skip_first_percent_loss`: Percentage of loss points to skip from beginning for convergence analysis. Default `0.20` (20%).
+
+## Determinism
+
+Deterministic training guarantees that two runs with identical inputs produce identical outputs at every step.  It is useful for debugging (isolating regressions) and for reproducibility studies.
+
+### What `--deterministic` does
+
+**Environment variables** (set on the Slurm executor via `PerfEnvPlugin`):
+
+| Variable | Value | Reason |
+|---|---|---|
+| `NCCL_ALGO` | `Ring` | Disables tree/NVLink collectives that are non-deterministic |
+| `NVTE_ALLOW_NONDETERMINISTIC_ALGO` | `0` | Forces TE to use deterministic algorithms |
+| `CUBLAS_WORKSPACE_CONFIG` | `:4096:8` | Disables cuBLAS heuristic workspace selection |
+
+**Model config overrides** (applied by `apply_determinism_overrides` in the recipe layer):
+
+| Field | Value |
+|---|---|
+| `model.deterministic_mode` | `True` |
+| `model.cross_entropy_loss_fusion` | `False` |
+| `comm_overlap.tp_comm_overlap` | `False` |
+
+### Example commands
+
+```bash
+# Llama 3 70B — deterministic, H100 64-GPU
+python scripts/performance/setup_experiment.py \
+  --account <account> --partition <partition> \
+  --gpu h100 -m llama3 -s 70b -ng 64 -gn 8 \
+  --container_image <image> --task pretrain \
+  --deterministic
+
+# Llama 3.1 405B — deterministic, H100 512-GPU
+python scripts/performance/setup_experiment.py \
+  --account <account> --partition <partition> \
+  --gpu h100 -m llama31 -s 405b -ng 512 -gn 8 \
+  --container_image <image> --task pretrain \
+  --deterministic
+```
+
+### Using the recipe library directly
+
+`apply_determinism_overrides` is also importable for use outside the performance script layer:
+
+```python
+from megatron.bridge.recipes.llama import llama3_70b_pretrain_deterministic_config
+
+cfg = llama3_70b_pretrain_deterministic_config(mock=True)
+
+# Or, apply overrides to any existing recipe:
+from megatron.bridge.recipes.utils import apply_determinism_overrides
+from megatron.bridge.recipes.llama import llama3_70b_pretrain_config
+
+cfg = llama3_70b_pretrain_config(mock=True)
+apply_determinism_overrides(cfg)
+```
+
+Note: bit-exact reproducibility additionally requires the executor-side env vars listed above. The recipe-only path covers the model config, not the runtime environment.
