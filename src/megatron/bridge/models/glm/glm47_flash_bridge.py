@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -104,13 +104,8 @@ class GLM47FlashBridge(MegatronModelBridge):
 
         return provider
 
-    def build_conversion_tasks(self, hf_pretrained, megatron_model):
-        """Override to store config before mapping_registry is called."""
-        self._hf_config = hf_pretrained.config
-        return super().build_conversion_tasks(hf_pretrained, megatron_model)
-
     def mapping_registry(self) -> MegatronMappingRegistry:
-        hf_config = getattr(self, "_hf_config", None)
+        hf_config = getattr(self, "hf_config", None)
         mapping_list = get_common_mapping_list(hf_config=hf_config)
         mapping_list.append(
             AutoMapping(
