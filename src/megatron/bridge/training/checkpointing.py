@@ -975,6 +975,17 @@ def _save_hf_weights(
     is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
     rank = torch.distributed.get_rank() if is_distributed else 0
 
+    if get_rank_safe() == 0:
+        logger.info(
+            "Saving HuggingFace full model weights to %s (hf_source=%s, distributed_save=%s, "
+            "hf_save_every_n_ranks=%s)",
+            iter_dir,
+            hf_source,
+            distributed_save,
+            save_every_n_ranks,
+        )
+
+    hf_export_t0 = time()
     # Step 1: gather full HF tensors (collectives on the main process)
     raw_generator = bridge.export_hf_weights(
         model,
@@ -1009,6 +1020,12 @@ def _save_hf_weights(
             bridge.hf_pretrained.save_artifacts(iter_dir, original_source_path=hf_source)
         if is_distributed:
             torch.distributed.barrier()
+        if get_rank_safe() == 0:
+            logger.info(
+                "Finished HuggingFace full model weight save (distributed_save) in %.2fs -> %s",
+                time() - hf_export_t0,
+                iter_dir,
+            )
         return
 
     # Non-distributed save: rank 0 runs streaming safetensors I/O inside ``save_generator`` (which
@@ -1023,6 +1040,12 @@ def _save_hf_weights(
 
     state_source.save_generator(raw_generator, iter_dir, strict=False)
     bridge.hf_pretrained.save_artifacts(iter_dir, original_source_path=hf_source)
+    if get_rank_safe() == 0:
+        logger.info(
+            "Finished HuggingFace full model weight save (rank0 streaming safetensors) in %.2fs -> %s",
+            time() - hf_export_t0,
+            iter_dir,
+        )
 
 
 def _save_hf_adapter_weights(
@@ -1058,6 +1081,14 @@ def _save_hf_adapter_weights(
 
     if is_distributed:
         torch.distributed.barrier()
+
+    if get_rank_safe() == 0:
+        logger.info(
+            "Starting HuggingFace PEFT adapter export to %s (async_save=%s, rank=%s)",
+            iter_dir,
+            async_save,
+            rank,
+        )
 
     # ``save_hf_adapter`` already handles distributed export internally and is
     # collective.  When async_save is enabled we still need the collective on
@@ -1110,6 +1141,10 @@ def _save_hf_adapter_weights(
             with open(save_dir / "adapter_config.json", "w") as f:
                 _json.dump(adapter_config_dict, f, indent=2)
             save_file(adapter_state, str(save_dir / "adapter_model.safetensors"))
+            logger.info(
+                "Finished HuggingFace PEFT adapter disk write (background thread) -> %s",
+                str(save_dir),
+            )
 
         def _runner() -> None:
             try:
@@ -1125,6 +1160,10 @@ def _save_hf_adapter_weights(
         hf_async.thread = thread
         state.hf_async_save = hf_async
         thread.start()
+        logger.info(
+            "HuggingFace PEFT adapter disk write dispatched to background thread -> %s",
+            iter_dir,
+        )
     elif async_save:
         # Non-zero ranks still need to participate in the collective generator
         for _ in bridge.export_adapter_weights(model, cpu=True, show_progress=False):
@@ -1137,6 +1176,8 @@ def _save_hf_adapter_weights(
             base_model_name_or_path=base_model_name_or_path,
             show_progress=False,
         )
+        if get_rank_safe() == 0:
+            logger.info("Finished HuggingFace PEFT adapter save (synchronous) -> %s", iter_dir)
 
     if is_distributed:
         torch.distributed.barrier()
