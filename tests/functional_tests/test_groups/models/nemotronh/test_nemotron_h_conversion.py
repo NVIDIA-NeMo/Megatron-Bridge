@@ -45,23 +45,21 @@ def _fix_tied_weights_keys(model: nn.Module):
             module._tied_weights_keys = {k: k for k in tied}
 
 
-def _copy_custom_code_from_hub(repo_id: str, model_dir: Path, source_file: str | Path) -> None:
+def _copy_custom_code_from_source(model_dir: Path, source_file: str | Path) -> None:
     """Copy custom modeling/configuration modules needed for local trust_remote_code loading."""
     copied_files: set[str] = set()
 
-    source_dir = Path(source_file).parent
+    source_file = Path(source_file)
+    source_dir = source_file.parent
     for py_file in source_dir.glob("*.py"):
         target = model_dir / py_file.name
         shutil.copy2(py_file, target)
         copied_files.add(target.name)
 
-    from huggingface_hub import hf_hub_download, list_repo_files
+    from transformers.dynamic_module_utils import get_relative_import_files
 
-    for repo_file in list_repo_files(repo_id):
-        if not repo_file.endswith(".py"):
-            continue
-        source = Path(hf_hub_download(repo_id=repo_id, filename=repo_file))
-        target = model_dir / Path(repo_file).name
+    for source in map(Path, get_relative_import_files(source_file)):
+        target = model_dir / source.name
         if target.name not in copied_files:
             shutil.copy2(source, target)
             copied_files.add(target.name)
@@ -163,7 +161,7 @@ class TestNemotronHConversion:
         # directly from the HF Hub and are unaffected.
         model.save_pretrained(model_dir, safe_serialization=True, save_original_format=False)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
-        _copy_custom_code_from_hub("nvidia/Nemotron-H-8B-Base-8K", model_dir, modeling_filepath)
+        _copy_custom_code_from_source(model_dir, modeling_filepath)
 
         # Ensure config.json exists with expected keys
         config_path = model_dir / "config.json"
@@ -446,7 +444,7 @@ class TestNemotron3NanoConversion:
         # Check the notes above in TestNemotronHConversion.test_toy_model_creation for more details.
         model.save_pretrained(model_dir, safe_serialization=True, save_original_format=False)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
-        _copy_custom_code_from_hub(repo_id, model_dir, modeling_filepath)
+        _copy_custom_code_from_source(model_dir, modeling_filepath)
 
         # Ensure config.json exists with expected keys
         config_path = model_dir / "config.json"
@@ -742,7 +740,7 @@ class TestNemotron3SuperConversion:
             ]
         model.save_pretrained(model_dir, safe_serialization=True)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
-        _copy_custom_code_from_hub(repo_id, model_dir, modeling_filepath)
+        _copy_custom_code_from_source(model_dir, modeling_filepath)
 
         # Ensure config.json exists with expected keys
         config_path = model_dir / "config.json"
