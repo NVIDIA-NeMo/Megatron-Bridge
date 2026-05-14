@@ -39,7 +39,7 @@ skill keyword — infer it from the artifact you read.
 **ALWAYS:**
 - Run `uv run pre-commit run --all-files` before committing
 - Add NVIDIA copyright headers to new Python files (except under `tests/`)
-- Sign off commits: `git commit -s -m "message"`
+- GPG-sign and sign off commits: `git commit -S -s -m "message"`
 - Use `uv run python -m pytest` and `uv run python -m torch.distributed.run`, not bare `pytest` / `torchrun`
 - Use the current year (2026) in generated content — do not default to 2025 or any past year
 
