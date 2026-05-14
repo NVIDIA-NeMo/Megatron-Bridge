@@ -63,9 +63,9 @@ from omegaconf import OmegaConf
 
 from megatron.bridge.diffusion.models.common.dgpt_step import DGPTStep
 from megatron.bridge.diffusion.recipes.nemotron_labs_diffusion.ar_to_dlm import (
-    nemotron_labs_diffusion3_3b_pretrain_config,
-    nemotron_labs_diffusion3_8b_pretrain_config,
-    nemotron_labs_diffusion3_14b_pretrain_config,
+    nemotron_labs_diffusion_3b_pretrain_config,
+    nemotron_labs_diffusion_8b_pretrain_config,
+    nemotron_labs_diffusion_14b_pretrain_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
@@ -80,9 +80,9 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 logger: logging.Logger = logging.getLogger(__name__)
 
 PRETRAIN_CONFIGS = {
-    "3b": nemotron_labs_diffusion3_3b_pretrain_config,
-    "8b": nemotron_labs_diffusion3_8b_pretrain_config,
-    "14b": nemotron_labs_diffusion3_14b_pretrain_config,
+    "3b": nemotron_labs_diffusion_3b_pretrain_config,
+    "8b": nemotron_labs_diffusion_8b_pretrain_config,
+    "14b": nemotron_labs_diffusion_14b_pretrain_config,
 }
 
 

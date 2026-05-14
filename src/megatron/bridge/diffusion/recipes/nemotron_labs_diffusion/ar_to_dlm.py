@@ -43,16 +43,16 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-def nemotron_labs_diffusion3_pretrain_config(**user_kwargs) -> ConfigContainer:
+def nemotron_labs_diffusion_pretrain_config(**user_kwargs) -> ConfigContainer:
     """Return a pre-training config for NemotronLabsDiffusion.
 
-    See `_nemotron_labs_diffusion3_common` for the full list of parameters.
+    See `_nemotron_labs_diffusion_common` for the full list of parameters.
     """
     # Combine defaults with user kwargs; user values take precedence.
-    return _nemotron_labs_diffusion3_common(**user_kwargs)
+    return _nemotron_labs_diffusion_common(**user_kwargs)
 
 
-def nemotron_labs_diffusion3_3b_pretrain_config(**user_kwargs) -> ConfigContainer:
+def nemotron_labs_diffusion_3b_pretrain_config(**user_kwargs) -> ConfigContainer:
     """Return a pre-training config for NemotronLabsDiffusion 3B (TP=1, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
     defaults = dict(
         tensor_parallelism=1,
@@ -69,10 +69,10 @@ def nemotron_labs_diffusion3_3b_pretrain_config(**user_kwargs) -> ConfigContaine
         tokenizer_model="mistralai/Ministral-3-3B-Base-2512",
     )
     defaults.update(user_kwargs)
-    return _nemotron_labs_diffusion3_common(**defaults)
+    return _nemotron_labs_diffusion_common(**defaults)
 
 
-def nemotron_labs_diffusion3_8b_pretrain_config(**user_kwargs) -> ConfigContainer:
+def nemotron_labs_diffusion_8b_pretrain_config(**user_kwargs) -> ConfigContainer:
     """Return a pre-training config for NemotronLabsDiffusion 8B (TP=4, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
     defaults = dict(
         tensor_parallelism=4,
@@ -89,10 +89,10 @@ def nemotron_labs_diffusion3_8b_pretrain_config(**user_kwargs) -> ConfigContaine
         tokenizer_model="mistralai/Ministral-3-8B-Base-2512",
     )
     defaults.update(user_kwargs)
-    return _nemotron_labs_diffusion3_common(**defaults)
+    return _nemotron_labs_diffusion_common(**defaults)
 
 
-def nemotron_labs_diffusion3_14b_pretrain_config(**user_kwargs) -> ConfigContainer:
+def nemotron_labs_diffusion_14b_pretrain_config(**user_kwargs) -> ConfigContainer:
     """Return a pre-training config for NemotronLabsDiffusion 14B (TP=8, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
     defaults = dict(
         tensor_parallelism=8,
@@ -109,10 +109,10 @@ def nemotron_labs_diffusion3_14b_pretrain_config(**user_kwargs) -> ConfigContain
         tokenizer_model="mistralai/Ministral-3-14B-Base-2512",
     )
     defaults.update(user_kwargs)
-    return _nemotron_labs_diffusion3_common(**defaults)
+    return _nemotron_labs_diffusion_common(**defaults)
 
 
-def _nemotron_labs_diffusion3_common(
+def _nemotron_labs_diffusion_common(
     model_provider: NemotronLabsDiffusionModelProvider | None = None,
     hf_path: str | None = None,
     dir: str | None = None,
