@@ -104,6 +104,7 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
             self.null_context = (
                 payload["null_context"] if isinstance(payload, dict) else payload
             )
+            print(f"[WanTaskEncoder] CFG on: p={cfg_dropout_prob}, null_context shape={tuple(self.null_context.shape)}", flush=True)
         else:
             self.null_context = None
 
