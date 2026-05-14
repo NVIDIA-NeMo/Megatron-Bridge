@@ -455,3 +455,120 @@ class TestNexTronAttentionInferenceForward:
         assert attn._kv_cache_k is None
         assert attn._kv_cache_v is None
         assert attn._kv_cache_seq_len == 0
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage: bidirectional mask, llama4 disabled, non-default RoPE
+# ---------------------------------------------------------------------------
+
+
+class TestBlockBidirectionalMask:
+    def test_set_stores_starts_and_ends(self):
+        attn = _make_attention()
+        starts = torch.tensor([0, 4, 8])
+        ends = torch.tensor([3, 7, 11])
+        attn.set_block_bidirectional_mask(starts, ends)
+        assert attn._block_bidirectional_starts is starts
+        assert attn._block_bidirectional_ends is ends
+
+    def test_set_rejects_non_1d_starts(self):
+        attn = _make_attention()
+        with pytest.raises(ValueError, match=r"must be 1D"):
+            attn.set_block_bidirectional_mask(torch.zeros(2, 2), torch.zeros(2))
+
+    def test_set_rejects_non_1d_ends(self):
+        attn = _make_attention()
+        with pytest.raises(ValueError, match=r"must be 1D"):
+            attn.set_block_bidirectional_mask(torch.zeros(2), torch.zeros(2, 2))
+
+    def test_set_rejects_shape_mismatch(self):
+        attn = _make_attention()
+        with pytest.raises(ValueError, match=r"must match"):
+            attn.set_block_bidirectional_mask(torch.tensor([0, 4]), torch.tensor([3, 7, 11]))
+
+    def test_clear_resets_to_none(self):
+        attn = _make_attention()
+        attn.set_block_bidirectional_mask(torch.tensor([0]), torch.tensor([3]))
+        attn.clear_block_bidirectional_mask()
+        assert attn._block_bidirectional_starts is None
+        assert attn._block_bidirectional_ends is None
+
+    def test_set_inference_params_clears_bidirectional_mask(self):
+        attn = _make_attention()
+        attn.set_block_bidirectional_mask(torch.tensor([0]), torch.tensor([3]))
+        attn.set_inference_params(causal=True, cache_enabled=True)
+        assert attn._block_bidirectional_starts is None
+        assert attn._block_bidirectional_ends is None
+
+    def test_set_inference_mode_false_clears_bidirectional_mask(self):
+        attn = _make_attention()
+        attn.set_inference_mode(True)
+        attn.set_block_bidirectional_mask(torch.tensor([0]), torch.tensor([3]))
+        attn.set_inference_mode(False)
+        assert attn._block_bidirectional_starts is None
+        assert attn._block_bidirectional_ends is None
+
+
+class TestLlama4ScalingDisabled:
+    def test_beta_is_none_when_flag_off(self):
+        attn = _make_attention(apply_llama4=False)
+        assert attn.beta is None
+        assert attn.max_position_embeddings is None
+
+    def test_beta_set_when_flag_on(self):
+        attn = _make_attention(apply_llama4=True)
+        assert attn.beta == 0.1
+        assert attn.max_position_embeddings == 16  # SEQ_LEN default
+
+
+class TestRotaryEmbeddingNonDefault:
+    """Exercises the non-default rope_type branch (YARN init path)."""
+
+    def test_linear_rope_type_initializes(self):
+        from megatron.bridge.diffusion.models.common.nextron_attention import (
+            Ministral3RotaryEmbedding,
+        )
+
+        hf_cfg = types.SimpleNamespace(
+            max_position_embeddings=16,
+            rope_parameters={
+                "rope_type": "linear",
+                "rope_theta": 10000.0,
+                "factor": 1.0,
+            },
+            num_attention_heads=4,
+            hidden_size=32,
+            standardize_rope_params=lambda: None,  # HF stub
+        )
+        rope = Ministral3RotaryEmbedding(hf_cfg)
+        assert rope.rope_type == "linear"
+        assert rope.inv_freq is not None
+        # The non-default path should set rope_theta and rope_scaling on the config
+        assert hasattr(hf_cfg, "rope_theta")
+        assert hf_cfg.rope_theta == 10000.0
+        assert hasattr(hf_cfg, "rope_scaling")
+        # rope_scaling must not contain rope_type itself
+        assert "rope_type" not in hf_cfg.rope_scaling
+
+    def test_linear_rope_forward_runs(self):
+        from megatron.bridge.diffusion.models.common.nextron_attention import (
+            Ministral3RotaryEmbedding,
+        )
+
+        hf_cfg = types.SimpleNamespace(
+            max_position_embeddings=16,
+            rope_parameters={
+                "rope_type": "linear",
+                "rope_theta": 10000.0,
+                "factor": 1.0,
+            },
+            num_attention_heads=4,
+            hidden_size=32,
+            standardize_rope_params=lambda: None,  # HF stub
+        )
+        rope = Ministral3RotaryEmbedding(hf_cfg)
+        x = torch.randn(1, 4, 16, 8)
+        pos = torch.arange(16).unsqueeze(0)
+        cos, sin = rope(x, pos)
+        assert cos.shape == (1, 16, 8)
+        assert sin.shape == (1, 16, 8)
