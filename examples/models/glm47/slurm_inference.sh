@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,11 +17,12 @@
 # GLM-4.7 Inference (Multi-Node via Slurm)
 #
 # GLM-4.7 (MoE: 160 experts, top-8, ~358B params)
-# Requires at least 3 nodes (24 GPUs) with EP=24.
+# Requires at least 4 nodes (32 GPUs) with EP=32.
 #
 # Usage:
 #   1. Fill in CONTAINER_IMAGE, CONTAINER_MOUNTS, and token exports
-#   2. Submit: sbatch examples/models/glm47/slurm_inference.sh
+#   2. Create logs/ if your Slurm setup requires the output directory to exist
+#   3. Submit: sbatch examples/models/glm47/slurm_inference.sh
 # ==============================================================================
 
 #SBATCH --job-name=glm47-inference
@@ -34,28 +35,30 @@
 #SBATCH --output=logs/glm47_inference_%j.log
 #SBATCH --exclusive
 
-# ── Container ────────────────────────────────────────────────────────────
-CONTAINER_IMAGE=""
-# CONTAINER_IMAGE="/path/to/container.sqsh"
-CONTAINER_MOUNTS=""
-# CONTAINER_MOUNTS="/lustre:/lustre,/path/to/project:/opt/Megatron-Bridge"
-WORKDIR="/opt/Megatron-Bridge"
+set -euo pipefail
 
-# ── Tokens / Caches ──────────────────────────────────────────────────────
+# Container
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-}"
+# CONTAINER_IMAGE="/path/to/container.sqsh"
+CONTAINER_MOUNTS="${CONTAINER_MOUNTS:-}"
+# CONTAINER_MOUNTS="/lustre:/lustre,/path/to/project:/opt/Megatron-Bridge"
+WORKDIR="${WORKDIR:-/opt/Megatron-Bridge}"
+
+# Tokens / Caches
 # export HF_TOKEN="hf_your_token_here"
 # export HF_HOME="/path/to/shared/HF_HOME"
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 
-# ── Model / Parallelism ──────────────────────────────────────────────────
-MODEL_NAME=GLM-4.7
-HF_MODEL_ID=zai-org/$MODEL_NAME
-PROMPT="What is artificial intelligence?"
-MAX_NEW_TOKENS=100
-TP=1
-EP=32
-PP=1
+# Model / Parallelism
+MODEL_NAME="${MODEL_NAME:-GLM-4.7}"
+HF_MODEL_ID="${HF_MODEL_ID:-zai-org/$MODEL_NAME}"
+PROMPT="${PROMPT:-What is artificial intelligence?}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-100}"
+TP="${TP:-1}"
+EP="${EP:-32}"
+PP="${PP:-1}"
 
-# ── Environment ───────────────────────────────────────────────────────────
+# Environment
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
 
@@ -65,7 +68,7 @@ export NCCL_NVLS_ENABLE=0
 
 echo "======================================"
 echo "GLM-4.7 Inference"
-echo "Job: $SLURM_JOB_ID | Nodes: $SLURM_JOB_NUM_NODES"
+echo "Job: ${SLURM_JOB_ID:-unknown} | Nodes: ${SLURM_JOB_NUM_NODES:-unknown}"
 echo "TP=$TP PP=$PP EP=$EP (Total GPUs: $((TP * EP * PP)))"
 echo "======================================"
 
@@ -76,21 +79,26 @@ if [ -z "$CONTAINER_IMAGE" ]; then
     exit 1
 fi
 
-SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
+SRUN_CMD=(srun --mpi=pmix --container-image="$CONTAINER_IMAGE" --no-container-mount-home)
 if [ -n "$CONTAINER_MOUNTS" ]; then
-    SRUN_CMD="$SRUN_CMD --container-mounts=$CONTAINER_MOUNTS"
+    SRUN_CMD+=(--container-mounts="$CONTAINER_MOUNTS")
 fi
 
-CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 10; fi && "
-CMD="${CMD}uv run --no-sync python examples/conversion/hf_to_megatron_generate_text.py"
-CMD="$CMD --hf_model_path $HF_MODEL_ID"
-CMD="$CMD --prompt '$PROMPT'"
+echo "Warming uv cache"
+"${SRUN_CMD[@]}" -N 1 --ntasks=1 bash -c "cd \"$WORKDIR\" && uv sync"
+
+printf -v HF_MODEL_ARG "%q" "$HF_MODEL_ID"
+printf -v PROMPT_ARG "%q" "$PROMPT"
+
+CMD="uv run --no-sync python examples/conversion/hf_to_megatron_generate_text.py"
+CMD="$CMD --hf_model_path $HF_MODEL_ARG"
+CMD="$CMD --prompt $PROMPT_ARG"
 CMD="$CMD --max_new_tokens $MAX_NEW_TOKENS"
-CMD="$CMD --tp $TP --ep $EP"
+CMD="$CMD --tp $TP --pp $PP --ep $EP"
 
 echo "Executing: $CMD"
 
-$SRUN_CMD bash -c "cd $WORKDIR && $CMD"
+"${SRUN_CMD[@]}" bash -c "cd \"$WORKDIR\" && $CMD"
 
 echo "======================================"
 echo "Inference completed"

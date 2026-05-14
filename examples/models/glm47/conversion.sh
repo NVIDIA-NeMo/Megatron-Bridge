@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,33 +25,33 @@
 
 set -xeuo pipefail
 
-WORKSPACE=${WORKSPACE:-/workspace}
+WORKSPACE="${WORKSPACE:-/workspace}"
 
-# ── GLM-4.7-Flash (single-node, ~30B, MLA+MoE) ─────────────────────────
+# GLM-4.7-Flash (single-node, ~30B, MLA+MoE)
 
-GLM47_FLASH_HF=zai-org/GLM-4.7-Flash
+GLM47_FLASH_HF="${GLM47_FLASH_HF:-zai-org/GLM-4.7-Flash}"
 
 # Single-GPU round-trip (small models only; Flash is ~30B so may OOM on 1 GPU)
 # uv run python examples/conversion/hf_megatron_roundtrip.py \
-#     --hf-model-id $GLM47_FLASH_HF
+#     --hf-model-id "$GLM47_FLASH_HF"
 
 # Multi-GPU round-trip with EP=8
 uv run python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-    --hf-model-id $GLM47_FLASH_HF --ep 8
+    --hf-model-id "$GLM47_FLASH_HF" --ep 8
 
 # Multi-GPU round-trip with TP=2 EP=4
 uv run python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-    --hf-model-id $GLM47_FLASH_HF --tp 2 --ep 4
+    --hf-model-id "$GLM47_FLASH_HF" --tp 2 --ep 4
 
-# Import HF → Megatron checkpoint
+# Import HF -> Megatron checkpoint
 uv run python examples/conversion/convert_checkpoints.py import \
-    --hf-model $GLM47_FLASH_HF \
-    --megatron-path ${WORKSPACE}/models/GLM-4.7-Flash
+    --hf-model "$GLM47_FLASH_HF" \
+    --megatron-path "${WORKSPACE}/models/GLM-4.7-Flash"
 
-# Export Megatron → HF checkpoint
+# Export Megatron -> HF checkpoint
 uv run python examples/conversion/convert_checkpoints.py export \
-    --hf-model $GLM47_FLASH_HF \
-    --megatron-path ${WORKSPACE}/models/GLM-4.7-Flash/iter_0000000 \
-    --hf-path ${WORKSPACE}/models/GLM-4.7-Flash-hf-export
+    --hf-model "$GLM47_FLASH_HF" \
+    --megatron-path "${WORKSPACE}/models/GLM-4.7-Flash/iter_0000000" \
+    --hf-path "${WORKSPACE}/models/GLM-4.7-Flash-hf-export"

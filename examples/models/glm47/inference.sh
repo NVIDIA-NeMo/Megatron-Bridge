@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,10 +22,19 @@
 
 set -xeuo pipefail
 
-# ── GLM-4.7-Flash ────────────────────────────────────────────────────────
+# GLM-4.7-Flash
 
-uv run python -m torch.distributed.run --nproc_per_node=8 \
+GLM47_FLASH_HF="${GLM47_FLASH_HF:-zai-org/GLM-4.7-Flash}"
+PROMPT="${PROMPT:-What is artificial intelligence?}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-100}"
+TP="${TP:-1}"
+PP="${PP:-1}"
+EP="${EP:-8}"
+NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
+
+uv run python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" \
     examples/conversion/hf_to_megatron_generate_text.py \
-    --hf_model_path zai-org/GLM-4.7-Flash \
-    --prompt "What is artificial intelligence?" \
-    --max_new_tokens 100 --ep 8
+    --hf_model_path "$GLM47_FLASH_HF" \
+    --prompt "$PROMPT" \
+    --max_new_tokens "$MAX_NEW_TOKENS" \
+    --tp "$TP" --pp "$PP" --ep "$EP"
