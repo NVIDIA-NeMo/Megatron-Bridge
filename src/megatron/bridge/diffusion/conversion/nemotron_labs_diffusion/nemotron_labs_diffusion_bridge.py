@@ -13,22 +13,22 @@
 # limitations under the License.
 
 """
-Megatron Bridge for NexTron diffusion language models.
+Megatron Bridge for NemotronLabsDiffusion diffusion language models.
 
 Converts between HuggingFace and Megatron-Core GPTModel format, using
-NexTronModelProvider which replaces core attention with
-NexTronAttention for sbd_block_diff.
+NemotronLabsDiffusionModelProvider which replaces core attention with
+NemotronLabsDiffusionAttention for sbd_block_diff.
 
 Supports two HF checkpoint formats (auto-detected from config):
-- Text-only (NexTron): encoder.*, diffusion_head.weight
+- Text-only (NemotronLabsDiffusion): encoder.*, diffusion_head.weight
 - VLM source (Ministral CPT): language_model.model.*, language_model.lm_head.weight
   (vision_tower and multi_modal_projector weights are ignored)
 """
 
 from megatron.core.models.gpt.gpt_model import GPTModel
 
-from megatron.bridge.diffusion.models.nextron.nextron_provider import (
-    NexTronModelProvider,
+from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
+    NemotronLabsDiffusionModelProvider,
 )
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, register_bridge_implementation
@@ -40,8 +40,8 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
-class NexTronBridge(MegatronModelBridge):
-    """HF <-> Megatron bridge for NexTron diffusion language models.
+class NemotronLabsDiffusionBridge(MegatronModelBridge):
+    """HF <-> Megatron bridge for NemotronLabsDiffusion diffusion language models.
 
     Handles both text-only (encoder.*) and VLM (language_model.model.*) HF formats.
     The format is auto-detected in provider_bridge() and used in mapping_registry().
@@ -52,14 +52,14 @@ class NexTronBridge(MegatronModelBridge):
 
     _is_text_only: bool = True
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NexTronModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronLabsDiffusionModelProvider:
         hf_config = hf_pretrained.config
         text_config = getattr(hf_config, "text_config", hf_config)
 
         # Auto-detect checkpoint format: VLM configs nest text params under text_config
         self._is_text_only = not hasattr(hf_config, "text_config")
 
-        return NexTronModelProvider(
+        return NemotronLabsDiffusionModelProvider(
             hidden_size=text_config.hidden_size,
             ffn_hidden_size=text_config.intermediate_size,
             num_layers=text_config.num_hidden_layers,
@@ -70,7 +70,7 @@ class NexTronBridge(MegatronModelBridge):
         )
 
     def _text_only_mappings(self) -> list:
-        """Mappings for text-only NexTron checkpoints (encoder.*, diffusion_head.weight)."""
+        """Mappings for text-only NemotronLabsDiffusion checkpoints (encoder.*, diffusion_head.weight)."""
         param_mappings = {
             "embedding.word_embeddings.weight": "encoder.embed_tokens.weight",
             "output_layer.weight": "diffusion_head.weight",
@@ -143,5 +143,5 @@ class NexTronBridge(MegatronModelBridge):
 register_bridge_implementation(
     source="MinistralDiffEncoderModel",
     target=GPTModel,
-    bridge_class=NexTronBridge,
+    bridge_class=NemotronLabsDiffusionBridge,
 )

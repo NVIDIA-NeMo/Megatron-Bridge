@@ -1,6 +1,6 @@
-# NexTron
+# NemotronLabsDiffusion
 
-This directory contains recipes for training and running NexTron language models (dLLMs) based on Ministral-3 (3B, 8B, 14B). The full workflow is:
+This directory contains recipes for training and running NemotronLabsDiffusion language models (dLLMs) based on Ministral-3 (3B, 8B, 14B). The full workflow is:
 
 0. **Bridge (Checkpoint Conversion)** — convert a HuggingFace Ministral-3 checkpoint to Megatron-Bridge format.
 1. **Continuous Pretraining (CPT)** — standard autoregressive pretraining on the base Ministral-3 model with additional data.
@@ -16,7 +16,7 @@ CPT fine-tunes a pretrained Ministral-3 model on new data using standard autoreg
 
 **Example script:**
 ```bash
-torchrun --nproc_per_node=8 examples/diffusion/recipes/nextron/continuous_pretraining.py \
+torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/continuous_pretraining.py \
     --model-size 3b \
     --hf-path mistralai/Ministral-3-3B-Base-2512 \
     --data-paths /path/to/dclm/merged_tokenized_text_document
@@ -27,22 +27,22 @@ torchrun --nproc_per_node=8 examples/diffusion/recipes/nextron/continuous_pretra
 
 ## Stage 2: AR-to-DLM
 
-This stage converts the CPT checkpoint into a diffusion LM. It replaces the standard attention with `NexTronAttention` and trains with a combined diffusion + AR loss.
+This stage converts the CPT checkpoint into a diffusion LM. It replaces the standard attention with `NemotronLabsDiffusionAttention` and trains with a combined diffusion + AR loss.
 
-**Key recipe:** `examples/diffusion/recipes/nextron/ar_to_dlm.py`
+**Key recipe:** `examples/diffusion/recipes/nemotron_labs_diffusion/ar_to_dlm.py`
 
-The model is built via `NexTronModelProvider`, which extends `Ministral3ModelProvider` with:
+The model is built via `NemotronLabsDiffusionModelProvider`, which extends `Ministral3ModelProvider` with:
 - `dlm_paradigm = "sbd_block_diff"` — attention with block masking
 - `block_size = 64` — number of tokens per diffusion block
 - `mask_token_id = 100` — token ID used for masking during diffusion
 - `dlm_loss_weight = 0.3`, `ar_loss_weight = 1.0` — loss weighting between diffusion and AR objectives
-- `NexTronAttention` replaces core attention to support block-causal masking
+- `NemotronLabsDiffusionAttention` replaces core attention to support block-causal masking
 
 The CPT checkpoint from Stage 1 is passed via `checkpoint.pretrained_checkpoint`. Setting `checkpoint.finetune=true` skips loading the optimizer state from the CPT stage.
 
 **Example launch:**
 ```bash
-torchrun --nproc_per_node=8 examples/diffusion/recipes/nextron/ar_to_dlm.py \
+torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/ar_to_dlm.py \
     --model-size 3b \
     --hf-path mistralai/Ministral-3-3B-Base-2512 \
     --data-paths /path/to/dclm/merged_tokenized_text_document \
@@ -55,12 +55,12 @@ torchrun --nproc_per_node=8 examples/diffusion/recipes/nextron/ar_to_dlm.py \
 
 ## Inference
 
-The script [`inference_nextron.py`](inference_nextron.py) runs text generation from a trained Megatron-format NexTron checkpoint. Both dLLM (block diffusion) and AR modes are supported.
+The script [`inference_nemotron_labs_diffusion.py`](inference_nemotron_labs_diffusion.py) runs text generation from a trained Megatron-format NemotronLabsDiffusion checkpoint. Both dLLM (block diffusion) and AR modes are supported.
 
 ### dLLM mode (default)
 
 ```bash
-torchrun --nproc_per_node=4 examples/diffusion/recipes/nextron/inference_nextron.py \
+torchrun --nproc_per_node=4 examples/diffusion/recipes/nemotron_labs_diffusion/inference_nemotron_labs_diffusion.py \
     --megatron-path /path/to/checkpoints/ar_to_dlm_8b \
     --hf-model mistralai/Ministral-3-8B-Base-2512 \
     --prompts "The capital of France is" \
@@ -71,7 +71,7 @@ torchrun --nproc_per_node=4 examples/diffusion/recipes/nextron/inference_nextron
 ### AR mode
 
 ```bash
-python examples/diffusion/recipes/nextron/inference_nextron.py \
+python examples/diffusion/recipes/nemotron_labs_diffusion/inference_nemotron_labs_diffusion.py \
     --megatron-path /path/to/checkpoints/ar_to_dlm_3b \
     --hf-model mistralai/Ministral-3-3B-Base-2512 \
     --mode ar \
@@ -86,7 +86,7 @@ The `--tp` argument must match the tensor parallelism degree of the saved checkp
 
 ## Checkpoint Conversion (Bridge)
 
-The `NexTronBridge` converts between HuggingFace `MinistralDiffEncoderModel` and Megatron-Bridge distributed checkpoint format. It handles:
+The `NemotronLabsDiffusionBridge` converts between HuggingFace `MinistralDiffEncoderModel` and Megatron-Bridge distributed checkpoint format. It handles:
 
 - **Language model weights** — mapped between HF (`encoder.*`) and Megatron (`language_model.decoder.*`) with proper QKV merging and tensor-parallel sharding.
 - **Diffusion head** (`diffusion_head.weight`) — mapped to Megatron's `language_model.output_layer.weight`.
@@ -96,7 +96,7 @@ The conversion script is [`convert_checkpoints.py`](convert_checkpoints.py).
 ### Import: HuggingFace → Megatron
 
 ```bash
-python examples/diffusion/recipes/nextron/convert_checkpoints.py import \
+python examples/diffusion/recipes/nemotron_labs_diffusion/convert_checkpoints.py import \
     --hf-model nvidia/Nemotron-Labs-Diffusion-3B \
     --megatron-path /path/to/checkpoints/hf_to_mb_3b \
     --torch-dtype bfloat16
@@ -104,7 +104,7 @@ python examples/diffusion/recipes/nextron/convert_checkpoints.py import \
 
 For the 8B model (TP=4):
 ```bash
-python examples/diffusion/recipes/nextron/convert_checkpoints.py import \
+python examples/diffusion/recipes/nemotron_labs_diffusion/convert_checkpoints.py import \
     --hf-model nvidia/Nemotron-Labs-Diffusion-8B \
     --megatron-path /path/to/checkpoints/hf_to_mb_8b \
     --torch-dtype bfloat16
@@ -117,7 +117,7 @@ The Megatron checkpoint is written under `--megatron-path` (e.g. `.../hf_to_mb_3
 Export a trained Megatron checkpoint back to HuggingFace format. A reference HF model is required to provide config and tokenizer artifacts:
 
 ```bash
-python examples/diffusion/recipes/nextron/convert_checkpoints.py export \
+python examples/diffusion/recipes/nemotron_labs_diffusion/convert_checkpoints.py export \
     --hf-model nvidia/Nemotron-Labs-Diffusion-3B \
     --megatron-path /path/to/checkpoints/ar_to_dlm_3b \
     --hf-path /path/to/checkpoints/mb_to_hf_3b

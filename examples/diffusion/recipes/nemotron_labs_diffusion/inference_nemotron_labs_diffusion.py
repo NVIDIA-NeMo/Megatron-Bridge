@@ -14,20 +14,20 @@
 # limitations under the License.
 
 """
-NexTron inference script.
+NemotronLabsDiffusion inference script.
 
 Runs text generation over one or more prompts using a Megatron-format
-NexTron checkpoint. Supports both dLLM (block diffusion) and AR modes.
+NemotronLabsDiffusion checkpoint. Supports both dLLM (block diffusion) and AR modes.
 
 Examples:
     Single prompt, dLLM mode (default):
-        $ torchrun --nproc_per_node=4 examples/diffusion/recipes/nextron/inference_nemotron.py \\
+        $ torchrun --nproc_per_node=4 examples/diffusion/recipes/nemotron_labs_diffusion/inference_nemotron.py \\
             --megatron-path /path/to/checkpoints/ar_to_dlm_8b \\
             --hf-model mistralai/Ministral-3-8B-Base-2512 \\
             --prompts "The capital of France is"
 
     AR mode:
-        $ python examples/diffusion/recipes/nextron/inference_nemotron.py \\
+        $ python examples/diffusion/recipes/nemotron_labs_diffusion/inference_nemotron.py \\
             --megatron-path /path/to/checkpoints/ar_to_dlm_3b \\
             --hf-model mistralai/Ministral-3-3B-Base-2512 \\
             --mode ar \\
@@ -35,7 +35,7 @@ Examples:
             --prompts "Once upon a time"
 
     Multiple prompts with custom diffusion settings:
-        $ torchrun --nproc_per_node=4 examples/diffusion/recipes/nextron/inference_nemotron.py \\
+        $ torchrun --nproc_per_node=4 examples/diffusion/recipes/nemotron_labs_diffusion/inference_nemotron.py \\
             --megatron-path /path/to/checkpoints/ar_to_dlm_8b \\
             --hf-model mistralai/Ministral-3-8B-Base-2512 \\
             --prompts "Prompt one" --prompts "Prompt two" \\
@@ -49,8 +49,10 @@ import torch
 import torch.distributed as dist
 from transformers import AutoTokenizer
 
-from megatron.bridge.diffusion.conversion.nextron.nextron_bridge import NexTronBridge
-from megatron.bridge.diffusion.models.nextron.inference_nextron import (
+from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge import (
+    NemotronLabsDiffusionBridge,
+)
+from megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron_labs_diffusion import (
     generate_ar,
     generate_dllm,
     set_tp_group,
@@ -60,7 +62,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 def parse_args():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="NexTron inference")
+    parser = argparse.ArgumentParser(description="NemotronLabsDiffusion inference")
     parser.add_argument(
         "--megatron-path",
         type=str,
@@ -152,9 +154,11 @@ def parse_args():
 
 
 def load_model(args):
-    """Load the NexTron model from a Megatron checkpoint via AutoBridge."""
-    hf_pretrained = PreTrainedCausalLM.from_pretrained(args.hf_model, torch_dtype=torch.bfloat16, trust_remote_code=True)
-    bridge = NexTronBridge()
+    """Load the NemotronLabsDiffusion model from a Megatron checkpoint via AutoBridge."""
+    hf_pretrained = PreTrainedCausalLM.from_pretrained(
+        args.hf_model, torch_dtype=torch.bfloat16, trust_remote_code=True
+    )
+    bridge = NemotronLabsDiffusionBridge()
     model_provider = bridge.provider_bridge(hf_pretrained)
     model_provider.tensor_model_parallel_size = args.tp
     model_provider.pipeline_model_parallel_size = 1
@@ -176,7 +180,7 @@ def load_model(args):
 
 
 def main():
-    """Entry point for NexTron inference."""
+    """Entry point for NemotronLabsDiffusion inference."""
     args = parse_args()
 
     # Distributed setup

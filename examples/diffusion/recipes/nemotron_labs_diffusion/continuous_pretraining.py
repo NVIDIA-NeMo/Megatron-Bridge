@@ -14,42 +14,30 @@
 # limitations under the License.
 
 """
-NexTron diffusion LM pretraining.
+Ministral3 continued pretraining (CPT) — standard autoregressive training.
 
-Uses the sbd_block_diff diffusion paradigm via DGPTStep.
-Use --model-size to select 3b, 8b, or 14b (default: 3b).
-Use --hf-path to override the HuggingFace model ID or local model path.
+Select model size with --model-size {3b,8b,14b} (default: 14b).
+Use --hf-path to specify a HuggingFace model ID or local path.
+Configuration is overridden via CLI dotlist overrides.
 
 Examples:
-    3B model, first job from AR checkpoint (finetune=true skips optimizer state):
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nextron/ar_to_dlm.py \
-            --model-size 3b \
-            --hf-path mistralai/Ministral-3-3B-Base-2512 \
-            --data-paths /path/to/dclm/merged_tokenized_text_document \
-            checkpoint.pretrained_checkpoint=/path/to/hf_to_mb_3b \
-            checkpoint.finetune=true
-
-    3B model, subsequent jobs (resume from DLM checkpoint):
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nextron/ar_to_dlm.py \
+    3B model:
+        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/continuous_pretraining.py \
             --model-size 3b \
             --hf-path mistralai/Ministral-3-3B-Base-2512 \
             --data-paths /path/to/dclm/merged_tokenized_text_document
 
     8B model with TP=4:
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nextron/ar_to_dlm.py \
+        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/continuous_pretraining.py \
             --model-size 8b \
             --hf-path mistralai/Ministral-3-8B-Base-2512 \
-            --data-paths /path/to/dclm/merged_tokenized_text_document \
-            checkpoint.pretrained_checkpoint=/path/to/hf_to_mb_8b \
-            checkpoint.finetune=true
+            --data-paths /path/to/dclm/merged_tokenized_text_document
 
     14B model with TP=8:
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nextron/ar_to_dlm.py \
+        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/continuous_pretraining.py \
             --model-size 14b \
             --hf-path mistralai/Ministral-3-14B-Base-2512 \
-            --data-paths /path/to/dclm/merged_tokenized_text_document \
-            checkpoint.pretrained_checkpoint=/path/to/hf_to_mb_14b \
-            checkpoint.finetune=true
+            --data-paths /path/to/dclm/merged_tokenized_text_document
 """
 
 import argparse
@@ -61,11 +49,10 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
-from megatron.bridge.diffusion.models.common.dgpt_step import DGPTStep
-from megatron.bridge.diffusion.recipes.nextron.ar_to_dlm import (
-    nextron3_3b_pretrain_config,
-    nextron3_8b_pretrain_config,
-    nextron3_14b_pretrain_config,
+from megatron.bridge.diffusion.recipes.nemotron_labs_diffusion.continuous_pretraining import (
+    nemotron_labs_diffusion_3b_finetune_config,
+    nemotron_labs_diffusion_8b_finetune_config,
+    nemotron_labs_diffusion_14b_finetune_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
@@ -74,36 +61,37 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
+from megatron.bridge.training.vlm_step import forward_step
 from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 PRETRAIN_CONFIGS = {
-    "3b": nextron3_3b_pretrain_config,
-    "8b": nextron3_8b_pretrain_config,
-    "14b": nextron3_14b_pretrain_config,
+    "3b": nemotron_labs_diffusion_3b_finetune_config,
+    "8b": nemotron_labs_diffusion_8b_finetune_config,
+    "14b": nemotron_labs_diffusion_14b_finetune_config,
 }
 
 
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
-    """Parse command-line arguments for the AR-to-DLM conversion script."""
+    """Parse command-line arguments for the continuous pretraining script."""
     parser = argparse.ArgumentParser(
-        description="NexTron diffusion LM pretraining (no distillation)",
+        description="Ministral3 continued pretraining (AR)",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
         "--model-size",
         type=str,
         choices=list(PRETRAIN_CONFIGS.keys()),
-        default="3b",
-        help="Model size to train (default: 3b).",
+        default="14b",
+        help="Model size to train (default: 14b).",
     )
     parser.add_argument(
         "--hf-path",
         type=str,
         default=None,
-        help="HuggingFace model ID or local path to model weights. Overrides the default for the selected model size.",
+        help="HuggingFace model ID or local path. Overrides the default for the selected model size.",
     )
     parser.add_argument(
         "--config-file",
@@ -141,7 +129,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
 
 def main() -> None:
-    """Entry point for AR-to-DLM conversion and continued pretraining."""
+    """Entry point for Ministral3 continued pretraining."""
     args, cli_overrides = parse_cli_args()
 
     pretrain_config = PRETRAIN_CONFIGS[args.model_size]
@@ -149,6 +137,7 @@ def main() -> None:
         data_paths=args.data_paths,
         data_args_path=args.data_args_path,
         hf_path=args.hf_path,
+        peft=None,
     )
 
     if get_rank_safe() == 0:
@@ -174,7 +163,7 @@ def main() -> None:
         cfg.print_yaml()
         logger.info("----------------------------------")
 
-    pretrain(config=cfg, forward_step_func=DGPTStep())
+    pretrain(config=cfg, forward_step_func=forward_step)
 
     if torch.distributed.is_initialized():
         torch.distributed.barrier()

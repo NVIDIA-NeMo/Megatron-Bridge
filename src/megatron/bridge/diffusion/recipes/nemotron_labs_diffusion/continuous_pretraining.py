@@ -1,6 +1,8 @@
 from functools import partial
 
-from megatron.bridge.diffusion.conversion.nextron.nextron_bridge import NexTronBridge
+from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge import (
+    NemotronLabsDiffusionBridge,
+)
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
@@ -17,7 +19,7 @@ def _copy_embedding_to_output_layer(models):
     return models
 
 
-def _nextron_cpt_config(
+def _nemotron_labs_diffusion_cpt_config(
     hf_path,
     tensor_model_parallel_size,
     micro_batch_size,
@@ -29,12 +31,12 @@ def _nextron_cpt_config(
     cfg = _pretrain_common()
 
     # Model configuration — load HF config to build a standard Ministral3-based GPTModel
-    # (no diffusion attention), and use NexTronBridge for weight loading
+    # (no diffusion attention), and use NemotronLabsDiffusionBridge for weight loading
     # which strips the vision encoder from VLM checkpoints.
     hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path)
-    bridge = NexTronBridge()
+    bridge = NemotronLabsDiffusionBridge()
     provider = bridge.provider_bridge(hf_pretrained)
-    # For CPT, use standard attention (not NexTronAttention) by calling
+    # For CPT, use standard attention (not NemotronLabsDiffusionAttention) by calling
     # the grandparent's provide method which creates a plain GPTModel
     provider.provide = (
         lambda pre_process=None, post_process=None, vp_stage=None: Ministral3ModelProvider.provide_language_model(
@@ -135,14 +137,14 @@ def _nextron_cpt_config(
     return cfg
 
 
-def nextron_3b_finetune_config(
+def nemotron_labs_diffusion_3b_finetune_config(
     data_paths=None,
     data_args_path=None,
     hf_path=None,
     peft=None,
 ) -> ConfigContainer:
-    """Return a CPT config for NexTron 3B. Default: TP=1, MBS=1."""
-    return _nextron_cpt_config(
+    """Return a CPT config for NemotronLabsDiffusion 3B. Default: TP=1, MBS=1."""
+    return _nemotron_labs_diffusion_cpt_config(
         hf_path=hf_path or "mistralai/Ministral-3-3B-Base-2512",
         tensor_model_parallel_size=1,
         micro_batch_size=1,
@@ -153,14 +155,14 @@ def nextron_3b_finetune_config(
     )
 
 
-def nextron_8b_finetune_config(
+def nemotron_labs_diffusion_8b_finetune_config(
     data_paths=None,
     data_args_path=None,
     hf_path=None,
     peft=None,
 ) -> ConfigContainer:
-    """Return a CPT config for NexTron 8B. Default: TP=4, MBS=1."""
-    return _nextron_cpt_config(
+    """Return a CPT config for NemotronLabsDiffusion 8B. Default: TP=4, MBS=1."""
+    return _nemotron_labs_diffusion_cpt_config(
         hf_path=hf_path or "mistralai/Ministral-3-8B-Base-2512",
         tensor_model_parallel_size=4,
         micro_batch_size=1,
@@ -171,14 +173,14 @@ def nextron_8b_finetune_config(
     )
 
 
-def nextron_14b_finetune_config(
+def nemotron_labs_diffusion_14b_finetune_config(
     data_paths=None,
     data_args_path=None,
     hf_path=None,
     peft=None,
 ) -> ConfigContainer:
-    """Return a CPT config for NexTron 14B. Default: TP=8, MBS=1."""
-    return _nextron_cpt_config(
+    """Return a CPT config for NemotronLabsDiffusion 14B. Default: TP=8, MBS=1."""
+    return _nemotron_labs_diffusion_cpt_config(
         hf_path=hf_path or "mistralai/Ministral-3-14B-Base-2512",
         tensor_model_parallel_size=8,
         micro_batch_size=1,

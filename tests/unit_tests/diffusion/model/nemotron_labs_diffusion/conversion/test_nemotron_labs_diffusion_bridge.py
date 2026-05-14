@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for NexTronBridge mapping registry and provider bridge."""
+"""Unit tests for NemotronLabsDiffusionBridge mapping registry and provider bridge."""
 
 import types
 
 import pytest
 
-from megatron.bridge.diffusion.conversion.nextron.nextron_bridge import NexTronBridge
+from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge import (
+    NemotronLabsDiffusionBridge,
+)
 
 
 pytestmark = [pytest.mark.unit]
@@ -49,11 +51,11 @@ class DummyHFPretrained:
         self.config = hf_config
 
 
-class TestNexTronBridgeMappingRegistry:
-    """Tests for NexTronBridge.mapping_registry()."""
+class TestNemotronLabsDiffusionBridgeMappingRegistry:
+    """Tests for NemotronLabsDiffusionBridge.mapping_registry()."""
 
     def setup_method(self):
-        self.bridge = NexTronBridge()
+        self.bridge = NemotronLabsDiffusionBridge()
         self.registry = self.bridge.mapping_registry()
 
     def test_registry_is_not_none(self):
@@ -62,7 +64,7 @@ class TestNexTronBridgeMappingRegistry:
     def test_megatron_keys_are_bare(self):
         """Megatron-side keys must be bare (no 'language_model.' prefix).
 
-        NexTron targets a bare GPTModel, not a VLM wrapper, so Megatron keys are
+        NemotronLabsDiffusion targets a bare GPTModel, not a VLM wrapper, so Megatron keys are
         'embedding.*', 'decoder.*', 'output_layer.*'.
         """
         mappings = list(self.registry)
@@ -126,58 +128,58 @@ class TestNexTronBridgeMappingRegistry:
         assert out_mappings[0].hf_param == "diffusion_head.weight"
 
 
-class TestNexTronBridgeProviderBridge:
-    """Tests for NexTronBridge.provider_bridge()."""
+class TestNemotronLabsDiffusionBridgeProviderBridge:
+    """Tests for NemotronLabsDiffusionBridge.provider_bridge()."""
 
-    def test_returns_nextron_model_provider(self):
-        from megatron.bridge.diffusion.models.nextron.nextron_provider import (
-            NexTronModelProvider,
+    def test_returns_nemotron_labs_diffusion_model_provider(self):
+        from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
+            NemotronLabsDiffusionModelProvider,
         )
 
-        bridge = NexTronBridge()
+        bridge = NemotronLabsDiffusionBridge()
         hf = DummyHFPretrained(_make_hf_config())
         provider = bridge.provider_bridge(hf)
-        assert isinstance(provider, NexTronModelProvider)
+        assert isinstance(provider, NemotronLabsDiffusionModelProvider)
 
     def test_provider_has_correct_hidden_size(self):
-        bridge = NexTronBridge()
+        bridge = NemotronLabsDiffusionBridge()
         hf = DummyHFPretrained(_make_hf_config(hidden_size=2048))
         provider = bridge.provider_bridge(hf)
         assert provider.hidden_size == 2048
 
     def test_provider_has_correct_num_layers(self):
-        bridge = NexTronBridge()
+        bridge = NemotronLabsDiffusionBridge()
         hf = DummyHFPretrained(_make_hf_config(num_hidden_layers=16))
         provider = bridge.provider_bridge(hf)
         assert provider.num_layers == 16
 
     def test_provider_has_correct_vocab_size(self):
-        bridge = NexTronBridge()
+        bridge = NemotronLabsDiffusionBridge()
         hf = DummyHFPretrained(_make_hf_config(vocab_size=65536))
         provider = bridge.provider_bridge(hf)
         assert provider.vocab_size == 65536
 
     def test_provider_share_embeddings_false_by_default(self):
-        bridge = NexTronBridge()
+        bridge = NemotronLabsDiffusionBridge()
         hf = DummyHFPretrained(_make_hf_config(tie_word_embeddings=False))
         provider = bridge.provider_bridge(hf)
         assert provider.share_embeddings_and_output_weights is False
 
     def test_provider_share_embeddings_true_when_tied(self):
-        bridge = NexTronBridge()
+        bridge = NemotronLabsDiffusionBridge()
         hf = DummyHFPretrained(_make_hf_config(tie_word_embeddings=True))
         provider = bridge.provider_bridge(hf)
         assert provider.share_embeddings_and_output_weights is True
 
     def test_provider_rotary_base_from_config(self):
-        bridge = NexTronBridge()
+        bridge = NemotronLabsDiffusionBridge()
         hf = DummyHFPretrained(_make_hf_config(rope_theta=500000.0))
         provider = bridge.provider_bridge(hf)
         assert provider.rotary_base == 500000.0
 
     def test_provider_uses_text_config_when_nested(self):
         """provider_bridge must read from text_config when it exists."""
-        bridge = NexTronBridge()
+        bridge = NemotronLabsDiffusionBridge()
         hf = DummyHFPretrained(_make_hf_config(hidden_size=512, num_hidden_layers=4))
         provider = bridge.provider_bridge(hf)
         assert provider.hidden_size == 512
@@ -185,7 +187,7 @@ class TestNexTronBridgeProviderBridge:
 
     def test_provider_falls_back_to_flat_config(self):
         """provider_bridge must fall back to flat config when text_config is absent."""
-        bridge = NexTronBridge()
+        bridge = NemotronLabsDiffusionBridge()
         flat_cfg = types.SimpleNamespace(
             hidden_size=768,
             intermediate_size=3072,
@@ -200,11 +202,11 @@ class TestNexTronBridgeProviderBridge:
         assert provider.hidden_size == 768
 
 
-class TestNexTronBridgeMappingRegistryVLM:
+class TestNemotronLabsDiffusionBridgeMappingRegistryVLM:
     """Tests for the VLM-format mapping registry (HF keys use language_model.* prefix)."""
 
     def setup_method(self):
-        self.bridge = NexTronBridge()
+        self.bridge = NemotronLabsDiffusionBridge()
         # provider_bridge sets _is_text_only based on whether hf_config has text_config
         hf = DummyHFPretrained(_make_hf_config())  # has text_config -> VLM mode
         self.bridge.provider_bridge(hf)

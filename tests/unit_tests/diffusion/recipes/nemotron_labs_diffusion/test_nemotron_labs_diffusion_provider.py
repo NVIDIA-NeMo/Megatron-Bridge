@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for NexTronModelProvider."""
+"""Unit tests for NemotronLabsDiffusionModelProvider."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from megatron.bridge.diffusion.models.common.nextron_attention import NexTronAttention
-from megatron.bridge.diffusion.models.nextron.nextron_provider import (
-    NexTronModelProvider,
+from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention import NemotronLabsDiffusionAttention
+from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
+    NemotronLabsDiffusionModelProvider,
 )
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 
@@ -34,7 +34,7 @@ pytestmark = [pytest.mark.unit]
 
 
 def _make_provider(**overrides):
-    """Return a NexTronModelProvider with minimal required fields set."""
+    """Return a NemotronLabsDiffusionModelProvider with minimal required fields set."""
     defaults = dict(
         hidden_size=1024,
         ffn_hidden_size=4096,
@@ -43,7 +43,7 @@ def _make_provider(**overrides):
         vocab_size=32000,
     )
     defaults.update(overrides)
-    return NexTronModelProvider(**defaults)
+    return NemotronLabsDiffusionModelProvider(**defaults)
 
 
 def _make_submodules_spec():
@@ -65,7 +65,7 @@ def _make_submodules_spec():
 # ---------------------------------------------------------------------------
 
 
-class TestNexTronModelProviderDefaults:
+class TestNemotronLabsDiffusionModelProviderDefaults:
     """Ensure all diffusion-specific fields have the expected defaults."""
 
     def setup_method(self):
@@ -104,11 +104,11 @@ class TestNexTronModelProviderDefaults:
 # ---------------------------------------------------------------------------
 
 
-class TestNexTronModelProviderInheritance:
-    """NexTronModelProvider must inherit from Ministral3ModelProvider."""
+class TestNemotronLabsDiffusionModelProviderInheritance:
+    """NemotronLabsDiffusionModelProvider must inherit from Ministral3ModelProvider."""
 
     def test_is_subclass_of_ministral3(self):
-        assert issubclass(NexTronModelProvider, Ministral3ModelProvider)
+        assert issubclass(NemotronLabsDiffusionModelProvider, Ministral3ModelProvider)
 
     def test_instance_is_ministral3(self):
         provider = _make_provider()
@@ -120,7 +120,7 @@ class TestNexTronModelProviderInheritance:
 # ---------------------------------------------------------------------------
 
 
-class TestNexTronModelProviderOverrides:
+class TestNemotronLabsDiffusionModelProviderOverrides:
     """Constructor keyword arguments must override defaults."""
 
     def test_custom_mask_token_id(self):
@@ -153,8 +153,8 @@ class TestNexTronModelProviderOverrides:
 # ---------------------------------------------------------------------------
 
 
-class TestNexTronProvideMethod:
-    """provide() must replace core_attention with NexTronAttention."""
+class TestNemotronLabsDiffusionProvideMethod:
+    """provide() must replace core_attention with NemotronLabsDiffusionAttention."""
 
     def _run_provide(self, provider, spec):
         """Call provider.provide() with a mocked transformer_layer_spec and parent provide()."""
@@ -165,11 +165,11 @@ class TestNexTronProvideMethod:
 
         return result, mock_parent, spec
 
-    def test_core_attention_replaced_with_nextron_attention(self):
+    def test_core_attention_replaced_with_nemotron_labs_diffusion_attention(self):
         provider = _make_provider()
         spec = _make_submodules_spec()
         self._run_provide(provider, spec)
-        assert spec.submodules.self_attention.submodules.core_attention is NexTronAttention
+        assert spec.submodules.self_attention.submodules.core_attention is NemotronLabsDiffusionAttention
 
     def test_parent_provide_called_once(self):
         provider = _make_provider()
@@ -199,7 +199,7 @@ class TestNexTronProvideMethod:
         spec = _make_submodules_spec()
         # Patch isinstance to treat the MagicMock as a ModuleSpec
         with patch(
-            "megatron.bridge.diffusion.models.nextron.nextron_provider.ModuleSpec",
+            "megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider.ModuleSpec",
             ModuleSpec,
         ):
             # Make the spec an actual ModuleSpec instance
@@ -210,7 +210,7 @@ class TestNexTronProvideMethod:
             with patch.object(Ministral3ModelProvider, "provide_language_model", return_value=MagicMock()):
                 provider.provide()
 
-        assert real_spec.submodules.self_attention.submodules.core_attention is NexTronAttention
+        assert real_spec.submodules.self_attention.submodules.core_attention is NemotronLabsDiffusionAttention
 
     def test_provide_passes_pre_post_process_to_parent(self):
         """pre_process and post_process arguments must be forwarded to the parent."""

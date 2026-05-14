@@ -61,7 +61,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForConditionalGeneration",
     "NemotronH_Nano_VL_V2",
     "Qwen2_5OmniModel",
-    "MinistralDiffEncoderModel",  # required for NexTron
+    "MinistralDiffEncoderModel",  # required for NemotronLabsDiffusion
 )
 
 # Mapping from non-standard HF architecture names to their actual transformers class names.

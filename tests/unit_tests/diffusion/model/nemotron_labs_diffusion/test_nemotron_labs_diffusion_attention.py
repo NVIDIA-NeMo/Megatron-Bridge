@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for NexTronAttention and its helper functions."""
+"""Unit tests for NemotronLabsDiffusionAttention and its helper functions."""
 
 import math
 import types
@@ -23,7 +23,7 @@ import torch
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.diffusion.models.common.nextron_attention import (
+from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention import (
     Ministral3RotaryEmbedding,
     _get_llama_4_attn_scale,
     apply_rotary_pos_emb,
@@ -49,7 +49,7 @@ def _make_config(
     apply_llama4: bool = True,
     apply_qk_scaling: bool = False,
 ) -> TransformerConfig:
-    """Build a minimal TransformerConfig for NexTronAttention."""
+    """Build a minimal TransformerConfig for NemotronLabsDiffusionAttention."""
     hf_text_config = types.SimpleNamespace(
         max_position_embeddings=seq_len,
         rope_parameters={
@@ -99,7 +99,7 @@ def _make_attention(
     apply_llama4: bool = True,
     apply_qk_scaling: bool = False,
 ):
-    """Instantiate NexTronAttention with compute_block_mask mocked."""
+    """Instantiate NemotronLabsDiffusionAttention with compute_block_mask mocked."""
     cfg = _make_config(
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
@@ -109,15 +109,15 @@ def _make_attention(
         apply_llama4=apply_llama4,
         apply_qk_scaling=apply_qk_scaling,
     )
-    from megatron.bridge.diffusion.models.common.nextron_attention import (
-        NexTronAttention,
+    from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention import (
+        NemotronLabsDiffusionAttention,
     )
 
     with patch(
-        "megatron.bridge.diffusion.models.common.nextron_attention.compute_block_mask",
+        "megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention.compute_block_mask",
         return_value=MagicMock(),
     ):
-        return NexTronAttention(
+        return NemotronLabsDiffusionAttention(
             cfg,
             layer_number,
             AttnMaskType.causal,
@@ -296,11 +296,11 @@ class TestMinistral3RotaryEmbedding:
 
 
 # ---------------------------------------------------------------------------
-# TestNexTronAttentionInit
+# TestNemotronLabsDiffusionAttentionInit
 # ---------------------------------------------------------------------------
 
 
-class TestNexTronAttentionInit:
+class TestNemotronLabsDiffusionAttentionInit:
     def test_softmax_scale_computed_correctly(self):
         head_dim = 8
         attn = _make_attention(head_dim=head_dim)
@@ -358,12 +358,12 @@ class TestNexTronAttentionInit:
 
 
 # ---------------------------------------------------------------------------
-# TestNexTronAttentionInferenceForward
+# TestNemotronLabsDiffusionAttentionInferenceForward
 # ---------------------------------------------------------------------------
 
 
-class TestNexTronAttentionInferenceForward:
-    """Tests for NexTronAttention._inference_forward via forward()."""
+class TestNemotronLabsDiffusionAttentionInferenceForward:
+    """Tests for NemotronLabsDiffusionAttention._inference_forward via forward()."""
 
     NUM_HEADS = 4
     NUM_KV_HEADS = 2
@@ -525,7 +525,7 @@ class TestRotaryEmbeddingNonDefault:
     """Exercises the non-default rope_type branch (YARN init path)."""
 
     def test_linear_rope_type_initializes(self):
-        from megatron.bridge.diffusion.models.common.nextron_attention import (
+        from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention import (
             Ministral3RotaryEmbedding,
         )
 
@@ -551,7 +551,7 @@ class TestRotaryEmbeddingNonDefault:
         assert "rope_type" not in hf_cfg.rope_scaling
 
     def test_linear_rope_forward_runs(self):
-        from megatron.bridge.diffusion.models.common.nextron_attention import (
+        from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention import (
             Ministral3RotaryEmbedding,
         )
 

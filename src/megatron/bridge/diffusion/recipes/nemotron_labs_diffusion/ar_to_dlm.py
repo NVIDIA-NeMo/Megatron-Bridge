@@ -19,9 +19,11 @@ from typing import Optional
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.diffusion.conversion.nextron.nextron_bridge import NexTronBridge
-from megatron.bridge.diffusion.models.nextron.nextron_provider import (
-    NexTronModelProvider,
+from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge import (
+    NemotronLabsDiffusionBridge,
+)
+from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
+    NemotronLabsDiffusionModelProvider,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -41,17 +43,17 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-def nextron3_pretrain_config(**user_kwargs) -> ConfigContainer:
-    """Return a pre-training config for NexTron.
+def nemotron_labs_diffusion3_pretrain_config(**user_kwargs) -> ConfigContainer:
+    """Return a pre-training config for NemotronLabsDiffusion.
 
-    See `_nextron3_common` for the full list of parameters.
+    See `_nemotron_labs_diffusion3_common` for the full list of parameters.
     """
     # Combine defaults with user kwargs; user values take precedence.
-    return _nextron3_common(**user_kwargs)
+    return _nemotron_labs_diffusion3_common(**user_kwargs)
 
 
-def nextron3_3b_pretrain_config(**user_kwargs) -> ConfigContainer:
-    """Return a pre-training config for NexTron 3B (TP=1, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
+def nemotron_labs_diffusion3_3b_pretrain_config(**user_kwargs) -> ConfigContainer:
+    """Return a pre-training config for NemotronLabsDiffusion 3B (TP=1, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
     defaults = dict(
         tensor_parallelism=1,
         micro_batch_size=1,
@@ -67,11 +69,11 @@ def nextron3_3b_pretrain_config(**user_kwargs) -> ConfigContainer:
         tokenizer_model="mistralai/Ministral-3-3B-Base-2512",
     )
     defaults.update(user_kwargs)
-    return _nextron3_common(**defaults)
+    return _nemotron_labs_diffusion3_common(**defaults)
 
 
-def nextron3_8b_pretrain_config(**user_kwargs) -> ConfigContainer:
-    """Return a pre-training config for NexTron 8B (TP=4, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
+def nemotron_labs_diffusion3_8b_pretrain_config(**user_kwargs) -> ConfigContainer:
+    """Return a pre-training config for NemotronLabsDiffusion 8B (TP=4, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
     defaults = dict(
         tensor_parallelism=4,
         micro_batch_size=1,
@@ -87,11 +89,11 @@ def nextron3_8b_pretrain_config(**user_kwargs) -> ConfigContainer:
         tokenizer_model="mistralai/Ministral-3-8B-Base-2512",
     )
     defaults.update(user_kwargs)
-    return _nextron3_common(**defaults)
+    return _nemotron_labs_diffusion3_common(**defaults)
 
 
-def nextron3_14b_pretrain_config(**user_kwargs) -> ConfigContainer:
-    """Return a pre-training config for NexTron 14B (TP=8, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
+def nemotron_labs_diffusion3_14b_pretrain_config(**user_kwargs) -> ConfigContainer:
+    """Return a pre-training config for NemotronLabsDiffusion 14B (TP=8, MBS=1, GBS=512, 12.5k iters, WSD LR)."""
     defaults = dict(
         tensor_parallelism=8,
         micro_batch_size=1,
@@ -107,11 +109,11 @@ def nextron3_14b_pretrain_config(**user_kwargs) -> ConfigContainer:
         tokenizer_model="mistralai/Ministral-3-14B-Base-2512",
     )
     defaults.update(user_kwargs)
-    return _nextron3_common(**defaults)
+    return _nemotron_labs_diffusion3_common(**defaults)
 
 
-def _nextron3_common(
-    model_provider: NexTronModelProvider | None = None,
+def _nemotron_labs_diffusion3_common(
+    model_provider: NemotronLabsDiffusionModelProvider | None = None,
     hf_path: str | None = None,
     dir: str | None = None,
     name: str = "default",
@@ -153,11 +155,11 @@ def _nextron3_common(
     comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for NexTron models using a given model provider.
+    Create a pre-training configuration for NemotronLabsDiffusion models using a given model provider.
 
     Args:
         hf_path (Optional[str]): HuggingFace model path (e.g., "Qwen/Qwen3-1.7B").
-        model_provider (NexTronModelProvider): Model provider for the model.
+        model_provider (NemotronLabsDiffusionModelProvider): Model provider for the model.
         dir (Optional[str]): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
         data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
@@ -203,7 +205,7 @@ def _nextron3_common(
     )
     if hf_path is not None:
         hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path)
-        bridge = NexTronBridge()
+        bridge = NemotronLabsDiffusionBridge()
         model_cfg = bridge.provider_bridge(hf_pretrained)
         model_cfg.share_embeddings_and_output_weights = False  # dLLM needs separate diffusion_head
         model_cfg.perform_initialization = False

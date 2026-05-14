@@ -6,7 +6,7 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
-"""CPU-only unit tests for NexTron inference helper utilities.
+"""CPU-only unit tests for NemotronLabsDiffusion inference helper utilities.
 
 Covers the pure-tensor and pure-Python helpers that don't require GPU or
 torch.distributed. The actual generate_ar / generate_dllm functions need
@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-import megatron.bridge.diffusion.models.nextron.inference_nextron as inf
+import megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron_labs_diffusion as inf
 
 
 pytestmark = [pytest.mark.unit]

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NexTronAttention for sbd_block_diff diffusion LM training with YARN RoPE."""
+"""NemotronLabsDiffusionAttention for sbd_block_diff diffusion LM training with YARN RoPE."""
 
 import math
 from typing import Optional
@@ -135,12 +135,12 @@ class Ministral3RotaryEmbedding(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# NexTronAttention  (sbd_block_diff only)
+# NemotronLabsDiffusionAttention  (sbd_block_diff only)
 # ---------------------------------------------------------------------------
 
 
-class NexTronAttention(MegatronModule):
-    """NexTronAttention for semi-block-diffusion (sbd_block_diff) training.
+class NemotronLabsDiffusionAttention(MegatronModule):
+    """NemotronLabsDiffusionAttention for semi-block-diffusion (sbd_block_diff) training.
 
     The sequence is doubled to ``[xt | x0]`` where xt are noised tokens and x0
     are clean tokens.  RoPE is applied independently to each half.  Llama-4
@@ -170,7 +170,9 @@ class NexTronAttention(MegatronModule):
         if pg_collection is None:
             pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=["tp"])
         else:
-            assert hasattr(pg_collection, "tp"), "NexTronAttention pg_collection must have tp process group"
+            assert hasattr(pg_collection, "tp"), (
+                "NemotronLabsDiffusionAttention pg_collection must have tp process group"
+            )
 
         world_size = pg_collection.tp.size()
         self.hidden_size_per_partition = divide(projection_size, world_size)
@@ -250,7 +252,7 @@ class NexTronAttention(MegatronModule):
         attention_bias: Tensor = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
     ):
-        assert packed_seq_params is None, "Packed sequence is not supported by NexTronAttention."
+        assert packed_seq_params is None, "Packed sequence is not supported by NemotronLabsDiffusionAttention."
 
         if self._inference_mode:
             return self._inference_forward(query, key, value)
@@ -285,7 +287,7 @@ class NexTronAttention(MegatronModule):
         key = repeat_kv(key, n_rep)
         value = repeat_kv(value, n_rep)
 
-        # NexTronAttention with pre-computed block mask
+        # NemotronLabsDiffusionAttention with pre-computed block mask
         context = fused_flex_attention(query, key, value, block_mask=self.mask)
 
         # Dropout
