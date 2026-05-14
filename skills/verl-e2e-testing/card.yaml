@@ -1,0 +1,70 @@
+title: verl_e2e_testing
+validated_on: "2026-05-14"
+summary: >
+  External compatibility workflow for validating Megatron-Bridge model/provider
+  changes through verl's Megatron backend. The recommended first pass is a
+  one-step non-vanilla Bridge run with LoRA enabled and Megatron DDP selected,
+  followed by targeted save/resume, parallelism, Megatron-FSDP, or
+  architecture-specific variants when the change requires them.
+validation_status:
+  bridge_focused_unit_tests:
+    - workflow_defined
+  verl_non_vanilla_bridge_lora_ddp:
+    - workflow_defined
+  verl_save_resume:
+    - optional_validation
+  verl_parallelism_stress:
+    - optional_validation
+  verl_megatron_fsdp:
+    - optional_validation
+  verl_architecture_specific_runtime:
+    - optional_validation
+  verl_convergence_learning_signal:
+    - optional_validation
+feature_meaning:
+  non_vanilla_bridge:
+    >
+      verl imports and configures the local Megatron-Bridge provider path instead
+      of using the older vanilla mbridge path.
+  lora_ddp_smoke:
+    >
+      A small external-loop run that exercises Bridge provider construction,
+      PEFT wrapping, Megatron DDP wrapping, optimizer setup, and one PPO update.
+recommended_path:
+  first_pass:
+    ENGINE: vllm
+    USE_MBRIDGE: true
+    VANILLA_MBRIDGE: false
+    VALUE_VANILLA_MBRIDGE: false
+    LORA_RANK: 4
+    USE_MEGATRON_FSDP: false
+    TOTAL_TRAIN_STEPS: 1
+  add_variants_when:
+    save_resume: "PEFT, checkpointing, export, optimizer state, or resume behavior changed"
+    parallelism_stress: "provider finalization, mpu-derived settings, TP/PP/CP/EP, sequence parallel, or dispatcher behavior changed"
+    megatron_fsdp: "FSDP wrapping, sharding, checkpoint format, or distributed optimizer behavior changed"
+    architecture_specific: "VLM, MoE, MTP, QAT/ModelOpt, quantized weights, or custom layer behavior is involved"
+    convergence_learning_signal: "Optimizer, scheduler, loss, reward, PEFT trainability, gradient flow, or model-specific training stability changed"
+known_constraints:
+  - Requires a separate verl checkout.
+  - Default verl source is https://github.com/verl-project/verl.
+  - Default container source is https://hub.docker.com/r/verlai/verl.
+  - Use a vLLM-flavored verlai/verl image tag for the default PPO smoke path unless deliberately testing another rollout backend.
+  - The local Bridge checkout must be first on PYTHONPATH inside the runtime environment.
+  - GSM8K parquet data or equivalent verl-compatible train/validation parquet files are required.
+  - verl's PPO wrapper enables a reward model by default unless overridden by a model-family-specific command.
+  - Dummy models validate construction/training mechanics, not pretrained weight compatibility.
+  - One-step smoke runs do not validate convergence.
+known_limitations:
+  - This is an external compatibility smoke test, not a replacement for Bridge conversion parity tests.
+  - The generic GSM8K PPO run is text-only and does not validate VLM image/video execution.
+  - Expert-parallel, MTP, QAT, and quantized-weight behavior require targeted variants.
+  - Short convergence runs provide learning-signal evidence, not benchmark-quality convergence claims.
+  - Site-specific Slurm account, partition, image, and mount paths must not be committed.
+evidence:
+  - skills/verl-e2e-testing/SKILL.md
+  - skills/adding-model-support/tests-and-examples.md
+  - skills/multi-node-slurm/SKILL.md
+follow_up_validation:
+  - Add model-family-specific verl smoke commands when a new provider needs special data or rollout settings.
+  - Promote repeatable small-model coverage into CI only after cost and ownership are agreed.

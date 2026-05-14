@@ -272,6 +272,15 @@ uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 --model_class "MyModelForConditionalGeneration"
 ```
 
+## External verl E2E
+
+After Bridge unit and conversion tests pass for a new model/provider, run a small external-loop
+smoke test through verl when downstream RL compatibility matters. Start with the non-vanilla
+Bridge path, LoRA enabled, and Megatron DDP selected, then add save/resume, parallelism stress,
+Megatron-FSDP, or architecture-specific variants when the change requires that coverage.
+
+Read @skills/verl-e2e-testing/SKILL.md for the full workflow and reporting format.
+
 ## Documentation Page
 
 Create `docs/models/<type>/<model>.md`:
