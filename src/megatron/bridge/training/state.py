@@ -43,6 +43,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import safe_serialize
+from megatron.bridge.training.utils.mlflow_utils import install_mlflow_failure_hook
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe
 
@@ -285,6 +286,8 @@ class GlobalState:
                 active_run = mlflow.active_run()
                 if active_run is None:
                     mlflow.start_run(run_name=run_name, tags=tags or None)
+                    # Mark the run FAILED on uncaught Python exceptions
+                    install_mlflow_failure_hook()
                 elif tags:
                     # If there is already an active run, at least set provided tags
                     mlflow.set_tags(tags)
