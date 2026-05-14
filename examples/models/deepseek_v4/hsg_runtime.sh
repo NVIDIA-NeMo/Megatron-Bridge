@@ -40,3 +40,51 @@ PY
     mv "$tmp" "$site"
   ) 9>"$lock"
 }
+
+ensure_emerging_optimizers_site() {
+  local site=${1:?emerging optimizers site path required}
+  local python_bin=${PYTHON_BIN:-/opt/venv/bin/python}
+  local lock="${site}.lock"
+
+  mkdir -p "$(dirname "$site")"
+
+  (
+    flock 9
+
+    if [ -d "$site/emerging_optimizers" ] && PYTHONPATH="$site:${PYTHONPATH:-}" "$python_bin" - <<'PY'
+import importlib.metadata as md
+
+version = md.version('emerging-optimizers')
+assert tuple(int(x) for x in version.split('.')[:2]) >= (0, 2), version
+import absl
+import emerging_optimizers
+
+print('absl:', absl.__file__)
+print('emerging-optimizers:', version, emerging_optimizers.__file__)
+PY
+    then
+      exit 0
+    fi
+
+    local tmp="${site}.tmp.${SLURM_JOB_ID:-nojob}.${SLURM_PROCID:-0}.$$"
+    rm -rf "$tmp"
+    "$python_bin" -m pip install --target "$tmp" --no-deps \
+      'absl-py==2.4.0' \
+      'git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0'
+
+    PYTHONPATH="$tmp:${PYTHONPATH:-}" "$python_bin" - <<'PY'
+import importlib.metadata as md
+
+version = md.version('emerging-optimizers')
+assert tuple(int(x) for x in version.split('.')[:2]) >= (0, 2), version
+import absl
+import emerging_optimizers
+
+print('absl:', absl.__file__)
+print('emerging-optimizers:', version, emerging_optimizers.__file__)
+PY
+
+    rm -rf "$site"
+    mv "$tmp" "$site"
+  ) 9>"$lock"
+}

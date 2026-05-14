@@ -21,11 +21,11 @@ MCORE_DIR=${MCORE_DIR:-/lustre/fsw/portfolios/coreai/users/chcui/repos/Megatron-
 FHT_SITE=${FHT_SITE:-/lustre/fsw/portfolios/coreai/users/chcui/parity/dsv4_cudnn_dsa/fast_hadamard_site}
 CUDNN_FE_SITE=${CUDNN_FE_SITE:-/lustre/fsw/portfolios/coreai/users/chcui/parity/dsv4_cudnn_dsa/cudnn_fe_site}
 TRANSFORMERS_SITE=${TRANSFORMERS_SITE:-/lustre/fsw/portfolios/coreai/users/chcui/training/dsv4_transformers_5_8_1_nodeps}
+EMERGING_OPTIMIZERS_SITE=${EMERGING_OPTIMIZERS_SITE:-/lustre/fsw/portfolios/coreai/users/chcui/training/dsv4_emerging_optimizers_0_2_0}
 HF_CONFIG=${HF_CONFIG:-/lustre/fsw/portfolios/coreai/users/weijiac/models/deepseek-ai/DeepSeek-V4-Flash}
 OUTDIR=${OUTDIR:-/lustre/fsw/portfolios/coreai/users/chcui/training/dsv4_toy}
 LOGDIR=${LOGDIR:-/lustre/fsw/portfolios/coreai/users/chcui/logs}
 PY_DEPS=${PY_DEPS:-$OUTDIR/python_deps}
-VENDOR_DEPS=${VENDOR_DEPS:-$WORKDIR/examples/models/deepseek_v4/vendor}
 CSA_BACKEND=${CSA_BACKEND:-cudnn_dsa}
 MOE_TOKEN_DISPATCHER_TYPE=${MOE_TOKEN_DISPATCHER_TYPE:-alltoall}
 ADAM_MAX_LR=${ADAM_MAX_LR:-1e-4}
@@ -63,12 +63,12 @@ echo "mcore=$MCORE_DIR"
 echo "fht_site=$FHT_SITE"
 echo "cudnn_fe_site=$CUDNN_FE_SITE"
 echo "transformers_site=$TRANSFORMERS_SITE"
+echo "emerging_optimizers_site=$EMERGING_OPTIMIZERS_SITE"
 echo "hf_config=$HF_CONFIG"
 echo "outdir=$OUTDIR"
 echo "cases=$CASES"
 echo "csa_backend=$CSA_BACKEND"
 echo "moe_token_dispatcher_type=$MOE_TOKEN_DISPATCHER_TYPE"
-echo "vendor_deps=$VENDOR_DEPS"
 echo "seq_length=$SEQ_LENGTH train_iters=$TRAIN_ITERS nproc_per_node=$NPROC_PER_NODE"
 echo "adam_lr=$ADAM_MAX_LR:$ADAM_MIN_LR adam_weight_decay=$ADAM_WEIGHT_DECAY"
 echo "muon_lr=$MUON_MAX_LR:$MUON_MIN_LR muon_weight_decay=$MUON_WEIGHT_DECAY muon_momentum=$MUON_MOMENTUM"
@@ -105,7 +105,7 @@ for CASE in $CASES; do
 	      rm -f /opt/venv/lib/python3.12/site-packages/__editable__*megatron*.pth \
 	            /opt/venv/lib/python3.12/site-packages/__editable__*megatron*.py
 	      mkdir -p $PY_DEPS
-	      export PYTHONPATH=$VENDOR_DEPS:$PY_DEPS:$TRANSFORMERS_SITE:$FHT_SITE:$CUDNN_FE_SITE:$WORKDIR/src:$MCORE_DIR:\${PYTHONPATH:-}
+	      export PYTHONPATH=$PY_DEPS:$TRANSFORMERS_SITE:$EMERGING_OPTIMIZERS_SITE:$FHT_SITE:$CUDNN_FE_SITE:$WORKDIR/src:$MCORE_DIR:\${PYTHONPATH:-}
 	      source $WORKDIR/examples/models/deepseek_v4/hsg_runtime.sh
 	      ensure_transformers_site $TRANSFORMERS_SITE
 	      /opt/venv/bin/python - <<'PY'
@@ -126,6 +126,7 @@ print('cuDNN origin:', cudnn_spec.origin)
 print('cuDNN DSA sparse attention backward wrapper: OK')
 PY
 	      if [[ $CASE == muon* ]]; then
+	        ensure_emerging_optimizers_site $EMERGING_OPTIMIZERS_SITE
 	        /opt/venv/bin/python - <<'PY'
 import importlib.metadata as md
 

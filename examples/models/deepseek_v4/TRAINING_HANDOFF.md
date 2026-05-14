@@ -10,7 +10,7 @@ Important scripts:
 - `toy_training.py`: shared DSv4 training smoke harness. Uses mock GPT data, random init, and HF config translation.
 - `toy_training_hsg.sbatch`: one-node toy matrix for `adam`, `muon`, `adam_mxfp8`, `muon_mxfp8`.
 - `full_training_hsg.sbatch`: full DSv4-Flash Adam smoke, currently PP4/EP8 across 8 nodes.
-- `hsg_runtime.sh`: installs/loads the side Transformers 5.8.1 site used by native DSv4 config loading.
+- `hsg_runtime.sh`: installs/loads side-site dependencies for Transformers 5.8.1 and Muon's emerging-optimizers package.
 - `roundtrip_hsg.sbatch`: conversion roundtrip helper.
 
 Known HSG results:
@@ -30,3 +30,5 @@ sbatch examples/models/deepseek_v4/full_training_hsg.sbatch
 ```
 
 For benchmarking, start by increasing `TRAIN_ITERS`, `SEQ_LENGTH`, and batch sizes in the sbatch environment. The current runs are correctness smokes on mock data, not throughput benchmarks.
+
+No Python packages are vendored in this branch. The HSG scripts populate shared side-site dependency directories on first use.
