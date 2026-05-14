@@ -10,7 +10,6 @@
 #SBATCH --gpus-per-node=4
 #SBATCH --time=04:00:00
 #SBATCH --output=/lustre/fsw/portfolios/coreai/users/chcui/logs/dsv4_roundtrip_%j.log
-#SBATCH --exclusive
 
 set -euo pipefail
 
