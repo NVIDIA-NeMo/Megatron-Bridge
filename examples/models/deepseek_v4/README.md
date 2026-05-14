@@ -4,12 +4,23 @@ End-to-end conversion and inference scripts for the DeepSeek V4 family on Megatr
 
 The bridge supports four published variants out of the same code path. The on-disk quantisation differs between post-trained (Flash, Pro) and pretrained-only (Flash-Base, Pro-Base) models — see [`docs/models/llm/deepseek-v4.md`](../../../docs/models/llm/deepseek-v4.md) for the per-variant scheme.
 
-| Variant | HF path | Quant scheme | TP | EP | Min GPUs | Parity status |
-|---------|---------|--------------|---:|---:|---------:|---------------|
-| DeepSeek-V4-Flash | `deepseek-ai/DeepSeek-V4-Flash` | FP8 attn + MXFP4 experts | 1 | 4 | 4 × B200 192 GB | Verified, last-real-token logit cosine ~0.97-0.99 vs official inference |
-| DeepSeek-V4-Flash-Base | `deepseek-ai/DeepSeek-V4-Flash-Base` | uniform FP8 (F32 scales) | 1 | 4 | 4 × B200 192 GB | Verified, last-real-token logit cosine 0.9866-0.9930, mean 0.9907 vs official inference |
-| DeepSeek-V4-Pro | `deepseek-ai/DeepSeek-V4-Pro` | FP8 attn + MXFP4 experts | 1 | 16 | 16 × B200 192 GB | Algorithmic dequant validated; end-to-end unmeasured |
-| DeepSeek-V4-Pro-Base | `deepseek-ai/DeepSeek-V4-Pro-Base` | uniform FP8 (F32 scales) | 1 | 16 | 16 × B200 192 GB | Algorithmic dequant validated; end-to-end unmeasured |
+## MCore Dev Branch Requirement
+
+DSv4 imports require MCore changes that are not yet on a tagged release: PR [#3430](https://github.com/NVIDIA/Megatron-LM/pull/3430), PR [#4458](https://github.com/NVIDIA/Megatron-LM/pull/4458), PR [#4481](https://github.com/NVIDIA/Megatron-LM/pull/4481), and PR [#4518](https://github.com/NVIDIA/Megatron-LM/pull/4518). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch:
+
+```bash
+./scripts/switch_mcore.sh dev
+uv sync
+```
+
+Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pinned main-branch submodule.
+
+| Variant | HF path | Quant scheme | TP | EP | Validation |
+|---------|---------|--------------|---:|---:|------------|
+| DeepSeek-V4-Flash | `deepseek-ai/DeepSeek-V4-Flash` | FP8 attn + MXFP4 experts | 1 | 4 | Verified on GB200, last-real-token logit cosine ~0.97-0.99 vs official inference |
+| DeepSeek-V4-Flash-Base | `deepseek-ai/DeepSeek-V4-Flash-Base` | uniform FP8 (F32 scales) | 1 | 4 | Verified on GB200, last-real-token logit cosine 0.9866-0.9930, mean 0.9907 vs official inference |
+| DeepSeek-V4-Pro | `deepseek-ai/DeepSeek-V4-Pro` | FP8 attn + MXFP4 experts | 1 | 16 | Algorithmic dequant validated; end-to-end unmeasured |
+| DeepSeek-V4-Pro-Base | `deepseek-ai/DeepSeek-V4-Pro-Base` | uniform FP8 (F32 scales) | 1 | 16 | Algorithmic dequant validated; end-to-end unmeasured |
 
 ## Examples
 
@@ -29,25 +40,14 @@ No external dequantisation script is required.
 
 DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported alongside the DSv4 hybrid attention path. Scale via expert and pipeline parallelism instead.
 
-| Model | TP | PP | EP | Min GPUs | GPU Type | Use Case |
-|-------|---:|---:|---:|---------:|----------|----------|
-| DeepSeek-V4-Flash | 1 | 1 | 4 | 4 | B200 192 GB | Smoke / single-node inference |
-| DeepSeek-V4-Flash-Base | 1 | 1 | 4 | 4 | B200 192 GB | Smoke / single-node inference |
-| DeepSeek-V4-Pro | 1 | 1+ | 16 | 16 | B200 192 GB | Multi-node inference or conversion |
-| DeepSeek-V4-Pro-Base | 1 | 1+ | 16 | 16 | B200 192 GB | Multi-node inference or conversion |
-
-The model does not fit on A100 80 GB at TP=1; use B200 192 GB or larger.
+| Model | TP | PP | EP | Verified Layout | Use Case |
+|-------|---:|---:|---:|-----------------|----------|
+| DeepSeek-V4-Flash | 1 | 1 | 4 | 4 GPUs on GB200 | Smoke / single-node inference |
+| DeepSeek-V4-Flash-Base | 1 | 1 | 4 | 4 GPUs on GB200 | Smoke / single-node inference |
+| DeepSeek-V4-Pro | 1 | 1+ | 16 | Not end-to-end verified | Multi-node inference or conversion |
+| DeepSeek-V4-Pro-Base | 1 | 1+ | 16 | Not end-to-end verified | Multi-node inference or conversion |
 
 ## Known Limitations
-
-- **MCore prerequisites are not yet on a tagged release.** DSv4 imports require PR [#3430](https://github.com/NVIDIA/Megatron-LM/pull/3430), PR [#4458](https://github.com/NVIDIA/Megatron-LM/pull/4458), PR [#4481](https://github.com/NVIDIA/Megatron-LM/pull/4481), and PR [#4518](https://github.com/NVIDIA/Megatron-LM/pull/4518). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch:
-
-  ```bash
-  ./scripts/switch_mcore.sh dev
-  uv sync
-  ```
-
-  Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pinned main-branch submodule.
 
 - **MTP is disabled for inference** via `disable_mtp_for_inference()`. MTP weights are mapped end-to-end and loaded into the Megatron model.
 
