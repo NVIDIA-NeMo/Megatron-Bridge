@@ -284,7 +284,11 @@ class GlobalState:
 
                 active_run = mlflow.active_run()
                 if active_run is None:
-                    mlflow.start_run(run_name=run_name, tags=tags or None)
+                    mlflow.start_run(
+                        run_name=run_name,
+                        tags=tags or None,
+                        description=logger_cfg.mlflow_description,
+                    )
                 elif tags:
                     # If there is already an active run, at least set provided tags
                     mlflow.set_tags(tags)
