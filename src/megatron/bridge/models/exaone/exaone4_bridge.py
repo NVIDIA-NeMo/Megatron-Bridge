@@ -34,8 +34,6 @@ References:
 - Qwen3 bridge: QK layernorm mapping pattern
 """
 
-import logging
-
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 
@@ -48,9 +46,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.exaone.exaone4_provider import Exaone4ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-
-
-logger = logging.getLogger(__name__)
 
 
 # Register custom EXAONE modules for AutoMapping weight distribution
@@ -189,9 +184,13 @@ class Exaone4Bridge(MegatronModelBridge):
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
             "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
             # Post-LN: post-attention layernorm (Gemma2 pattern)
-            "decoder.layers.*.self_attention.linear_proj.post_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
+            "decoder.layers.*.self_attention.linear_proj.post_layernorm.weight": (
+                "model.layers.*.post_attention_layernorm.weight"
+            ),
             # Post-LN: post-feedforward layernorm (Gemma2 pattern)
-            "decoder.layers.*.mlp.linear_fc2.post_layernorm.weight": "model.layers.*.post_feedforward_layernorm.weight",
+            "decoder.layers.*.mlp.linear_fc2.post_layernorm.weight": (
+                "model.layers.*.post_feedforward_layernorm.weight"
+            ),
             # MLP down projection
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         }
