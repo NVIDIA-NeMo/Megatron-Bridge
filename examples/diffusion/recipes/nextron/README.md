@@ -2,7 +2,7 @@
 
 This directory contains recipes for training and running NexTron language models (dLLMs) based on Ministral-3 (3B, 8B, 14B). The full workflow is:
 
-0. **Bridge (Checkpoint Conversion)** — convert a HuggingFace Ministral-3 checkpoint to Megatron-Bridge format, and export trained checkpoints back to HuggingFace.
+0. **Bridge (Checkpoint Conversion)** — convert a HuggingFace Ministral-3 checkpoint to Megatron-Bridge format.
 1. **Continuous Pretraining (CPT)** — standard autoregressive pretraining on the base Ministral-3 model with additional data.
 2. **AR-to-DLM** — converts the CPT checkpoint into a diffusion language model using the block diffusion paradigm.
 3. **Inference** — run text generation from a trained checkpoint.
@@ -32,7 +32,7 @@ This stage converts the CPT checkpoint into a diffusion LM. It replaces the stan
 **Key recipe:** `examples/diffusion/recipes/nextron/ar_to_dlm.py`
 
 The model is built via `NexTronModelProvider`, which extends `Ministral3ModelProvider` with:
-- `dlm_paradigm = "sbd_block_diff"` — semi-block diffusion with block masking
+- `dlm_paradigm = "sbd_block_diff"` — attention with block masking
 - `block_size = 64` — number of tokens per diffusion block
 - `mask_token_id = 100` — token ID used for masking during diffusion
 - `dlm_loss_weight = 0.3`, `ar_loss_weight = 1.0` — loss weighting between diffusion and AR objectives
