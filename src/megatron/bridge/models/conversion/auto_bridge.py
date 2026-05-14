@@ -945,7 +945,12 @@ class AutoBridge(Generic[MegatronModelT]):
         )
 
     def load_megatron_model(
-        self, path: str | Path, *, mp_overrides: ModelParallelKwargs | None = None, **kwargs: Unpack[GetModelKwargs]
+        self,
+        path: str | Path,
+        *,
+        mp_overrides: ModelParallelKwargs | None = None,
+        use_cpu_init: bool | None = None,
+        **kwargs: Unpack[GetModelKwargs],
     ) -> list[MegatronModelT]:
         """
         Load a Megatron model from a native Megatron checkpoint.
@@ -1001,10 +1006,13 @@ class AutoBridge(Generic[MegatronModelT]):
         # else: checkpoint_path remains as the input path (no iter folders found)
 
         skip_temp_dist_context = dist.is_available() and dist.is_initialized()
+        if use_cpu_init is None:
+            use_cpu_init = skip_temp_dist_context and dist.get_backend() == "gloo"
+
         # Load the state dict
         model = load_megatron_model(
             str(checkpoint_path),
-            use_cpu_init=(skip_temp_dist_context and dist.get_backend() == "gloo"),
+            use_cpu_init=use_cpu_init,
             skip_temp_dist_context=skip_temp_dist_context,
             mp_overrides=mp_overrides,
         )

@@ -23,7 +23,11 @@ from types import SimpleNamespace
 import pytest
 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
-from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    DeepSeekV4Bridge,
+    _dsv4_compress_ratios,
+    _dsv4_num_hash_layers,
+)
 
 
 @pytest.fixture
@@ -46,6 +50,50 @@ def bridge_without_mtp():
 def _by_megatron(registry):
     """Index mappings by megatron_param for quick lookup in assertions."""
     return {m.megatron_param: m for m in registry.mappings}
+
+
+class TestNativeDeepSeekV4ConfigTranslation:
+    """Native Transformers DSv4 config fields must map back to MCore fields."""
+
+    def test_compress_ratios_from_native_layer_types(self):
+        hf_config = SimpleNamespace(
+            num_hidden_layers=4,
+            num_nextn_predict_layers=1,
+            layer_types=[
+                "sliding_attention",
+                "sliding_attention",
+                "compressed_sparse_attention",
+                "heavily_compressed_attention",
+            ],
+            compress_rates={
+                "compressed_sparse_attention": 4,
+                "heavily_compressed_attention": 128,
+            },
+        )
+
+        assert _dsv4_compress_ratios(hf_config) == [0, 0, 4, 128, 0]
+
+    def test_legacy_compress_ratios_still_work(self):
+        hf_config = SimpleNamespace(
+            num_hidden_layers=4,
+            num_nextn_predict_layers=1,
+            compress_ratios=[0, 0, 4, 128, 0],
+        )
+
+        assert _dsv4_compress_ratios(hf_config) == [0, 0, 4, 128, 0]
+
+    def test_hash_layers_from_native_mlp_layer_types(self):
+        hf_config = SimpleNamespace(
+            mlp_layer_types=["hash_moe", "hash_moe", "hash_moe", "moe", "moe"],
+        )
+
+        assert _dsv4_num_hash_layers(hf_config) == 3
+
+    def test_hash_layers_must_be_prefix(self):
+        hf_config = SimpleNamespace(mlp_layer_types=["hash_moe", "moe", "hash_moe"])
+
+        with pytest.raises(ValueError, match="contiguous prefix"):
+            _dsv4_num_hash_layers(hf_config)
 
 
 class TestDecoderHCHeadMappings:
