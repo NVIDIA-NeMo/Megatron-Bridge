@@ -81,18 +81,12 @@ def _check_world_size(tp: int, cp: int, ep: int) -> None:
     except ValueError as err:
         raise ValueError("Invalid WORLD_SIZE environment variable.") from err
 
-    non_expert_mp_size = tp * cp
-    expert_mp_size = ep
-    if non_expert_mp_size <= 0 or expert_mp_size <= 0:
+    mp_size = tp * cp * ep
+    if mp_size <= 0:
         raise ValueError(f"Invalid parallel sizes: tp={tp}, cp={cp}, ep={ep}")
-    if world_size % non_expert_mp_size != 0:
+    if world_size % mp_size != 0:
         raise ValueError(
-            f"WORLD_SIZE ({world_size}) must be divisible by tp*cp ({non_expert_mp_size}). "
-            f"Got tp={tp}, cp={cp}, ep={ep}."
-        )
-    if world_size % expert_mp_size != 0:
-        raise ValueError(
-            f"WORLD_SIZE ({world_size}) must be divisible by ep ({expert_mp_size}). Got tp={tp}, cp={cp}, ep={ep}."
+            f"WORLD_SIZE ({world_size}) must be divisible by tp*cp*ep ({mp_size}). Got tp={tp}, cp={cp}, ep={ep}."
         )
 
 
