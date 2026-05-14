@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import signal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -657,6 +659,68 @@ class TestGlobalState:
 
             mock_dsh.assert_not_called()
             assert state._signal_handler is None
+
+    @pytest.fixture
+    def restore_sigterm_handler(self):
+        """Snapshot SIGTERM handler and restore it after the test.
+
+        The tests below exercise the real ``DistributedSignalHandler``, which
+        calls ``signal.signal(SIGTERM, ...)`` on the live process. Without
+        this fixture the installed trap would leak across tests.
+        """
+        original = signal.getsignal(signal.SIGTERM)
+        try:
+            yield
+        finally:
+            signal.signal(signal.SIGTERM, original)
+
+    def test_set_signal_handler_installs_os_trap(self, restore_sigterm_handler):
+        """Regression: _set_signal_handler must install an OS-level SIGTERM trap.
+
+        Constructs the real DistributedSignalHandler (no patch) and asserts
+        that ``signal.getsignal(SIGTERM)`` changes. With the prior bug the
+        handler object was constructed but ``__enter__()`` was never called,
+        so ``signal.signal`` was never invoked and ``getsignal`` returned the
+        pre-test value.
+        """
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.train.exit_signal = signal.SIGTERM
+        state._cfg = mock_config
+
+        before = signal.getsignal(signal.SIGTERM)
+        state._set_signal_handler()
+        after = signal.getsignal(signal.SIGTERM)
+
+        assert after is not before, "SIGTERM handler was not replaced; __enter__() likely missing"
+        assert callable(after)
+        assert state._signal_handler is not None
+        assert state._signal_handler.released is False
+
+    def test_sigterm_flips_signal_received_flag(self, restore_sigterm_handler):
+        """End-to-end: real SIGTERM after cfg setter flips ``_signal_received``.
+
+        Drives the path through ``state.cfg = mock_config`` (which triggers
+        ``_set_signal_handler`` via the setter) so the test exercises the
+        public surface a real training run uses. Reads ``_signal_received``
+        directly to avoid the ``all_gather`` in ``signals_received()``.
+        """
+        # Safety net: install a no-op SIGTERM handler first. If a future
+        # regression drops the OS trap install, this keeps SIGTERM from
+        # killing the pytest worker so the assertion fails cleanly.
+        signal.signal(signal.SIGTERM, lambda signum, frame: None)
+
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.train.exit_signal = signal.SIGTERM
+        state.cfg = mock_config
+
+        assert state._signal_handler is not None
+        assert state._signal_handler._signal_received is False
+
+        os.kill(os.getpid(), signal.SIGTERM)
+
+        assert state._signal_handler._signal_received is True
 
     def test_mlflow_logger_property_disabled(self):
         """Test mlflow logger when disabled."""
