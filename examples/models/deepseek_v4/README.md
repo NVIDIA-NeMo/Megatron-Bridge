@@ -40,7 +40,14 @@ The model does not fit on A100 80 GB at TP=1; use B200 192 GB or larger.
 
 ## Known Limitations
 
-- **MCore prerequisites are not yet on a tagged release.** DSv4 imports require PR [#3430](https://github.com/NVIDIA/Megatron-LM/pull/3430), PR [#4458](https://github.com/NVIDIA/Megatron-LM/pull/4458), PR [#4481](https://github.com/NVIDIA/Megatron-LM/pull/4481), and PR [#4518](https://github.com/NVIDIA/Megatron-LM/pull/4518). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch.
+- **MCore prerequisites are not yet on a tagged release.** DSv4 imports require PR [#3430](https://github.com/NVIDIA/Megatron-LM/pull/3430), PR [#4458](https://github.com/NVIDIA/Megatron-LM/pull/4458), PR [#4481](https://github.com/NVIDIA/Megatron-LM/pull/4481), and PR [#4518](https://github.com/NVIDIA/Megatron-LM/pull/4518). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch:
+
+  ```bash
+  ./scripts/switch_mcore.sh dev
+  uv sync
+  ```
+
+  Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pinned main-branch submodule.
 
 - **MTP is disabled for inference** via `disable_mtp_for_inference()`. MTP weights are mapped end-to-end and loaded into the Megatron model.
 

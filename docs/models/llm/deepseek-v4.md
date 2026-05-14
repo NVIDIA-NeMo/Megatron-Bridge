@@ -4,19 +4,6 @@
 
 DeepSeek V4 models are supported via the Bridge system with auto-detected configuration and weight mapping.
 
-## Available Models
-
-Megatron Bridge supports the following DeepSeek V4 model variants:
-
-| Variant | Hidden Layers | Hidden Size | Routed Experts | Quant Scheme | Parity Status |
-|---------|--------------:|------------:|---------------:|--------------|---------------|
-| **DeepSeek-V4-Flash** | 43 | 4096 | 256 | FP8 attn + MXFP4 experts (E8M0 scales) | Verified, last-real-token logit cosine ~0.97-0.99 vs official inference |
-| **DeepSeek-V4-Flash-Base** | 43 | 4096 | 256 | Uniform FP8 (F32 block scales) | Verified, last-real-token logit cosine ~0.9866-0.9930 vs official inference |
-| **DeepSeek-V4-Pro** | 61 | 7168 | 384 | FP8 attn + MXFP4 experts (E8M0 scales) | Algorithmic dequant validated; end-to-end unmeasured |
-| **DeepSeek-V4-Pro-Base** | 61 | 7168 | 384 | Uniform FP8 (F32 block scales) | Algorithmic dequant validated; end-to-end unmeasured |
-
-The bridge dispatches purely on tensor dtype and reads every dimension- and layer-dependent field from the HF config, so all four variants share the same code path.
-
 ## Model Architecture Features
 
 - **Hybrid Attention (DSv4HybridSelfAttention)**: Per-layer mix of dense MLA and Compressed Sparse Attention selected by `compress_ratios`
