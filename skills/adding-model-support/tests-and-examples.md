@@ -272,6 +272,22 @@ uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 --model_class "MyModelForConditionalGeneration"
 ```
 
+## External NeMo-RL E2E
+
+After Bridge unit and conversion tests pass for a new model/provider, run a small external-loop
+smoke test through NeMo-RL when downstream RL compatibility matters. Start with the Megatron
+policy GRPO smoke (`tests/functional/grpo_megatron.sh`) to prove NeMo-RL can import the local
+Bridge checkout, build the Megatron policy, initialize optimizer/scheduler state, and complete a
+short RL training loop.
+
+Add the non-colocated vLLM refit variant when the change touches HF export, parameter mapping,
+policy-to-generation weight transfer, delta compression, or vLLM loading. Add PEFT/checkpoint,
+Megatron generation, parallelism stress, learning-signal, or architecture-specific variants when
+the change requires that coverage.
+
+Read @skills/nemo-rl-e2e-testing/SKILL.md for the full workflow, environment setup, metric checks,
+failure triage, and reporting format.
+
 ## External verl E2E
 
 After Bridge unit and conversion tests pass for a new model/provider, run a small external-loop
