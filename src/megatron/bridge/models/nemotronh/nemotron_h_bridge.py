@@ -396,6 +396,13 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "backbone.layers.*.mixer.experts.*.down_proj.weight",
         }
 
+        # Lazy fallback: if build_conversion_tasks() hasn't been called (e.g., adapter
+        # export path), read mtp_hybrid_override_pattern directly from self.hf_config.
+        # self.hf_config is set by model_bridge.build_conversion_tasks() OR by
+        # AutoBridge.export_adapter_weights() (both call paths now seed it).
+        if self._mtp_layers_per_block is None and getattr(self, "hf_config", None) is not None:
+            mtp_pattern = getattr(self.hf_config, "mtp_hybrid_override_pattern", None)
+            self._mtp_layers_per_block = len(mtp_pattern) if mtp_pattern is not None else 0
         mtp_layers_per_block = int(self._mtp_layers_per_block or 0)
 
         mapping_list = []

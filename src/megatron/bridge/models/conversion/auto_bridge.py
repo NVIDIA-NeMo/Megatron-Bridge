@@ -530,6 +530,13 @@ class AutoBridge(Generic[MegatronModelT]):
             HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters
         """
         bridge = self._model_bridge
+        # Mirror model_bridge.build_conversion_tasks(): seed the bridge with hf_pretrained
+        # and hf_config so mapping_registry() can read HF config fields (e.g., Nemotron-H
+        # needs mtp_hybrid_override_pattern to emit MTP flattening mappings).
+        bridge.hf_pretrained = self.hf_pretrained
+        bridge.hf_config = (
+            self.hf_pretrained.config if hasattr(self.hf_pretrained, "config") else self.hf_pretrained
+        )
         return bridge.stream_adapter_weights_megatron_to_hf(model, cpu=cpu, show_progress=show_progress)
 
     def save_hf_adapter(

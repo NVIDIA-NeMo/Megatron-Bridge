@@ -14,6 +14,14 @@
 
 # Nemotron Nano v2 models
 # Nemotron 3 Nano models
+# Nemotron 3.5 Nano models
+from megatron.bridge.recipes.nemotronh.nemotron_3_5_nano import (
+    nemotron_3_5_nano_peft_config,
+    nemotron_3_5_nano_peft_openmathinstruct2_config,
+    nemotron_3_5_nano_pretrain_config,
+    nemotron_3_5_nano_sft_config,
+    nemotron_3_5_nano_sft_openmathinstruct2_config,
+)
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_peft_config,
     nemotron_3_nano_pretrain_config,
@@ -81,4 +89,10 @@ __all__ = [
     "nemotron_3_super_pretrain_config",
     "nemotron_3_super_sft_config",
     "nemotron_3_super_peft_config",
+    # Nemotron 3.5 Nano models
+    "nemotron_3_5_nano_pretrain_config",
+    "nemotron_3_5_nano_sft_config",
+    "nemotron_3_5_nano_peft_config",
+    "nemotron_3_5_nano_sft_openmathinstruct2_config",
+    "nemotron_3_5_nano_peft_openmathinstruct2_config",
 ]
