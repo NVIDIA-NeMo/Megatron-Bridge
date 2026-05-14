@@ -114,7 +114,7 @@ class Exaone4ModelProvider(GPTModelProvider):
     - GQA (Grouped Query Attention)
     - SwiGLU activation
     - RoPE with llama3-style scaling
-    - Tied word embeddings (embed_tokens shared with lm_head)
+    - Tied word embeddings (inherits share_embeddings_and_output_weights=True from GPTModelProvider)
     """
 
     # Architecture defaults common across EXAONE 4.0 model sizes
@@ -127,8 +127,6 @@ class Exaone4ModelProvider(GPTModelProvider):
     qk_layernorm: bool = True  # EXAONE 4.0 uses QK RMSNorm
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
-    share_embeddings_and_output_weights: bool = True  # tie_word_embeddings
-    rotary_percent: float = 1.0
 
     # Custom layer spec for Post-LN architecture
     transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = exaone4_layer_spec
