@@ -151,7 +151,6 @@ def export_megatron_to_hf(
     show_progress: bool = True,
     distributed_save: bool = False,
     save_every_n_ranks: int = 1,
-    use_cpu_init: bool = False,
 ) -> None:
     """Export a distributed Megatron checkpoint to HuggingFace format."""
     _check_distributed()
@@ -160,7 +159,6 @@ def export_megatron_to_hf(
     print_rank_0(f"Exporting: {megatron_path} -> {hf_path}")
     print_rank_0(f"  TP={tp}  PP={pp}  EP={ep}  ETP={etp}  dtype={torch_dtype}")
     print_rank_0(f"  distributed_save={distributed_save}  save_every_n_ranks={save_every_n_ranks}")
-    print_rank_0(f"  use_cpu_init={use_cpu_init}")
 
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
@@ -192,10 +190,8 @@ def export_megatron_to_hf(
         megatron_path,
         mp_overrides=mp_overrides,
         wrap_with_ddp=False,
-        use_cpu_init=use_cpu_init,
     )
-    if not use_cpu_init:
-        megatron_model = [m.cuda() for m in megatron_model]
+    megatron_model = [m.cuda() for m in megatron_model]
 
     print_rank_0(f"Saving HuggingFace model to: {hf_path}")
     bridge.save_hf_pretrained(
@@ -259,12 +255,6 @@ def main():
         default=1,
         help="Only every N-th rank writes files (reduces I/O, only with --distributed-save)",
     )
-    export_parser.add_argument(
-        "--use-cpu-init",
-        action="store_true",
-        help="Load the Megatron model on CPU for export to reduce GPU memory pressure",
-    )
-
     args = parser.parse_args()
 
     if not args.command:
@@ -297,7 +287,6 @@ def main():
             show_progress=not args.no_progress,
             distributed_save=args.distributed_save,
             save_every_n_ranks=args.save_every_n_ranks,
-            use_cpu_init=args.use_cpu_init,
         )
 
 

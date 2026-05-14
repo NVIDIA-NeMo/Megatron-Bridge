@@ -102,8 +102,7 @@ PY
       --torch-dtype bfloat16 \
       --trust-remote-code \
       --not-strict \
-      --distributed-save \
-      --use-cpu-init
+      --distributed-save
   "
 
 echo "Exit $?"
