@@ -19,7 +19,8 @@ from typing import Callable, Optional, Union
 import torch
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.activations import fast_gelu
-from megatron.core.extensions.transformer_engine import TELayerNormColumnParallelLinear, TENorm, TERowParallelLinear
+from megatron.core.extensions.transformer_engine import TELayerNormColumnParallelLinear
+from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.fusions.fused_softmax import FusedScaleMaskSoftmax
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
@@ -252,29 +253,7 @@ class Gemma2DotProductAttention(MegatronModule):
         return context
 
 
-class TERowParallelLinearLayerNorm(TERowParallelLinear):
-    """Modified From TERowParallelLinear with an additional Post-LN."""
 
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int,
-        *,
-        config: TransformerConfig,
-        **kwargs,
-    ):
-        super().__init__(
-            input_size,
-            output_size,
-            config=config,
-            **kwargs,
-        )
-        self.post_layernorm = TENorm(config, output_size)
-
-    def forward(self, x):
-        """Forward with additional Post LN on output"""
-        output, bias = super().forward(x)
-        return self.post_layernorm(output), bias
 
 
 class Gemma2OutputLayer(ColumnParallelLinear):

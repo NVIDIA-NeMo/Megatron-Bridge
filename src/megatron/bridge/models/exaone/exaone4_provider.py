@@ -30,17 +30,12 @@ The Post-LN implementation reuses the TERowParallelLinearLayerNorm pattern
 established by Gemma2 bridge.
 """
 
-import logging
 from dataclasses import dataclass
 from typing import Callable
 
 import torch
 import torch.nn.functional as F
-from megatron.core.extensions.transformer_engine import (
-    TEColumnParallelLinear,
-    TENorm,
-    TERowParallelLinear,
-)
+from megatron.core.extensions.transformer_engine import TEColumnParallelLinear
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.transformer import (
     ModuleSpec,
@@ -53,56 +48,8 @@ from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
 
+from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-
-
-logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Custom Modules for EXAONE Post-LN Architecture
-# =============================================================================
-
-
-class TERowParallelLinearLayerNorm(TERowParallelLinear):
-    """Row-parallel linear with an additional Post-LayerNorm on the output.
-
-    Used for attention output projection (o_proj) and MLP down projection (down_proj)
-    in Post-LN architectures where normalization is applied after the residual add.
-
-    This is the same pattern used by Gemma2 bridge for Post-LN support.
-
-    Note:
-        This module assumes ``add_bias_linear=False`` (bias is always None).
-        EXAONE 4.0 satisfies this invariant. If reused for models with
-        ``add_bias_linear=True``, the Post-LN would be applied before bias
-        addition, producing incorrect results.
-    """
-
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int,
-        *,
-        config: TransformerConfig,
-        **kwargs,
-    ):
-        super().__init__(
-            input_size,
-            output_size,
-            config=config,
-            **kwargs,
-        )
-        self.post_layernorm = TENorm(config, output_size)
-
-    def forward(self, x):
-        """Forward with Post-LN applied to the linear output."""
-        output, bias = super().forward(x)
-        assert bias is None, (
-            "TERowParallelLinearLayerNorm assumes add_bias_linear=False. "
-            "Post-LN before bias addition is incorrect when bias is present."
-        )
-        return self.post_layernorm(output), bias
 
 
 # =============================================================================
