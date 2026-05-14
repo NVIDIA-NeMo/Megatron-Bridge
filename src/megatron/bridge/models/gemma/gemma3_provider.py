@@ -39,6 +39,7 @@ from megatron.core.transformer.enums import AttnBackend, AttnMaskType
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from torch import Tensor
 
+from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.import_utils import safe_import_from
 
@@ -48,7 +49,6 @@ TELayerNormColumnParallelLinear, _ = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TELayerNormColumnParallelLinear"
 )
 TEDotProductAttention, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEDotProductAttention")
-from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
 
 
 @dataclass
@@ -404,6 +404,5 @@ def _is_local_attn_layer(
 ) -> bool:
     pattern_size = sum(layer_pattern)
     return layer_number % pattern_size != 0
-
 
 
