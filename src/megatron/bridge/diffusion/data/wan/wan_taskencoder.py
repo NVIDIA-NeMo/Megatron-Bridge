@@ -14,7 +14,8 @@
 
 # pylint: disable=C0115,C0116,C0301
 
-from typing import List
+import random
+from typing import List, Optional
 
 import torch
 import torch.nn.functional as F
@@ -30,6 +31,7 @@ from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import
 from megatron.bridge.diffusion.models.wan.utils import grid_sizes_calculation, patchify
 
 
+@stateless
 def cook(sample: dict) -> dict:
     """
     Processes a raw sample dictionary from energon dataset and returns a new dictionary with specific keys.
@@ -73,12 +75,37 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         patch_spatial: int = 2,
         patch_temporal: int = 1,
         seq_length: int = 1024,
+        cfg_dropout_prob: float = 0.0,
+        null_context_path: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.patch_spatial = patch_spatial
         self.patch_temporal = patch_temporal
         self.seq_length = seq_length
+        self.cfg_dropout_prob = cfg_dropout_prob
+
+        # CFG dropout is only validated for SBHD batch mode (packing_buffer_size is None).
+        if cfg_dropout_prob > 0.0 and self.packing_buffer_size is not None:
+            raise ValueError(
+                "cfg_dropout_prob > 0 is only supported with packing_buffer_size=None "
+                "(SBHD batch mode). THD / sequence-packed mode is not tested for CFG."
+            )
+
+        # Precomputed UMT5(null_prompt) embedding for classifier-free guidance dropout.
+        # Note: Must match what the inference pipeline for context_null so train/inference unconditional distributions agree.
+        if cfg_dropout_prob > 0.0:
+            if null_context_path is None:
+                raise ValueError(
+                    "cfg_dropout_prob > 0 requires null_context_path. Precompute one with "
+                    "examples/diffusion/recipes/wan/precompute_null_context.py."
+                )
+            payload = torch.load(null_context_path, map_location="cpu")
+            self.null_context = (
+                payload["null_context"] if isinstance(payload, dict) else payload
+            )
+        else:
+            self.null_context = None
 
     @stateless(restore_seeds=True)
     def encode_sample(self, sample: dict) -> dict:
@@ -86,6 +113,12 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         context_embeddings = sample["pickle"]
         video_metadata = sample["json"]
 
+        # CFG dropout. The substituted tensor goes through the same F.pad-to-512 
+        # below as any real prompt.
+        if self.null_context is not None and self.cfg_dropout_prob > 0.0:
+            if random.random() < self.cfg_dropout_prob:
+                context_embeddings = self.null_context.to(dtype=context_embeddings.dtype)
+            
         # sanity quality check
         if torch.isnan(video_latent).any() or torch.isinf(video_latent).any():
             raise SkipSample()
