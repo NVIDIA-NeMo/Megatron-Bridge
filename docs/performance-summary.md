@@ -110,6 +110,10 @@ The performance data includes:
 |--------|--------|-----------|-----|-----|-----------------|------|----|----|----|----|----|-----------------------|-------------------------|
 | DGX-GB300 | 256 | MXFP8 | 4096 | 2 | 4096 | 0 | 1 | 4 | 1 | 4 | 64 | 5344 | 1092 |
 
+-  Muon optimizer was used for pre-training Kimi-K2.
+
+- In MoE training benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
+
 #### Model: Nemotron_3_Nano
 
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | FSDP | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
@@ -140,10 +144,6 @@ The performance data includes:
 | DGX-GB300 | 64 | MXFP8 | 1024 | 4 | 4096 | 0 | 1 | 2 | 1 | 4 | 32 | 11328 | 277 |
 | DGX-GB200 | 64 | MXFP8 | 1024 | 2 | 4096 | 0 | 1 | 2 | 1 | 4 | 32 | 9856 | 241 |
 | DGX-B200 | 64 | MXFP8 | 1024 | 1 | 4096 | 0 | 1 | 1 | 1 | n/a | 64 | 4864 | 119 |
-
--  Muon optimizer was used for pre-training Kimi-K2.
-
-- In MoE training benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
 
 ## Archive
 
