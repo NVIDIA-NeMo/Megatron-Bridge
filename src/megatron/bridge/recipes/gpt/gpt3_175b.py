@@ -39,7 +39,7 @@ def gpt3_175b_pretrain_config() -> ConfigContainer:
         hidden_dropout=0.0,
         attention_dropout=0.0,
         bias_activation_fusion=True,
-        bias_dropout_add_fusion=True,
+        bias_dropout_fusion=True,
         use_transformer_engine_full_layer_spec=True,
         layernorm_zero_centered_gamma=True,
         tensor_model_parallel_size=4,
