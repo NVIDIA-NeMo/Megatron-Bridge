@@ -135,6 +135,9 @@ The performance data includes:
 | DGX-B200 | 64 | MXFP8 | 512 | 1 | 8192 | 0 | 1 | 1 | 1 | n/a | 64 | 6400 | 542 |
 | DGX-B200 | 64 | NVFP4 | 512 | 1 | 8192 | 0 | 2 | 1 | 1 | n/a | 64 | 5632 | 475 |
 
+- Mapping used for MXFP8 precision could not fit for  NVFP4 precision.
+- We expect to improve performance in future when NVFP4 param gather is supported for this model.
+
 [^moe-training-note]: In MoE training benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
 
 ## Archive
