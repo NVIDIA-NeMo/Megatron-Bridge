@@ -170,7 +170,7 @@ def parse_cli_args():
     parser.add_argument(
         "--domain",
         type=lower_str,
-        choices=["llm", "vlm", "qwen3vl"],
+        choices=["llm", "vlm", "qwen3vl", "diffusion"],
         help="Domain to use for experiment.",
         default="llm",
     )
@@ -493,6 +493,13 @@ def parse_cli_args():
         "'none' skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.",
         required=False,
     )
+    slurm_args.add_argument(
+        "--enable_pct_binding",
+        type=bool_arg,
+        help="Enable PCT binding. Enabled by default.",
+        required=False,
+        default=True,
+    )
 
     # DGXCloud
     dgxc_args = parser.add_argument_group("DGXCloud arguments")
@@ -609,9 +616,24 @@ def parse_cli_args():
         required=False,
     )
     performance_args.add_argument(
+        "-lgc",
+        "--lock_gpu_freq",
+        help="Lock GPU graphics clock to the specified frequency in MHz via "
+        "`sudo nvidia-smi -lgc <freq>`. Runs once per node before training. "
+        "Use `nvidia-smi -rgc` to reset after the job.",
+        type=int,
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
         "-en",
         "--enable_nsys",
         help="Enable Nsys profiling. Disabled by default",
+        action="store_true",
+    )
+    performance_args.add_argument(
+        "--export_nsys_sqlite",
+        help="Export a SQLite report after Nsys profiling finishes. Requires --enable_nsys.",
         action="store_true",
     )
     performance_args.add_argument(
@@ -737,6 +759,12 @@ def parse_cli_args():
         required=False,
         default=-1,
     )
+    performance_args.add_argument(
+        "--deterministic",
+        help="Enable bit-exact deterministic training. Sets NCCL/cuBLAS/TE env vars "
+        "and disables fused cross-entropy loss and TP comm overlap.",
+        action="store_true",
+    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")
@@ -806,7 +834,13 @@ def parse_cli_args():
         help="List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).",
     )
 
-    # Testing parameters
+    _testing_args(parser)
+
+    return parser
+
+
+def _testing_args(parser):
+    """Add testing-related arguments to the parser."""
     testing_args = parser.add_argument_group("Testing arguments")
     testing_args.add_argument(
         "--is_long_convergence_run",
@@ -870,5 +904,3 @@ def parse_cli_args():
         default=None,
         help="End step (0-indexed, exclusive) for timing average window. If None, averages to end.",
     )
-
-    return parser

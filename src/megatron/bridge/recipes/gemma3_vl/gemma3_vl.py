@@ -81,7 +81,7 @@ def gemma3_vl_4b_sft_config() -> ConfigContainer:
     # Training config
     cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -187,7 +187,7 @@ def gemma3_vl_12b_sft_config() -> ConfigContainer:
     # Training config
     cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -293,7 +293,7 @@ def gemma3_vl_27b_sft_config() -> ConfigContainer:
     # Training config
     cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -408,7 +408,7 @@ def gemma3_vl_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
     # Training config
     cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -523,7 +523,7 @@ def gemma3_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
     # Training config
     cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -638,7 +638,7 @@ def gemma3_vl_27b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
     # Training config
     cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100

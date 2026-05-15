@@ -31,12 +31,13 @@
 #   9B (dense):      TP=4, PP=1         (1 node)
 #   27B (dense):     TP=4, PP=4         (2 nodes)
 #   35B-A3B (MoE):   TP=2, PP=1, EP=16  (2 nodes)
-#   122B-A10B (MoE): TP=2, PP=6, EP=8   (4 nodes)
+#   122B-A10B (MoE): TP=2, PP=6, EP=8   (6 nodes)
 #   397B-A17B (MoE): TP=2, PP=4, EP=32  (16 nodes)
 #
 # Examples:
 #   sbatch slurm_sft.sh 4B
 #   sbatch --nodes=2 slurm_sft.sh 27B
+#   sbatch --nodes=6 slurm_sft.sh 122B-A10B
 #   sbatch --nodes=16 slurm_sft.sh 397B-A17B
 # ==============================================================================
 
@@ -171,7 +172,7 @@ CLI_OVERRIDES="\
 #   --hf_path ${WORKSPACE}/models/Qwen/${HF_MODEL_NAME}
 CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
-    --step_func vlm_step \
+    --step_func qwen3_vl_step \
     $CLI_OVERRIDES"
 
 echo "Executing command..."

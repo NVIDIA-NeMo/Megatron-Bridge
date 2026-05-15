@@ -295,7 +295,7 @@ class TestCheckpointUtils:
         assert result.iteration == 100
         assert result.epoch == 5
         assert result.step == 1000
-        mock_torch_load.assert_called_once_with("train_state.pt", map_location="cpu")
+        mock_torch_load.assert_called_once_with("train_state.pt", map_location="cpu", weights_only=True)
 
     @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
     @patch("megatron.bridge.training.utils.checkpoint_utils.get_world_size_safe")

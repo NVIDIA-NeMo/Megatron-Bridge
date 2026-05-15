@@ -47,6 +47,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
@@ -131,7 +132,7 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         provider.experimental_attention_variant = "gated_delta_net"
         # full_attention_interval defines how often standard attention appears:
         # e.g., 4 means every 4th layer is standard attention (3 GDN + 1 Attn)
-        provider.linear_attention_freq = getattr(text_config, "full_attention_interval", 4)
+        provider.linear_attention_freq = full_attention_interval_from_hf(text_config)
         provider.rotary_percent = getattr(text_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25)
 
         # --- MoE specific parameters ---
@@ -488,7 +489,7 @@ class Qwen35VLBridge(MegatronModelBridge):
         provider.layernorm_zero_centered_gamma = True
         provider.attention_output_gate = True
         provider.experimental_attention_variant = "gated_delta_net"
-        provider.linear_attention_freq = getattr(text_config, "full_attention_interval", 4)
+        provider.linear_attention_freq = full_attention_interval_from_hf(text_config)
         provider.rotary_percent = getattr(text_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25)
 
         # --- GDN (Gated DeltaNet) specific parameters ---

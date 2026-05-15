@@ -10,18 +10,18 @@ Megatron Bridge is Python-first: configure models, data, and training via typed 
 
 ```bash
 # From a YAML config file (MODEL_ARGS section)
-python scripts/translate_mlm_to_bridge.py --yaml model_configs/DeepSeek-V3.yaml
+uv run python scripts/translate_mlm_to_bridge.py --yaml model_configs/DeepSeek-V3.yaml
 
 # From inline CLI args
-python scripts/translate_mlm_to_bridge.py \
+uv run python scripts/translate_mlm_to_bridge.py \
     --args "--num-layers 32 --hidden-size 4096 --num-attention-heads 32 --bf16 --swiglu"
 
 # Emit a standalone Bridge recipe Python file (output goes to stdout; use -o to write to a file)
-python scripts/translate_mlm_to_bridge.py \
+uv run python scripts/translate_mlm_to_bridge.py \
     --yaml DeepSeek-V3.yaml --emit recipe --recipe-name deepseek_v3
 
 # Write output to a file instead of stdout
-python scripts/translate_mlm_to_bridge.py \
+uv run python scripts/translate_mlm_to_bridge.py \
     --yaml DeepSeek-V3.yaml -o bridge_overrides.txt
 ```
 
@@ -29,20 +29,20 @@ python scripts/translate_mlm_to_bridge.py \
 
 ```bash
 # From a Bridge recipe name (defaults exported as MLM args)
-python scripts/translate_mlm_to_bridge.py --reverse \
+uv run python scripts/translate_mlm_to_bridge.py --reverse \
     --recipe llama32_1b_pretrain_config
 
 # From a recipe plus inline overrides
-python scripts/translate_mlm_to_bridge.py --reverse \
+uv run python scripts/translate_mlm_to_bridge.py --reverse \
     --recipe llama32_1b_pretrain_config \
     --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
 
 # From Bridge overrides only (no recipe)
-python scripts/translate_mlm_to_bridge.py --reverse \
+uv run python scripts/translate_mlm_to_bridge.py --reverse \
     --args "model.num_layers=32 model.activation_func=silu model.gated_linear_unit=true"
 
 # From a Bridge YAML/OmegaConf config file (e.g. exported ConfigContainer)
-python scripts/translate_mlm_to_bridge.py --reverse \
+uv run python scripts/translate_mlm_to_bridge.py --reverse \
     --yaml bridge_config.yaml
 ```
 
@@ -98,7 +98,7 @@ Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`) are
 Run your example training entrypoint and override config keys directly:
 
 ```bash
-python examples/models/llama/pretrain_llama3_8b.py \
+uv run python examples/models/llama/pretrain_llama3_8b.py \
   train.micro_batch_size=2 \
   train.global_batch_size=128 \
   model.num_layers=32 model.hidden_size=4096 model.num_attention_heads=32 \

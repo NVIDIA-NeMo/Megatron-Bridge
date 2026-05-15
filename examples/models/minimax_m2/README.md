@@ -2,6 +2,8 @@
 
 This directory contains example scripts for [MiniMax-M2](https://huggingface.co/MiniMaxAI/MiniMax-M2), a large sparse MoE model with 456B total parameters (45.9B active), 256 experts, and FP8 quantization.
 
+> **M2.5 / M2.7 compatibility:** [MiniMax-M2.5](https://huggingface.co/MiniMaxAI/MiniMax-M2.5) and [MiniMax-M2.7](https://huggingface.co/MiniMaxAI/MiniMax-M2.7) share the same architecture (`MiniMaxM2ForCausalLM`) and work with the same bridge. Replace the model ID in the scripts below (e.g. `MiniMaxAI/MiniMax-M2.5`).
+
 ## Hardware Requirements
 
 MiniMax-M2 requires **at least 2 nodes (16 GPUs)** for inference and conversion. The model cannot fit on a single 8-GPU node because:

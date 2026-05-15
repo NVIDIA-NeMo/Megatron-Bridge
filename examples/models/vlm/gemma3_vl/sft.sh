@@ -27,7 +27,7 @@ DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
 TRAIN_ITERS=50
 GLOBAL_BATCH_SIZE=32
-MICRO_BATCH_SIZE=1
+MICRO_BATCH_SIZE=2
 EVAL_ITERS=10
 LR=0.00005
 MIN_LR=0.000005
@@ -43,7 +43,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
     
     echo "Running full finetuning with TP=$TP, PP=$PP"
     uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-        --recipe ${MODEL_NAME}_finetune_config \
+        --recipe ${MODEL_NAME}_sft_config \
         --step_func vlm_step \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         model.seq_length=$SEQ_LENGTH \

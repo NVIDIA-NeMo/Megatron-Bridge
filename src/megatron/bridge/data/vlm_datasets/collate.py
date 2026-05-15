@@ -463,7 +463,14 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 
     # Wrap visual tensors in GenericVisualInputs so vlm_step.py picks them up
     visual_kwargs = {}
-    for vk in ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "image_sizes"):
+    for vk in (
+        "pixel_values",
+        "pixel_values_videos",
+        "image_grid_thw",
+        "video_grid_thw",
+        "image_sizes",
+        "image_position_ids",
+    ):
         if vk in batch:
             visual_kwargs[vk] = batch.pop(vk)
     batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
@@ -536,6 +543,14 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     # to avoid a ValueError from apply_chat_template.
     can_pad = tokenizer is not None and tokenizer.pad_token is not None
 
+    # Force right-padding for training collation.  Some tokenizers (e.g. Gemma3)
+    # default to left-padding which breaks downstream sequence packing: the packer
+    # copies tokens[seq_idx, :length] from position 0, so left-padded content gets
+    # replaced by padding tokens and image/special tokens are lost.
+    saved_padding_side = getattr(tokenizer, "padding_side", None)
+    if tokenizer is not None:
+        tokenizer.padding_side = "right"
+
     batch = processor.apply_chat_template(
         [example["conversation"] for example in examples],
         tokenize=True,
@@ -544,6 +559,10 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         return_tensors="pt",
         return_dict=True,
     )
+
+    # Restore original padding side so generation paths are unaffected.
+    if tokenizer is not None and saved_padding_side is not None:
+        tokenizer.padding_side = saved_padding_side
 
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
@@ -576,6 +595,10 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         del batch["image_grid_thw"]
     batch["visual_inputs"] = visual_inputs
     return batch
+
+
+# Gemma4 VL uses apply_chat_template and returns image_position_ids — same path as ministral3
+gemma4_vl_collate_fn = ministral3_collate_fn
 
 
 def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
@@ -919,6 +942,7 @@ COLLATE_FNS = {
     "Qwen3VLProcessor": qwen2_5_collate_fn,
     "NemotronNanoVLV2Processor": nemotron_nano_v2_vl_collate_fn,
     "PixtralProcessor": ministral3_collate_fn,  # Ministral3 uses PixtralProcessor
+    "Gemma4Processor": gemma4_vl_collate_fn,  # Gemma4 VL
     "Qwen2AudioProcessor": qwen2_audio_collate_fn,
     "Glm4vProcessor": glm4v_collate_fn,
     "KimiK25Processor": kimi_k25_vl_collate_fn,

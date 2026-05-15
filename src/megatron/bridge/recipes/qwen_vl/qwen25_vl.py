@@ -94,7 +94,7 @@ def qwen25_vl_3b_sft_config() -> ConfigContainer:
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=5e-6,
-        min_lr=3e-5,
+        min_lr=1e-6,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -202,7 +202,7 @@ def qwen25_vl_7b_sft_config() -> ConfigContainer:
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=5e-6,
-        min_lr=3e-5,
+        min_lr=1e-6,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -310,7 +310,7 @@ def qwen25_vl_32b_sft_config() -> ConfigContainer:
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=5e-6,
-        min_lr=3e-5,
+        min_lr=1e-6,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -418,7 +418,7 @@ def qwen25_vl_72b_sft_config() -> ConfigContainer:
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=5e-6,
-        min_lr=3e-5,
+        min_lr=1e-6,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -535,7 +535,7 @@ def qwen25_vl_3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=1e-4,
-        min_lr=3e-5,
+        min_lr=1e-5,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -652,7 +652,7 @@ def qwen25_vl_7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=1e-4,
-        min_lr=3e-5,
+        min_lr=1e-5,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -769,7 +769,7 @@ def qwen25_vl_32b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=1e-4,
-        min_lr=3e-5,
+        min_lr=1e-5,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -886,7 +886,7 @@ def qwen25_vl_72b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=1e-4,
-        min_lr=3e-5,
+        min_lr=1e-5,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg

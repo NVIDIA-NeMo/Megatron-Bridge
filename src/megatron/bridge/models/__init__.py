@@ -52,9 +52,15 @@ from megatron.bridge.models.gemma_vl import (
     Gemma3VLBridge,
     Gemma3VLModel,
     Gemma3VLModelProvider,
+    Gemma4VLBridge,
+    Gemma4VLModel,
+    Gemma4VLModelProvider,
 )
 from megatron.bridge.models.glm import (
     GLM45Bridge,
+)
+from megatron.bridge.models.glm_moe_dsa import (
+    GLM5Bridge,
 )
 from megatron.bridge.models.glm_vl import (
     GLM45VBridge,
@@ -122,6 +128,9 @@ from megatron.bridge.models.qwen_audio import (
     Qwen2AudioModelProvider,
 )
 from megatron.bridge.models.qwen_omni import (
+    Qwen3OmniBridge,
+    Qwen3OmniModel,
+    Qwen3OmniModelProvider,
     Qwen25OmniBridge,
     Qwen25OmniModel,
     Qwen25OmniModelProvider,
@@ -179,6 +188,7 @@ __all__ = [
     "Gemma2ModelProvider9B",
     "Gemma2ModelProvider27B",
     "GLM45Bridge",
+    "GLM5Bridge",
     "GLM45VBridge",
     "GLM45VModelProvider",
     "GPTModelProvider",
@@ -228,6 +238,9 @@ __all__ = [
     "Gemma3VLBridge",
     "Gemma3VLModel",
     "Gemma3VLModelProvider",
+    "Gemma4VLBridge",
+    "Gemma4VLModel",
+    "Gemma4VLModelProvider",
     "NemotronVLModel",
     "NemotronVLBridge",
     "NemotronNano12Bv2VLModelProvider",
@@ -239,6 +252,9 @@ __all__ = [
     "Qwen25OmniModel",
     "Qwen25OmniBridge",
     "Qwen25OmniModelProvider",
+    "Qwen3OmniModel",
+    "Qwen3OmniBridge",
+    "Qwen3OmniModelProvider",
     "SarvamMLABridge",
     "SarvamMoEBridge",
 ]
