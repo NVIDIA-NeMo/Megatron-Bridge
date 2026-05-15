@@ -31,11 +31,80 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM
 
 # Patch is_torch_fx_available (removed in transformers 5.x) before any Kimi
 # custom model code is loaded via trust_remote_code.
 import megatron.bridge.models.conversion.transformers_compat  # noqa: F401
+
+
+def _copy_custom_code_from_source(model_dir: Path, source_file: str | Path) -> None:
+    """Copy custom Python modules needed for local trust_remote_code loading."""
+    copied_files: set[str] = set()
+    source_file = Path(source_file)
+    source_dir = source_file.parent
+
+    for py_file in source_dir.glob("*.py"):
+        target = model_dir / py_file.name
+        shutil.copy2(py_file, target)
+        copied_files.add(py_file.name)
+
+    from transformers.dynamic_module_utils import get_relative_import_files
+
+    for source in map(Path, get_relative_import_files(source_file)):
+        target = model_dir / source.name
+        if target.name not in copied_files:
+            shutil.copy2(source, target)
+            copied_files.add(target.name)
+
+
+def _make_recursive_imports_direct(module_file: Path) -> None:
+    """Work around Transformers 5.x local dynamic-module copying of only direct relative imports."""
+    from transformers.dynamic_module_utils import get_relative_import_files, get_relative_imports
+
+    direct_imports = set(get_relative_imports(module_file))
+    recursive_imports = {Path(path).stem for path in get_relative_import_files(module_file)}
+    missing_direct_imports = sorted(recursive_imports - direct_imports)
+    if not missing_direct_imports:
+        return
+
+    with open(module_file, "a") as f:
+        f.write("\n# Ensure Transformers copies recursive dynamic-module dependencies from local checkpoints.\n")
+        for module_name in missing_direct_imports:
+            f.write(f"from .{module_name} import *  # noqa: F403\n")
+
+
+def _save_minimal_fast_tokenizer(save_directory: Path) -> None:
+    """Save tokenizer artifacts that Transformers 5.x can reload without tiktoken."""
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import PreTrainedTokenizerFast
+
+    end_of_text = "<|endoftext|>"
+    unknown = "<unk>"
+    tokenizer = Tokenizer(
+        WordLevel(
+            {
+                end_of_text: 0,
+                unknown: 1,
+                "<image>": 2,
+                "<video>": 3,
+            },
+            unk_token=unknown,
+        )
+    )
+    tokenizer.pre_tokenizer = Whitespace()
+
+    hf_tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer,
+        bos_token=end_of_text,
+        eos_token=end_of_text,
+        pad_token=end_of_text,
+        unk_token=unknown,
+        model_max_length=4096,
+    )
+    hf_tokenizer.save_pretrained(save_directory)
 
 
 class TestKimiK25VLConversion:
@@ -139,24 +208,12 @@ class TestKimiK25VLConversion:
         # Copy custom code files so the saved checkpoint can be loaded with
         # trust_remote_code=True from the local path.
         source_file = inspect.getfile(type(model))
-        source_dir = Path(source_file).parent
-        for py_file in source_dir.glob("*.py"):
-            target = model_dir / py_file.name
-            if not target.exists():
-                shutil.copy2(py_file, target)
+        _copy_custom_code_from_source(model_dir, source_file)
+        _make_recursive_imports_direct(model_dir / Path(source_file).name)
 
         config.save_pretrained(model_dir)
 
-        try:
-            tokenizer = AutoTokenizer.from_pretrained("moonshotai/Kimi-K2.5", trust_remote_code=True)
-            tokenizer.save_pretrained(model_dir)
-        except Exception:
-            tokenizer_config = {
-                "tokenizer_class": "PreTrainedTokenizerFast",
-                "vocab_size": 2048,
-            }
-            with open(model_dir / "tokenizer_config.json", "w") as f:
-                json.dump(tokenizer_config, f, indent=2)
+        _save_minimal_fast_tokenizer(model_dir)
 
         return str(model_dir)
 
