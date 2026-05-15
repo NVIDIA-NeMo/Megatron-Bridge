@@ -1,12 +1,12 @@
 ---
 name: nemo-rl-e2e-testing
-description: External NeMo-RL end-to-end validation workflow for Megatron-Bridge model/provider changes. Covers running NeMo-RL Megatron policy jobs from a Bridge checkout, choosing GRPO/SFT/PEFT/checkpoint/non-colocated refit variants, setting PYTHONPATH so NeMo-RL imports the local Bridge tree, and reporting pass/fail evidence.
-when_to_use: Adding or changing a Megatron-Bridge model/provider and needing downstream NeMo-RL compatibility validation; checking external RL lifecycle behavior; testing Megatron policy setup, HF import/export, PEFT/LoRA, checkpoint/resume, non-colocated vLLM refit, delta weight transfer, or Megatron generation through NeMo-RL; 'does this model work in NeMo-RL', 'run NeMo-RL e2e', 'external RL loop validation'.
+description: External NeMo-RL end-to-end validation workflow for Megatron-Bridge model/provider changes. Covers running NeMo-RL Megatron policy jobs from a Bridge checkout, choosing GRPO/SFT/checkpoint/non-colocated refit variants, setting PYTHONPATH so NeMo-RL imports the local Bridge tree, and reporting pass/fail evidence.
+when_to_use: Adding or changing a Megatron-Bridge model/provider and needing downstream NeMo-RL compatibility validation; checking external RL lifecycle behavior; testing Megatron policy setup, HF import/export, checkpoint/resume, non-colocated vLLM refit, delta weight transfer, or optional LoRA/generation variants when NeMo-RL supports them; 'does this model work in NeMo-RL', 'run NeMo-RL e2e', 'external RL loop validation'.
 ---
 
 # NeMo-RL E2E Testing
 
-Validate a Megatron-Bridge model or training API change through NeMo-RL's Megatron backend. This catches integration issues that Bridge-only tests miss: NeMo-RL-owned rollout scheduling, reward handling, policy/reference setup, HF import/export through Bridge, PEFT wrapping, optimizer setup, checkpoint ownership, and policy-to-generation weight transfer.
+Validate a Megatron-Bridge model or training API change through NeMo-RL's Megatron backend. This catches integration issues that Bridge-only tests miss: NeMo-RL-owned rollout scheduling, reward handling, policy/reference setup, HF import/export through Bridge, optimizer setup, checkpoint ownership, and policy-to-generation weight transfer.
 
 Use this as an external compatibility smoke test after the focused Bridge tests for the model/provider change pass.
 
@@ -19,9 +19,9 @@ Think in coverage levels. Start with Level 0 and add only the levels justified b
 | Level | Required when | What it proves |
 |---|---|---|
 | 0: Megatron policy GRPO smoke | Any new provider or provider config change that claims NeMo-RL compatibility | NeMo-RL can import the local Bridge provider, build a Megatron policy, initialize optimizer/scheduler state, run rollout/ref/logprob wiring, and finish a short GRPO job |
-| 1: PEFT + checkpoint | PEFT, adapter loading/saving, checkpointing, HF export, optimizer state, or resume behavior changed | NeMo-RL can apply Bridge PEFT hooks, save through NeMo-RL checkpoint scheduling, and resume without losing training state |
+| 1: LoRA/checkpoint variant | Checkpointing, HF export, optimizer state, resume behavior, or a NeMo-RL-supported PEFT path changed | NeMo-RL can save through its checkpoint schedule, resume without losing training state, and, when PEFT is enabled in that NeMo-RL checkout, apply Bridge LoRA hooks |
 | 2: Non-colocated vLLM refit | HF export, weight mapping, policy-to-generation refit, delta compression, packed transfer, or vLLM update behavior changed | Bridge-exported weights can be transferred from the Megatron policy worker into separate vLLM generation workers |
-| 3: Megatron generation backend | Bridge generation model construction, mcore generation config, KV/cache behavior, or Megatron inference path changed | NeMo-RL can use Megatron for both policy and generation rather than only vLLM generation |
+| 3: Optional Megatron generation backend | Only when the NeMo-RL checkout still supports `policy.generation.backend=megatron` and the change explicitly targets that path | NeMo-RL can use Megatron for both policy and generation rather than only vLLM generation |
 | 4: Parallelism stress | TP/PP/CP/EP, sequence parallel, MoE dispatch, pipeline stage layout, or distributed optimizer behavior changed | Provider settings remain correct under non-trivial Megatron parallel state |
 | 5: Architecture-specific e2e | VLM, audio, MoE, MTP/draft models, FP8/QAT/ModelOpt, quantized weights, or custom layers are involved | The architecture-specific runtime path is exercised, not just a text-only dense GRPO smoke |
 | 6: Learning signal | Optimizer, scheduler, loss, reward, PEFT trainability, gradient flow, or training stability changed | Metrics move in the expected direction over a short run and do not silently produce zero/NaN/unstable updates |
@@ -239,11 +239,13 @@ uv run bash tests/functional/grpo_megatron.sh \
 
 Keep the first smoke small. Increase model size or parallelism only after a small run proves the basic path works.
 
-## PEFT And Checkpoint Coverage
+## LoRA And Checkpoint Coverage
 
-Use Level 1 when the change touches PEFT, adapter state, checkpoint save/load, HF export, optimizer state, or resume behavior.
+Use Level 1 when the change touches checkpoint save/load, HF export, optimizer state, resume behavior, or a NeMo-RL PEFT path that is known to work in the checkout being tested.
 
-PEFT + checkpoint save smoke:
+NeMo-RL PEFT support is backend- and revision-dependent. Do not block a provider-only compatibility smoke solely on a known-broken or unsupported NeMo-RL PEFT path. In that case, record Level 1 PEFT as not applicable or blocked by NeMo-RL, keep the Level 0 GRPO smoke as the required downstream signal, and cover Bridge PEFT behavior with focused Bridge tests.
+
+LoRA + checkpoint save smoke, when the NeMo-RL checkout supports this path:
 
 ```bash
 uv run bash tests/functional/grpo_megatron_lora.sh
@@ -329,13 +331,13 @@ If the payload broadcast time is tiny but sparse encode/decode dominates, report
 
 ## Megatron Generation Backend
 
-Use Level 3 when the Bridge-side generation path matters:
+Use Level 3 only when the NeMo-RL checkout under test supports the Megatron generation backend and the Bridge change explicitly affects that downstream path. Do not require this for normal provider compatibility, HF import/export, vLLM-backed generation, or generic Bridge inference tests.
 
 ```bash
 uv run bash tests/functional/grpo_megatron_generation.sh
 ```
 
-This exercises `policy.generation.backend=megatron`, so it validates Megatron generation model construction and runtime behavior more directly than the default vLLM-backed GRPO functional.
+This exercises `policy.generation.backend=megatron`, so it validates NeMo-RL's Megatron generation construction and runtime behavior more directly than the default vLLM-backed GRPO functional.
 
 ## Parallelism Stress
 
@@ -472,7 +474,7 @@ A useful pass has all of the following:
 - The NeMo-RL config has `policy.megatron_cfg.enabled=true` for Megatron policy validation.
 - The run reaches the requested step count and writes `metrics.json`.
 - `tests/check_metrics.py` passes when the maintained functional includes metric assertions.
-- No exception occurs during Bridge provider setup, HF import/export, PEFT wrapping, Megatron initialization, optimizer setup, checkpoint manager setup, weight transfer, or the training step.
+- No exception occurs during Bridge provider setup, HF import/export, enabled PEFT/LoRA wrapping, Megatron initialization, optimizer setup, checkpoint manager setup, weight transfer, or the training step.
 
 Ray shutdown warnings, Python resource-tracker warnings, or post-completion process-group warnings can be acceptable if the training step completed, metrics were written, and the process exits successfully. Mention them as residual log noise.
 
@@ -505,19 +507,35 @@ If `helpers_cpp` fails to link with `No space left on device`, or if logs show `
 
 If a baseline fails before model build because of data, Ray, vLLM, package setup, or container mismatch, fix the environment first and do not report it as a Bridge provider failure.
 
-## Report Format
+## Summary Format
 
-Include:
+End every run with a short user-facing summary that answers "Did the requested deliverables pass?" before adding details. Use `Pass`, `Fail`, `Skipped`, or `Blocked` for each deliverable, and do not report an overall `Pass` unless the pass criteria for the requested coverage level were met.
 
 ```text
-Bridge repo: <commit> plus dirty files
-NeMo-RL repo: <commit> plus dirty files
-Bridge import path: <megatron.bridge.__file__>
+Result: <Pass/Fail/Blocked> - <one sentence stating what was validated>
+Requested coverage: <Level 0/1/2/3/4/5/6 and requested variants>
 Model: <policy.model_name or local model path>
-Coverage level: Level 0/1/2/3/4/5/6
-Variant: GRPO Megatron, LoRA/checkpoint, non-colocated vLLM refit, Megatron generation, parallelism stress, architecture-specific, or learning-signal
-Command: <exact command or script path>
-Result: pass/fail
-Evidence: log path, metrics path, key completion/error lines, and metric assertions
-Limitations: dummy model, skipped save/resume, text-only VLM smoke, trivial EP, known shutdown warnings, etc.
+
+Deliverables:
+- Bridge-side checks: <Pass/Fail/Skipped> - <test command or skipped reason>
+- Local Bridge import in NeMo-RL: <Pass/Fail> - <megatron.bridge.__file__ path>
+- NeMo-RL Megatron policy run: <Pass/Fail/Skipped> - <GRPO Megatron or requested variant>
+- Requested variants: <Pass/Fail/Skipped/Not requested> - <LoRA/checkpoint, non-colocated vLLM refit, Megatron generation, parallelism stress, architecture-specific, or learning-signal>
+- Metrics/log capture: <Pass/Fail> - <log path, metrics path, and metric assertion status>
+
+Evidence:
+- Bridge repo: <commit> plus dirty files
+- NeMo-RL repo: <commit> plus dirty files
+- Command: <exact command or script path>
+- Key lines: <policy.megatron_cfg.enabled=true, step completion, metrics.json creation, tests/check_metrics.py result, or the first relevant error>
+
+Limitations:
+- <dummy model, skipped save/resume, text-only VLM/audio smoke, trivial EP, no learning-signal claim, known shutdown warnings, etc.>
+
+Follow-ups:
+- <needed rerun, environment fix, provider fix, NeMo-RL issue, or "none">
 ```
+
+If the job is blocked before Bridge model/provider construction by data, Ray, vLLM, dependency, disk, container, or cluster setup, mark the overall result as `Blocked`, not `Fail`, and state that it is not evidence against the Bridge provider.
+
+If any requested deliverable was not run, mark it `Skipped` or `Not requested` with the reason. Do not leave it implicit in the limitations.

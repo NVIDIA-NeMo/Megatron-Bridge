@@ -1,12 +1,12 @@
 ---
 name: verl-e2e-testing
-description: External verl end-to-end validation workflow for Megatron-Bridge model/provider changes. Covers running a small verl Megatron backend job from a Bridge checkout, choosing LoRA/DDP/Megatron-FSDP variants, setting PYTHONPATH so verl imports the local Bridge tree, and reporting pass/fail evidence.
-when_to_use: Adding or changing a Megatron-Bridge model/provider and needing downstream verl compatibility validation; checking non-vanilla Bridge provider paths; testing PEFT/LoRA, DDP, Megatron-FSDP, or checkpoint behavior through verl; 'does this model work in verl', 'run verl e2e', 'external RL loop validation'.
+description: External verl end-to-end validation workflow for Megatron-Bridge model/provider changes. Covers running a small verl Megatron backend job from a Bridge checkout, choosing LoRA/DDP plus optional save/resume and parallelism variants, setting PYTHONPATH so verl imports the local Bridge tree, and reporting pass/fail evidence.
+when_to_use: Adding or changing a Megatron-Bridge model/provider and needing downstream verl compatibility validation; checking non-vanilla Bridge provider paths; testing PEFT/LoRA, DDP, checkpoint behavior, or explicitly requested advanced variants through verl; 'does this model work in verl', 'run verl e2e', 'external RL loop validation'.
 ---
 
 # verl E2E Testing
 
-Validate a Megatron-Bridge model addition through verl's Megatron backend. This catches integration issues that Bridge-only conversion tests miss: provider configuration, HF import through Bridge, PEFT wrapping, DDP/FSDP wrapping, optimizer setup, rollout/ref wiring, and checkpoint ownership by an external RL loop.
+Validate a Megatron-Bridge model addition through verl's Megatron backend. This catches integration issues that Bridge-only conversion tests miss: provider configuration, HF import through Bridge, PEFT wrapping, DDP wrapping, optimizer setup, rollout/ref wiring, and checkpoint ownership by an external RL loop.
 
 Use this as an external compatibility smoke test after the Bridge unit and functional tests for a new model provider are green.
 
@@ -21,7 +21,7 @@ Think in coverage levels. Start with Level 0 and add only the levels justified b
 | 0: LoRA + DDP smoke | Any new provider or provider config change that claims verl compatibility | verl can import the local Bridge provider, apply PEFT, wrap with Megatron DDP, build optimizer state, run rollout/ref/critic wiring, and finish one PPO step |
 | 1: Save/resume | PEFT, checkpointing, HF export, adapter export, optimizer state, or resume behavior changed | verl-owned checkpoint scheduling can save and reload Bridge-built model state |
 | 2: Parallelism stress | Provider finalization, mpu-derived settings, TP/PP/CP/EP, sequence parallel, or dispatcher behavior changed | provider settings remain correct under non-trivial Megatron parallel state |
-| 3: Megatron-FSDP | FSDP wrapping, sharding, checkpoint format, or distributed optimizer behavior changed | the same provider works when verl selects Megatron-FSDP instead of DDP |
+| 3: Optional Megatron-FSDP | Only when downstream explicitly asks for verl Megatron-FSDP coverage or the change directly touches that integration path | the same provider works when verl selects Megatron-FSDP instead of DDP |
 | 4: Architecture-specific e2e | VLM, MoE, MTP, QAT/ModelOpt, quantized weights, or custom layer behavior is involved | the part of the architecture not exercised by text-only GSM8K also has a targeted runtime check |
 | 5: Convergence / learning signal | Optimizer, scheduler, loss, reward, PEFT trainability, gradient flow, or model-specific training stability changed | metrics move in the expected direction over a short run and do not silently produce zero/NaN/unstable updates |
 
@@ -40,7 +40,7 @@ This is intentionally small. It exercises the Bridge-facing path in verl without
 
 Level 0 is not a convergence test. It only proves the training loop can complete one update. Use Level 5 when the question is whether the model actually learns under verl.
 
-Run a Megatron-FSDP variant only for Level 3 coverage:
+Megatron-FSDP is not part of the default validation expected for current provider compatibility work. Run it only for Level 3 coverage when FSDP is explicitly in scope:
 
 ```bash
 USE_MEGATRON_FSDP=True
@@ -282,9 +282,9 @@ bash tests/special_e2e/run_ppo_trainer_megatron.sh
 
 Keep these as follow-up runs. Do not make them the first debugging surface for a new provider.
 
-## Megatron-FSDP Variant
+## Optional Megatron-FSDP Variant
 
-Use Level 3 after Level 0 passes when FSDP behavior matters:
+Use Level 3 after Level 0 passes only when downstream explicitly requests Megatron-FSDP coverage or the Bridge change directly touches FSDP wrapping, sharding, checkpoint format, or distributed optimizer behavior:
 
 ```bash
 USE_MEGATRON_FSDP=True \
@@ -396,7 +396,7 @@ A useful pass has all of the following:
 - verl uses the local Bridge checkout through `PYTHONPATH`.
 - The verl log shows `VANILLA_MBRIDGE=False`.
 - One training step reaches completion, for example `Training Progress: 100%|1/1|`.
-- No exception occurs during Bridge provider setup, HF import, LoRA wrapping, DDP/FSDP wrapping, optimizer setup, checkpoint manager setup, or the training step.
+- No exception occurs during Bridge provider setup, HF import, LoRA wrapping, DDP wrapping, optional FSDP wrapping when enabled, optimizer setup, checkpoint manager setup, or the training step.
 
 Ray shutdown, Python resource-tracker warnings, or post-completion DataLoader worker termination can be acceptable if the training step completed, metrics for `training/global_step:1` were logged, and the process exits successfully. Mention them as residual log noise.
 
@@ -420,18 +420,35 @@ If the baseline fails before model build because of data, reward model, Ray, vLL
 
 If model download fails with `No space left on device`, move `HF_HOME`, `HF_HUB_CACHE`, and `MODEL_PATH` to a larger shared or node-local path, then rerun with the explicit local `MODEL_PATH`.
 
-## Report Format
+## Summary Format
 
-Include:
+End every run with a short user-facing summary that answers "Did the requested deliverables pass?" before adding details. Use `Pass`, `Fail`, `Skipped`, or `Blocked` for each deliverable, and do not report an overall `Pass` unless the pass criteria for the requested coverage level were met.
 
 ```text
-Bridge repo: <commit> plus dirty files
-verl repo: <commit> plus dirty files
+Result: <Pass/Fail/Blocked> - <one sentence stating what was validated>
+Requested coverage: <Level 0/1/2/3/4/5 and requested variants>
 Model: <MODEL_ID or MODEL_PATH>
-Coverage level: Level 0/1/2/3/4/5
-Variant: LoRA + DDP, optional save/resume, optional parallelism stress, optional Megatron-FSDP, optional architecture-specific run, optional convergence/learning-signal run
-Command: <exact command or script path>
-Result: pass/fail
-Evidence: log path and key completion/error lines
-Limitations: dummy model, skipped save/resume, known shutdown warnings, etc.
+
+Deliverables:
+- Bridge-side checks: <Pass/Fail/Skipped> - <test command or skipped reason>
+- Local Bridge import in verl: <Pass/Fail> - <PYTHONPATH or imported Bridge path>
+- verl Megatron backend run: <Pass/Fail/Skipped> - <LoRA + DDP or requested variant>
+- Requested variants: <Pass/Fail/Skipped/Not requested> - <save/resume, parallelism stress, Megatron-FSDP, architecture-specific run, or learning-signal/convergence>
+- Log capture: <Pass/Fail> - <log path>
+
+Evidence:
+- Bridge repo: <commit> plus dirty files
+- verl repo: <commit> plus dirty files
+- Command: <exact command or script path>
+- Key lines: <VANILLA_MBRIDGE=False, Training Progress completion, training/global_step:1, or the first relevant error>
+
+Limitations:
+- <dummy model, skipped save/resume, COMMON_EP=1, text-only data for VLM, no convergence claim, known shutdown warnings, etc.>
+
+Follow-ups:
+- <needed rerun, environment fix, provider fix, or "none">
 ```
+
+If the job is blocked before Bridge model/provider construction by data, reward model, Ray, vLLM, dependency, disk, or cluster setup, mark the overall result as `Blocked`, not `Fail`, and state that it is not evidence against the Bridge provider.
+
+If any requested deliverable was not run, mark it `Skipped` or `Not requested` with the reason. Do not leave it implicit in the limitations.
