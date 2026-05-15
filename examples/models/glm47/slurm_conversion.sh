@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # ==============================================================================
-# GLM-4.7 Conversion Round-Trip Verification (Multi-Node via Slurm)
+# GLM-4.7 Conversion Round-Trip Example (Multi-Node via Slurm)
 #
 # GLM-4.7 (MoE: 160 experts, top-8, ~358B params)
 # Requires at least 4 nodes (32 GPUs) with EP=32.
@@ -23,14 +23,10 @@
 # GLM-4.7-Flash (MLA+MoE: 64 experts, top-4, ~30B params)
 # Fits on 1 node (8 GPUs) with EP=8.
 #
-# Sweeps multiple parallelism configs (TP,PP,EP) to verify HF <-> Megatron
-# round-trip conversion. Each config runs sequentially.
-#
 # Usage:
 #   1. Fill in CONTAINER_IMAGE, CONTAINER_MOUNTS, and token exports
-#   2. Adjust PARALLELISM_CONFIGS_STR if needed
-#   3. Create logs/ if your Slurm setup requires the output directory to exist
-#   4. Submit: sbatch examples/models/glm47/slurm_conversion.sh
+#   2. Create logs/ if your Slurm setup requires the output directory to exist
+#   3. Submit: sbatch examples/models/glm47/slurm_conversion.sh
 # ==============================================================================
 
 #SBATCH --job-name=glm47-roundtrip
@@ -49,7 +45,7 @@ set -euo pipefail
 CONTAINER_IMAGE="${CONTAINER_IMAGE:-}"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 CONTAINER_MOUNTS="${CONTAINER_MOUNTS:-}"
-# CONTAINER_MOUNTS="/lustre:/lustre,/path/to/project:/opt/Megatron-Bridge"
+# CONTAINER_MOUNTS="/data:/data,/path/to/project:/opt/Megatron-Bridge"
 WORKDIR="${WORKDIR:-/opt/Megatron-Bridge}"
 
 # Tokens / Caches
@@ -62,11 +58,6 @@ WORKDIR="${WORKDIR:-/opt/Megatron-Bridge}"
 MODEL_NAME="${MODEL_NAME:-GLM-4.7}"
 HF_MODEL_ID="${HF_MODEL_ID:-zai-org/$MODEL_NAME}"
 
-# Parallelism configs: "TP,PP,EP" per entry.
-# To override without editing, set PARALLELISM_CONFIGS_STR="1,1,32 2,1,16".
-PARALLELISM_CONFIGS_STR="${PARALLELISM_CONFIGS_STR:-1,1,32 2,1,16 1,2,16}"
-read -r -a PARALLELISM_CONFIGS <<< "$PARALLELISM_CONFIGS_STR"
-
 # Environment
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
@@ -76,9 +67,9 @@ export NCCL_NVLS_ENABLE=0
 # ==============================================================================
 
 echo "======================================"
-echo "GLM-4.7 Round-Trip Conversion Sweep"
+echo "GLM-4.7 Round-Trip Conversion"
 echo "Job: ${SLURM_JOB_ID:-unknown} | Nodes: ${SLURM_JOB_NUM_NODES:-unknown}"
-echo "Parallelism configs: ${PARALLELISM_CONFIGS[*]}"
+echo "Parallelism: TP=1 PP=1 EP=32"
 echo "======================================"
 
 mkdir -p logs
@@ -96,32 +87,17 @@ fi
 echo "Warming uv cache"
 "${SRUN_CMD[@]}" -N 1 --ntasks=1 bash -c "cd \"$WORKDIR\" && uv sync"
 
-CONFIG_INDEX=0
-for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
-    IFS=',' read -r TP PP EP <<< "$CONFIG"
-    CONFIG_INDEX=$((CONFIG_INDEX + 1))
+printf -v HF_MODEL_ARG "%q" "$HF_MODEL_ID"
 
-    echo ""
-    echo "======================================"
-    echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP"
-    echo "======================================"
+CMD="uv run --no-sync python examples/conversion/hf_megatron_roundtrip_multi_gpu.py"
+CMD="$CMD --hf-model-id $HF_MODEL_ARG"
+CMD="$CMD --tp 1 --pp 1 --ep 32"
 
-    CMD="uv run --no-sync python examples/conversion/hf_megatron_roundtrip_multi_gpu.py"
-    CMD="$CMD --hf-model-id $HF_MODEL_ID"
-    CMD="$CMD --tp $TP --pp $PP --ep $EP"
+echo "Executing: $CMD"
 
-    echo "Executing: $CMD"
-
-    if "${SRUN_CMD[@]}" bash -c "cd \"$WORKDIR\" && $CMD"; then
-        echo "[OK] Config $CONFIG_INDEX: TP=$TP, PP=$PP, EP=$EP passed"
-    else
-        RUN_EXIT=$?
-        echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP failed (exit $RUN_EXIT)"
-        exit $RUN_EXIT
-    fi
-done
+"${SRUN_CMD[@]}" bash -c "cd \"$WORKDIR\" && $CMD"
 
 echo ""
 echo "======================================"
-echo "All ${#PARALLELISM_CONFIGS[@]} configs passed"
+echo "Round-trip conversion completed"
 echo "======================================"

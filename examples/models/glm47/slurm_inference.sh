@@ -41,7 +41,7 @@ set -euo pipefail
 CONTAINER_IMAGE="${CONTAINER_IMAGE:-}"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 CONTAINER_MOUNTS="${CONTAINER_MOUNTS:-}"
-# CONTAINER_MOUNTS="/lustre:/lustre,/path/to/project:/opt/Megatron-Bridge"
+# CONTAINER_MOUNTS="/data:/data,/path/to/project:/opt/Megatron-Bridge"
 WORKDIR="${WORKDIR:-/opt/Megatron-Bridge}"
 
 # Tokens / Caches
@@ -49,14 +49,11 @@ WORKDIR="${WORKDIR:-/opt/Megatron-Bridge}"
 # export HF_HOME="/path/to/shared/HF_HOME"
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 
-# Model / Parallelism
+# Model / Generation
 MODEL_NAME="${MODEL_NAME:-GLM-4.7}"
 HF_MODEL_ID="${HF_MODEL_ID:-zai-org/$MODEL_NAME}"
 PROMPT="${PROMPT:-What is artificial intelligence?}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-100}"
-TP="${TP:-1}"
-EP="${EP:-32}"
-PP="${PP:-1}"
 
 # Environment
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
@@ -69,7 +66,7 @@ export NCCL_NVLS_ENABLE=0
 echo "======================================"
 echo "GLM-4.7 Inference"
 echo "Job: ${SLURM_JOB_ID:-unknown} | Nodes: ${SLURM_JOB_NUM_NODES:-unknown}"
-echo "TP=$TP PP=$PP EP=$EP (Total GPUs: $((TP * EP * PP)))"
+echo "Parallelism: TP=1 PP=1 EP=32"
 echo "======================================"
 
 mkdir -p logs
@@ -94,7 +91,7 @@ CMD="uv run --no-sync python examples/conversion/hf_to_megatron_generate_text.py
 CMD="$CMD --hf_model_path $HF_MODEL_ARG"
 CMD="$CMD --prompt $PROMPT_ARG"
 CMD="$CMD --max_new_tokens $MAX_NEW_TOKENS"
-CMD="$CMD --tp $TP --pp $PP --ep $EP"
+CMD="$CMD --tp 1 --pp 1 --ep 32"
 
 echo "Executing: $CMD"
 

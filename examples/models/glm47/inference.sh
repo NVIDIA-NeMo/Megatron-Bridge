@@ -27,14 +27,10 @@ set -xeuo pipefail
 GLM47_FLASH_HF="${GLM47_FLASH_HF:-zai-org/GLM-4.7-Flash}"
 PROMPT="${PROMPT:-What is artificial intelligence?}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-100}"
-TP="${TP:-1}"
-PP="${PP:-1}"
-EP="${EP:-8}"
-NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 
-uv run python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" \
+uv run python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_to_megatron_generate_text.py \
     --hf_model_path "$GLM47_FLASH_HF" \
     --prompt "$PROMPT" \
     --max_new_tokens "$MAX_NEW_TOKENS" \
-    --tp "$TP" --pp "$PP" --ep "$EP"
+    --tp 1 --pp 1 --ep 8

@@ -15,8 +15,8 @@ GLM-4.7 uses the existing `glm4_moe` architecture already covered by `GLM45Bridg
 
 ## Validation Status
 
-- [x] GLM-4.7-Flash round-trip on 8 GPUs with `EP=8`: 9,701 weights matched, 0 failures.
-- [x] GLM-4.7-Flash inference on 8 GPUs with `TP=1, EP=8`: coherent output on the default prompt.
+- [x] GLM-4.7-Flash round-trip on 8 GPUs with `TP=1, PP=1, EP=8`: 9,701 weights matched, 0 failures.
+- [x] GLM-4.7-Flash inference on 8 GPUs with `TP=1, PP=1, EP=8`: coherent output on the default prompt.
 - [x] GLM-4.7 inference on 32 GPUs with `TP=1, PP=1, EP=32`: coherent output on the default prompt.
 
 ## Hardware Requirements
@@ -84,7 +84,7 @@ up with the latest developments, let alone understand their implications.
 
 ### GLM-4.7-Flash (single node)
 
-[conversion.sh](conversion.sh) runs HF -> Megatron -> HF round-trip with `EP=8` and `TP=2 EP=4` on 8 GPUs, then imports / exports a Megatron checkpoint.
+[conversion.sh](conversion.sh) runs HF -> Megatron -> HF round-trip with `TP=1, PP=1, EP=8` on 8 GPUs, then imports / exports a Megatron checkpoint.
 
 ```bash
 bash examples/models/glm47/conversion.sh
@@ -92,13 +92,13 @@ bash examples/models/glm47/conversion.sh
 
 ### GLM-4.7 (multi-node via Slurm)
 
-[slurm_conversion.sh](slurm_conversion.sh) sweeps multiple parallelism configs (`TP,PP,EP`) to verify round-trip conversion. Each config runs sequentially.
+[slurm_conversion.sh](slurm_conversion.sh) runs HF -> Megatron -> HF round-trip with `TP=1, PP=1, EP=32` on 4 nodes (32 GPUs).
 
 ```bash
 sbatch examples/models/glm47/slurm_conversion.sh
 ```
 
-Default sweep: `1,1,32`, `2,1,16`, `1,2,16` on 4 nodes (32 GPUs).
+To try a different parallelism layout, edit the command in the script directly.
 
 ## Slurm Script Configuration
 
@@ -111,6 +111,4 @@ Set the following before `sbatch`:
 | `HF_HOME` | HuggingFace cache directory containing the downloaded checkpoint |
 | `HF_TOKEN` | HuggingFace access token (for gated model access) |
 | `MODEL_NAME` | Model name for Slurm scripts; defaults to `GLM-4.7` |
-| `PARALLELISM_CONFIGS_STR` | Space-separated `TP,PP,EP` entries for `slurm_conversion.sh`; defaults to `1,1,32 2,1,16 1,2,16` |
-| `TP`, `PP`, `EP` | Parallelism for `slurm_inference.sh`; defaults to `1,1,32` |
 | `PROMPT`, `MAX_NEW_TOKENS` | Optional inference prompt and generation length overrides |

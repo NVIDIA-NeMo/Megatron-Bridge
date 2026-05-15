@@ -19,7 +19,7 @@
 # GLM-4.7 (Glm4MoeForCausalLM):  MoE, 160 experts top-8, ~358B params
 # GLM-4.7-Flash (Glm4MoeLiteForCausalLM): MLA+MoE, 64 experts top-4, ~30B params
 #
-# GLM-4.7-Flash fits on a single 8-GPU node with EP=8.
+# GLM-4.7-Flash fits on a single 8-GPU node with TP=1, PP=1, EP=8.
 # GLM-4.7 requires multi-node (see slurm_conversion.sh).
 # ==============================================================================
 
@@ -35,15 +35,10 @@ GLM47_FLASH_HF="${GLM47_FLASH_HF:-zai-org/GLM-4.7-Flash}"
 # uv run python examples/conversion/hf_megatron_roundtrip.py \
 #     --hf-model-id "$GLM47_FLASH_HF"
 
-# Multi-GPU round-trip with EP=8
+# Multi-GPU round-trip with TP=1, PP=1, EP=8
 uv run python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-    --hf-model-id "$GLM47_FLASH_HF" --ep 8
-
-# Multi-GPU round-trip with TP=2 EP=4
-uv run python -m torch.distributed.run --nproc_per_node=8 \
-    examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-    --hf-model-id "$GLM47_FLASH_HF" --tp 2 --ep 4
+    --hf-model-id "$GLM47_FLASH_HF" --tp 1 --pp 1 --ep 8
 
 # Import HF -> Megatron checkpoint
 uv run python examples/conversion/convert_checkpoints.py import \
