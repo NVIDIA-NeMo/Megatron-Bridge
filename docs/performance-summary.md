@@ -135,14 +135,6 @@ The performance data includes:
 | DGX-B200 | 64 | MXFP8 | 512 | 1 | 8192 | 0 | 1 | 1 | 1 | n/a | 64 | 6400 | 542 |
 | DGX-B200 | 64 | NVFP4 | 512 | 1 | 8192 | 0 | 2 | 1 | 1 | n/a | 64 | 5632 | 475 |
 
-#### Model: Qwen3_Next_80B_a3B
-
-| System | #-GPUs | Precision | GBS | MBS | Sequence Length | FSDP | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
-|--------|--------|-----------|-----|-----|-----------------|------|----|----|----|----|----|-----------------------|-------------------------|
-| DGX-GB300 | 64 | MXFP8 | 1024 | 4 | 4096 | 0 | 1 | 2 | 1 | 4 | 32 | 11328 | 277 |
-| DGX-GB200 | 64 | MXFP8 | 1024 | 2 | 4096 | 0 | 1 | 2 | 1 | 4 | 32 | 9856 | 241 |
-| DGX-B200 | 64 | MXFP8 | 1024 | 1 | 4096 | 0 | 1 | 1 | 1 | n/a | 64 | 4864 | 119 |
-
 [^moe-training-note]: In MoE training benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
 
 ## Archive
