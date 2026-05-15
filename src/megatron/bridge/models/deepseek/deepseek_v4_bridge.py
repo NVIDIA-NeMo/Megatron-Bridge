@@ -347,7 +347,9 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             compress_rope_params.get("rope_theta", getattr(hf_config, "compress_rope_theta", provider.rotary_base))
         )  # 160000
         provider.rotary_scaling_factor = float(compress_rope_params["factor"])  # 16
-        provider.original_max_position_embeddings = int(compress_rope_params["original_max_position_embeddings"])  # 65536
+        provider.original_max_position_embeddings = int(
+            compress_rope_params["original_max_position_embeddings"]
+        )  # 65536
         provider.beta_fast = float(compress_rope_params.get("beta_fast", 32))
         provider.beta_slow = float(compress_rope_params.get("beta_slow", 1))
         # DSv4 has no mscale in HF config; Set both equal to cancel out (like DSv3).
