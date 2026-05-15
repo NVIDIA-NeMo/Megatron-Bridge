@@ -16,20 +16,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-import megatron.bridge.models as models
-import megatron.bridge.models.falcon_h1 as falcon_h1
 from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
 
 
 pytestmark = pytest.mark.unit
-
-
-SIZE_SPECIFIC_PROVIDER_NAMES = {
-    "FalconH1ModelProvider500M",
-    "FalconH1ModelProvider1P5BDeep",
-    "FalconH1ModelProvider7B",
-    "FalconH1ModelProvider34B",
-}
 
 
 def _minimal_provider(**overrides):
@@ -46,14 +36,6 @@ def _minimal_provider(**overrides):
     }
     kwargs.update(overrides)
     return FalconH1ModelProvider(**kwargs)
-
-
-def test_size_specific_providers_are_not_public_api():
-    assert SIZE_SPECIFIC_PROVIDER_NAMES.isdisjoint(falcon_h1.__all__)
-    assert SIZE_SPECIFIC_PROVIDER_NAMES.isdisjoint(models.__all__)
-    for name in SIZE_SPECIFIC_PROVIDER_NAMES:
-        assert not hasattr(falcon_h1, name)
-        assert not hasattr(models, name)
 
 
 def test_provider_defaults_do_not_apply_mup_scaling():

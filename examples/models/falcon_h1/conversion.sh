@@ -39,6 +39,9 @@ uv run python examples/conversion/convert_checkpoints.py export \
     --hf-path "$HF_EXPORT_PATH" \
     --trust-remote-code
 
+# The config-only export path writes model config/weights, but not tokenizer
+# artifacts. Copy them so $HF_EXPORT_PATH is loadable by AutoTokenizer for
+# standalone generation checks.
 uv run python - "$HF_MODEL_ID" "$HF_EXPORT_PATH" <<'PY'
 import sys
 

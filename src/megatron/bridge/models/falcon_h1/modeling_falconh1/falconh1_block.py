@@ -364,7 +364,7 @@ class FalconH1Stack(MegatronModule):
                             rotary_pos_emb=rotary_pos_emb,
                             sequence_len_offset=sequence_len_offset,
                         )
-                    if isinstance(layer, FalconH1Layer):
+                    elif isinstance(layer, FalconH1Layer):
                         hidden_states = layer(
                             hidden_states=hidden_states,
                             attention_mask=attention_mask,
