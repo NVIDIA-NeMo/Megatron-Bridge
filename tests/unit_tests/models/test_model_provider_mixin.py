@@ -35,6 +35,10 @@ class MockMegatronModule(MegatronModule):
 class TestProvider(ModelProviderMixin):
     """A concrete implementation of ModelProviderMixin for testing."""
 
+    cpu_offloading = False
+    cpu_offloading_activations = True
+    cpu_offloading_weights = False
+
     def provide(self, pre_process=None, post_process=None) -> MockMegatronModule:
         return MockMegatronModule()
 
@@ -81,6 +85,9 @@ def test_provide_distributed_model_uses_gloo_for_cpu_initialization(provider):
 
     mock_dist.init_process_group.assert_called_once_with("gloo")
     mock_cuda.set_device.assert_not_called()
+    assert provider.cpu_offloading is False
+    assert provider.cpu_offloading_activations is False
+    assert provider.cpu_offloading_weights is False
 
 
 def test_provide_distributed_model_uses_gloo_without_visible_cuda(provider):
@@ -104,6 +111,9 @@ def test_provide_distributed_model_uses_gloo_without_visible_cuda(provider):
 
     mock_dist.init_process_group.assert_called_once_with("gloo")
     mock_cuda.set_device.assert_not_called()
+    assert provider.cpu_offloading is False
+    assert provider.cpu_offloading_activations is False
+    assert provider.cpu_offloading_weights is False
 
 
 def test_provide_distributed_model_keeps_nccl_when_cuda_available(provider):

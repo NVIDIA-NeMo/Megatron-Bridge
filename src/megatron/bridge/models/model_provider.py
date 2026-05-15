@@ -87,6 +87,17 @@ def _initialize_default_process_group(*, backend: str) -> None:
     torch.distributed.init_process_group(backend)
 
 
+def _disable_cpu_offloading_for_cpu_only_initialization(provider: object) -> None:
+    for attr in (
+        "cpu_offloading",
+        "cpu_offloading_activations",
+        "cpu_offloading_weights",
+        "cpu_offloading_double_buffering",
+    ):
+        if hasattr(provider, attr):
+            setattr(provider, attr, False)
+
+
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
     """A mixin that implements the ModelProvider pattern for Megatron Bridge.
 
@@ -191,6 +202,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
         self.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
+        if self.use_cpu_initialization or not _cuda_is_available():
+            _disable_cpu_offloading_for_cpu_only_initialization(self)
 
         if not torch.distributed.is_initialized():
             backend = _select_distributed_backend(use_cpu_initialization=use_cpu_initialization)
