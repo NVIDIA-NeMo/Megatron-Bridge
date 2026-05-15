@@ -14,6 +14,10 @@
 
 """Megatron Bridge for GLM-4.7-Flash (Glm4MoeLiteForCausalLM).
 
+This module registers only the ``glm4_moe_lite`` / Flash variant. The full
+GLM-4.7 model uses the existing ``GLM45Bridge`` registration for
+``Glm4MoeForCausalLM`` / ``glm4_moe``.
+
 GLM-4.7-Flash combines Multi-Latent Attention (MLA, inherited from DeepSeek V3)
 with GLM-style MoE routing.  The safetensors checkpoint uses per-expert weight
 naming (``experts.{i}.gate_proj``), not the fused ``gate_up_proj`` tensor used

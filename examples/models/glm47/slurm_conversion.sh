@@ -24,7 +24,7 @@
 # Fits on 1 node (8 GPUs) with EP=8.
 #
 # Usage:
-#   1. Fill in CONTAINER_IMAGE, CONTAINER_MOUNTS, and token exports
+#   1. Set CONTAINER_IMAGE and token exports; set CONTAINER_MOUNTS if needed
 #   2. Create logs/ if your Slurm setup requires the output directory to exist
 #   3. Submit: sbatch examples/models/glm47/slurm_conversion.sh
 # ==============================================================================
@@ -45,7 +45,7 @@ set -euo pipefail
 CONTAINER_IMAGE="${CONTAINER_IMAGE:-}"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 CONTAINER_MOUNTS="${CONTAINER_MOUNTS:-}"
-# CONTAINER_MOUNTS="/data:/data,/path/to/project:/opt/Megatron-Bridge"
+# CONTAINER_MOUNTS="/data:/data,/path/to/local/checkout:/opt/Megatron-Bridge"
 WORKDIR="${WORKDIR:-/opt/Megatron-Bridge}"
 
 # Tokens / Caches

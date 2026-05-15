@@ -107,7 +107,8 @@ Set the following before `sbatch`:
 | Variable | Description |
 |---|---|
 | `CONTAINER_IMAGE` | Path to Singularity / SquashFS container image |
-| `CONTAINER_MOUNTS` | Bind mounts (must include the Bridge checkout as `/opt/Megatron-Bridge`, or set `WORKDIR` to the mounted path) |
+| `CONTAINER_MOUNTS` | Optional bind mounts for data, caches, or a local checkout when debugging |
+| `WORKDIR` | Repository path inside the container; defaults to `/opt/Megatron-Bridge` |
 | `HF_HOME` | HuggingFace cache directory containing the downloaded checkpoint |
 | `HF_TOKEN` | HuggingFace access token (for gated model access) |
 | `MODEL_NAME` | Model name for Slurm scripts; defaults to `GLM-4.7` |
