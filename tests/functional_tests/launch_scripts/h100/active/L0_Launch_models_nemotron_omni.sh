@@ -21,10 +21,6 @@ export NEMOTRON_OMNI_CONVERSION_GPUS="${NEMOTRON_OMNI_CONVERSION_GPUS:-2}"
 export NEMOTRON_OMNI_CONVERSION_TP="${NEMOTRON_OMNI_CONVERSION_TP:-2}"
 export NEMOTRON_OMNI_CONVERSION_PP="${NEMOTRON_OMNI_CONVERSION_PP:-1}"
 
-if [[ -z "${NEMOTRON_OMNI_HF_MODEL:-}" ]]; then
-  echo "NEMOTRON_OMNI_HF_MODEL is not set; the Nemotron Omni conversion functional test will skip."
-fi
-
 uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
   tests/functional_tests/test_groups/models/nemotron_omni

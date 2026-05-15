@@ -23,18 +23,11 @@ import pytest
 
 _DEFAULT_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 
-if not os.environ.get("NEMOTRON_OMNI_HF_MODEL"):
-    pytest.skip(
-        "Set NEMOTRON_OMNI_HF_MODEL to a local toy checkpoint or "
-        f"to {_DEFAULT_HF_ID} to run the Nemotron Omni conversion test.",
-        allow_module_level=True,
-    )
-
 
 class TestNemotronOmniConversion:
     @pytest.mark.run_only_on("GPU")
     def test_nemotron_omni_conversion_roundtrip(self, tmp_path):
-        hf_model_id = os.environ.get("NEMOTRON_OMNI_HF_MODEL")
+        hf_model_id = os.environ.get("NEMOTRON_OMNI_HF_MODEL") or _DEFAULT_HF_ID
 
         output_dir = tmp_path / "nemotron_omni_roundtrip"
         output_dir.mkdir(exist_ok=True)
