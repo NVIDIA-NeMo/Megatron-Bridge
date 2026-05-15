@@ -123,6 +123,7 @@ no-build-isolation-package = [
 ]
 prerelease = "allow"
 override-dependencies = [
+    "av; sys_platform == 'never'",  # Not used and addresses CVE
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
