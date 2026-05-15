@@ -260,9 +260,9 @@ class Gemma4TopKRouter(TopKRouter):
             torch.ones(config.hidden_size, dtype=config.params_dtype),
         )
 
-    def routing(self, logits, padding_mask=None):
+    def routing(self, logits, padding_mask=None, input_ids=None):
         """Apply standard routing, then renormalize and scale by per_expert_scale."""
-        routing_probs, routing_map = super().routing(logits, padding_mask=padding_mask)
+        routing_probs, routing_map = super().routing(logits, padding_mask=padding_mask, input_ids=input_ids)
         # routing_probs: [num_tokens, num_experts] sparse — non-zero at selected experts
         # routing_map: [num_tokens, num_experts] boolean mask
         #
