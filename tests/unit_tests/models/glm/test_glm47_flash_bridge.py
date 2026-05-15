@@ -140,7 +140,14 @@ class TestGLM47FlashBridge:
 
         registry = bridge.mapping_registry()
         megatron_params = {mapping.megatron_param for mapping in registry.mappings}
-        hf_params = {mapping.hf_param for mapping in registry.mappings if hasattr(mapping, "hf_param")}
+        hf_params = set()
+        for mapping in registry.mappings:
+            if not hasattr(mapping, "hf_param"):
+                continue
+            if isinstance(mapping.hf_param, dict):
+                hf_params.update(mapping.hf_param.values())
+            else:
+                hf_params.add(mapping.hf_param)
 
         assert "embedding.word_embeddings.weight" in megatron_params
         assert "output_layer.weight" in megatron_params
