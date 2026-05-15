@@ -1,8 +1,7 @@
 # Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
 
-from typing import Literal, Optional
-
-from torch import Tensor
+from dataclasses import dataclass
+from typing import Literal, Optional, Tuple
 
 from megatron.core import tensor_parallel
 from megatron.core.config_logger import has_config_logger_enabled, log_config_to_disk
@@ -16,9 +15,8 @@ from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.utils import WrappedTensor, deprecate_inference_params
+from torch import Tensor
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
 
 @dataclass
 class FalconH1Config(TransformerConfig):
@@ -117,16 +115,14 @@ class FalconH1Config(TransformerConfig):
         if self.use_mamba:
             # Validate A_init_dist
             if self.A_init_dist not in ["uniform", "log-uniform"]:
-                raise ValueError(
-                    f"A_init_dist must be 'uniform' or 'log-uniform', got {self.A_init_dist}"
-                )
+                raise ValueError(f"A_init_dist must be 'uniform' or 'log-uniform', got {self.A_init_dist}")
 
             # Check that d_inner is divisible by mamba_head_dim
             if self.d_inner % self.mamba_head_dim != 0:
                 raise ValueError(
-                    f"d_inner ({self.d_inner}) must be divisible by "
-                    f"mamba_head_dim ({self.mamba_head_dim})"
+                    f"d_inner ({self.d_inner}) must be divisible by mamba_head_dim ({self.mamba_head_dim})"
                 )
+
 
 class FalconH1Model(LanguageModule):
     """Mamba language model.
@@ -180,7 +176,7 @@ class FalconH1Model(LanguageModule):
         parallel_output: bool = True,
         share_embeddings_and_output_weights: bool = False,
         # Mamba with no attention has no need for position embeddings, so none is default
-        position_embedding_type: Literal['learned_absolute', 'rope', 'none'] = 'none',
+        position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none",
         rotary_percent: float = 1.0,
         rotary_base: int = 10000,
         scatter_embedding_sequence_parallel: bool = True,
@@ -220,7 +216,7 @@ class FalconH1Model(LanguageModule):
                 tp_group=self.pg_collection.tp,
             )
 
-        if self.position_embedding_type == 'rope':
+        if self.position_embedding_type == "rope":
             self.rotary_pos_emb = RotaryEmbedding(
                 kv_channels=self.config.kv_channels,
                 rotary_percent=rotary_percent,
@@ -253,8 +249,7 @@ class FalconH1Model(LanguageModule):
                 bias=False,
                 skip_bias_add=False,
                 gather_output=not self.parallel_output,
-                skip_weight_param_allocation=self.pre_process
-                and self.share_embeddings_and_output_weights,
+                skip_weight_param_allocation=self.pre_process and self.share_embeddings_and_output_weights,
                 tp_group=self.pg_collection.tp,
             )
 
@@ -262,7 +257,7 @@ class FalconH1Model(LanguageModule):
             self.setup_embeddings_and_output_layer()
 
         for name, module in self.named_modules():
-            if hasattr(module, 'finish_init'):
+            if hasattr(module, "finish_init"):
                 quant_config = get_quant_config_or_none(name, self.config.quant_recipe)
                 module.finish_init(quant_config)
 
@@ -279,7 +274,7 @@ class FalconH1Model(LanguageModule):
         if not isinstance(input_tensor, list):
             input_tensor = [input_tensor]
 
-        assert len(input_tensor) == 1, 'input_tensor should only be length 1 for gpt/bert'
+        assert len(input_tensor) == 1, "input_tensor should only be length 1 for gpt/bert"
         self.decoder.set_input_tensor(input_tensor[0])
 
     def forward(
@@ -314,14 +309,16 @@ class FalconH1Model(LanguageModule):
         if decoder_input is not None:
             pass
         elif self.pre_process:
-            decoder_input = self.embedding(input_ids=input_ids, position_ids=position_ids) * self.config.embedding_multiplier
+            decoder_input = (
+                self.embedding(input_ids=input_ids, position_ids=position_ids) * self.config.embedding_multiplier
+            )
         else:
             # intermediate stage of pipeline
             # decoder will get hidden_states from encoder.input_tensor
             decoder_input = None
 
         rotary_pos_emb = None
-        if self.position_embedding_type == 'rope':
+        if self.position_embedding_type == "rope":
             rotary_seq_len = self.rotary_pos_emb.get_rotary_seq_len(
                 inference_context, self.decoder, decoder_input, self.config
             )
@@ -362,9 +359,8 @@ class FalconH1Model(LanguageModule):
         if in_inference_mode and inference_context.materialize_only_last_token_logits:
             hidden_states = hidden_states[-1, :, :].unsqueeze(0)
 
-        logits, _ = self.output_layer(
-            hidden_states, weight=output_weight, runtime_gather_output=runtime_gather_output
-        ) * self.config.lm_head_multiplier
+        logits, _ = self.output_layer(hidden_states, weight=output_weight, runtime_gather_output=runtime_gather_output)
+        logits = logits * self.config.lm_head_multiplier
 
         if labels is None:
             # [s b h] => [b s h]
