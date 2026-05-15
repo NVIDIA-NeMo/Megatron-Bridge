@@ -60,18 +60,3 @@ Expected correctness signal: the generated text should be a coherent English
 answer about AI systems or machine intelligence. Repeated symbols, unrelated
 fragments, or obvious gibberish indicate a conversion or Falcon H1 multiplier
 issue.
-
-## cw Validation
-
-On cw, use a one-node GPU allocation or an equivalent sbatch job, set shared
-cache locations such as `HF_HOME` and `UV_CACHE_DIR`, run `uv sync`, then run:
-
-```bash
-uv run python -m pytest tests/unit_tests/models/falcon_h1 -v
-WORKSPACE=/shared/workspace/falcon_h1 bash examples/models/falcon_h1/conversion.sh
-WORKSPACE=/shared/workspace/falcon_h1 bash examples/models/falcon_h1/inference.sh
-```
-
-For PR validation, attach the Slurm job id and log path. The inference log should
-show a coherent completion for the default prompt after both HF direct loading
-and Megatron checkpoint loading.
