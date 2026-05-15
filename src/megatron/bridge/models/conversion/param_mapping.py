@@ -915,7 +915,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             splits = None
 
         if isinstance(target_param, DTensor):
-            output_shape = [target_param.shape[0] // self.tp_size, *target_param.shape[1:]]
+            output_shape = target_param.orig_param.shape
         else:
             output_shape = target_param.shape
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
@@ -1023,8 +1023,8 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         else:
             splits = None
 
-        if isinstance(target_param, DTensor) and hf_weights.ndim != 1:
-            output_shape = [target_param.shape[0], target_param.shape[1] // self.tp_size, *target_param.shape[2:]]
+        if isinstance(target_param, DTensor):
+            output_shape = target_param.orig_param.shape
         else:
             output_shape = target_param.shape
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
@@ -2244,7 +2244,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             splits = None
 
         if isinstance(target_param, DTensor):
-            output_shape = [target_param.shape[0] // self.tp_size, *target_param.shape[1:]]
+            output_shape = target_param.orig_param.shape
         else:
             output_shape = target_param.shape
         # Scatter the concatenated shards to each rank
@@ -2482,11 +2482,12 @@ class FusedGatedExpertMapping(AutoMapping):
         if target_shape[0] % 2 != 0:
             raise ValueError(f"Expected even fused dim for {self.megatron_param}, got {target_shape}.")
 
-        gate_target_shape = (target_shape[0] // 2, target_shape[1])
-        # target_shape is the TP-sharded Megatron shape; compute the full (unsharded) shapes
-        # so that _align_expert_weight_to_shape can correctly match the raw HF weights.
-        # _gated_mapping.hf_to_megatron is responsible for TP scatter.
-        gate_full_shape = (gate_target_shape[0] * self.tp_size, target_shape[1])
+        if isinstance(target_param, DTensor):
+            gate_full_shape = (target_shape[0] // 2, target_shape[1])
+        else:
+            # target_shape is the TP-sharded Megatron shape; compute the full
+            # unsharded shape so raw HF weights can be validated before TP scatter.
+            gate_full_shape = (target_shape[0] // 2 * self.tp_size, target_shape[1])
         gate_up_full_shape = (gate_full_shape[0] * 2, target_shape[1])
 
         if expert_weight.ndim == 3 and expert_weight.shape[0] == 2:
