@@ -356,57 +356,6 @@ def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dic
 # ============================================================================
 
 
-@dataclass
-class HFAsyncSave:
-    """Tracks an in-flight HuggingFace PEFT adapter background save (rank 0 only).
-
-    Full-model HuggingFace checkpoints use ``save_generator`` on the main training
-    thread (collective-safe, shard-buffered).  When ``save_weight_format='hf'``,
-    ``cfg.peft`` is set, and ``async_save=True``, the small ``adapter_model.safetensors``
-    disk write may be offloaded to a background thread after collective export finishes.
-
-    Attributes:
-        thread: Background writer thread (rank 0 only).
-        finalize_fns: Hooks to invoke after the writer thread has joined.
-        error: Captured exception from the writer thread (if any).
-    """
-
-    thread: Optional[threading.Thread] = None
-    finalize_fns: list[Callable] = None  # type: ignore[assignment]
-    error: Optional[BaseException] = None
-
-    def __post_init__(self) -> None:
-        if self.finalize_fns is None:
-            self.finalize_fns = []
-
-    def add_finalize_fn(self, fn: Callable) -> None:
-        """Register a hook to run after the HF writer thread joins."""
-        self.finalize_fns.append(fn)
-
-    def is_done(self) -> bool:
-        """Return True if no writer is running (or it has already terminated)."""
-        return self.thread is None or not self.thread.is_alive()
-
-    def finalize(self, blocking: bool) -> bool:
-        """Join the writer thread (when ``blocking``) and run finalize hooks.
-
-        Returns True when the request has been fully consumed, False otherwise.
-        """
-        if self.thread is not None and self.thread.is_alive():
-            if not blocking:
-                return False
-            self.thread.join()
-        self.thread = None
-        if self.error is not None:
-            err = self.error
-            self.error = None
-            raise err
-        for fn in self.finalize_fns:
-            fn()
-        self.finalize_fns = []
-        return True
-
-
 def schedule_async_save(global_state: GlobalState, async_request: AsyncRequest) -> None:
     """Schedule the async save request.
 
@@ -434,10 +383,6 @@ def maybe_finalize_async_save(
                 be closed as the last action of this function.
     """
     if not ckpt_cfg.async_save:
-        # Even when async_save is disabled, an HF background writer may have
-        # been spawned (rank0-only synchronous fallback should be a no-op here),
-        # so we still drain it for safety.
-        _finalize_hf_async_save(global_state, blocking=blocking)
         return
 
     async_queue = global_state.async_calls_queue
@@ -448,20 +393,8 @@ def maybe_finalize_async_save(
     if async_queue is not None:
         async_queue.maybe_finalize_async_calls(blocking)
 
-    _finalize_hf_async_save(global_state, blocking=blocking)
-
     if terminate and async_queue is not None:
         async_queue.close()
-
-
-def _finalize_hf_async_save(global_state: GlobalState, blocking: bool) -> None:
-    """Helper: join the HF background writer thread if present."""
-    hf_async = getattr(global_state, "hf_async_save", None)
-    if hf_async is None:
-        return
-    if hf_async.finalize(blocking=blocking):
-        # Successfully drained — drop the reference so it doesn't get re-finalized.
-        global_state.hf_async_save = None
 
 
 def is_empty_async_queue(global_state: GlobalState) -> bool:
@@ -475,9 +408,6 @@ def is_empty_async_queue(global_state: GlobalState) -> bool:
     """
     async_queue = global_state.async_calls_queue
     if async_queue is not None and async_queue.get_num_unfinalized_calls() > 0:
-        return False
-    hf_async = getattr(global_state, "hf_async_save", None)
-    if hf_async is not None and not hf_async.is_done():
         return False
     return True
 
@@ -935,8 +865,8 @@ def _save_hf_weights(
     Rank 0 performs streaming safetensors I/O via ``SafeTensorsStateSource.save_generator``.
     When ``hf_distributed_save=True``, writes are spread across ranks synchronously.
 
-    The ``async_save`` flag only affects PEFT adapter exports (see :func:`_save_hf_adapter_weights`);
-    full checkpoints always complete HF weight I/O on the main thread for collective safety.
+    HF weight I/O completes on the main thread for collective safety.  This includes
+    PEFT adapter exports, which are small and share the same collective constraints.
 
     PEFT-aware: when ``cfg.peft is not None`` this delegates to
     :func:`_save_hf_adapter_weights`.
@@ -944,12 +874,8 @@ def _save_hf_weights(
     cfg = state.cfg
     ckpt_cfg = cfg.checkpoint
 
-    # Drain any previous HF background writer before starting a new save so we
-    # don't lose track of it (each save replaces ``state.hf_async_save``).
-    _finalize_hf_async_save(state, blocking=True)
-
     if cfg.peft is not None:
-        _save_hf_adapter_weights(state, model, iter_dir, ckpt_cfg.async_save)
+        _save_hf_adapter_weights(state, model, iter_dir)
         return
 
     hf_source = _resolve_hf_source(cfg)
@@ -1042,20 +968,17 @@ def _save_hf_adapter_weights(
     state: GlobalState,
     model: list[MegatronModule],
     iter_dir: str,
-    async_save: bool,
 ) -> None:
     """Save PEFT adapter weights as a HuggingFace PEFT directory under ``iter_dir``.
 
     Writes ``adapter_model.safetensors`` and ``adapter_config.json`` so the
     output can be loaded directly with ``peft.PeftModel.from_pretrained``.
 
-    The gather step (which issues collectives) always happens on the main
-    process; only the rank-0 disk write is dispatched to a background thread
-    when ``async_save=True``.
+    The adapter export is intentionally synchronous.  It may issue collectives,
+    and the resulting adapter files are small enough that a separate HF async
+    state machine is not worth the resume/finalization complexity.
     """
     cfg = state.cfg
-
-    _finalize_hf_async_save(state, blocking=True)
 
     bridge = _build_auto_bridge_for_save(cfg)
     peft_config = cfg.peft
@@ -1074,100 +997,20 @@ def _save_hf_adapter_weights(
 
     if get_rank_safe() == 0:
         logger.info(
-            "Starting HuggingFace PEFT adapter export to %s (async_save=%s, rank=%s)",
+            "Starting HuggingFace PEFT adapter export to %s (rank=%s)",
             iter_dir,
-            async_save,
             rank,
         )
 
-    # ``save_hf_adapter`` already handles distributed export internally and is
-    # collective.  When async_save is enabled we still need the collective on
-    # the main thread, so we run the synchronous save in either mode; the only
-    # difference is whether subsequent training waits for it before the next
-    # save.  To approximate async, dispatch the rank-0 write to a thread *after*
-    # all collective work has completed (i.e. the file write itself).
-    if async_save and rank == 0:
-        # Pre-compute the rank0-only state from save_hf_adapter so that we can
-        # offload the disk write to a thread.  We reimplement the small subset
-        # here to keep the collective part on the main thread.
-        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
-        from megatron.bridge.models.conversion.peft_bridge import (
-            build_adapter_config_dict,
-            convert_adapter_weights_to_peft_state,
-            infer_rank_pattern_from_adapter_weights,
-            infer_target_modules_from_adapter_weights,
-        )
-
-        raw = [
-            HFWeightTuple(w.param_name, w.weight.clone().float())
-            for w in bridge.export_adapter_weights(model, cpu=True, show_progress=False)
-        ]
-        if not raw:
-            raise RuntimeError(
-                "No PEFT adapter weights were found on the model. Cannot save HF adapter."
-            )
-        adapter_state, module_adapter_keys, target_parameters = convert_adapter_weights_to_peft_state(raw)
-        rank_pattern = infer_rank_pattern_from_adapter_weights(
-            raw, default_rank=getattr(peft_config, "dim", 32)
-        )
-        target_modules = infer_target_modules_from_adapter_weights(module_adapter_keys)
-        adapter_config_dict = build_adapter_config_dict(
-            peft_config,
-            target_modules=target_modules,
-            target_parameters=target_parameters,
-            base_model_name_or_path=base_model_name_or_path or "",
-            rank_pattern=rank_pattern,
-        )
-
-        hf_async = HFAsyncSave()
-
-        def _do_write_adapter() -> None:
-            import json as _json
-
-            from safetensors.torch import save_file
-
-            save_dir = Path(iter_dir)
-            save_dir.mkdir(parents=True, exist_ok=True)
-            with open(save_dir / "adapter_config.json", "w") as f:
-                _json.dump(adapter_config_dict, f, indent=2)
-            save_file(adapter_state, str(save_dir / "adapter_model.safetensors"))
-            logger.info(
-                "Finished HuggingFace PEFT adapter disk write (background thread) -> %s",
-                str(save_dir),
-            )
-
-        def _runner() -> None:
-            try:
-                _do_write_adapter()
-            except BaseException as exc:  # pragma: no cover - propagated on finalize
-                hf_async.error = exc
-
-        thread = threading.Thread(
-            target=_runner,
-            name="hf-adapter-save",
-            daemon=True,
-        )
-        hf_async.thread = thread
-        state.hf_async_save = hf_async
-        thread.start()
-        logger.info(
-            "HuggingFace PEFT adapter disk write dispatched to background thread -> %s",
-            iter_dir,
-        )
-    elif async_save:
-        # Non-zero ranks still need to participate in the collective generator
-        for _ in bridge.export_adapter_weights(model, cpu=True, show_progress=False):
-            pass
-    else:
-        bridge.save_hf_adapter(
-            model,
-            iter_dir,
-            peft_config=peft_config,
-            base_model_name_or_path=base_model_name_or_path,
-            show_progress=False,
-        )
-        if get_rank_safe() == 0:
-            logger.info("Finished HuggingFace PEFT adapter save (synchronous) -> %s", iter_dir)
+    bridge.save_hf_adapter(
+        model,
+        iter_dir,
+        peft_config=peft_config,
+        base_model_name_or_path=base_model_name_or_path,
+        show_progress=False,
+    )
+    if get_rank_safe() == 0:
+        logger.info("Finished HuggingFace PEFT adapter save -> %s", iter_dir)
 
     if is_distributed:
         torch.distributed.barrier()

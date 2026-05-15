@@ -147,7 +147,6 @@ class GlobalState:
         self._ft_state: Optional[FaultToleranceState] = None
         self._straggler_timer: Optional[StragglerDetector] = None
         self._async_calls_queue: Optional[Any] = None
-        self._hf_async_save: Optional[Any] = None
         self._nvrx_straggler_manager: Optional[NVRxStragglerDetectionManager] = None
         self._nvrx_straggler_created: bool = False
         self._energy_monitor: Optional[Any] = None
@@ -445,21 +444,6 @@ class GlobalState:
     def async_calls_queue(self) -> Optional[Any]:
         """The AsyncCallsQueue instance for handling asynchronous checkpoint saves."""
         return self._async_calls_queue
-
-    @property
-    def hf_async_save(self) -> Optional[Any]:
-        """Tracker for in-flight HuggingFace safetensors background writes.
-
-        Populated by ``save_checkpoint`` when ``save_weight_format='hf'`` and
-        ``async_save=True`` to keep a reference to the rank-0 background thread
-        (and any errors it produced) so that ``maybe_finalize_async_save`` can
-        wait on it before the next save / training exit.
-        """
-        return self._hf_async_save
-
-    @hf_async_save.setter
-    def hf_async_save(self, value: Optional[Any]) -> None:
-        self._hf_async_save = value
 
     @property
     def nvrx_straggler_manager(self) -> Optional[NVRxStragglerDetectionManager]:

@@ -32,9 +32,10 @@ from megatron.bridge.training.checkpointing import (
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
-    _resolve_iteration_dir_for_hf,
     _load_base_checkpoint,
     _load_model_state_dict,
+    _resolve_iteration_dir_for_hf,
+    _save_hf_adapter_weights,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
     create_checkpoint_manager,
@@ -762,6 +763,39 @@ class TestSaveCheckpoint:
         assert "model" in saved_state_dict
         assert saved_state_dict["model"] == {"param1": "value1"}
         mock_save_hf_weights.assert_called_once_with(state, save_checkpoint_fixtures["mock_model"], f"{iter_dir}/hf")
+
+    @patch("megatron.bridge.training.checkpointing._resolve_hf_source")
+    @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.is_available")
+    def test_save_hf_adapter_weights_uses_synchronous_bridge_save(
+        self,
+        mock_dist_available,
+        mock_dist_init,
+        mock_build_bridge,
+        mock_resolve_source,
+        save_checkpoint_fixtures,
+    ):
+        """PEFT HF adapter export should not create a separate HF async save path."""
+        mock_dist_available.return_value = False
+        mock_dist_init.return_value = False
+        mock_resolve_source.return_value = "/hf/base"
+
+        bridge = Mock()
+        mock_build_bridge.return_value = bridge
+
+        state = save_checkpoint_fixtures["mock_state"]
+        state.cfg.peft = Mock()
+
+        _save_hf_adapter_weights(state, save_checkpoint_fixtures["mock_model"], "/checkpoints/iter_0001000/hf")
+
+        bridge.save_hf_adapter.assert_called_once_with(
+            save_checkpoint_fixtures["mock_model"],
+            "/checkpoints/iter_0001000/hf",
+            peft_config=state.cfg.peft,
+            base_model_name_or_path="/hf/base",
+            show_progress=False,
+        )
 
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     def test_save_checkpoint_invalid_non_persistent_type(self, mock_print_rank_0, save_checkpoint_fixtures):
