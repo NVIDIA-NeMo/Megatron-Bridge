@@ -23,13 +23,12 @@ import pytest
 
 _DEFAULT_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("NEMOTRON_OMNI_HF_MODEL"),
-    reason=(
+if not os.environ.get("NEMOTRON_OMNI_HF_MODEL"):
+    pytest.skip(
         "Set NEMOTRON_OMNI_HF_MODEL to a local toy checkpoint or "
-        f"to {_DEFAULT_HF_ID} to run the Nemotron Omni conversion test."
-    ),
-)
+        f"to {_DEFAULT_HF_ID} to run the Nemotron Omni conversion test.",
+        allow_module_level=True,
+    )
 
 
 class TestNemotronOmniConversion:
