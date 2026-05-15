@@ -942,7 +942,7 @@ class MegatronPeftBridge:
             if packed_expert:
                 raise NotImplementedError(
                     "Reloading HuggingFace PEFT adapters saved in packed grouped-expert layout is not "
-                    "supported. Resume from a Megatron ``megatron_state/`` checkpoint instead."
+                    "supported. Resume from a complete Megatron checkpoint instead."
                 )
 
             for base_suffix in base_suffixes:

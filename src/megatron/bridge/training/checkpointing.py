@@ -232,8 +232,8 @@ def _get_checkpoint_format(checkpoint_path: str) -> str:
         # Assume fsdp_dtensor for PyTorch DCP format
         return "fsdp_dtensor"
 
-    # HuggingFace format (raw HF repo OR an iter_* directory written by Bridge with
-    # ``save_weight_format='hf'``).  Adapter-only directories also qualify.
+    # HuggingFace format (raw HF repo OR the extra ``iter_*/hf`` export written
+    # by Bridge with ``save_weight_format='hf'``).  Adapter-only directories also qualify.
     if is_hf_checkpoint_dir(checkpoint_path):
         print_rank_0(f" Auto-detected checkpoint format as 'hf' from {checkpoint_path}.")
         return "hf"
