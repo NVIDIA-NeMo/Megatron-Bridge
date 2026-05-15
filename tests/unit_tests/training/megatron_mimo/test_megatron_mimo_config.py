@@ -118,6 +118,7 @@ def test_colocated_validator_accepts_equal_dp_tp_pp1_cp1():
     cfg.finalize(world_size=2)
     assert cfg.total_world_size == 2
 
+
 def test_colocated_validator_accepts_language_pp_gt_1():
     """Language PP>1 in colocated is accepted by the colocated language-PP adapter.
 
@@ -265,8 +266,8 @@ def test_colocated_validator_rejects_language_cp_with_multiple_modality_modules(
         cfg.finalize(world_size=2)
 
 
-def test_colocated_validator_rejects_combined_language_pp_and_cp():
-    """CP+PP is rejected until MCore language-PP CP label/loss-mask sharding lands."""
+def test_colocated_validator_accepts_combined_language_pp_and_cp():
+    """Language PP>1 and CP>1 can compose when the colocated rank ranges match."""
     module_parallelisms = {
         "vision": ModuleParallelismConfig(
             tensor_model_parallel_size=1,
@@ -283,8 +284,8 @@ def test_colocated_validator_rejects_combined_language_pp_and_cp():
         ),
     }
     cfg = MegatronMIMOParallelismConfig(module_parallelisms=module_parallelisms)
-    with pytest.raises(ValueError, match="does not support combining language PP>1 with language CP>1"):
-        cfg.finalize(world_size=4)
+    cfg.finalize(world_size=4)
+    assert cfg.total_world_size == 4
 
 
 def test_colocated_validator_rejects_etp_gt_1():

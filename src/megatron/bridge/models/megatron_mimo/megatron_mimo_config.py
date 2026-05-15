@@ -250,9 +250,9 @@ class MegatronMIMOParallelismConfig:
         Colocated supports heterogeneous encoder and LLM TP/DP factorizations
         on the same physical rank range. Language PP>1 is supported by the
         colocated language-PP adapter; encoder PP must remain 1. Language CP>1
-        is supported without language PP, while encoder CP must remain 1. EP
-        and ETP also remain at 1 on every module. Non-colocated layouts are
-        unaffected.
+        is supported, including composition with language PP>1, while encoder
+        CP must remain 1. EP and ETP also remain at 1 on every module.
+        Non-colocated layouts are unaffected.
 
         Hybrid placement (some modules overlap, others disjoint) is rejected
         upstream by ``_validate_module_placement``.
@@ -268,14 +268,6 @@ class MegatronMIMOParallelismConfig:
         language_pp = language.pipeline_model_parallel_size
         language_cp = language.context_parallel_size
         modality_names = [name for name in self.module_parallelisms if name != MIMO_LANGUAGE_MODULE_KEY]
-
-        if language_pp > 1 and language_cp > 1:
-            raise ValueError(
-                f"Colocated MegatronMIMO does not support combining language PP>1 with language CP>1 yet. "
-                f"Got language pipeline_model_parallel_size={language_pp} and "
-                f"context_parallel_size={language_cp}. CP+PP support requires the MCore language-PP "
-                f"label/loss-mask sharding path."
-            )
 
         if (language_pp > 1 or language_cp > 1) and len(modality_names) != 1:
             raise ValueError(

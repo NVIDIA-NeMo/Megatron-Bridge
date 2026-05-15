@@ -1121,7 +1121,7 @@ class TestMegatronMIMOProvider:
             megatron_mimo_parallelism_config=parallelism_config,
         )
 
-    @pytest.mark.parametrize(("language_pp", "language_cp"), [(2, 1), (1, 2)], ids=["pp", "cp"])
+    @pytest.mark.parametrize(("language_pp", "language_cp"), [(2, 1), (1, 2), (2, 2)], ids=["pp", "cp", "pp_cp"])
     def test_colocated_language_pp_or_cp_spec_validator_accepts_single_encoder_per_token_loss(
         self, language_pp, language_cp
     ):
@@ -1129,8 +1129,10 @@ class TestMegatronMIMOProvider:
         provider = self._make_colocated_language_pp_provider(language_pp=language_pp, language_cp=language_cp)
         provider._validate_colocated_language_pp_or_cp_spec_constraints()
 
-    @pytest.mark.parametrize(("language_pp", "language_cp"), [(2, 1), (1, 2)], ids=["pp", "cp"])
-    def test_colocated_language_pp_or_cp_spec_validator_rejects_multiple_encoder_towers(self, language_pp, language_cp):
+    @pytest.mark.parametrize(("language_pp", "language_cp"), [(2, 1), (1, 2), (2, 2)], ids=["pp", "cp", "pp_cp"])
+    def test_colocated_language_pp_or_cp_spec_validator_rejects_multiple_encoder_towers(
+        self, language_pp, language_cp
+    ):
         """Nested multi-encoder modality inputs are rejected for PP/CP v1."""
         provider = self._make_colocated_language_pp_provider(
             language_pp=language_pp,
@@ -1140,7 +1142,7 @@ class TestMegatronMIMOProvider:
         with pytest.raises(ValueError, match="exactly one encoder tower"):
             provider._validate_colocated_language_pp_or_cp_spec_constraints()
 
-    @pytest.mark.parametrize(("language_pp", "language_cp"), [(2, 1), (1, 2)], ids=["pp", "cp"])
+    @pytest.mark.parametrize(("language_pp", "language_cp"), [(2, 1), (1, 2), (2, 2)], ids=["pp", "cp", "pp_cp"])
     @pytest.mark.parametrize(
         ("provider_kwargs", "match"),
         [
