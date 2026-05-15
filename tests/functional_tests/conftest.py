@@ -36,7 +36,9 @@ def ensure_test_data(tmp_path_factory):
 
         try:
             # Download assets to data_path
-            from tests.functional_tests.data.download_unit_tests_dataset import get_oldest_release_and_assets
+            from tests.functional_tests.test_groups.data.download_unit_tests_dataset import (
+                get_oldest_release_and_assets,
+            )
 
             get_oldest_release_and_assets(assets_dir=str(data_path))
 
@@ -125,13 +127,15 @@ def shared_tmp_dir():
         yield tmp_dir
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(autouse=True)
 def reset_cuda():
     """Reset CUDA state between tests."""
     yield
 
-    # Clear CUDA cache after test
     if torch.cuda.is_available():
+        import gc
+
+        gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 

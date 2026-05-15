@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 
 try:
@@ -28,6 +29,8 @@ except ImportError:
 
 if HAS_NEMO_RUN:
     from megatron.bridge.recipes.run_plugins import (
+        CometPlugin,
+        CometPluginScriptArgs,
         FaultTolerancePlugin,
         FaultTolerancePluginScriptArgs,
         NsysPlugin,
@@ -48,7 +51,7 @@ def create_test_config(**kwargs):
     from megatron.core.distributed import DistributedDataParallelConfig
     from megatron.core.optimizer import OptimizerConfig
 
-    from megatron.bridge.models.llama import Llama3ModelProvider8B
+    from megatron.bridge.models.gpt_provider import GPTModelProvider
     from megatron.bridge.training.config import (
         CheckpointConfig,
         ConfigContainer,
@@ -58,6 +61,7 @@ def create_test_config(**kwargs):
         SchedulerConfig,
         TokenizerConfig,
         TrainingConfig,
+        ValidationConfig,
     )
 
     # Extract model-specific args
@@ -77,8 +81,31 @@ def create_test_config(**kwargs):
     min_lr = kwargs.pop("min_lr", 1e-5)
 
     # Create model config with apply_rope_fusion=False
-    model_cfg = Llama3ModelProvider8B(
+    model_cfg = GPTModelProvider(
+        normalization="RMSNorm",
+        activation_func=F.silu,
+        gated_linear_unit=True,
+        position_embedding_type="rope",
+        add_bias_linear=False,
+        attention_dropout=0.0,
+        hidden_dropout=0.0,
+        share_embeddings_and_output_weights=False,
+        bias_activation_fusion=True,
+        masked_softmax_fusion=True,
+        persist_layer_norm=True,
+        bias_dropout_fusion=True,
         apply_rope_fusion=False,  # Disable to avoid TE/Apex requirement
+        num_query_groups=8,
+        init_method_std=0.01,
+        layernorm_epsilon=1e-05,
+        rotary_percent=1.0,
+        rotary_base=500_000,
+        seq_length=8192,
+        num_layers=32,
+        hidden_size=4096,
+        ffn_hidden_size=14336,
+        num_attention_heads=32,
+        cross_entropy_fusion_impl="te",
         tensor_model_parallel_size=tensor_model_parallel_size,
         pipeline_model_parallel_size=pipeline_model_parallel_size,
         pipeline_dtype=pipeline_dtype,
@@ -92,14 +119,16 @@ def create_test_config(**kwargs):
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=2000,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             exit_signal_handler=False,
             exit_signal_handler_for_dataloader=False,
             manual_gc=False,
             manual_gc_interval=100,
+        ),
+        validation=ValidationConfig(
+            eval_interval=2000,
+            eval_iters=32,
         ),
         optimizer=OptimizerConfig(
             optimizer="adam",
@@ -110,7 +139,7 @@ def create_test_config(**kwargs):
             fp16=False,
             adam_beta1=0.9,
             adam_beta2=0.95,
-            adam_eps=1e-5,
+            adam_eps=1e-8,
             use_distributed_optimizer=True,
             clip_grad=1.0,
         ),
@@ -612,6 +641,162 @@ class TestWandbPlugin:
         assert "--wandb-name=custom_run" in task.args
         # Verify hydra-style args are NOT present
         assert "logger.wandb_project=custom_project" not in task.args
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+class TestCometPlugin:
+    """Test CometPlugin functionality.
+
+    Mirrors the TestWandbPlugin pattern. CometPlugin gates its setup on the
+    COMET_API_KEY environment variable being set; when present it forwards the
+    key into the executor's env_vars and emits the documented Hydra-style CLI
+    overrides (`logger.comet_project`, `logger.comet_workspace`,
+    `logger.comet_experiment_name`).
+    """
+
+    def test_initialization(self):
+        """Plugin initialization stores all fields."""
+        plugin = CometPlugin(
+            project="test_project",
+            name="test_run",
+            workspace="test_workspace",
+        )
+        assert plugin.project == "test_project"
+        assert plugin.name == "test_run"
+        assert plugin.workspace == "test_workspace"
+        assert plugin.script_args_converter_fn is None
+
+    def test_initialization_optional_fields_default_to_none(self):
+        """name and workspace are optional and default to None."""
+        plugin = CometPlugin(project="only_project")
+        assert plugin.project == "only_project"
+        assert plugin.name is None
+        assert plugin.workspace is None
+
+    @patch.dict(os.environ, {"COMET_API_KEY": "test_api_key"})
+    def test_setup_with_script_task(self):
+        """All three fields produce the documented Hydra overrides."""
+        plugin = CometPlugin(
+            project="script_project",
+            workspace="script_workspace",
+            name="script_run",
+        )
+
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        plugin.setup(task, executor)
+
+        # API key is forwarded into the executor's env_vars.
+        assert executor.env_vars["COMET_API_KEY"] == "test_api_key"
+
+        # CLI overrides are appended in the documented order.
+        expected_args = [
+            "logger.comet_project=script_project",
+            "logger.comet_workspace=script_workspace",
+            "logger.comet_experiment_name=script_run",
+        ]
+        for arg in expected_args:
+            assert arg in task.args
+
+    @patch.dict(os.environ, {"COMET_API_KEY": "test_api_key"})
+    def test_setup_with_only_required_field(self):
+        """When name and workspace are None, only the project override is emitted."""
+        plugin = CometPlugin(project="bare_project")
+
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        plugin.setup(task, executor)
+
+        assert "logger.comet_project=bare_project" in task.args
+        # Optional overrides must NOT be emitted when their values are None.
+        assert not any(arg.startswith("logger.comet_workspace=") for arg in task.args)
+        assert not any(arg.startswith("logger.comet_experiment_name=") for arg in task.args)
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_setup_without_api_key_warns_and_does_not_propagate(self):
+        """Missing COMET_API_KEY ⇒ warning + no env_var + no CLI overrides."""
+        plugin = CometPlugin(project="test_project", name="run", workspace="ws")
+
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        import megatron.bridge.recipes.run_plugins
+
+        with patch.object(megatron.bridge.recipes.run_plugins.logger, "warning") as mock_warning:
+            plugin.setup(task, executor)
+
+        mock_warning.assert_called_once()
+        warning_msg = mock_warning.call_args[0][0]
+        assert "COMET_API_KEY environment variable is not set" in warning_msg
+
+        # Neither env var nor CLI overrides should be set.
+        assert "COMET_API_KEY" not in executor.env_vars
+        assert task.args == []
+
+    @patch.dict(os.environ, {"COMET_API_KEY": "test_api_key"})
+    def test_setup_raises_for_non_script_task(self):
+        """API key set + non-Script task ⇒ NotImplementedError (documented contract)."""
+        plugin = CometPlugin(project="test_project")
+
+        # A run.Partial task is not supported — only run.Script is.
+        task = MagicMock(spec=run.Partial)
+
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        with pytest.raises(NotImplementedError, match="CometPlugin is only supported for run.Script tasks"):
+            plugin.setup(task, executor)
+
+        # The API key is still forwarded to the executor BEFORE the type check
+        # — confirm that contract too so a future refactor doesn't drop it.
+        assert executor.env_vars["COMET_API_KEY"] == "test_api_key"
+
+    @patch.dict(os.environ, {"COMET_API_KEY": "test_api_key"})
+    def test_custom_script_args_converter(self):
+        """A custom converter replaces the default Hydra-style overrides entirely."""
+
+        def custom_converter(args: CometPluginScriptArgs):
+            result = ["--comet"]
+            result.append(f"--comet-project={args.project}")
+            if args.workspace:
+                result.append(f"--comet-workspace={args.workspace}")
+            if args.name:
+                result.append(f"--comet-name={args.name}")
+            return result
+
+        plugin = CometPlugin(
+            project="custom_project",
+            workspace="custom_workspace",
+            name="custom_run",
+            script_args_converter_fn=custom_converter,
+        )
+
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        plugin.setup(task, executor)
+
+        # Custom converter output is present.
+        assert "--comet" in task.args
+        assert "--comet-project=custom_project" in task.args
+        assert "--comet-workspace=custom_workspace" in task.args
+        assert "--comet-name=custom_run" in task.args
+        # Hydra-style overrides are NOT emitted when a custom converter is supplied.
+        assert "logger.comet_project=custom_project" not in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")

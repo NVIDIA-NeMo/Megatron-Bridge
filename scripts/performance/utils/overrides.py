@@ -19,8 +19,11 @@ from typing import List, Optional
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
+from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
@@ -60,20 +63,20 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
 
     if hasattr(recipe.model, "use_transformer_engine_op_fuser") and recipe.model.use_transformer_engine_op_fuser:
         recipe.model.use_transformer_engine_op_fuser = False
-    recipe.model.apply_rope_fusion = True
-    recipe.model.cross_entropy_fusion_impl = "te"
+    if hasattr(recipe.model, "apply_rope_fusion"):
+        recipe.model.apply_rope_fusion = True
+    if hasattr(recipe.model, "cross_entropy_fusion_impl"):
+        recipe.model.cross_entropy_fusion_impl = "te"
 
     # TODO: This needs to be adjusted when overlapping HybridEP with computation or
     # the number of SMs for HybridEP is reduced.
-    if recipe.model.moe_flex_dispatcher_backend == "hybridep":
+    if hasattr(recipe.model, "moe_flex_dispatcher_backend") and recipe.model.moe_flex_dispatcher_backend == "hybridep":
         recipe.model.moe_hybridep_num_sms = 32
 
     return recipe
 
 
-def _set_megatron_fsdp_overrides(
-    recipe: ConfigContainer, use_megatron_fsdp: bool = False, nccl_ub: bool = False
-) -> ConfigContainer:
+def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: bool = False) -> ConfigContainer:
     """Set the Megatron FSDP overrides."""
     if not use_megatron_fsdp:
         return
@@ -83,10 +86,6 @@ def _set_megatron_fsdp_overrides(
     recipe.ddp.keep_fp8_transpose_cache = False
     # average_in_collective is not supported with Megatron FSDP
     recipe.ddp.average_in_collective = False
-
-    if nccl_ub:
-        recipe.ddp.nccl_ub = True
-        recipe.ddp.fsdp_manual_registration = True
 
     recipe.model.init_model_with_meta_device = True
     recipe.model.gradient_accumulation_fusion = True
@@ -117,14 +116,17 @@ def _set_cuda_graph_overrides(
         else:  # this condition ensures we unset in case of user override to "none" from default
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
-        if cuda_graph_impl == "transformer_engine":
-            valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
-            assert all(scope in valid_te_scopes for scope in cuda_graph_scope), (
-                f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: {valid_te_scopes}"
-            )
-
     if cuda_graph_scope is not None:
         recipe.model.cuda_graph_scope = cuda_graph_scope
+
+    # Validate post-override state so we check the effective recipe value,
+    # not the raw CLI input (which may be None when the recipe default is used).
+    if recipe.model.cuda_graph_impl == "transformer_engine":
+        valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
+        effective_scope = getattr(recipe.model, "cuda_graph_scope", None)
+        assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
+            f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
+        )
 
     return recipe
 
@@ -136,7 +138,7 @@ def _set_recompute_overrides(
     recompute_modules: Optional[List[str]] = None,
 ) -> ConfigContainer:
     """Set the recompute and CPU offloading overrides."""
-    if cpu_offloading_num_layers is not None:
+    if cpu_offloading_num_layers is not None and cpu_offloading_num_layers > 0:
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
@@ -147,6 +149,10 @@ def _set_recompute_overrides(
     if recompute_modules is not None:
         recipe.model.recompute_modules = recompute_modules
         recipe.model.recompute_granularity = "selective"
+    # No else: if the caller has no recompute configuration to apply, leave
+    # whatever the recipe already has in place. Callers that want to *disable*
+    # recompute should set granularity=None / modules=[] at the recipe or via
+    # Hydra overrides explicitly.
 
     return recipe
 
@@ -210,7 +216,8 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     cfg.train.global_batch_size = settings.global_batch_size
     cfg.train.micro_batch_size = settings.micro_batch_size
 
-    _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp, nccl_ub=settings.nccl_ub)
+    _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp)
+    _set_nccl_ub_overrides(cfg, nccl_ub=settings.nccl_ub)
     _set_cuda_graph_overrides(
         cfg,
         cuda_graph_impl=settings.cuda_graph_impl,
@@ -223,7 +230,16 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cpu_offloading_num_layers=settings.cpu_offloading_num_layers,
         recompute_num_layers=settings.recompute_num_layers,
     )
+    if settings.te_precision_config_file is not None:
+        from megatron.core.quantization.utils import load_quantization_recipe
+
+        cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
+
+    if settings.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)
+    elif hasattr(cfg.model, "moe_token_dispatcher_type"):
+        cfg.model.moe_token_dispatcher_type = "alltoall"
 
     return cfg
 
@@ -248,9 +264,24 @@ def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> Conf
     return recipe
 
 
+def _set_nccl_ub_overrides(recipe: ConfigContainer, nccl_ub: bool = False) -> ConfigContainer:
+    """Set the NCCL UB overrides."""
+    if nccl_ub:
+        recipe.ddp.nccl_ub = True
+        # The current version of NCCL does not support the AVG operation for reductions with symmetric kernels.
+        # To enable symmetric kernels, average_in_collective must be disabled.
+        recipe.ddp.average_in_collective = False
+
+    if recipe.ddp.use_megatron_fsdp and recipe.ddp.nccl_ub:
+        recipe.ddp.fsdp_manual_registration = True
+
+    return recipe
+
+
 def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Set the user overrides."""
-    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp, nccl_ub=args.nccl_ub)
+    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp)
+    _set_nccl_ub_overrides(recipe, nccl_ub=args.nccl_ub)
     _set_cuda_graph_overrides(
         recipe,
         cuda_graph_impl=args.cuda_graph_impl,
@@ -325,7 +356,12 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             # Override the dataset configuration for LLM models.
             # For vlm models, use the default dataset configuration in model recipe,
             # becuase preprocess of dataset is different for each vlm model.
-            recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
+            recipe.dataset = create_mock_dataset_config(
+                seq_length=args.seq_length or recipe.model.seq_length,
+                num_workers=recipe.dataset.num_workers,
+                pin_memory=recipe.dataset.pin_memory,
+                persistent_workers=recipe.dataset.persistent_workers,
+            )
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
@@ -333,6 +369,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             dataset_paths=args.dataset_paths,
             seq_length=recipe.dataset.sequence_length,
             index_mapping_dir=args.index_mapping_dir,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
         )
     elif args.data == "squad":
         if not args.dataset_root:
@@ -344,6 +383,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             seq_length=args.seq_length or recipe.model.seq_length,
             packed=False,
             pad_seq_to_mult=pad_seq_to_mult,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
@@ -355,6 +397,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             seq_length=args.seq_length or recipe.model.seq_length,
             packed=True,
             pad_seq_to_mult=pad_seq_to_mult,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
         )
         if recipe.model.cuda_graph_impl != "none":
             recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
@@ -384,9 +429,36 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         pp_size is not None or vp_size != -1 or pipeline_model_parallel_layout is not None
     ):
         set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
+    if model_recipe_name == "kimi_k2":
+        if pp_size is not None or vp_size != -1:
+            if not isinstance(recipe.model.pipeline_model_parallel_layout, str):
+                try:
+                    layout = _get_kimi_k2_pipeline_layout(
+                        recipe.model.pipeline_model_parallel_size, recipe.model.virtual_pipeline_model_parallel_size
+                    )
+                    recipe.model.pipeline_model_parallel_layout = layout
+                except ValueError:
+                    logger.warning(
+                        f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout for Kimi-K2. Using default layout."
+                    )
+                    recipe.model.pipeline_model_parallel_layout = None
+        if pipeline_model_parallel_layout is not None:
+            recipe.model.pipeline_model_parallel_layout = pipeline_model_parallel_layout
 
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
+
+    if args.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
+    elif hasattr(recipe.model, "moe_token_dispatcher_type"):
+        recipe.model.moe_token_dispatcher_type = "alltoall"
+
+    pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
+    if args.task == "lora" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
+        recipe.dist.use_tp_pp_dp_mapping = True
+
+    if args.deterministic:
+        apply_determinism_overrides(recipe)
 
     return recipe
 
@@ -407,7 +479,7 @@ def set_post_overrides(
         model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
     )
 
-    if compute_dtype == "bf16":
+    if compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True
 
     tp = recipe.model.tensor_model_parallel_size
@@ -419,13 +491,18 @@ def set_post_overrides(
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
     if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
-            recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+        # Do not enable overlap_param_gather_with_optimizer_step for muon optimizer.
+        if recipe.optimizer.optimizer != "dist_muon":
+            recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+            if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
+                recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     default_num_gpus = workload_base_config.num_gpus
     if user_gbs is None:
-        if num_gpus != default_num_gpus:
+        # Only auto-rescale if the recipe's current GBS still equals the
+        # workload default — i.e., no one (Hydra or earlier step) has already
+        # expressed an intent. Otherwise Hydra-set GBS gets silently stomped.
+        if recipe.train.global_batch_size == workload_base_config.global_batch_size and num_gpus != default_num_gpus:
             new_gbs = int(workload_base_config.gbs_scaling_factor * num_gpus)
             recipe.train.global_batch_size = new_gbs
             logger.info(

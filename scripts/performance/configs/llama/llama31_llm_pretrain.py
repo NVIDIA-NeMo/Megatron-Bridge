@@ -43,6 +43,18 @@ def set_llama31_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
+def disable_param_gather_overlap(cfg: ConfigContainer) -> None:
+    """
+    Disable parameter-gather overlap to reduce training peak memory and avoid OOM.
+    Note: This is a workaround and should be removed once the issue is fixed.
+    See: https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/3714
+    """
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.comm_overlap.overlap_param_gather = False
+    cfg.comm_overlap.align_param_gather = False
+
+
 def llama31_405b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
@@ -62,7 +74,8 @@ def llama31_405b_pretrain_config_gb300(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -95,7 +108,45 @@ def llama31_405b_pretrain_config_gb200(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_llama31_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    if cfg.ddp.use_megatron_fsdp:
+        cfg.ddp.fsdp_double_buffer = True
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
+        cfg.ddp.num_distributed_optimizer_instances = 2
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
+    if precision == "nvfp4" and config_variant.lower() == "v2":
+        disable_param_gather_overlap(cfg)
+
+    return cfg
+
+
+def llama31_405b_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama31_405b",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    if precision == "bf16":
+        comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
+    else:
+        comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
+
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -129,7 +180,8 @@ def llama31_405b_pretrain_config_b300(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -158,7 +210,8 @@ def llama31_405b_pretrain_config_b200(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -187,7 +240,8 @@ def llama31_405b_pretrain_config_h100(
     else:
         comm_overlap_cfg = userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192
 
-    cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 

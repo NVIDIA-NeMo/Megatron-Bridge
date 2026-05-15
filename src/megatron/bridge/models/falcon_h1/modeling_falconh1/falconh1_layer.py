@@ -1,26 +1,141 @@
 # Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
 
-import math
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
-from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config
-from megatron.core.transformer.module import MegatronModule
-from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.transformer.enums import AttnMaskType
-from megatron.core.transformer.identity_op import IdentityOp
-from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.inference.contexts import BaseInferenceContext
-from megatron.core.utils import log_single_rank
-import logging
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.ssm.mamba_mixer import MambaMixer, MambaMixerSubmodules
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
+from megatron.core.transformer.enums import AttnMaskType
+from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP
+from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.spec_utils import ModuleSpec, build_module
+from megatron.core.utils import log_single_rank
+
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config
+
 
 logger = logging.getLogger(__name__)
+
+
+class FalconH1MambaMixer(MambaMixer):
+    """Mamba mixer with Falcon H1 projection multipliers."""
+
+    def _scale_zxbc_dt(self, zxbc_dt: torch.Tensor, *, use_context_parallel_dims: bool) -> torch.Tensor:
+        multipliers = self.config.ssm_multipliers
+        if tuple(multipliers) == (1.0, 1.0, 1.0, 1.0, 1.0):
+            return zxbc_dt
+
+        if use_context_parallel_dims:
+            d_inner = self.cp.d_inner_local_tpcp
+            d_group_state = self.cp.ngroups_local_tpcp * self.d_state
+            nheads = self.cp.nheads_local_tpcp
+        else:
+            d_inner = self.d_inner_local_tp
+            d_group_state = self.ngroups_local_tp * self.d_state
+            nheads = self.nheads_local_tp
+
+        pieces = [
+            zxbc_dt.new_full((d_inner,), multipliers[0]),
+            zxbc_dt.new_full((d_inner,), multipliers[1]),
+            zxbc_dt.new_full((d_group_state,), multipliers[2]),
+            zxbc_dt.new_full((d_group_state,), multipliers[3]),
+            zxbc_dt.new_full((nheads,), multipliers[4]),
+        ]
+        scale = torch.cat(pieces).view(*([1] * (zxbc_dt.dim() - 1)), -1)
+        return zxbc_dt * scale
+
+    def _ssm_training(self, zxBCdt: torch.Tensor, packed_seq_params: Optional[PackedSeqParams] = None) -> torch.Tensor:
+        return super()._ssm_training(
+            self._scale_zxbc_dt(zxBCdt, use_context_parallel_dims=True),
+            packed_seq_params,
+        )
+
+    def _ssm_prefill(self, zxBCdt: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        return super()._ssm_prefill(
+            self._scale_zxbc_dt(zxBCdt, use_context_parallel_dims=True),
+            *args,
+            **kwargs,
+        )
+
+    def _ssm_decode(self, zxBCdt: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        return super()._ssm_decode(
+            self._scale_zxbc_dt(zxBCdt, use_context_parallel_dims=False),
+            *args,
+            **kwargs,
+        )
+
+
+class FalconH1SelfAttention(SelfAttention):
+    """Self attention with Falcon H1 key projection multiplier."""
+
+    def get_query_key_value_tensors(
+        self,
+        hidden_states: torch.Tensor,
+        key_value_states: torch.Tensor | None = None,
+        output_gate: bool = False,
+        split_qkv: bool = True,
+    ):
+        qkv = super().get_query_key_value_tensors(
+            hidden_states,
+            key_value_states,
+            output_gate=output_gate,
+            split_qkv=split_qkv,
+        )
+
+        key_multiplier = self.config.key_multiplier
+        if key_multiplier == 1.0:
+            return qkv
+
+        if not split_qkv:
+            raise ValueError("Falcon H1 key_multiplier requires split QKV tensors")
+
+        if output_gate:
+            query, key, value, gate = qkv
+            return query, key * key_multiplier, value, gate
+
+        query, key, value = qkv
+        return query, key * key_multiplier, value
+
+
+class FalconH1MLP(MLP):
+    """MLP with Falcon H1 gate and down projection multipliers."""
+
+    def forward(self, hidden_states: torch.Tensor, per_token_scale: torch.Tensor | None = None):
+        if per_token_scale is not None:
+            raise ValueError("Falcon H1 MLP does not support per_token_scale")
+        if self.config.use_te_activation_func or self.config.bias_activation_fusion:
+            raise ValueError("Falcon H1 MLP multipliers require the unfused activation path")
+
+        intermediate_parallel, bias_parallel = self.linear_fc1(hidden_states)
+        if bias_parallel is not None:
+            intermediate_parallel = intermediate_parallel + bias_parallel
+
+        if self.config.gated_linear_unit:
+            gate, linear = torch.chunk(intermediate_parallel, 2, dim=-1)
+            if (clamp_value := self.config.activation_func_clamp_value) is not None:
+                gate = gate.clamp(min=None, max=clamp_value)
+                linear = linear.clamp(min=-clamp_value, max=clamp_value)
+            gate_multiplier, down_multiplier = self.config.mlp_multipliers
+            intermediate_parallel = self.config.activation_func(gate * gate_multiplier) * (
+                linear + self.config.glu_linear_offset
+            )
+        else:
+            down_multiplier = self.config.mlp_multipliers[1]
+            intermediate_parallel = self.activation_func(intermediate_parallel)
+
+        output, output_bias = self.linear_fc2(intermediate_parallel)
+        output = output * down_multiplier
+        if output_bias is not None:
+            output_bias = output_bias * down_multiplier
+
+        return output, output_bias
+
 
 @dataclass
 class FalconH1Submodules:
@@ -28,6 +143,7 @@ class FalconH1Submodules:
     Configuration class for specifying the submodules of FalconH1 hybrid mixer.
     Uses composition of existing Megatron components.
     """
+
     # Pre-norm layer (not needed with TELayerNormColumnParallelLinear)
     norm: Union[ModuleSpec, type] = IdentityOp
 
@@ -163,8 +279,8 @@ class FalconH1Layer(MegatronModule):
                 linear_qkv=submodules.self_attention.submodules.linear_qkv,
                 core_attention=submodules.self_attention.submodules.core_attention,
                 linear_proj=submodules.self_attention.submodules.linear_proj,
-                q_layernorm=getattr(submodules.self_attention.submodules, 'q_layernorm', None),
-                k_layernorm=getattr(submodules.self_attention.submodules, 'k_layernorm', None),
+                q_layernorm=getattr(submodules.self_attention.submodules, "q_layernorm", None),
+                k_layernorm=getattr(submodules.self_attention.submodules, "k_layernorm", None),
             )
 
             self.self_attention = build_module(
@@ -181,20 +297,18 @@ class FalconH1Layer(MegatronModule):
         # Bias-Dropout-Add fusion for Mamba/Attention
         self.falconh1_bda = build_module(submodules.falconh1_bda)
 
-        #MLP Component
+        # MLP Component
         if self.use_mlp:
             additional_mlp_kwargs = {}
 
-            from megatron.core.transformer.moe.experts import GroupedMLP, SequentialMLP, TEGroupedMLP
+            from megatron.core.transformer.moe.experts import SequentialMLP, TEGroupedMLP
             from megatron.core.transformer.moe.moe_layer import MoELayer
 
             if isinstance(submodules.mlp, ModuleSpec):
-                if submodules.mlp.module in (MoELayer, GroupedMLP, TEGroupedMLP, SequentialMLP):
+                if submodules.mlp.module in (MoELayer, TEGroupedMLP, SequentialMLP):
                     additional_mlp_kwargs["pg_collection"] = pg_collection
-                elif submodules.mlp.module == MLP:
-                    assert hasattr(
-                        pg_collection, 'tp'
-                    ), 'TP process group is required for MLP in FalconH1Layer'
+                elif isinstance(submodules.mlp.module, type) and issubclass(submodules.mlp.module, MLP):
+                    assert hasattr(pg_collection, "tp"), "TP process group is required for MLP in FalconH1Layer"
                     additional_mlp_kwargs["tp_group"] = pg_collection.tp
                 else:
                     log_single_rank(
@@ -204,14 +318,10 @@ class FalconH1Layer(MegatronModule):
                     )
 
             # Build the MLP module
-            self.mlp = build_module(
-                submodules.mlp,
-                config=self.config,
-                **additional_mlp_kwargs
-            )
+            self.mlp = build_module(submodules.mlp, config=self.config, **additional_mlp_kwargs)
 
             # Set layer number if MLP supports it
-            if hasattr(self.mlp, 'set_layer_number'):
+            if hasattr(self.mlp, "set_layer_number"):
                 self.mlp.set_layer_number(self.layer_number)
 
             # Build MLP bias-dropout-add
@@ -280,7 +390,7 @@ class FalconH1Layer(MegatronModule):
                 packed_seq_params=packed_seq_params,
                 sequence_len_offset=sequence_len_offset,
             )
-            attn_output = self.config.attention_out_multiplier
+            attn_output = attn_output * self.config.attention_out_multiplier
             outputs.append(attn_output)
             if attn_bias is not None:
                 biases.append(attn_bias)
@@ -302,25 +412,24 @@ class FalconH1Layer(MegatronModule):
         out_with_bias = (combined_output, combined_bias)
 
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.falconh1_bda(
-                training=self.training,
-                fused=self.config.bias_dropout_fusion
-            )(out_with_bias, residual, self.hidden_dropout)
+            hidden_states = self.falconh1_bda(training=self.training, fused=self.config.bias_dropout_fusion)(
+                out_with_bias, residual, self.hidden_dropout
+            )
 
         if self.use_mlp and self.mlp is not None:
-            #residual for MLP
+            # residual for MLP
             mlp_residual = hidden_states
             if self.residual_in_fp32:
                 mlp_residual = mlp_residual.to(torch.float32)
 
-            mlp_output_with_bias = self.mlp(hidden_states)
+            mlp_input = hidden_states.to(dtype=self.config.params_dtype)
+            mlp_output_with_bias = self.mlp(mlp_input)
 
             # MLP bias-dropout-add
             with self.bias_dropout_add_exec_handler():
-                hidden_states = self.mlp_bda(
-                    training=self.training,
-                    fused=self.config.bias_dropout_fusion
-                )(mlp_output_with_bias, mlp_residual, self.hidden_dropout)
+                hidden_states = self.mlp_bda(training=self.training, fused=self.config.bias_dropout_fusion)(
+                    mlp_output_with_bias, mlp_residual, self.hidden_dropout
+                )
 
         return hidden_states
 
@@ -329,10 +438,8 @@ class FalconH1Layer(MegatronModule):
         caches = {}
 
         if self.use_mamba and self.mamba_mixer is not None:
-            mamba_cache = self.mamba_mixer.allocate_inference_cache(
-                batch_size, max_seqlen, dtype
-            )
-            caches['mamba'] = mamba_cache
+            mamba_cache = self.mamba_mixer.allocate_inference_cache(batch_size, max_seqlen, dtype)
+            caches["mamba"] = mamba_cache
 
         if self.use_attention and self.self_attention is not None:
             # TODO: Implement attention cache allocation if needed
@@ -340,37 +447,31 @@ class FalconH1Layer(MegatronModule):
 
         return caches
 
-    def sharded_state_dict(self, prefix='', sharded_offsets=(), metadata=None):
+    def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
         """Provide a sharded state dictionary for distributed checkpointing."""
         from megatron.core.transformer.utils import sharded_state_dict_default
 
         sharded_state_dict = {}
-        #norm
-        if hasattr(self, 'norm') and self.norm is not None:
-            norm_sd = sharded_state_dict_default(
-                self.norm, f'{prefix}norm.', sharded_offsets, metadata
-            )
+        # norm
+        if hasattr(self, "norm") and self.norm is not None:
+            norm_sd = sharded_state_dict_default(self.norm, f"{prefix}norm.", sharded_offsets, metadata)
             sharded_state_dict.update(norm_sd)
 
         # SSM component
-        if self.use_mamba and hasattr(self, 'mamba_mixer') and self.mamba_mixer is not None:
-            mamba_sd = sharded_state_dict_default(
-                self.mamba_mixer, f'{prefix}mamba_mixer.', sharded_offsets, metadata
-            )
+        if self.use_mamba and hasattr(self, "mamba_mixer") and self.mamba_mixer is not None:
+            mamba_sd = sharded_state_dict_default(self.mamba_mixer, f"{prefix}mamba_mixer.", sharded_offsets, metadata)
             sharded_state_dict.update(mamba_sd)
 
         # attention component
-        if self.use_attention and hasattr(self, 'self_attention') and self.self_attention is not None:
+        if self.use_attention and hasattr(self, "self_attention") and self.self_attention is not None:
             attn_sd = sharded_state_dict_default(
-                self.self_attention, f'{prefix}self_attention.', sharded_offsets, metadata
+                self.self_attention, f"{prefix}self_attention.", sharded_offsets, metadata
             )
             sharded_state_dict.update(attn_sd)
 
         # MLP component
-        if self.use_mlp and hasattr(self, 'mlp') and self.mlp is not None:
-            mlp_sd = sharded_state_dict_default(
-                self.mlp, f'{prefix}mlp.', sharded_offsets, metadata
-            )
+        if self.use_mlp and hasattr(self, "mlp") and self.mlp is not None:
+            mlp_sd = sharded_state_dict_default(self.mlp, f"{prefix}mlp.", sharded_offsets, metadata)
             sharded_state_dict.update(mlp_sd)
 
         return sharded_state_dict

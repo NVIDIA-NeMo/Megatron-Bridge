@@ -29,10 +29,12 @@ class TestSetupModelAndTokenizer:
     @patch("megatron.bridge.inference.vlm.base.AutoProcessor")
     @patch("megatron.bridge.inference.vlm.base.AutoBridge")
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint")
+    @patch("megatron.bridge.inference.vlm.base.is_safe_repo", return_value=False)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
     def test_setup_model_and_tokenizer_basic(
         self,
         mock_print_rank_0,
+        mock_is_safe_repo,
         mock_get_hf_model_id,
         mock_auto_bridge,
         mock_auto_processor,
@@ -75,7 +77,11 @@ class TestSetupModelAndTokenizer:
         # Assertions
         mock_print_rank_0.assert_called()
         mock_get_hf_model_id.assert_called_once_with("/path/to/checkpoint")
-        mock_auto_bridge.from_hf_pretrained.assert_called_once_with("Qwen/Qwen2.5-VL-3B")
+        mock_auto_bridge.from_hf_pretrained.assert_called_once()
+        fb_args, fb_kwargs = mock_auto_bridge.from_hf_pretrained.call_args
+        assert fb_args[0] == "Qwen/Qwen2.5-VL-3B"
+        if "trust_remote_code" in fb_kwargs:
+            assert fb_kwargs["trust_remote_code"] is False
         mock_bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
 
         # Verify model provider configuration
@@ -107,14 +113,22 @@ class TestSetupModelAndTokenizer:
         assert result_model == mock_wrapped_model
         assert result_processor == mock_processor
 
+    @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint", return_value=None)
+    @patch("megatron.bridge.inference.vlm.base.print_rank_0")
+    def test_setup_model_raises_without_hf_id(self, mock_print_rank_0, mock_get_hf_model_id):
+        with pytest.raises(ValueError, match="Could not determine HuggingFace model id"):
+            setup_model_and_tokenizer(megatron_model_path="/path/to/checkpoint")
+
     @patch("megatron.bridge.inference.vlm.base.setup_inference_wrapper")
     @patch("megatron.bridge.inference.vlm.base.AutoProcessor")
     @patch("megatron.bridge.inference.vlm.base.AutoBridge")
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint")
+    @patch("megatron.bridge.inference.vlm.base.is_safe_repo", return_value=False)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
     def test_setup_model_and_tokenizer_with_existing_pad_token(
         self,
         mock_print_rank_0,
+        mock_is_safe_repo,
         mock_get_hf_model_id,
         mock_auto_bridge,
         mock_auto_processor,
@@ -149,10 +163,12 @@ class TestSetupModelAndTokenizer:
     @patch("megatron.bridge.inference.vlm.base.AutoProcessor")
     @patch("megatron.bridge.inference.vlm.base.AutoBridge")
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint")
+    @patch("megatron.bridge.inference.vlm.base.is_safe_repo", return_value=False)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
     def test_setup_model_and_tokenizer_grad_scale_func_set_to_none(
         self,
         mock_print_rank_0,
+        mock_is_safe_repo,
         mock_get_hf_model_id,
         mock_auto_bridge,
         mock_auto_processor,
@@ -189,10 +205,12 @@ class TestSetupModelAndTokenizer:
     @patch("megatron.bridge.inference.vlm.base.AutoProcessor")
     @patch("megatron.bridge.inference.vlm.base.AutoBridge")
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint")
+    @patch("megatron.bridge.inference.vlm.base.is_safe_repo", return_value=False)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
     def test_setup_model_and_tokenizer_default_params(
         self,
         mock_print_rank_0,
+        mock_is_safe_repo,
         mock_get_hf_model_id,
         mock_auto_bridge,
         mock_auto_processor,
@@ -236,38 +254,65 @@ class TestSetupInferenceWrapper:
 
     @patch("megatron.bridge.inference.vlm.base.QwenVLInferenceWrapper")
     def test_setup_inference_wrapper_qwen25(self, mock_wrapper_cls, mock_tokenizer):
-        mock_model = MagicMock()
+        """Test Qwen25 setup with module.language_model.decoder structure."""
+
+        # Create mock objects with nested structure
+        class MockObject:
+            pass
+
+        mock_decoder = MagicMock()
+
+        # Build the nested structure: model.module.language_model.decoder
+        mock_language_model = MockObject()
+        mock_language_model.decoder = mock_decoder
+        mock_language_model.vocab_size = 151936
+
+        mock_module = MockObject()
+        mock_module.language_model = mock_language_model
+
+        mock_model = MockObject()
+        mock_model.module = mock_module
         mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
         mock_model.config.hidden_size = 1024
+        mock_model.cuda = MagicMock(return_value=mock_model)
+        mock_model.to = MagicMock(return_value=mock_model)
+        mock_model.eval = MagicMock()
 
         _wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
 
+        # Verify decoder was exposed at module level
+        assert hasattr(mock_module, "decoder")
+        assert mock_module.decoder is mock_decoder
+
         mock_wrapper_cls.assert_called_once()
-        # Check InferenceWrapperConfig was created with correct hidden_size
-        # Args are positional: (model, InferenceWrapperConfig)
-        call_args = mock_wrapper_cls.call_args
-        inference_config = call_args[0][1]  # Second positional argument
-        assert inference_config.hidden_size == 1024
 
     @patch("megatron.bridge.inference.vlm.base.QwenVLInferenceWrapper")
     def test_setup_inference_wrapper_qwen3(self, mock_wrapper_cls, mock_tokenizer):
-        mock_model = MagicMock()
+        # Create a simple object without module attribute to avoid infinite loop
+        class MockObject:
+            pass
+
+        mock_model = MockObject()
         mock_model.config = MagicMock(spec=Qwen3VLModelProvider)
-        mock_model.config.language_transformer_config = MagicMock()
-        mock_model.config.language_transformer_config.hidden_size = 2048
+        mock_model.config.hidden_size = 2048
+        mock_model.cuda = MagicMock(return_value=mock_model)
+        mock_model.to = MagicMock(return_value=mock_model)
+        mock_model.eval = MagicMock()
 
         _wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
 
         mock_wrapper_cls.assert_called_once()
-        # Check InferenceWrapperConfig was created with correct hidden_size
-        # Args are positional: (model, InferenceWrapperConfig)
-        call_args = mock_wrapper_cls.call_args
-        inference_config = call_args[0][1]  # Second positional argument
-        assert inference_config.hidden_size == 2048
 
     def test_setup_inference_wrapper_invalid(self, mock_tokenizer):
-        mock_model = MagicMock()
+        # Create a simple object without module attribute to avoid infinite loop
+        class MockObject:
+            pass
+
+        mock_model = MockObject()
         mock_model.config = MagicMock()  # Not Qwen config
+        mock_model.cuda = MagicMock(return_value=mock_model)
+        mock_model.to = MagicMock(return_value=mock_model)
+        mock_model.eval = MagicMock()
 
         with pytest.raises(ValueError):
             setup_inference_wrapper(mock_model, mock_tokenizer)
@@ -313,13 +358,13 @@ class TestGenerate:
 
     @patch("megatron.bridge.inference.vlm.base.VLMEngine")
     @patch("megatron.bridge.inference.vlm.base.QwenVLTextGenerationController")
-    def test_generate_with_inference_params(
+    def test_generate_with_sampling_params(
         self, mock_qwen_controller, mock_engine, mock_tokenizer, mock_image_processor
     ):
-        from megatron.core.inference.common_inference_params import CommonInferenceParams
+        from megatron.core.inference.sampling_params import SamplingParams
 
         mock_wrapper = MagicMock(spec=QwenVLInferenceWrapper)
-        inference_params = CommonInferenceParams(num_tokens_to_generate=100)
+        sampling_params = SamplingParams(num_tokens_to_generate=100)
 
         generate(
             wrapped_model=mock_wrapper,
@@ -328,10 +373,10 @@ class TestGenerate:
             prompts=["test"],
             images=["image"],
             processor="processor",
-            inference_params=inference_params,
+            sampling_params=sampling_params,
         )
 
         # Verify generate was called with the provided inference params
         mock_engine.return_value.generate.assert_called()
         call_args = mock_engine.return_value.generate.call_args
-        assert call_args[1]["common_inference_params"] == inference_params
+        assert call_args[1]["sampling_params"] == sampling_params

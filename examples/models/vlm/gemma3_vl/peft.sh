@@ -16,6 +16,10 @@
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
 
+# Before training, make sure to set WANDB_API_KEY or disable wandb logging
+# export WANDB_API_KEY=<your_wandb_api_key>
+# export WANDB_MODE=disabled
+
 # Common configurations
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/gemma-3-4b-it
 MODEL_NAME=gemma3_vl_4b
@@ -23,7 +27,7 @@ DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
 TRAIN_ITERS=50
 GLOBAL_BATCH_SIZE=32
-MICRO_BATCH_SIZE=1
+MICRO_BATCH_SIZE=2
 EVAL_ITERS=10
 LR=0.0002
 MIN_LR=0.00002
@@ -39,7 +43,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
     
     echo "Running LoRA finetuning with TP=$TP, PP=$PP"
     uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-        --recipe ${MODEL_NAME}_finetune_config \
+        --recipe ${MODEL_NAME}_peft_config \
         --step_func vlm_step \
         --peft_scheme lora \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \

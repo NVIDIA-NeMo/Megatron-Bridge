@@ -16,15 +16,16 @@ from typing import List, Optional, Union
 
 import torch
 import torch.distributed
-from megatron.core.inference.common_inference_params import CommonInferenceParams
+from megatron.core.inference.contexts import StaticInferenceContext
 from megatron.core.inference.model_inference_wrappers.abstract_model_inference_wrapper import (
     AbstractModelInferenceWrapper,
 )
-from megatron.core.inference.model_inference_wrappers.inference_wrapper_config import InferenceWrapperConfig
+from megatron.core.inference.sampling_params import SamplingParams
 from PIL.Image import Image
 from transformers import AutoProcessor
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.models.qwen_vl import Qwen3VLModelProvider, Qwen25VLModelProvider
 from megatron.bridge.training.utils.checkpoint_utils import get_hf_model_id_from_checkpoint
 from megatron.bridge.utils.common_utils import print_rank_0
@@ -41,29 +42,35 @@ def setup_model_and_tokenizer(
     params_dtype: torch.dtype = torch.bfloat16,
     inference_batch_times_seqlen_threshold: int = 1000,
     inference_max_seq_length: int = 8192,
+    inference_max_batch_size: int = 4,
 ):
     """Set up model and tokenizer from a Megatron checkpoint.
 
     Args:
-        megatron_model_path: Path to the Megatron checkpoint.
+        megatron_model_path: Path to the Megatron checkpoint. HuggingFace model id for
+            tokenizer/processor is read from checkpoint metadata.
         tp: Tensor model parallel size.
         pp: Pipeline model parallel size.
         params_dtype: Data type for model parameters.
         inference_batch_times_seqlen_threshold: Threshold for inference batching.
         inference_max_seq_length: Maximum sequence length for inference (prompt + generated tokens).
-
+        inference_max_batch_size: Maximum batch size for inference.
     Returns:
         A tuple of (inference_wrapped_model, processor).
     """
     # Load from Megatron checkpoint
     print_rank_0(f"Loading Megatron model from: {megatron_model_path}")
 
-    # Get HF model path from checkpoint metadata
-    hf_model_path = get_hf_model_id_from_checkpoint(megatron_model_path)
+    hf_pretrained_id = get_hf_model_id_from_checkpoint(megatron_model_path)
+    if not hf_pretrained_id:
+        raise ValueError("Could not determine HuggingFace model id from checkpoint metadata for tokenizer/processor.")
 
     # We still need HF config for tokenizer, but we'll load the model from Megatron checkpoint
     # Create bridge from HF config only (no weights)
-    bridge = AutoBridge.from_hf_pretrained(hf_model_path)
+    bridge = AutoBridge.from_hf_pretrained(
+        hf_pretrained_id,
+        trust_remote_code=is_safe_repo(trust_remote_code=False, hf_path=hf_pretrained_id),
+    )
 
     # Initialize model parallel before loading
     model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -95,7 +102,8 @@ def setup_model_and_tokenizer(
 
     # Initialize tokenizer and processor
     processor = AutoProcessor.from_pretrained(
-        hf_model_path,
+        hf_pretrained_id,
+        trust_remote_code=is_safe_repo(trust_remote_code=False, hf_path=hf_pretrained_id),
     )
     if processor.tokenizer.pad_token is None:
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
@@ -107,9 +115,22 @@ def setup_model_and_tokenizer(
         params_dtype=torch.bfloat16,
         inference_batch_times_seqlen_threshold=1000,
         inference_max_seq_length=inference_max_seq_length,
+        inference_max_batch_size=inference_max_batch_size,
     )
 
     return inference_wrapped_model, processor
+
+
+def _expose_decoder_from_language_model(model):
+    """Recursively get language_model from model and expose decoder, handling wrapped modules."""
+    current = model
+    while hasattr(current, "module"):
+        current = current.module
+
+    if hasattr(current, "language_model"):
+        language_model = current.language_model
+        current.decoder = language_model.decoder
+        current.vocab_size = language_model.vocab_size
 
 
 def setup_inference_wrapper(
@@ -118,6 +139,7 @@ def setup_inference_wrapper(
     params_dtype: torch.dtype = torch.bfloat16,
     inference_batch_times_seqlen_threshold: int = 1000,
     inference_max_seq_length: int = 8192,
+    inference_max_batch_size: int = 4,
 ):
     """Set up inference wrapper for the model"""
     config = model.config
@@ -126,24 +148,17 @@ def setup_inference_wrapper(
     mcore_model = mcore_model.to(params_dtype)
     mcore_model.eval()
 
-    # if isinstance(config, vlm.Qwen2VLConfig):
     if isinstance(config, Qwen25VLModelProvider) or isinstance(config, Qwen3VLModelProvider):
         wrapper_cls = QwenVLInferenceWrapper
-        if isinstance(config, Qwen25VLModelProvider):
-            hidden_size = config.hidden_size
-        else:
-            hidden_size = config.language_transformer_config.hidden_size
+        _expose_decoder_from_language_model(mcore_model)
     else:
         raise ValueError(f"Unknown model config: {config}")
 
     inference_wrapped_model = wrapper_cls(
         mcore_model,
-        InferenceWrapperConfig(
-            hidden_size=hidden_size,
-            params_dtype=params_dtype,
-            inference_batch_times_seqlen_threshold=inference_batch_times_seqlen_threshold,
-            padded_vocab_size=tokenizer.vocab_size,
-            inference_max_seq_length=inference_max_seq_length,
+        inference_context=StaticInferenceContext(
+            max_batch_size=inference_max_batch_size,
+            max_sequence_length=inference_max_seq_length,
         ),
     )
 
@@ -157,9 +172,8 @@ def generate(
     prompts: List[str],
     images: List[Union[Image, List[Image]]],
     processor=None,
-    max_batch_size: int = 4,
     random_seed: Optional[int] = None,
-    inference_params: Optional[CommonInferenceParams] = None,
+    sampling_params: Optional[SamplingParams] = None,
 ) -> dict:
     """
     Generates text using a NeMo VLM model.
@@ -169,10 +183,9 @@ def generate(
         image_processor: image processor for the input image,
         prompts (list[str]): The list of prompts to generate text for.
         images (list): The list of images to generate text for.
-        max_batch_size (int, optional): The maximum batch size. Defaults to 4.
         random_seed (Optional[int], optional): The random seed. Defaults to None.
-        inference_params (Optional["CommonInferenceParams"], optional): The inference parameters defined in
-            Mcore's CommonInferenceParams. Defaults to None.
+        sampling_params (Optional["SamplingParams"], optional): The sampling parameters defined in
+            Mcore's SamplingParams. Defaults to None.
 
     Returns:
         list[Union["InferenceRequest", str]]: A list of generated text,
@@ -193,15 +206,16 @@ def generate(
             image_processor=image_processor,
         )
     mcore_engine = VLMEngine(
-        text_generation_controller=text_generation_controller, max_batch_size=max_batch_size, random_seed=random_seed
+        text_generation_controller=text_generation_controller, random_seed=random_seed, legacy=True
     )
 
-    common_inference_params = inference_params or CommonInferenceParams(num_tokens_to_generate=50)
+    if sampling_params is None:
+        sampling_params = SamplingParams(num_tokens_to_generate=50)
 
     results = mcore_engine.generate(
         prompts=prompts,
         images=images,
-        common_inference_params=common_inference_params,
+        sampling_params=sampling_params,
     )
 
     return results

@@ -37,11 +37,12 @@ from nemo_run import Plugin, Script, SlurmExecutor
 
 
 try:
-    from utils.utils import get_workload_base_config
+    from utils.utils import WorkloadBaseConfig, get_workload_base_config
 except (ImportError, ModuleNotFoundError):
-    from .utils.utils import get_workload_base_config
+    from .utils.utils import WorkloadBaseConfig, get_workload_base_config
 
 logger: logging.Logger = logging.getLogger(__name__)
+NSYS_SQLITE_EXPORT_ARG = "--export=sqlite"
 
 
 def _format_list_for_override(values: List | int):
@@ -52,6 +53,21 @@ def _format_list_for_override(values: List | int):
     if isinstance(values, int):
         values = [values]
     return "[" + ",".join(str(v) for v in values) + "]"
+
+
+def _ensure_sqlite_nsys_export(nsys_extra_args: list[str]) -> list[str]:
+    """Add SQLite export unless nsys export args already request it."""
+    for index, arg in enumerate(nsys_extra_args):
+        export_values = None
+        if arg == "--export" and index + 1 < len(nsys_extra_args):
+            export_values = nsys_extra_args[index + 1]
+        elif arg.startswith("--export="):
+            export_values = arg.split("=", 1)[1]
+
+        if export_values is not None and "sqlite" in export_values.split(","):
+            return nsys_extra_args
+
+    return nsys_extra_args + [NSYS_SQLITE_EXPORT_ARG]
 
 
 @dataclass
@@ -93,6 +109,7 @@ class NsysPlugin(Plugin):
             'nvtx' and 'cuda' events will be traced.
         record_shapes (bool): Whether to record tensor shapes. Default is False.
         nsys_gpu_metrics (bool): Whether to enable GPU metrics collection. Default is False.
+        export_sqlite (bool): Whether to export a SQLite report after profiling finishes. Default is False.
         script_args_converter_fn (Optional[Callable]): A function that takes NsysPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
@@ -110,6 +127,7 @@ class NsysPlugin(Plugin):
     nsys_extra_args: Optional[list[str]] = None
     record_shapes: bool = False
     nsys_gpu_metrics: bool = False
+    export_sqlite: bool = False
     script_args_converter_fn: Optional[Callable[[NsysPluginScriptArgs], List[str]]] = None
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
@@ -128,6 +146,9 @@ class NsysPlugin(Plugin):
             # Combine user args with existing args (user args first for precedence)
             launcher.nsys_extra_args = self.nsys_extra_args + existing_extra_args
             logger.info(f"Combined nsys_extra_args: {launcher.nsys_extra_args}")
+
+        if self.export_sqlite:
+            launcher.nsys_extra_args = _ensure_sqlite_nsys_export(launcher.nsys_extra_args or [])
 
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
@@ -188,6 +209,8 @@ class PerfEnvPlugin(Plugin):
             in order to not block DP level communication overlap.
         enable_vboost (bool): Whether to steer more power towards tensor cores via
             `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
+        lock_gpu_freq (int | None): Lock GPU graphics clock to the specified frequency in MHz via
+            `sudo nvidia-smi -lgc <freq>`. Runs once per node before training. None to disable.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
         tp_size (int): Tensor parallelism size. Default is 1.
@@ -200,6 +223,7 @@ class PerfEnvPlugin(Plugin):
 
     enable_layernorm_sm_margin: bool = True
     enable_vboost: bool = False
+    lock_gpu_freq: int | None = None
     enable_manual_gc: bool = True
     manual_gc_interval: int = 100
     tp_size: int | None = None
@@ -214,6 +238,14 @@ class PerfEnvPlugin(Plugin):
     compute_dtype: str
     train_task: str
     config_variant: str = "v1"
+    deterministic: bool = False
+
+    def _set_determinism_env_vars(self, executor: "run.Executor") -> None:
+        """Set env vars required for bit-exact reproducibility."""
+        executor.env_vars["NCCL_ALGO"] = "Ring"
+        executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
+        executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        logger.info("Deterministic mode enabled")
 
     def _set_num_cuda_device_max_connections(
         self,
@@ -252,6 +284,7 @@ class PerfEnvPlugin(Plugin):
         self,
         task: Union["run.Partial", "run.Script"],
         executor: "run.Executor",
+        workload_base_config: WorkloadBaseConfig,
         model_family_name: str,
         model_recipe_name: str,
         gpu: str,
@@ -259,14 +292,16 @@ class PerfEnvPlugin(Plugin):
         train_task: str,
     ):
         """Set model-specific environment variables"""
-        if (
-            model_family_name in ["llama"]
-            and model_recipe_name in ["llama31_405b"]
-            and train_task == "pretrain"
-            and gpu in ["gb200"]
-        ):
-            if compute_dtype in ["fp8_cs", "fp8_mx"]:
-                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        if model_family_name in ["deepseek"]:
+            executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
+
+        remove_allocator_env_vars = workload_base_config.nccl_ub is True or (
+            model_family_name == "llama" and workload_base_config.use_megatron_fsdp is True
+        )
+        if remove_allocator_env_vars:
+            for env_var in ("PYTORCH_CUDA_ALLOC_CONF", "NCCL_GRAPH_REGISTER"):
+                executor.env_vars.pop(env_var, None)
+
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
@@ -281,6 +316,16 @@ class PerfEnvPlugin(Plugin):
             if model_family_name == "llama" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     del_cudnn_ln = False
+            if model_family_name == "deepseek":
+                if compute_dtype == "fp8_mx":
+                    del_cudnn_ln = False
+            if model_family_name == "kimi":
+                if compute_dtype == "fp8_mx":
+                    del_cudnn_ln = False
+        if model_family_name in ["llama"] and train_task in ["sft"]:
+            del_cudnn_ln = False
+        if model_recipe_name in ["nemotron_3_nano"]:
+            del_cudnn_ln = False
         if del_cudnn_ln:
             if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
@@ -318,6 +363,9 @@ class PerfEnvPlugin(Plugin):
                 executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
                 executor.env_vars["USE_MNNVL"] = "1"
                 executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(ep_size)
+            # Workaround for unfused combine performance regression in DeepEP hybrid-ep.
+            # Remove after https://github.com/NVIDIA/Megatron-LM/pull/4089 lands.
+            executor.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] = "128"
 
     def _set_nccl_pp_comm_chunksize(
         self,
@@ -384,6 +432,48 @@ class PerfEnvPlugin(Plugin):
                 else vboost_cmd
             )
 
+    def _set_lock_gpu_freq(
+        self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", lock_gpu_freq: int | None
+    ):
+        """Lock GPU graphics clocks to a fixed frequency before training.
+
+        Used for silicon simulation correlation studies where a fixed GPU
+        clock frequency is required to match simulation assumptions.
+        """
+
+        def get_lock_gpu_freq_srun_cmd(job_dir, freq_mhz):
+            import shlex
+
+            lock_freq_cmd = "\n".join(
+                [
+                    "",
+                    "# Command 0: lock GPU graphics clock",
+                    " ".join(
+                        [
+                            "srun",
+                            "--ntasks-per-node=1",
+                            "--output",
+                            os.path.join(job_dir, "lock_gpu_freq.out"),
+                            "--error",
+                            os.path.join(job_dir, "lock_gpu_freq.err"),
+                            "bash -c",
+                            shlex.quote(f"sudo nvidia-smi -lgc {freq_mhz}"),
+                        ]
+                    ),
+                    "",
+                ]
+            )
+
+            return lock_freq_cmd
+
+        if lock_gpu_freq is not None and isinstance(executor, SlurmExecutor):
+            lock_freq_cmd = get_lock_gpu_freq_srun_cmd(executor.tunnel.job_dir, lock_gpu_freq)
+            executor.setup_lines = (
+                executor.setup_lines + lock_freq_cmd
+                if (executor.setup_lines and len(executor.setup_lines) > 0)
+                else lock_freq_cmd
+            )
+
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
         workload_base_config = get_workload_base_config(
@@ -432,11 +522,12 @@ class PerfEnvPlugin(Plugin):
         )
 
         # Set the chunk size of P2P communications
-        nccl_pp_comm_chunksize = (
-            2097152
-            if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain"
-            else None
-        )
+        if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain":
+            nccl_pp_comm_chunksize = 2097152
+        elif self.model_family_name in ["llama"] and self.train_task in ["sft"]:
+            nccl_pp_comm_chunksize = 2097152
+        else:
+            nccl_pp_comm_chunksize = None
         self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
 
         # Configure manual garbage collection
@@ -445,10 +536,14 @@ class PerfEnvPlugin(Plugin):
         # Improve perf by steering power to tensor cores, may not work on all systems
         self._set_vboost(task, executor, self.enable_vboost)
 
+        # Lock GPU graphics clock frequency for stable performance measurements
+        self._set_lock_gpu_freq(task, executor, self.lock_gpu_freq)
+
         # Set model-specific environment variables
         self._set_model_specific_environment_variables(
             task,
             executor,
+            workload_base_config,
             self.model_family_name,
             self.model_recipe_name,
             self.gpu,
@@ -459,6 +554,9 @@ class PerfEnvPlugin(Plugin):
         # Set NVFP4-specific environment variables
         if self.compute_dtype == "nvfp4":
             executor.env_vars["NVTE_USE_FAST_MATH"] = "1"
+
+        if self.deterministic:
+            self._set_determinism_env_vars(executor)
 
 
 @dataclass

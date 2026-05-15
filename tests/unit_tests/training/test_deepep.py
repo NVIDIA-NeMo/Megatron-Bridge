@@ -133,6 +133,7 @@ class TestApplyDeepEP:
         # Mock Volta GPU (compute capability 7.x)
         mock_properties = MagicMock()
         mock_properties.major = 7
+        mock_properties.name = "NVIDIA V100"
         mock_get_device_properties.return_value = mock_properties
 
         # Create a mock TransformerConfig with MoE enabled
@@ -145,7 +146,7 @@ class TestApplyDeepEP:
         # Verify warning was logged
         mock_logger.warning.assert_called_once()
         assert (
-            "DeepEP is only applicable to Ampere, Hopper, and Blackwell (only B200 and B300) GPUs"
+            "DeepEP is only applicable to Ampere, Hopper, and Blackwell (B200/B300) GPUs"
             in mock_logger.warning.call_args[0][0]
         )
 
@@ -162,6 +163,7 @@ class TestApplyDeepEP:
         # Mock Pascal GPU (compute capability 6.x)
         mock_properties = MagicMock()
         mock_properties.major = 6
+        mock_properties.name = "NVIDIA P100"
         mock_get_device_properties.return_value = mock_properties
 
         # Create a mock TransformerConfig with MoE enabled
@@ -174,7 +176,7 @@ class TestApplyDeepEP:
         # Verify warning was logged
         mock_logger.warning.assert_called_once()
         assert (
-            "DeepEP is only applicable to Ampere, Hopper, and Blackwell (only B200 and B300) GPUs"
+            "DeepEP is only applicable to Ampere, Hopper, and Blackwell (B200/B300) GPUs"
             in mock_logger.warning.call_args[0][0]
         )
 
@@ -249,6 +251,7 @@ class TestValidateDeepEP:
         # Mock Volta GPU (compute capability 7.x)
         mock_properties = MagicMock()
         mock_properties.major = 7
+        mock_properties.name = "NVIDIA V100"
         mock_get_device_properties.return_value = mock_properties
 
         # Create a mock TransformerConfig with DeepEP enabled
@@ -259,7 +262,7 @@ class TestValidateDeepEP:
         # Should raise ValueError
         with pytest.raises(
             ValueError,
-            match="DeepEP is supported for Ampere, Hopper, and Blackwell \\(only B200 and B300\\) GPUs",
+            match="DeepEP is supported for Ampere, Hopper, and Blackwell \\(B200/B300\\) GPUs",
         ):
             validate_flex_dispatcher_backend(config)
 
@@ -272,6 +275,7 @@ class TestValidateDeepEP:
         # Mock future GPU
         mock_properties = MagicMock()
         mock_properties.major = 200
+        mock_properties.name = "NVIDIA Future GPU"
         mock_get_device_properties.return_value = mock_properties
 
         # Create a mock TransformerConfig with DeepEP enabled

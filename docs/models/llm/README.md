@@ -14,11 +14,13 @@ Megatron Bridge supports the following LLM families:
 | **Gemma 3** | [gemma3.md](gemma3.md) | Google Gemma 3 models |
 | **GLM-4.5** | [glm45.md](glm45.md) | GLM-4.5 model family |
 | **GPT-OSS** | [gpt-oss.md](gpt-oss.md) | Open-source GPT-style models |
+| **MiniMax-M2** | — | MiniMax-M2 / M2.5 / M2.7 (456B MoE, FP8) |
 | **LLaMA 3** | [llama3.md](llama3.md) | Meta LLaMA 3 models |
 | **LLaMA Nemotron** | [llama-nemotron.md](llama-nemotron.md) | NVIDIA LLaMA Nemotron models |
 | **Mistral** | [mistral.md](mistral.md) | Mistral AI models |
 | **Moonlight** | [moonlight.md](moonlight.md) | Moonlight model family |
 | **Nemotron-3** | [nemotron3.md](nemotron3.md) | NVIDIA Nemotron-3 models |
+| **Nemotron-3 Super** | [nemotron3-super.md](nemotron3-super.md) | NVIDIA Nemotron-3 Super models |
 | **Nemotron-H** | [nemotronh.md](nemotronh.md) | NVIDIA Nemotron-H models |
 | **OLMoE** | [olmoe.md](olmoe.md) | OLMoE (Open Language Model - Mixture of Experts) |
 | **Qwen** | [qwen.md](qwen.md) | Alibaba Cloud Qwen model family |

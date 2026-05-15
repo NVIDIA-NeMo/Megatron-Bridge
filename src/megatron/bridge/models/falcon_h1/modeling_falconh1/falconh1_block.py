@@ -12,8 +12,6 @@ from functools import partial
 from typing import Optional, Union
 
 import torch
-from torch import Tensor, nn
-
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.dist_checkpointing.utils import replace_prefix_for_sharding
 from megatron.core.enums import Fp8Recipe
@@ -21,17 +19,19 @@ from megatron.core.extensions.transformer_engine import TENorm
 from megatron.core.fp8_utils import get_fp8_context
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.bridge.models.falcon_h1.modeling_falconh1.mamba_hybrid_layer_allocation import Symbols as LayerSymbols
-from megatron.bridge.models.falcon_h1.modeling_falconh1.mamba_hybrid_layer_allocation  import allocate_layers
 from megatron.core.tensor_parallel import get_cuda_rng_tracker
-from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_layer import TransformerLayer
-from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import FalconH1Layer
 from megatron.core.transformer.utils import sharded_state_dict_default
 from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
+from torch import Tensor, nn
+
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import FalconH1Layer
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config
+from megatron.bridge.models.falcon_h1.modeling_falconh1.mamba_hybrid_layer_allocation import Symbols as LayerSymbols
+from megatron.bridge.models.falcon_h1.modeling_falconh1.mamba_hybrid_layer_allocation import allocate_layers
 
 
 # https://github.com/huggingface/transformers/blob/c28d04e9e252a1a099944e325685f14d242ecdcd/src/transformers/models/gpt2/modeling_gpt2.py#L454
@@ -163,9 +163,7 @@ class FalconH1Stack(MegatronModule):
 
         pp_layer_offset = 0
         if self.pp_group.size() > 1:
-            pp_layer_offset, layer_type_list = self._select_layers_for_pipeline_parallel(
-                layer_type_list
-            )
+            pp_layer_offset, layer_type_list = self._select_layers_for_pipeline_parallel(layer_type_list)
 
         self.layers = nn.ModuleList()
         for i, layer_type in enumerate(layer_type_list):
@@ -244,8 +242,7 @@ class FalconH1Stack(MegatronModule):
         num_layers_per_pipeline_rank = self.config.num_layers // self.pp_group.size()
 
         assert self.config.virtual_pipeline_model_parallel_size is None, (
-            "The Mamba hybrid model does not currently support "
-            "virtual/interleaved pipeline parallelism"
+            "The Mamba hybrid model does not currently support virtual/interleaved pipeline parallelism"
         )
 
         offset = self.pp_group.rank() * num_layers_per_pipeline_rank
@@ -317,9 +314,9 @@ class FalconH1Stack(MegatronModule):
             hidden_states = hidden_states.unwrap()
 
         if inference_context:
-            assert (
-                inference_context.is_static_batching()
-            ), "Mamba currently does not support dynamic inference batching."
+            assert inference_context.is_static_batching(), (
+                "Mamba currently does not support dynamic inference batching."
+            )
             # NOTE(bnorick): match BaseInferenceContext attributes for
             # mamba_ssm.utils.generation.BaseInferenceContext,
             # this hack supports eval
@@ -328,10 +325,7 @@ class FalconH1Stack(MegatronModule):
 
         if (
             (
-                (
-                    self.config.cuda_graph_impl == "local"
-                    and self.config.cuda_graph_scope != "full_iteration"
-                )
+                (self.config.cuda_graph_impl == "local" and self.config.cuda_graph_scope != "full_iteration")
                 or self.config.flash_decode
             )
             and inference_context
@@ -342,7 +336,7 @@ class FalconH1Stack(MegatronModule):
             sequence_len_offset = torch.tensor(
                 [inference_context.sequence_len_offset] * current_batch_size,
                 dtype=torch.int32,
-                device='cuda',
+                device="cuda",
             )
         else:
             sequence_len_offset = None
@@ -359,13 +353,11 @@ class FalconH1Stack(MegatronModule):
         with outer_fp8_context:
             for layer in self.layers:
                 inner_fp8_context = (
-                    get_fp8_context(self.config, layer.layer_number - 1)
-                    if use_inner_fp8_context
-                    else nullcontext()
+                    get_fp8_context(self.config, layer.layer_number - 1) if use_inner_fp8_context else nullcontext()
                 )
                 with inner_fp8_context:
                     if isinstance(layer, TransformerLayer):
-                        hidden_states, _  = layer(
+                        hidden_states, _ = layer(
                             hidden_states=hidden_states,
                             attention_mask=attention_mask,
                             inference_context=inference_context,
@@ -399,15 +391,13 @@ class FalconH1Stack(MegatronModule):
 
         # Ensure that the tensor passed between pipeline parallel stages is
         # viewless. See related notes in TransformerBlock and TransformerLayer
-        output = make_viewless_tensor(
-            inp=hidden_states, requires_grad=hidden_states.requires_grad, keep_graph=True
-        )
+        output = make_viewless_tensor(inp=hidden_states, requires_grad=hidden_states.requires_grad, keep_graph=True)
 
-        return hidden_states
+        return output
 
     def sharded_state_dict(
         self,
-        prefix: str = '',
+        prefix: str = "",
         sharded_offsets: Optional[tuple] = None,
         metadata: Optional[dict] = None,
     ) -> ShardedStateDict:
@@ -428,21 +418,16 @@ class FalconH1Stack(MegatronModule):
         """
 
         sharded_state_dict = {}
-        layer_prefix = f'{prefix}layers.'
+        layer_prefix = f"{prefix}layers."
 
         for local_layer_idx, layer in enumerate(self.layers):
-
             global_layer_offset = layer.layer_number - 1  # self.layer_number starts at 1
-            state_dict_prefix = (
-                f'{layer_prefix}{local_layer_idx}.'  # module list index in MambaBlock
-            )
+            state_dict_prefix = f"{layer_prefix}{local_layer_idx}."  # module list index in MambaBlock
 
-            sharded_prefix = f'{layer_prefix}{global_layer_offset}.'
+            sharded_prefix = f"{layer_prefix}{global_layer_offset}."
             sharded_pp_offset = []
 
-            layer_sharded_state_dict = layer.sharded_state_dict(
-                state_dict_prefix, sharded_pp_offset, metadata
-            )
+            layer_sharded_state_dict = layer.sharded_state_dict(state_dict_prefix, sharded_pp_offset, metadata)
 
             replace_prefix_for_sharding(layer_sharded_state_dict, state_dict_prefix, sharded_prefix)
 
@@ -452,9 +437,7 @@ class FalconH1Stack(MegatronModule):
         for name, module in self.named_children():
             if not module is self.layers:
                 sharded_state_dict.update(
-                    sharded_state_dict_default(
-                        module, f'{prefix}{name}.', sharded_offsets, metadata
-                    )
+                    sharded_state_dict_default(module, f"{prefix}{name}.", sharded_offsets, metadata)
                 )
 
         return sharded_state_dict

@@ -66,7 +66,8 @@ def llama3_70b_pretrain_config_gb300(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
-    cfg = llama3_70b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama3_70b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -100,7 +101,43 @@ def llama3_70b_pretrain_config_gb200(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
-    cfg = llama3_70b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama3_70b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_llama3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    if cfg.ddp.use_megatron_fsdp:
+        cfg.ddp.fsdp_double_buffer = True
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
+        cfg.ddp.suggested_communication_unit_size = 800000000
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
+
+    return cfg
+
+
+def llama3_70b_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_70b",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    if precision == "bf16":
+        comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
+    else:
+        comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
+
+    cfg = llama3_70b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -134,7 +171,8 @@ def llama3_70b_pretrain_config_b300(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
-    cfg = llama3_70b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama3_70b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -168,7 +206,8 @@ def llama3_70b_pretrain_config_b200(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
-    cfg = llama3_70b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama3_70b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -202,7 +241,8 @@ def llama3_70b_pretrain_config_h100(
     else:
         comm_overlap_cfg = userbuffers_fp8_h100_h8192_tp4_mbs1_seqlen8192
 
-    cfg = llama3_70b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama3_70b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -212,6 +252,56 @@ def llama3_70b_pretrain_config_h100(
 
 
 # Llama3 8B configs ---------------------------------------------------------
+
+
+def llama3_8b_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_8b",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_llama3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
+
+    return cfg
+
+
+def llama3_8b_pretrain_config_r100(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """R100, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_8b",
+        gpu="r100",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    set_llama3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
+
+    return cfg
 
 
 def llama3_8b_pretrain_config_gb300(
@@ -228,7 +318,8 @@ def llama3_8b_pretrain_config_gb300(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_8b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -252,7 +343,8 @@ def llama3_8b_pretrain_config_gb200(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_8b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -276,7 +368,8 @@ def llama3_8b_pretrain_config_b300(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_8b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -300,7 +393,8 @@ def llama3_8b_pretrain_config_b200(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_8b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -324,7 +418,8 @@ def llama3_8b_pretrain_config_h100(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_8b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 

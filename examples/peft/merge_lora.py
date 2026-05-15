@@ -27,11 +27,23 @@ DeepSeek, Phi, etc.).
 
 Usage
 -----
-python merge_lora.py \
-    --lora-checkpoint path/to/finetune_ckpt \
-    --hf-model-path   path/to/hf_model \
-    --output          path/to/merged_ckpt \
-    [--pretrained path/to/base_ckpt]
+CPU-only (single process, no GPU required)::
+
+    python merge_lora.py \
+        --lora-checkpoint path/to/finetune_ckpt \
+        --hf-model-path   path/to/hf_model \
+        --output          path/to/merged_ckpt \
+        [--pretrained path/to/base_ckpt] \
+        --cpu
+
+GPU with tensor/pipeline/expert parallelism::
+
+    torchrun --nproc_per_node <N> merge_lora.py \
+        --lora-checkpoint path/to/finetune_ckpt \
+        --hf-model-path   path/to/hf_model \
+        --output          path/to/merged_ckpt \
+        [--pretrained path/to/base_ckpt] \
+        [--tp 1] [--pp 1] [--ep 1]
 """
 
 from __future__ import annotations
@@ -53,7 +65,7 @@ from megatron.bridge.training.checkpointing import (
 )
 from megatron.bridge.training.model_load_save import save_megatron_model
 from megatron.bridge.training.utils.checkpoint_utils import read_run_config
-from megatron.bridge.utils.common_utils import print_rank_0
+from megatron.bridge.utils.common_utils import print_rank_0, resolve_path
 
 
 logger = logging.getLogger(__name__)
@@ -82,6 +94,13 @@ def parse_args() -> argparse.Namespace:
         help="Base (dense) checkpoint. If omitted, resolved from run_config.yaml in the LoRA checkpoint.",
     )
     parser.add_argument("--debug", action="store_true", help="Verbose logging")
+
+    # Parallelism options
+    parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size")
+    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size")
+    parser.add_argument("--ep", type=int, default=1, help="Expert parallel size")
+    parser.add_argument("--cpu", action="store_true", help="Load and merge entirely on CPU (no GPU required)")
+
     return parser.parse_args()
 
 
@@ -92,7 +111,7 @@ def parse_args() -> argparse.Namespace:
 
 def _resolve_pretrained(lora_dir: Path, explicit: Optional[str]) -> Path:
     if explicit:
-        return Path(explicit).expanduser().resolve()
+        return resolve_path(explicit)
     cfg_path = lora_dir / "run_config.yaml"
     if not cfg_path.exists():
         raise FileNotFoundError("run_config.yaml not found in LoRA checkpoint and --pretrained not supplied")
@@ -100,7 +119,7 @@ def _resolve_pretrained(lora_dir: Path, explicit: Optional[str]) -> Path:
     base = cfg.get("checkpoint", {}).get("pretrained_checkpoint")
     if base is None:
         raise ValueError("pretrained_checkpoint missing in run_config.yaml; pass --pretrained")
-    return Path(base).expanduser().resolve()
+    return resolve_path(base)
 
 
 # -----------------------------------------------------------------------------
@@ -113,6 +132,7 @@ def merge_lora(
     lora_dir: Path,
     out_dir: Path,
     hf_model_path: str,
+    args: argparse.Namespace,
 ) -> None:
     """
     Merge LoRA adapter weights back into the base model.
@@ -122,6 +142,7 @@ def merge_lora(
         lora_dir (Path): Path to the directory containing the LoRA fine-tuned checkpoint.
         out_dir (Path): Path to the directory where the merged model checkpoint should be saved.
         hf_model_path (str): HuggingFace model name or local path to the model architecture/configuration.
+        args (argparse.Namespace): Command-line arguments containing parallelism and device settings.
 
     This routine reconstructs the model architecture from HuggingFace config,
     loads the dense base model weights, then loads the LoRA adapter weights
@@ -131,17 +152,32 @@ def merge_lora(
     print_rank_0(f"Loading base model from {base_dir}")
     bridge = AutoBridge.from_hf_pretrained(hf_model_path, trust_remote_code=True)
 
-    # Single-GPU context; set all parallel dims to 1
     model_provider = bridge.to_megatron_provider(load_weights=False)
-    model_provider.tensor_model_parallel_size = 1
-    model_provider.pipeline_model_parallel_size = 1
-    model_provider.expert_model_parallel_size = 1
+
+    print_rank_0(f"Setting Parallelism: TP={args.tp} | PP={args.pp} | EP={args.ep}")
+    model_provider.tensor_model_parallel_size = args.tp
+    model_provider.pipeline_model_parallel_size = args.pp
+    model_provider.expert_model_parallel_size = args.ep
     model_provider.expert_tensor_parallel_size = 1
     model_provider.pipeline_dtype = torch.bfloat16
+    if args.cpu:
+        if args.tp != 1 or args.pp != 1 or args.ep != 1:
+            logger.warning("TP, PP, and EP must be 1 when using CPU merge. Setting to 1.")
+            args.tp = 1
+            args.pp = 1
+            args.ep = 1
+        if not torch.distributed.is_initialized():
+            torch.distributed.init_process_group("gloo")
     model_provider.initialize_model_parallel(seed=0)
 
+    mp_overrides = {
+        "tensor_model_parallel_size": args.tp,
+        "pipeline_model_parallel_size": args.pp,
+        "expert_model_parallel_size": args.ep,
+    }
+
     # 1) Load base model weights
-    model = bridge.load_megatron_model(str(base_dir), wrap_with_ddp=False)
+    model = bridge.load_megatron_model(str(base_dir), mp_overrides=mp_overrides)
 
     # 2) Patch the model with LoRA adapter *structure* (no weights yet)
     # Load LoRA hyper-parameters from the fine-tuning run_config.yaml so we
@@ -234,18 +270,26 @@ def main() -> None:
         level=logging.DEBUG if args.debug else logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
 
-    lora_dir = Path(args.lora_checkpoint).expanduser().resolve()
+    lora_dir = resolve_path(args.lora_checkpoint)
     if not lora_dir.exists():
         raise FileNotFoundError(f"LoRA checkpoint not found: {lora_dir}")
     base_dir = _resolve_pretrained(lora_dir, args.pretrained)
     if not base_dir.exists():
         raise FileNotFoundError(f"Pre-trained checkpoint not found: {base_dir}")
-    merge_lora(
-        base_dir=base_dir,
-        lora_dir=lora_dir,
-        out_dir=Path(args.output).expanduser().resolve(),
-        hf_model_path=args.hf_model_path,
-    )
+    try:
+        merge_lora(
+            base_dir=base_dir,
+            lora_dir=lora_dir,
+            out_dir=resolve_path(args.output),
+            hf_model_path=args.hf_model_path,
+            args=args,
+        )
+    except torch.cuda.OutOfMemoryError:
+        logger.warning("CUDA out of memory during merge. Please rerun this script on CPU by adding the `--cpu` flag.")
+        raise SystemExit(1)
+    finally:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":

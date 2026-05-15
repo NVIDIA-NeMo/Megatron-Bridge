@@ -138,7 +138,7 @@ class Gemma3VLModel(MegatronModule):
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [b, decoder_seq_len, h_language]
 
             if pixel_values is not None:
-                image_features = self.get_image_features(pixel_values)
+                image_features = self.get_image_features(pixel_values, return_dict=True).pooler_output
 
                 # TODO might need to check if input_ids is None
                 assert input_ids is not None
@@ -156,10 +156,6 @@ class Gemma3VLModel(MegatronModule):
                 inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
-            # Apply sequence parallelism scatter if enabled
-            if self.config.sequence_parallel:
-                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
-
         # Compute attention mask on FULL sequence (before CP slicing)
         # This is needed because image regions need bidirectional attention
         attention_mask = self._compute_attention_mask(input_ids)
@@ -175,6 +171,13 @@ class Gemma3VLModel(MegatronModule):
             packed_seq_params=packed_seq_params,
             pg_collection=self.config._pg_collection,
         )
+
+        # Apply SP scatter after CP slice, before entering the language model.
+        # The language model's embedding layer (which normally handles SP scatter) is
+        # bypassed when decoder_input is provided. Matches Megatron Core's LLaVA pattern
+        # (llava_model.py:747-750): CP slice first, then SP scatter → [S/(CP*TP), B, H].
+        if self.config.sequence_parallel and inputs_embeds is not None:
+            inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
 
         outputs = self.language_model.forward(
             input_ids=None,

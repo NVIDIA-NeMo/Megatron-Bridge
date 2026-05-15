@@ -62,8 +62,10 @@ See: [bridge.recipes.moonlight](../../apidocs/bridge/bridge.recipes.moonlight.md
 - **Pretrain recipes**:
   - `moonlight_16b_pretrain_config`: Pre-training for Moonlight-16B (16B parameters, 3B activated per token)
 
-- **Finetune recipes**:
-  - `moonlight_16b_finetune_config`: Finetuning for Moonlight-16B with PEFT support (LoRA, DoRA)
+- **SFT recipes**:
+  - `moonlight_16b_sft_config`: Full SFT for Moonlight-16B
+- **PEFT recipes** (LoRA, DoRA):
+  - `moonlight_16b_peft_config`: PEFT for Moonlight-16B
 
 ### Parallelism Configurations
 
@@ -114,13 +116,12 @@ cfg = moonlight_16b_pretrain_config(
 #### Full Finetuning (2 Nodes)
 
 ```python
-from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
-cfg = moonlight_16b_finetune_config(
+cfg = moonlight_16b_sft_config(
     tokenizer_path="moonshotai/Moonlight-16B-A3B",
     name="moonlight_full_sft",
     pretrained_checkpoint="/results/moonlight_16b/checkpoints/iter_0500000",
-    peft=None,  # Full supervised finetuning
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=5e-6,
@@ -131,13 +132,13 @@ cfg = moonlight_16b_finetune_config(
 #### LoRA Finetuning
 
 ```python
-from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
 
-cfg = moonlight_16b_finetune_config(
+cfg = moonlight_16b_peft_config(
     tokenizer_path="moonshotai/Moonlight-16B-A3B",
     name="moonlight_lora_finetune",
     pretrained_checkpoint="/results/moonlight_16b/checkpoints/iter_0500000",
-    peft="lora",  # or "dora" for DoRA
+    peft_scheme="lora",  # or "dora" for DoRA
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,

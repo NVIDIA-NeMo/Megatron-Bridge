@@ -94,6 +94,7 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.qwen_vl import qwen3_vl as qwen3_vl_recipes
 from megatron.bridge.recipes.qwen_vl import qwen25_vl as qwen25_vl_recipes
 from megatron.bridge.training.config import ConfigContainer
@@ -103,7 +104,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from megatron.bridge.training.vlm_step import forward_step
+from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 from megatron.bridge.utils.common_utils import get_rank_safe
 
 
@@ -184,6 +185,13 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         action="store_true",
         help="Use preloaded dataset provider (enabled automatically when --data-path is set).",
     )
+    parser.add_argument(
+        "--peft",
+        type=str,
+        default=None,
+        choices=["lora", "dora", "none"],
+        help="Type of PEFT to use: 'lora', 'dora', or 'none' (full SFT). If not set, uses full SFT.",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides
@@ -203,9 +211,11 @@ def main() -> None:
     if recipe_name.startswith("qwen3"):
         recipe_module = qwen3_vl_recipes
         model_family = "Qwen3-VL"
+        forward_step_func = qwen3_vl_forward_step
     elif recipe_name.startswith("qwen25"):  # qwen25
         recipe_module = qwen25_vl_recipes
         model_family = "Qwen2.5-VL"
+        forward_step_func = vlm_forward_step
     else:
         raise ValueError(f"Unknown recipe name: {recipe_name}")
 
@@ -216,14 +226,21 @@ def main() -> None:
     use_preloaded_flag = bool(args.data_path) or bool(getattr(args, "use_preloaded", False))
     dataset_type = args.dataset_type or ("preloaded" if use_preloaded_flag else "mock")
 
-    cfg: ConfigContainer = pretrain_config(
-        dataset_type=dataset_type,
-        train_data_path=args.data_path,
-        valid_data_path=None,
-        test_data_path=None,
-        image_folder=args.image_folder,
-        pretrained_checkpoint=args.pretrained_checkpoint,
-    )
+    # Build recipe kwargs
+    recipe_kwargs = {
+        "dataset_type": dataset_type,
+        "train_data_path": args.data_path,
+        "valid_data_path": None,
+        "test_data_path": None,
+        "image_folder": args.image_folder,
+        "pretrained_checkpoint": args.pretrained_checkpoint,
+    }
+
+    # Add peft parameter if specified via --peft flag
+    if args.peft is not None:
+        recipe_kwargs["peft"] = args.peft
+
+    cfg: ConfigContainer = pretrain_config(**recipe_kwargs)
     logger.info("Loaded base configuration")
 
     if get_rank_safe() == 0:
@@ -263,7 +280,7 @@ def main() -> None:
         cfg.print_yaml()
         logger.info("----------------------------------")
 
-    pretrain(config=cfg, forward_step_func=forward_step)
+    pretrain(config=cfg, forward_step_func=forward_step_func)
 
 
 if __name__ == "__main__":

@@ -4,8 +4,6 @@
 NeMo Megatron Bridge supports pretraining, full parameters finetuning, and LoRA finetuning this model. The finetuned model can be converted back to the 🤗 Hugging Face format for downstream evaluation.
 
 ```{important}
-Please use the custom container `nvcr.io/nvidia/nemo:25.11.nemotron_3_nano` when working with this model.
-
 Run all commands from `/opt/Megatron-Bridge` (e.g. `docker run -w /opt/Megatron-Bridge ...`)
 ```
 
@@ -21,7 +19,7 @@ We use the following environment variables throughout this page
 ### Import HF → Megatron
 To import the HF model to your desired `$MEGATRON_MODEL_PATH`, run the following command.
 ```bash
-python examples/conversion/convert_checkpoints.py import  \
+uv run python examples/conversion/convert_checkpoints.py import  \
 --hf-model $HF_MODEL_ID  \
 --megatron-path /path/to/output/megatron/ckpt \
 --trust-remote-code
@@ -29,7 +27,7 @@ python examples/conversion/convert_checkpoints.py import  \
 
 ### Export Megatron → HF
 ```bash
-python examples/conversion/convert_checkpoints.py export  \
+uv run python examples/conversion/convert_checkpoints.py export  \
 --hf-model $HF_MODEL_ID  \
 --megatron-path /path/to/trained/megatron/ckpt \
 --hf-path /path/to/output/hf/ckpt
@@ -40,7 +38,7 @@ python examples/conversion/convert_checkpoints.py export  \
 BLEND_PATH=/path/to/dataset/blend
 TOKENIZER_MODEL=/path/to/tiktok/tokenizer/model
 
-torchrun --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_nano.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_nano.py \
 --per-split-data-args-path=${BLEND_PATH} \
 --tokenizer-model=${TOKENIZER_MODEL} \
 train.global_batch_size=3072 \
@@ -58,7 +56,7 @@ Notes:
 
 ### Full Parameter Fine-Tuning
 ```bash
-torchrun --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
 train.global_batch_size=128 \
 train.train_iters=100 \
 scheduler.lr_warmup_iters=10 \
@@ -66,7 +64,7 @@ checkpoint.pretrained_checkpoint=/path/to/output/megatron/ckpt
 ```
 
 Notes:
-- Default parallelism TP=1, EP=8, PP=1, CP=1. It is recommended to run this recipe on at least 2 H100 nodes (16 GPUs).
+- Default parallelism TP=1, EP=8, PP=1, CP=1. Running this recipe requires at least 2 H100 nodes (16 GPUs).
 - By default, the [SQuAD](https://huggingface.co/datasets/rajpurkar/squad) dataset is used. To use customerized dataset, see this [tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/recipes/llama#quickstart)
 - Fine-tuning requires a pretrained megatron checkpoint, which can be obtained in "Import HF → Megatron" section above
 
@@ -74,7 +72,7 @@ Notes:
 ### LoRA Fine-Tuning
 To enable LoRA fine-tuning, pass `--peft lora` to script
 ```bash
-torchrun --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
 --peft lora \
 train.global_batch_size=128 \
 train.train_iters=100 \
@@ -90,7 +88,7 @@ Notes:
 A LoRA checkpoint only contains the learnable adapter weights. In order to convert the LoRA checkpoint to Hugging Face format for downstream evaluation, it is necessary to merge the LoRA adapters back to the base model.
 
 ```bash
-python examples/peft/merge_lora.py \
+uv run python examples/peft/merge_lora.py \
 --hf-model-path $HF_MODEL_ID \
 --lora-checkpoint /path/to/lora/ckpt/iter_xxxxxxx 
 --output /path/to/merged/ckpt

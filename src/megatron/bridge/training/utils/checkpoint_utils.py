@@ -53,6 +53,24 @@ def file_exists(path: str) -> bool:
         return os.path.exists(path)
 
 
+def join_paths(*paths: str) -> str:
+    """Join paths, using MultiStorageClient when needed"""
+    if not paths:
+        raise ValueError("Empty paths")
+
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        path_cls = msc.Path
+    else:
+        path_cls = Path
+
+    path = path_cls(paths[0])
+    for part in paths[1:]:
+        path = path / part
+
+    return str(path)
+
+
 def ensure_directory_exists(filename: str, check_parent: bool = True) -> None:
     """Ensure that the directory for a given filename exists.
 
@@ -87,7 +105,7 @@ def get_checkpoint_name(checkpoints_path: str, iteration: int, release: bool = F
     else:
         directory = "iter_{:07d}".format(iteration)
 
-    common_path = os.path.join(checkpoints_path, directory)
+    common_path = join_paths(checkpoints_path, directory)
     return common_path
 
 
@@ -104,9 +122,9 @@ def get_checkpoint_train_state_filename(checkpoints_path: str, prefix: Optional[
         The full path to the train state tracker file.
     """
     if prefix is None:
-        return os.path.join(checkpoints_path, TRAIN_STATE_FILE)
+        return join_paths(checkpoints_path, TRAIN_STATE_FILE)
     else:
-        return os.path.join(checkpoints_path, f"{prefix}_{TRAIN_STATE_FILE}")
+        return join_paths(checkpoints_path, f"{prefix}_{TRAIN_STATE_FILE}")
 
 
 def get_checkpoint_run_config_filename(checkpoints_path: str) -> str:
@@ -118,7 +136,7 @@ def get_checkpoint_run_config_filename(checkpoints_path: str) -> str:
     Returns:
         The full path to the run configuration file (e.g., run_config.yaml).
     """
-    return os.path.join(checkpoints_path, CONFIG_FILE)
+    return join_paths(checkpoints_path, CONFIG_FILE)
 
 
 def get_checkpoint_tracker_filename(checkpoints_path: str) -> str:
@@ -132,11 +150,47 @@ def get_checkpoint_tracker_filename(checkpoints_path: str) -> str:
     Returns:
         The full path to the checkpoint tracker file (e.g., latest_checkpointed_iteration.txt).
     """
-    return os.path.join(checkpoints_path, "latest_checkpointed_iteration.txt")
+    return join_paths(checkpoints_path, "latest_checkpointed_iteration.txt")
+
+
+_ITERATION_DIR_MARKERS = (
+    CONFIG_FILE,  # run_config.yaml  — Megatron Bridge checkpoint
+    TRAIN_STATE_FILE,  # train_state.pt   — Megatron Bridge per-iteration state
+    "metadata.json",  # MCore distributed checkpoint (torch_dist)
+    ".metadata",  # PyTorch DCP checkpoint (fsdp_dtensor)
+)
+
+
+def is_checkpoint_iteration_directory(path: Optional[str]) -> bool:
+    """Check if ``path`` is a specific checkpoint iteration directory.
+
+    An iteration directory (e.g. ``/checkpoints/iter_0001000/``) contains the
+    actual checkpoint payload as opposed to a parent checkpoint directory
+    which holds tracker files and ``iter_*`` subdirectories.
+
+    Detection order:
+      1. ``run_config.yaml`` — present in all Megatron Bridge checkpoints.
+      2. ``train_state.pt``  — per-iteration state file written by Bridge.
+      3. ``metadata.json``   — MCore distributed checkpoint (``torch_dist``).
+      4. ``.metadata``       — PyTorch DCP checkpoint (``fsdp_dtensor``).
+
+    Args:
+        path: Filesystem path to check.
+
+    Returns:
+        True when ``path`` contains any of the recognised checkpoint markers.
+    """
+    if path is None:
+        return False
+    return any(file_exists(join_paths(path, m)) for m in _ITERATION_DIR_MARKERS)
 
 
 def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
     """Check if a checkpoint directory exists.
+
+    Supports both parent checkpoint directories (containing tracker files) and
+    specific iteration directories (containing checkpoint markers such as
+    ``run_config.yaml``, ``metadata.json``, or ``.metadata``).
 
     Args:
         checkpoints_path: Path to the potential checkpoint directory.
@@ -147,7 +201,11 @@ def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
     if checkpoints_path is None:
         return False
 
-    train_state_filename = os.path.join(checkpoints_path, f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}")
+    # Direct iteration directory (e.g. /checkpoints/iter_0001000/)
+    if is_checkpoint_iteration_directory(checkpoints_path):
+        return True
+
+    train_state_filename = join_paths(checkpoints_path, f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}")
 
     if file_exists(train_state_filename):
         return True
@@ -329,9 +387,9 @@ def read_train_state(train_state_filename: str) -> TrainState:
             try:
                 if MultiStorageClientFeature.is_enabled():
                     msc = MultiStorageClientFeature.import_package()
-                    state_dict = msc.torch.load(train_state_filename, map_location="cpu")
+                    state_dict = msc.torch.load(train_state_filename, map_location="cpu", weights_only=True)
                 else:
-                    state_dict = torch.load(train_state_filename, map_location="cpu")
+                    state_dict = torch.load(train_state_filename, map_location="cpu", weights_only=True)
                 ts = TrainState()
                 ts.load_state_dict(state_dict)
                 state_obj[0] = ts
@@ -351,9 +409,9 @@ def read_train_state(train_state_filename: str) -> TrainState:
     try:
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
-            state_dict = msc.torch.load(train_state_filename, map_location="cpu")
+            state_dict = msc.torch.load(train_state_filename, map_location="cpu", weights_only=True)
         else:
-            state_dict = torch.load(train_state_filename, map_location="cpu")
+            state_dict = torch.load(train_state_filename, map_location="cpu", weights_only=True)
         ts = TrainState()
         ts.load_state_dict(state_dict)
         return ts

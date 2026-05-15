@@ -21,9 +21,11 @@ from megatron.core import parallel_state
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer_specs import (
+    falconh1_stack_spec as default_falconh1_stack_spec,
+)
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config, FalconH1Model
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Model, FalconH1Config
-from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer_specs import falconh1_stack_spec as default_falconh1_stack_spec
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -91,7 +93,7 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
     cross_entropy_loss_fusion: bool = False
     transformer_impl: str = "local"
 
-    #Falcon H1 Mup Fwd Multpliers
+    # Falcon H1 Mup Fwd Multpliers
     embedding_multiplier: float = 1.0
     lm_head_multiplier: float = 1.0
     key_multiplier: float = 1.0
@@ -101,7 +103,6 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
     ssm_out_multiplier: float = 1.0
     mlp_multipliers: tuple = (1.0, 1.0)
     ssm_multipliers: tuple = (1.0, 1.0, 1.0, 0.5, 1.0)
-
 
     # Stack specification
     falconh1_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = get_default_falconh1_stack_spec
@@ -156,14 +157,16 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
 
     def finalize(self) -> None:
         # Call parent class finalize if it exists
-        if hasattr(super(), 'finalize'):
+        if hasattr(super(), "finalize"):
             super().finalize()
+
 
 @dataclass
 class FalconH1ModelProvider500M(FalconH1ModelProvider):
     """Configuration for FalconH1 0.5B model.
     Based on: https://huggingface.co/tiiuae/Falcon-H1-0.5B-Instruct
     """
+
     # Model architecture from config.json
     num_layers: int = 36
     hidden_size: int = 1024
@@ -210,6 +213,7 @@ class FalconH1ModelProvider1P5BDeep(FalconH1ModelProvider):
     """Configuration for FalconH1 1.5B Deep model.
     Based on: https://huggingface.co/tiiuae/Falcon-H1-1.5B-Deep-Instruct
     """
+
     # Model architecture from config.json
     num_layers: int = 66
     hidden_size: int = 1280
@@ -256,6 +260,7 @@ class FalconH1ModelProvider7B(FalconH1ModelProvider):
     """Configuration for FalconH1 7B model.
     Based on: https://huggingface.co/tiiuae/Falcon-H1-7B-Instruct
     """
+
     # Model architecture from config.json
     num_layers: int = 44
     hidden_size: int = 3072
@@ -302,6 +307,7 @@ class FalconH1ModelProvider34B(FalconH1ModelProvider):
     """Configuration for FalconH1 34B model.
     Based on: https://huggingface.co/tiiuae/Falcon-H1-34B-Instruct
     """
+
     # Model architecture from config.json
     num_layers: int = 72
     hidden_size: int = 5120
