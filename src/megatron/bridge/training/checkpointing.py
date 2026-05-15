@@ -1230,6 +1230,7 @@ def save_checkpoint(
         and ckpt_cfg.save_weight_format == "hf"
         and bool(model)
     )
+    pending_hf_save_dir = _hf_weights_dir(checkpoint_name) if is_hf_save else None
     dist_save_target = checkpoint_name
 
     if ckpt_type == CheckpointType.GLOBAL:
@@ -1343,8 +1344,9 @@ def save_checkpoint(
                 # cfg.dist can be None during checkpoint conversion (save_megatron_model)
                 if not (cfg.dist and cfg.dist.use_decentralized_pg):
                     save_sharded_modelopt_state(model, checkpoint_name, (ckpt_cfg.ckpt_format, 1))
-            if is_hf_save:
-                _save_hf_weights(state, model, _hf_weights_dir(checkpoint_name))
+            if pending_hf_save_dir is not None and not ckpt_cfg.async_save:
+                _save_hf_weights(state, model, pending_hf_save_dir)
+                pending_hf_save_dir = None
     else:
         # [ModelOpt]: Inject modelopt_state into state_dict (skip if model is empty)
         if ckpt_type == CheckpointType.LOCAL:
@@ -1527,6 +1529,8 @@ def save_checkpoint(
     if ckpt_cfg.async_save:
         schedule_async_save(state, async_save_request)
         print_rank_0(f"  scheduled an async checkpoint save at iteration {train_state.step:7d} to {save_dir}")
+        if pending_hf_save_dir is not None:
+            _save_hf_weights(state, model, pending_hf_save_dir)
 
     end_misc = time()
     logger.debug(f"rank: {rank}, takes {end_misc - start_misc} to finalize ckpt save ")
