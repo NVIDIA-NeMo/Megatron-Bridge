@@ -13,11 +13,9 @@
 # limitations under the License.
 
 import abc
-import os
 import warnings
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Generic, Iterator, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -32,8 +30,6 @@ except ImportError:
 
         Unpack = MagicMock()
 
-
-from typing import Callable
 
 import torch
 from megatron.core import parallel_state, tensor_parallel
@@ -53,7 +49,14 @@ from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.config import from_hf_pretrained, save_hf_pretrained
-from megatron.bridge.utils.common_utils import get_local_rank_preinit
+from megatron.bridge.models.utils import (
+    _cuda_is_available,
+    _disable_cpu_offloading_for_cpu_only_initialization,
+    _disable_te_cpu_offload_context_for_cpu_only_initialization,
+    _disable_te_only_features_for_cpu_only_initialization,
+    _initialize_default_process_group,
+    _select_distributed_backend,
+)
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
 
 
@@ -64,69 +67,6 @@ except ImportError:
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
-
-
-def _cuda_is_available() -> bool:
-    return torch.cuda.is_available() and torch.cuda.device_count() > 0
-
-
-def _select_distributed_backend(*, use_cpu_initialization: bool | None) -> str:
-    if use_cpu_initialization or not _cuda_is_available():
-        return "gloo"
-    return "nccl"
-
-
-def _initialize_default_process_group(*, backend: str) -> None:
-    os.environ["RANK"] = os.environ.get("RANK", "0")
-    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
-    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
-    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "12355")
-
-    if backend == "nccl":
-        torch.cuda.set_device(get_local_rank_preinit())
-
-    torch.distributed.init_process_group(backend)
-
-
-def _disable_cpu_offloading_for_cpu_only_initialization(provider: object) -> None:
-    for attr in (
-        "cpu_offloading",
-        "cpu_offloading_activations",
-        "cpu_offloading_weights",
-        "cpu_offloading_double_buffering",
-    ):
-        if hasattr(provider, attr):
-            setattr(provider, attr, False)
-
-
-def _disable_te_only_features_for_cpu_only_initialization(provider: object) -> None:
-    _disable_cpu_offloading_for_cpu_only_initialization(provider)
-    if hasattr(provider, "persist_layer_norm"):
-        setattr(provider, "persist_layer_norm", False)
-
-
-@contextmanager
-def _disable_te_cpu_offload_context_for_cpu_only_initialization(enabled: bool) -> Iterator[None]:
-    if not enabled:
-        yield
-        return
-
-    try:
-        from megatron.core.transformer import transformer_block
-    except ImportError:
-        yield
-        return
-
-    get_cpu_offload_context = getattr(transformer_block, "get_cpu_offload_context", None)
-    if get_cpu_offload_context is None:
-        yield
-        return
-
-    transformer_block.get_cpu_offload_context = None
-    try:
-        yield
-    finally:
-        transformer_block.get_cpu_offload_context = get_cpu_offload_context
 
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):

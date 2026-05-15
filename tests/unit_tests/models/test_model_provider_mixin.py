@@ -75,8 +75,8 @@ def test_provide_distributed_model_uses_gloo_for_cpu_initialization(provider):
         patch.dict(os.environ, {}, clear=True),
         patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups") as mock_use_pg,
         patch("megatron.bridge.models.model_provider.get_model") as mock_get_model,
-        patch("megatron.bridge.models.model_provider.torch.cuda") as mock_cuda,
-        patch("megatron.bridge.models.model_provider.torch.distributed") as mock_dist,
+        patch("megatron.bridge.models.utils.torch.cuda") as mock_cuda,
+        patch("megatron.bridge.models.utils.torch.distributed") as mock_dist,
         patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True),
         patch(
             "megatron.core.transformer.transformer_block.get_cpu_offload_context",
@@ -114,8 +114,8 @@ def test_provide_distributed_model_uses_gloo_without_visible_cuda(provider):
         patch.dict(os.environ, {}, clear=True),
         patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups") as mock_use_pg,
         patch("megatron.bridge.models.model_provider.get_model") as mock_get_model,
-        patch("megatron.bridge.models.model_provider.torch.cuda") as mock_cuda,
-        patch("megatron.bridge.models.model_provider.torch.distributed") as mock_dist,
+        patch("megatron.bridge.models.utils.torch.cuda") as mock_cuda,
+        patch("megatron.bridge.models.utils.torch.distributed") as mock_dist,
         patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True),
     ):
         mock_dist.is_initialized.return_value = False
@@ -142,8 +142,8 @@ def test_provide_distributed_model_keeps_nccl_when_cuda_available(provider):
         patch.dict(os.environ, {"LOCAL_RANK": "2"}, clear=True),
         patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups") as mock_use_pg,
         patch("megatron.bridge.models.model_provider.get_model") as mock_get_model,
-        patch("megatron.bridge.models.model_provider.torch.cuda") as mock_cuda,
-        patch("megatron.bridge.models.model_provider.torch.distributed") as mock_dist,
+        patch("megatron.bridge.models.utils.torch.cuda") as mock_cuda,
+        patch("megatron.bridge.models.utils.torch.distributed") as mock_dist,
         patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True),
     ):
         mock_dist.is_initialized.return_value = False
@@ -163,8 +163,8 @@ def test_initialize_model_parallel_skips_cuda_seed_without_visible_cuda(provider
     """Model-parallel setup should not initialize CUDA RNG state on CPU-only hosts."""
     with (
         patch.dict(os.environ, {}, clear=True),
-        patch("megatron.bridge.models.model_provider.torch.cuda") as mock_cuda,
-        patch("megatron.bridge.models.model_provider.torch.distributed") as mock_dist,
+        patch("megatron.bridge.models.utils.torch.cuda") as mock_cuda,
+        patch("megatron.bridge.models.utils.torch.distributed") as mock_dist,
         patch("megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel") as mock_init_mp,
         patch("megatron.bridge.models.model_provider.model_parallel_cuda_manual_seed") as mock_seed,
     ):

@@ -497,6 +497,44 @@ class TestGPTModelProvider:
         mock_get_mtp.assert_called_once_with(provider, moe_layer_spec, use_transformer_engine=True, vp_stage=2)
         assert result == "mtp_spec"
 
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_decoder_layer_specs")
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
+    @patch("megatron.bridge.models.gpt_provider.torch.cuda")
+    def test_mtp_block_spec_uses_local_decoder_spec_for_cpu_only_initialization(
+        self, mock_cuda, mock_get_mtp, mock_get_decoder_specs
+    ):
+        """CPU-only MTP setup should avoid Transformer Engine MTP layer specs."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            mtp_num_layers=1,
+            use_cpu_initialization=True,
+        )
+
+        empty_block_spec = Mock()
+        empty_block_spec.layer_specs = []
+        provider.transformer_layer_spec = lambda config: empty_block_spec
+
+        dense_layer_spec = Mock(name="dense_layer_spec")
+        moe_layer_spec = Mock(name="moe_layer_spec")
+        mock_get_decoder_specs.return_value = [dense_layer_spec, moe_layer_spec]
+        mock_get_mtp.return_value = "mtp_spec"
+        mock_cuda.is_available.return_value = False
+
+        result = mtp_block_spec(provider, vp_stage=2)
+
+        mock_get_decoder_specs.assert_called_once_with(
+            provider,
+            use_transformer_engine=False,
+            normalization=provider.normalization,
+            qk_l2_norm=provider.qk_l2_norm,
+        )
+        mock_get_mtp.assert_called_once_with(provider, moe_layer_spec, use_transformer_engine=False, vp_stage=2)
+        assert result == "mtp_spec"
+
     @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
     def test_mtp_block_spec_passes_vp_stage_to_callable_spec(self, mock_get_mtp):
         """When the transformer_layer_spec callable accepts vp_stage, it is forwarded."""
