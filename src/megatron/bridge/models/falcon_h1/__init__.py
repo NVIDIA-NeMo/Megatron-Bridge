@@ -13,13 +13,7 @@
 # limitations under the License.
 
 from megatron.bridge.models.falcon_h1.falconh1_bridge import FalconH1Bridge
-from megatron.bridge.models.falcon_h1.falconh1_provider import (
-    FalconH1ModelProvider,
-    FalconH1ModelProvider1P5BDeep,
-    FalconH1ModelProvider7B,
-    FalconH1ModelProvider34B,
-    FalconH1ModelProvider500M,
-)
+from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_block import FalconH1Stack, FalconH1StackSubmodules
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import FalconH1Layer, FalconH1Submodules
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer_specs import falconh1_stack_spec
@@ -29,10 +23,6 @@ from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import Fa
 __all__ = [
     # Providers
     "FalconH1ModelProvider",
-    "FalconH1ModelProvider500M",
-    "FalconH1ModelProvider1P5BDeep",
-    "FalconH1ModelProvider7B",
-    "FalconH1ModelProvider34B",
     # Bridge
     "FalconH1Bridge",
     # Model and Config

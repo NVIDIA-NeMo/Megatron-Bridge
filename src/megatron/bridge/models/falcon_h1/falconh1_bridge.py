@@ -1,8 +1,18 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import logging
-
-import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -15,7 +25,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     RowParallelMapping,
 )
-from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Model
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -24,7 +33,12 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 logger = logging.getLogger(__name__)
 
 
-@MegatronModelBridge.register_bridge(source="FalconH1ForCausalLM", target=FalconH1Model)
+@MegatronModelBridge.register_bridge(
+    source="FalconH1ForCausalLM",
+    target=FalconH1Model,
+    provider=FalconH1ModelProvider,
+    model_type="falcon_h1",
+)
 class FalconH1Bridge(MegatronModelBridge):
     """
     Megatron Bridge for FalconH1 Causal LM.
@@ -39,60 +53,64 @@ class FalconH1Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
+        ("projectors_bias", "add_bias_linear"),
+        ("mamba_d_state", "mamba_state_dim"),
+        ("mamba_d_head", "mamba_head_dim"),
+        ("mamba_n_heads", "mamba_num_heads"),
+        ("mamba_n_groups", "mamba_num_groups"),
+        ("mamba_expand", "expand"),
+        ("mamba_d_conv", "d_conv"),
+        ("mamba_conv_bias", "conv_bias"),
+        ("mamba_chunk_size", "chunk_size"),
+        ("mamba_rms_norm", "rmsnorm"),
+        ("mamba_norm_before_gate", "norm_before_gate"),
+        ("embedding_multiplier", "embedding_multiplier"),
+        ("lm_head_multiplier", "lm_head_multiplier"),
+        ("key_multiplier", "key_multiplier"),
+        ("attention_in_multiplier", "attention_in_multiplier"),
+        ("attention_out_multiplier", "attention_out_multiplier"),
+        ("ssm_in_multiplier", "ssm_in_multiplier"),
+        ("ssm_out_multiplier", "ssm_out_multiplier"),
+        ("mlp_multipliers", "mlp_multipliers"),
+        ("ssm_multipliers", "ssm_multipliers"),
+    ]
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> FalconH1ModelProvider:
+        """Convert HuggingFace Falcon H1 config to ``FalconH1ModelProvider``."""
+        provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        return FalconH1ModelProvider(
-            # Basic model dimensions
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            seq_length=hf_config.max_position_embeddings,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            kv_channels=getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads),
-            # Mamba-specific parameters
-            mamba_state_dim=hf_config.mamba_d_state,
-            mamba_head_dim=hf_config.mamba_d_head,
-            mamba_num_heads=hf_config.mamba_n_heads,
-            mamba_num_groups=hf_config.mamba_n_groups,
-            expand=hf_config.mamba_expand,
-            d_conv=hf_config.mamba_d_conv,
-            chunk_size=hf_config.mamba_chunk_size,
-            rmsnorm=hf_config.mamba_rms_norm,
-            # Model configuration
-            vocab_size=hf_config.vocab_size,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            # Position embeddings
-            position_embedding_type="rope",
-            rotary_base=int(rope_theta_from_hf(hf_config)),
-            # Weights and biases
-            share_embeddings_and_output_weights=hf_config.tie_word_embeddings,
-            add_bias_linear=hf_config.projectors_bias,
-            attention_dropout=hf_config.attention_dropout,
-            hidden_dropout=getattr(hf_config, "hidden_dropout", 0.0),
-            # Data types
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.bfloat16),
-            fp16=(self.dtype_from_hf(hf_config, default=torch.bfloat16) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.bfloat16) == torch.bfloat16),
-            # FalconH1 specific - uniform hybrid layers
-            falconh1_ratio=1.0,
-            use_mamba=True,
-            use_attention=True,
-            use_mlp=True,
-            # Make vocab size divisible
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            # Add all MuP multipliers from HF config
-            embedding_multiplier=getattr(hf_config, "embedding_multiplier", 1.0),
-            lm_head_multiplier=getattr(hf_config, "lm_head_multiplier", 1.0),
-            key_multiplier=getattr(hf_config, "key_multiplier", 1.0),
-            attention_in_multiplier=getattr(hf_config, "attention_in_multiplier", 1.0),
-            attention_out_multiplier=getattr(hf_config, "attention_out_multiplier", 1.0),
-            ssm_in_multiplier=getattr(hf_config, "ssm_in_multiplier", 1.0),
-            ssm_out_multiplier=getattr(hf_config, "ssm_out_multiplier", 1.0),
-            mlp_multipliers=tuple(getattr(hf_config, "mlp_multipliers", [1.0, 1.0])),
-            ssm_multipliers=tuple(getattr(hf_config, "ssm_multipliers", [1.0, 1.0, 1.0, 1.0, 1.0])),
-        )
+        provider.position_embedding_type = "rope"
+        provider.rotary_percent = 1.0
+        provider.rotary_base = int(provider.rotary_base)
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_bias_linear = getattr(hf_config, "projectors_bias", provider.add_bias_linear)
+        provider.hidden_dropout = getattr(hf_config, "hidden_dropout", 0.0)
+
+        # Falcon H1 checkpoints represent every decoder block as a parallel
+        # Mamba + attention + MLP layer.
+        provider.falconh1_ratio = 1.0
+        provider.use_mamba = True
+        provider.use_attention = True
+        provider.use_mlp = True
+
+        provider.mlp_multipliers = tuple(provider.mlp_multipliers)
+        provider.ssm_multipliers = tuple(provider.ssm_multipliers)
+
+        return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: FalconH1ModelProvider) -> dict:
+        """Convert ``FalconH1ModelProvider`` to HuggingFace config fields."""
+        hf_config = super(FalconH1Bridge, cls).megatron_to_hf_config(provider)
+
+        hf_config["mamba_d_ssm"] = provider.mamba_num_heads * provider.mamba_head_dim
+        hf_config["mamba_proj_bias"] = provider.add_bias_linear
+        hf_config["mamba_use_mlp"] = provider.use_mlp
+
+        return hf_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Define parameter mappings between Megatron and HuggingFace formats."""

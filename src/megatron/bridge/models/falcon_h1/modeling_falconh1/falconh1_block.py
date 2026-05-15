@@ -216,7 +216,7 @@ class FalconH1Stack(MegatronModule):
                         chunk_size=self.config.chunk_size,
                     )
                 else:
-                    assert False, "unexpected layer_type"
+                    raise AssertionError(f"unexpected layer_type: {layer_type}")
             self.layers.append(layer)
 
         # Required for activation recomputation

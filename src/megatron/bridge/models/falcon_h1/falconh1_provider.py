@@ -93,7 +93,7 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
     cross_entropy_loss_fusion: bool = False
     transformer_impl: str = "local"
 
-    # Falcon H1 Mup Fwd Multpliers
+    # Falcon H1 MuP forward multipliers
     embedding_multiplier: float = 1.0
     lm_head_multiplier: float = 1.0
     key_multiplier: float = 1.0
@@ -102,7 +102,7 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
     ssm_in_multiplier: float = 1.0
     ssm_out_multiplier: float = 1.0
     mlp_multipliers: tuple = (1.0, 1.0)
-    ssm_multipliers: tuple = (1.0, 1.0, 1.0, 0.5, 1.0)
+    ssm_multipliers: tuple = (1.0, 1.0, 1.0, 1.0, 1.0)
 
     # Stack specification
     falconh1_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = get_default_falconh1_stack_spec
@@ -151,199 +151,11 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
             rotary_percent=self.rotary_percent,
             rotary_base=self.rotary_base,
             seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-            pre_process=pre_process or parallel_state.is_pipeline_first_stage(),
-            post_process=post_process or parallel_state.is_pipeline_last_stage(),
+            pre_process=parallel_state.is_pipeline_first_stage() if pre_process is None else pre_process,
+            post_process=parallel_state.is_pipeline_last_stage() if post_process is None else post_process,
         )
 
     def finalize(self) -> None:
         # Call parent class finalize if it exists
         if hasattr(super(), "finalize"):
             super().finalize()
-
-
-@dataclass
-class FalconH1ModelProvider500M(FalconH1ModelProvider):
-    """Configuration for FalconH1 0.5B model.
-    Based on: https://huggingface.co/tiiuae/Falcon-H1-0.5B-Instruct
-    """
-
-    # Model architecture from config.json
-    num_layers: int = 36
-    hidden_size: int = 1024
-    ffn_hidden_size: int = 2048
-    num_attention_heads: int = 8
-    num_query_groups: int = 2
-    seq_length: int = 16384
-
-    # Mamba-specific parameters
-    mamba_state_dim: int = 128
-    mamba_head_dim: int = 64
-    mamba_num_heads: int = 24
-    mamba_num_groups: int = 1
-    expand: int = 2
-    d_conv: int = 4
-    chunk_size: int = 128
-    rmsnorm: bool = False
-
-    # Model settings
-    vocab_size: int = 32784
-    tie_word_embeddings: bool = False
-    make_vocab_size_divisible_by: int = 16
-
-    # All layers are FalconH1 layers
-    falconh1_ratio: float = 1.0
-    use_mamba: bool = True
-    use_attention: bool = True
-    use_mlp: bool = True
-
-    # MuP multipliers for 0.5B
-    embedding_multiplier: float = 5.656854249492381
-    lm_head_multiplier: float = 0.0390625
-    key_multiplier: float = 0.39062499999999994
-    attention_in_multiplier: float = 1.0
-    attention_out_multiplier: float = 0.9375
-    ssm_in_multiplier: float = 1.25
-    ssm_out_multiplier: float = 0.23570226039551587
-    mlp_multipliers: tuple = (0.8838834764831844, 0.5859375)
-    ssm_multipliers: tuple = (0.3535533905932738, 0.25, 0.3535533905932738, 0.5, 0.3535533905932738)
-
-
-@dataclass
-class FalconH1ModelProvider1P5BDeep(FalconH1ModelProvider):
-    """Configuration for FalconH1 1.5B Deep model.
-    Based on: https://huggingface.co/tiiuae/Falcon-H1-1.5B-Deep-Instruct
-    """
-
-    # Model architecture from config.json
-    num_layers: int = 66
-    hidden_size: int = 1280
-    ffn_hidden_size: int = 3072
-    num_attention_heads: int = 6
-    num_query_groups: int = 2
-    seq_length: int = 131072
-
-    # Mamba-specific parameters
-    mamba_state_dim: int = 256
-    mamba_head_dim: int = 64
-    mamba_num_heads: int = 24
-    mamba_num_groups: int = 1
-    expand: int = 2
-    d_conv: int = 4
-    chunk_size: int = 128
-    rmsnorm: bool = True
-
-    # Model settings
-    vocab_size: int = 65537
-    tie_word_embeddings: bool = False
-    make_vocab_size_divisible_by: int = 1
-
-    # All layers are FalconH1 layers
-    falconh1_ratio: float = 1.0
-    use_mamba: bool = True
-    use_attention: bool = True
-    use_mlp: bool = True
-
-    # MuP multipliers for 1.5B Deep
-    embedding_multiplier: float = 5.656854249492381
-    lm_head_multiplier: float = 0.03125
-    key_multiplier: float = 0.17677669529663687
-    attention_in_multiplier: float = 1.0
-    attention_out_multiplier: float = 0.5
-    ssm_in_multiplier: float = 1.0
-    ssm_out_multiplier: float = 0.23570226039551587
-    mlp_multipliers: tuple = (0.7071067811865476, 0.3125)
-    ssm_multipliers: tuple = (0.3535533905932738, 0.25, 0.1767766952966369, 0.5, 0.3535533905932738)
-
-
-@dataclass
-class FalconH1ModelProvider7B(FalconH1ModelProvider):
-    """Configuration for FalconH1 7B model.
-    Based on: https://huggingface.co/tiiuae/Falcon-H1-7B-Instruct
-    """
-
-    # Model architecture from config.json
-    num_layers: int = 44
-    hidden_size: int = 3072
-    ffn_hidden_size: int = 12288
-    num_attention_heads: int = 12
-    num_query_groups: int = 2
-    seq_length: int = 262144
-
-    # Mamba-specific parameters
-    mamba_state_dim: int = 256
-    mamba_head_dim: int = 128
-    mamba_num_heads: int = 24
-    mamba_num_groups: int = 1
-    expand: int = 2
-    d_conv: int = 4
-    chunk_size: int = 256
-    rmsnorm: bool = True
-
-    # Model settings
-    vocab_size: int = 130049
-    tie_word_embeddings: bool = False
-    make_vocab_size_divisible_by: int = 1
-
-    # All layers are FalconH1 layers
-    falconh1_ratio: float = 1.0
-    use_mamba: bool = True
-    use_attention: bool = True
-    use_mlp: bool = True
-
-    # MuP multipliers for 7B
-    embedding_multiplier: float = 5.656854249492381
-    lm_head_multiplier: float = 0.013020833333333334
-    key_multiplier: float = 0.030690398488999456
-    attention_in_multiplier: float = 1.0
-    attention_out_multiplier: float = 0.10416666666666667
-    ssm_in_multiplier: float = 0.4166666666666667
-    ssm_out_multiplier: float = 0.11785113019775793
-    mlp_multipliers: tuple = (0.2946278254943948, 0.032552083333333336)
-    ssm_multipliers: tuple = (0.3535533905932738, 0.25, 0.1767766952966369, 0.5, 0.3535533905932738)
-
-
-@dataclass
-class FalconH1ModelProvider34B(FalconH1ModelProvider):
-    """Configuration for FalconH1 34B model.
-    Based on: https://huggingface.co/tiiuae/Falcon-H1-34B-Instruct
-    """
-
-    # Model architecture from config.json
-    num_layers: int = 72
-    hidden_size: int = 5120
-    ffn_hidden_size: int = 21504
-    num_attention_heads: int = 20
-    num_query_groups: int = 4
-    seq_length: int = 262144
-
-    # Mamba-specific parameters
-    mamba_state_dim: int = 256
-    mamba_head_dim: int = 128
-    mamba_num_heads: int = 32
-    mamba_num_groups: int = 2
-    expand: int = 2
-    d_conv: int = 4
-    chunk_size: int = 128
-    rmsnorm: bool = True
-
-    # Model settings
-    vocab_size: int = 261120
-    tie_word_embeddings: bool = False
-    make_vocab_size_divisible_by: int = 128
-
-    # All layers are FalconH1 layers
-    falconh1_ratio: float = 1.0
-    use_mamba: bool = True
-    use_attention: bool = True
-    use_mlp: bool = True
-
-    # MuP multipliers for 34B
-    embedding_multiplier: float = 5.656854249492381
-    lm_head_multiplier: float = 0.0078125
-    key_multiplier: float = 0.011048543456039804
-    attention_in_multiplier: float = 1.0
-    attention_out_multiplier: float = 0.0375
-    ssm_in_multiplier: float = 0.25
-    ssm_out_multiplier: float = 0.08838834764831845
-    mlp_multipliers: tuple = (0.1767766952966369, 0.011160714285714284)
-    ssm_multipliers: tuple = (0.3535533905932738, 0.25, 0.1767766952966369, 0.5, 0.3535533905932738)
