@@ -33,20 +33,9 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV3Bridge,
 )
 from megatron.bridge.models.gemma import (
-    CodeGemmaModelProvider2B,
-    CodeGemmaModelProvider7B,
     Gemma2ModelProvider,
-    Gemma2ModelProvider2B,
-    Gemma2ModelProvider9B,
-    Gemma2ModelProvider27B,
     Gemma3ModelProvider,
-    Gemma3ModelProvider1B,
-    Gemma3ModelProvider4B,
-    Gemma3ModelProvider12B,
-    Gemma3ModelProvider27B,
     GemmaModelProvider,
-    GemmaModelProvider2B,
-    GemmaModelProvider7B,
 )
 from megatron.bridge.models.gemma_vl import (
     Gemma3VLBridge,
@@ -94,21 +83,17 @@ from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
     Ministral3ModelProvider,
-    Ministral3ModelProvider3B,
-    Ministral3ModelProvider8B,
-    Ministral3ModelProvider14B,
 )
 from megatron.bridge.models.mistral import (
     MistralModelProvider,
-    MistralSmall3ModelProvider24B,
 )
 from megatron.bridge.models.nemotron import (
     NemotronBridge,
 )
 from megatron.bridge.models.nemotron_vl import (
-    NemotronNano12Bv2VLModelProvider,
     NemotronVLBridge,
     NemotronVLModel,
+    NemotronVLModelProvider,
 )
 from megatron.bridge.models.nemotronh import (
     NemotronHBridge,
@@ -174,19 +159,8 @@ __all__ = [
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
     "Gemma3ModelProvider",
-    "Gemma3ModelProvider1B",
-    "Gemma3ModelProvider4B",
-    "Gemma3ModelProvider12B",
-    "Gemma3ModelProvider27B",
-    "CodeGemmaModelProvider2B",
-    "CodeGemmaModelProvider7B",
     "GemmaModelProvider",
-    "GemmaModelProvider2B",
-    "GemmaModelProvider7B",
     "Gemma2ModelProvider",
-    "Gemma2ModelProvider2B",
-    "Gemma2ModelProvider9B",
-    "Gemma2ModelProvider27B",
     "GLM45Bridge",
     "GLM5Bridge",
     "GLM45VBridge",
@@ -202,14 +176,10 @@ __all__ = [
     "LlamaNemotronHeterogeneousProvider",
     "LlamaNemotronBridge",
     "MistralModelProvider",
-    "MistralSmall3ModelProvider24B",
     # Ministral 3 Models
     "Ministral3Bridge",
     "Ministral3Model",
     "Ministral3ModelProvider",
-    "Ministral3ModelProvider3B",
-    "Ministral3ModelProvider8B",
-    "Ministral3ModelProvider14B",
     "MiniMaxM2Bridge",
     "OlMoEBridge",
     "OlMoEModelProvider",
@@ -243,7 +213,7 @@ __all__ = [
     "Gemma4VLModelProvider",
     "NemotronVLModel",
     "NemotronVLBridge",
-    "NemotronNano12Bv2VLModelProvider",
+    "NemotronVLModelProvider",
     # ASR Models
     "Qwen3ASRBridge",
     "Qwen3ASRModel",

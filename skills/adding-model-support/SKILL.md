@@ -130,6 +130,13 @@ directory — keep them namespaced under the `modeling_<model>` prefix.
    then sets model-specific attributes on it. **Do not create a provider file** — the stock
    provider returned by `super().provider_bridge()` is usually sufficient for LLMs
    (e.g., `GPTModelProvider`, or another base provider selected via `PROVIDER_CLASS`).
+   **Do not add size-specific provider classes** whose names combine
+   `ModelProvider` with a model-size suffix. Examples of forbidden suffixes
+   include `7B`, `200M`, and `A3B`. Model size and architecture fields should
+   come from the Hugging Face config through `AutoBridge` /
+   `MegatronModelBridge` config mapping. If a recipe needs a fixed
+   architecture, configure the base provider inside the recipe function instead
+   of exporting a provider subclass.
 
 **VLM:**
 1. **Bridge** — Register bridge, implement config and weight mappings.
@@ -310,6 +317,12 @@ Each recipe file defines functions for each model size + training mode:
 - `<model>_<size>_pretrain_config()` — Pretraining (LLM only, usually)
 
 For detailed recipe patterns, see @skills/adding-model-support/recipe-patterns.md.
+
+Recipes are the right API surface for model-size presets. Do not create or
+export size-specific provider subclasses for recipes; either call
+`AutoBridge.from_hf_pretrained(...).to_megatron_provider(load_weights=False)` to
+derive the provider from HF config, or instantiate the base provider class with
+explicit architecture fields inside the recipe function.
 
 ### Export checklist
 
