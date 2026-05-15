@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.12.*"
 resolution-markers = [
     "platform_machine != 's390x'",
@@ -2453,7 +2453,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.6.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'" },
-    { name = "transformers", specifier = "==5.8.1" },
+    { name = "transformers", specifier = ">=5.8.1,<5.9.0" },
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.25.0" },
 ]
