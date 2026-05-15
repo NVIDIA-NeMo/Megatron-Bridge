@@ -280,10 +280,10 @@ def setup(
             # This is switched off here in order to load these states from the checkpoint
             cfg.checkpoint.finetune = False
     else:
-        # ``checkpoint_exists`` returns True for both Megatron and HuggingFace checkpoint
-        # directories (see ``is_hf_checkpoint_dir`` in ``checkpoint_utils``).  Loading
-        # of an HF ``pretrained_checkpoint`` is dispatched inside ``_load_checkpoint_from_path``
-        # via ``_resolve_iteration_dir_for_hf``.
+        # ``checkpoint_exists`` returns True for both Megatron and explicit HuggingFace
+        # checkpoint directories (see ``is_hf_checkpoint_dir`` in ``checkpoint_utils``).
+        # Parent Megatron save dirs still resume through the native ``iter_*`` path;
+        # any extra ``iter_*/hf`` export is ignored unless the user points directly at it.
         should_load_checkpoint = (
             (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load))
             or (

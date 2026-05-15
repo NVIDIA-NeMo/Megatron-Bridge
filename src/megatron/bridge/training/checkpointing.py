@@ -2253,75 +2253,6 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
             raise
 
 
-def _resolve_iteration_dir_for_hf(
-    load_dir: Optional[str],
-    ckpt_cfg: CheckpointConfig,
-    ignore_ckpt_step: bool = False,
-) -> Optional[str]:
-    """Resolve the concrete iteration directory for HF-format checkpoint loads.
-
-    Returns the path of an ``iter_*`` directory (or ``load_dir`` itself when it
-    is already a HF directory).  Returns ``None`` when no usable HF checkpoint
-    can be located.
-
-    Implementation detail: we deliberately read the tracker file directly here
-    rather than routing through :func:`_resolve_checkpoint_iteration` so that
-    callers downstream (e.g. the ``fsdp_dtensor`` branch in
-    :func:`_load_checkpoint_from_path`) which mock or count
-    ``is_checkpoint_iteration_directory`` are not affected by our HF probe.
-
-    Args:
-        load_dir: Base directory (parent of ``iter_*``) or an iteration directory.
-        ckpt_cfg: Checkpoint configuration (consulted for ``ckpt_step``).
-        ignore_ckpt_step: When True, ignore ``ckpt_cfg.ckpt_step`` (used by
-            PEFT pre-wrap hook to load pretrained base from latest iter).
-    """
-    if load_dir is None:
-        return None
-    if dist_checkpointing.check_is_distributed_checkpoint(load_dir):
-        return None
-    if is_hf_checkpoint_dir(load_dir):
-        return load_dir
-
-    # ``load_dir`` is not an HF directory itself; see if it points at a parent
-    # save directory whose tracker resolves to an HF iter sub-directory.
-    ckpt_step_override = None if ignore_ckpt_step else ckpt_cfg.ckpt_step
-    if ckpt_step_override is not None:
-        candidate = get_checkpoint_name(load_dir, ckpt_step_override, release=False)
-        if dist_checkpointing.check_is_distributed_checkpoint(candidate):
-            return None
-        if is_hf_checkpoint_dir(candidate):
-            return candidate
-        hf_candidate = _hf_weights_dir(candidate)
-        return hf_candidate if is_hf_checkpoint_dir(hf_candidate) else None
-
-    iteration: Optional[int] = None
-    release = False
-    tracker_filename = get_checkpoint_train_state_filename(load_dir, prefix=TRACKER_PREFIX)
-    if file_exists(tracker_filename):
-        try:
-            train_state = read_train_state(tracker_filename)
-            iteration = train_state.step
-        except Exception:
-            iteration = None
-    if iteration is None:
-        legacy_tracker_filename = get_checkpoint_tracker_filename(load_dir)
-        if file_exists(legacy_tracker_filename):
-            try:
-                iteration, release = read_metadata(legacy_tracker_filename)
-            except Exception:
-                iteration = None
-    if iteration is None or iteration < 0:
-        return None
-    candidate = get_checkpoint_name(load_dir, iteration, release)
-    if dist_checkpointing.check_is_distributed_checkpoint(candidate):
-        return None
-    if is_hf_checkpoint_dir(candidate):
-        return candidate
-    hf_candidate = _hf_weights_dir(candidate)
-    return hf_candidate if is_hf_checkpoint_dir(hf_candidate) else None
-
-
 def _load_hf_iter_checkpoint(
     iter_dir: str,
     state: GlobalState,
@@ -2344,7 +2275,6 @@ def _load_hf_iter_checkpoint(
         return False
 
     if not skip_load_to_model_and_opt:
-        bridge = _build_auto_bridge_for_save(cfg)
         if is_hf_peft_adapter_only_dir(iter_dir):
             import json
 
@@ -2359,6 +2289,7 @@ def _load_hf_iter_checkpoint(
                     "HF PEFT adapter checkpoint is missing base weights. Set base_model_name_or_path in "
                     "adapter_config.json, or set cfg.checkpoint.hf_source_path / cfg.model.hf_model_id."
                 )
+            bridge = _build_auto_bridge_for_save(cfg, hf_source=base_path)
             bridge.load_hf_weights(model, hf_path=base_path)
             if cfg.peft is not None or _model_has_adapter_parameters():
                 bridge.load_hf_adapter(model, iter_dir)
@@ -2369,6 +2300,7 @@ def _load_hf_iter_checkpoint(
                     "are applied."
                 )
         else:
+            bridge = _build_auto_bridge_for_save(cfg, hf_source=iter_dir)
             bridge.load_hf_weights(model, hf_path=iter_dir)
 
     metadata_dir = (
@@ -2455,17 +2387,14 @@ def _load_checkpoint_from_path(
     pg_collection = pg_collection or get_pg_collection(model)
     ckpt_format = cfg.checkpoint.ckpt_format
 
-    # ------------------------------------------------------------------
-    # HuggingFace-format directory: load weights from safetensors only.  Full
-    # training resume is handled by the complete Megatron checkpoint at iter_*/.
-    # ------------------------------------------------------------------
-    hf_iter_dir = _resolve_iteration_dir_for_hf(
-        load_dir, cfg.checkpoint, ignore_ckpt_step=ignore_ckpt_step
-    )
-    if hf_iter_dir is not None:
-        print_rank_0(f" loading HuggingFace-format checkpoint from {hf_iter_dir}")
+    # HuggingFace-format directories are only honored when explicitly provided
+    # as ``load_dir``/``pretrained_checkpoint``.  Parent Megatron save dirs should
+    # resume from their native ``iter_*`` checkpoint and ignore the extra
+    # ``iter_*/hf`` export produced by ``save_weight_format='hf'``.
+    if is_hf_checkpoint_dir(load_dir):
+        print_rank_0(f" loading HuggingFace-format checkpoint from {load_dir}")
         return _load_hf_iter_checkpoint(
-            hf_iter_dir,
+            load_dir,
             state,
             model,
             optimizer,
