@@ -477,6 +477,59 @@ class TestMoeQuantMappingRegistryIntegration:
             "model.layers.0.mlp.experts.*.down_proj.weight_quantizer._amax",
         ]
 
+    def test_moe_weight_star_amax_is_export_only(self, registry):
+        hf_name = "model.layers.0.mlp.experts.1.down_proj.weight_quantizer._amax"
+        m = registry.megatron_to_hf_lookup("decoder.layers.0.mlp.experts.linear_fc2.weight_quantizer._amax")
+
+        assert m is not None
+        assert m.hf_param == {}
+        assert registry.hf_to_megatron_lookup(hf_name) is None
+        assert m.hf_to_megatron({}, SimpleNamespace()) is None
+
+    def test_moe_weight_star_amax_stream_import_yields_no_weight(self, registry):
+        from megatron.bridge.models.conversion import model_bridge as mb
+        from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+
+        class DummyBridge(MegatronModelBridge):
+            def provider_bridge(self, hf_pretrained):
+                return None
+
+            def mapping_registry(self):
+                return registry
+
+        class EmptyState(dict):
+            def __init__(self, hf_keys):
+                super().__init__()
+                self.source = SimpleNamespace(get_all_keys=lambda: hf_keys)
+
+        local_name = "decoder.layers.0.mlp.experts.linear_fc2.weight_quantizer._amax"
+        hf_name = "model.layers.0.mlp.experts.1.down_proj.weight_quantizer._amax"
+        model_config = SimpleNamespace(num_moe_experts=2, share_embeddings_and_output_weights=False)
+        model = SimpleNamespace(
+            config=model_config,
+            named_parameters=lambda: iter(()),
+        )
+        module = SimpleNamespace(config=model.config)
+        param = torch.tensor([1.0])
+        hf_pretrained = SimpleNamespace(state=EmptyState({hf_name}))
+        bridge = DummyBridge()
+
+        with (
+            patch.object(bridge, "_megatron_global_param_names_all_pp_ranks", return_value=[local_name]),
+            patch.object(mb, "unwrap_model", return_value=[model]),
+            patch.object(mb, "_megatron_local_name_to_global", side_effect=lambda _models, _config, name, *_: name),
+            patch.object(mb, "persistent_buffers", return_value=[(local_name, param)]),
+            patch.object(mb, "get_module_and_param_from_name", return_value=(module, param)),
+            patch.object(mb.parallel_state, "get_pipeline_model_parallel_rank", return_value=0),
+        ):
+            tasks = bridge.build_conversion_tasks(hf_pretrained, [model])
+            result = list(bridge.stream_weights_hf_to_megatron(hf_pretrained, [model], tasks))
+
+        assert len(tasks) == 1
+        assert tasks[0] is not None
+        assert tasks[0].megatron_module is module
+        assert result == []
+
     def test_sequential_mlp_local_expert_weight_uses_regular_expert_mapping(self):
         mappings = [
             AutoMapping(

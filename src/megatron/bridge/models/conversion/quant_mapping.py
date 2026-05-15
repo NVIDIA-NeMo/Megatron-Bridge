@@ -22,7 +22,7 @@ from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
 class AmaxMapping(ReplicatedMapping):
     """Amax mapping for quantization."""
 
-    def __init__(self, megatron_param: str, hf_param: str):
+    def __init__(self, megatron_param: str, hf_param: str | dict[str, str]):
         """Initialize the Amax mapping."""
         super().__init__(megatron_param, hf_param)
         self.allow_hf_name_mismatch = True
@@ -97,7 +97,7 @@ class MoeAmaxFanoutMapping(AmaxMapping):
         assert hf_patterns, "hf_patterns must be non-empty"
         self.hf_patterns = hf_patterns
         self.num_experts = num_experts
-        super().__init__(megatron_param, hf_patterns[0])
+        super().__init__(megatron_param, {})
 
     def _validate_patterns(self) -> None:
         """Allow one extra HF wildcard for the expert index."""
@@ -107,6 +107,10 @@ class MoeAmaxFanoutMapping(AmaxMapping):
     def is_expert(self) -> bool:
         """Use normal TP handling; EP fanout is handled explicitly here."""
         return False
+
+    def hf_to_megatron(self, hf_weights, megatron_module):
+        """Grouped-MoE amax fanout is export-only."""
+        return None
 
     def _get_num_experts(self, megatron_module: object | None) -> int | None:
         if self.num_experts is not None:
