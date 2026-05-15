@@ -96,6 +96,7 @@ class Qwen3OmniModel(MegatronModule):
         inference_params: InferenceParams | None = None,
         packed_seq_params: PackedSeqParams | None = None,
         extra_block_kwargs: dict | None = None,
+        runtime_gather_output: bool | None = None,
         **kwargs,
     ) -> torch.Tensor:
         return self.thinker(
@@ -107,5 +108,6 @@ class Qwen3OmniModel(MegatronModule):
             inference_params=inference_params,
             packed_seq_params=packed_seq_params,
             extra_block_kwargs=extra_block_kwargs,
+            runtime_gather_output=runtime_gather_output,
             **kwargs,
         )
