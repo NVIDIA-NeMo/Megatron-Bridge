@@ -29,10 +29,10 @@ The current implementation focuses on checkpoint conversion, training-oriented m
 
 Qwen3-Omni examples are maintained here:
 
-- `examples/models/vlm/qwen3_omni/README.md`
-- `examples/models/vlm/qwen3_omni/conversion.sh`
-- `examples/models/vlm/qwen3_omni/inference.sh`
-- `examples/models/vlm/qwen3_omni/local_train_thinker_4node_tp2_ep8_sp.sh`
+- `examples/models/qwen/qwen3_omni/README.md`
+- `examples/models/qwen/qwen3_omni/conversion.sh`
+- `examples/models/qwen/qwen3_omni/inference.sh`
+- `examples/models/qwen/qwen3_omni/local_train_thinker_full.sh`
 
 ## Related Docs
 

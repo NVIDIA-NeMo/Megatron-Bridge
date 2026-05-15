@@ -48,7 +48,7 @@ GPT OSS models are supported via the Bridge system with specialized configuratio
 
 ## Examples
 
-For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [GPT-OSS Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gpt_oss/README.md).
+For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [GPT-OSS Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gpt_oss/gpt_oss/README.md).
 
 ## API reference
 

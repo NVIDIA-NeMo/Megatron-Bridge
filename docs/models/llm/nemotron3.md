@@ -38,7 +38,7 @@ uv run python examples/conversion/convert_checkpoints.py export  \
 BLEND_PATH=/path/to/dataset/blend
 TOKENIZER_MODEL=/path/to/tiktok/tokenizer/model
 
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_nano.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_3/nano/pretrain_nemotron_3_nano.py \
 --per-split-data-args-path=${BLEND_PATH} \
 --tokenizer-model=${TOKENIZER_MODEL} \
 train.global_batch_size=3072 \
@@ -56,7 +56,7 @@ Notes:
 
 ### Full Parameter Fine-Tuning
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_3/nano/finetune_nemotron_3_nano.py \
 train.global_batch_size=128 \
 train.train_iters=100 \
 scheduler.lr_warmup_iters=10 \
@@ -72,7 +72,7 @@ Notes:
 ### LoRA Fine-Tuning
 To enable LoRA fine-tuning, pass `--peft lora` to script
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_3/nano/finetune_nemotron_3_nano.py \
 --peft lora \
 train.global_batch_size=128 \
 train.train_iters=100 \
