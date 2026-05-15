@@ -17,7 +17,7 @@ DeepSeek V4 models are supported via the Bridge system with auto-detected config
 
 ## Examples, Parallelism, and Limitations
 
-For checkpoint conversion and inference scripts, recommended parallelism settings, and current known limitations, see the [DeepSeek V4 examples README](../../../examples/models/deepseek_v4/README.md).
+For checkpoint conversion and inference scripts, recommended parallelism settings, and current known limitations, see the [DeepSeek V4 examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/deepseek_v4).
 
 ## Hugging Face Model Cards & References
 
@@ -31,4 +31,4 @@ For checkpoint conversion and inference scripts, recommended parallelism setting
 - GitHub Repository: https://github.com/deepseek-ai/DeepSeek-V4
 
 ## Related Docs
-- DeepSeek V4 examples: [examples/models/deepseek_v4/README.md](../../../examples/models/deepseek_v4/README.md)
+- DeepSeek V4 examples: [examples/models/deepseek_v4/README.md](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/deepseek_v4)

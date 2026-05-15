@@ -19,10 +19,8 @@ schema. It derives dimension- and layer-dependent fields from the HF config and
 dispatches checkpoint import by tensor dtype so FP8 and FP8+MXFP4 formats can
 share the same conversion path.
 
-Checkpoint format notes
------------------------
-DeepSeek-V4 uses a custom serialisation format that differs from standard
-HuggingFace Transformers naming conventions:
+Checkpoint format notes: DeepSeek-V4 uses a custom serialisation format that
+differs from standard HuggingFace Transformers naming conventions:
 
   - embed.weight            (not model.embed_tokens.weight)
   - head.weight             (not lm_head.weight)
@@ -35,10 +33,8 @@ HuggingFace Transformers naming conventions:
   - hc_head_fn / hc_head_base / hc_head_scale            (global HC head, learned output contraction)
   - mtp.N.*                                               (MTP layers)
 
-Quantisation schemes
---------------------
-Two on-disk formats coexist in this family. The bridge dispatches purely on
-tensor dtype, so the same code path handles both:
+Quantisation schemes: Two on-disk formats coexist in this family. The bridge
+dispatches purely on tensor dtype, so the same code path handles both:
 
   Released variant     Attn / shared experts     Routed experts
   -------------------  ------------------------  ----------------------------
@@ -52,16 +48,13 @@ except the MXFP4 expert path, where scale is per-row over 32-element K-tiles.
 F32 via ``.to(torch.float32)`` and selects the tile expansion automatically.
 All weights are dequantised to bfloat16 during import.
 
-MoE router note
----------------
-Hash-routing layers (layer_number <= moe_n_hash_layers) contain a
-`tid2eid` buffer (int32 vocab→expert lookup table).  Buffers are not
+MoE router note: Hash-routing layers (layer_number <= moe_n_hash_layers)
+contain a `tid2eid` buffer (int32 vocab→expert lookup table).  Buffers are not
 parameters, so Megatron does not expose them via `named_parameters()`.
 The bridge handles `tid2eid` via `maybe_modify_loaded_hf_weight()` and
 a dedicated `_Tid2EidMapping` that writes it into `state_dict` directly.
 
-Megatron-Core prerequisites
----------------------------
+Megatron-Core prerequisites:
   - HyperConnectionModule
   - DSv4HybridSelfAttention / CompressedSparseAttention / CSAIndexer / Compressor
   - Hash-routing tid2eid support and SwiGLU clamp
