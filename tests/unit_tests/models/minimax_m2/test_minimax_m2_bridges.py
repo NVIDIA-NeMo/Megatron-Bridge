@@ -266,14 +266,89 @@ class TestFullDimRMSNorm:
 
     def test_full_dim_rms_norm_forward_tp1(self):
         """TP=1: forward pass normalises over full local_dim == global_dim."""
-        norm = _FullDimRMSNorm(local_dim=64, global_dim=64, tp_group_getter=lambda: None, eps=1e-6)
+        norm = _FullDimRMSNorm(
+            local_dim=64,
+            global_dim=64,
+            shard_world_size=1,
+            tp_group_getter=lambda: None,
+            eps=1e-6,
+        )
         x = torch.randn(4, 2, 1, 64)  # [sq, b, num_heads_local, head_dim]
         out = norm(x)
         assert out.shape == x.shape
 
     def test_full_dim_rms_norm_weight_shape(self):
-        norm = _FullDimRMSNorm(local_dim=32, global_dim=64, tp_group_getter=lambda: None)
+        norm = _FullDimRMSNorm(
+            local_dim=32,
+            global_dim=64,
+            shard_world_size=2,
+            tp_group_getter=lambda: None,
+        )
         assert norm.weight.shape == (32,)
+
+    def test_full_dim_rms_norm_replica_aware_variance(self):
+        norm = _FullDimRMSNorm(
+            local_dim=2,
+            global_dim=4,
+            shard_world_size=2,
+            tp_group_getter=lambda: "tp",
+            eps=0.0,
+        )
+        x = torch.tensor([[[[1.0, 2.0]]]])
+
+        def fake_all_reduce(tensor, op=None, group=None):
+            tensor.copy_(torch.tensor([[[60.0]]], dtype=tensor.dtype))
+
+        with (
+            patch(
+                "megatron.bridge.models.minimax_m2.minimax_m2_provider.dist.get_world_size",
+                return_value=4,
+            ),
+            patch(
+                "megatron.bridge.models.minimax_m2.minimax_m2_provider.dist.all_reduce",
+                side_effect=fake_all_reduce,
+            ),
+        ):
+            out = norm(x)
+
+        expected = x / torch.sqrt(torch.tensor(7.5))
+        assert torch.allclose(out, expected, atol=1e-6)
+
+    def test_full_dim_rms_norm_sharded_state_dict_uses_unique_shards(self):
+        norm = _FullDimRMSNorm(
+            local_dim=4,
+            global_dim=8,
+            shard_world_size=2,
+            tp_group_getter=lambda: "tp",
+        )
+
+        def fake_get_pg_size(group):
+            return 4 if group == "tp" else 1
+
+        def fake_get_pg_rank(group):
+            if group == "tp":
+                return 3
+            if group == "dp":
+                return 0
+            raise AssertionError(f"Unexpected group: {group}")
+
+        with (
+            patch(
+                "megatron.bridge.models.minimax_m2.minimax_m2_provider.get_pg_size",
+                side_effect=fake_get_pg_size,
+            ),
+            patch(
+                "megatron.bridge.models.minimax_m2.minimax_m2_provider.get_pg_rank",
+                side_effect=fake_get_pg_rank,
+            ),
+        ):
+            state_dict = norm.sharded_state_dict(prefix="layer.", metadata={"dp_cp_group": "dp"})
+
+        sharded_weight = state_dict["layer.weight"]
+        assert sharded_weight.global_shape == (8,)
+        assert sharded_weight.global_offset == (4,)
+        assert sharded_weight.axis_fragmentations == (2,)
+        assert sharded_weight.replica_id == (0, 1, 0)
 
     def test_full_dim_q_norm_creates_rms_norm_tp1(self):
         """FullDimQNorm factory creates _FullDimRMSNorm with correct dims for TP=1."""
@@ -286,6 +361,7 @@ class TestFullDimRMSNorm:
         # local_dim = (8 // 1) * 64 = 512; global_dim = 8 * 64 = 512
         assert norm.local_dim == 512
         assert norm.global_dim == 512
+        assert norm.shard_world_size == 1
 
     def test_full_dim_q_norm_creates_rms_norm_tp2(self):
         """FullDimQNorm shards correctly for TP=2."""
@@ -298,6 +374,7 @@ class TestFullDimRMSNorm:
         # local_dim = (8 // 2) * 64 = 256; global_dim = 8 * 64 = 512
         assert norm.local_dim == 256
         assert norm.global_dim == 512
+        assert norm.shard_world_size == 2
 
     def test_full_dim_k_norm_uses_num_kv_heads(self):
         """FullDimKNorm uses num_query_groups (KV heads) instead of num_attention_heads."""
@@ -311,6 +388,7 @@ class TestFullDimRMSNorm:
         # local_dim = (4 // 1) * 64 = 256; global_dim = 4 * 64 = 256
         assert norm.local_dim == 256
         assert norm.global_dim == 256
+        assert norm.shard_world_size == 1
 
     def test_full_dim_k_norm_falls_back_to_q_heads(self):
         """FullDimKNorm falls back to num_attention_heads when num_query_groups is None."""
@@ -321,6 +399,20 @@ class TestFullDimRMSNorm:
         config.params_dtype = torch.bfloat16
         norm = FullDimKNorm(hidden_size=64, config=config)
         assert norm.global_dim == 8 * 64
+        assert norm.shard_world_size == 1
+
+    def test_full_dim_k_norm_replicates_when_tp_exceeds_num_kv_heads(self):
+        """FullDimKNorm keeps one KV shard per unique KV head when TP > KV heads."""
+        config = Mock()
+        config.tensor_model_parallel_size = 4
+        config.num_query_groups = 2
+        config.num_attention_heads = 8
+        config.params_dtype = torch.bfloat16
+        norm = FullDimKNorm(hidden_size=64, config=config)
+        assert isinstance(norm, _FullDimRMSNorm)
+        assert norm.local_dim == 64
+        assert norm.global_dim == 128
+        assert norm.shard_world_size == 2
 
 
 class TestFullDimQKNormMappingTP1:
@@ -357,3 +449,57 @@ class TestFullDimQKNormMappingTP1:
 
         assert isinstance(result, dict)
         assert list(result.values())[0].shape == (512,)
+
+
+class TestFullDimQKNormMappingReplicatedKV:
+    """Unit tests for _FullDimQKNormMapping when TP ranks replicate KV shards."""
+
+    def _make_mapping(self):
+        return _FullDimQKNormMapping(
+            megatron_param="decoder.layers.*.self_attention.k_layernorm.weight",
+            hf_param="model.layers.*.self_attn.k_norm.weight",
+        )
+
+    def test_hf_to_megatron_uses_unique_kv_shard_rank(self):
+        mapping = self._make_mapping()
+        megatron_module = Mock()
+        megatron_module.weight = torch.zeros(4, dtype=torch.bfloat16)
+        megatron_module.global_dim = 8
+        hf_weight = torch.arange(8, dtype=torch.bfloat16)
+
+        with (
+            patch.object(type(mapping), "tp_size", new_callable=lambda: property(lambda self: 4)),
+            patch.object(type(mapping), "tp_rank", new_callable=lambda: property(lambda self: 3)),
+            patch.object(
+                mapping,
+                "broadcast_tensor_to_tp_ranks",
+                side_effect=lambda _w, **_kw: hf_weight.clone(),
+            ),
+        ):
+            result = mapping.hf_to_megatron(hf_weight, megatron_module)
+
+        assert torch.equal(result, hf_weight[4:8])
+
+    def test_megatron_to_hf_deduplicates_replicated_kv_shards(self):
+        mapping = self._make_mapping()
+        megatron_module = Mock()
+        megatron_module.global_dim = 8
+        gathered = [
+            torch.arange(4, dtype=torch.bfloat16),
+            torch.arange(4, dtype=torch.bfloat16),
+            torch.arange(4, 8, dtype=torch.bfloat16),
+            torch.arange(4, 8, dtype=torch.bfloat16),
+        ]
+
+        with (
+            patch.object(type(mapping), "tp_size", new_callable=lambda: property(lambda self: 4)),
+            patch.object(mapping, "broadcast_from_pp_rank", side_effect=lambda w, **kw: w),
+            patch.object(mapping, "maybe_dequantize", side_effect=lambda w: w),
+            patch.object(mapping, "gather_from_tp_ranks", return_value=gathered),
+        ):
+            result = mapping.megatron_to_hf(gathered[-1], megatron_module)
+
+        assert torch.equal(
+            result["model.layers.*.self_attn.k_norm.weight"],
+            torch.arange(8, dtype=torch.bfloat16),
+        )

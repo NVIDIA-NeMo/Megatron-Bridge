@@ -128,6 +128,28 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # allow_hf_name_mismatch should be set to True to bypass a check in `build_conversion_tasks`
         self.allow_hf_name_mismatch = False
 
+    def set_process_groups_from_pg_collection(self, pg_collection: Any) -> None:
+        """Override snapshotted Megatron-Core globals with a ``ProcessGroupCollection``.
+
+        Used by the decentralized PG path where ``mpu`` is never initialized.
+        ``__init__`` runs at registry construction time and snapshots whatever
+        Megatron-Core globals exist then; in the decentralized path those are
+        absent, so ``tp_size`` would default to ``world_size`` and conversions
+        would compute the wrong shard sizes. ``MegatronModelBridge`` calls this
+        right before running tasks to install the user-supplied groups.
+        """
+        if pg_collection is None:
+            return
+        for attr, field in (
+            ("pp_group", "pp"),
+            ("ep_group", "ep"),
+            ("_tp_group", "tp"),
+            ("_etp_group", "expt_tp"),
+        ):
+            group = getattr(pg_collection, field, None)
+            if group is not None:
+                setattr(self, attr, group)
+
     @property
     def tp_group(self):
         """Get the tensor model parallel group."""
@@ -348,14 +370,17 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             self._tensor_spec_output_cache[cache_key] = tensor_spec_output
 
         # ------------------------------------------------------------------
-        # 2.  Identify the owning rank (the only rank with a non-None spec).
+        # 2.  Identify the first owning rank (pick the lowest-ranked PP stage
+        #     that holds the tensor).  Certain architectures (MLA / DeepSeek-V3,
+        #     MTP, or models with tied embeddings) legitimately place the same
+        #     weight on more than one PP rank, so we must *not* raise on
+        #     duplicates – instead we deterministically pick the first owner
+        #     as the broadcast source.
         # ------------------------------------------------------------------
         target_tensor_spec = None
         src_rank = None  # Rank *inside* the PP group.
         for rank, spec in enumerate(tensor_spec_output):
-            if spec is not None:
-                if target_tensor_spec is not None:
-                    raise ValueError(f"Tensor exists on more than one PP rank. Found on ranks {src_rank} and {rank}.")
+            if spec is not None and target_tensor_spec is None:
                 target_tensor_spec = spec
                 src_rank = rank
 
@@ -401,7 +426,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Any: Broadcasted object on all ranks.
 
         Raises:
-            ValueError: If object exists on multiple ranks or no ranks.
+            ValueError: If object does not exist on any rank.
         """
         if self.pp_size == 1:
             return obj
@@ -418,12 +443,15 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather_object(obj_flags, has_obj, group=self.pp_group)
 
         # ------------------------------------------------------------------
-        # 2. Identify the owning rank (the only rank with True flag)
+        # 2. Identify the first owning rank (lowest PP stage with the object).
+        #    Certain architectures (MLA, MTP, tied embeddings) place the same
+        #    parameter on multiple PP ranks — pick the first owner.
         # ------------------------------------------------------------------
         src_rank = None  # Rank *inside* the PP group
         for rank, flag in enumerate(obj_flags):
             if flag:
                 src_rank = rank
+                break
 
         if src_rank is None:
             raise ValueError("Object must exist on at least one PP rank")
@@ -431,8 +459,6 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # ------------------------------------------------------------------
         # 3. Broadcast the object from the source rank to all ranks
         # ------------------------------------------------------------------
-        if src_rank is None:
-            raise ValueError("Could not determine source rank")
 
         # Use broadcast_object_list which is more robust than all_gather_object
         obj_list = [obj]
@@ -481,6 +507,51 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         global_src = torch.distributed.get_global_rank(group=self.tp_group, group_rank=src_rank)
         torch.distributed.broadcast(tensor, src=global_src, group=self.tp_group)
         return tensor
+
+    def _get_shard_spec(
+        self,
+        *,
+        shard_size: int,
+        megatron_module: nn.Module | None = None,
+        global_size: int | None = None,
+        global_size_attr: str | None = None,
+    ) -> tuple[int, int]:
+        """Get the unique TP shard count and shard rank for the current TP rank.
+
+        This supports layouts where TP ranks may contain replicated copies of a
+        smaller set of unique shards, such as KV-head sharding when
+        ``num_query_groups < tensor_model_parallel_size``.
+
+        Args:
+            shard_size: Number of elements in the local shard along the sharded axis.
+            megatron_module: Optional Megatron module carrying layout metadata.
+            global_size: Explicit global size along the sharded axis.
+            global_size_attr: Optional module attribute that stores the global
+                size along the sharded axis.
+
+        Returns:
+            Tuple of ``(shard_world_size, shard_rank)`` where ``shard_world_size``
+            is the number of unique shards and ``shard_rank`` is the current
+            rank's unique shard index.
+        """
+        resolved_global_size = shard_size * self.tp_size
+        if global_size is not None:
+            resolved_global_size = global_size
+        elif megatron_module is not None and global_size_attr is not None:
+            resolved_global_size = getattr(megatron_module, global_size_attr, resolved_global_size)
+
+        if resolved_global_size % shard_size != 0:
+            raise ValueError(f"Invalid sharded layout: global_size={resolved_global_size}, shard_size={shard_size}")
+
+        shard_world_size = resolved_global_size // shard_size
+        if self.tp_size % shard_world_size != 0:
+            raise ValueError(
+                f"Invalid replicated shard layout: tp_size={self.tp_size}, shard_world_size={shard_world_size}"
+            )
+
+        replicas = self.tp_size // shard_world_size
+        shard_rank = self.tp_rank // replicas
+        return shard_world_size, shard_rank
 
     def scatter_to_tp_ranks(
         self,
@@ -844,7 +915,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             splits = None
 
         if isinstance(target_param, DTensor):
-            output_shape = [target_param.shape[0] // self.tp_size, *target_param.shape[1:]]
+            output_shape = target_param.orig_param.shape
         else:
             output_shape = target_param.shape
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
@@ -952,8 +1023,8 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         else:
             splits = None
 
-        if isinstance(target_param, DTensor) and hf_weights.ndim != 1:
-            output_shape = [target_param.shape[0], target_param.shape[1] // self.tp_size, *target_param.shape[2:]]
+        if isinstance(target_param, DTensor):
+            output_shape = target_param.orig_param.shape
         else:
             output_shape = target_param.shape
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
@@ -2173,7 +2244,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             splits = None
 
         if isinstance(target_param, DTensor):
-            output_shape = [target_param.shape[0] // self.tp_size, *target_param.shape[1:]]
+            output_shape = target_param.orig_param.shape
         else:
             output_shape = target_param.shape
         # Scatter the concatenated shards to each rank
@@ -2411,11 +2482,12 @@ class FusedGatedExpertMapping(AutoMapping):
         if target_shape[0] % 2 != 0:
             raise ValueError(f"Expected even fused dim for {self.megatron_param}, got {target_shape}.")
 
-        gate_target_shape = (target_shape[0] // 2, target_shape[1])
-        # target_shape is the TP-sharded Megatron shape; compute the full (unsharded) shapes
-        # so that _align_expert_weight_to_shape can correctly match the raw HF weights.
-        # _gated_mapping.hf_to_megatron is responsible for TP scatter.
-        gate_full_shape = (gate_target_shape[0] * self.tp_size, target_shape[1])
+        if isinstance(target_param, DTensor):
+            gate_full_shape = (target_shape[0] // 2, target_shape[1])
+        else:
+            # target_shape is the TP-sharded Megatron shape; compute the full
+            # unsharded shape so raw HF weights can be validated before TP scatter.
+            gate_full_shape = (target_shape[0] // 2 * self.tp_size, target_shape[1])
         gate_up_full_shape = (gate_full_shape[0] * 2, target_shape[1])
 
         if expert_weight.ndim == 3 and expert_weight.shape[0] == 2:

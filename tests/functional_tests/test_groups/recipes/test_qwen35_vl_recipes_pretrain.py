@@ -24,6 +24,8 @@ Run with:
         tests/functional_tests/test_groups/recipes/test_qwen35_vl_recipes_pretrain.py -v
 """
 
+from functools import partial
+
 import pytest
 
 from megatron.bridge.recipes.qwen_vl.qwen35_vl import qwen35_vl_9b_pretrain_mock_config
@@ -35,15 +37,21 @@ pytestmark = pytest.mark.integration
 _TP2_PP1 = {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1}
 _TINY_MODEL = {"num_layers": 4}
 
+# Point the 9B pretrain recipe at the 27B HF artifacts so CI only needs one
+# Qwen3.5-VL cache (shared with the 27B SFT finetune tests). The test forces
+# ``num_layers=4`` and does not load weights, so the underlying variant only
+# matters for config/processor lookup.
+_qwen35_vl_9b_pretrain_mock_config = partial(qwen35_vl_9b_pretrain_mock_config, hf_path="Qwen/Qwen3.5-27B")
+
 QWEN35_VL_PRETRAIN_RECIPES = [
     (
-        qwen35_vl_9b_pretrain_mock_config,
+        _qwen35_vl_9b_pretrain_mock_config,
         "qwen35_vl_9b_pretrain_mock",
         _TP2_PP1,
         _TINY_MODEL,
     ),
     (
-        qwen35_vl_9b_pretrain_mock_config,
+        _qwen35_vl_9b_pretrain_mock_config,
         "qwen35_vl_9b_pretrain_mock_unfrozen_proj",
         _TP2_PP1,
         {

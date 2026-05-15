@@ -14,6 +14,7 @@
 
 import base64
 import io
+import logging
 import mimetypes
 import os
 from typing import Dict, List
@@ -21,6 +22,20 @@ from typing import Dict, List
 import torch
 from PIL import Image
 from transformers.video_utils import VideoMetadata
+
+from megatron.bridge.utils.safe_url import (
+    ALLOW_PRIVATE_URL_FETCH_ENV,
+    is_safe_public_http_url,
+    safe_url_open,
+)
+
+
+logger = logging.getLogger(__name__)
+
+# Backward-compatible private aliases so existing callers and tests keep working.
+_ALLOW_PRIVATE_URL_FETCH_ENV = ALLOW_PRIVATE_URL_FETCH_ENV
+_is_safe_public_http_url = is_safe_public_http_url
+_safe_url_open = safe_url_open
 
 
 def encode_pil_to_jpeg_data_url(pil_image):
@@ -155,13 +170,18 @@ def maybe_path_or_url_to_data_urls(path_or_url, fps=1, nframe=0, nframe_max=-1):
     # Remote URL
     if low.startswith("http://") or low.startswith("https://"):
         if low.endswith(".mp4"):
+            is_safe, reason = _is_safe_public_http_url(val)
+            if not is_safe:
+                logger.warning("Refusing to fetch video URL (%s): %s", reason, val)
+                return [val], None
             try:
+                import shutil
                 import tempfile
-                import urllib.request
 
                 with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmpf:
-                    urllib.request.urlretrieve(val, tmpf.name)
                     local_path = tmpf.name
+                    with _safe_url_open(val) as resp:
+                        shutil.copyfileobj(resp, tmpf)
                 result = sample_video_frames_to_data_urls(local_path, fps=fps, nframe=nframe, nframe_max=nframe_max)
                 try:
                     os.unlink(local_path)

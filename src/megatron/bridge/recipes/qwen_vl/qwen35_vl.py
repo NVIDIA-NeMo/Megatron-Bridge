@@ -424,7 +424,7 @@ def qwen35_vl_35b_a3b_fsdp_sft_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> 
 def qwen35_vl_122b_a10b_sft_config(hf_path: str = "Qwen/Qwen3.5-122B-A10B") -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 122B-A10B (MoE).
 
-    Default configuration: 4 nodes, 32 GPUs
+    Default configuration: 6 nodes, 48 GPUs
     - TP=2, PP=6, EP=8
     - LR=2e-5 (full SFT)
     - Sequence length: 4096

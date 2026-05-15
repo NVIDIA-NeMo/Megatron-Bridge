@@ -20,6 +20,7 @@ from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
@@ -141,12 +142,11 @@ def _set_recompute_overrides(
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
-
     if recompute_num_layers is not None:
         recipe.model.recompute_granularity = "full"
         recipe.model.recompute_method = "block"
         recipe.model.recompute_num_layers = recompute_num_layers
-    elif recompute_modules is not None:
+    if recompute_modules is not None:
         recipe.model.recompute_modules = recompute_modules
         recipe.model.recompute_granularity = "selective"
     # No else: if the caller has no recompute configuration to apply, leave
@@ -452,6 +452,13 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
     elif hasattr(recipe.model, "moe_token_dispatcher_type"):
         recipe.model.moe_token_dispatcher_type = "alltoall"
+
+    pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
+    if args.task == "lora" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
+        recipe.dist.use_tp_pp_dp_mapping = True
+
+    if args.deterministic:
+        apply_determinism_overrides(recipe)
 
     return recipe
 

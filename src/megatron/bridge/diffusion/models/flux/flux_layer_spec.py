@@ -230,10 +230,17 @@ class MMDiTLayer(TransformerLayer):
         cp_override_config.tp_comm_overlap = False
 
         if not context_pre_only:
-            self.context_mlp = build_module(
-                submodules.mlp,
-                config=cp_override_config,
-            )
+            if isinstance(submodules.mlp, ModuleSpec):
+                self.context_mlp = build_module(
+                    submodules.mlp,
+                    config=cp_override_config,
+                )
+            else:
+                self.context_mlp = submodules.mlp(
+                    config=cp_override_config,
+                    pg_collection=self.pg_collection,
+                    is_mtp_layer=self.is_mtp_layer,
+                )
         else:
             self.context_mlp = None
 
