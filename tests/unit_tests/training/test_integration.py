@@ -86,6 +86,36 @@ def test_create_peft_rejects_unknown_type() -> None:
         integration.create_peft({"type": "not_lora", "rank": 4})
 
 
+def test_create_peft_imports_only_selected_peft_type(monkeypatch) -> None:
+    real_import_module = integration.import_module
+
+    def guarded_import_module(module_name):
+        if module_name in {"megatron.bridge.peft.lora", "megatron.bridge.peft.canonical_lora"}:
+            raise AssertionError(f"unexpected import of {module_name}")
+        return real_import_module(module_name)
+
+    monkeypatch.setattr(integration, "import_module", guarded_import_module)
+
+    peft = integration.create_peft({"type": "dora", "rank": 4})
+
+    assert peft.__class__.__name__ == "DoRA"
+    assert peft.dim == 4
+
+
+def test_create_peft_reports_lora_import_failure(monkeypatch) -> None:
+    real_import_module = integration.import_module
+
+    def failing_import_module(module_name):
+        if module_name == "megatron.bridge.peft.lora":
+            raise ModuleNotFoundError("No module named 'transformer_engine'")
+        return real_import_module(module_name)
+
+    monkeypatch.setattr(integration, "import_module", failing_import_module)
+
+    with pytest.raises(ImportError, match=r"PEFT type 'lora'.*\[te\] extra"):
+        integration.create_peft({"type": "lora", "rank": 4})
+
+
 def test_create_peft_translates_rank_and_ignores_downstream_keys() -> None:
     peft = integration.create_peft(
         {

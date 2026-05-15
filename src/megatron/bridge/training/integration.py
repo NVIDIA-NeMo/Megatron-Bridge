@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import fields
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -47,20 +48,7 @@ def create_peft(config: Mapping[str, Any], *, dtype: torch.dtype | str | int | N
     if kwargs.get("dim", 0) <= 0:
         return None
 
-    from megatron.bridge.peft.canonical_lora import CanonicalLoRA
-    from megatron.bridge.peft.dora import DoRA
-    from megatron.bridge.peft.lora import LoRA, VLMLoRA
-
-    peft_classes = {
-        "lora": LoRA,
-        "vlm_lora": VLMLoRA,
-        "canonical_lora": CanonicalLoRA,
-        "dora": DoRA,
-    }
-    if peft_type not in peft_classes:
-        supported_types = ", ".join(sorted(peft_classes))
-        raise ValueError(f"Unsupported PEFT type {peft_type!r}. Supported types: {supported_types}.")
-    peft_cls = peft_classes[peft_type]
+    peft_cls = _import_peft_class(peft_type)
 
     peft_fields = {field.name for field in fields(peft_cls) if field.init}
     config_dtype = kwargs.pop("dtype", None)
@@ -75,6 +63,29 @@ def create_peft(config: Mapping[str, Any], *, dtype: torch.dtype | str | int | N
     kwargs = {key: value for key, value in kwargs.items() if key in peft_fields}
 
     return peft_cls(**kwargs)
+
+
+def _import_peft_class(peft_type: str) -> type[Any]:
+    peft_classes = {
+        "lora": ("megatron.bridge.peft.lora", "LoRA"),
+        "vlm_lora": ("megatron.bridge.peft.lora", "VLMLoRA"),
+        "canonical_lora": ("megatron.bridge.peft.canonical_lora", "CanonicalLoRA"),
+        "dora": ("megatron.bridge.peft.dora", "DoRA"),
+    }
+    if peft_type not in peft_classes:
+        supported_types = ", ".join(sorted(peft_classes))
+        raise ValueError(f"Unsupported PEFT type {peft_type!r}. Supported types: {supported_types}.")
+
+    module_name, class_name = peft_classes[peft_type]
+    try:
+        module = import_module(module_name)
+    except ImportError as err:
+        message = f"Failed to import PEFT type {peft_type!r} from {module_name}.{class_name}."
+        if peft_type in {"lora", "vlm_lora", "canonical_lora"}:
+            message += " Install Megatron Bridge with the [te] extra for Transformer Engine support."
+        raise ImportError(message) from err
+
+    return getattr(module, class_name)
 
 
 def create_peft_hook(
