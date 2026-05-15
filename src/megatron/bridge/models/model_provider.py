@@ -15,8 +15,9 @@
 import abc
 import os
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, Iterator, TypedDict, TypeVar, Union
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -96,6 +97,36 @@ def _disable_cpu_offloading_for_cpu_only_initialization(provider: object) -> Non
     ):
         if hasattr(provider, attr):
             setattr(provider, attr, False)
+
+
+def _disable_te_only_features_for_cpu_only_initialization(provider: object) -> None:
+    _disable_cpu_offloading_for_cpu_only_initialization(provider)
+    if hasattr(provider, "persist_layer_norm"):
+        setattr(provider, "persist_layer_norm", False)
+
+
+@contextmanager
+def _disable_te_cpu_offload_context_for_cpu_only_initialization(enabled: bool) -> Iterator[None]:
+    if not enabled:
+        yield
+        return
+
+    try:
+        from megatron.core.transformer import transformer_block
+    except ImportError:
+        yield
+        return
+
+    get_cpu_offload_context = getattr(transformer_block, "get_cpu_offload_context", None)
+    if get_cpu_offload_context is None:
+        yield
+        return
+
+    transformer_block.get_cpu_offload_context = None
+    try:
+        yield
+    finally:
+        transformer_block.get_cpu_offload_context = get_cpu_offload_context
 
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
@@ -201,9 +232,13 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         if wrap_with_ddp and not ddp_config:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
-        self.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
-        if self.use_cpu_initialization or not _cuda_is_available():
+        cuda_available = _cuda_is_available()
+        use_cpu_initialization = bool(use_cpu_initialization or not cuda_available)
+        self.use_cpu_initialization = use_cpu_initialization
+        if self.use_cpu_initialization and cuda_available:
             _disable_cpu_offloading_for_cpu_only_initialization(self)
+        elif self.use_cpu_initialization:
+            _disable_te_only_features_for_cpu_only_initialization(self)
 
         if not torch.distributed.is_initialized():
             backend = _select_distributed_backend(use_cpu_initialization=use_cpu_initialization)
@@ -232,23 +267,24 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             final_pre_wrap_hook = pre_wrap_hook or self.pre_wrap_hook
         final_post_wrap_hook = post_wrap_hook or self.post_wrap_hook
 
-        model = get_model(
-            self,
-            ddp_config=ddp_config,
-            model_type=model_type,
-            overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,
-            fp16=fp16,
-            bf16=bf16,
-            use_megatron_fsdp=use_megatron_fsdp,
-            use_torch_fsdp2=use_torch_fsdp2,
-            wrap_with_ddp=wrap_with_ddp,
-            data_parallel_random_init=data_parallel_random_init,
-            use_cpu_initialization=use_cpu_initialization,
-            init_model_with_meta_device=init_model_with_meta_device,
-            pre_wrap_hook=final_pre_wrap_hook,
-            mixed_precision_wrapper=mixed_precision_wrapper,
-            pg_collection=pg_collection,
-        )
+        with _disable_te_cpu_offload_context_for_cpu_only_initialization(self.use_cpu_initialization):
+            model = get_model(
+                self,
+                ddp_config=ddp_config,
+                model_type=model_type,
+                overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,
+                fp16=fp16,
+                bf16=bf16,
+                use_megatron_fsdp=use_megatron_fsdp,
+                use_torch_fsdp2=use_torch_fsdp2,
+                wrap_with_ddp=wrap_with_ddp,
+                data_parallel_random_init=data_parallel_random_init,
+                use_cpu_initialization=use_cpu_initialization,
+                init_model_with_meta_device=init_model_with_meta_device,
+                pre_wrap_hook=final_pre_wrap_hook,
+                mixed_precision_wrapper=mixed_precision_wrapper,
+                pg_collection=pg_collection,
+            )
 
         if final_post_wrap_hook:
             _model = final_post_wrap_hook(model)

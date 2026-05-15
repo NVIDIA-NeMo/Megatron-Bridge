@@ -95,6 +95,12 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     )
 
 
+def _should_use_local_layer_spec_for_cpu_only_initialization(config: "GPTModelProvider") -> bool:
+    return bool(getattr(config, "use_cpu_initialization", False)) and not (
+        torch.cuda.is_available() and torch.cuda.device_count() > 0
+    )
+
+
 def modelopt_transformer_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Layer specification for quantization with ModelOpt."""
     # arbitrary attention mask is used for speculative decoding training
@@ -117,6 +123,8 @@ def modelopt_transformer_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
+    if _should_use_local_layer_spec_for_cpu_only_initialization(config):
+        return local_layer_spec(config)
     if config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config)
     else:
@@ -351,6 +359,7 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
     if getattr(config, "mtp_num_layers", None):
         from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
 
+        use_transformer_engine = not _should_use_local_layer_spec_for_cpu_only_initialization(config)
         if isinstance(config.transformer_layer_spec, Callable):
             if "vp_stage" in inspect.signature(config.transformer_layer_spec).parameters:
                 spec = config.transformer_layer_spec(config, vp_stage=vp_stage)
@@ -367,12 +376,12 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
 
             decoder_layer_specs = get_gpt_decoder_layer_specs(
                 config,
-                use_transformer_engine=True,
+                use_transformer_engine=use_transformer_engine,
                 normalization=config.normalization,
                 qk_l2_norm=config.qk_l2_norm,
             )
             spec = decoder_layer_specs[-1]
-        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
+        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=use_transformer_engine, vp_stage=vp_stage)
     else:
         return None
 

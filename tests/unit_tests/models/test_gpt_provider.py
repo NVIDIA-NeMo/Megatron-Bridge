@@ -374,6 +374,58 @@ class TestGPTModelProvider:
         mock_te_spec.assert_called_once_with(provider)
         assert result == "te_spec"
 
+    @patch("megatron.bridge.models.gpt_provider.local_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.torch.cuda")
+    def test_default_layer_spec_uses_local_spec_for_cpu_only_initialization(
+        self, mock_cuda, mock_te_full_spec, mock_te_spec, mock_local_spec
+    ):
+        """CPU-only model construction should avoid Transformer Engine layer specs."""
+        from megatron.bridge.models.gpt_provider import default_layer_spec
+
+        provider = GPTModelProvider(
+            num_layers=12,
+            hidden_size=768,
+            num_attention_heads=12,
+            use_cpu_initialization=True,
+            use_transformer_engine_full_layer_spec=True,
+        )
+        mock_cuda.is_available.return_value = False
+        mock_local_spec.return_value = "local_spec"
+
+        result = default_layer_spec(provider)
+
+        mock_local_spec.assert_called_once_with(provider)
+        mock_te_full_spec.assert_not_called()
+        mock_te_spec.assert_not_called()
+        assert result == "local_spec"
+
+    @patch("megatron.bridge.models.gpt_provider.local_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.torch.cuda")
+    def test_default_layer_spec_keeps_te_spec_for_cpu_initialization_when_cuda_available(
+        self, mock_cuda, mock_te_spec, mock_local_spec
+    ):
+        """CPU initialization on a GPU host should preserve the existing TE default."""
+        from megatron.bridge.models.gpt_provider import default_layer_spec
+
+        provider = GPTModelProvider(
+            num_layers=12,
+            hidden_size=768,
+            num_attention_heads=12,
+            use_cpu_initialization=True,
+        )
+        mock_cuda.is_available.return_value = True
+        mock_cuda.device_count.return_value = 8
+        mock_te_spec.return_value = "te_spec"
+
+        result = default_layer_spec(provider)
+
+        mock_local_spec.assert_not_called()
+        mock_te_spec.assert_called_once_with(provider)
+        assert result == "te_spec"
+
     def test_mtp_block_spec_returns_none_when_mtp_disabled(self):
         """mtp_block_spec returns None when mtp_num_layers is unset."""
         from megatron.bridge.models.gpt_provider import mtp_block_spec

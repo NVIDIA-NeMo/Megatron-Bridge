@@ -38,6 +38,7 @@ class TestProvider(ModelProviderMixin):
     cpu_offloading = False
     cpu_offloading_activations = True
     cpu_offloading_weights = False
+    persist_layer_norm = True
 
     def provide(self, pre_process=None, post_process=None) -> MockMegatronModule:
         return MockMegatronModule()
@@ -66,6 +67,9 @@ def _stub_pg_collection():
 def test_provide_distributed_model_uses_gloo_for_cpu_initialization(provider):
     """CPU initialization should not require a CUDA device or NCCL process group."""
     mock_model = [MockMegatronModule()]
+    te_cpu_offload_context = object()
+
+    from megatron.core.transformer import transformer_block
 
     with (
         patch.dict(os.environ, {}, clear=True),
@@ -74,20 +78,32 @@ def test_provide_distributed_model_uses_gloo_for_cpu_initialization(provider):
         patch("megatron.bridge.models.model_provider.torch.cuda") as mock_cuda,
         patch("megatron.bridge.models.model_provider.torch.distributed") as mock_dist,
         patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True),
+        patch(
+            "megatron.core.transformer.transformer_block.get_cpu_offload_context",
+            te_cpu_offload_context,
+        ),
     ):
         mock_dist.is_initialized.return_value = False
         mock_cuda.is_available.return_value = True
         mock_cuda.device_count.return_value = 8
         mock_use_pg.return_value = _stub_pg_collection()
-        mock_get_model.return_value = mock_model
+
+        def assert_cpu_offload_context_disabled(*args, **kwargs):
+            assert transformer_block.get_cpu_offload_context is None
+            return mock_model
+
+        mock_get_model.side_effect = assert_cpu_offload_context_disabled
 
         provider.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=True)
+        assert transformer_block.get_cpu_offload_context is te_cpu_offload_context
+        assert mock_get_model.call_args.kwargs["use_cpu_initialization"] is True
 
     mock_dist.init_process_group.assert_called_once_with("gloo")
     mock_cuda.set_device.assert_not_called()
     assert provider.cpu_offloading is False
     assert provider.cpu_offloading_activations is False
     assert provider.cpu_offloading_weights is False
+    assert provider.persist_layer_norm is True
 
 
 def test_provide_distributed_model_uses_gloo_without_visible_cuda(provider):
@@ -108,12 +124,14 @@ def test_provide_distributed_model_uses_gloo_without_visible_cuda(provider):
         mock_get_model.return_value = mock_model
 
         provider.provide_distributed_model(wrap_with_ddp=False)
+        assert mock_get_model.call_args.kwargs["use_cpu_initialization"] is True
 
     mock_dist.init_process_group.assert_called_once_with("gloo")
     mock_cuda.set_device.assert_not_called()
     assert provider.cpu_offloading is False
     assert provider.cpu_offloading_activations is False
     assert provider.cpu_offloading_weights is False
+    assert provider.persist_layer_norm is False
 
 
 def test_provide_distributed_model_keeps_nccl_when_cuda_available(provider):
@@ -135,6 +153,7 @@ def test_provide_distributed_model_keeps_nccl_when_cuda_available(provider):
         mock_get_model.return_value = mock_model
 
         provider.provide_distributed_model(wrap_with_ddp=False)
+        assert mock_get_model.call_args.kwargs["use_cpu_initialization"] is False
 
     mock_dist.init_process_group.assert_called_once_with("nccl")
     mock_cuda.set_device.assert_called_once_with(2)
