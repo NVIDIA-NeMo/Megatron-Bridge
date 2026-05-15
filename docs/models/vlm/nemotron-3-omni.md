@@ -23,4 +23,4 @@ deployment.
 
 For the full setup, conversion, inference, training, evaluation, and LoRA
 merge / adapter export workflows, see
-[`examples/models/nemotron/nemotron_3_omni/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/nemotron/nemotron_3_omni/README.md).
+[`examples/models/vlm/nemotron_3_omni/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/README.md).
