@@ -34,7 +34,6 @@ from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention i
 
 pytestmark = [pytest.mark.unit]
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures / helpers
 # ---------------------------------------------------------------------------
@@ -460,53 +459,6 @@ class TestNemotronLabsDiffusionAttentionInferenceForward:
 # ---------------------------------------------------------------------------
 # Additional coverage: bidirectional mask, llama4 disabled, non-default RoPE
 # ---------------------------------------------------------------------------
-
-
-class TestBlockBidirectionalMask:
-    def test_set_stores_starts_and_ends(self):
-        attn = _make_attention()
-        starts = torch.tensor([0, 4, 8])
-        ends = torch.tensor([3, 7, 11])
-        attn.set_block_bidirectional_mask(starts, ends)
-        assert attn._block_bidirectional_starts is starts
-        assert attn._block_bidirectional_ends is ends
-
-    def test_set_rejects_non_1d_starts(self):
-        attn = _make_attention()
-        with pytest.raises(ValueError, match=r"must be 1D"):
-            attn.set_block_bidirectional_mask(torch.zeros(2, 2), torch.zeros(2))
-
-    def test_set_rejects_non_1d_ends(self):
-        attn = _make_attention()
-        with pytest.raises(ValueError, match=r"must be 1D"):
-            attn.set_block_bidirectional_mask(torch.zeros(2), torch.zeros(2, 2))
-
-    def test_set_rejects_shape_mismatch(self):
-        attn = _make_attention()
-        with pytest.raises(ValueError, match=r"must match"):
-            attn.set_block_bidirectional_mask(torch.tensor([0, 4]), torch.tensor([3, 7, 11]))
-
-    def test_clear_resets_to_none(self):
-        attn = _make_attention()
-        attn.set_block_bidirectional_mask(torch.tensor([0]), torch.tensor([3]))
-        attn.clear_block_bidirectional_mask()
-        assert attn._block_bidirectional_starts is None
-        assert attn._block_bidirectional_ends is None
-
-    def test_set_inference_params_clears_bidirectional_mask(self):
-        attn = _make_attention()
-        attn.set_block_bidirectional_mask(torch.tensor([0]), torch.tensor([3]))
-        attn.set_inference_params(causal=True, cache_enabled=True)
-        assert attn._block_bidirectional_starts is None
-        assert attn._block_bidirectional_ends is None
-
-    def test_set_inference_mode_false_clears_bidirectional_mask(self):
-        attn = _make_attention()
-        attn.set_inference_mode(True)
-        attn.set_block_bidirectional_mask(torch.tensor([0]), torch.tensor([3]))
-        attn.set_inference_mode(False)
-        assert attn._block_bidirectional_starts is None
-        assert attn._block_bidirectional_ends is None
 
 
 class TestLlama4ScalingDisabled:

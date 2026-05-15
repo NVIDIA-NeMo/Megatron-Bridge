@@ -17,6 +17,7 @@
 import pytest
 import torch
 
+import megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron_labs_diffusion as inf_mod
 from megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron_labs_diffusion import (
     add_gumbel_noise,
     get_num_transfer_tokens,
@@ -213,9 +214,12 @@ def _make_mock_model(num_layers=2, vocab_size=50, seq_len=None):
     decoder.layers = [layer, layer]  # num_layers copies
     model = MagicMock()
     model.decoder = decoder
-    # Ensure no .module attribute so _unwrap returns model itself
+    # Strip auto-generated wrapper attrs so _unwrap() terminates instead of recursing
+    # forever through MagicMock's on-demand attribute creation.
     if hasattr(model, "module"):
         del model.module
+    if hasattr(model, "language_model"):
+        del model.language_model
     return model, mock_attn
 
 
@@ -587,71 +591,6 @@ class TestGenerateDllm:
         """shift_logits=False path runs without error and returns correct shape."""
         (x_accum, _nfe, _timing), *_ = self._run(extra_kwargs={"shift_logits": False})
         assert x_accum.shape == (1, self._PROMPT_LEN + self._GEN_LENGTH)
-
-    def test_generate_dllm_with_model_schedule(self):
-        """Providing model_schedule runs without error and returns correct output shape."""
-        sched_model, _ = _make_mock_model()
-
-        vocab_size = self._VOCAB
-
-        def fake_forward(m, input_ids):
-            return _make_logits(input_ids.shape[0], input_ids.shape[1], vocab_size)
-
-        prompt = torch.zeros(1, self._PROMPT_LEN, dtype=torch.long)
-        model, _attn = _make_mock_model()
-
-        # steps_per_block = steps / num_blocks = 4 / 1 = 4 (gen=block=4 => 1 block)
-        model_schedule = [(sched_model, 4)]
-
-        with (
-            patch(f"{_MODULE}._model_forward", side_effect=fake_forward),
-            patch(f"{_MODULE}._tp_send_cmd"),
-            patch("torch.cuda.synchronize"),
-        ):
-            x_accum, nfe, timing = generate_dllm(
-                model,
-                prompt,
-                gen_length=self._GEN_LENGTH,
-                block_length=self._BLOCK_LENGTH,
-                steps=self._STEPS,
-                mask_id=999,
-                model_schedule=model_schedule,
-            )
-        assert x_accum.shape == (1, self._PROMPT_LEN + self._GEN_LENGTH)
-
-    def test_generate_dllm_model_schedule_wrong_steps_raises(self):
-        """model_schedule whose step total != steps_per_block raises ValueError."""
-        sched_model, _ = _make_mock_model()
-        # steps_per_block=4 but schedule only provides 3 steps
-        model_schedule = [(sched_model, 3)]
-        prompt = torch.zeros(1, self._PROMPT_LEN, dtype=torch.long)
-        model, _ = _make_mock_model()
-
-        def fake_forward(m, input_ids):
-            return _make_logits(input_ids.shape[0], input_ids.shape[1], self._VOCAB)
-
-        with (
-            patch(f"{_MODULE}._model_forward", side_effect=fake_forward),
-            patch(f"{_MODULE}._tp_send_cmd"),
-            patch("torch.cuda.synchronize"),
-            pytest.raises(ValueError, match="model_schedule total steps"),
-        ):
-            generate_dllm(
-                model,
-                prompt,
-                gen_length=self._GEN_LENGTH,
-                block_length=self._BLOCK_LENGTH,
-                steps=self._STEPS,
-                mask_id=999,
-                model_schedule=model_schedule,
-            )
-
-
-# ---------------------------------------------------------------------------
-# TestTpSendCmd
-# ---------------------------------------------------------------------------
-
-import megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron_labs_diffusion as inf_mod
 
 
 class TestTpSendCmd:

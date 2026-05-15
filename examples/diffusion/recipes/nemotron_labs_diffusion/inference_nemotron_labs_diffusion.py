@@ -49,6 +49,8 @@ import torch
 import torch.distributed as dist
 from transformers import AutoTokenizer
 
+# Register NemotronLabsDiffusionBridge so AutoBridge can match MinistralDiffEncoderModel architecture
+import megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge  # noqa: F401
 from megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron_labs_diffusion import (
     generate_ar,
     generate_dllm,
