@@ -18,11 +18,6 @@ set -xeuo pipefail
 WORKSPACE=${WORKSPACE:-/workspace}
 MODEL_NAME=${MODEL_NAME:-Falcon-H1-0.5B-Instruct}
 HF_MODEL_ID=${HF_MODEL_ID:-tiiuae/${MODEL_NAME}}
-TP=${TP:-1}
-PP=${PP:-1}
-EP=${EP:-1}
-ETP=${ETP:-1}
-NPROC_PER_NODE=${NPROC_PER_NODE:-$((TP * PP * EP))}
 
 MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-${WORKSPACE}/models/${MODEL_NAME}}
 HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/models/${MODEL_NAME}-hf-export}
@@ -53,9 +48,9 @@ tokenizer = AutoTokenizer.from_pretrained(hf_model_id, trust_remote_code=True)
 tokenizer.save_pretrained(hf_export_path)
 PY
 
-uv run python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" \
+uv run python -m torch.distributed.run --nproc_per_node=1 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
     --hf-model-id "$HF_MODEL_ID" \
     --megatron-load-path "${MEGATRON_MODEL_PATH}/iter_0000000" \
-    --tp "$TP" --pp "$PP" --ep "$EP" --etp "$ETP" \
+    --tp 1 --pp 1 --ep 1 --etp 1 \
     --trust-remote-code

@@ -24,17 +24,11 @@ Directory structure:
 
 [conversion.sh](conversion.sh) imports the Hugging Face checkpoint to Megatron,
 exports it back to Hugging Face format, copies tokenizer assets into the export
-directory, and runs the multi-GPU round-trip checker. The default `TP=1, PP=1`
-and `NPROC_PER_NODE=1` layout works for the 0.5B model.
+directory, and runs the round-trip checker with `TP=1, PP=1, EP=1, ETP=1`.
+This single-process layout works for the 0.5B model.
 
 ```bash
 bash examples/models/falcon_h1/conversion.sh
-```
-
-To run the same check with a different parallelism layout:
-
-```bash
-TP=2 PP=1 NPROC_PER_NODE=2 bash examples/models/falcon_h1/conversion.sh
 ```
 
 The round-trip check should complete with all converted parameters matching.
