@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from unittest.mock import Mock, call, patch
 
 import pytest
@@ -48,6 +49,105 @@ def provider():
 def ddp_config():
     """Fixture to create a DistributedDataParallelConfig instance."""
     return DistributedDataParallelConfig()
+
+
+def _stub_pg_collection():
+    return type(
+        "PG",
+        (),
+        {"pp": object(), "tp": object(), "cp": object(), "dp": object(), "dp_cp": object(), "expt_dp": object()},
+    )()
+
+
+def test_provide_distributed_model_uses_gloo_for_cpu_initialization(provider):
+    """CPU initialization should not require a CUDA device or NCCL process group."""
+    mock_model = [MockMegatronModule()]
+
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups") as mock_use_pg,
+        patch("megatron.bridge.models.model_provider.get_model") as mock_get_model,
+        patch("megatron.bridge.models.model_provider.torch.cuda") as mock_cuda,
+        patch("megatron.bridge.models.model_provider.torch.distributed") as mock_dist,
+        patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True),
+    ):
+        mock_dist.is_initialized.return_value = False
+        mock_cuda.is_available.return_value = True
+        mock_cuda.device_count.return_value = 8
+        mock_use_pg.return_value = _stub_pg_collection()
+        mock_get_model.return_value = mock_model
+
+        provider.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=True)
+
+    mock_dist.init_process_group.assert_called_once_with("gloo")
+    mock_cuda.set_device.assert_not_called()
+
+
+def test_provide_distributed_model_uses_gloo_without_visible_cuda(provider):
+    """A CPU-only process should fall back to Gloo instead of touching CUDA."""
+    mock_model = [MockMegatronModule()]
+
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups") as mock_use_pg,
+        patch("megatron.bridge.models.model_provider.get_model") as mock_get_model,
+        patch("megatron.bridge.models.model_provider.torch.cuda") as mock_cuda,
+        patch("megatron.bridge.models.model_provider.torch.distributed") as mock_dist,
+        patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True),
+    ):
+        mock_dist.is_initialized.return_value = False
+        mock_cuda.is_available.return_value = False
+        mock_use_pg.return_value = _stub_pg_collection()
+        mock_get_model.return_value = mock_model
+
+        provider.provide_distributed_model(wrap_with_ddp=False)
+
+    mock_dist.init_process_group.assert_called_once_with("gloo")
+    mock_cuda.set_device.assert_not_called()
+
+
+def test_provide_distributed_model_keeps_nccl_when_cuda_available(provider):
+    """GPU initialization should preserve the existing NCCL behavior."""
+    mock_model = [MockMegatronModule()]
+
+    with (
+        patch.dict(os.environ, {"LOCAL_RANK": "2"}, clear=True),
+        patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups") as mock_use_pg,
+        patch("megatron.bridge.models.model_provider.get_model") as mock_get_model,
+        patch("megatron.bridge.models.model_provider.torch.cuda") as mock_cuda,
+        patch("megatron.bridge.models.model_provider.torch.distributed") as mock_dist,
+        patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True),
+    ):
+        mock_dist.is_initialized.return_value = False
+        mock_cuda.is_available.return_value = True
+        mock_cuda.device_count.return_value = 8
+        mock_use_pg.return_value = _stub_pg_collection()
+        mock_get_model.return_value = mock_model
+
+        provider.provide_distributed_model(wrap_with_ddp=False)
+
+    mock_dist.init_process_group.assert_called_once_with("nccl")
+    mock_cuda.set_device.assert_called_once_with(2)
+
+
+def test_initialize_model_parallel_skips_cuda_seed_without_visible_cuda(provider):
+    """Model-parallel setup should not initialize CUDA RNG state on CPU-only hosts."""
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        patch("megatron.bridge.models.model_provider.torch.cuda") as mock_cuda,
+        patch("megatron.bridge.models.model_provider.torch.distributed") as mock_dist,
+        patch("megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel") as mock_init_mp,
+        patch("megatron.bridge.models.model_provider.model_parallel_cuda_manual_seed") as mock_seed,
+    ):
+        mock_dist.is_initialized.return_value = False
+        mock_cuda.is_available.return_value = False
+
+        provider.initialize_model_parallel(seed=123)
+
+    mock_dist.init_process_group.assert_called_once_with("gloo")
+    mock_cuda.set_device.assert_not_called()
+    mock_init_mp.assert_called_once()
+    mock_seed.assert_not_called()
 
 
 @patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")
