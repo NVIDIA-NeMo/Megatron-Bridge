@@ -46,9 +46,11 @@ EXPORT_DIR="${WORKSPACE}/models/${MODEL_VARIANT}-hf-export"
 ITER=iter_0000000
 
 # 1) Import HF -> Megatron (FP8 / MXFP4 dequantised to bfloat16 in-flight)
-uv run python examples/conversion/convert_checkpoints.py import \
+uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
+    examples/conversion/convert_checkpoints_multi_gpu.py import \
     --hf-model "${HF_MODEL_ID}" \
     --megatron-path "${MEGATRON_DIR}" \
+    --tp ${TP} --pp ${PP} --ep ${EP} \
     --torch-dtype bfloat16 \
     --trust-remote-code
 
@@ -62,8 +64,12 @@ uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
     --trust-remote-code
 
 # 3) Export Megatron -> HF (round-trip)
-uv run python examples/conversion/convert_checkpoints.py export \
+uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
+    examples/conversion/convert_checkpoints_multi_gpu.py export \
     --hf-model "${HF_MODEL_ID}" \
     --megatron-path "${MEGATRON_DIR}/${ITER}" \
+    --tp ${TP} --pp ${PP} --ep ${EP} \
+    --torch-dtype bfloat16 \
     --hf-path "${EXPORT_DIR}" \
+    --distributed-save \
     --trust-remote-code
