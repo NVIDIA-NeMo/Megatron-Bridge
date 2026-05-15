@@ -15,12 +15,12 @@ uv sync
 
 Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pinned main-branch submodule.
 
-| Variant | HF path | Quant scheme | TP | EP | Validation |
-|---------|---------|--------------|---:|---:|------------|
-| DeepSeek-V4-Flash | `deepseek-ai/DeepSeek-V4-Flash` | FP8 attn + MXFP4 experts | 1 | 4 | Verified on GB200, last-real-token logit cosine ~0.97-0.99 vs official inference |
-| DeepSeek-V4-Flash-Base | `deepseek-ai/DeepSeek-V4-Flash-Base` | uniform FP8 (F32 scales) | 1 | 4 | Verified on GB200, last-real-token logit cosine 0.9866-0.9930, mean 0.9907 vs official inference |
-| DeepSeek-V4-Pro | `deepseek-ai/DeepSeek-V4-Pro` | FP8 attn + MXFP4 experts | 1 | 16 | Algorithmic dequant validated; end-to-end unmeasured |
-| DeepSeek-V4-Pro-Base | `deepseek-ai/DeepSeek-V4-Pro-Base` | uniform FP8 (F32 scales) | 1 | 16 | Algorithmic dequant validated; end-to-end unmeasured |
+| Variant | HF path | Quant scheme | Validation |
+|---------|---------|--------------|------------|
+| DeepSeek-V4-Flash | `deepseek-ai/DeepSeek-V4-Flash` | FP8 attn + MXFP4 experts | Verified on GB200, last-token logit cosine 0.96-0.99 (short prompts ~0.98, long prompts >1024 tokens ~0.96-0.99) vs official inference |
+| DeepSeek-V4-Flash-Base | `deepseek-ai/DeepSeek-V4-Flash-Base` | uniform FP8 (F32 scales) | Verified on GB200, last-real-token logit cosine 0.9866-0.9930, mean 0.9907 vs official inference |
+| DeepSeek-V4-Pro | `deepseek-ai/DeepSeek-V4-Pro` | FP8 attn + MXFP4 experts | Import, export, inference verified on GB200 (PP=4 EP=8) and H100 (PP=16 EP=8) |
+| DeepSeek-V4-Pro-Base | `deepseek-ai/DeepSeek-V4-Pro-Base` | uniform FP8 (F32 scales) | Same bridge code as Pro; end-to-end untested |
 
 ## Examples
 
@@ -40,12 +40,12 @@ No external dequantisation script is required.
 
 DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported alongside the DSv4 hybrid attention path. Scale via expert and pipeline parallelism instead.
 
-| Model | TP | PP | EP | Verified Layout | Use Case |
-|-------|---:|---:|---:|-----------------|----------|
-| DeepSeek-V4-Flash | 1 | 1 | 4 | 4 GPUs on GB200 | Smoke / single-node inference |
-| DeepSeek-V4-Flash-Base | 1 | 1 | 4 | 4 GPUs on GB200 | Smoke / single-node inference |
-| DeepSeek-V4-Pro | 1 | 1+ | 16 | Not end-to-end verified | Multi-node inference or conversion |
-| DeepSeek-V4-Pro-Base | 1 | 1+ | 16 | Not end-to-end verified | Multi-node inference or conversion |
+| Model | TP | PP | EP | Min GPUs | Verified | Use Case |
+|-------|---:|---:|---:|---------:|----------|----------|
+| DeepSeek-V4-Flash | 1 | 1 | 4 | 4 | GB200 | Single-node inference |
+| DeepSeek-V4-Flash-Base | 1 | 1 | 4 | 4 | GB200 | Single-node inference |
+| DeepSeek-V4-Pro | 1 | 4 | 8 | 32 | GB200 | Multi-node (192 GB GPUs) |
+| DeepSeek-V4-Pro-Base | 1 | 4 | 8 | 32 | GB200 | Multi-node (192 GB GPUs) |
 
 ## Known Limitations
 

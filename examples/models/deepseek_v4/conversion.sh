@@ -46,7 +46,7 @@ EXPORT_DIR="${WORKSPACE}/models/${MODEL_VARIANT}-hf-export"
 ITER=iter_0000000
 
 # 1) Import HF -> Megatron (FP8 / MXFP4 dequantised to bfloat16 in-flight)
-uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
+uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
     examples/conversion/convert_checkpoints_multi_gpu.py import \
     --hf-model "${HF_MODEL_ID}" \
     --megatron-path "${MEGATRON_DIR}" \
@@ -55,7 +55,7 @@ uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
     --trust-remote-code
 
 # 2) Compare HF and Megatron logits on a short prompt
-uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
+uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
     examples/conversion/compare_hf_and_megatron/compare.py \
     --hf_model_path "${HF_MODEL_ID}" \
     --megatron_model_path "${MEGATRON_DIR}" \
@@ -64,7 +64,7 @@ uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
     --trust-remote-code
 
 # 3) Export Megatron -> HF (round-trip)
-uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
+uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
     examples/conversion/convert_checkpoints_multi_gpu.py export \
     --hf-model "${HF_MODEL_ID}" \
     --megatron-path "${MEGATRON_DIR}/${ITER}" \
