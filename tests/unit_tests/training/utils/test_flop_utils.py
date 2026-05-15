@@ -19,8 +19,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
 
-from megatron.bridge.training.utils.flop_utils import num_floating_point_operations, vit_flops
+from megatron.bridge.training.utils.flop_utils import (
+    accumulate_flops_metadata,
+    num_floating_point_operations,
+    vit_flops,
+)
 
 
 @dataclass
@@ -1662,3 +1667,114 @@ class TestProviderOverride:
         assert num_floating_point_operations(cfg, batch_size=4) == sentinel * 4
         # Override must have been invoked twice with the right batch_size args.
         assert captured == [1, 4], f"Override call log mismatch: {captured}"
+
+
+class _State:
+    """Minimal stand-in for GlobalState — just an attribute bag."""
+
+
+class TestAccumulateFlopsMetadata:
+    """Unit tests for ``accumulate_flops_metadata``."""
+
+    def test_bshd_no_cu_seqlens_uses_pack_length_squared(self):
+        # Without cu_seqlens, the accumulator falls back to BSHD math —
+        # mbs * seq_len² — matching the pre-existing behavior on dense
+        # pretraining / non-packed paths.
+        state = _State()
+        tokens = torch.zeros(2, 512)
+        accumulate_flops_metadata(state, tokens)
+        assert state._flops_seqlen_sum == 2 * 512
+        assert state._flops_seqlen_sq_sum == 2 * 512**2
+
+    def test_thd_cu_seqlens_uses_sum_of_squares(self):
+        # cu_seqlens = [0, 256, 512, 4096] → sub-seq lengths [256, 256, 3584].
+        # THD attention work = 256² + 256² + 3584² = 12,975,488; the BSHD
+        # approximation (1 × 4096²) would be 16,777,216 — much larger.
+        state = _State()
+        tokens = torch.zeros(1, 4096)
+        cu_seqlens = torch.tensor([0, 256, 512, 4096])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sum == 1 * 4096
+        assert state._flops_seqlen_sq_sum == 256**2 + 256**2 + 3584**2
+
+    def test_thd_padded_cu_seqlens_with_argmin(self):
+        # Offline packed SFT pads cu_seqlens for CUDA graphs; the real
+        # entries end at cu_seqlens_argmin. Pad entries past argmin must be
+        # ignored (here they would otherwise contribute zero-length, but we
+        # exercise the truncation explicitly).
+        state = _State()
+        tokens = torch.zeros(1, 8192)
+        cu_seqlens = torch.tensor([0, 1024, 4096, 8192, 8192, 8192, 8192])
+        argmin = torch.tensor(4)  # real entries [0, 1024, 4096, 8192]
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, cu_seqlens_argmin=argmin)
+        assert state._flops_seqlen_sq_sum == 1024**2 + 3072**2 + 4096**2
+
+    def test_thd_unpadded_takes_precedence_over_padded(self):
+        # When both cu_seqlens_unpadded and cu_seqlens are present, the
+        # unpadded variant describes the actual sub-sequence boundaries used
+        # by the attention kernel (cu_seqlens_q in PackedSeqParams) and must
+        # be the source of Σᵢ sᵢ².
+        state = _State()
+        tokens = torch.zeros(1, 4096)
+        cu_seqlens_padded = torch.tensor([0, 4096, 4096, 4096])  # 1 pad-aligned sub-seq
+        cu_seqlens_unpadded = torch.tensor([0, 1000, 3500, 4096])  # 3 real sub-seqs
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            cu_seqlens=cu_seqlens_padded,
+            cu_seqlens_unpadded=cu_seqlens_unpadded,
+        )
+        assert state._flops_seqlen_sq_sum == 1000**2 + 2500**2 + 596**2
+
+    def test_accumulates_additively_across_microbatches(self):
+        # Each call adds to existing accumulators (microbatch loop semantics).
+        state = _State()
+        tokens = torch.zeros(1, 128)
+        cu_a = torch.tensor([0, 32, 128])
+        cu_b = torch.tensor([0, 64, 128])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_a)
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_b)
+        assert state._flops_seqlen_sum == 2 * 128
+        assert state._flops_seqlen_sq_sum == (32**2 + 96**2) + (64**2 + 64**2)
+
+    def test_tokens_none_is_noop(self):
+        state = _State()
+        accumulate_flops_metadata(state, None)
+        assert not hasattr(state, "_flops_seqlen_sum")
+        assert not hasattr(state, "_flops_seqlen_sq_sum")
+
+    def test_visual_inputs_image_and_video_grids(self):
+        state = _State()
+        tokens = torch.zeros(1, 64)
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            image_grid_thw=torch.tensor([[1, 4, 4], [1, 2, 8]]),  # 16 + 16 = 32 patches
+            video_grid_thw=torch.tensor([[2, 2, 2]]),  # 8 patches
+        )
+        assert state._flops_vision_patches == 32 + 8
+
+    def test_empty_cu_seqlens_falls_back_to_bshd(self):
+        # Degenerate cu_seqlens (only one element after argmin truncation)
+        # yields no sub-seqs, so the helper must fall back to BSHD rather
+        # than report 0 attention work.
+        state = _State()
+        tokens = torch.zeros(1, 256)
+        cu_seqlens = torch.tensor([0])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sq_sum == 1 * 256**2
+
+    def test_thd_substantially_smaller_than_bshd_for_short_samples(self):
+        # Regression check on the headline claim: a pack containing many
+        # short samples has dramatically less attention work than the BSHD
+        # approximation would suggest.
+        state = _State()
+        tokens = torch.zeros(1, 8192)
+        # 32 sub-seqs of length 256 → pack length 8192.
+        cu_seqlens = torch.tensor([i * 256 for i in range(33)])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        thd_sq = state._flops_seqlen_sq_sum
+        bshd_sq = 1 * 8192**2
+        # 32 * 256² = 2,097,152 vs 8192² = 67,108,864 → 32× smaller.
+        assert thd_sq == 32 * 256**2
+        assert bshd_sq // thd_sq == 32

@@ -32,6 +32,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
@@ -237,6 +238,21 @@ def _forward_step_common(
             cu_seqlens_unpadded_argmin,
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
+
+    # Accumulate FLOPS metadata across micro-batches. For offline-packed THD
+    # SFT, ``cu_seqlens`` (and ``cu_seqlens_unpadded`` when ``pad_seq_to_mult
+    # > 1``) describe the real sub-sequence boundaries within the pack, so
+    # the helper computes the THD-correct Σᵢ sᵢ² for the attention term
+    # instead of the pack-length² BSHD approximation. train.py resets these
+    # before each step and reads accumulated values afterwards.
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        cu_seqlens=cu_seqlens,
+        cu_seqlens_argmin=cu_seqlens_argmin,
+        cu_seqlens_unpadded=cu_seqlens_unpadded,
+        cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin,
+    )
 
     forward_args = {
         "input_ids": tokens,

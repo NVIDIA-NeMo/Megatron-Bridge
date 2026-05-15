@@ -27,6 +27,7 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
@@ -180,6 +181,16 @@ def forward_step(
 
     if pg_collection.cp.size() > 1:
         raise NotImplementedError("Qwen3-Omni training supports SP/EP, but CP is not supported yet.")
+
+    # Accumulate FLOPS metadata across micro-batches. Qwen3-Omni does not pack
+    # within a batch, so cu_seqlens is absent and the helper falls back to
+    # BSHD math for the attention term. Vision-patch tracking still applies.
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        image_grid_thw=multimodal_inputs.get("image_grid_thw") if isinstance(multimodal_inputs, dict) else None,
+        video_grid_thw=multimodal_inputs.get("video_grid_thw") if isinstance(multimodal_inputs, dict) else None,
+    )
 
     forward_args = {
         "input_ids": tokens,
