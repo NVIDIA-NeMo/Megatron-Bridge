@@ -113,4 +113,6 @@ override-dependencies = [
     "langchain~=1.0.0",
     "langchain-core~=1.2.22",                            # GHSA-qh6h-p6c9-ff54
     "decord; sys_platform == 'never'",                   # Optional dependency. Resolves CVE
+    "av; sys_platform == 'never'",                       # Optional dependency. Resolves CVE
+    "opencv-python-headless; sys_platform == 'never'",   # Optional dependency. Resolves CVE
 ]
