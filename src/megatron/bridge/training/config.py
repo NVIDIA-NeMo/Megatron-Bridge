@@ -658,12 +658,12 @@ class CheckpointConfig(MTrainCheckpointConfig):
 
     - ``"megatron"`` (default): weights are saved together with optimizer / RNG / scheduler / rerun
       state in a single distributed checkpoint, following the format specified by ``ckpt_format``.
-    - ``"hf"``: weights are saved as HuggingFace ``*.safetensors`` directly under each ``iter_*/``
-      directory together with HF ``config.json`` / tokenizer / (optional) custom modeling files.
-      Optimizer, RNG, scheduler and rerun state are still serialized with ``torch_dist`` under the
-      ``iter_*/megatron_state/`` sub-directory so that training can be resumed losslessly.
+    - ``"hf"``: a complete Megatron checkpoint is still saved under each ``iter_*/`` directory,
+      including model weights, optimizer, RNG, scheduler, and rerun state.  In addition, model
+      weights are exported as HuggingFace ``*.safetensors`` under ``iter_*/hf/`` together with
+      HF ``config.json`` / tokenizer / (optional) custom modeling files.
 
-    When ``cfg.peft`` is configured, ``save_weight_format='hf'`` writes a HuggingFace
+    When ``cfg.peft`` is configured, the extra HF export writes a HuggingFace
     PEFT-compatible ``adapter_model.safetensors`` + ``adapter_config.json`` instead of the
     full base weights.
     """
@@ -716,7 +716,7 @@ class CheckpointConfig(MTrainCheckpointConfig):
             if self.ckpt_format == "fsdp_dtensor":
                 raise ValueError(
                     "save_weight_format='hf' is not supported together with ckpt_format='fsdp_dtensor'. "
-                    "Optimizer/RNG state needs to be stored as torch_dist alongside HF weights."
+                    "Use ckpt_format='torch_dist' when exporting additional HF weights during training."
                 )
             if self.non_persistent_ckpt_type == "local":
                 raise ValueError(
