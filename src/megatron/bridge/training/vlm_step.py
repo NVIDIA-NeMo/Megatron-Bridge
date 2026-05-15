@@ -27,6 +27,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
@@ -435,21 +436,19 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
-    # Accumulate FLOPS metadata across micro-batches.
-    # Each micro-batch contributes its actual padded seq_length (not cfg.model.seq_length).
-    # train.py resets these before each step and reads accumulated values afterwards.
-    if tokens is not None:
-        mbs = tokens.shape[0]
-        seq_len = tokens.shape[1]
-        state._flops_seqlen_sum = getattr(state, "_flops_seqlen_sum", 0) + mbs * seq_len
-        state._flops_seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0) + mbs * seq_len**2
-    if visual_inputs is not None:
-        for attr in ("image_grid_thw", "video_grid_thw"):
-            grid = getattr(visual_inputs, attr, None)
-            if grid is not None and grid.numel() > 0:
-                state._flops_vision_patches = getattr(state, "_flops_vision_patches", 0) + int(
-                    grid.prod(dim=-1).sum().item()
-                )
+    # Accumulate FLOPS metadata across micro-batches. For in-batch packed
+    # batches, ``cu_seqlens`` describes the real sub-sequence boundaries (no
+    # padding sub-seqs), so the helper computes the THD-correct Σᵢ sᵢ² for
+    # the attention term instead of the pack-length² BSHD approximation.
+    # train.py resets these before each step and reads accumulated values
+    # afterwards.
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        cu_seqlens=cu_seqlens,
+        image_grid_thw=getattr(visual_inputs, "image_grid_thw", None) if visual_inputs is not None else None,
+        video_grid_thw=getattr(visual_inputs, "video_grid_thw", None) if visual_inputs is not None else None,
+    )
 
     forward_args = {
         "input_ids": tokens,

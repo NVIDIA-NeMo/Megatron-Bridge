@@ -27,6 +27,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
@@ -261,6 +262,21 @@ def forward_step(
         force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
         seq_length=config.seq_length,
     )
+
+    # Accumulate FLOPS metadata across micro-batches. When in-batch packing is
+    # active, ``packed_seq_params.cu_seqlens_q`` describes the real sub-seq
+    # boundaries used by the THD attention kernel; the helper uses it to
+    # compute the THD-correct Σᵢ sᵢ² instead of pack-length² (BSHD). When not
+    # packed, the helper falls back to BSHD. train.py resets these before each
+    # step and reads accumulated values afterwards.
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        cu_seqlens=getattr(packed_seq_params, "cu_seqlens_q", None) if packed_seq_params is not None else None,
+        image_grid_thw=multi_modal_inputs.get("image_grid_thw") if isinstance(multi_modal_inputs, dict) else None,
+        video_grid_thw=multi_modal_inputs.get("video_grid_thw") if isinstance(multi_modal_inputs, dict) else None,
+    )
+
     forward_args = {
         "input_ids": tokens,
         "labels": labels,

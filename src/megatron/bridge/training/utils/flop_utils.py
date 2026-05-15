@@ -15,6 +15,7 @@
 import importlib
 from pathlib import Path
 
+import torch
 import torch.nn.functional as F
 
 from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
@@ -24,6 +25,91 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _lora_seq_stats_cache: dict = {}
+
+
+def _real_subseq_lengths(
+    cu_seqlens: torch.Tensor | None,
+    cu_seqlens_argmin: torch.Tensor | None = None,
+    cu_seqlens_unpadded: torch.Tensor | None = None,
+    cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+    """Extract real (non-pad) sub-sequence lengths from cu_seqlens metadata.
+
+    Prefers ``cu_seqlens_unpadded`` (true sub-sequence boundaries when
+    ``pad_seq_to_mult > 1``) over the padded ``cu_seqlens``. Truncates by the
+    corresponding ``*_argmin`` when provided. Returns ``None`` when no
+    cu_seqlens info is available.
+    """
+    if cu_seqlens_unpadded is not None:
+        cu = cu_seqlens_unpadded.squeeze()
+        argmin = cu_seqlens_unpadded_argmin
+    elif cu_seqlens is not None:
+        cu = cu_seqlens.squeeze()
+        argmin = cu_seqlens_argmin
+    else:
+        return None
+
+    if argmin is not None:
+        cu = cu[: int(argmin.item())]
+
+    if cu.numel() < 2:
+        return cu.new_empty(0, dtype=torch.long)
+
+    sub_seq_lens = (cu[1:] - cu[:-1]).long()
+    return sub_seq_lens[sub_seq_lens > 0]
+
+
+def accumulate_flops_metadata(
+    state,
+    tokens: torch.Tensor | None,
+    *,
+    cu_seqlens: torch.Tensor | None = None,
+    cu_seqlens_argmin: torch.Tensor | None = None,
+    cu_seqlens_unpadded: torch.Tensor | None = None,
+    cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
+    image_grid_thw: torch.Tensor | None = None,
+    video_grid_thw: torch.Tensor | None = None,
+) -> None:
+    """Accumulate per-microbatch FLOPS metadata onto ``state``.
+
+    Writes three accumulators consumed by ``train.py`` at end of step:
+
+    - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1]`` (padded total tokens
+      this microbatch contributes). Drives the linear MLP/proj/logit terms.
+    - ``_flops_seqlen_sq_sum``: Σᵢ sᵢ² over real sub-sequence lengths derived
+      from ``cu_seqlens`` when available (THD-correct attention work), else
+      ``mbs * seq_len²`` (BSHD fallback, matches legacy behavior).
+    - ``_flops_vision_patches``: Σ patches across the provided image/video
+      grid tensors (each shaped ``[num_images, 3]`` with rows ``(t, h, w)``).
+
+    The BSHD fallback applies when cu_seqlens is not provided (e.g. dense
+    pretraining or non-packed SFT) and reproduces the existing single-pack-as-
+    one-sequence computation.
+
+    For THD packed training (offline packed LLM SFT or VLM in-batch packing),
+    treating the whole pack as one length-``seq_len`` sequence over-counts
+    attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
+    not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
+    """
+    if tokens is None:
+        return
+
+    mbs = tokens.shape[0]
+    seq_len = tokens.shape[1]
+    state._flops_seqlen_sum = getattr(state, "_flops_seqlen_sum", 0) + mbs * seq_len
+
+    sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
+    if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
+        sq_delta = int((sub_seq_lens.long() ** 2).sum().item())
+    else:
+        sq_delta = mbs * seq_len**2
+    state._flops_seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0) + sq_delta
+
+    for grid in (image_grid_thw, video_grid_thw):
+        if grid is not None and grid.numel() > 0:
+            state._flops_vision_patches = getattr(state, "_flops_vision_patches", 0) + int(
+                grid.prod(dim=-1).sum().item()
+            )
 
 
 def vit_flops(
