@@ -163,9 +163,11 @@ def pack_or_pad_batch_sequences(
     seq_length: int = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, PackedSeqParams]:
     """
-    Pad or truncate the batch sequences to the target length, and build packed sequences.
-    If is_qwen3vl, return bshd tokens for be compatible with qwen3vl model.
-    Otherwise, return thd tokens and packed sequences.
+    Right-pad BSHD sequences to a common length and build a bookkeeping PackedSeqParams.
+
+    The returned ``packed_seq_params`` carries uniform `target_len` per segment and is only used
+    as a fallback. Real-length-aware packing (the path that delivers pad-skip FLOP savings) is
+    handled separately by ``_pack_bshd_to_thd`` in ``forward_step``.
     """
 
     batch_size, cur_len = tokens.shape
@@ -205,6 +207,111 @@ def pack_or_pad_batch_sequences(
     )
 
     return tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params
+
+
+def _per_sample_real_lengths(attention_mask: torch.Tensor) -> torch.Tensor:
+    """Reduce a BSHD attention mask to (B,) int32 real-length per sample.
+
+    Accepts a 2D `(B, T)` keep mask (1=real, 0=pad) or a 4D Megatron-style bool mask
+    `(B|1, 1, T, T)` where True=masked.
+    """
+    if attention_mask.dim() == 2:
+        return attention_mask.to(torch.int32).sum(dim=-1)
+    if attention_mask.dim() == 4:
+        # Megatron causal masks are (B|1, 1, T, T) bool with True=masked. The diagonal row tells
+        # us which key positions are "real": True on the diagonal means a fully masked-out row.
+        keep_row = ~attention_mask[:, 0, :, 0].bool()
+        if keep_row.size(0) == 1:
+            keep_row = keep_row.expand(attention_mask.size(0) if attention_mask.size(0) > 1 else 1, -1)
+        return keep_row.to(torch.int32).sum(dim=-1)
+    raise ValueError(f"Unsupported attention_mask rank: {attention_mask.dim()}")
+
+
+def _pack_bshd_to_thd(
+    *,
+    tokens: torch.Tensor,
+    labels: torch.Tensor | None,
+    loss_mask: torch.Tensor | None,
+    position_ids: torch.Tensor | None,
+    real_lengths: torch.Tensor,
+    align_size: int,
+    pad_token_id: int = 0,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    int,
+]:
+    """Pack a BSHD micro-batch into a single THD row by concatenating per-sample real content.
+
+    Per segment i in the packed row: `[real_content_i, align_pad_i]` where `align_pad_i` brings
+    the segment length up to a multiple of `align_size` (filled with `pad_token_id` / `-100` /
+    `0` for tokens / labels / loss_mask respectively). Real content is taken from the leftmost
+    `real_lengths[i]` positions of row i.
+
+    Returns:
+        packed_tokens, packed_labels, packed_loss_mask, packed_position_ids,
+        cu_seqlens_unpadded, cu_seqlens_padded, moe_padding_mask, max_real_seqlen
+    """
+    batch_size, _ = tokens.shape
+    device = tokens.device
+
+    real_lens_cpu = real_lengths.tolist()
+    padded_lens_cpu = [((rl + align_size - 1) // align_size) * align_size for rl in real_lens_cpu]
+    total_padded = int(sum(padded_lens_cpu))
+    max_real_seqlen = int(max(real_lens_cpu)) if real_lens_cpu else 0
+
+    cu_unpadded_cpu = [0]
+    cu_padded_cpu = [0]
+    for rl, pl in zip(real_lens_cpu, padded_lens_cpu):
+        cu_unpadded_cpu.append(cu_unpadded_cpu[-1] + int(rl))
+        cu_padded_cpu.append(cu_padded_cpu[-1] + int(pl))
+
+    cu_seqlens_unpadded = torch.tensor(cu_unpadded_cpu, dtype=torch.int32, device=device)
+    cu_seqlens_padded = torch.tensor(cu_padded_cpu, dtype=torch.int32, device=device)
+
+    packed_tokens = torch.full((1, total_padded), pad_token_id, dtype=tokens.dtype, device=device)
+    packed_labels = (
+        torch.full((1, total_padded), -100, dtype=labels.dtype, device=device) if labels is not None else None
+    )
+    packed_loss_mask = (
+        torch.zeros((1, total_padded), dtype=loss_mask.dtype, device=device) if loss_mask is not None else None
+    )
+    packed_position_ids = (
+        torch.zeros((1, total_padded), dtype=position_ids.dtype, device=device) if position_ids is not None else None
+    )
+    moe_padding_mask = torch.zeros((1, total_padded), dtype=torch.bool, device=device)
+
+    for i in range(batch_size):
+        real_len = int(real_lens_cpu[i])
+        padded_len = int(padded_lens_cpu[i])
+        start = int(cu_padded_cpu[i])
+        if real_len > 0:
+            packed_tokens[0, start : start + real_len] = tokens[i, :real_len]
+            if packed_labels is not None:
+                packed_labels[0, start : start + real_len] = labels[i, :real_len]
+            if packed_loss_mask is not None:
+                packed_loss_mask[0, start : start + real_len] = loss_mask[i, :real_len]
+            if packed_position_ids is not None:
+                packed_position_ids[0, start : start + real_len] = position_ids[i, :real_len]
+        if padded_len > real_len:
+            # Align-pad slots are excluded from MoE accounting.
+            moe_padding_mask[0, start + real_len : start + padded_len] = True
+
+    return (
+        packed_tokens,
+        packed_labels,
+        packed_loss_mask,
+        packed_position_ids,
+        cu_seqlens_unpadded,
+        cu_seqlens_padded,
+        moe_padding_mask,
+        max_real_seqlen,
+    )
 
 
 def forward_step(
@@ -250,16 +357,27 @@ def forward_step(
     # Qwen3VL model need the original input and do cp and sp split in model.forward.
     pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
 
-    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
-        tokens,
-        labels,
-        loss_mask,
-        attention_mask,
-        position_ids,
-        this_pg_collection,
-        use_fp8_padding=True,
-        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
-        seq_length=config.seq_length,
+    # Capture per-sample real lengths from a dataset-supplied 2D `(B, T)` attention_mask before
+    # `pack_or_pad_batch_sequences` pads rows. `pad_or_truncate_attn_to_len` only accepts 4D
+    # Megatron-style masks, so strip the 2D mask here and let downstream packing rebuild what
+    # it needs from the captured lengths.
+    dataset_real_lengths: torch.Tensor | None = None
+    if attention_mask is not None and attention_mask.dim() == 2:
+        dataset_real_lengths = attention_mask.to(torch.int32).sum(dim=-1)
+        attention_mask = None
+
+    tokens, labels, loss_mask, attention_mask, position_ids, _bookkeeping_packed_seq_params = (
+        pack_or_pad_batch_sequences(
+            tokens,
+            labels,
+            loss_mask,
+            attention_mask,
+            position_ids,
+            this_pg_collection,
+            use_fp8_padding=True,
+            force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
+            seq_length=config.seq_length,
+        )
     )
     forward_args = {
         "input_ids": tokens,
@@ -276,18 +394,72 @@ def forward_step(
     # calculate position_ids in model forward
     forward_args["position_ids"] = None
     if pack_sequences_in_batch:
-        if forward_args["labels"] is not None:
-            # When using pp, labels could be None
-            forward_args["labels"] = forward_args["labels"].reshape(1, -1)
-        attention_mask = torch.ones(
-            original_tokens.shape[0], original_tokens.shape[1], dtype=torch.bool, device=original_tokens.device
+        # Derive real per-sample lengths. Preference order:
+        # 1. lengths captured from the 2D attention_mask the dataset supplied (most reliable);
+        # 2. an explicit 4D mask still attached to forward_args (rare for qwen3-vl);
+        # 3. "position of last non-zero token" in the BSHD padded tokens — only the trailing-pad
+        #    that pad_or_truncate_2d_to_len introduces is reliably zero, so this misses a
+        #    collator-pad token (e.g. tokenizer.pad_token_id) between real content and the
+        #    trailing zeros.  Option 1 is much preferred; enable it via
+        #    `dataset.skip_getting_attention_mask_from_dataset=False`.
+        if dataset_real_lengths is not None:
+            real_lengths = dataset_real_lengths.to(torch.int32)
+        elif forward_args["attention_mask"] is not None:
+            real_lengths = _per_sample_real_lengths(forward_args["attention_mask"])
+        else:
+            indices = torch.arange(original_tokens.shape[1], device=original_tokens.device)
+            nonzero = original_tokens != 0
+            masked_indices = torch.where(
+                nonzero, indices.unsqueeze(0).expand_as(nonzero), torch.full_like(nonzero, -1, dtype=indices.dtype)
+            )
+            real_lengths = (masked_indices.max(dim=-1).values + 1).clamp(min=0).to(torch.int32)
+
+        tp_size = this_pg_collection.tp.size()
+        cp_size = this_pg_collection.cp.size()
+        align_size = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+        align_size = math.lcm(align_size, 16)  # match fp8/transformer-engine alignment used above
+
+        (
+            packed_tokens,
+            packed_labels,
+            packed_loss_mask,
+            _packed_position_ids,  # model recomputes MRoPE; dataset position_ids are dropped
+            cu_seqlens_unpadded,
+            cu_seqlens_padded,
+            moe_padding_mask,
+            max_real_seqlen,
+        ) = _pack_bshd_to_thd(
+            tokens=original_tokens,
+            labels=forward_args["labels"],
+            loss_mask=forward_args["loss_mask"],
+            position_ids=None,
+            real_lengths=real_lengths,
+            align_size=align_size,
+            pad_token_id=0,
         )
-        forward_args["attention_mask"] = attention_mask
-        if forward_args["loss_mask"] is not None:
-            forward_args["loss_mask"] = forward_args["loss_mask"].reshape(1, -1)
-        # qwen3vl need the original input_ids and position_ids
-        # use split attention mask for calculate loss
+
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu_seqlens_unpadded,
+            max_seqlen_q=max_real_seqlen,
+            cu_seqlens_kv=cu_seqlens_unpadded,
+            max_seqlen_kv=max_real_seqlen,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
+        )
+
+        forward_args["input_ids"] = packed_tokens
+        forward_args["labels"] = packed_labels
+        forward_args["loss_mask"] = packed_loss_mask
+        # Attention isolation now comes from cu_seqlens; the mask is unused on the THD path.
+        forward_args["attention_mask"] = None
+        forward_args["position_ids"] = None
         forward_args["packed_seq_params"] = packed_seq_params
+        # Tell the model's per-subseq MRoPE path which content belongs to which sample
+        # (consumed by model.forward when running on a packed (1, total) input).
+        forward_args["rope_cu_seqlens"] = cu_seqlens_unpadded
+        # Exclude align-pad slots from MoE router accounting.
+        forward_args["moe_padding_mask"] = moe_padding_mask
 
     # use cp split loss mask for calculate loss
     loss_mask = forward_args["loss_mask"]
