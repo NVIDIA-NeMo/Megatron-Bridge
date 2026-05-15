@@ -477,6 +477,26 @@ class TestMoeQuantMappingRegistryIntegration:
             "model.layers.0.mlp.experts.*.down_proj.weight_quantizer._amax",
         ]
 
+    def test_sequential_mlp_local_expert_weight_uses_regular_expert_mapping(self):
+        mappings = [
+            AutoMapping(
+                "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                "model.layers.*.mlp.experts.*.gate_proj.weight",
+            ),
+        ]
+        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}, clear=False):
+            registry = MegatronMappingRegistry(*mappings)
+
+        m = registry.megatron_to_hf_lookup(
+            "decoder.layers.0.mlp.experts.local_experts.1.linear_fc1.weight_quantizer._amax"
+        )
+        assert m is not None, "registry did not resolve SequentialMLP amax mapping"
+        assert isinstance(m, AmaxMapping)
+        assert not isinstance(m, MoeAmaxFanoutMapping)
+        assert m.is_expert is True
+        assert m.megatron_param == "decoder.layers.0.mlp.experts.local_experts.1.linear_fc1.weight_quantizer._amax"
+        assert m.hf_param == "model.layers.0.mlp.experts.1.gate_proj.weight_quantizer._amax"
+
 
 class TestConvertToAmaxMapMoeWeightWildcard:
     """convert_to_amax_map should construct MoeAmaxFanoutMapping for `.weight*` mappings."""

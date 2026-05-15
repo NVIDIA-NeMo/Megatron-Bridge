@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import re
-from typing import Optional
 
 import torch
 
@@ -93,14 +92,14 @@ class MoeAmaxFanoutMapping(AmaxMapping):
         self,
         megatron_param: str,
         hf_patterns: list[str],
-        num_experts: Optional[int] = None,
-    ):
+        num_experts: int | None = None,
+    ) -> None:
         assert hf_patterns, "hf_patterns must be non-empty"
         self.hf_patterns = hf_patterns
         self.num_experts = num_experts
         super().__init__(megatron_param, hf_patterns[0])
 
-    def _validate_patterns(self):
+    def _validate_patterns(self) -> None:
         """Allow one extra HF wildcard for the expert index."""
         return
 
@@ -109,7 +108,7 @@ class MoeAmaxFanoutMapping(AmaxMapping):
         """Use normal TP handling; EP fanout is handled explicitly here."""
         return False
 
-    def _get_num_experts(self, megatron_module):
+    def _get_num_experts(self, megatron_module: object | None) -> int | None:
         if self.num_experts is not None:
             return self.num_experts
 
@@ -140,7 +139,7 @@ class MoeAmaxFanoutMapping(AmaxMapping):
             capture_index += 1
         return resolved
 
-    def _get_num_experts_for_rank(self, megatron_module):
+    def _get_num_experts_for_rank(self, megatron_module: object | None) -> int | None:
         if self.num_experts is not None:
             return self.num_experts
 
@@ -150,7 +149,7 @@ class MoeAmaxFanoutMapping(AmaxMapping):
         num_experts = self._get_num_experts(megatron_module)
         return self.broadcast_obj_from_pp_rank(num_experts, cache_key=f"{self.megatron_param}:num_experts")
 
-    def _gather_amax_by_ep_rank(self, weight):
+    def _gather_amax_by_ep_rank(self, weight: torch.Tensor) -> list[torch.Tensor]:
         if self.ep_size == 1:
             return [weight]
 
@@ -158,7 +157,11 @@ class MoeAmaxFanoutMapping(AmaxMapping):
         torch.distributed.all_gather(gathered_weights, weight, group=self.ep_group)
         return gathered_weights
 
-    def megatron_to_hf(self, megatron_weights, megatron_module):
+    def megatron_to_hf(
+        self,
+        megatron_weights: torch.Tensor | None,
+        megatron_module: object | None,
+    ) -> dict[str, torch.Tensor]:
         base = super().megatron_to_hf(megatron_weights, megatron_module)
         if not base:
             return {}
@@ -194,7 +197,7 @@ class MoeAmaxFanoutMapping(AmaxMapping):
                 result[pattern] = weight
         return result
 
-    def resolve(self, captures: tuple[str, ...]):
+    def resolve(self, captures: tuple[str, ...]) -> "MoeAmaxFanoutMapping":
         """Resolve layer wildcards while preserving the HF expert wildcard."""
         megatron_wildcards = self._count_wildcard_groups(self.megatron_param)
         resolved_megatron_param = self._resolve_pattern(
@@ -214,18 +217,16 @@ class MoeAmaxFanoutMapping(AmaxMapping):
         return new_mapping
 
 
-def _convert_hf_weight_names(hf_param, mapped_name: str):
+def _convert_hf_weight_names(hf_param: str | dict[str, str], mapped_name: str) -> list[str]:
     if isinstance(hf_param, dict):
         return [value.replace(".weight", mapped_name) for value in hf_param.values() if value.endswith(".weight")]
     if isinstance(hf_param, str) and hf_param.endswith(".weight"):
         return [hf_param.replace(".weight", mapped_name)]
-    if not isinstance(hf_param, str):
-        print(f"Unknown hf_param type: {type(hf_param)}")
     return []
 
 
 def convert_to_amax_map(
-    mappings: list[MegatronParamMapping], mapped_name=".weight_quantizer._amax"
+    mappings: list[MegatronParamMapping], mapped_name: str = ".weight_quantizer._amax"
 ) -> list[MegatronParamMapping]:
     """Convert weight mappings to amax mappings for quantization.
 
