@@ -20,7 +20,7 @@ overrides = [
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=71bbefbf153418f943640df0f7373625dc93fa46" },
+    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=366798ef8a0a00d8f2c1650d11e7e623d7c33e26" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
 ]
@@ -1414,18 +1414,18 @@ wheels = [
 
 [[package]]
 name = "hf-xet"
-version = "1.5.0.dev3"
+version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3e/a8/7e6ea3e57762cccd804619580b786bff93a36ccc0a02dab7f36ae57d6b60/hf_xet-1.5.0.dev3.tar.gz", hash = "sha256:36ad0e770a1f8122be4c826c2e1c1611ce91e2c40ec462cce175c1ad33c78d0b", size = 837309, upload-time = "2026-05-01T03:56:43.953Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/74/d8/5c06fc76461418326a7decf8367480c35be11a41fd938633929c60a9ec6b/hf_xet-1.5.0.tar.gz", hash = "sha256:e0fb0a34d9f406eed88233e829a67ec016bec5af19e480eac65a233ea289a948", size = 837196, upload-time = "2026-05-06T06:18:15.583Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/5c/ac35f280468d3d1c17700a324405216082b82ed6223437f643f515703f3a/hf_xet-1.5.0.dev3-cp37-abi3-macosx_10_12_x86_64.whl", hash = "sha256:af53fa4c5ee12288471f1266ec89c400822010dfa54b536862862f63574588fa", size = 6932356, upload-time = "2026-05-01T03:56:15.76Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/40/6061155935fe031a727e42ea04ed483d851584f44ff29b4c7d783339efb6/hf_xet-1.5.0.dev3-cp37-abi3-macosx_11_0_arm64.whl", hash = "sha256:18e6f273e2c492cd036b5901abeb1979d01c07e8757ad9f05c02ff2cc224d279", size = 6542058, upload-time = "2026-05-01T03:56:14.196Z" },
-    { url = "https://files.pythonhosted.org/packages/df/94/045c4353a4fcab83bcb47f2c09ce0983b7b5a812ea43399d06ca8233abc0/hf_xet-1.5.0.dev3-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a1fb5079b08a31cf7ef7e094991b556c78853a045da608b173581e20d9465689", size = 62784780, upload-time = "2026-05-01T03:56:00.678Z" },
-    { url = "https://files.pythonhosted.org/packages/56/15/3ac0e735e8ba02ebe794d6dfec7089ee84ed45e5945a9504d548d2a6bf8f/hf_xet-1.5.0.dev3-cp37-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d27f0d252b5c3b8c9060599ec5c4b62d41429f5226524f4f50d2bfcd705eb5ac", size = 57877382, upload-time = "2026-05-01T03:55:57.277Z" },
-    { url = "https://files.pythonhosted.org/packages/1c/15/fc31983423f40375e209008868e3d844d5201e2fedc11e8280f683bfb913/hf_xet-1.5.0.dev3-cp37-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:0acfe15073c3c41381c6a0d04b167ddae33d75718b394995a5274c7760a203dc", size = 58380810, upload-time = "2026-05-01T03:56:29.722Z" },
-    { url = "https://files.pythonhosted.org/packages/70/74/60f13281a13722c479f5f96da17edc600fa48eaf96d37e1e21b0c4b04392/hf_xet-1.5.0.dev3-cp37-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:44ef55d28fe8542b53d4cdb071cdeb4e8185999ccaf1ee7e3f4a890bbe56b1cf", size = 59863210, upload-time = "2026-05-01T03:56:33.468Z" },
-    { url = "https://files.pythonhosted.org/packages/cf/4f/1273cdf66bac72b50231db253ddfa4347254b91c9867ebb7cbb40261ec82/hf_xet-1.5.0.dev3-cp37-abi3-win_amd64.whl", hash = "sha256:53dff585e943b9bf8a9e4d64dc0d470044541e410373552d01731cad66529bdf", size = 3983462, upload-time = "2026-05-01T03:56:50.33Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/a7/64cecc0a1a7230b369c010c4e8d79860e9d18236634dd178efa2b394f262/hf_xet-1.5.0.dev3-cp37-abi3-win_arm64.whl", hash = "sha256:24fa551f27ba8b14d3e0d2ae264a25aa605502fab30cddb6415cca4410b4a4a1", size = 3808761, upload-time = "2026-05-01T03:56:48.771Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/fb/69ff198a82cae7eb1a69fb84d93b3a3e4816564d76817fe541ddc96874eb/hf_xet-1.5.0-cp37-abi3-macosx_10_12_x86_64.whl", hash = "sha256:dad0dc84e941b8ba3c860659fe1fdc35c049d47cce293f003287757e971a8f56", size = 4030814, upload-time = "2026-05-06T06:17:57.933Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/ff/edcc2b40162bef3ff78e14ab637e5f3b89243d6aee72f5949d3bb6a5af83/hf_xet-1.5.0-cp37-abi3-macosx_11_0_arm64.whl", hash = "sha256:fd6e5a9b0fdac4ed03ed45ef79254a655b1aaab514a02202617fbf643f5fdf7a", size = 3798444, upload-time = "2026-05-06T06:17:55.79Z" },
+    { url = "https://files.pythonhosted.org/packages/49/4d/103f76b04310e5e57656696cc184690d20c466af0bca3ca88f8c8ea5d4f3/hf_xet-1.5.0-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:3531b1823a0e6d77d80f9ed15ca0e00f0d115094f8ac033d5cae88f4564cc949", size = 4465986, upload-time = "2026-05-06T06:17:44.886Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/a2/546f47f464737b3edbab6f8ddb57f2599b93d2cbb66f06abb475ccb48651/hf_xet-1.5.0-cp37-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:9a0ee58cd18d5ea799f7ed11290bbccbe56bdd8b1d97ca74b9cc49a3945d7a3b", size = 4259865, upload-time = "2026-05-06T06:17:42.639Z" },
+    { url = "https://files.pythonhosted.org/packages/95/7f/1be593c1f28613be2e196473481cd81bfc5910795e30a34e8f744f6cac4f/hf_xet-1.5.0-cp37-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:1e60df5a42e9bed8628b6416af2cba4cba57ae9f02de226a06b020d98e1aab18", size = 4459835, upload-time = "2026-05-06T06:18:08.026Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/b2/703569fc881f3284487e68cda7b42179978480da3c438042a6bbbb4a671c/hf_xet-1.5.0-cp37-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:4b35549ce62601b84da4ff9b24d970032ace3d4430f52d91bcbb26c901d6c690", size = 4672414, upload-time = "2026-05-06T06:18:09.864Z" },
+    { url = "https://files.pythonhosted.org/packages/af/37/1b6def445c567286b50aa3b33828158e135b1be44938dde59f11382a500c/hf_xet-1.5.0-cp37-abi3-win_amd64.whl", hash = "sha256:2806c7c17b4d23f8d88f7c4814f838c3b6150773fe339c20af23e1cfaf2797e4", size = 3977238, upload-time = "2026-05-06T06:18:23.621Z" },
+    { url = "https://files.pythonhosted.org/packages/62/94/3b66b148778ee100dcfd69c2ca22b57b41b44d3063ceec934f209e9184ce/hf_xet-1.5.0-cp37-abi3-win_arm64.whl", hash = "sha256:b6c9df403040248c76d808d3e047d64db2d923bae593eb244c41e425cf6cd7be", size = 3806916, upload-time = "2026-05-06T06:18:21.7Z" },
 ]
 
 [[package]]
@@ -2472,9 +2472,9 @@ requires-dist = [
     { name = "torch", specifier = ">=2.6.0" },
     { name = "tqdm", marker = "extra == 'dev'" },
     { name = "tqdm", marker = "extra == 'lts'" },
-    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'dev'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=71bbefbf153418f943640df0f7373625dc93fa46" },
-    { name = "transformers", marker = "extra == 'mlm'" },
-    { name = "transformers", marker = "extra == 'training'" },
+    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'dev'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=366798ef8a0a00d8f2c1650d11e7e623d7c33e26" },
+    { name = "transformers", marker = "extra == 'mlm'", specifier = "<=5.3.0" },
+    { name = "transformers", marker = "extra == 'training'", specifier = "<=5.3.0" },
     { name = "wandb", marker = "extra == 'mlm'" },
     { name = "wandb", marker = "extra == 'training'" },
     { name = "wget", marker = "extra == 'dev'" },
@@ -4881,8 +4881,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.14.0+71bbefbf"
-source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=71bbefbf153418f943640df0f7373625dc93fa46#71bbefbf153418f943640df0f7373625dc93fa46" }
+version = "2.14.1+366798ef"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=366798ef8a0a00d8f2c1650d11e7e623d7c33e26#366798ef8a0a00d8f2c1650d11e7e623d7c33e26" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },
