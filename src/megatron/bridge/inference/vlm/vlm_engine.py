@@ -18,7 +18,6 @@ import torch
 from megatron.core.inference.engines.static_engine import StaticInferenceEngine
 from megatron.core.inference.inference_request import InferenceRequest
 from megatron.core.inference.sampling_params import SamplingParams
-from megatron.core.inference.utils import InferenceMode
 from PIL.Image import Image
 
 
@@ -33,35 +32,31 @@ class VLMEngine(StaticInferenceEngine):
         sampling_params: Optional[SamplingParams] = None,
     ) -> List[InferenceRequest]:
         # pylint: disable=C0115,C0116
-        InferenceMode.set_active()
-        try:
-            request_ids: List[str] = []
+        request_ids: List[str] = []
 
-            if self.random_seed:
-                torch.random.manual_seed(self.random_seed)
+        if self.random_seed:
+            torch.random.manual_seed(self.random_seed)
 
-            if images is not None and len(images) != len(prompts):
-                raise ValueError(f"Number of images ({len(images)}) must match number of prompts ({len(prompts)})")
+        if images is not None and len(images) != len(prompts):
+            raise ValueError(f"Number of images ({len(images)}) must match number of prompts ({len(prompts)})")
 
-            for i in range(len(prompts)):
-                prompt = prompts[i]
-                image = images[i] if images is not None else None
-                prompt_tokens, image_dict = self.controller.tokenize_prompt(prompt, image)
+        for i in range(len(prompts)):
+            prompt = prompts[i]
+            image = images[i] if images is not None else None
+            prompt_tokens, image_dict = self.controller.tokenize_prompt(prompt, image)
 
-                # Reuse encoder_prompt from scheduler to pass image
-                request_id = self.scheduler.add_request(
-                    prompt=prompt,
-                    prompt_tokens=prompt_tokens,
-                    encoder_prompt=image_dict,
-                    sampling_params=sampling_params,
-                )
-                request_ids.append(request_id)
+            # Reuse encoder_prompt from scheduler to pass image
+            request_id = self.scheduler.add_request(
+                prompt=prompt,
+                prompt_tokens=prompt_tokens,
+                encoder_prompt=image_dict,
+                sampling_params=sampling_params,
+            )
+            request_ids.append(request_id)
 
-            self.run_engine()
+        self.run_engine()
 
-            result: List[InferenceRequest] = [
-                self.scheduler.completed_request_pool[request_id] for request_id in request_ids
-            ]
-            return result
-        finally:
-            InferenceMode.unset_active()
+        result: List[InferenceRequest] = [
+            self.scheduler.completed_request_pool[request_id] for request_id in request_ids
+        ]
+        return result
