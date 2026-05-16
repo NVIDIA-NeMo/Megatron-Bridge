@@ -67,6 +67,8 @@ class TestWan1_3BPretrainConfig:
         assert config.model.hidden_size == 1536
         assert config.model.num_attention_heads == 12
         assert config.model.ffn_hidden_size == 8960
+        assert config.model.crossattn_emb_size == 1536
+        assert config.model.seq_length == 1024
         assert config.model.tensor_model_parallel_size == 1
         assert config.model.context_parallel_size == 8
 

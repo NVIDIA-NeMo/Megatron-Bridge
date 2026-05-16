@@ -49,7 +49,14 @@ def wan_1_3b_pretrain_config() -> ConfigContainer:
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
     # Model configuration
-    model_cfg = WanModelProvider()
+    model_cfg = WanModelProvider(
+        num_layers=30,
+        hidden_size=1536,
+        ffn_hidden_size=8960,
+        num_attention_heads=12,
+        crossattn_emb_size=1536,
+        seq_length=1024,
+    )
     model_cfg.tensor_model_parallel_size = 1
     model_cfg.pipeline_model_parallel_size = 1
     model_cfg.pipeline_dtype = torch.bfloat16
