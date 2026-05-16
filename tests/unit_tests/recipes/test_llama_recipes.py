@@ -506,3 +506,20 @@ def test_llama3_8b_low_precision_nvfp4_defaults(monkeypatch: pytest.MonkeyPatch)
     assert cfg.mixed_precision.first_last_layers_bf16 is True
     assert cfg.mixed_precision.num_layers_at_start_in_bf16 == 0
     assert cfg.mixed_precision.num_layers_at_end_in_bf16 == 4
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
+    ["llama3_70b_pretrain_deterministic_config", "llama31_405b_pretrain_deterministic_config"],
+)
+def test_llama_deterministic_wrapper_applies_overrides(recipe_name: str, monkeypatch: pytest.MonkeyPatch):
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    recipe_func = getattr(_llama_module, recipe_name)
+    cfg = recipe_func()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.comm_overlap.tp_comm_overlap is False

@@ -31,6 +31,7 @@ from megatron.bridge.training.utils.train_utils import (
     needs_global_state_injection,
     param_is_not_shared,
     prepare_forward_step_func,
+    reduce_max_memory_across_pp_group,
     report_l2_norm_grad,
     report_memory,
     report_runtime,
@@ -1726,6 +1727,131 @@ class TestTrainingLog:
         assert np.round(l2_norm_report["l2_norm/grad/global"], 2) == 74.92
         assert l2_norm_report["l2_norm/grad/layer_2"] == 2.0
         assert l2_norm_report["l2_norm/grad/layer_9"] == 9.0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for this test")
+class TestReduceMaxMemoryAcrossPpGroup:
+    """Test suite for the reduce_max_memory_across_pp_group helper.
+
+    The helper aggregates per-rank memory metrics across the pipeline-parallel
+    group with MAX so the writer rank emits the per-metric peak across the
+    pipeline (issue #3167). These tests cover the no-op fallbacks and the
+    happy-path reduction behavior.
+    """
+
+    def test_empty_report_returns_unchanged(self):
+        """Empty report short-circuits before touching distributed."""
+        pp_group = mock.MagicMock()
+        pp_group.size.return_value = 4
+        result = reduce_max_memory_across_pp_group({}, pp_group)
+        assert result == {}
+        pp_group.size.assert_not_called()
+
+    def test_distributed_uninitialized_returns_unchanged(self):
+        """When torch.distributed is not initialized, return input as-is."""
+        report = {"peak_allocated_gigabytes": 12.5, "alloc_retries": 3}
+        pp_group = mock.MagicMock()
+        pp_group.size.return_value = 4
+
+        with mock.patch("torch.distributed.is_initialized", return_value=False):
+            result = reduce_max_memory_across_pp_group(report, pp_group)
+
+        assert result == report
+        pp_group.size.assert_not_called()
+
+    def test_pp_size_one_returns_unchanged(self):
+        """A single-rank PP group bypasses the all-reduce."""
+        report = {"peak_allocated_gigabytes": 7.0}
+        pp_group = mock.MagicMock()
+        pp_group.size.return_value = 1
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch("torch.distributed.all_reduce") as mock_all_reduce,
+        ):
+            result = reduce_max_memory_across_pp_group(report, pp_group)
+
+        assert result == report
+        mock_all_reduce.assert_not_called()
+
+    def test_pp_group_missing_size_returns_unchanged(self):
+        """A defensive check: if the group has no callable .size, no-op."""
+        report = {"peak_allocated_gigabytes": 4.5}
+
+        # An object without .size attribute at all.
+        class _Bare:
+            pass
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch("torch.distributed.all_reduce") as mock_all_reduce,
+        ):
+            result = reduce_max_memory_across_pp_group(report, _Bare())
+
+        assert result == report
+        mock_all_reduce.assert_not_called()
+
+    def test_max_reduction_across_pp_ranks(self):
+        """All-reduce MAX is invoked once and replaces values with the max."""
+        report = {
+            "peak_allocated_gigabytes": 10.0,
+            "peak_reserved_gigabytes": 12.5,
+        }
+        pp_group = mock.MagicMock()
+        pp_group.size.return_value = 4
+
+        # Simulate the in-place all-reduce by writing the per-element max
+        # values directly into the input tensor.
+        def _fake_all_reduce(tensor, op, group):
+            assert op == torch.distributed.ReduceOp.MAX
+            assert group is pp_group
+            # Pretend rank-0 had higher peak across the pipeline.
+            tensor.copy_(torch.tensor([14.25, 18.0], dtype=tensor.dtype, device=tensor.device))
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch("torch.distributed.all_reduce", side_effect=_fake_all_reduce) as mock_all_reduce,
+        ):
+            result = reduce_max_memory_across_pp_group(report, pp_group)
+
+        assert mock_all_reduce.call_count == 1
+        assert result == {
+            "peak_allocated_gigabytes": pytest.approx(14.25),
+            "peak_reserved_gigabytes": pytest.approx(18.0),
+        }
+        # Original report must not be mutated.
+        assert report == {
+            "peak_allocated_gigabytes": 10.0,
+            "peak_reserved_gigabytes": 12.5,
+        }
+
+    def test_int_counters_remain_int_after_reduction(self):
+        """Counter-style integer metrics (e.g. alloc_retries) stay as int."""
+        report = {
+            "peak_allocated_gigabytes": 8.0,
+            "alloc_retries": 1,
+        }
+        pp_group = mock.MagicMock()
+        pp_group.size.return_value = 2
+
+        def _fake_all_reduce(tensor, op, group):
+            tensor.copy_(torch.tensor([9.5, 4.0], dtype=tensor.dtype, device=tensor.device))
+
+        with (
+            mock.patch("torch.distributed.is_available", return_value=True),
+            mock.patch("torch.distributed.is_initialized", return_value=True),
+            mock.patch("torch.distributed.all_reduce", side_effect=_fake_all_reduce),
+        ):
+            result = reduce_max_memory_across_pp_group(report, pp_group)
+
+        assert isinstance(result["peak_allocated_gigabytes"], float)
+        assert result["peak_allocated_gigabytes"] == pytest.approx(9.5)
+        # `alloc_retries` was an int on input, so it must remain an int.
+        assert isinstance(result["alloc_retries"], int)
+        assert result["alloc_retries"] == 4
 
 
 class TestNeedsGlobalStateInjection:
