@@ -127,7 +127,7 @@ known to work.
 Performance harness example:
 
 ```bash
-python scripts/performance/setup_experiment.py \
+uv run python scripts/performance/setup_experiment.py \
   --model qwen3-30b-a3b \
   --moe_a2a_overlap \
   --num_nodes 2 \

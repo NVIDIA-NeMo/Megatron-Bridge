@@ -71,10 +71,13 @@ Measured repo evidence today is strongest for MoE EP overlap. The pattern is
 mixed rather than universally positive:
 
 - small-EP `alltoall` runs can be correct but flat or slower
-- larger MoE runs show stronger evidence that the overlap path is operationally
-  useful
-- `delay_wgrad_compute` can help some schedules, but it is not a guaranteed
-  speedup over overlap-only
+- a short 2026-05-16 H100 x16 Qwen3 30B-A3B mock-data run with `EP=16`,
+  `alltoall`, CUDA graphs disabled, and `moe_permute_fusion=false` reduced
+  steady-state step time from 43.1s to 32.6s when enabling EP overlap
+- in that same run, adding `delay_wgrad_compute` was neutral: 32.5s versus
+  32.6s for overlap-only
+- `delay_wgrad_compute` can still help some schedules, but it is not a
+  guaranteed speedup over overlap-only
 
 So, in this repo, EP overlap is better described as correctness-backed and
 workload-sensitive rather than universally speedup-backed.
@@ -129,7 +132,8 @@ For config examples and minimal runnable commands, see:
 | `step_time` | down | TP overlap with `TP >= 2`, sequence parallelism, and supported TE path | expected |
 | `pipeline_idle_time` | down | interleaved PP where p2p cost is visible | expected |
 | `step_time` | flat to mixed | small-EP MoE with `alltoall` | measured |
-| `step_time` | mixed | larger MoE with EP overlap plus delayed wgrad | measured |
+| `step_time` | down in one short EP16 H100 run | Qwen3 30B-A3B, `alltoall`, CUDA graphs off, `moe_permute_fusion=false` | measured |
+| `step_time` | neutral in one short EP16 H100 run | same run, EP overlap plus delayed wgrad versus EP overlap-only | measured |
 
 Do not assume one overlap win transfers automatically to another mode. The
 correct question is always "which communication path is exposed in this run?"
@@ -143,6 +147,10 @@ correct question is always "which communication path is exposed in this run?"
 - Setting `moe_flex_dispatcher_backend` alone does not activate DeepEP or HybridEP; the dispatcher must actually switch to `flex`.
 - Small-EP `alltoall` MoE runs can get slower because scheduling overhead is
   larger than the communication being hidden.
+- Fused MoE permutation may depend on the exact Transformer Engine and Triton
+  stack. If a bring-up fails inside `transformer_engine.pytorch.permutation`,
+  disable `moe_permute_fusion` for the smoke run and retest the fusion in a
+  matched runtime before treating the timing as final.
 
 ## Related Docs
 
