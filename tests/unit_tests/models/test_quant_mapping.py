@@ -430,6 +430,15 @@ class TestMoeAmaxFanoutMapping:
         assert torch.equal(result["model.layers.0.mlp.experts.2.gate_proj.weight_quantizer._amax"], rank1_weight)
         assert torch.equal(result["model.layers.0.mlp.experts.3.gate_proj.weight_quantizer._amax"], rank1_weight)
 
+    def test_get_num_experts_from_megatron_module_config_n_routed_experts_fallback(self):
+        m = MoeAmaxFanoutMapping(
+            "decoder.layers.0.mlp.experts.linear_fc1.weight_quantizer._amax",
+            ["model.layers.0.mlp.experts.*.gate_proj.weight_quantizer._amax"],
+        )
+        megatron_module = SimpleNamespace(config=SimpleNamespace(n_routed_experts=8))
+
+        assert m._get_num_experts(megatron_module) == 8
+
     def test_megatron_to_hf_raises_when_num_experts_undeterminable(self):
         """If num_experts is neither in the ctor nor on the module/config, raise RuntimeError."""
         hf_pattern = "model.layers.0.mlp.experts.*.gate_proj.weight_quantizer._amax"
@@ -569,6 +578,23 @@ class TestConvertToAmaxMapMoeWeightWildcard:
         assert out.megatron_param == "decoder.layers.*.mlp.experts.linear_fc2.weight_quantizer._amax"
         assert out.hf_patterns == [
             "model.layers.*.mlp.experts.*.down_proj.weight_quantizer._amax",
+        ]
+
+    def test_grouped_moe_weight_star_converts_dict_hf_params(self):
+        from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map
+
+        moe_mapping = GatedMLPMapping(
+            megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+            gate="model.layers.*.mlp.experts.*.gate_proj.weight",
+            up="model.layers.*.mlp.experts.*.up_proj.weight",
+        )
+        result = convert_to_amax_map([moe_mapping])
+        assert len(result) == 1
+        out = result[0]
+        assert isinstance(out, MoeAmaxFanoutMapping)
+        assert out.hf_patterns == [
+            "model.layers.*.mlp.experts.*.gate_proj.weight_quantizer._amax",
+            "model.layers.*.mlp.experts.*.up_proj.weight_quantizer._amax",
         ]
 
 

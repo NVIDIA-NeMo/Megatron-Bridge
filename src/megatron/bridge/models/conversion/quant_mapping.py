@@ -223,9 +223,11 @@ class MoeAmaxFanoutMapping(AmaxMapping):
 
 def _convert_hf_weight_names(hf_param: str | dict[str, str], mapped_name: str) -> list[str]:
     if isinstance(hf_param, dict):
-        return [value.replace(".weight", mapped_name) for value in hf_param.values() if value.endswith(".weight")]
+        return [
+            value.removesuffix(".weight") + mapped_name for value in hf_param.values() if value.endswith(".weight")
+        ]
     if isinstance(hf_param, str) and hf_param.endswith(".weight"):
-        return [hf_param.replace(".weight", mapped_name)]
+        return [hf_param.removesuffix(".weight") + mapped_name]
     return []
 
 
@@ -268,17 +270,17 @@ def convert_to_amax_map(
         if not mapping.megatron_param.endswith(".weight"):
             continue
 
-        new_megatron_param = mapping.megatron_param.replace(".weight", mapped_name)
+        new_megatron_param = mapping.megatron_param.removesuffix(".weight") + mapped_name
 
         if isinstance(mapping.hf_param, dict):
             # For dict-based hf_param (e.g., QKVMapping, GatedMLPMapping)
             new_hf_param = {
-                key: (value.replace(".weight", mapped_name) if value.endswith(".weight") else value)
+                key: (value.removesuffix(".weight") + mapped_name if value.endswith(".weight") else value)
                 for key, value in mapping.hf_param.items()
             }
         elif isinstance(mapping.hf_param, str):
             if mapping.hf_param.endswith(".weight"):
-                new_hf_param = mapping.hf_param.replace(".weight", mapped_name)
+                new_hf_param = mapping.hf_param.removesuffix(".weight") + mapped_name
             else:
                 continue
         else:
