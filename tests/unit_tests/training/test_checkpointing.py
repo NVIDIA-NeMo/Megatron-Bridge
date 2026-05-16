@@ -1064,49 +1064,32 @@ class TestLoadCheckpoint:
         )
 
     @patch("torch.distributed.is_initialized")
-    @patch("megatron.bridge.training.checkpointing.file_exists")
-    @patch("builtins.open", new_callable=mock_open, read_data='{"base_model_name_or_path": "/hf/base-model"}')
-    @patch("json.load")
     @patch("megatron.bridge.training.checkpointing.is_hf_peft_adapter_only_dir")
     @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
-    def test_load_hf_adapter_checkpoint_uses_adapter_base_as_bridge_source(
+    def test_load_hf_adapter_checkpoint_is_not_supported_for_megatron_resume(
         self,
         mock_build_bridge,
         mock_is_adapter_dir,
-        mock_json_load,
-        mock_file_open,
-        mock_file_exists,
         mock_dist_init,
         load_checkpoint_fixtures,
     ):
-        """Adapter-only HF loads should build the bridge from the recorded base model."""
+        """Adapter-only HF directories are export artifacts, not Megatron PEFT resume checkpoints."""
         mock_dist_init.return_value = False
-        mock_file_exists.return_value = False
         mock_is_adapter_dir.return_value = True
-        mock_json_load.return_value = {"base_model_name_or_path": "/hf/base-model"}
-        bridge = Mock()
-        mock_build_bridge.return_value = bridge
         load_checkpoint_fixtures["mock_cfg"].peft = Mock()
 
-        _load_hf_iter_checkpoint(
-            "/checkpoints/iter_0001000/hf",
-            load_checkpoint_fixtures["mock_state"],
-            load_checkpoint_fixtures["mock_model"],
-            load_checkpoint_fixtures["mock_optimizer"],
-            load_checkpoint_fixtures["mock_scheduler"],
-            pg_collection=Mock(),
-            skip_load_to_model_and_opt=False,
-        )
+        with pytest.raises(ValueError, match="adapter-only checkpoints"):
+            _load_hf_iter_checkpoint(
+                "/checkpoints/iter_0001000/hf",
+                load_checkpoint_fixtures["mock_state"],
+                load_checkpoint_fixtures["mock_model"],
+                load_checkpoint_fixtures["mock_optimizer"],
+                load_checkpoint_fixtures["mock_scheduler"],
+                pg_collection=Mock(),
+                skip_load_to_model_and_opt=False,
+            )
 
-        mock_build_bridge.assert_called_once_with(
-            load_checkpoint_fixtures["mock_cfg"], hf_source="/hf/base-model"
-        )
-        bridge.load_hf_weights.assert_called_once_with(
-            load_checkpoint_fixtures["mock_model"], hf_path="/hf/base-model"
-        )
-        bridge.load_hf_adapter.assert_called_once_with(
-            load_checkpoint_fixtures["mock_model"], "/checkpoints/iter_0001000/hf"
-        )
+        mock_build_bridge.assert_not_called()
 
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_train_state")

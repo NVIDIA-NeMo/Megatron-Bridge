@@ -2271,38 +2271,13 @@ def _load_hf_iter_checkpoint(
     cfg = state.cfg
     ckpt_cfg = cfg.checkpoint
 
-    def _model_has_adapter_parameters() -> bool:
-        for stage in model:
-            for name, _ in stage.named_parameters():
-                if ".adapter." in name:
-                    return True
-        return False
-
     if not skip_load_to_model_and_opt:
         if is_hf_peft_adapter_only_dir(iter_dir):
-            import json
-
-            adapter_cfg_path = os.path.join(iter_dir, "adapter_config.json")
-            with open(adapter_cfg_path, encoding="utf-8") as f:
-                adapter_json = json.load(f)
-            base_path = (adapter_json.get("base_model_name_or_path") or "").strip()
-            if not base_path:
-                base_path = (ckpt_cfg.hf_source_path or _resolve_hf_source(cfg) or "").strip()
-            if not base_path:
-                raise ValueError(
-                    "HF PEFT adapter checkpoint is missing base weights. Set base_model_name_or_path in "
-                    "adapter_config.json, or set cfg.checkpoint.hf_source_path / cfg.model.hf_model_id."
-                )
-            bridge = _build_auto_bridge_for_save(cfg, hf_source=base_path)
-            bridge.load_hf_weights(model, hf_path=base_path)
-            if cfg.peft is not None or _model_has_adapter_parameters():
-                bridge.load_hf_adapter(model, iter_dir)
-            else:
-                print_rank_0(
-                    "WARNING: HuggingFace adapter weights were not loaded because no PEFT adapters are present "
-                    "on the model yet. If you are resuming PEFT training, load this checkpoint after adapters "
-                    "are applied."
-                )
+            raise ValueError(
+                "Loading HuggingFace PEFT adapter-only checkpoints into Megatron adapters is not supported. "
+                "For PEFT resume training, set checkpoint.load to a complete Megatron checkpoint. "
+                "For base-model initialization, set checkpoint.pretrained_checkpoint to a full model checkpoint."
+            )
         else:
             bridge = _build_auto_bridge_for_save(cfg, hf_source=iter_dir)
             bridge.load_hf_weights(model, hf_path=iter_dir)
