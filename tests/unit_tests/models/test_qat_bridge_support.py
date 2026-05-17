@@ -174,6 +174,29 @@ def test_auto_mapping_detects_quantized_layernorm_column_parallel_modules() -> N
     assert norm_mapping._detect_parallelism_type(module) == "replicated"
 
 
+def test_auto_mapping_detects_dynamic_layernorm_column_parallel_modules(monkeypatch) -> None:
+    class FakeDynamicModule(torch.nn.Module):
+        def get_original_cls_by_level(self, *, level: int) -> type[torch.nn.Module]:
+            assert level == 0
+            return type("QuantLayerNormColumnParallelLinear", (torch.nn.Module,), {})
+
+    monkeypatch.setattr(param_mapping_module, "is_modelopt_dynamic_module", lambda _module: True)
+
+    weight_mapping = AutoMapping(
+        megatron_param="decoder.layers.0.self_attention.linear_qkv.weight",
+        hf_param="model.layers.0.self_attn.q_proj.weight",
+    )
+    norm_mapping = AutoMapping(
+        megatron_param="decoder.layers.0.self_attention.linear_qkv.layer_norm_weight",
+        hf_param="model.layers.0.input_layernorm.weight",
+    )
+
+    module = FakeDynamicModule()
+
+    assert weight_mapping._detect_parallelism_type(module) == "column"
+    assert norm_mapping._detect_parallelism_type(module) == "replicated"
+
+
 def test_auto_mapping_registers_quantized_parallel_linear_types() -> None:
     assert "QuantColumnParallelLinear" in AutoMapping._MODULE_TYPE_REGISTRY["column"]
     assert "QuantRowParallelLinear" in AutoMapping._MODULE_TYPE_REGISTRY["row"]

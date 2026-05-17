@@ -763,8 +763,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         local_expert_number = global_expert_number % num_experts_per_rank
 
-        # Compute global expert numbers for all EP ranks
-        # use regex to replace the local expert number with the global expert number
+        # Compute global expert numbers for all EP ranks. HF MoE params use
+        # experts.N naming here; local_experts.N would require a separate pattern.
         gathered_expert_param_names = [
             re.sub(
                 r"experts\.(\d+)", f"experts.{int(local_expert_number) + num_experts_per_rank * i}", str(hf_param_name)
