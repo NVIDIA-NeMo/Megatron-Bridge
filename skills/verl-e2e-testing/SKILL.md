@@ -96,6 +96,31 @@ PY
 
 The printed path must live under `$BRIDGE_REPO/src`. If it points at site-packages, fix `PYTHONPATH` before trusting any result.
 
+When running against an existing Ray cluster, the driver import is not enough. Ray workers may not inherit the shell `PYTHONPATH`, and the run can fail later with `ModuleNotFoundError: No module named 'megatron.bridge'` even though the driver import passed. Verify a worker import:
+
+```bash
+python - <<'PY'
+import os
+import ray
+
+ray.init(address="auto", runtime_env={"env_vars": {"PYTHONPATH": os.environ["PYTHONPATH"]}})
+
+@ray.remote
+def bridge_path():
+    import megatron.bridge
+    return megatron.bridge.__file__
+
+print(ray.get(bridge_path.remote()))
+PY
+```
+
+If the worker import fails, pass the checkout path through Ray's runtime environment when launching the wrapper:
+
+```bash
+bash tests/special_e2e/run_ppo_trainer_megatron.sh \
+  "++ray_kwargs.ray_init.runtime_env.env_vars.PYTHONPATH=${PYTHONPATH}"
+```
+
 If this import fails before model construction, fix the runtime environment first. The official verl image may not contain every Bridge dependency; for example, Bridge imports `modelopt` through `AutoBridge`, so a missing `nvidia-modelopt` can fail the smoke before verl exercises the provider:
 
 ```bash
@@ -231,11 +256,22 @@ Capture logs to a file for review:
 ```bash
 mkdir -p "${LOG_DIR:-$PWD/verl_e2e_logs}"
 LOG_FILE="${LOG_DIR:-$PWD/verl_e2e_logs}/verl_lora_ddp_$(date +%Y%m%d_%H%M%S).log"
-bash tests/special_e2e/run_ppo_trainer_megatron.sh 2>&1 | tee "$LOG_FILE"
+bash tests/special_e2e/run_ppo_trainer_megatron.sh \
+  "++ray_kwargs.ray_init.runtime_env.env_vars.PYTHONPATH=${PYTHONPATH}" \
+  2>&1 | tee "$LOG_FILE"
 grep -E "Training Progress|VANILLA_MBRIDGE|Traceback|RuntimeError|KeyError|ValueError" "$LOG_FILE"
 ```
 
 Prefer a saved log over a pasted terminal excerpt in PR descriptions.
+
+For time-limited smoke runs where vLLM CUDA graph capture dominates setup and the goal is Bridge provider validation, it is acceptable to add:
+
+```bash
+bash tests/special_e2e/run_ppo_trainer_megatron.sh \
+  actor_rollout_ref.rollout.enforce_eager=True
+```
+
+Report this override as a limitation. It still validates Bridge import, HF import, LoRA, Megatron DDP, rollout wiring, and one PPO update, but not vLLM CUDA graph capture.
 
 ## Save/Resume Coverage
 
@@ -380,6 +416,15 @@ srun <site-specific-slurm-options> \
     LORA_RANK=4 USE_MEGATRON_FSDP=False TOTAL_TRAIN_STEPS=1 SAVE_FREQ=-1 \
     bash tests/special_e2e/run_ppo_trainer_megatron.sh
   '
+```
+
+Use a persistent log directory on a shared filesystem or `$HOME` for long Slurm jobs. Logs written only to node-local `/tmp` can disappear when the allocation expires or is canceled. If a cluster attach helper runs the command through `srun --pty`, do not background the workload inside that attached shell; the step cleanup can terminate it immediately. To detach safely, background the attach helper itself from the login node:
+
+```bash
+mkdir -p "$HOME/verl_e2e_logs"
+nohup env COMMAND='bash /path/to/run_verl_e2e.sh' \
+  bash /path/to/<jobid>-attach.sh \
+  > "$HOME/verl_e2e_logs/attach_driver_$(date +%Y%m%d_%H%M%S).out" 2>&1 &
 ```
 
 If an attach helper enters a container that no longer sees the expected checkouts or log directory, treat that helper as stale. Start a fresh `srun` step against the existing allocation with explicit `--container-image`, `--container-mounts`, and `--container-workdir`.

@@ -1,7 +1,6 @@
 ---
 name: nemo-rl-e2e-testing
-description: External NeMo-RL end-to-end validation workflow for Megatron-Bridge model/provider changes. Covers running NeMo-RL Megatron policy jobs from a Bridge checkout, choosing GRPO/SFT/checkpoint/non-colocated refit variants, setting PYTHONPATH so NeMo-RL imports the local Bridge tree, and reporting pass/fail evidence.
-when_to_use: Adding or changing a Megatron-Bridge model/provider and needing downstream NeMo-RL compatibility validation; checking external RL lifecycle behavior; testing Megatron policy setup, HF import/export, checkpoint/resume, non-colocated vLLM refit, delta weight transfer, or optional LoRA/generation variants when NeMo-RL supports them; 'does this model work in NeMo-RL', 'run NeMo-RL e2e', 'external RL loop validation'.
+description: External NeMo-RL end-to-end validation workflow for Megatron-Bridge model/provider changes, including downstream compatibility checks, external RL lifecycle behavior, Megatron policy setup, HF import/export, checkpoint/resume, non-colocated vLLM refit, delta weight transfer, optional LoRA/generation variants, and questions such as "does this model work in NeMo-RL", "run NeMo-RL e2e", or "external RL loop validation". Covers running NeMo-RL Megatron policy jobs from a Bridge checkout, choosing GRPO/SFT/checkpoint/non-colocated refit variants, setting PYTHONPATH so NeMo-RL imports the local Bridge tree, and reporting pass/fail evidence.
 ---
 
 # NeMo-RL E2E Testing
@@ -339,6 +338,8 @@ uv run bash tests/functional/grpo_megatron_generation.sh
 
 This exercises `policy.generation.backend=megatron`, so it validates NeMo-RL's Megatron generation construction and runtime behavior more directly than the default vLLM-backed GRPO functional.
 
+Some NeMo-RL revisions declare `mcore` and `vllm` extras as mutually incompatible. In that environment, a vLLM-backed Level 0 run may be blocked even though the Megatron policy path is testable. Use `policy.generation.backend=megatron` for a Megatron-only smoke, record vLLM as skipped or blocked, and do not claim non-colocated vLLM refit coverage.
+
 ## Parallelism Stress
 
 Use Level 4 when provider finalization, model-parallel settings, sequence parallel, context parallel, MoE dispatch, pipeline layout, or distributed optimizer behavior changed.
@@ -498,6 +499,19 @@ If non-colocated refit fails, separate the boundary:
 - payload packing/broadcast
 - consumer decode and model loading on the generation worker
 - vLLM-specific weight-loader behavior
+
+If NeMo-RL rejects TP >= 4 with the batch-variant accuracy guard, prefer TP 1 or 2 for the smoke, or set `policy.train_micro_batch_size` and `policy.logprob_batch_size` equal. Do not bypass with `NRL_IGNORE_TP_ACCURACY_CHECK=1` for pass/fail evidence unless the user explicitly wants an unsupported diagnostic run.
+
+If Megatron generation fails during `cuda graph warmup` with `CUDA error: an illegal memory access was encountered`, rerun the same config with:
+
+```bash
+policy.generation.mcore_generation_config.num_cuda_graphs=null \
+policy.generation.mcore_generation_config.use_cuda_graphs_for_non_decode_steps=false
+```
+
+If the no-graph run passes, report the original result as a Megatron generation CUDA-graph failure and the no-graph run as a reduced-optimization pass. Keep both logs.
+
+If the run reaches the requested step count but `tests/check_metrics.py` fails on `train/token_mult_prob_error`, treat it as a real metric failure, not a harness failure. NeMo-RL computes this metric from `exp(abs(generation_logprobs - prev_logprobs))`; huge values mean the generation backend logprobs disagree with the policy logprobs recomputed for training. Isolate by retrying with simpler parallelism or kernels such as `policy.megatron_cfg.sequence_parallel=false`, `policy.megatron_cfg.apply_rope_fusion=false`, shorter sequence lengths, or vLLM generation when available. Do not relax the metric threshold or use sequence masking to claim a pass; run Bridge logits/import/export parity to localize whether the mismatch is in Bridge conversion, Megatron generation logprob collection, or NeMo-RL recomputation.
 
 If model download fails, move HF caches to a larger path and rerun with explicit cache settings.
 
