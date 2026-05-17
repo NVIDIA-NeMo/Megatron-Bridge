@@ -1185,6 +1185,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         "column": {
             "ColumnParallelLinear",
             "LinearCrossEntropyModule",
+            "QuantColumnParallelLinear",
             "TEColumnParallelLinear",
             "TELayerNormColumnParallelLinear",
             "InferenceLayerNormColumnParallelLinear",
@@ -1195,6 +1196,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         },
         "row": {
             "RowParallelLinear",
+            "QuantRowParallelLinear",
             "TERowParallelLinear",
             "InferenceRowParallelLinear",
             "TERowParallelGroupedLinear",
@@ -1213,6 +1215,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             "TopKRouter",
         },
     }
+    _FUSED_LAYER_NORM_COLUMN_PARALLEL_SUBSTRING = "LayerNormColumnParallelLinear"
 
     @classmethod
     def register_module_type(cls, module_name: str, parallelism_type: str):
@@ -1269,7 +1272,8 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Handle fused modules like TELayerNormColumnParallelLinear
         # These modules have both column-parallel weights (weight, bias)
         # and replicated layer norm weights (layer_norm_weight, layer_norm_bias)
-        if module_type in ("TELayerNormColumnParallelLinear", "InferenceLayerNormColumnParallelLinear"):
+        is_layernorm_column_parallel = self._FUSED_LAYER_NORM_COLUMN_PARALLEL_SUBSTRING in module_type
+        if is_layernorm_column_parallel:
             # Check the actual parameter name to determine the correct parallelism type
             if self.megatron_param and (
                 self.megatron_param.endswith("layer_norm_weight") or self.megatron_param.endswith("layer_norm_bias")
