@@ -285,8 +285,8 @@ def wan_1_3b_text2image_pretrain_config() -> ConfigContainer:
     overridden at runtime via --diffusion_dataset_path.
     """
     cfg = wan_1_3b_pretrain_config()
-    cfg.model.seq_length = 12228
-    cfg.dataset.seq_length = 12228
+    cfg.model.seq_length = 12240
+    cfg.dataset.seq_length = 12240
     return cfg
 
 
