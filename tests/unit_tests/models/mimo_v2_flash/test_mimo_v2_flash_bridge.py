@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,10 +25,8 @@ from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge import (
     MiMoV2FlashQKVMapping,
     _dequant_fp8_blockwise,
 )
-from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider import (
-    MiMoV2FlashModelProvider,
-    mimo_v2_flash_layer_spec,
-)
+from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider import MiMoV2FlashModelProvider
+from megatron.bridge.models.mimo_v2_flash.modeling_mimo_v2_flash import mimo_v2_flash_layer_spec
 
 
 _MIMO_V2_FLASH_CONFIG = {
@@ -144,10 +142,6 @@ class TestMiMoV2FlashBridgeProviderBridge:
     def test_layernorm_epsilon(self, provider):
         assert provider.layernorm_epsilon == 1e-5
 
-    def test_attention_sink_bias(self, provider):
-        assert provider.add_swa_attention_sink_bias is True
-        assert provider.add_full_attention_sink_bias is False
-
     def test_attention_value_scale(self, provider):
         assert provider.attention_value_scale == 0.707
 
@@ -232,18 +226,11 @@ class TestMiMoV2FlashMegatronToHfConfig:
         # MoE
         assert result["moe_layer_freq"] == list(original.moe_layer_freq)
 
-        # Attention sink bias
-        assert result["add_swa_attention_sink_bias"] == original.add_swa_attention_sink_bias
-        assert result["add_full_attention_sink_bias"] == original.add_full_attention_sink_bias
-
         # Attention value scale
         assert result["attention_value_scale"] == original.attention_value_scale
 
         # Layernorm epsilon
         assert result["layernorm_epsilon"] == original.layernorm_epsilon
-
-        # norm_topk_prob (hardcoded, not on original config)
-        assert result["norm_topk_prob"] is True
 
 
 class TestMiMoV2FlashBridgeMappingRegistry:

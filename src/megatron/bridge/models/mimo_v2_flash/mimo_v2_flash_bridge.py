@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -176,11 +176,6 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         provider.moe_router_pre_softmax = True
         provider.moe_token_dispatcher_type = "alltoall"
 
-        # Attention sink bias — learnable per-head offset on SWA layers
-        # MiMoV2FlashTEDotProductAttention resets to "vanilla" for full attention layers
-        provider.add_swa_attention_sink_bias = hf_config.add_swa_attention_sink_bias
-        provider.add_full_attention_sink_bias = hf_config.add_full_attention_sink_bias
-
         # Attention value scale
         provider.attention_value_scale = hf_config.attention_value_scale
 
@@ -238,9 +233,10 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         hf_cfg["moe_layer_freq"] = provider.moe_layer_freq
         hf_cfg["topk_method"] = "noaux_tc"
 
-        # Attention sink bias
-        hf_cfg["add_swa_attention_sink_bias"] = provider.add_swa_attention_sink_bias
-        hf_cfg["add_full_attention_sink_bias"] = provider.add_full_attention_sink_bias
+        # Attention sink bias — SWA layers use learnable softmax,
+        # full-attention layers use vanilla softmax.
+        hf_cfg["add_swa_attention_sink_bias"] = True
+        hf_cfg["add_full_attention_sink_bias"] = False
 
         # Attention value scale
         hf_cfg["attention_value_scale"] = provider.attention_value_scale
