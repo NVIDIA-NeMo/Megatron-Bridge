@@ -1029,11 +1029,41 @@ class TestLoadCheckpoint:
         mock_load_hf.assert_not_called()
         mock_load_base.assert_called_once()
 
+    @patch("megatron.bridge.training.checkpointing._load_hf_iter_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir")
+    @patch("megatron.bridge.training.checkpointing.get_pg_collection")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    def test_load_checkpoint_rejects_hf_directory_for_resume_load(
+        self,
+        mock_unwrap,
+        mock_get_pg_collection,
+        mock_is_hf_checkpoint_dir,
+        mock_load_hf,
+        load_checkpoint_fixtures,
+    ):
+        """checkpoint.load should resume from native Megatron checkpoints, not HF directories."""
+        mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+        mock_get_pg_collection.return_value = Mock()
+        mock_is_hf_checkpoint_dir.return_value = True
+        load_checkpoint_fixtures["mock_cfg"].checkpoint.load = "/hf/full-model"
+        load_checkpoint_fixtures["mock_cfg"].checkpoint.pretrained_checkpoint = None
+
+        with pytest.raises(ValueError, match="checkpoint.load does not support HuggingFace-format"):
+            _load_checkpoint_from_path(
+                "/hf/full-model",
+                load_checkpoint_fixtures["mock_state"],
+                load_checkpoint_fixtures["mock_model"],
+                load_checkpoint_fixtures["mock_optimizer"],
+                load_checkpoint_fixtures["mock_scheduler"],
+            )
+
+        mock_load_hf.assert_not_called()
+
     @patch("torch.distributed.is_initialized")
     @patch("megatron.bridge.training.checkpointing.file_exists")
     @patch("megatron.bridge.training.checkpointing.is_hf_peft_adapter_only_dir")
     @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
-    def test_load_hf_iter_checkpoint_uses_hf_dir_as_bridge_source(
+    def test_load_hf_iter_checkpoint_initializes_from_hf_pretrained_source(
         self,
         mock_build_bridge,
         mock_is_adapter_dir,
@@ -1041,7 +1071,7 @@ class TestLoadCheckpoint:
         mock_dist_init,
         load_checkpoint_fixtures,
     ):
-        """Direct HF loads should not require a separate hf_source_path."""
+        """HF pretrained initialization should not require a separate hf_source_path."""
         mock_dist_init.return_value = False
         mock_file_exists.return_value = False
         mock_is_adapter_dir.return_value = False

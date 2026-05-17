@@ -2267,9 +2267,8 @@ def _load_hf_iter_checkpoint(
     pg_collection: ProcessGroupCollection,
     skip_load_to_model_and_opt: bool,
 ) -> tuple[int, int]:
-    """Load a HuggingFace-format checkpoint directory."""
+    """Load HuggingFace full-model weights for initialization."""
     cfg = state.cfg
-    ckpt_cfg = cfg.checkpoint
 
     if not skip_load_to_model_and_opt:
         if is_hf_peft_adapter_only_dir(iter_dir):
@@ -2282,47 +2281,17 @@ def _load_hf_iter_checkpoint(
             bridge = _build_auto_bridge_for_save(cfg, hf_source=iter_dir)
             bridge.load_hf_weights(model, hf_path=iter_dir)
 
-    metadata_dir = (
-        os.path.dirname(iter_dir)
-        if os.path.basename(iter_dir.rstrip(os.sep)) == HF_WEIGHTS_SUBDIR
-        else iter_dir
-    )
-    train_state_filename = get_checkpoint_train_state_filename(metadata_dir)
-    parent_train_state_filename = None
-    save_dir = ckpt_cfg.load
-    if save_dir is not None:
-        parent_train_state_filename = get_checkpoint_train_state_filename(save_dir, prefix=TRACKER_PREFIX)
+    state.train_state.step = 0
 
-    train_state_loaded = False
-    if not ckpt_cfg.finetune:
-        if file_exists(train_state_filename):
-            state.train_state = read_train_state(train_state_filename)
-            train_state_loaded = True
-        elif parent_train_state_filename and file_exists(parent_train_state_filename):
-            state.train_state = read_train_state(parent_train_state_filename)
-            train_state_loaded = True
-
-    if not train_state_loaded:
-        # Either finetune mode (reset counters) or no train_state.pt present.
-        state.train_state.step = 0
-
-    if not ckpt_cfg.finetune and train_state_loaded:
-        update_num_microbatches(consumed_samples=state.train_state.consumed_train_samples, verbose=True)
-
-    iteration = state.train_state.step if train_state_loaded else 0
-    num_floating_point_operations_so_far = (
-        getattr(state.train_state, "floating_point_operations_so_far", 0) if train_state_loaded else 0
-    )
-
-    # HF fallback checkpoints only contain model/adaptor weights.  Full training
-    # resume should load the complete Megatron checkpoint from ``iter_*/``.
+    # HF checkpoints only initialize model weights. Full training resume should
+    # load the complete Megatron checkpoint through ``checkpoint.load``.
     if (cfg.model.fp16 or cfg.model.bf16) and optimizer is not None and not cfg.ddp.use_megatron_fsdp:
         optimizer.reload_model_params()
 
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
 
-    return iteration, num_floating_point_operations_so_far
+    return 0, 0
 
 
 def _load_checkpoint_from_path(
@@ -2366,11 +2335,16 @@ def _load_checkpoint_from_path(
     pg_collection = pg_collection or get_pg_collection(model)
     ckpt_format = cfg.checkpoint.ckpt_format
 
-    # HuggingFace-format directories are only honored when explicitly provided
-    # as ``load_dir``/``pretrained_checkpoint``.  Parent Megatron save dirs should
-    # resume from their native ``iter_*`` checkpoint and ignore the extra
-    # ``iter_*/hf`` export produced by ``save_weight_format='hf'``.
+    # HuggingFace-format directories are only honored for pretrained model
+    # initialization.  Resume training via ``checkpoint.load`` should use a
+    # complete native Megatron checkpoint.
     if is_hf_checkpoint_dir(load_dir):
+        if load_dir == cfg.checkpoint.load:
+            raise ValueError(
+                "checkpoint.load does not support HuggingFace-format directories. "
+                "Use checkpoint.load with a native Megatron checkpoint for resume training, "
+                "or use checkpoint.pretrained_checkpoint for full-model HuggingFace initialization."
+            )
         print_rank_0(f" loading HuggingFace-format checkpoint from {load_dir}")
         return _load_hf_iter_checkpoint(
             load_dir,
