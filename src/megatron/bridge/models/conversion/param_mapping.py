@@ -762,13 +762,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             num_experts_per_rank = num_experts // self.ep_size
             num_experts_per_rank = self.broadcast_obj_from_pp_rank(num_experts_per_rank, "num_experts_per_rank")
 
-        # Extract local expert number from parameter name
-        # Handle both .weight and .bias suffixes
-        local_expert_number = None
-        for key in (".weight", ".bias"):
-            if key in self.megatron_param:
-                global_expert_number = int(self.megatron_param.split(key)[-1])
-                local_expert_number = global_expert_number % num_experts_per_rank
+        global_expert_number = extract_expert_number_from_param(self.megatron_param)
+        local_expert_number = global_expert_number % num_experts_per_rank
 
         # Compute global expert numbers for all EP ranks
         # use regex to replace the local expert number with the global expert number
@@ -1719,7 +1714,7 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # Check if we're dealing with biases (1D) or weights (2D)
         if packed_qkv.ndim == 1:
             # Split biases
-            raise ValueError("Biaes are usually not quantized. Biases are not supported for quantization.")
+            raise ValueError("Biases are usually not quantized. Biases are not supported for quantization.")
         else:
             # Split weights
             q_q, k_q, v_q = split_qkv_weights(config, packed_qkv)

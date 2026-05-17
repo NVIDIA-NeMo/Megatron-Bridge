@@ -19,6 +19,7 @@ import logging
 from functools import cached_property, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optional, Type, TypeVar, Union, Tuple
+from collections.abc import Callable
 
 import torch
 import torch.distributed as dist
@@ -506,8 +507,8 @@ class AutoBridge(Generic[MegatronModelT]):
     def export_hf_weights_quant(
         self,
         model: list[MegatronModelT],
-        quantization_checker: callable,
-        quant_fn: callable,
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., tuple[torch.Tensor, torch.Tensor]],
         quant_block_size: Optional[Tuple[int, int]] = None,
         cpu: bool = False,
         show_progress: bool = True,
