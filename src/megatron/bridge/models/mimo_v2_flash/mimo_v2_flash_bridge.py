@@ -196,7 +196,7 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         """Convert Megatron provider config to HuggingFace config dict."""
         hf_cfg = super(MiMoV2FlashBridge, cls).megatron_to_hf_config(provider)
 
-        if isinstance(provider.rotary_base, tuple):
+        if isinstance(provider.rotary_base, (tuple, list)):
             swa_theta, full_theta = provider.rotary_base
             hf_cfg["rope_theta"] = full_theta
             hf_cfg["swa_rope_theta"] = swa_theta

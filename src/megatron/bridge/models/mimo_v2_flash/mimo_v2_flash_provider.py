@@ -83,8 +83,7 @@ class MiMoV2FlashModelProvider(GPTModelProvider):
         min_kv_groups = min(self.full_attn_num_query_groups, self.swa_num_query_groups)
         assert self.tensor_model_parallel_size <= min_kv_groups, "MiMo-V2-Flash requires TP size <= num query groups"
         assert self.context_parallel_size <= 1, "MiMo-V2-Flash does not support context parallelism yet."
-        # Resolve dual rope base
-        if isinstance(self.rotary_base, tuple):
+        if isinstance(self.rotary_base, (tuple, list)):
             rotary_base_local, rotary_base_global = self.rotary_base
         else:
             rotary_base_local = 10_000
