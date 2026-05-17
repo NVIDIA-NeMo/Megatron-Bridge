@@ -210,14 +210,12 @@ def _has_hf_weight_files(path: str) -> bool:
 def is_hf_checkpoint_dir(path: Optional[str]) -> bool:
     """Detect whether ``path`` looks like a HuggingFace model directory.
 
-    A path qualifies as HF when either:
-      - ``config.json`` is present AND the directory contains at least one
-        HuggingFace-style weight file. Both consolidated (``model.safetensors``,
-        ``pytorch_model.bin``) and sharded (``model-XXXXX-of-XXXXX.safetensors``,
-        ``pytorch_model-XXXXX-of-XXXXX.bin``) layouts are recognised, with or
-        without the matching ``*.index.json`` manifest.
-      - ``adapter_config.json`` is present together with
-        ``adapter_model.safetensors`` (HuggingFace PEFT format).
+    A path qualifies as HF when ``config.json`` is present and the directory
+    contains at least one HuggingFace-style weight file. Both consolidated
+    (``model.safetensors``, ``pytorch_model.bin``) and sharded
+    (``model-XXXXX-of-XXXXX.safetensors``, ``pytorch_model-XXXXX-of-XXXXX.bin``)
+    layouts are recognised, with or without the matching ``*.index.json``
+    manifest.
 
     Args:
         path: Filesystem path to check (may be ``None``).
@@ -227,36 +225,9 @@ def is_hf_checkpoint_dir(path: Optional[str]) -> bool:
     """
     if path is None:
         return False
-    if file_exists(join_paths(path, "adapter_config.json")) and file_exists(
-        join_paths(path, "adapter_model.safetensors")
-    ):
-        return True
     if not file_exists(join_paths(path, "config.json")):
         return False
     return _has_hf_weight_files(path)
-
-
-def is_hf_peft_adapter_only_dir(path: Optional[str]) -> bool:
-    """True when the directory is HuggingFace PEFT adapter weights without base model checkpoints.
-
-    ``adapter_model.safetensors`` qualifies as HF for :func:`is_hf_checkpoint_dir`, but training
-    must still load base weights separately (via ``adapter_config.json`` /
-    ``base_model_name_or_path`` or checkpoint config HF source fields).
-
-    Args:
-        path: Directory path to inspect.
-
-    Returns:
-        True when adapter files are present and no HuggingFace *base* model weight files exist.
-    """
-    if path is None:
-        return False
-    if not (
-        file_exists(join_paths(path, "adapter_config.json"))
-        and file_exists(join_paths(path, "adapter_model.safetensors"))
-    ):
-        return False
-    return not _has_hf_weight_files(path)
 
 
 def is_checkpoint_iteration_directory(path: Optional[str]) -> bool:
@@ -271,7 +242,7 @@ def is_checkpoint_iteration_directory(path: Optional[str]) -> bool:
       2. ``train_state.pt``  — per-iteration state file written by Bridge.
       3. ``metadata.json``   — MCore distributed checkpoint (``torch_dist``).
       4. ``.metadata``       — PyTorch DCP checkpoint (``fsdp_dtensor``).
-      5. HF iteration directory — see :func:`is_hf_checkpoint_dir`.
+      5. HF full-model directory — see :func:`is_hf_checkpoint_dir`.
 
     Args:
         path: Filesystem path to check.

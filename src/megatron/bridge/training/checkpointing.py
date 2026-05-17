@@ -79,7 +79,6 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_train_state_filename,
     is_checkpoint_iteration_directory,
     is_hf_checkpoint_dir,
-    is_hf_peft_adapter_only_dir,
     read_run_config,
     read_train_state,
 )
@@ -811,15 +810,6 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
 
 
 _AUTO_BRIDGE_CACHE: dict[tuple[str, bool], Any] = {}
-
-
-def clear_hf_auto_bridge_cache() -> None:
-    """Drop cached :class:`~megatron.bridge.models.conversion.auto_bridge.AutoBridge` instances.
-
-    Useful in tests or single-process multi-run jobs to avoid retaining large HF templates in memory.
-    """
-
-    _AUTO_BRIDGE_CACHE.clear()
 
 
 def _build_auto_bridge_for_save(
@@ -2257,29 +2247,20 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
             raise
 
 
-def _load_hf_iter_checkpoint(
-    iter_dir: str,
+def _load_hf_pretrained_checkpoint(
+    hf_dir: str,
     state: GlobalState,
     model: list[MegatronModule],
     optimizer: Optional[MegatronOptimizer],
-    opt_param_scheduler: Optional[Any],
     *,
-    pg_collection: ProcessGroupCollection,
     skip_load_to_model_and_opt: bool,
 ) -> tuple[int, int]:
     """Load HuggingFace full-model weights for initialization."""
     cfg = state.cfg
 
     if not skip_load_to_model_and_opt:
-        if is_hf_peft_adapter_only_dir(iter_dir):
-            raise ValueError(
-                "Loading HuggingFace PEFT adapter-only checkpoints into Megatron adapters is not supported. "
-                "For PEFT resume training, set checkpoint.load to a complete Megatron checkpoint. "
-                "For base-model initialization, set checkpoint.pretrained_checkpoint to a full model checkpoint."
-            )
-        else:
-            bridge = _build_auto_bridge_for_save(cfg, hf_source=iter_dir)
-            bridge.load_hf_weights(model, hf_path=iter_dir)
+        bridge = _build_auto_bridge_for_save(cfg, hf_source=hf_dir)
+        bridge.load_hf_weights(model, hf_path=hf_dir)
 
     state.train_state.step = 0
 
@@ -2346,13 +2327,11 @@ def _load_checkpoint_from_path(
                 "or use checkpoint.pretrained_checkpoint for full-model HuggingFace initialization."
             )
         print_rank_0(f" loading HuggingFace-format checkpoint from {load_dir}")
-        return _load_hf_iter_checkpoint(
+        return _load_hf_pretrained_checkpoint(
             load_dir,
             state,
             model,
             optimizer,
-            opt_param_scheduler,
-            pg_collection=pg_collection,
             skip_load_to_model_and_opt=skip_load_to_model_and_opt,
         )
 
