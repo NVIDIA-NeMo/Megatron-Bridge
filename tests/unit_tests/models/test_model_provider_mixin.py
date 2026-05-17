@@ -35,6 +35,15 @@ class MockMegatronModule(MegatronModule):
 class TestProvider(ModelProviderMixin):
     """A concrete implementation of ModelProviderMixin for testing."""
 
+    def __init__(self) -> None:
+        self.tensor_model_parallel_size = 1
+        self.pipeline_model_parallel_size = 1
+        self.expert_model_parallel_size = 1
+        self.expert_tensor_parallel_size = 1
+        self.virtual_pipeline_model_parallel_size = None
+        self.context_parallel_size = 1
+        self.sequence_parallel = False
+
     def provide(self, pre_process=None, post_process=None) -> MockMegatronModule:
         return MockMegatronModule()
 
@@ -80,6 +89,13 @@ def test_configure_sets_attrs_and_finalizes(provider):
     assert provider.sequence_parallel is True
     assert provider.finalized is True
     assert hook_seen == [(torch.bfloat16, 2, True)]
+
+
+@patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=False)
+def test_configure_rejects_unknown_override(mock_ps_init, provider):
+    """Test that configure rejects misspelled provider override names."""
+    with pytest.raises(AttributeError, match="TestProvider has no attribute 'tensor_mode_parallel_size'"):
+        provider.configure(overrides={"tensor_mode_parallel_size": 2})
 
 
 @patch("megatron.bridge.models.model_provider.parallel_state.get_context_parallel_world_size", return_value=6)

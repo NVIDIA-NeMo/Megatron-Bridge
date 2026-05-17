@@ -16,7 +16,7 @@ import abc
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Generic, Iterable, Mapping, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, Iterable, Mapping, Self, TypedDict, TypeVar, Union
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -99,13 +99,18 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         """
         pass
 
+    @abc.abstractmethod
+    def finalize(self) -> None:
+        """Finalize provider state after configuration overrides are applied."""
+        pass
+
     def configure(
         self,
         *,
         dtype: torch.dtype | None = None,
         overrides: Mapping[str, object] | None = None,
         pre_finalize_hooks: Iterable[Callable[[object], None]] = (),
-    ):
+    ) -> Self:
         """Apply integration settings and finalize this provider.
 
         Args:
@@ -138,6 +143,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         provider_overrides.update(overrides or {})
 
         for name, value in provider_overrides.items():
+            if not hasattr(self, name):
+                raise AttributeError(f"{type(self).__name__} has no attribute {name!r}.")
             setattr(self, name, value)
 
         for hook in pre_finalize_hooks:

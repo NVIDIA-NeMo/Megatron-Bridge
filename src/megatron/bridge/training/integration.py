@@ -27,6 +27,8 @@ from megatron.core import tensor_parallel
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 
+from megatron.bridge.training.checkpointing import load_fsdp_dtensor_checkpoint, save_fsdp_dtensor_checkpoint
+
 
 ModelList = list[MegatronModule]
 ModelHook = Callable[[ModelList], ModelList | None]
@@ -204,7 +206,7 @@ def _import_peft_class(peft_type: str) -> type[Any]:
     try:
         module = import_module(module_name)
     except ImportError as err:
-        message = f"Failed to import PEFT type {peft_type!r} from {module_name}.{class_name}."
+        message = f"Failed to import PEFT type {peft_type!r} ({module_name}:{class_name})."
         if peft_type in {"lora", "vlm_lora", "canonical_lora"}:
             message += " Install Megatron Bridge with the [te] extra for Transformer Engine support."
         raise ImportError(message) from err
@@ -277,14 +279,24 @@ def load_peft_adapter_checkpoint(
     loaded_state_dict = dist_checkpointing.load(sharded_state_dict, checkpoint_path, load_strategy)
     for vpp_rank, model_chunk in enumerate(model_chunks):
         model_key = "model" if len(model_chunks) == 1 else f"model{vpp_rank}"
-        if model_key not in loaded_state_dict and len(model_chunks) == 1:
-            fallback_model_key = next((key for key in loaded_state_dict if key.startswith("model")), None)
-            if fallback_model_key is None:
+        if model_key not in loaded_state_dict:
+            if len(model_chunks) == 1:
+                fallback_model_key = next((key for key in loaded_state_dict if key.startswith("model")), None)
+                if fallback_model_key is not None:
+                    model_key = fallback_model_key
+                else:
+                    raise KeyError(
+                        "Expected adapter checkpoint to contain a top-level 'model' or 'model*' key, "
+                        f"but found keys: {list(loaded_state_dict.keys())}"
+                    )
+            else:
+                expected_model_keys = [f"model{rank}" for rank in range(len(model_chunks))]
                 raise KeyError(
-                    "Expected adapter checkpoint to contain a top-level 'model' or 'model*' key, "
+                    f"Expected adapter checkpoint to contain top-level key {model_key!r} "
+                    f"for virtual pipeline model chunk {vpp_rank} "
+                    f"(expected keys: {expected_model_keys}), "
                     f"but found keys: {list(loaded_state_dict.keys())}"
                 )
-            model_key = fallback_model_key
         model_chunk.load_state_dict(loaded_state_dict[model_key], strict=strict)
 
 
@@ -386,6 +398,8 @@ __all__ = [
     "create_peft",
     "create_peft_hook",
     "freeze_moe_router",
+    "load_fsdp_dtensor_checkpoint",
     "load_peft_adapter_checkpoint",
     "make_value_model",
+    "save_fsdp_dtensor_checkpoint",
 ]

@@ -112,7 +112,7 @@ def test_create_peft_reports_lora_import_failure(monkeypatch) -> None:
 
     monkeypatch.setattr(integration, "import_module", failing_import_module)
 
-    with pytest.raises(ImportError, match=r"PEFT type 'lora'.*\[te\] extra"):
+    with pytest.raises(ImportError, match=r"PEFT type 'lora'.*\(megatron\.bridge\.peft\.lora:LoRA\).*\[te\] extra"):
         integration.create_peft({"type": "lora", "rank": 4})
 
 
@@ -208,6 +208,41 @@ def test_load_peft_adapter_checkpoint_errors_for_missing_model_key(monkeypatch) 
             fully_parallel_load=False,
             load_strategy="strategy",
         )
+
+
+def test_load_peft_adapter_checkpoint_errors_for_missing_virtual_model_key(monkeypatch) -> None:
+    model = [FakeModel(), FakeModel()]
+    peft = FakePeft()
+
+    fake_checkpointing = types.SimpleNamespace(
+        _generate_model_state_dict=lambda model, model_sd_kwargs, ckpt_format, pg_collection=None: {
+            f"model{index}": model_chunk.sharded_state_dict() for index, model_chunk in enumerate(model)
+        },
+        apply_peft_adapter_filter_to_state_dict=lambda state_dict, peft: state_dict,
+    )
+    monkeypatch.setitem(sys.modules, "megatron.bridge.training.checkpointing", fake_checkpointing)
+    monkeypatch.setattr(
+        "megatron.core.dist_checkpointing.load",
+        lambda sharded_state_dict, checkpoint_path, load_strategy: {"model0": {}},
+    )
+
+    with pytest.raises(KeyError, match="model1"):
+        integration.load_peft_adapter_checkpoint(
+            model,
+            "/adapter",
+            peft=peft,
+            fully_parallel_load=False,
+            load_strategy="strategy",
+        )
+
+
+def test_fsdp_dtensor_checkpoint_helpers_are_reexported() -> None:
+    from megatron.bridge.training import checkpointing
+
+    assert "save_fsdp_dtensor_checkpoint" in integration.__all__
+    assert "load_fsdp_dtensor_checkpoint" in integration.__all__
+    assert integration.save_fsdp_dtensor_checkpoint is checkpointing.save_fsdp_dtensor_checkpoint
+    assert integration.load_fsdp_dtensor_checkpoint is checkpointing.load_fsdp_dtensor_checkpoint
 
 
 def test_create_ddp_config_builds_and_finalizes(monkeypatch) -> None:

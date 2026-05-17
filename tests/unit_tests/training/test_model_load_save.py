@@ -766,6 +766,9 @@ class TestSaveMegatronModel:
             def provide(self, pre_process=None, post_process=None, vp_stage=None):
                 return Mock()
 
+            def finalize(self) -> None:
+                pass
+
         mock_model_config = MockModelConfig()
         mock_get_model_config.return_value = mock_model_config
 
@@ -818,6 +821,9 @@ class TestSaveMegatronModel:
         class MockModelConfig(ModelProviderMixin, Mock):
             def provide(self, pre_process=None, post_process=None, vp_stage=None):
                 return Mock()
+
+            def finalize(self) -> None:
+                pass
 
         mock_model_config = MockModelConfig()
         mock_get_model_config.return_value = mock_model_config
@@ -897,6 +903,9 @@ class TestSaveMegatronModel:
         class MockModelConfig(ModelProviderMixin, Mock):
             def provide(self, pre_process=None, post_process=None, vp_stage=None):
                 return Mock()
+
+            def finalize(self) -> None:
+                pass
 
         mock_model_config = MockModelConfig()
         mock_get_model_config.return_value = mock_model_config
