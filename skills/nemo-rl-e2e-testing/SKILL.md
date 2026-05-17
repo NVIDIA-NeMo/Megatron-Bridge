@@ -1,6 +1,7 @@
 ---
 name: nemo-rl-e2e-testing
 description: External NeMo-RL end-to-end validation workflow for Megatron-Bridge model/provider changes, including downstream compatibility checks, external RL lifecycle behavior, Megatron policy setup, HF import/export, checkpoint/resume, non-colocated vLLM refit, delta weight transfer, optional LoRA/generation variants, and questions such as "does this model work in NeMo-RL", "run NeMo-RL e2e", or "external RL loop validation". Covers running NeMo-RL Megatron policy jobs from a Bridge checkout, choosing GRPO/SFT/checkpoint/non-colocated refit variants, setting PYTHONPATH so NeMo-RL imports the local Bridge tree, and reporting pass/fail evidence.
+when_to_use: Adding or changing a Megatron-Bridge model/provider and needing downstream NeMo-RL compatibility validation; checking non-vanilla Bridge provider paths; testing PEFT/LoRA, checkpoint behavior, non-colocated vLLM refit, or explicitly requested advanced variants through NeMo-RL; 'does this model work in NeMo-RL', 'run NeMo-RL e2e', 'external RL loop validation'.
 ---
 
 # NeMo-RL E2E Testing
