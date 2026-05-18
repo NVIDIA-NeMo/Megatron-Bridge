@@ -196,7 +196,10 @@ Two modes, different trade-offs:
 
 Partial CUDA graphs capture static components while leaving dynamic expert
 computation outside the graph, which is why they are the safer default for
-dropless MoE.
+dropless MoE. Validate the replay window against an eager run on the same
+dispatcher and container: TE-scoped capture can be neutral or slightly slower
+on all-to-all fallback shapes that are not visibly launch-bound, even when
+capture succeeds.
 
 For full CUDA Graphs on dropless MoE, three techniques are needed:
 
