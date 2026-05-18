@@ -217,6 +217,7 @@ class Step35Bridge(MegatronModelBridge):
         if provider.use_head_wise_attn_gate:
             provider.attention_output_gate = False
         provider.layer_types = list(getattr(hf_config, "layer_types", []) or [])
+        provider.rotary_percent = 0.5
         provider.sliding_attention_setting = {
                 "rotary_percent": 1.0,
                 "num_attention_heads": 96,
