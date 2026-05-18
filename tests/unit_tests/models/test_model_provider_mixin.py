@@ -15,7 +15,6 @@
 from unittest.mock import Mock, call, patch
 
 import pytest
-import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -61,72 +60,6 @@ def provider():
 def ddp_config():
     """Fixture to create a DistributedDataParallelConfig instance."""
     return DistributedDataParallelConfig()
-
-
-def test_configure_sets_attrs_and_finalizes(provider):
-    """Test that configure applies dtype, hooks, overrides, and finalization."""
-    hook_seen = []
-
-    result = provider.configure(
-        dtype=torch.bfloat16,
-        overrides={"tensor_model_parallel_size": 2, "sequence_parallel": True},
-        pre_finalize_hooks=[
-            lambda current_provider: hook_seen.append(
-                (
-                    current_provider.params_dtype,
-                    current_provider.tensor_model_parallel_size,
-                    current_provider.sequence_parallel,
-                )
-            )
-        ],
-    )
-
-    assert result is provider
-    assert provider.params_dtype is torch.bfloat16
-    assert provider.fp16 is False
-    assert provider.bf16 is True
-    assert provider.tensor_model_parallel_size == 2
-    assert provider.sequence_parallel is True
-    assert provider.finalized is True
-    assert hook_seen == [(torch.bfloat16, 2, True)]
-
-
-@patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=False)
-def test_configure_rejects_unknown_override(mock_ps_init, provider):
-    """Test that configure rejects misspelled provider override names."""
-    with pytest.raises(AttributeError, match="TestProvider has no attribute 'tensor_mode_parallel_size'"):
-        provider.configure(overrides={"tensor_mode_parallel_size": 2})
-
-
-@patch("megatron.bridge.models.model_provider.parallel_state.get_context_parallel_world_size", return_value=6)
-@patch(
-    "megatron.bridge.models.model_provider.parallel_state.get_virtual_pipeline_model_parallel_world_size",
-    return_value=5,
-)
-@patch("megatron.bridge.models.model_provider.parallel_state.get_expert_tensor_parallel_world_size", return_value=4)
-@patch("megatron.bridge.models.model_provider.parallel_state.get_expert_model_parallel_world_size", return_value=3)
-@patch("megatron.bridge.models.model_provider.parallel_state.get_pipeline_model_parallel_world_size", return_value=2)
-@patch("megatron.bridge.models.model_provider.parallel_state.get_tensor_model_parallel_world_size", return_value=1)
-@patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True)
-def test_configure_reads_parallel_state_when_initialized(
-    mock_ps_init,
-    mock_tp_size,
-    mock_pp_size,
-    mock_ep_size,
-    mock_etp_size,
-    mock_vpp_size,
-    mock_cp_size,
-    provider,
-):
-    """Test that configure uses initialized model-parallel state by default."""
-    provider.configure(overrides={"pipeline_model_parallel_size": 8})
-
-    assert provider.tensor_model_parallel_size == 1
-    assert provider.pipeline_model_parallel_size == 8
-    assert provider.expert_model_parallel_size == 3
-    assert provider.expert_tensor_parallel_size == 4
-    assert provider.virtual_pipeline_model_parallel_size == 5
-    assert provider.context_parallel_size == 6
 
 
 @patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")

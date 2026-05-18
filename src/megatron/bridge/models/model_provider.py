@@ -16,7 +16,7 @@ import abc
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Generic, Iterable, Mapping, Self, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, Mapping, Self, TypedDict, TypeVar, Union
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -104,19 +104,16 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         """Finalize provider state after configuration overrides are applied."""
         pass
 
-    def configure(
+    def apply_overrides_and_finalize(
         self,
-        *,
         dtype: torch.dtype | None = None,
         overrides: Mapping[str, object] | None = None,
-        pre_finalize_hooks: Iterable[Callable[[object], None]] = (),
     ) -> Self:
-        """Apply integration settings and finalize this provider.
+        """Apply dtype and attribute overrides, then finalize this provider.
 
         Args:
             dtype: Optional parameter dtype. Also sets ``fp16`` and ``bf16``.
             overrides: Provider attributes to set before finalization.
-            pre_finalize_hooks: Mutations that must run before ``finalize()``.
 
         Returns:
             This provider.
@@ -126,29 +123,10 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             self.fp16 = dtype == torch.float16
             self.bf16 = dtype == torch.bfloat16
 
-        provider_overrides = {}
-        if parallel_state.is_initialized():
-            provider_overrides.update(
-                {
-                    "tensor_model_parallel_size": parallel_state.get_tensor_model_parallel_world_size(),
-                    "pipeline_model_parallel_size": parallel_state.get_pipeline_model_parallel_world_size(),
-                    "expert_model_parallel_size": parallel_state.get_expert_model_parallel_world_size(),
-                    "expert_tensor_parallel_size": parallel_state.get_expert_tensor_parallel_world_size(),
-                    "virtual_pipeline_model_parallel_size": (
-                        parallel_state.get_virtual_pipeline_model_parallel_world_size()
-                    ),
-                    "context_parallel_size": parallel_state.get_context_parallel_world_size(),
-                }
-            )
-        provider_overrides.update(overrides or {})
-
-        for name, value in provider_overrides.items():
+        for name, value in (overrides or {}).items():
             if not hasattr(self, name):
                 raise AttributeError(f"{type(self).__name__} has no attribute {name!r}.")
             setattr(self, name, value)
-
-        for hook in pre_finalize_hooks:
-            hook(self)
 
         self.finalize()
         return self
