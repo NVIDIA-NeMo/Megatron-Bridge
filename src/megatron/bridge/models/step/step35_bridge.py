@@ -244,10 +244,10 @@ class Step35Bridge(MegatronModelBridge):
         provider.moe_permute_fusion = True
 
         if hf_config.moe_layers_enum is not None:
-            moe_layer_freq = [0] * (provider.num_layers + provider.mtp_num_layers)
+            moe_layer_freq = [0] * provider.num_layers
             for layer in hf_config.moe_layers_enum.split(","):
                 idx = int(layer)
-                if idx < provider.num_layers + provider.mtp_num_layers:
+                if idx < provider.num_layers:
                     moe_layer_freq[idx] = 1
             provider.moe_layer_freq = moe_layer_freq
             # _build_step35_layer_spec reads moe_layer_freq to produce per-layer dense/MoE
@@ -331,7 +331,7 @@ class Step35Bridge(MegatronModelBridge):
             logger.warning("No HF config found, skipping MTP mappings.")
             return MegatronMappingRegistry(*mapping_list)
 
-        num_mtp_layers = getattr(self.hf_config, "num_nextn_predict_layers", 0)
+        mtp_num_layers = getattr(self.hf_config, "num_nextn_predict_layers", 0)
         num_transformer_layers = self.hf_config.num_hidden_layers
 
         # Layer-specific param patterns to replicate for each MTP transformer sub-layer.
@@ -349,7 +349,7 @@ class Step35Bridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         }
 
-        for mtp_layer in range(num_mtp_layers):
+        for mtp_layer in range(mtp_num_layers):
             hf_layer = mtp_layer + num_transformer_layers
             # Megatron may name the sub-layer "mtp_model_layer" or "transformer_layer".
             for layer_prefix in ("mtp_model_layer", "transformer_layer"):
