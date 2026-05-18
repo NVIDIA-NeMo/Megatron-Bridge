@@ -90,6 +90,19 @@ except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
 
+# Register deepseek_v4 model type for transformers versions that lack native support.
+try:
+    from transformers import AutoConfig
+    from transformers.configuration_utils import PretrainedConfig
+
+    class _DeepseekV4Config(PretrainedConfig):
+        model_type = "deepseek_v4"
+
+    AutoConfig.register("deepseek_v4", _DeepseekV4Config)
+except (ValueError, ImportError):
+    pass  # already registered natively or import error
+
+
 _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO = {
     "sliding_attention": 0,
     "compressed_sparse_attention": 4,
@@ -213,12 +226,16 @@ class _HCAlphaMapping(MegatronParamMapping):
 
     def megatron_to_hf(self, megatron_weights, megatron_module):
         # megatron_weights is alpha_pre [1]; gather all 3 from the same module.
+        # With PP > 1, megatron_module may be None on non-owning ranks,
+        # so we broadcast alpha_post and alpha_res alongside alpha_pre.
+        post_tensor = megatron_module.alpha_post.detach() if megatron_module is not None else None
+        res_tensor = megatron_module.alpha_res.detach() if megatron_module is not None else None
         megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
+        post = self.broadcast_from_pp_rank(post_tensor, cache_key=str(self.hf_param) + "_post")
+        res = self.broadcast_from_pp_rank(res_tensor, cache_key=str(self.hf_param) + "_res")
         if megatron_weights is None:
             return {}
         megatron_weights = self.maybe_dequantize(megatron_weights)
-        post = megatron_module.alpha_post.detach()
-        res = megatron_module.alpha_res.detach()
         return {self.hf_param: torch.cat([megatron_weights.float(), post.float(), res.float()])}
 
 
@@ -295,6 +312,34 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     # ------------------------------------------------------------------
     # Provider configuration
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def generate_pipeline_layout(num_layers: int, pp: int, mtp_layers: int = 1) -> list[list[str]]:
+        """Generate a pipeline-parallel layout for DSv4 models.
+
+        DSv4 with hash MoE routing requires an explicit pipeline layout when PP > 1.
+        The layout distributes decoder layers across PP stages, placing the embedding
+        on the first stage and MTP + loss on the last stage.
+
+        Args:
+            num_layers: Number of decoder layers (e.g. 43 for Flash, 61 for Pro).
+            pp: Pipeline parallel size.
+            mtp_layers: Number of MTP layers (default 1).
+
+        Returns:
+            List of lists, where each inner list describes one pipeline stage.
+        """
+        base, rem = num_layers // pp, num_layers % pp
+        layout = []
+        for i in range(pp):
+            n = base + (1 if i < rem else 0)
+            stage = ["decoder"] * n
+            if i == 0:
+                stage = ["embedding"] + stage
+            if i == pp - 1:
+                stage = stage + ["mtp"] * mtp_layers + ["loss"]
+            layout.append(stage)
+        return layout
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)

@@ -40,16 +40,19 @@ No external dequantisation script is required.
 
 DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported alongside the DSv4 hybrid attention path. Scale via expert and pipeline parallelism instead.
 
-| Model | TP | PP | EP | Min GPUs | Verified | Use Case |
-|-------|---:|---:|---:|---------:|----------|----------|
-| DeepSeek-V4-Flash | 1 | 1 | 4 | 4 | GB200 | Single-node inference |
-| DeepSeek-V4-Flash-Base | 1 | 1 | 4 | 4 | GB200 | Single-node inference |
-| DeepSeek-V4-Pro | 1 | 4 | 8 | 32 | GB200 | Multi-node (192 GB GPUs) |
-| DeepSeek-V4-Pro-Base | 1 | 4 | 8 | 32 | GB200 | Multi-node (192 GB GPUs) |
+| Model | TP | PP | EP | GPUs | GPU | Verified |
+|-------|---:|---:|---:|-----:|-----|----------|
+| DeepSeek-V4-Flash | 1 | 1 | 4 | 4 | GB200 192GB | Import, export, inference |
+| DeepSeek-V4-Flash | 1 | 1 | 8 | 8 | H100 80GB | Import, export, inference |
+| DeepSeek-V4-Flash-Base | 1 | 1 | 4 | 4 | GB200 192GB | Import, export, inference |
+| DeepSeek-V4-Pro | 1 | 4 | 8 | 32 | GB200 192GB | Import, export, inference |
+| DeepSeek-V4-Pro | 1 | 16 | 8 | 128 | H100 80GB | Import, export, inference |
 
 ## Known Limitations
 
 - **MTP is disabled for inference** via `disable_mtp_for_inference()`. MTP weights are mapped end-to-end and loaded into the Megatron model.
+
+- **Fused mHC is not supported on H100.** Set `use_fused_mhc=False` in the bridge config when running on Hopper GPUs. Fused mHC is enabled by default and works on GB200.
 
 - **`fast_hadamard_transform` is optional.** When unavailable, DSA falls back to a PyTorch hadamard implementation. Throughput is lower but numerical behavior is unchanged.
 

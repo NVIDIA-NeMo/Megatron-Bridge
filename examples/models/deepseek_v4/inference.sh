@@ -19,8 +19,11 @@
 #   WORKSPACE: directory holding the imported Megatron checkpoint (default: /workspace)
 #   MODEL_VARIANT: one of DeepSeek-V4-Flash, DeepSeek-V4-Flash-Base,
 #                  DeepSeek-V4-Pro, DeepSeek-V4-Pro-Base
-#   EP: expert-parallel size (default: 4 for Flash variants, 16 for Pro variants)
+#   EP: expert-parallel size (default: 4 for Flash, 8 for Pro)
+#   PP: pipeline-parallel size (default: 1 for Flash, 4 for Pro)
 #   PROMPT: prompt string (default: "Explain hyper-connections in transformer models.")
+#
+# Defaults below are for GB200 (192 GB). For H100 (80 GB) configs, see README.md.
 
 set -xeuo pipefail
 
@@ -31,15 +34,20 @@ PROMPT=${PROMPT:-"Explain hyper-connections in transformer models."}
 
 if [[ -z "${EP:-}" ]]; then
     case "${MODEL_VARIANT}" in
-        DeepSeek-V4-Pro*) EP=16 ;;
+        DeepSeek-V4-Pro*) EP=8 ;;
         *)                EP=4 ;;
     esac
 fi
+if [[ -z "${PP:-}" ]]; then
+    case "${MODEL_VARIANT}" in
+        DeepSeek-V4-Pro*) PP=4 ;;
+        *)                PP=1 ;;
+    esac
+fi
 TP=1
-PP=1
 
 # Inference directly from the HF checkpoint (Bridge dequantises in-flight).
-uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
+uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
     examples/conversion/hf_to_megatron_generate_text.py \
     --hf_model_path "${HF_MODEL_ID}" \
     --prompt "${PROMPT}" \
@@ -50,7 +58,7 @@ uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
 # Inference from a previously-imported Megatron checkpoint (faster cold start).
 MEGATRON_DIR="${WORKSPACE}/models/${MODEL_VARIANT}"
 if [[ -d "${MEGATRON_DIR}/iter_0000000" ]]; then
-    uv run python -m torch.distributed.run --nproc_per_node=$((TP * PP * EP)) \
+    uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
         examples/conversion/hf_to_megatron_generate_text.py \
         --hf_model_path "${HF_MODEL_ID}" \
         --megatron_model_path "${MEGATRON_DIR}" \

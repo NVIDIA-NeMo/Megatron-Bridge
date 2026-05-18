@@ -15,7 +15,7 @@
 
 # DeepSeek-V4 import + export with the Bridge.
 #
-# DSv4 currently requires TP=1; scale via expert parallelism (EP).
+# DSv4 currently requires TP=1; scale via expert and pipeline parallelism (EP, PP).
 # The Bridge dispatches FP8 / MXFP4 dequantisation by tensor dtype, so the
 # same script works for Flash, Flash-Base, Pro, and Pro-Base.
 #
@@ -24,7 +24,10 @@
 #   MODEL_VARIANT: one of DeepSeek-V4-Flash, DeepSeek-V4-Flash-Base,
 #                  DeepSeek-V4-Pro, DeepSeek-V4-Pro-Base
 #                  (default: DeepSeek-V4-Flash-Base)
-#   EP: expert-parallel size (default: 4 for Flash variants, 16 for Pro variants)
+#   EP: expert-parallel size (default: 4 for Flash, 8 for Pro)
+#   PP: pipeline-parallel size (default: 1 for Flash, 4 for Pro)
+#
+# Defaults below are for GB200 (192 GB). For H100 (80 GB) configs, see README.md.
 
 set -xeuo pipefail
 
@@ -34,12 +37,17 @@ HF_MODEL_ID="deepseek-ai/${MODEL_VARIANT}"
 
 if [[ -z "${EP:-}" ]]; then
     case "${MODEL_VARIANT}" in
-        DeepSeek-V4-Pro*) EP=16 ;;
+        DeepSeek-V4-Pro*) EP=8 ;;
         *)                EP=4 ;;
     esac
 fi
+if [[ -z "${PP:-}" ]]; then
+    case "${MODEL_VARIANT}" in
+        DeepSeek-V4-Pro*) PP=4 ;;
+        *)                PP=1 ;;
+    esac
+fi
 TP=1
-PP=1
 
 MEGATRON_DIR="${WORKSPACE}/models/${MODEL_VARIANT}"
 EXPORT_DIR="${WORKSPACE}/models/${MODEL_VARIANT}-hf-export"
@@ -71,5 +79,29 @@ uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
     --tp ${TP} --pp ${PP} --ep ${EP} \
     --torch-dtype bfloat16 \
     --hf-path "${EXPORT_DIR}" \
+    --distributed-save \
+    --trust-remote-code
+
+# 4) Round-trip validation (bf16 -> Megatron -> bf16)
+# DSv4 HF weights are quantized (FP8/MXFP4), so the first import dequantises
+# to bfloat16. A true lossless roundtrip re-imports the exported bf16 checkpoint
+# and compares against the first export.
+ROUNDTRIP_DIR="${WORKSPACE}/models/${MODEL_VARIANT}-roundtrip"
+uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
+    examples/conversion/convert_checkpoints_multi_gpu.py import \
+    --hf-model "${EXPORT_DIR}" \
+    --megatron-path "${ROUNDTRIP_DIR}" \
+    --tp ${TP} --pp ${PP} --ep ${EP} \
+    --torch-dtype bfloat16 \
+    --trust-remote-code
+
+ROUNDTRIP_EXPORT_DIR="${WORKSPACE}/models/${MODEL_VARIANT}-roundtrip-export"
+uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
+    examples/conversion/convert_checkpoints_multi_gpu.py export \
+    --hf-model "${EXPORT_DIR}" \
+    --megatron-path "${ROUNDTRIP_DIR}" \
+    --hf-path "${ROUNDTRIP_EXPORT_DIR}" \
+    --tp ${TP} --pp ${PP} --ep ${EP} \
+    --torch-dtype bfloat16 \
     --distributed-save \
     --trust-remote-code

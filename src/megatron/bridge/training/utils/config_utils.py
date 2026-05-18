@@ -283,6 +283,10 @@ class _ConfigContainerBase:
         elif hasattr(value, "to_cfg_dict"):
             # Allow non-Container classes to implement own custom method
             return value.to_cfg_dict()
+        elif type(value).__name__ == "PipelineParallelLayerLayout":
+            # PipelineParallelLayerLayout: serialize as the original plain list
+            # so it can be deserialized without special instantiation logic.
+            return value.input_data
         elif is_dataclass(value) and not isinstance(value, type):
             # Handle regular dataclasses
             result = {}
