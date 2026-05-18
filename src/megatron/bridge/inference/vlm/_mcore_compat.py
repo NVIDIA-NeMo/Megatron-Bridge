@@ -20,7 +20,8 @@ except ImportError as exc:
     if "InferenceMode" not in str(exc):
         raise
 
-    # TODO: remove this guard when Megatron-Core dev exposes InferenceMode from megatron.core.inference.utils.
+    # TODO(mcore-dev): remove this guard when Megatron-Core dev exposes InferenceMode from
+    # megatron.core.inference.utils.
     class InferenceMode:
         """No-op compatibility shim for MCore commits without InferenceMode."""
 
