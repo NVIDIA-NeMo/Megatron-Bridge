@@ -119,6 +119,10 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
         Returns:
             torch.Tensor: The output logits of shape [batch_size, seq_len, padded_vocab_size]
         """
-        logits = self.model(**inference_input)
+        logits = self.model(
+            **inference_input,
+            inference_context=self.inference_context,
+            runtime_gather_output=True,
+        )
 
         return logits
