@@ -9,11 +9,11 @@ Two-phase test (separate torchrun invocations required):
   Phase 2 (resume): Resume from checkpoint, train to TOTAL_STEPS, verify continuity.
 
 Run via wrapper:
-    bash examples/models/megatron_mimo/megatron_mimo/run_megatron_mimo_checkpoint_resume.sh
+    bash examples/megatron_mimo/run_megatron_mimo_checkpoint_resume.sh
 Or manually:
     CKPT_DIR=$(mktemp -d)
-    torchrun --nproc_per_node=8 examples/models/megatron_mimo/megatron_mimo/megatron_mimo_checkpoint_resume_e2e.py --phase save   --ckpt-dir $CKPT_DIR
-    torchrun --nproc_per_node=8 examples/models/megatron_mimo/megatron_mimo/megatron_mimo_checkpoint_resume_e2e.py --phase resume --ckpt-dir $CKPT_DIR
+    torchrun --nproc_per_node=8 examples/megatron_mimo/megatron_mimo_checkpoint_resume_e2e.py --phase save   --ckpt-dir $CKPT_DIR
+    torchrun --nproc_per_node=8 examples/megatron_mimo/megatron_mimo_checkpoint_resume_e2e.py --phase resume --ckpt-dir $CKPT_DIR
 """
 
 from __future__ import annotations

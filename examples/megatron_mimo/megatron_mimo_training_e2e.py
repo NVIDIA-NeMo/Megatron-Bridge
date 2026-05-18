@@ -6,7 +6,7 @@ on 8 GPUs with synthetic data using the real data pipeline.
 LLM on ranks 0-3 (TP=4), vision encoder on ranks 4-7 (TP=4).
 
 Run:
-    torchrun --nproc_per_node=8 examples/models/megatron_mimo/megatron_mimo/megatron_mimo_training_e2e.py
+    torchrun --nproc_per_node=8 examples/megatron_mimo/megatron_mimo_training_e2e.py
 """
 
 from __future__ import annotations

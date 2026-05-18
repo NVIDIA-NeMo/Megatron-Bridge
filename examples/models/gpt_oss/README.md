@@ -60,7 +60,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
 
 ## Training Recipes
 
-- See: [bridge.recipes.gpt_oss](../../../../src/megatron/bridge/recipes/gpt_oss/gpt_oss.py)
+- See: [bridge.recipes.gpt_oss](../../../src/megatron/bridge/recipes/gpt_oss/gpt_oss.py)
 - Available recipes:
   - `gpt_oss_20b_pretrain_config`: Pretraining configuration for 20B
   - `gpt_oss_20b_pretrain_fp8_current_scaling_config`: Pretraining configuration for 20B with Hopper FP8 current scaling

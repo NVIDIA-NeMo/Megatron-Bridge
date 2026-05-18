@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Prepare an audio-augmented LLaVA-Pretrain dataset for training with
-# examples/models/megatron_mimo/megatron_mimo/megatron_mimo_training_llava_audio.py --audio-column audio.
+# examples/megatron_mimo/megatron_mimo_training_llava_audio.py --audio-column audio.
 #
 # Writes a fresh DST tree containing:
 #   blip_laion_cc_sbu_558k.json              — records with image paths absolutised to SRC
@@ -114,7 +114,7 @@ for (( s=0; s<NUM_SHARDS; s++ )); do
     log=$(printf "%s/shard_%05d.log" "$LOG_DIR" "$s")
     echo "[prepare]   shard $s -> GPU $gpu, log=$log"
     CUDA_VISIBLE_DEVICES=$gpu \
-      python "$REPO/examples/models/megatron_mimo/megatron_mimo/synthesize_llava_pretrain_audio.py" \
+      python "$REPO/examples/megatron_mimo/synthesize_llava_pretrain_audio.py" \
         --dataset-root "$DST" \
         --shard-index "$s" --num-shards "$NUM_SHARDS" \
         ${LIMIT:+--limit "$LIMIT"} \
@@ -136,5 +136,5 @@ fi
 echo "[prepare] all $NUM_SHARDS shard(s) completed successfully"
 
 # 4. Merge into DST/blip_laion_cc_sbu_558k_with_audio.json (what the test consumes).
-python "$REPO/examples/models/megatron_mimo/megatron_mimo/synthesize_llava_pretrain_audio.py" --mode merge \
+python "$REPO/examples/megatron_mimo/synthesize_llava_pretrain_audio.py" --mode merge \
     --dataset-root "$DST"

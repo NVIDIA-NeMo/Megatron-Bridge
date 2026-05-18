@@ -42,7 +42,7 @@ fi
 uv run torchrun \
     --nproc_per_node "$GPUS_PER_NODE" \
     --nnodes "$NUM_NODES" \
-    examples/models/megatron_mimo/megatron_mimo/megatron_mimo_training_llava.py \
+    examples/megatron_mimo/megatron_mimo_training_llava.py \
     --micro-batch-size 4 \
     --global-batch-size 96 \
     --train-iters 100 \
