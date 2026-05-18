@@ -181,6 +181,11 @@ class Qwen35VLModelProvider(GPTModelProvider):
             self.vision_config = Qwen3_5VisionConfig()
         super().__post_init__()
 
+    def finalize(self) -> None:
+        if (self.context_parallel_size or 1) > 1:
+            self.calculate_per_token_loss = True
+        super().finalize()
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 VL dense model instance with vision and language components."""
         from megatron.bridge.models.gpt_provider import mtp_block_spec
@@ -347,6 +352,11 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         if self.vision_config is None:
             self.vision_config = Qwen3_5MoeVisionConfig()
         super().__post_init__()
+
+    def finalize(self) -> None:
+        if (self.context_parallel_size or 1) > 1:
+            self.calculate_per_token_loss = True
+        super().finalize()
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 VL model instance with vision and language components.

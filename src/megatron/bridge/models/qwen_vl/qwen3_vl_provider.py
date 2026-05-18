@@ -134,6 +134,11 @@ class Qwen3VLModelProvider(GPTModelProvider):
     # If None, calculated from num_position_embeddings / spatial_merge_size^2
     max_vision_cuda_graph_seq_length: Optional[int] = None
 
+    def finalize(self) -> None:
+        if (self.context_parallel_size or 1) > 1:
+            self.calculate_per_token_loss = True
+        super().finalize()
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3 VL model instance with vision and language components."""
         language_transformer_config = self
@@ -295,6 +300,8 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     max_vision_cuda_graph_seq_length: Optional[int] = None
 
     def finalize(self) -> None:
+        if (self.context_parallel_size or 1) > 1:
+            self.calculate_per_token_loss = True
         if self.tensor_model_parallel_size > 1:
             self.sequence_parallel = True
         super().finalize()

@@ -25,6 +25,7 @@ TRAINING_PATH = (
     / "examples"
     / "models"
     / "megatron_mimo"
+    / "megatron_mimo"
     / "megatron_mimo_training_llava_audio.py"
 )
 
