@@ -45,7 +45,7 @@ def _make_hf_config(**overrides) -> SimpleNamespace:
         num_attention_groups=8,
         moe_num_experts=4,
         moe_top_k=2,
-        use_head_wise_attn_gate=True,
+        head_wise_attn_gate=True,
         layer_types=[
             "full_attention",
             "sliding_attention",
@@ -73,7 +73,7 @@ class _FakeProvider:
         self.num_query_groups = None
         self.num_moe_experts = None
         self.moe_router_topk = None
-        self.use_head_wise_attn_gate = None
+        self.head_wise_attn_gate = None
         self.attention_output_gate = True
         self.layer_types = None
         self.sliding_attention_setting = None
@@ -155,7 +155,7 @@ class TestStep35BridgeProviderBridge:
         assert p.num_query_groups == hf_config.num_attention_groups
         assert p.num_moe_experts == hf_config.moe_num_experts
         assert p.moe_router_topk == hf_config.moe_top_k
-        assert p.use_head_wise_attn_gate is True
+        assert p.head_wise_attn_gate is True
 
     def test_head_wise_gate_disables_attention_output_gate(self):
         _, p = self._run()
