@@ -15,7 +15,7 @@ llama3.md
 llama-nemotron.md
 mistral.md
 moonlight.md
-nemotron3.md
+nemotron3-nano.md
 nemotron3-super.md
 nemotronh.md
 olmoe.md
