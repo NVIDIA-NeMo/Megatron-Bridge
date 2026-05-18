@@ -71,11 +71,12 @@ Measured repo evidence today is strongest for MoE EP overlap. The pattern is
 mixed rather than universally positive:
 
 - small-EP `alltoall` runs can be correct but flat or slower
-- a short 2026-05-16 H100 x16 Qwen3 30B-A3B mock-data run with `EP=16`,
-  `alltoall`, CUDA graphs disabled, and `moe_permute_fusion=false` reduced
-  steady-state step time from 43.1s to 32.6s when enabling EP overlap
-- in that same run, adding `delay_wgrad_compute` was neutral: 32.5s versus
-  32.6s for overlap-only
+- a 2026-05-18 current-main H100 x16 Qwen3 30B-A3B mock-data rerun with
+  `EP=16`, `alltoall`, CUDA graphs disabled, and `moe_permute_fusion=false`
+  reduced steady-state step time from 41.25s to 31.31s when enabling EP
+  overlap
+- in that same run, adding `delay_wgrad_compute` was neutral: 31.20s versus
+  31.31s for overlap-only
 - `delay_wgrad_compute` can still help some schedules, but it is not a
   guaranteed speedup over overlap-only
 
@@ -132,8 +133,8 @@ For config examples and minimal runnable commands, see:
 | `step_time` | down | TP overlap with `TP >= 2`, sequence parallelism, and supported TE path | expected |
 | `pipeline_idle_time` | down | interleaved PP where p2p cost is visible | expected |
 | `step_time` | flat to mixed | small-EP MoE with `alltoall` | measured |
-| `step_time` | down in one short EP16 H100 run | Qwen3 30B-A3B, `alltoall`, CUDA graphs off, `moe_permute_fusion=false` | measured |
-| `step_time` | neutral in one short EP16 H100 run | same run, EP overlap plus delayed wgrad versus EP overlap-only | measured |
+| `step_time` | down in repeated short EP16 H100 runs | Qwen3 30B-A3B, `alltoall`, CUDA graphs off, `moe_permute_fusion=false` | measured |
+| `step_time` | neutral in repeated short EP16 H100 runs | same shape, EP overlap plus delayed wgrad versus EP overlap-only | measured |
 
 Do not assume one overlap win transfers automatically to another mode. The
 correct question is always "which communication path is exposed in this run?"

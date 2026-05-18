@@ -56,20 +56,22 @@ You must also set `moe_token_dispatcher_type = "flex"`.
 
 ## Measured Short-Run Caveat
 
-A 2026-05-16 H100 x16 smoke on Qwen3 30B-A3B mock pretraining used `EP=16`,
-`alltoall`, global batch size 1024, CUDA graphs disabled, and
-`moe_permute_fusion=false` because the ad hoc PyTorch 25.11 / TE / Triton stack
-failed in Transformer Engine fused permutation before iteration 1.
+A 2026-05-18 current-main H100 x16 smoke on Qwen3 30B-A3B mock pretraining
+used `EP=16`, `alltoall`, global batch size 1024, CUDA graphs disabled, and
+`moe_permute_fusion=false` because the PyTorch 25.11 / TE / Triton stack failed
+in Transformer Engine fused permutation in prior bring-up.
 
 Results were directional rather than release-grade:
 
-- no EP overlap: 43.1s steady-state mean, excluding iteration 1
-- EP overlap: 32.6s steady-state mean
-- EP overlap plus `delay_wgrad_compute`: 32.5s steady-state mean
+- no EP overlap: 41.25s steady-state mean over iterations 3-8
+- EP overlap: 31.31s steady-state mean over iterations 3-8
+- EP overlap plus `delay_wgrad_compute`: 31.20s steady-state mean over
+  iterations 3-8
 
 Treat this as evidence that EP overlap can help an inter-node `alltoall` MoE
 shape when communication is exposed. It is not proof that delayed wgrad is a
-separate win, and it does not validate the fused permutation path.
+separate win, and it does not validate the fused permutation path. An earlier
+2026-05-16 short smoke on the same shape showed the same pattern.
 
 ## Code Anchors
 
@@ -116,7 +118,7 @@ uv run python scripts/performance/run_script.py \
   -c bf16 \
   -ng 16 \
   -gn 8 \
-  --max_steps 5 \
+  --max_steps 8 \
   --config_variant v1 \
   --cuda_graph_impl none \
   --moe_flex_dispatcher_backend None \
