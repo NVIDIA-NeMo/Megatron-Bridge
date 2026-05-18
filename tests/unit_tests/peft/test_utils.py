@@ -1107,7 +1107,7 @@ class _FakeModel:
 class _FakePeft:
     """Fake PEFT object for utility tests."""
 
-    def __call__(self, model, *, training: bool):
+    def __call__(self, model, training: bool):
         self.call = (model, training)
         return model
 
@@ -1129,29 +1129,15 @@ def _patch_checkpointing(monkeypatch, generate_model_state_dict, filter_state_di
     )
 
 
-def test_create_peft_hook_runs_loaders_and_sets_params_to_save() -> None:
+def test_create_peft_hook_sets_params_to_save() -> None:
     base_model = [_FakeModel()]
-    loaded_model = [_FakeModel()]
     peft = _FakePeft()
-    events = []
 
-    def base_loader(model):
-        events.append(("base", model))
-        return loaded_model
+    hook = peft_utils.create_peft_hook(peft)
 
-    def adapter_loader(model):
-        events.append(("adapter", model))
-
-    hook = peft_utils.create_peft_hook(
-        peft,
-        base_checkpoint_loader=base_loader,
-        adapter_checkpoint_loader=adapter_loader,
-    )
-
-    assert hook(base_model) is loaded_model
-    assert peft.call == (loaded_model, True)
-    assert peft.saved_model is loaded_model
-    assert events == [("base", base_model), ("adapter", loaded_model)]
+    assert hook(base_model) is base_model
+    assert peft.call == (base_model, True)
+    assert peft.saved_model is base_model
 
 
 def test_create_peft_returns_none_when_rank_disabled() -> None:

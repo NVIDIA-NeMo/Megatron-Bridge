@@ -37,7 +37,6 @@ T = TypeVar("T", bound="_ConfigContainerBase")
 
 
 def create_ddp_config(
-    *,
     wrap_with_ddp: bool = True,
     use_distributed_optimizer: bool = True,
     use_megatron_fsdp: bool = False,

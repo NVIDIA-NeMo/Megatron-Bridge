@@ -61,7 +61,7 @@ class LinearForLastLayer(nn.Linear):
     replicated linear projection.
     """
 
-    def __init__(self, *, input_size: int, output_size: int, sequence_parallel: bool) -> None:
+    def __init__(self, input_size: int, output_size: int, sequence_parallel: bool) -> None:
         """Initialize a replicated final projection.
 
         Args:
@@ -91,7 +91,7 @@ class LinearForLastLayer(nn.Linear):
         return logits, None
 
 
-def create_value_head_hook(*, hidden_size: int, sequence_parallel: bool, output_size: int = 1) -> ModelHook:
+def create_value_head_hook(hidden_size: int, sequence_parallel: bool, output_size: int = 1) -> ModelHook:
     """Create a pre-wrap hook that replaces the final pipeline stage output head.
 
     Args:

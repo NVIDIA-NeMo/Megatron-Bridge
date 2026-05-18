@@ -3447,7 +3447,7 @@ def test_linear_for_last_layer_gathers_sequence_parallel_output(monkeypatch) -> 
 
     calls = {}
 
-    def fake_gather(tensor, *, tensor_parallel_output_grad):
+    def fake_gather(tensor, tensor_parallel_output_grad):
         calls["tensor"] = tensor
         calls["tensor_parallel_output_grad"] = tensor_parallel_output_grad
         return tensor + 1
@@ -3465,10 +3465,10 @@ def test_linear_for_last_layer_gathers_sequence_parallel_output(monkeypatch) -> 
     assert bias is None
 
 
-def _patch_virtual_pipeline_last_stage(monkeypatch, *, last_vp_stage: int) -> None:
+def _patch_virtual_pipeline_last_stage(monkeypatch, last_vp_stage: int) -> None:
     from megatron.core import parallel_state
 
-    def fake_is_pipeline_last_stage(*, ignore_virtual=False, vp_stage=None) -> bool:
+    def fake_is_pipeline_last_stage(ignore_virtual=False, vp_stage=None) -> bool:
         del ignore_virtual
         return vp_stage == last_vp_stage
 
@@ -3486,7 +3486,7 @@ def _patch_single_pipeline_last_stage(monkeypatch) -> None:
 
 
 def test_create_value_head_hook_replaces_last_virtual_pipeline_chunk(monkeypatch) -> None:
-    _patch_virtual_pipeline_last_stage(monkeypatch, last_vp_stage=1)
+    _patch_virtual_pipeline_last_stage(monkeypatch, 1)
 
     model_chunks = [torch.nn.Module(), torch.nn.Module()]
     hook = create_value_head_hook(hidden_size=4, output_size=2, sequence_parallel=True)

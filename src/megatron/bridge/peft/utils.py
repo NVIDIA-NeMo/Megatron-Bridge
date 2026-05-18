@@ -88,7 +88,7 @@ TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParalle
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 
-def create_peft(config: Mapping[str, Any], *, dtype: torch.dtype | str | int | None = None) -> object | None:
+def create_peft(config: Mapping[str, Any], dtype: torch.dtype | str | int | None = None) -> object | None:
     """Create a Bridge PEFT object from a small config mapping."""
     kwargs = dict(config)
     peft_type = kwargs.pop("type", "lora")
@@ -116,23 +116,12 @@ def create_peft(config: Mapping[str, Any], *, dtype: torch.dtype | str | int | N
 
 def create_peft_hook(
     peft: object,
-    *,
-    base_checkpoint_loader: Callable[[ModelList], ModelList | None] | None = None,
-    adapter_checkpoint_loader: Callable[[ModelList], None] | None = None,
     training: bool = True,
 ) -> ModelHook:
-    """Create a provider pre-wrap hook that loads base weights, applies PEFT, and loads adapters."""
+    """Create a provider pre-wrap hook that applies PEFT."""
 
     def hook(model: ModelList) -> ModelList:
-        if base_checkpoint_loader is not None:
-            loaded_model = base_checkpoint_loader(model)
-            if loaded_model is not None:
-                model = loaded_model
-
         model = _apply_peft(peft, model, training=training)
-
-        if adapter_checkpoint_loader is not None:
-            adapter_checkpoint_loader(model)
 
         return model
 
@@ -142,7 +131,6 @@ def create_peft_hook(
 def load_peft_adapter_checkpoint(
     model: ModelList | MegatronModule,
     adapter_checkpoint_path: CheckpointPath,
-    *,
     peft: object,
     strict: bool = False,
     model_sd_kwargs: Mapping[str, object] | None = None,
@@ -200,7 +188,7 @@ def load_peft_adapter_checkpoint(
         model_chunk.load_state_dict(loaded_state_dict[model_key], strict=strict)
 
 
-def _apply_peft(peft: object, model: ModelList, *, training: bool = True) -> ModelList:
+def _apply_peft(peft: object, model: ModelList, training: bool = True) -> ModelList:
     """Apply PEFT and mark adapter parameters for checkpointing."""
     transformed_model = peft(model, training=training)
     peft.set_params_to_save(transformed_model)
@@ -234,7 +222,6 @@ def _model_state_dict(
     model: ModelList,
     model_sd_kwargs: Mapping[str, object] | None = None,
     ckpt_format: str = "torch_dist",
-    *,
     pg_collection: ProcessGroupCollection | None = None,
 ) -> dict[str, Any]:
     """Generate Bridge model checkpoint sections for an external trainer."""
