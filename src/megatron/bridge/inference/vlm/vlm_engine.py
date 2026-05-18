@@ -18,8 +18,9 @@ import torch
 from megatron.core.inference.engines.static_engine import StaticInferenceEngine
 from megatron.core.inference.inference_request import InferenceRequest
 from megatron.core.inference.sampling_params import SamplingParams
-from megatron.core.inference.utils import InferenceMode
 from PIL.Image import Image
+
+from megatron.bridge.inference.vlm.inference_mode import InferenceMode
 
 
 class VLMEngine(StaticInferenceEngine):
