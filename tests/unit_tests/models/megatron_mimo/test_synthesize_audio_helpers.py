@@ -18,6 +18,7 @@ SYNTH_PATH = (
     / "examples"
     / "models"
     / "megatron_mimo"
+    / "megatron_mimo"
     / "synthesize_llava_pretrain_audio.py"
 )
 
