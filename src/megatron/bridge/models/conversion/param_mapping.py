@@ -1525,6 +1525,88 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         )
 
 
+class QKVGMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+    """QKV mapping that also fuses a per-head scalar gate (``g_proj``).
+
+    Megatron format: ``[interleaved QKV block, gate rows]`` — gate rows are
+    appended after the standard GQA-interleaved QKV block produced by
+    :class:`QKVMapping`. See :func:`merge_qkvg_weights` for the layout.
+
+    External (HF) format: four separate tensors ``q_proj``, ``k_proj``,
+    ``v_proj``, ``g_proj``.
+    """
+
+    def __init__(self, megatron_param: str, q: str, k: str, v: str, g: str):
+        super().__init__(megatron_param, {"q": q, "k": k, "v": v, "g": g})
+        self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+
+    def hf_to_megatron(
+        self,
+        hf_weights: Dict[str, torch.Tensor],
+        megatron_module: nn.Module,
+    ) -> torch.Tensor:
+        if self.tp_rank == 0:
+            config = self._get_config(megatron_module)
+            if hf_weights["q"].ndim == 1:
+                # Biases not supported for the fused gate variant (Step-3.5 has
+                # add_qkv_bias=False and g_proj has no bias).
+                raise NotImplementedError(
+                    "QKVGMapping does not support bias tensors; add_qkv_bias must be False."
+                )
+            merged = merge_qkvg_weights(
+                config,
+                hf_weights["q"],
+                hf_weights["k"],
+                hf_weights["v"],
+                hf_weights["g"],
+            )
+        else:
+            merged = None
+        return self._tp_mapping.hf_to_megatron(merged, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None, "qkvg_config")
+        else:
+            config = self._get_config(megatron_module)
+            config = remove_non_pickleables(config, max_depth=3)
+            config = self.broadcast_obj_from_pp_rank(config, "qkvg_config")
+
+        packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        if not packed_dict:
+            return {}
+
+        packed_qkvg = next(iter(packed_dict.values()))
+        if packed_qkvg.ndim == 1:
+            raise NotImplementedError(
+                "QKVGMapping does not support bias tensors; add_qkv_bias must be False."
+            )
+        q, k, v, g = split_qkvg_weights(config, packed_qkvg)
+        return {
+            self.hf_param["q"]: q,
+            self.hf_param["k"]: k,
+            self.hf_param["v"]: v,
+            self.hf_param["g"]: g,
+        }
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(
+            resolved_megatron_param,
+            resolved_hf_param["q"],
+            resolved_hf_param["k"],
+            resolved_hf_param["v"],
+            resolved_hf_param["g"],
+        )
+
+
 class KVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """
     Mapping for interleaved Key/Value projection weights.
@@ -2679,6 +2761,33 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
         return qkv.reshape([-1, hidden_size])
 
 
+def merge_qkvg_weights(
+    provider: TransformerConfig,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+) -> torch.Tensor:
+    """Merge Q, K, V, and per-head scalar gate into Megatron's fused linear_qkv format.
+
+    Layout: the standard GQA-interleaved QKV block (see :func:`merge_qkv_weights`)
+    followed by the gate rows appended at the end. For Step-3.5-Flash this
+    yields ``out_dim = num_heads*head_dim + 2*num_query_groups*head_dim + num_heads``.
+
+    Args:
+        provider: Model configuration provider.
+        q/k/v: Same as :func:`merge_qkv_weights`.
+        g: Per-head gate projection weights ``[num_heads, hidden_size]`` (bias
+            shape ``[num_heads]``).
+    """
+    qkv = merge_qkv_weights(provider, q, k, v)
+    if g.ndim != qkv.ndim:
+        raise ValueError(
+            f"QKV/gate tensor rank mismatch: qkv.ndim={qkv.ndim}, g.ndim={g.ndim}"
+        )
+    return torch.cat([qkv, g], dim=0)
+
+
 def split_qkv_weights(
     provider: TransformerConfig,
     qkv: torch.Tensor,
@@ -2791,6 +2900,28 @@ def split_qkv_weights(
         v = v.reshape(-1, hidden_size)
 
     return q, k, v
+
+
+def split_qkvg_weights(
+    provider: TransformerConfig,
+    qkvg: torch.Tensor,
+    feature_dim: Optional[int] = None,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Split Megatron's fused linear_qkv tensor into (Q, K, V, gate).
+
+    Inverse of :func:`merge_qkvg_weights`: peels the trailing ``num_heads`` rows
+    off as the per-head gate, then delegates the rest to :func:`split_qkv_weights`.
+    """
+    head_num = provider.num_attention_heads
+    gate_rows = head_num
+    if qkvg.shape[0] <= gate_rows:
+        raise ValueError(
+            f"fused qkvg tensor too small for gate split: shape={tuple(qkvg.shape)}, gate_rows={gate_rows}"
+        )
+    qkv = qkvg[:-gate_rows]
+    g = qkvg[-gate_rows:]
+    q, k, v = split_qkv_weights(provider, qkv, feature_dim=feature_dim)
+    return q, k, v, g
 
 
 def merge_gdn_linear_weights(
