@@ -637,3 +637,49 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
+
+# =============================================================================
+# DeepSeek V3 — Large-scale proxy variants
+# =============================================================================
+# Pre-refactor large_scale configs in workload_base_configs.py used distinct
+# parallelism from V2 (typically BF16_V1's layout) plus a small global batch
+# size to stress comm patterns without long-running training. Reproduce that
+# behavior here so the `config_variant=large_scale` lookup resolves to the
+# correct shape.
+
+
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB300, MXFP8, large-scale proxy (BF16_V1 layout, GBS=256)."""
+    cfg = deepseek_v3_pretrain_256gpu_gb300_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.train.global_batch_size = 256
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB200, MXFP8, large-scale proxy (GBS=256)."""
+    cfg = deepseek_v3_pretrain_256gpu_gb200_fp8mx_config()
+    cfg.train.global_batch_size = 256
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_b300_fp8mx_large_scale_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B300, MXFP8, large-scale proxy (GBS=256)."""
+    cfg = deepseek_v3_pretrain_256gpu_b300_fp8mx_config()
+    cfg.train.global_batch_size = 256
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_b200_fp8mx_large_scale_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B200, MXFP8, large-scale proxy (GBS=256)."""
+    cfg = deepseek_v3_pretrain_256gpu_b200_fp8mx_config()
+    cfg.train.global_batch_size = 256
+    return cfg
+
+
+def deepseek_v3_pretrain_1024gpu_h100_fp8sc_large_scale_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 1024× H100, FP8-SC, large-scale proxy (GBS=1024)."""
+    cfg = deepseek_v3_pretrain_1024gpu_h100_fp8sc_config()
+    cfg.train.global_batch_size = 1024
+    return cfg

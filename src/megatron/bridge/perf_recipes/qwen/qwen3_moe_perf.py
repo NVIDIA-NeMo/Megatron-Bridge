@@ -1443,6 +1443,46 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
 
 
 # =============================================================================
+# Qwen3 235B A22B — Large-scale proxy variants: V2 layout + GBS=512
+# =============================================================================
+
+
+def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain: 256× GB300, FP8-MX, large-scale proxy (GBS=512)."""
+    cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config()
+    cfg.train.global_batch_size = 512
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain: 256× GB200, FP8-MX, large-scale proxy (GBS=512)."""
+    cfg = qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config()
+    cfg.train.global_batch_size = 512
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_large_scale_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain: 256× B300, FP8-MX, large-scale proxy (GBS=512)."""
+    cfg = qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config()
+    cfg.train.global_batch_size = 512
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_large_scale_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain: 256× B200, FP8-MX, large-scale proxy (GBS=512)."""
+    cfg = qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_config()
+    cfg.train.global_batch_size = 512
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_large_scale_config() -> ConfigContainer:
+    """Qwen3 235B A22B pretrain: 256× H100, FP8-CS, large-scale proxy (GBS=512)."""
+    cfg = qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config()
+    cfg.train.global_batch_size = 512
+    return cfg
+
+
+# =============================================================================
 # Qwen3 235B A22B — NVFP4 aliases: same parallelism as FP8-CS
 # =============================================================================
 

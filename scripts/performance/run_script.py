@@ -61,20 +61,26 @@ def _dump_env_rank0() -> None:
         logger.warning(f"Failed to write environment dump to {env_path}: {e}")
 
 
-def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision):
-    """Load a flat perf recipe from megatron.bridge.perf_recipes by convention name."""
+def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision, config_variant=None):
+    """Load a flat perf recipe from megatron.bridge.perf_recipes by convention name.
+
+    Non-default ``config_variant`` (anything other than ``v1``/``v2``) is appended
+    to the function name. E.g. ``config_variant="large_scale"`` resolves to
+    ``{model}_{task}_{N}gpu_{gpu}_{prec}_large_scale_config``.
+    """
     import importlib
 
     precision_map = {
         "bf16": "bf16",
         "fp8_cs": "fp8cs",
         "fp8_mx": "fp8mx",
-        "fp8_sc": "fp8cs",
+        "fp8_sc": "fp8sc",
         "nvfp4": "nvfp4",
     }
     prec = precision_map.get(precision.lower(), precision.lower().replace("_", ""))
 
-    name = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{prec}_config"
+    variant_suffix = f"_{config_variant}" if config_variant and config_variant not in {"v1", "v2"} else ""
+    name = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{prec}{variant_suffix}_config"
 
     family_map = {
         "llama3_8b": "llama",
@@ -125,6 +131,7 @@ def main():
         num_gpus=args.num_gpus,
         gpu=args.gpu,
         precision=args.compute_dtype,
+        config_variant=getattr(args, "config_variant", None),
     )
 
     recipe = set_cli_overrides(recipe, cli_overrides)
