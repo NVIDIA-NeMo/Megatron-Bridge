@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -30,22 +31,10 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.minimax_m2.minimax_m2_provider import minimax_m2_layer_spec
 
 
-_FP8_BLOCK_SIZE = 128
+__all__ = ["MiniMaxM2Bridge", "_FullDimQKNormMapping", "_dequant_fp8_blockwise"]
 
 
-def _dequant_fp8_blockwise(weight: torch.Tensor, scale_inv: torch.Tensor) -> torch.Tensor:
-    """Block-wise FP8 dequantization: out = fp8_val * scale_inv per 128x128 block."""
-    M, N = weight.shape
-    B = _FP8_BLOCK_SIZE
-    w = weight.float()
-    out = torch.empty_like(w)
-    sM, sN = scale_inv.shape
-    for bi in range(sM):
-        for bj in range(sN):
-            r0, r1 = bi * B, min((bi + 1) * B, M)
-            c0, c1 = bj * B, min((bj + 1) * B, N)
-            out[r0:r1, c0:c1] = w[r0:r1, c0:c1] * scale_inv[bi, bj]
-    return out.to(torch.bfloat16)
+_dequant_fp8_blockwise = quantization_utils.dequantize_fp8_blockwise
 
 
 class _FullDimQKNormMapping(MegatronParamMapping[torch.Tensor]):
@@ -194,12 +183,8 @@ class MiniMaxM2Bridge(MegatronModelBridge):
 
     def _load_and_dequant(self, key: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
         w = hf_state_dict[key]
-        if w.dtype not in (torch.float8_e4m3fn, torch.float8_e5m2):
-            return w
         sinv_key = key + "_scale_inv"
-        if w.ndim == 2 and sinv_key in hf_state_dict:
-            return _dequant_fp8_blockwise(w, hf_state_dict[sinv_key])
-        return w.float().to(torch.bfloat16)
+        return quantization_utils.maybe_dequantize_fp8_blockwise(w, hf_state_dict.get(sinv_key))
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {
