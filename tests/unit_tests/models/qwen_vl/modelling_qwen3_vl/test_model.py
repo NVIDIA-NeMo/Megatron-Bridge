@@ -603,6 +603,184 @@ class TestQwen3VLModel:
         assert language_model.last_kwargs["visual_pos_masks"] is None
         assert language_model.last_kwargs["decoder_input"].shape == (2, 1, 4)
 
+    def test_forward_packed_thd_rope_uses_padded_cu_seqlens(self, monkeypatch):
+        """Packed THD MRoPE should unpack with padded cu_seqlens and repack to THD."""
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.reorganize_inputs",
+            lambda **_kwargs: (None, None, None),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+
+        captured = {}
+
+        def fake_get_rope_index(*args, **kwargs):
+            input_ids = kwargs["input_ids"] if "input_ids" in kwargs else args[4]
+            captured["input_ids"] = input_ids.clone()
+            positions = torch.arange(input_ids.shape[1], dtype=input_ids.dtype, device=input_ids.device)
+            return positions.view(1, 1, -1).expand(3, input_ids.shape[0], -1).clone(), None
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.get_rope_index",
+            fake_get_rope_index,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def embedding(self, input_ids, position_ids=None):
+                del position_ids
+                batch_size, seq_len = input_ids.shape
+                return torch.zeros((seq_len, batch_size, 4), dtype=torch.float32)
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=True,
+            square_merge_size=4,
+            config=SimpleNamespace(
+                vision_dp_when_cp=False,
+                sequence_parallel=False,
+                spatial_merge_size=4,
+            ),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                pp=object(),
+            ),
+            language_model=language_model,
+            image_token_id=1,
+            video_token_id=2,
+            vision_start_token_id=3,
+            use_dist_train=False,
+        )
+
+        input_ids = torch.tensor([[10, 11, 0, 20, 21, 22]], dtype=torch.long)
+        packed_seq_params = SimpleNamespace(
+            cu_seqlens_q=torch.tensor([0, 2, 5], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 3, 6], dtype=torch.int32),
+        )
+
+        output = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+            pixel_values=None,
+            pixel_values_videos=None,
+            image_grid_thw=None,
+            video_grid_thw=None,
+            packed_seq_params=packed_seq_params,
+        )
+
+        assert torch.equal(output, torch.ones(1))
+        assert torch.equal(captured["input_ids"], torch.tensor([[10, 11, 0], [20, 21, 22]]))
+        assert torch.equal(
+            language_model.last_kwargs["position_ids"],
+            torch.tensor([[[0, 1, 2, 0, 1, 2]], [[0, 1, 2, 0, 1, 2]], [[0, 1, 2, 0, 1, 2]]]),
+        )
+        assert language_model.rotary_pos_emb.is_thd_format is True
+
+    def test_forward_packed_thd_passes_explicit_moe_padding_mask(self, monkeypatch):
+        """Packed THD should pass the explicit MoE padding mask after packing."""
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.reorganize_inputs",
+            lambda **_kwargs: (None, None, None),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+
+        def fake_get_rope_index(*args, **kwargs):
+            input_ids = kwargs["input_ids"] if "input_ids" in kwargs else args[4]
+            positions = torch.arange(input_ids.shape[1], dtype=input_ids.dtype, device=input_ids.device)
+            return positions.view(1, 1, -1).expand(3, input_ids.shape[0], -1).clone(), None
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.get_rope_index",
+            fake_get_rope_index,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def embedding(self, input_ids, position_ids=None):
+                del position_ids
+                batch_size, seq_len = input_ids.shape
+                return torch.zeros((seq_len, batch_size, 4), dtype=torch.float32)
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=True,
+            square_merge_size=4,
+            config=SimpleNamespace(
+                vision_dp_when_cp=False,
+                sequence_parallel=False,
+                spatial_merge_size=4,
+            ),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                pp=object(),
+            ),
+            language_model=language_model,
+            image_token_id=1,
+            video_token_id=2,
+            vision_start_token_id=3,
+            use_dist_train=False,
+        )
+
+        input_ids = torch.tensor([[10, 11, 0], [20, 99, 22]], dtype=torch.long)
+        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+        moe_padding_mask = torch.tensor([[False, False, True], [False, True, False]])
+        packed_seq_params = SimpleNamespace(
+            cu_seqlens_q=torch.tensor([0, 3, 6], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 3, 6], dtype=torch.int32),
+        )
+
+        output = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pixel_values=None,
+            pixel_values_videos=None,
+            image_grid_thw=None,
+            video_grid_thw=None,
+            packed_seq_params=packed_seq_params,
+            moe_padding_mask=moe_padding_mask,
+        )
+
+        assert torch.equal(output, torch.ones(1))
+        assert language_model.last_kwargs is not None
+        assert torch.equal(language_model.last_kwargs["input_ids"], torch.tensor([[10, 11, 0, 20, 99, 22]]))
+        assert torch.equal(
+            language_model.last_kwargs["padding_mask"],
+            torch.tensor([[False, False, True, False, True, False]]),
+        )
+
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
     @pytest.mark.timeout(120)
     def test_forward_non_dist_train(self, hf_config, processor, random_image):

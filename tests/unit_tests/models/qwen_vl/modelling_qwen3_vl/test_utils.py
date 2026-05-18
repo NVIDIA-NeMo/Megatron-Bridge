@@ -190,6 +190,38 @@ class TestQwen3VLUtils:
         assert split_part_by_cp_tp(cp_size, 1, tp_size, 0, split_size) == [2, 3]
         assert split_part_by_cp_tp(cp_size, 1, tp_size, 1, split_size) == [4, 5]
 
+    def test_split_deepstack_embs_returns_inputs_when_deepstack_is_none(self):
+        """Pure-text microbatch: deepstack=None should not crash."""
+        visual_pos_masks = torch.zeros(1, 8, dtype=torch.bool)
+
+        out_masks, out_embeds = split_deepstack_embs(
+            visual_pos_masks=visual_pos_masks,
+            deepstack_visual_embeds=None,
+            tp_size=2,
+            tp_rank=0,
+            cp_size=1,
+            cp_rank=0,
+            sequence_parallel=True,
+        )
+
+        assert out_embeds is None
+        assert torch.equal(out_masks, visual_pos_masks)
+
+    def test_pack_dist_train_vision_module_output_matches_unpack_contract(self):
+        """DistTrain receiver expects deepstack chunks first and final vision embedding last."""
+        vision_embeds = torch.full((2, 3), 3.0)
+        deepstack_feature_lists = [
+            torch.full((2, 3), 1.0),
+            torch.full((2, 3), 2.0),
+        ]
+
+        packed = pack_dist_train_vision_module_output(vision_embeds, deepstack_feature_lists)
+        chunks = torch.chunk(packed["vision_module"].reshape(-1, 3), chunks=3, dim=0)
+
+        assert torch.equal(chunks[0], deepstack_feature_lists[0])
+        assert torch.equal(chunks[1], deepstack_feature_lists[1])
+        assert torch.equal(chunks[-1], vision_embeds)
+
     def test_reorganize_inputs(self):
         """Test reorganize_inputs for image-only and video-only."""
         image_token_id = 151655
@@ -330,7 +362,7 @@ class TestQwen3VLUtils:
         assert list(out.keys()) == ["vision_module"]
         tensor = out["vision_module"]
         assert tensor.shape == (1, 6, hidden)
-        expected = torch.cat([vision_embeds, ds0, ds1], dim=0).unsqueeze(0)
+        expected = torch.cat([ds0, ds1, vision_embeds], dim=0).unsqueeze(0)
         assert torch.equal(tensor, expected)
 
     def test_pack_dist_train_vision_module_output_no_deepstack(self):

@@ -215,25 +215,34 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         pad_id = getattr(processor.tokenizer, "pad_token_id", 0) or 0
         in_with = batch_with["input_ids"]
         in_without = batch_without["input_ids"]
+        attention_mask_with_images = batch_with["attention_mask"]
+        attention_mask_without_images = batch_without["attention_mask"]
         max_len = max(in_with.shape[1], in_without.shape[1])
 
-        def pad_to(x, tgt_len):
+        def pad_to(x, tgt_len, pad_value):
             if x.shape[1] == tgt_len:
                 return x
             pad_len = tgt_len - x.shape[1]
-            return F.pad(x, (0, pad_len), value=pad_id)
+            return F.pad(x, (0, pad_len), value=pad_value)
 
-        in_with = pad_to(in_with, max_len)
-        in_without = pad_to(in_without, max_len)
+        in_with = pad_to(in_with, max_len, pad_id)
+        in_without = pad_to(in_without, max_len, pad_id)
+        attention_mask_with_images = pad_to(attention_mask_with_images, max_len, 0)
+        attention_mask_without_images = pad_to(attention_mask_without_images, max_len, 0)
 
-        input_ids = torch.full((len(examples), max_len), pad_id, dtype=in_with.dtype)
+        input_ids = torch.full((len(examples), max_len), pad_id, dtype=in_with.dtype, device=in_with.device)
+        attention_mask = torch.zeros(
+            (len(examples), max_len), dtype=attention_mask_with_images.dtype, device=attention_mask_with_images.device
+        )
         # Place rows
         for row, i in enumerate(idx_with):
             input_ids[i] = in_with[row]
+            attention_mask[i] = attention_mask_with_images[row]
         for row, i in enumerate(idx_without):
             input_ids[i] = in_without[row]
+            attention_mask[i] = attention_mask_without_images[row]
 
-        batch = {"input_ids": input_ids}
+        batch = {"input_ids": input_ids, "attention_mask": attention_mask}
         # Carry over vision tensors if present
         if "pixel_values" in batch_with:
             batch["pixel_values"] = batch_with["pixel_values"]

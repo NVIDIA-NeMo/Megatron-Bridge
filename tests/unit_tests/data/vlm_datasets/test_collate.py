@@ -42,7 +42,7 @@ class _DummyProcessor:
     def __call__(self, text=None, images=None, padding=True, return_tensors="pt", **kwargs):
         # Minimal shape/value outputs used by qwen2_5_collate_fn
         input_ids = torch.tensor([[1, 2, 3]])
-        out = {"input_ids": input_ids}
+        out = {"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)}
         if images is not None:
             # Create 1-batch, N images = len(images)
             n = len(images)
@@ -147,6 +147,41 @@ def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
     vi = batch["visual_inputs"]
     # Ensure fields exist when images present
     assert hasattr(vi, "pixel_values")
+
+
+def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(monkeypatch):
+    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+
+    def _fake_pvi(conv):
+        if "with image" in str(conv):
+            return ([object()], None)
+        return (None, None)
+
+    monkeypatch.setattr(collate, "process_vision_info", _fake_pvi)
+
+    class _MixedProcessor(_DummyProcessor):
+        def __call__(self, text=None, images=None, padding=True, return_tensors="pt", **kwargs):
+            if images is not None:
+                input_ids = torch.tensor([[11, 12, 13, 14]])
+                return {
+                    "input_ids": input_ids,
+                    "attention_mask": torch.ones_like(input_ids),
+                    "pixel_values": torch.randn(1, 1, 3, 4, 4),
+                    "image_grid_thw": torch.tensor([[[1, 2, 2]]]),
+                }
+            input_ids = torch.tensor([[21, 22]])
+            return {"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)}
+
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "with image"}]}]},
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "text only"}]}]},
+    ]
+
+    batch = collate.qwen2_5_collate_fn(examples, _MixedProcessor())
+
+    assert "attention_mask" in batch
+    assert batch["input_ids"].tolist() == [[11, 12, 13, 14], [21, 22, 0, 0]]
+    assert batch["attention_mask"].tolist() == [[1, 1, 1, 1], [1, 1, 0, 0]]
 
 
 def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
