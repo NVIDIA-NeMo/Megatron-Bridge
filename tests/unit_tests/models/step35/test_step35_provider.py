@@ -14,12 +14,11 @@
 
 """Unit tests for Step35ModelProvider / Step35DecoderLayer / Step35Config."""
 
-import copy
 import dataclasses
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import torch
+from megatron.core.transformer.transformer_layer import TransformerLayer
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.step.configuration_step35 import Step35Config
@@ -27,7 +26,6 @@ from megatron.bridge.models.step.step35_provider import (
     Step35DecoderLayer,
     Step35ModelProvider,
 )
-from megatron.core.transformer.transformer_layer import TransformerLayer
 
 
 # ---------------------------------------------------------------------------
@@ -81,9 +79,9 @@ class TestStep35ModelProvider:
     def test_default_values(self):
         # Build the dataclass using only the new fields; everything else falls
         # back to GPTModelProvider defaults, which we do not exercise here.
-        p = Step35ModelProvider.__new__(Step35ModelProvider)
         defaults = {
-            f.name: f.default for f in dataclasses.fields(Step35ModelProvider)
+            f.name: f.default
+            for f in dataclasses.fields(Step35ModelProvider)
             if f.name in ("layer_types", "attention_other_setting")
         }
         assert defaults == {"layer_types": None, "attention_other_setting": None}
@@ -99,7 +97,8 @@ def _make_config(layer_types, sliding_setting=None, *, attention_other_setting=T
     cfg = SimpleNamespace(
         layer_types=layer_types,
         attention_other_setting=attention_other_setting,
-        sliding_attention_setting=sliding_setting or {
+        sliding_attention_setting=sliding_setting
+        or {
             "rotary_percent": 1.0,
             "num_attention_heads": 96,
             "num_query_groups": 8,
@@ -129,22 +128,34 @@ class TestStep35DecoderLayerIsSliding:
     override the config when needed. Verified by patching out TransformerLayer.__init__
     so we can introspect what super() sees."""
 
-    def _build(self, *, layer_number, is_mtp_layer=False, add_layer_offset=True,
-               layer_types=None, attention_other_setting=True,
-               offset_return=0, pp_rank=0):
-        layer_types = layer_types if layer_types is not None else [
-            "full_attention", "sliding_attention",
-        ]
+    def _build(
+        self,
+        *,
+        layer_number,
+        is_mtp_layer=False,
+        add_layer_offset=True,
+        layer_types=None,
+        attention_other_setting=True,
+        offset_return=0,
+        pp_rank=0,
+    ):
+        layer_types = (
+            layer_types
+            if layer_types is not None
+            else [
+                "full_attention",
+                "sliding_attention",
+            ]
+        )
         config = _make_config(layer_types, attention_other_setting=attention_other_setting)
         recorder = _SuperInitRecorder()
 
         with (
-            patch.object(TransformerLayer, "__init__",
-                         lambda self, config, **kw: recorder(self, config, **kw)),
-            patch("megatron.bridge.models.step.step35_provider.get_pg_rank",
-                  return_value=pp_rank),
-            patch("megatron.bridge.models.step.step35_provider.get_transformer_layer_offset",
-                  return_value=offset_return),
+            patch.object(TransformerLayer, "__init__", lambda self, config, **kw: recorder(self, config, **kw)),
+            patch("megatron.bridge.models.step.step35_provider.get_pg_rank", return_value=pp_rank),
+            patch(
+                "megatron.bridge.models.step.step35_provider.get_transformer_layer_offset", return_value=offset_return
+            ),
         ):
             Step35DecoderLayer(
                 config=config,
@@ -202,7 +213,8 @@ class TestStep35DecoderLayerIsSliding:
         unset (None / falsy), even ``sliding_attention`` layers fall through to
         the global config."""
         original, captured = self._build(
-            layer_number=2, attention_other_setting=None,
+            layer_number=2,
+            attention_other_setting=None,
         )
         assert captured is original
         assert captured.num_attention_heads == 64

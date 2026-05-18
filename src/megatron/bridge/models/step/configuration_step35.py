@@ -13,13 +13,57 @@
 # limitations under the License.
 
 from typing import Any, Optional
+
 from transformers.configuration_utils import PretrainedConfig
 
 
 class Step35Config(PretrainedConfig):
-    # HF identifiers kept as `step3p5` / `Step3p5ForCausalLM` to match the
-    # config.json shipped on `stepfun-ai/Step-3.5-Flash`. Only the Python
-    # class name uses the `Step35` spelling internally.
+    """Configuration for the Step-3.5-Flash (``Step35``) Mixture-of-Experts model.
+
+    Step35 is a decoder-only causal language model with grouped-query
+    attention, rotary positional embeddings, and a configurable subset of
+    transformer layers replaced by MoE FFN blocks (the remaining layers stay
+    dense). It mirrors the architecture published under
+    ``stepfun-ai/Step-3.5-Flash`` on the Hugging Face Hub.
+
+    Args:
+        hidden_size: Dimensionality of the hidden states.
+        intermediate_size: Dimensionality of the dense FFN intermediate
+            states (used by non-MoE layers).
+        num_attention_heads: Number of query heads.
+        num_attention_groups: Number of key/value head groups for GQA.
+        num_hidden_layers: Total number of transformer layers.
+        max_seq_len: Maximum sequence length supported by the model.
+        vocab_size: Size of the tokenizer vocabulary.
+        rms_norm_eps: Epsilon used by RMSNorm.
+        moe_intermediate_size: Per-expert FFN intermediate size inside MoE
+            layers.
+        moe_num_experts: Number of routed experts per MoE layer.
+        moe_top_k: Number of experts each token is routed to.
+        rope_theta: Base period of the rotary embeddings.
+        rope_scaling: Optional RoPE scaling configuration dict.
+        max_position_embeddings: Maximum positions supported by RoPE.
+        share_expert_dims: Hidden size of the shared-expert branch that runs
+            alongside the routed experts.
+        head_dim: Per-head attention dimension.
+        norm_expert_weight: Whether to normalize the top-k expert routing
+            weights so they sum to 1.
+        layer_types: Optional per-layer type override (e.g. attention
+            variant); ``None`` uses the default for every layer.
+        sliding_window: Sliding-window size for windowed attention; ``None``
+            disables windowing.
+        moe_layers_enum: Indices of layers that use the MoE FFN. Layers not
+            listed here use the dense FFN of ``intermediate_size``.
+        **kwargs: Forwarded to :class:`~transformers.PretrainedConfig`.
+
+    Note:
+        ``model_type`` and ``architectures`` deliberately keep the
+        ``step3p5`` / ``Step3p5ForCausalLM`` spelling so this config stays
+        compatible with the ``config.json`` shipped on
+        ``stepfun-ai/Step-3.5-Flash``. Only the Python class name uses the
+        ``Step35`` spelling internally.
+    """
+
     model_type = "step3p5"
     architectures = ["Step3p5ForCausalLM"]
 
@@ -44,10 +88,50 @@ class Step35Config(PretrainedConfig):
         norm_expert_weight: bool = True,
         layer_types: list[str] = None,
         sliding_window: Optional[int] = None,
-        moe_layers_enum: tuple[int] = (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
-                                       15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-                                       25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
-                                       35, 36, 37, 38, 39, 40, 41, 42, 43, 44),
+        moe_layers_enum: tuple[int] = (
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+        ),
         **kwargs,
     ) -> None:
         self.hidden_size = hidden_size
@@ -71,4 +155,3 @@ class Step35Config(PretrainedConfig):
         self.layer_types = layer_types
         self.sliding_window = sliding_window
         super().__init__(**kwargs)
-

@@ -32,9 +32,7 @@ import torch
 _step35_module = importlib.import_module("megatron.bridge.recipes.step.step35")
 _STEP35_RECIPE_FUNCS = [
     getattr(_step35_module, name)
-    for name in getattr(
-        importlib.import_module("megatron.bridge.recipes.step"), "__all__", []
-    )
+    for name in getattr(importlib.import_module("megatron.bridge.recipes.step"), "__all__", [])
     if callable(getattr(_step35_module, name, None))
 ]
 
@@ -214,17 +212,18 @@ def test_freeze_non_layer_norm_hook_only_trains_qkv_layer_norm(monkeypatch):
     from megatron.bridge.recipes.step import step35 as step35_recipe
 
     # Suppress the rank-prefixed print spam during the test.
-    monkeypatch.setattr(step35_recipe.torch.distributed, "is_initialized",
-                        lambda: False)
+    monkeypatch.setattr(step35_recipe.torch.distributed, "is_initialized", lambda: False)
 
     trainable_param = _FakeParam()
     frozen_param_1 = _FakeParam()
     frozen_param_2 = _FakeParam()
-    chunk = _FakeModule([
-        ("decoder.layers.0.self_attention.linear_qkv.layer_norm_weight", trainable_param),
-        ("decoder.layers.0.self_attention.linear_qkv.weight", frozen_param_1),
-        ("decoder.layers.0.mlp.linear_fc1.weight", frozen_param_2),
-    ])
+    chunk = _FakeModule(
+        [
+            ("decoder.layers.0.self_attention.linear_qkv.layer_norm_weight", trainable_param),
+            ("decoder.layers.0.self_attention.linear_qkv.weight", frozen_param_1),
+            ("decoder.layers.0.mlp.linear_fc1.weight", frozen_param_2),
+        ]
+    )
 
     returned = step35_recipe._freeze_non_layer_norm_hook([chunk])
 

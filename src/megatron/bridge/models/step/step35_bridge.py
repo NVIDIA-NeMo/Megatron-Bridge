@@ -23,11 +23,6 @@ from megatron.core.models.gpt.gpt_layer_specs import (
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from megatron.bridge.models.step.configuration_step35 import Step35Config
-from megatron.bridge.models.step.step35_provider import (
-    Step35DecoderLayer,
-    Step35ModelProvider,
-)
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -37,6 +32,12 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.step.configuration_step35 import Step35Config
+from megatron.bridge.models.step.step35_provider import (
+    Step35DecoderLayer,
+    Step35ModelProvider,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -136,35 +137,27 @@ def _build_step35_layer_spec(cfg, **kw):
 
     Also rewrites every main-decoder layer's ModuleSpec to use
     ``Step35DecoderLayer`` instead of the default ``TransformerLayer``. The
-    custom layer reads ``cfg.layer_types`` / ``cfg.attention_other_setting`` at
-    init time and overrides the per-layer Q/KV-head shape for sliding-attention
-    layers (Step-3.5-Flash uses 64 heads on full layers and 96 on sliding).
+    custom layer reads ``cfg.layer_types`` at init time to determine whether
+    the layer is a sliding-attention layer.
 
     Returns a TransformerBlockSubmodules whose layer_specs list is wrapped in
     _MTPDenseLayerSpecsList so that get_gpt_mtp_block_spec_for_backend receives
     a dense ModuleSpec (via layer_specs[-1]) for the MTP transformer sub-layers.
     """
-    block_submodules = get_gpt_decoder_block_spec(
-        cfg, use_transformer_engine=True, normalization="RMSNorm", **kw
-    )
+    block_submodules = get_gpt_decoder_block_spec(cfg, use_transformer_engine=True, normalization="RMSNorm", **kw)
     # Swap the layer module class on every main-decoder spec. The dense MTP
     # spec below is used for MTP layers (which have their own 1-indexed
     # layer_number namespace and are NOT in layer_types) so it intentionally
     # keeps the default TransformerLayer.
     for spec in block_submodules.layer_specs:
         spec.module = Step35DecoderLayer
-    # TODO: fix this
-    # hard code the dense_mtp_spec for now,
-    # need to check moe_layer_pattern to determine whetch use moe or dense mtp_spec
     dense_mtp_spec = get_gpt_layer_with_transformer_engine_spec(
         num_experts=None,
         moe_grouped_gemm=False,
         qk_layernorm=cfg.qk_layernorm,
     )
     dense_mtp_spec.module = Step35DecoderLayer
-    block_submodules.layer_specs = _MTPDenseLayerSpecsList(
-        block_submodules.layer_specs, dense_mtp_spec
-    )
+    block_submodules.layer_specs = _MTPDenseLayerSpecsList(block_submodules.layer_specs, dense_mtp_spec)
 
     return block_submodules
 
@@ -213,26 +206,28 @@ class Step35Bridge(MegatronModelBridge):
         provider.num_query_groups = hf_config.num_attention_groups
         provider.num_moe_experts = hf_config.moe_num_experts
         provider.moe_router_topk = hf_config.moe_top_k
-        provider.use_head_wise_attn_gate = hf_config.use_head_wise_attn_gate
-        if provider.use_head_wise_attn_gate:
-            provider.attention_output_gate = False
+        provider.head_wise_attn_gate = hf_config.use_head_wise_attn_gate
+        if provider.head_wise_attn_gate:
+            assert provider.attention_output_gate is False, (
+                "attention_output_gate must be False when head_wise_attn_gate is True"
+            )
         provider.layer_types = list(getattr(hf_config, "layer_types", []) or [])
         provider.rotary_percent = 0.5
         provider.sliding_attention_setting = {
-                "rotary_percent": 1.0,
-                "num_attention_heads": 96,
-                "num_query_groups": 8,
-                "head_dim":128,
+            "rotary_percent": 1.0,
+            "num_attention_heads": 96,
+            "num_query_groups": 8,
+            "head_dim": 128,
         }
         rope_theta = hf_config.rope_theta
         if isinstance(rope_theta, list):
-            provider.rotary_base = rope_theta[0] # for main model
-            provider.rotary_base_per_layer = rope_theta # for each transformer layer
+            provider.rotary_base = rope_theta[0]  # for main model
+            provider.rotary_base_per_layer = rope_theta  # for each transformer layer
         else:
             provider.rotary_base = rope_theta
 
         provider.normalization = "RMSNorm"
-        provider.layernorm_zero_centered_gamma = True  # HF weights store γ-1; TE norm applies (1+w) 
+        provider.layernorm_zero_centered_gamma = True  # HF weights store γ-1; TE norm applies (1+w)
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
         provider.add_qkv_bias = False  # Step3.5 does NOT have QKV bias

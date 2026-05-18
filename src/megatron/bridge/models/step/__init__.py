@@ -14,6 +14,7 @@
 
 from megatron.bridge.models.step.step35_bridge import Step35Bridge
 
+
 __all__ = [
     "Step35Bridge",
 ]

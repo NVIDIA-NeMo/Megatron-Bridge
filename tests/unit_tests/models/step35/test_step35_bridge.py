@@ -17,7 +17,6 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
 import torch
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -48,8 +47,10 @@ def _make_hf_config(**overrides) -> SimpleNamespace:
         moe_top_k=2,
         use_head_wise_attn_gate=True,
         layer_types=[
-            "full_attention", "sliding_attention",
-            "full_attention", "sliding_attention",
+            "full_attention",
+            "sliding_attention",
+            "full_attention",
+            "sliding_attention",
         ],
         rope_theta=10000.0,
         moe_layers_enum="2,3",
@@ -122,6 +123,7 @@ class TestStep35BridgeRegistration:
         """
         # PROVIDER_CLASS is populated by the @register_bridge decorator
         from megatron.bridge.models.step.step35_provider import Step35ModelProvider
+
         assert Step35Bridge.PROVIDER_CLASS is Step35ModelProvider
 
 
@@ -234,6 +236,7 @@ class TestStep35BridgeProviderBridge:
 
     def test_transformer_layer_spec_uses_custom_builder(self):
         from megatron.bridge.models.step.step35_bridge import _build_step35_layer_spec
+
         _, p = self._run()
         assert p.transformer_layer_spec is _build_step35_layer_spec
 
@@ -299,17 +302,17 @@ class TestStep35BridgeMappingRegistry:
         # 2 MTP layers x both sub-layer prefixes ('mtp_model_layer' / 'transformer_layer')
         for layer in (0, 1):
             for prefix in ("mtp_model_layer", "transformer_layer"):
-                assert any(
-                    p.startswith(f"mtp.layers.{layer}.{prefix}.")
-                    for p in mtp_params
-                ), f"missing mappings for mtp.layers.{layer}.{prefix}"
+                assert any(p.startswith(f"mtp.layers.{layer}.{prefix}.") for p in mtp_params), (
+                    f"missing mappings for mtp.layers.{layer}.{prefix}"
+                )
 
     def test_mtp_layer_index_offset_to_hf(self):
         """MTP layer N must reference HF layer (num_hidden_layers + N)."""
         registry = self._registry(num_nextn_predict_layers=2, num_hidden_layers=4)
         # Look at one of the auto-generated AutoMapping entries.
         mtp_auto = [
-            m for m in registry
+            m
+            for m in registry
             if isinstance(m, AutoMapping)
             and str(m.megatron_param) == "mtp.layers.1.mtp_model_layer.self_attention.linear_proj.weight"
         ]
@@ -359,7 +362,8 @@ class TestStackedExpertAutoMapping:
 
         captured = {}
         monkeypatch.setattr(
-            AutoMapping, "hf_to_megatron",
+            AutoMapping,
+            "hf_to_megatron",
             lambda self, w, mod: captured.setdefault("w", w),
         )
         m.hf_to_megatron(stacked, megatron_module=None)
@@ -378,7 +382,8 @@ class TestStackedExpertGatedMLPMapping:
 
         seen = {}
         monkeypatch.setattr(
-            GatedMLPMapping, "hf_to_megatron",
+            GatedMLPMapping,
+            "hf_to_megatron",
             lambda self, w, mod: seen.setdefault("w", w),
         )
         m.hf_to_megatron({"gate": gate, "up": up}, megatron_module=None)

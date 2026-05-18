@@ -32,15 +32,18 @@ sub-modules.
 
 import copy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
-from megatron.core.transformer.transformer_layer import TransformerLayer
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.transformer_layer import (
+    TransformerLayer,
+    TransformerLayerSubmodules,
+    get_transformer_layer_offset,
+)
+from megatron.core.utils import get_pg_rank
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer.transformer_layer import get_transformer_layer_offset, TransformerLayerSubmodules
-from megatron.core.utils import get_pg_rank
-from megatron.core.transformer.transformer_config import TransformerConfig
 
 
 class Step35DecoderLayer(TransformerLayer):
@@ -80,6 +83,7 @@ class Step35DecoderLayer(TransformerLayer):
       MTP layers, which are not enumerated in ``layer_types``) fall through
       to the global config.
     """
+
     def __init__(
         self,
         config: TransformerConfig,
@@ -96,14 +100,11 @@ class Step35DecoderLayer(TransformerLayer):
         if is_mtp_layer or not add_layer_offset:
             layer_idx = layer_number - 1
         else:
-            layer_idx = layer_number + get_transformer_layer_offset(
-                config, vp_stage, pp_rank
-            ) - 1
+            layer_idx = layer_number + get_transformer_layer_offset(config, vp_stage, pp_rank) - 1
         layer_types = getattr(config, "layer_types", None) or []
-        attention_other_setting = getattr(config, "attention_other_setting", None)
 
         is_sliding = (
-            attention_other_setting
+            layer_types is not None
             and 0 <= layer_idx < len(layer_types)
             and layer_types[layer_idx] == "sliding_attention"
         )
@@ -142,7 +143,7 @@ class Step35ModelProvider(GPTModelProvider):
       ``"full_attention"`` / ``"sliding_attention"``), one entry per main
       decoder layer. Read by ``Step35DecoderLayer`` to decide whether the
       current layer is a sliding-attention layer.
-    * ``attention_other_setting``: raw HF ``attention_other_setting`` payload.
+    * ``head_wise_attn_gate``: whether to use head-wise attention gate.
       ``Step35DecoderLayer`` only uses it as a truthy enable-flag for the
       sliding-attention override path; the actual shape values that get
       applied to sliding layers are taken from
@@ -155,4 +156,4 @@ class Step35ModelProvider(GPTModelProvider):
     """
 
     layer_types: Optional[List[str]] = None
-    attention_other_setting: Optional[Dict[str, Any]] = None
+    head_wise_attn_gate: Optional[bool] = False

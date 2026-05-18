@@ -1550,9 +1550,7 @@ class QKVGMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             if hf_weights["q"].ndim == 1:
                 # Biases not supported for the fused gate variant (Step-3.5 has
                 # add_qkv_bias=False and g_proj has no bias).
-                raise NotImplementedError(
-                    "QKVGMapping does not support bias tensors; add_qkv_bias must be False."
-                )
+                raise NotImplementedError("QKVGMapping does not support bias tensors; add_qkv_bias must be False.")
             merged = merge_qkvg_weights(
                 config,
                 hf_weights["q"],
@@ -1585,9 +1583,7 @@ class QKVGMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         packed_qkvg = next(iter(packed_dict.values()))
         if packed_qkvg.ndim == 1:
-            raise NotImplementedError(
-                "QKVGMapping does not support bias tensors; add_qkv_bias must be False."
-            )
+            raise NotImplementedError("QKVGMapping does not support bias tensors; add_qkv_bias must be False.")
         q, k, v, g = split_qkvg_weights(config, packed_qkvg)
         return {
             self.hf_param["q"]: q,
@@ -2782,9 +2778,7 @@ def merge_qkvg_weights(
     """
     qkv = merge_qkv_weights(provider, q, k, v)
     if g.ndim != qkv.ndim:
-        raise ValueError(
-            f"QKV/gate tensor rank mismatch: qkv.ndim={qkv.ndim}, g.ndim={g.ndim}"
-        )
+        raise ValueError(f"QKV/gate tensor rank mismatch: qkv.ndim={qkv.ndim}, g.ndim={g.ndim}")
     return torch.cat([qkv, g], dim=0)
 
 
