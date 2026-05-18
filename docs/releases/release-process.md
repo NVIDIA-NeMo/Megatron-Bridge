@@ -76,6 +76,8 @@ In **Week 5**, the last bulk update of golden values is performed. After that po
 
 Code-freeze lasts **two weeks** and begins when RC3 is cut. This is the **stabilization phase** — no new features are landed.
 
+> See [Cherrypick Policy](cherrypick-policy.md) for the rules on what may merge during code-freeze and the absolute freeze that follows.
+
 ### First Half (Weeks 3–5)
 
 - **Release branches are created.**

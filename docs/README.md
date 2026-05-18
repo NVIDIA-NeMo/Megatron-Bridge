@@ -156,9 +156,15 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 
 1. [Training Documentation](training/README.md) *(training customization)*
 2. [PEFT](training/peft.md) *(parameter-efficient fine-tuning)*
-3. [Distillation](training/distillation.md) *(knowledge distillation)*
-4. [Adding New Models](adding-new-models.md) *(add model support)*
-5. [Bridge RL Integration](bridge-rl-integration.md) *(RL workflows)*
+3. [Adding New Models](adding-new-models.md) *(add model support)*
+4. [Bridge RL Integration](bridge-rl-integration.md) *(RL workflows)*
+
+### 🪄 Model Optimization (ModelOpt)
+
+1. [Model Optimization Overview](modelopt/README.md) *(quantization, distillation, pruning)*
+2. [Quantization](modelopt/quantization.md) *(PTQ and QAT)*
+3. [Distillation](modelopt/distillation.md) *(knowledge distillation)*
+4. [Pruning](modelopt/pruning.md) *(Minitron-based pruning)*
 
 ### 📦 Migration Paths
 
@@ -193,7 +199,13 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 - **Optimization** - Optimizer, scheduler, mixed precision, communication overlap
 - **Performance** - Attention optimizations, activation recomputation, CPU offloading
 - **Monitoring** - Logging, profiling, checkpointing, resiliency
-- **Advanced** - PEFT, packed sequences, distillation
+- **Advanced** - PEFT, packed sequences
+
+#### [modelopt/](modelopt/README.md)
+
+- **Quantization** - PTQ and QAT workflows (FP8, INT8, INT4)
+- **Distillation** - Knowledge distillation from teacher to student
+- **Pruning** - Minitron-based depth and width pruning
 
 #### [releases/](releases/README.md)
 

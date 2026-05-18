@@ -10,6 +10,7 @@ and verification steps.
 :maxdepth: 1
 
 skills/build-and-dependency/SKILL
+skills/bump-dependency/SKILL
 skills/testing/SKILL
 skills/cicd/SKILL
 skills/mlm-bridge-training/SKILL

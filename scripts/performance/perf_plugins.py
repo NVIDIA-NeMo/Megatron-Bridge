@@ -37,9 +37,9 @@ from nemo_run import Plugin, Script, SlurmExecutor
 
 
 try:
-    from utils.utils import get_workload_base_config
+    from utils.utils import WorkloadBaseConfig, get_workload_base_config
 except (ImportError, ModuleNotFoundError):
-    from .utils.utils import get_workload_base_config
+    from .utils.utils import WorkloadBaseConfig, get_workload_base_config
 
 logger: logging.Logger = logging.getLogger(__name__)
 NSYS_SQLITE_EXPORT_ARG = "--export=sqlite"
@@ -238,6 +238,14 @@ class PerfEnvPlugin(Plugin):
     compute_dtype: str
     train_task: str
     config_variant: str = "v1"
+    deterministic: bool = False
+
+    def _set_determinism_env_vars(self, executor: "run.Executor") -> None:
+        """Set env vars required for bit-exact reproducibility."""
+        executor.env_vars["NCCL_ALGO"] = "Ring"
+        executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
+        executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        logger.info("Deterministic mode enabled")
 
     def _set_num_cuda_device_max_connections(
         self,
@@ -276,6 +284,7 @@ class PerfEnvPlugin(Plugin):
         self,
         task: Union["run.Partial", "run.Script"],
         executor: "run.Executor",
+        workload_base_config: WorkloadBaseConfig,
         model_family_name: str,
         model_recipe_name: str,
         gpu: str,
@@ -283,45 +292,16 @@ class PerfEnvPlugin(Plugin):
         train_task: str,
     ):
         """Set model-specific environment variables"""
-        if (
-            model_family_name in ["llama"]
-            and model_recipe_name in ["llama31_405b"]
-            and train_task == "pretrain"
-            and gpu in ["gb200", "gb300"]
-        ):
-            if compute_dtype in ["fp8_cs", "fp8_mx"]:
-                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-                executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
-        elif (
-            model_family_name in ["deepseek"]
-            and model_recipe_name in ["deepseek_v3"]
-            and train_task == "pretrain"
-            and gpu in ["h100", "gb200", "b200"]
-        ):
-            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-            if gpu in ["gb200", "b200"]:
-                executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
-        elif (
-            model_family_name in ["qwen"]
-            and model_recipe_name in ["qwen3_next_80b_a3b"]
-            and train_task == "pretrain"
-            and gpu in ["h100"]
-            and compute_dtype == "fp8_cs"
-        ):
-            # NCCL 2.29.7 increases memory pressure on H100, causing allocator
-            # fragmentation OOM. expandable_segments lets the allocator reclaim
-            # fragmented physical memory and avoids the OOM without disabling
-            # any NCCL algorithms.
-            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
-        if model_recipe_name in ["llama3_70b"]:
-            if compute_dtype in ["fp8_cs", "fp8_mx"]:
-                if train_task in ["sft", "lora"]:
-                    if gpu in ["gb300", "gb200", "h100"]:
-                        executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-                        executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
+
+        remove_allocator_env_vars = workload_base_config.nccl_ub is True or (
+            model_family_name == "llama" and workload_base_config.use_megatron_fsdp is True
+        )
+        if remove_allocator_env_vars:
+            for env_var in ("PYTORCH_CUDA_ALLOC_CONF", "NCCL_GRAPH_REGISTER"):
+                executor.env_vars.pop(env_var, None)
+
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
@@ -343,14 +323,9 @@ class PerfEnvPlugin(Plugin):
                 if compute_dtype == "fp8_mx":
                     del_cudnn_ln = False
         if model_family_name in ["llama"] and train_task in ["sft"]:
-            # TODO: Verify for H100 and 8b
             del_cudnn_ln = False
-            if gpu in ["h100"] and model_recipe_name in ["llama3_70b"] and compute_dtype == "fp8_cs":
-                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-                executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         if model_recipe_name in ["nemotron_3_nano"]:
             del_cudnn_ln = False
-
         if del_cudnn_ln:
             if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
@@ -568,6 +543,7 @@ class PerfEnvPlugin(Plugin):
         self._set_model_specific_environment_variables(
             task,
             executor,
+            workload_base_config,
             self.model_family_name,
             self.model_recipe_name,
             self.gpu,
@@ -578,6 +554,9 @@ class PerfEnvPlugin(Plugin):
         # Set NVFP4-specific environment variables
         if self.compute_dtype == "nvfp4":
             executor.env_vars["NVTE_USE_FAST_MATH"] = "1"
+
+        if self.deterministic:
+            self._set_determinism_env_vars(executor)
 
 
 @dataclass

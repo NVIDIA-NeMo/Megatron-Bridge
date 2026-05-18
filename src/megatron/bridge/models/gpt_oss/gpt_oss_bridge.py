@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 from typing import Dict, Mapping, Optional, Tuple, Union
 
 import torch
@@ -27,6 +26,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     _align_expert_weight_to_shape,
 )
+from megatron.bridge.models.conversion.quantization_utils import dequantize_mxfp4 as _dequantize_mxfp4
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -106,7 +106,15 @@ class GPTOSSBridge(MegatronModelBridge):
     ) -> torch.Tensor:
         """Load weights from HuggingFace state dict with MXFP4 dequantization support.
 
-        down_proj is handled in GPTOSSMLPDownProjMapping.
+        Per-expert ``down_proj`` is square for GPT-OSS-20B/120B (hidden == intermediate), so
+        the bridge cannot auto-detect orientation from shape alone. BF16 checkpoints (e.g.
+        ``unsloth/gpt-oss-20b-BF16``, and what ``transformers.GptOssForCausalLM`` produces at
+        init) store it as ``[E, intermediate, hidden]``, matching ``gate_up_proj``'s
+        ``[E, hidden, 2*intermediate]`` convention. MXFP4-dequantized weights come out as
+        ``[E, hidden, intermediate]``. Megatron's TE ``RowParallelGroupedLinear`` expects
+        per-expert ``(hidden, intermediate)``, so the BF16 path needs a transpose here while
+        the MXFP4 path is already aligned. Without this, BF16 imports silently store down_proj
+        in the wrong orientation and inference is broken.
 
         gate_up_proj is handled directly in GPTOSSMLPGateUpProjMapping.hf_to_megatron via
         _align_expert_weight_to_shape, which auto-detects the orientation difference between
@@ -116,11 +124,27 @@ class GPTOSSBridge(MegatronModelBridge):
         if isinstance(hf_param, str):
             if hf_param in hf_state_dict:
                 hf_weights = hf_state_dict[hf_param]
+                if hf_param.endswith(".mlp.experts.down_proj") and hf_weights.ndim == 3:
+                    cfg = self.hf_pretrained.config
+                    hidden = cfg.hidden_size
+                    intermediate = cfg.intermediate_size
+                    last2 = tuple(hf_weights.shape[-2:])
+                    if last2 == (intermediate, hidden) and intermediate != hidden:
+                        # Unambiguous BF16 layout (E, intermediate, hidden); transpose to (E, hidden, intermediate).
+                        hf_weights = hf_weights.transpose(-1, -2).contiguous()
+                    elif last2 == (hidden, intermediate) and intermediate != hidden:
+                        # Already aligned with Megatron — no-op.
+                        pass
+                    elif intermediate == hidden:
+                        # Square: HF GptOssForCausalLM init produces (E, intermediate, hidden), so a plain BF16
+                        # checkpoint is in that layout. Transpose to (E, hidden, intermediate) for Megatron.
+                        hf_weights = hf_weights.transpose(-1, -2).contiguous()
                 return hf_weights
             blocks_key = hf_param + "_blocks"
             scales_key = hf_param + "_scales"
             if blocks_key in hf_state_dict and scales_key in hf_state_dict:
                 hf_weights = _dequantize_mxfp4(hf_state_dict[blocks_key], hf_state_dict[scales_key])
+                # MXFP4 dequant already emits [E, hidden, intermediate] for down_proj — leave as-is.
                 return hf_weights
             raise KeyError(
                 f"Cannot locate weights for '{hf_param}'. Missing both de-quantized tensor and "
@@ -227,9 +251,18 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
         return super().hf_to_megatron(hf_weights[global_expert_number], megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        if megatron_weights is None:
-            return super().megatron_to_hf(megatron_weights, megatron_module)
-        return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
+        # Megatron stores per-expert weight as (hidden, intermediate); HF down_proj
+        # weight is (E, intermediate, hidden). Transpose the last two dims so the
+        # grouped-export stack assembles in HF's layout. Under EP the parent's gather
+        # may have already cat'd across the EP group, producing a 3D (ep_size, out, in)
+        # tensor — handle that too. The bias has no orientation to align (per-expert
+        # 1-D, stacked to (E, hidden) on export), so leave bias mappings untouched.
+        if megatron_weights is not None:
+            megatron_weights = megatron_weights.contiguous()
+        result = super().megatron_to_hf(megatron_weights, megatron_module)
+        if self.hf_param.endswith("_bias"):
+            return result
+        return {k: v.transpose(-1, -2).contiguous() if v.ndim >= 2 else v for k, v in result.items()}
 
 
 class GPTOSSMLPGateUpProjMapping(AutoMapping):
@@ -274,60 +307,3 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
         if len(megatron_weights.shape) == 2:
             megatron_weights = megatron_weights.transpose(0, 1)
         return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
-
-
-def _dequantize_mxfp4(
-    blocks: torch.Tensor,
-    scales: torch.Tensor,
-    *,
-    dtype: torch.dtype = torch.bfloat16,
-    rows_per_chunk: int = 32768 * 1024,
-) -> torch.Tensor:
-    assert blocks.shape[:-1] == scales.shape, f"{blocks.shape=} does not match {scales.shape=}"
-    FP4_VALUES = [
-        +0.0,
-        +0.5,
-        +1.0,
-        +1.5,
-        +2.0,
-        +3.0,
-        +4.0,
-        +6.0,
-        -0.0,
-        -0.5,
-        -1.0,
-        -1.5,
-        -2.0,
-        -3.0,
-        -4.0,
-        -6.0,
-    ]
-    scales = scales.to(torch.int32) - 127
-    lut = torch.tensor(FP4_VALUES, dtype=dtype, device=blocks.device)
-
-    *prefix_shape, G, B = blocks.shape
-    rows_total = math.prod(prefix_shape) * G
-
-    blocks = blocks.reshape(rows_total, B)
-    scales = scales.reshape(rows_total, 1)
-
-    out = torch.empty(rows_total, B * 2, dtype=dtype, device=blocks.device)
-
-    for r0 in range(0, rows_total, rows_per_chunk):
-        r1 = min(r0 + rows_per_chunk, rows_total)
-
-        blk = blocks[r0:r1]
-        exp = scales[r0:r1]
-
-        # nibble indices -> int64
-        idx_lo = (blk & 0x0F).to(torch.long)
-        idx_hi = (blk >> 4).to(torch.long)
-
-        sub = out[r0:r1]
-        sub[:, 0::2] = lut[idx_lo]
-        sub[:, 1::2] = lut[idx_hi]
-
-        torch.ldexp(sub, exp, out=sub)
-        del idx_lo, idx_hi, blk, exp
-
-    return out.reshape(*prefix_shape, G, B * 2).view(*prefix_shape, G * B * 2)
