@@ -23,7 +23,13 @@ pytest.importorskip("megatron.core.transformer.transformer_block")
 
 
 WHISPER_MODEL_PATH = (
-    Path(__file__).resolve().parents[4] / "examples" / "models" / "megatron_mimo" / "whisper" / "whisper_model.py"
+    Path(__file__).resolve().parents[4]
+    / "examples"
+    / "models"
+    / "megatron_mimo"
+    / "megatron_mimo"
+    / "whisper"
+    / "whisper_model.py"
 )
 
 

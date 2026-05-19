@@ -24,6 +24,7 @@ CONVERTER_PATH = (
     / "examples"
     / "models"
     / "megatron_mimo"
+    / "megatron_mimo"
     / "whisper"
     / "convert_hf_whisper_to_megatron.py"
 )

@@ -24,6 +24,7 @@ SPECS_PATH = (
     / "examples"
     / "models"
     / "megatron_mimo"
+    / "megatron_mimo"
     / "whisper"
     / "whisper_layer_specs.py"
 )

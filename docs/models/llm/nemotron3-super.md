@@ -120,7 +120,7 @@ uv run python -m torch.distributed.run --nproc-per-node=8 examples/conversion/co
 BLEND_PATH=/path/to/dataset/blend.json
 CHECKPOINT_DIR=/path/to/checkpoints
 
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_super.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_3/super/pretrain_nemotron_3_super.py \
 --per-split-data-args-path=${BLEND_PATH} \
 logger.wandb_project=your_project \
 logger.wandb_entity=nvidia \
@@ -153,7 +153,7 @@ For quick testing without a dataset:
 ```bash
 CHECKPOINT_DIR=/path/to/checkpoints
 
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_super.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_3/super/pretrain_nemotron_3_super.py \
 logger.wandb_project=your_project \
 logger.wandb_entity=nvidia \
 checkpoint.load=${CHECKPOINT_DIR} \
@@ -179,7 +179,7 @@ Notes:
 MEGATRON_PATH=/path/to/pretrained/megatron/ckpt
 CHECKPOINT_DIR=/path/to/finetuned/checkpoints
 
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_super.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_3/super/finetune_nemotron_3_super.py \
 logger.wandb_project=your_project \
 logger.wandb_entity=nvidia \
 logger.log_interval=5 \
@@ -208,7 +208,7 @@ To enable LoRA fine-tuning, pass `--peft lora` to the script:
 MEGATRON_PATH=/path/to/pretrained/megatron/ckpt
 CHECKPOINT_DIR=/path/to/lora/checkpoints
 
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_super.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_3/super/finetune_nemotron_3_super.py \
 --peft lora \
 logger.wandb_project=your_project \
 logger.wandb_entity=nvidia \
@@ -303,7 +303,7 @@ After quantization, further improve model quality with QAT by continuing trainin
 MEGATRON_PATH=/path/to/quantized/megatron/ckpt
 CHECKPOINT_DIR=/path/to/qat/checkpoints
 
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron_3/qat_nemotron_3_super.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_3/super/qat_nemotron_3_super.py \
 --megatron-load-path=${MEGATRON_PATH} \
 --seq-length=8192 \
 --packed-sequence \
