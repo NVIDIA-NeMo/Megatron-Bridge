@@ -27,6 +27,7 @@ from megatron.bridge.recipes.qwen.qwen3_moe import (
     qwen3_30b_a3b_pretrain_config,
     qwen3_235b_a22b_pretrain_config,
 )
+from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
@@ -1555,3 +1556,154 @@ qwen3_30b_a3b_pretrain_32gpu_gb200_bf16_config = qwen3_30b_a3b_pretrain_8gpu_gb2
 qwen3_30b_a3b_pretrain_32gpu_gb200_fp8cs_config = qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config
 qwen3_30b_a3b_pretrain_32gpu_gb300_bf16_config = qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config
 qwen3_30b_a3b_pretrain_32gpu_gb300_fp8cs_config = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config
+
+
+# =============================================================================
+# Qwen3 Next 80B-A3B pretrain — 64 GPU, GB300
+# =============================================================================
+
+
+def qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
+    """Qwen3 Next 80B-A3B pretrain: 64× GB300, BF16, PP=2 VP=4 EP=32, hybridep."""
+    cfg = qwen3_next_80b_a3b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    cfg.model.bias_activation_fusion = True
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.model.moe_router_force_load_balancing = True
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.train.global_batch_size = 1024
+    cfg.train.micro_batch_size = 4
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+    cfg.model.pipeline_model_parallel_layout = "Et*4|(t*7|)*5t*8|tmL"
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+
+    _benchmark_common(cfg)
+    return cfg
+
+
+def qwen3_next_80b_a3b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Qwen3 Next 80B-A3B pretrain: 64× GB300, MXFP8 (same layout as BF16)."""
+    cfg = qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
+
+
+# =============================================================================
+# Qwen3 Next 80B-A3B pretrain — 64 GPU, GB200
+# =============================================================================
+
+
+def qwen3_next_80b_a3b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
+    """Qwen3 Next 80B-A3B pretrain: 64× GB200, BF16 (GB300 layout, MBS=2)."""
+    cfg = qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config()
+    cfg.train.micro_batch_size = 2
+    return cfg
+
+
+def qwen3_next_80b_a3b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Qwen3 Next 80B-A3B pretrain: 64× GB200, MXFP8 (same layout as BF16)."""
+    cfg = qwen3_next_80b_a3b_pretrain_64gpu_gb200_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
+
+
+# =============================================================================
+# Qwen3 Next 80B-A3B pretrain — 64 GPU, B300 / B200 (deepep, base parallelism)
+# =============================================================================
+
+
+def qwen3_next_80b_a3b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
+    """Qwen3 Next 80B-A3B pretrain: 64× B300, BF16, EP=64, deepep, MBS=1."""
+    cfg = qwen3_next_80b_a3b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    cfg.model.bias_activation_fusion = True
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.model.moe_router_force_load_balancing = True
+
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.train.global_batch_size = 1024
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+
+    _benchmark_common(cfg)
+    return cfg
+
+
+def qwen3_next_80b_a3b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
+    """Qwen3 Next 80B-A3B pretrain: 64× B300, MXFP8, EP=64, deepep, MBS=2."""
+    cfg = qwen3_next_80b_a3b_pretrain_64gpu_b300_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.train.micro_batch_size = 2
+    return cfg
+
+
+def qwen3_next_80b_a3b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
+    """Qwen3 Next 80B-A3B pretrain: 64× B200, BF16 (same layout as B300 BF16)."""
+    return qwen3_next_80b_a3b_pretrain_64gpu_b300_bf16_config()
+
+
+def qwen3_next_80b_a3b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
+    """Qwen3 Next 80B-A3B pretrain: 64× B200, MXFP8, EP=64, deepep, MBS=1."""
+    cfg = qwen3_next_80b_a3b_pretrain_64gpu_b300_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    return cfg
+
+
+# =============================================================================
+# Qwen3 Next 80B-A3B pretrain — 128 GPU, H100
+# =============================================================================
+
+
+def qwen3_next_80b_a3b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
+    """Qwen3 Next 80B-A3B pretrain: 128× H100, BF16, EP=128, MBS=1."""
+    cfg = qwen3_next_80b_a3b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    cfg.model.bias_activation_fusion = True
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.model.moe_router_force_load_balancing = True
+
+    cfg.model.expert_model_parallel_size = 128
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.train.global_batch_size = 1024
+    cfg.train.micro_batch_size = 1
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+
+    _benchmark_common(cfg)
+    return cfg
+
+
+def qwen3_next_80b_a3b_pretrain_128gpu_h100_fp8cs_config() -> ConfigContainer:
+    """Qwen3 Next 80B-A3B pretrain: 128× H100, FP8-CS (same layout as BF16)."""
+    cfg = qwen3_next_80b_a3b_pretrain_128gpu_h100_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_cs")
+    return cfg
