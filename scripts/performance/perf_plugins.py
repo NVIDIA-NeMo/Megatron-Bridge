@@ -512,6 +512,63 @@ class PerfEnvPlugin(Plugin):
         if self.compute_dtype == "nvfp4":
             executor.env_vars["NVTE_USE_FAST_MATH"] = "1"
 
+        # MLPerf v5.1 apples-to-apples parity (opt-in). Runs LAST so it can
+        # override defaults set by earlier methods (e.g. CUDA_DEVICE_MAX_CONNECTIONS,
+        # which _set_num_cuda_device_max_connections set to 32 for GB200).
+        self._set_mlperf_parity_env_overrides(executor)
+
+    def _set_mlperf_parity_env_overrides(self, executor: "run.Executor"):
+        """Forward MLPerf v5.1 parity env vars host->container; gated by MLPERF_PARITY_{F16_ATTN,FP4_ATTN,405B}; pairs with overrides.py for recipe knobs."""
+        f16_only = bool(os.environ.get("MLPERF_PARITY_F16_ATTN"))
+        fp4_attn = bool(os.environ.get("MLPERF_PARITY_FP4_ATTN"))
+        parity_405b = bool(os.environ.get("MLPERF_PARITY_405B"))
+        if not (f16_only or fp4_attn or parity_405b):
+            return
+
+        # Forward parity flag(s) so in-container overrides.py applies the recipe knobs.
+        if f16_only:
+            executor.env_vars["MLPERF_PARITY_F16_ATTN"] = "1"
+        if fp4_attn:
+            executor.env_vars["MLPERF_PARITY_FP4_ATTN"] = "1"
+        if parity_405b:
+            executor.env_vars["MLPERF_PARITY_405B"] = "1"
+
+        bucket_mb = os.environ.get("MLPERF_PARITY_BUCKET_MB")
+        if bucket_mb:
+            executor.env_vars["MLPERF_PARITY_BUCKET_MB"] = bucket_mb
+
+        # DPA recipe + FP4 NVFP4 quantization flags (effective env from v5.1 config source chains).
+        if fp4_attn:
+            # v5.1 8B FP4: config_common_fp4.sh + _fp8attn.sh effective env (CurrentScaling wins).
+            executor.env_vars["NVTE_DPA_FP8_RECIPE"] = "Float8CurrentScaling"
+            executor.env_vars["NVTE_NVFP4_DISABLE_RHT"] = "1"
+            executor.env_vars["NVTE_DPA_FP8CS_O_in_F16"] = "1"
+            executor.env_vars["NVTE_DPA_FP8_FORMAT"] = "HYBRID"
+        elif f16_only or parity_405b:
+            # v5.1 8B FP8, 405B FP8, 405B FP4 all set NVTE_DPA_FP8_RECIPE=F16 (no _fp8attn.sh in source chain).
+            executor.env_vars["NVTE_DPA_FP8_RECIPE"] = "F16"
+            # v5.1 405B FP4 also sets NVFP4 quantization flags (config_common_fp4.sh, no _8b.sh override for 405B).
+            if parity_405b and self.compute_dtype == "nvfp4":
+                executor.env_vars["NVTE_NVFP4_DISABLE_RHT"] = "1"
+                executor.env_vars["NVTE_NVFP4_DISABLE_STOCHASTIC_ROUNDING"] = "1"
+                executor.env_vars["NVTE_NVFP4_DISABLE_2D_QUANTIZATION"] = "1"
+
+        # MLPerf runtime env defaults (overridable for gap-chase via MLPERF_PARITY_CUDA_MAX_CONN / _NCCL_MIN_CTAS / _MAX_CTAS).
+        cuda_max_conn = os.environ.get("MLPERF_PARITY_CUDA_MAX_CONN", "1")
+        executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = cuda_max_conn
+        nccl_min_ctas = os.environ.get("MLPERF_PARITY_NCCL_MIN_CTAS", "16")
+        nccl_max_ctas = os.environ.get("MLPERF_PARITY_NCCL_MAX_CTAS", "32")
+        executor.env_vars["NCCL_MIN_CTAS"] = nccl_min_ctas
+        executor.env_vars["NCCL_MAX_CTAS"] = nccl_max_ctas
+
+        mode = "FP4_ATTN" if fp4_attn else ("405B" if parity_405b else "F16_ATTN")
+        logger.info(
+            f"MLPERF_PARITY_{mode}=1: forwarded to container env. "
+            f"CUDA_DEVICE_MAX_CONNECTIONS={cuda_max_conn}, "
+            f"NCCL_MIN_CTAS={nccl_min_ctas}, NCCL_MAX_CTAS={nccl_max_ctas}, "
+            f"NVTE_DPA_FP8_RECIPE={executor.env_vars['NVTE_DPA_FP8_RECIPE']}"
+        )
+
 
 @dataclass
 class PyTorchProfilerPluginScriptArgs:

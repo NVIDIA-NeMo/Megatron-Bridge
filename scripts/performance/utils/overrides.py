@@ -14,6 +14,7 @@
 
 import argparse
 import logging
+import os
 from typing import List, Optional
 
 from omegaconf import OmegaConf
@@ -484,5 +485,102 @@ def set_post_overrides(
             logger.info(
                 f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} based on {num_gpus} GPUs."
             )
+
+    # MLPerf v5.1 vs Megatron-Bridge 26.04.x parity (opt-in via env). Must run
+    # AFTER set_workload_base_configs / _set_common_perf_overrides (which
+    # force-disables use_transformer_engine_op_fuser) AND after the recipe
+    # builder has populated cfg.comm_overlap. set_post_overrides is the last
+    # override hook before pretrain() in run_script.py, so this satisfies both.
+    _apply_mlperf_parity_code_overrides(recipe, compute_dtype)
+
+    return recipe
+
+
+def _apply_mlperf_parity_code_overrides(recipe: ConfigContainer, compute_dtype: str) -> ConfigContainer:
+    """Apply MLPerf v5.1 apples-to-apples recipe knobs; gated by MLPERF_PARITY_{F16_ATTN,FP4_ATTN,405B} env vars (set by perf_plugins)."""
+    f16_only = bool(os.environ.get("MLPERF_PARITY_F16_ATTN"))
+    fp4_attn = bool(os.environ.get("MLPERF_PARITY_FP4_ATTN"))
+    parity_405b = bool(os.environ.get("MLPERF_PARITY_405B"))
+    if not (f16_only or fp4_attn or parity_405b):
+        return recipe
+
+    # 405B leaves 8B-only knobs (USE_TE_OPS / BUCKET_SIZE / FUSED_QKV_ROPE) unset; skip them under MLPERF_PARITY_405B.
+    apply_8b_recipe_knobs = (f16_only or fp4_attn) and not parity_405b
+    mode = "405B" if parity_405b else ("FP4_ATTN" if fp4_attn else "F16_ATTN")
+
+    applied: List[str] = []
+    skipped: List[str] = []
+
+    if apply_8b_recipe_knobs:
+        # Knob 1: TE op fuser (NeMo USE_TE_OPS=True). MBridge force-disables in _set_common_perf_overrides.
+        if hasattr(recipe.model, "use_transformer_engine_op_fuser"):
+            recipe.model.use_transformer_engine_op_fuser = True
+            applied.append("model.use_transformer_engine_op_fuser=True")
+        else:
+            skipped.append("model.use_transformer_engine_op_fuser")
+
+        # Knob 2: DDP grad bucket (NeMo BUCKET_SIZE=768000000). Override via MLPERF_PARITY_BUCKET_MB for gap-chase sweeps.
+        if recipe.comm_overlap is not None and hasattr(recipe.comm_overlap, "bucket_size"):
+            bucket_mb_override = os.environ.get("MLPERF_PARITY_BUCKET_MB")
+            if bucket_mb_override:
+                try:
+                    recipe.comm_overlap.bucket_size = int(bucket_mb_override) * 1024 * 1024
+                    applied.append(f"comm_overlap.bucket_size={bucket_mb_override}MB (override)")
+                except ValueError:
+                    logger.warning(f"MLPERF_PARITY_BUCKET_MB={bucket_mb_override!r} not int; using 768MB.")
+                    recipe.comm_overlap.bucket_size = 768 * 1024 * 1024
+                    applied.append("comm_overlap.bucket_size=768MB")
+            else:
+                recipe.comm_overlap.bucket_size = 768 * 1024 * 1024
+                applied.append("comm_overlap.bucket_size=768MB")
+        else:
+            skipped.append("comm_overlap.bucket_size (None at call site)")
+
+        # Knob 3: Fused QKV+RoPE (NeMo FUSED_QKV_ROPE=True).
+        if hasattr(recipe.model, "fused_single_qkv_rope"):
+            recipe.model.fused_single_qkv_rope = True
+            applied.append("model.fused_single_qkv_rope=True")
+        else:
+            skipped.append("model.fused_single_qkv_rope")
+
+        # Knob 4: TP-only amax reduction (NeMo Hydra default True; MBridge default False).
+        if hasattr(recipe.model, "tp_only_amax_red"):
+            recipe.model.tp_only_amax_red = True
+            applied.append("model.tp_only_amax_red=True")
+        else:
+            skipped.append("model.tp_only_amax_red")
+
+    # Knob 5: CUDA graphs (NeMo MCORE_CUDA_GRAPH=1 + FULL_CUDA_GRAPH=1). MBridge llama recipes hardcode "none".
+    if hasattr(recipe.model, "cuda_graph_impl"):
+        recipe.model.cuda_graph_impl = "local"
+        applied.append("model.cuda_graph_impl=local")
+        if hasattr(recipe.model, "cuda_graph_scope"):
+            recipe.model.cuda_graph_scope = "full_iteration"
+            applied.append("model.cuda_graph_scope=full_iteration")
+        if hasattr(recipe.model, "use_te_rng_tracker"):
+            recipe.model.use_te_rng_tracker = True
+            applied.append("model.use_te_rng_tracker=True")
+        if hasattr(recipe, "rng") and hasattr(recipe.rng, "te_rng_tracker"):
+            recipe.rng.te_rng_tracker = True
+            applied.append("rng.te_rng_tracker=True")
+    else:
+        skipped.append("model.cuda_graph_impl")
+
+    # Knob 6 (FP4 only): FP8 DPA (MLPerf FP8_DPA=True; NVFP4 invalid for DPA, must route through FP8).
+    if fp4_attn:
+        if recipe.mixed_precision is None or isinstance(recipe.mixed_precision, str):
+            skipped.append("mixed_precision (None or str) [FP4_ATTN]")
+        else:
+            mp = recipe.mixed_precision
+            if hasattr(mp, "fp8_dot_product_attention"):
+                mp.fp8_dot_product_attention = True
+                applied.append("fp8_dot_product_attention=True [FP4_ATTN]")
+            else:
+                skipped.append("fp8_dot_product_attention [FP4_ATTN]")
+
+    logger.warning(f"MLPerf parity: mode=MLPERF_PARITY_{mode}=1")
+    logger.warning(f"MLPerf parity: applied recipe overrides: {'; '.join(applied)}")
+    if skipped:
+        logger.warning(f"MLPerf parity: skipped: {'; '.join(skipped)}")
 
     return recipe

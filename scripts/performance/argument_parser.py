@@ -321,6 +321,11 @@ def parse_cli_args():
     data_args.add_argument("--dataset_name", type=str, help="Dataset name (deprecated)")
     data_args.add_argument("--packed_sequence", action="store_true", help="Use packed sequences")
     data_args.add_argument("--head_only", action="store_true", help="Use only head data (for rp2 dataset)")
+    data_args.add_argument(
+        "--mlperf_flavor",
+        action="store_true",
+        help="Apply MLPerf v5.1 apples-to-apples config: forces v5.1 shape per (model_recipe_name, compute_dtype, num_gpus), enables MLPerf-parity recipe/env knobs, and swaps to MLPerf C4 dataset. See utils/mlperf_flavor.py.",
+    )
 
     # Tokenizer configuration
     tokenizer_args = parser.add_argument_group("Tokenizer arguments")
