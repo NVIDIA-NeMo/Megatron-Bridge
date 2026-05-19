@@ -196,7 +196,10 @@ Two modes, different trade-offs:
 
 Partial CUDA graphs capture static components while leaving dynamic expert
 computation outside the graph, which is why they are the safer default for
-dropless MoE.
+dropless MoE. Validate the replay window against an eager run on the same
+dispatcher and container: TE-scoped capture can be neutral or slightly slower
+on all-to-all fallback shapes that are not visibly launch-bound, even when
+capture succeeds.
 
 For full CUDA Graphs on dropless MoE, three techniques are needed:
 
@@ -259,12 +262,34 @@ dispatcher backend controls how this communication is implemented:
 
 | Hardware | Recommended Dispatcher | Rationale |
 |---|---|---|
-| H100 / B200 (NVL8) | DeepEP | Optimized for node-based topologies |
-| GB200 / GB300 (NVL72) | HybridEP | Exploits NVLink domain for lower latency |
+| H100 / B200 (NVL8) | DeepEP, if installed | Optimized for node-based topologies |
+| GB200 / GB300 (NVL72) | HybridEP, if installed | Exploits NVLink domain for lower latency |
 
 HybridEP advantage usually grows with EP degree because it fuses intra-node
 NVLink transfers with inter-node IB work, avoiding much of the two-phase
 overhead of standard all-to-all at large EP sizes.
+
+Treat dispatcher package availability as part of the experiment setup, not as a
+given. `alltoall` is the correctness fallback and should be the first smoke test
+on a new container. DeepEP and HybridEP require their corresponding runtime
+packages to be installed; otherwise the config can select
+`moe_token_dispatcher_type="flex"` and still fail during model construction.
+Keep the container, CUDA graph scope, routing mode, and MoE kernel-fusion flags
+fixed when comparing dispatcher throughput.
+
+### Short-run H100 sanity check
+
+On 2026-05-17, a 16-GPU H100 smoke run of Qwen3 30B A3B BF16 with EP=16 and
+the recipe's Transformer Engine CUDA graph scopes (`moe_router`,
+`moe_preprocess`) completed with `alltoall` after disabling
+`moe_permute_fusion` for a Triton JIT compatibility issue in the container.
+The five-step run had a 45.65 s mean step time after the first warmup step,
+132.9 mean TFLOP/s/GPU after warmup, final loss 11.44050, and 61.351 GB peak
+max allocated memory. In the same container, DeepEP and HybridEP selected the
+requested flex backend in the dumped config but failed before iteration 1
+because the DeepEP/HybridEP packages were not installed. Use this as an
+availability caveat, not as evidence that `alltoall` is faster than flex
+dispatchers on H100.
 
 ## Long-Context MoE Training
 
