@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, Iterable, List, Mapping, Optional, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, Callable, Iterable, List, Mapping, Optional, Tuple, TypeVar, Union
 
 import torch
 from megatron.core.transformer.module import MegatronModule
@@ -33,8 +33,8 @@ class MegatronQuantizationBridge:
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         hf_pretrained: HFPreTrained,
-        quantization_checker: callable,
-        quant_fn: callable,
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
         quant_block_size: Optional[Tuple[int, int]] = None,
         cpu: bool = True,
         show_progress: bool = True,

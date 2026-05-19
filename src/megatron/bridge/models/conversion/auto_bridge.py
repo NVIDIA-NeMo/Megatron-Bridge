@@ -508,7 +508,7 @@ class AutoBridge(Generic[MegatronModelT]):
         self,
         model: list[MegatronModelT],
         quantization_checker: Callable[[str], bool],
-        quant_fn: Callable[..., tuple[torch.Tensor, torch.Tensor]],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
         quant_block_size: Optional[Tuple[int, int]] = None,
         cpu: bool = False,
         show_progress: bool = True,
