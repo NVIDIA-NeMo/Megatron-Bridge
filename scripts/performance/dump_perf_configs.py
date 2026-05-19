@@ -99,6 +99,17 @@ COMBOS = [
     ("qwen", "qwen3_235b_a22b", "pretrain", 256, "gb200", "fp8_cs"),
     ("qwen", "qwen3_235b_a22b", "pretrain", 256, "gb300", "bf16"),
     ("qwen", "qwen3_235b_a22b", "pretrain", 256, "gb300", "fp8_cs"),
+    # Qwen3-Next 80B-A3B
+    ("qwen", "qwen3_next_80b_a3b", "pretrain", 64, "gb300", "bf16"),
+    ("qwen", "qwen3_next_80b_a3b", "pretrain", 64, "gb300", "fp8_mx"),
+    ("qwen", "qwen3_next_80b_a3b", "pretrain", 64, "gb200", "bf16"),
+    ("qwen", "qwen3_next_80b_a3b", "pretrain", 64, "gb200", "fp8_mx"),
+    ("qwen", "qwen3_next_80b_a3b", "pretrain", 64, "b300", "bf16"),
+    ("qwen", "qwen3_next_80b_a3b", "pretrain", 64, "b300", "fp8_mx"),
+    ("qwen", "qwen3_next_80b_a3b", "pretrain", 64, "b200", "bf16"),
+    ("qwen", "qwen3_next_80b_a3b", "pretrain", 64, "b200", "fp8_mx"),
+    ("qwen", "qwen3_next_80b_a3b", "pretrain", 128, "h100", "bf16"),
+    ("qwen", "qwen3_next_80b_a3b", "pretrain", 128, "h100", "fp8_cs"),
     # Kimi K2
     ("kimi", "kimi_k2", "pretrain", 256, "gb300", "bf16"),
     ("kimi", "kimi_k2", "pretrain", 256, "gb300", "fp8_cs"),
