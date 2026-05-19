@@ -48,7 +48,7 @@ def apply_moe_token_drop(
                 "Model config does not use MoE (num_moe_experts is not set or is 0). "
                 "Skipping MoE token drop configuration."
             )
-        return
+        return model_provider
 
     if moe_expert_capacity_factor < 0:
         moe_expert_capacity_factor = None

@@ -173,3 +173,22 @@ def log_single_rank(logger: logging.Logger, *args: Any, rank: int = 0, **kwargs:
             logger.log(*args, **kwargs)
     else:
         logger.log(*args, **kwargs)
+
+
+def safe_serialize(obj) -> str:
+    """Safely convert any object to a JSON-serializable type.
+
+    Handles objects with broken __str__ or __repr__ methods that return
+    non-string types (e.g., PipelineParallelLayerLayout returns list).
+    """
+    try:
+        # Try str() first
+        result = str(obj)
+        # Verify it actually returns a string
+        if not isinstance(result, str):
+            # __str__ returned non-string type, use type name instead
+            return f"<{type(obj).__name__}>"
+        return result
+    except Exception:
+        # __str__ raised an exception, use type name as fallback
+        return f"<{type(obj).__name__}>"

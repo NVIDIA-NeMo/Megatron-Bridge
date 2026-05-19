@@ -22,12 +22,19 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
     DirectMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
+    KVMapping,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
+    merge_kv_biases,
+    merge_kv_weights,
     merge_qkv_biases,
     merge_qkv_weights,
+    split_kv_biases,
+    split_kv_weights,
     split_qkv_biases,
     split_qkv_weights,
 )
@@ -266,6 +273,34 @@ class TestAutoMapping:
         with pytest.raises(ValueError):
             mapping._detect_parallelism_type(torch.nn.Linear(5, 5))
 
+    def test_detect_parallelism_type_dynamic_module(self):
+        mtq = pytest.importorskip("modelopt.torch.quantization")
+        DynamicModule = pytest.importorskip("modelopt.torch.opt.dynamic").DynamicModule
+
+        class Wrapper(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = torch.nn.Linear(4, 4)
+
+            def forward(self, x):
+                return self.linear(x)
+
+        model = Wrapper()
+        mtq.quantize(model, mtq.INT8_DEFAULT_CFG)
+        quantized_linear = model.linear
+
+        assert isinstance(quantized_linear, DynamicModule)
+        assert type(quantized_linear).__name__ == "QuantLinear"
+        assert quantized_linear.get_original_cls_by_level(level=0).__name__ == "Linear"
+
+        AutoMapping.register_module_type("Linear", "column")
+        try:
+            mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
+            result = mapping._detect_parallelism_type(quantized_linear)
+            assert result == "column"
+        finally:
+            AutoMapping._MODULE_TYPE_REGISTRY["column"].discard("Linear")
+
 
 class TestHelperFunctions:
     def test_qkv_merge_split(self, transformer_config):
@@ -278,6 +313,19 @@ class TestHelperFunctions:
 
         q_s, k_s, v_s = split_qkv_weights(transformer_config, merged)
         assert torch.equal(q, q_s)
+        assert torch.equal(k, k_s)
+        assert torch.equal(v, v_s)
+
+    def test_kv_merge_split(self, transformer_config):
+        # k, v each [16, hidden_size] with hidden_size=32 in fixture
+        k = torch.randn(16, 32)
+        v = torch.randn(16, 32)
+
+        merged = merge_kv_weights(transformer_config, k, v)
+        # Expect stacked along dim 0: (16 + 16, 32)
+        assert merged.shape == (32, 32)
+
+        k_s, v_s = split_kv_weights(transformer_config, merged)
         assert torch.equal(k, k_s)
         assert torch.equal(v, v_s)
 
@@ -298,6 +346,44 @@ class TestQKVMapping:
             mock_hf_to_megatron.assert_called_once()
             merged_weight = mock_hf_to_megatron.call_args[0][0]
             assert merged_weight.shape == (64, 32)
+
+
+class TestKVMapping:
+    def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        mapping = KVMapping(megatron_param="kv.weight", k="k.weight", v="v.weight")
+        weights = {
+            "k": torch.randn(16, 32),
+            "v": torch.randn(16, 32),
+        }
+        megatron_module = MockModule(transformer_config, weight_shape=(32, 32))
+
+        with patch.object(mapping._tp_mapping, "hf_to_megatron") as mock_hf_to_megatron:
+            mapping.hf_to_megatron(weights, megatron_module)
+            mock_hf_to_megatron.assert_called_once()
+            merged_weight = mock_hf_to_megatron.call_args[0][0]
+            # Should match merge_kv_weights result and shape
+            expected = merge_kv_weights(transformer_config, weights["k"], weights["v"])
+            assert merged_weight.shape == (32, 32)
+            assert torch.equal(merged_weight, expected)
+
+    def test_megatron_to_hf(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        mapping = KVMapping(megatron_param="kv.weight", k="k.weight", v="v.weight")
+        # Construct packed KV via helper to guarantee split reversibility
+        k = torch.randn(16, 32)
+        v = torch.randn(16, 32)
+        packed_kv = merge_kv_weights(transformer_config, k, v)
+        megatron_module = MockModule(transformer_config, weight_shape=(32, 32))
+
+        with patch.object(mapping._tp_mapping, "megatron_to_hf", return_value={"kv.weight": packed_kv}):
+            result = mapping.megatron_to_hf(packed_kv, megatron_module)
+
+        assert "k.weight" in result and "v.weight" in result
+        assert result["k.weight"].shape == (16, 32)
+        assert result["v.weight"].shape == (16, 32)
+        assert torch.equal(result["k.weight"], k)
+        assert torch.equal(result["v.weight"], v)
 
 
 class TestGatedMLPMapping:
@@ -345,7 +431,10 @@ class TestGatedMLPMapping:
             # Should have 2 splits (one per TP rank)
             assert len(splits) == 2
             # Each split should be concatenated [gate_shard; up_shard]
-            assert splits[0].shape == (128, 32)  # Half of 128 gate + half of 128 up = 64 + 64 = 128
+            assert splits[0].shape == (
+                128,
+                32,
+            )  # Half of 128 gate + half of 128 up = 64 + 64 = 128
             assert splits[1].shape == (128, 32)
 
     def test_megatron_to_hf_single_tp(self, mock_distributed_env, transformer_config):
@@ -417,18 +506,44 @@ class TestGatedMLPMapping:
 class TestMappingEdgeCases:
     """Test edge cases and error handling in param mappings."""
 
+    def test_get_shard_spec_handles_replicated_tp_shards(self, mock_distributed_env):
+        mock_distributed_env(tp_size=4, tp_rank=3)
+        mapping = DirectMapping("weight", "weight")
+
+        megatron_module = torch.nn.Module()
+        megatron_module.global_dim = 8
+
+        shard_world_size, shard_rank = mapping._get_shard_spec(
+            shard_size=4,
+            megatron_module=megatron_module,
+            global_size_attr="global_dim",
+        )
+
+        assert shard_world_size == 2
+        assert shard_rank == 1
+
     def test_wildcard_pattern_validation(self):
         """Test that wildcard patterns are validated correctly."""
         # Valid patterns - should not raise
         DirectMapping("layer.*.weight", "model.*.weight")
-        QKVMapping(megatron_param="*.qkv.weight", q="*.q_proj.weight", k="*.k_proj.weight", v="*.v_proj.weight")
+        QKVMapping(
+            megatron_param="*.qkv.weight",
+            q="*.q_proj.weight",
+            k="*.k_proj.weight",
+            v="*.v_proj.weight",
+        )
 
         # Invalid patterns - mismatched wildcard counts
         with pytest.raises(ValueError, match="Wildcard count mismatch"):
             DirectMapping("layer.*.*.weight", "model.*.weight")
 
         with pytest.raises(ValueError, match="Wildcard count mismatch"):
-            QKVMapping("*.qkv.weight", q="*.*.q_proj.weight", k="*.k_proj.weight", v="*.v_proj.weight")
+            QKVMapping(
+                "*.qkv.weight",
+                q="*.*.q_proj.weight",
+                k="*.k_proj.weight",
+                v="*.v_proj.weight",
+            )
 
     def test_qkv_bias_handling(self, transformer_config):
         """Test QKV mapping handles biases correctly."""
@@ -443,6 +558,19 @@ class TestMappingEdgeCases:
         # Test bias splitting
         q_split, k_split, v_split = split_qkv_biases(transformer_config, merged)
         assert torch.equal(q_bias, q_split)
+        assert torch.equal(k_bias, k_split)
+        assert torch.equal(v_bias, v_split)
+
+    def test_kv_bias_handling(self, transformer_config):
+        """Test KV helpers handle biases correctly."""
+        # num_query_groups=2, kv_channels=8 -> each bias length 16
+        k_bias = torch.randn(16)
+        v_bias = torch.randn(16)
+
+        merged = merge_kv_biases(transformer_config, k_bias, v_bias)
+        assert merged.shape == (32,)
+
+        k_split, v_split = split_kv_biases(transformer_config, merged)
         assert torch.equal(k_bias, k_split)
         assert torch.equal(v_bias, v_split)
 
@@ -483,6 +611,95 @@ class TestMappingEdgeCases:
             with pytest.raises(ValueError, match="Object must exist on at least one PP rank"):
                 mapping.broadcast_from_pp_rank(None)
 
+    def test_broadcast_from_pp_rank_multi_owner(self, mock_distributed_env):
+        """Test PP broadcast handles tensors present on multiple PP ranks.
+
+        MLA (Multi-Latent Attention) architectures such as DeepSeek-V3 and
+        MTP models can place the same weight tensor on more than one PP stage.
+        broadcast_from_pp_rank must pick the first owner deterministically
+        rather than raising ValueError.
+        """
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
+        mapping = DirectMapping("weight", "weight")
+
+        tensor = torch.randn(16, 16)
+        spec = (tensor.shape, tensor.dtype, None, None)
+
+        # Simulate both PP ranks owning the tensor
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [spec, spec]
+        )
+        mock_dist.broadcast.side_effect = lambda t, src, group: None
+
+        # Must not raise — should pick rank 0 as source
+        result = mapping.broadcast_from_pp_rank(tensor)
+        assert result is not None
+
+        # Verify broadcast was called with src=rank 0
+        mock_dist.broadcast.assert_called_once()
+        call_kwargs = mock_dist.broadcast.call_args
+        assert call_kwargs[1]["src"] == 0 or call_kwargs[0][1] == 0
+
+    def test_broadcast_from_pp_rank_multi_owner_with_cache(self, mock_distributed_env):
+        """Test PP broadcast with cache_key when tensor exists on multiple ranks.
+
+        Every real mapping calls broadcast_from_pp_rank with
+        cache_key=str(self.hf_param). Verify that the cached path also
+        handles multi-owner tensors correctly and that the second call
+        skips the all_gather_object collective.
+        """
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
+        mapping = DirectMapping("weight", "weight")
+
+        tensor = torch.randn(16, 16)
+        spec = (tensor.shape, tensor.dtype, None, None)
+
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [spec, spec]
+        )
+        mock_dist.broadcast.side_effect = lambda t, src, group: None
+
+        cache_key = "model.layers.0.self_attn.kv_b_proj.weight"
+
+        # First call — populates cache
+        result1 = mapping.broadcast_from_pp_rank(tensor, cache_key=cache_key)
+        assert result1 is not None
+        assert mock_dist.all_gather_object.call_count == 1
+
+        # Second call with same cache_key — must reuse cached spec
+        result2 = mapping.broadcast_from_pp_rank(tensor, cache_key=cache_key)
+        assert result2 is not None
+        # all_gather_object should NOT be called again
+        assert mock_dist.all_gather_object.call_count == 1
+        # broadcast should be called twice (once per call)
+        assert mock_dist.broadcast.call_count == 2
+
+    def test_broadcast_obj_from_pp_rank_multi_owner(self, mock_distributed_env):
+        """Test PP object broadcast handles objects present on multiple PP ranks.
+
+        Similar to tensor broadcast, shared objects must not cause errors and
+        the first owning rank must be selected deterministically.
+        """
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=0)
+        mapping = DirectMapping("weight", "weight")
+
+        test_obj = {"config": "value"}
+
+        # Simulate both PP ranks owning the object
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [True, True]
+        )
+        mock_dist.broadcast_object_list.side_effect = lambda obj_list, src, group: None
+
+        # Must not raise — should pick rank 0 as source
+        result = mapping.broadcast_obj_from_pp_rank(test_obj)
+        assert result == test_obj
+
+        # Verify broadcast_object_list was called with src=rank 0
+        mock_dist.broadcast_object_list.assert_called_once()
+        call_args = mock_dist.broadcast_object_list.call_args
+        assert call_args[1].get("src", call_args[0][1] if len(call_args[0]) > 1 else None) == 0
+
     def test_tp_aware_unknown_module_error(self, transformer_config):
         """Test AutoMapping error for unknown module types."""
         mapping = AutoMapping("weight", "hf.weight")
@@ -502,7 +719,12 @@ class TestMappingEdgeCases:
         assert resolved.hf_param == "model.0.weight"
 
         # Test QKVMapping
-        qkv_mapping = QKVMapping("*.qkv.weight", q="*.q_proj.weight", k="*.k_proj.weight", v="*.v_proj.weight")
+        qkv_mapping = QKVMapping(
+            "*.qkv.weight",
+            q="*.q_proj.weight",
+            k="*.k_proj.weight",
+            v="*.v_proj.weight",
+        )
         resolved_qkv = qkv_mapping.resolve(("layer0",))
         assert resolved_qkv.megatron_param == "layer0.qkv.weight"
         assert resolved_qkv.hf_param["q"] == "layer0.q_proj.weight"
@@ -731,3 +953,125 @@ class TestAutoMappingWithPermute:
             # Without permute_dims, tensor should be passed unchanged
             passed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
             assert torch.equal(passed_tensor, hf_weight)
+
+
+class TestFusedGatedExpertMapping:
+    """Tests for FusedGatedExpertMapping.hf_to_megatron with TP > 1.
+
+    Regression: with TP=2 the target_param shape is already TP-sharded
+    (e.g. (512, 2048) for moe_ffn=512, hidden=2048).  The old code compared
+    the full HF gate_up_proj weight (1024, 2048) against that sharded shape
+    and raised ValueError.  The fix computes the full (unsharded) shape before
+    calling _align_expert_weight_to_shape so that _gated_mapping handles the
+    TP scatter.
+    """
+
+    # Model dims matching Qwen3.5-35B-A3B: hidden=2048, moe_ffn=512
+    HIDDEN = 2048
+    MOE_FFN = 512
+    NUM_EXPERTS = 4
+
+    def _make_mapping(self):
+        return FusedGatedExpertMapping(
+            megatron_param="decoder.layers.0.mlp.experts.linear_fc1.weight3",
+            hf_param="model.layers.0.mlp.experts.gate_up_proj",
+        )
+
+    def _make_hf_weights(self):
+        """Fused gate_up_proj: [num_experts, 2*moe_ffn, hidden]."""
+        return torch.randn(self.NUM_EXPERTS, 2 * self.MOE_FFN, self.HIDDEN)
+
+    @pytest.mark.parametrize("tp_size", [1, 2, 4])
+    def test_hf_to_megatron_tp_gt_1(self, mock_distributed_env, transformer_config, tp_size):
+        """gate and up passed to _gated_mapping must be full (unsharded) tensors."""
+        mock_mpu, _ = mock_distributed_env(tp_size=tp_size, tp_rank=0)
+
+        # Expert weights use the expert TP group (etp_group) for tp_size/tp_rank.
+        # Set etp_group to the same size as tp_group to match the test scenario.
+        class _MockGroup:
+            def __init__(self, size, rank):
+                self._size, self._rank = size, rank
+
+            def size(self):
+                return self._size
+
+            def rank(self):
+                return self._rank
+
+        mock_mpu.get_expert_tensor_parallel_group.return_value = _MockGroup(tp_size, 0)
+        mapping = self._make_mapping()
+        hf_weights = self._make_hf_weights()
+
+        # Megatron linear_fc1.weight shape on one TP rank: (2*moe_ffn/tp, hidden)
+        tp_sharded_shape = (2 * self.MOE_FFN // tp_size, self.HIDDEN)
+        target_param = torch.nn.Parameter(torch.empty(tp_sharded_shape))
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.param_mapping.get_module_and_param_from_name",
+                return_value=(None, target_param),
+            ),
+            patch.object(mapping, "_gated_mapping") as mock_gated,
+        ):
+            mock_gated.hf_to_megatron.return_value = torch.zeros(tp_sharded_shape)
+            mapping.hf_to_megatron(hf_weights, megatron_module=None)
+
+        call_kwargs = mock_gated.hf_to_megatron.call_args
+        gate = call_kwargs[0][0]["gate"]
+        up = call_kwargs[0][0]["up"]
+
+        # gate and up must be the full (unsharded) intermediate size
+        expected_gate_shape = (self.MOE_FFN, self.HIDDEN)
+        assert gate.shape == expected_gate_shape, (
+            f"gate.shape={gate.shape} but expected {expected_gate_shape} "
+            f"(TP={tp_size}; _gated_mapping is responsible for TP scatter)"
+        )
+        assert up.shape == expected_gate_shape, f"up.shape={up.shape} but expected {expected_gate_shape}"
+
+
+class TestFusedExpertMapping:
+    """Tests for FusedExpertMapping.hf_to_megatron with TP > 1.
+
+    Regression: with TP=2 the target_param shape (linear_fc2.weight) is already
+    TP-sharded (e.g. (2048, 256) for hidden=2048, moe_ffn=512).  The old code
+    compared the full HF down_proj weight (2048, 512) against that sharded shape
+    and raised ValueError.  The fix removes the _align call and passes the full
+    expert weight directly to AutoMapping which handles TP scatter.
+    """
+
+    HIDDEN = 2048
+    MOE_FFN = 512
+    NUM_EXPERTS = 4
+
+    def _make_mapping(self):
+        return FusedExpertMapping(
+            megatron_param="decoder.layers.0.mlp.experts.linear_fc2.weight3",
+            hf_param="model.layers.0.mlp.experts.down_proj",
+        )
+
+    def _make_hf_weights(self):
+        """Fused down_proj: [num_experts, hidden, moe_ffn]."""
+        return torch.randn(self.NUM_EXPERTS, self.HIDDEN, self.MOE_FFN)
+
+    @pytest.mark.parametrize("tp_size", [1, 2, 4])
+    def test_hf_to_megatron_tp_gt_1(self, mock_distributed_env, transformer_config, tp_size):
+        """Weight passed to AutoMapping.hf_to_megatron must be the full (unsharded) expert tensor."""
+        mock_mpu, _ = mock_distributed_env(tp_size=tp_size, tp_rank=0)
+        mapping = self._make_mapping()
+        hf_weights = self._make_hf_weights()
+
+        captured = {}
+
+        def _capture_super(hf_w, megatron_module):
+            captured["expert_weight"] = hf_w
+            return torch.zeros(self.HIDDEN, self.MOE_FFN // tp_size)
+
+        with patch.object(AutoMapping, "hf_to_megatron", side_effect=_capture_super):
+            mapping.hf_to_megatron(hf_weights, megatron_module=None)
+
+        expert_weight = captured["expert_weight"]
+        expected_shape = (self.HIDDEN, self.MOE_FFN)
+        assert expert_weight.shape == expected_shape, (
+            f"expert_weight.shape={expert_weight.shape} but expected {expected_shape} "
+            f"(TP={tp_size}; AutoMapping is responsible for TP scatter)"
+        )

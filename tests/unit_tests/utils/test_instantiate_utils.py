@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 import functools
 import logging
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from megatron.bridge.utils.instantiate_utils import (
+    _ALLOWED_TARGET_PREFIXES,
     InstantiationException,
     InstantiationMode,
     _call_target,
@@ -31,9 +33,22 @@ from megatron.bridge.utils.instantiate_utils import (
     _locate,
     _prepare_input_dict_or_list,
     _resolve_target,
+    _validate_target_prefix,
     instantiate,
     instantiate_node,
+    register_allowed_target_prefix,
 )
+
+
+@pytest.fixture(autouse=True)
+def _register_test_prefixes():
+    """Temporarily register test prefixes so test targets pass the allowlist."""
+    original = _ALLOWED_TARGET_PREFIXES.copy()
+    _ALLOWED_TARGET_PREFIXES.add("tests.")
+    _ALLOWED_TARGET_PREFIXES.add("builtins.")
+    yield
+    _ALLOWED_TARGET_PREFIXES.clear()
+    _ALLOWED_TARGET_PREFIXES.update(original)
 
 
 # Test classes and functions for instantiation testing
@@ -80,6 +95,7 @@ class TestKeys:
         assert _Keys.PARTIAL == "_partial_"
         assert _Keys.CALL == "_call_"
         assert _Keys.ARGS == "_args_"
+        assert _Keys.NAME == "_name_"
 
 
 class TestInstantiate:
@@ -186,23 +202,19 @@ class TestInstantiate:
         """Test instantiate in strict mode with error."""
         config = {
             "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestClass",
-            "nested": {"_target_": "non.existent.module.Class"},
+            "nested": {"_target_": "megatron.non_existent_module.Class"},
         }
         with pytest.raises(InstantiationException):
             instantiate(config, mode=InstantiationMode.STRICT)
 
-    def test_instantiate_lenient_mode_error(self, caplog):
-        """Test instantiate in lenient mode with error."""
+    def test_instantiate_lenient_mode_error(self):
+        """In lenient mode, nested resolution errors now propagate (no auto-None)."""
         config = {
             "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestClass",
-            "nested": {"_target_": "non.existent.module.Class"},
+            "nested": {"_target_": "megatron.non_existent_module.Class"},
         }
-        with caplog.at_level(logging.WARNING):
-            result = instantiate(config, mode=InstantiationMode.LENIENT)
-
-        assert isinstance(result, TestClass)
-        assert result.kwargs["nested"] is None
-        assert "Error instantiating" in caplog.text
+        with pytest.raises(InstantiationException, match="Error locating target"):
+            instantiate(config, mode=InstantiationMode.LENIENT)
 
     def test_instantiate_with_omegaconf_dict(self):
         """Test instantiate with OmegaConf DictConfig."""
@@ -410,9 +422,9 @@ class TestResolveTarget:
         assert result == test_function
 
     def test_resolve_invalid_string_target(self):
-        """Test resolving invalid string target."""
+        """Test resolving invalid string target that passes prefix check but doesn't exist."""
         with pytest.raises(InstantiationException, match="Error locating target"):
-            _resolve_target("invalid.target", "test_key")
+            _resolve_target("megatron.invalid.target", "test_key")
 
     def test_resolve_non_callable_target(self):
         """Test resolving non-callable target with check_callable=True."""
@@ -525,3 +537,163 @@ class TestComplexScenarios:
         actual_result = result(arg2="value2")
         expected = {"arg1": "value1", "arg2": "value2", "kwargs": {}}
         assert actual_result == expected
+
+
+class DummyTarget:
+    def __init__(self, a: int, b: int = 0) -> None:
+        self.a = a
+        self.b = b
+
+
+class KwTarget:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = dict(kwargs)
+
+
+def _target_qualname(obj) -> str:
+    return f"{obj.__module__}.{obj.__qualname__}"
+
+
+def test_drops_unexpected_kwargs_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    config = {
+        "_target_": _target_qualname(DummyTarget),
+        "a": 10,
+        "foo": 123,  # unexpected key that should be dropped
+    }
+
+    with caplog.at_level(logging.WARNING):
+        obj = instantiate(config)
+
+    assert isinstance(obj, DummyTarget)
+    assert obj.a == 10
+    # 'foo' is dropped; 'b' remains default
+    assert obj.b == 0
+
+    # Ensure a warning was emitted mentioning the dropped key
+    warnings = [rec.getMessage() for rec in caplog.records if rec.levelno == logging.WARNING]
+    assert any("Dropping unexpected config keys" in m for m in warnings)
+    assert any("foo" in m for m in warnings)
+
+
+def test_allows_kwargs_when_target_accepts_var_kwargs(caplog: pytest.LogCaptureFixture) -> None:
+    config = {
+        "_target_": _target_qualname(KwTarget),
+        "foo": 1,
+        "bar": 2,
+    }
+
+    with caplog.at_level(logging.WARNING):
+        obj = instantiate(config)
+
+    assert isinstance(obj, KwTarget)
+    assert obj.kwargs == {"foo": 1, "bar": 2}
+
+    # No warning should be emitted for **kwargs targets
+    warnings = [rec.getMessage() for rec in caplog.records if rec.levelno == logging.WARNING]
+    assert not any("Dropping unexpected config keys" in m for m in warnings)
+
+
+def test_raises_on_unexpected_kwargs_in_strict_mode() -> None:
+    config = {
+        "_target_": _target_qualname(DummyTarget),
+        "a": 10,
+        "foo": 123,
+    }
+
+    with pytest.raises(InstantiationException):
+        instantiate(config, mode=InstantiationMode.STRICT)
+
+
+class TestEnum(enum.Enum):
+    A = 1
+    B = 2
+
+
+class TestInstantiateEnum:
+    """Test instantiation of Enums."""
+
+    def test_instantiate_enum_with_args(self):
+        """Test instantiating an Enum with _args_."""
+        config = {
+            "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestEnum",
+            "_args_": [1],
+        }
+        result = instantiate(config)
+        assert result == TestEnum.A
+
+    def test_instantiate_enum_with_args_lenient(self):
+        """Test instantiating an Enum with _args_ in lenient mode (default)."""
+        config = {
+            "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestEnum",
+            "_args_": [2],
+        }
+        # This previously failed because _args_ was dropped in lenient mode
+        result = instantiate(config)
+        assert result == TestEnum.B
+
+
+class TestTargetPrefixValidation:
+    """Test _target_ prefix allowlist validation."""
+
+    def test_allowed_prefix_passes(self):
+        """Test that targets with allowed prefixes pass validation."""
+        _validate_target_prefix(target="megatron.bridge.Foo", full_key="key")
+        _validate_target_prefix(target="torch.nn.Module", full_key="key")
+        _validate_target_prefix(target="transformers.AutoModel", full_key="key")
+        _validate_target_prefix(target="numpy.array", full_key="key")
+        _validate_target_prefix(target="nvidia.dali.Pipeline", full_key="key")
+        _validate_target_prefix(target="nemo.collections.nlp", full_key="key")
+
+    def test_disallowed_prefix_rejected(self):
+        """Test that targets without allowed prefixes are rejected."""
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="os.system", full_key="key")
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="subprocess.run", full_key="key")
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="shutil.rmtree", full_key="key")
+
+    def test_disallowed_prefix_error_includes_full_key(self):
+        """Test that the error message includes the full_key when present."""
+        with pytest.raises(InstantiationException, match="full_key: my.config.key"):
+            _validate_target_prefix(target="os.system", full_key="my.config.key")
+
+    def test_disallowed_prefix_error_no_full_key(self):
+        """Test that the error message omits full_key when empty."""
+        with pytest.raises(InstantiationException, match="is not allowed") as exc_info:
+            _validate_target_prefix(target="os.system", full_key="")
+        assert "full_key" not in str(exc_info.value)
+
+    def test_empty_string_target(self):
+        """Test that empty string target is rejected."""
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="", full_key="key")
+
+    def test_register_allowed_target_prefix(self):
+        """Test that register_allowed_target_prefix extends the allowlist."""
+        original = _ALLOWED_TARGET_PREFIXES.copy()
+        try:
+            with pytest.raises(InstantiationException, match="is not allowed"):
+                _validate_target_prefix(target="custom_pkg.MyClass", full_key="key")
+
+            register_allowed_target_prefix("custom_pkg.")
+            _validate_target_prefix(target="custom_pkg.MyClass", full_key="key")  # should not raise
+        finally:
+            _ALLOWED_TARGET_PREFIXES.clear()
+            _ALLOWED_TARGET_PREFIXES.update(original)
+
+    def test_register_empty_prefix_rejected(self):
+        """Test that registering an empty prefix is rejected."""
+        with pytest.raises(ValueError, match="non-empty string"):
+            register_allowed_target_prefix("")
+
+    def test_register_whitespace_prefix_rejected(self):
+        """Test that registering a whitespace-only prefix is rejected."""
+        with pytest.raises(ValueError, match="non-empty string"):
+            register_allowed_target_prefix("   ")
+
+    def test_instantiate_rejects_disallowed_target(self):
+        """Test end-to-end: instantiate rejects a config with a disallowed _target_."""
+        config = {"_target_": "os.system", "command": "echo hello"}
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            instantiate(config)

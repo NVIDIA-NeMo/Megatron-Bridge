@@ -49,14 +49,14 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import HF → Megatron
 To import the HF model to your desired Megatron path:
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
 --hf-model google/gemma-3-1b-it \
 --megatron-path /models/gemma-3-1b-it
 ```
 
 ### Export Megatron → HF
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+uv run python examples/conversion/convert_checkpoints.py export \
 --hf-model google/gemma-3-1b-it \
 --megatron-path /results/gemma3_1b/checkpoints/iter_00001000 \
 --hf-path ./gemma3-hf-export
@@ -65,7 +65,7 @@ python examples/conversion/convert_checkpoints.py export \
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
 --hf_model_path google/gemma-3-1b-it \
 --megatron_model_path /models/gemma-3-1b-it \
 --prompt "What is artificial intelligence?" \
@@ -75,91 +75,103 @@ python examples/conversion/hf_to_megatron_generate_text.py \
 Note:
 - `--megatron_model_path` is optional. If not specified, the script will convert the model and then run forward.
 
-## Pretrain and Finetune Recipes
+## Recipes
 
-- See: [bridge.recipes.gemma](../../apidocs/bridge/bridge.recipes.gemma.md)
-- Available recipes:
-  - `gemma3_1b_pretrain_config`: Pre-training configuration for Gemma 3 1B
-  - `gemma3_1b_finetune_config`: Finetuning configuration with PEFT support (LoRA, DoRA)
+See: [bridge.recipes.gemma](../../apidocs/bridge/bridge.recipes.gemma.md)
 
-Before training, ensure the following environment variables are set:
-1. `SAVE_DIR`: checkpoint and log saving directory
-2. `HF_TOKEN`: to download models from HF Hub (if required)
-3. `HF_HOME`: (optional) to avoid re-downloading models and datasets
-4. `WANDB_API_KEY`: (optional) to enable WandB logging
+### Available Recipes
 
-### Pretraining
+- **Pretrain recipes**:
+  - `gemma3_1b_pretrain_config`: Pre-training for Gemma 3 1B
+
+- **SFT recipes**:
+  - `gemma3_1b_sft_config`: Full SFT for Gemma 3 1B
+
+- **PEFT recipes** (LoRA, DoRA):
+  - `gemma3_1b_peft_config`: PEFT for Gemma 3 1B
+
+**Before training**, ensure these environment variables are set:
+- `SAVE_DIR`: checkpoint and log saving directory
+- `HF_TOKEN`: to download models from HF Hub (if required)
+- `HF_HOME`: (optional) to avoid re-downloading models and datasets
+- `WANDB_API_KEY`: (optional) to enable WandB logging
+
+### Parallelism Configurations
+
+| Model | Mode | TP | PP | Total GPUs | Use Case |
+|-------|------|----|----|------------|----------|
+| **Gemma 3 1B** | Pretrain | 1 | 1 | 8 | Pre-training (single node) |
+| **Gemma 3 1B** | Full SFT | 1 | 1 | 8 | Full supervised finetuning |
+| **Gemma 3 1B** | LoRA/DoRA | 1 | 1 | 8 | PEFT finetuning (single node) |
+
+### Pre-training Example
 
 ```python
 from megatron.bridge.recipes.gemma import gemma3_1b_pretrain_config
 
-# Create a pretraining configuration
 config = gemma3_1b_pretrain_config(
-    name="my_gemma3_pretrain",
+    name="gemma3_1b_pretrain",
     data_paths=["path/to/data"],
     train_iters=100000,
     global_batch_size=256,
+    # Uses TP=1, PP=1 (8 GPUs) automatically
 )
 ```
 
-### Full Finetuning
+### Finetuning Examples
 
-```bash
-torchrun --nproc-per-node=8 run/run_recipe.py \
---pretrained-checkpoint /models/gemma-3-1b-it \
---recipe gemma3_1b_finetune_config \
-train.global_batch_size=64 \
-train.train_iters=1000 \
-checkpoint.save=$SAVE_DIR/gemma3_1b_finetune
-```
+#### Full Finetuning
 
-Or programmatically:
 ```python
-from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
+from megatron.bridge.recipes.gemma import gemma3_1b_sft_config
 
-config = gemma3_1b_finetune_config(
+config = gemma3_1b_sft_config(
     name="gemma3_1b_full_finetune",
     pretrained_checkpoint="/models/gemma-3-1b-it",
-    peft=None,
     train_iters=1000,
     global_batch_size=64,
+    finetune_lr=5e-6,
+    # Uses TP=1, PP=1 (8 GPUs) automatically
 )
 ```
 
-### Parameter-Efficient Finetuning (PEFT) with LoRA
+#### LoRA Finetuning
 
-```bash
-torchrun --nproc-per-node=8 run/run_recipe.py \
---pretrained-checkpoint /models/gemma-3-1b-it \
---recipe gemma3_1b_finetune_config \
---peft_scheme lora \
-train.global_batch_size=128 \
-checkpoint.save=$SAVE_DIR/gemma3_1b_lora
-```
-
-PEFT options:
-- `--peft_scheme`: Set to `lora` for LoRA or `dora` for DoRA. Omit for full finetuning.
-
-Or programmatically:
 ```python
-from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
+from megatron.bridge.recipes.gemma import gemma3_1b_peft_config
 
-# LoRA finetuning
-config = gemma3_1b_finetune_config(
+config = gemma3_1b_peft_config(
     name="gemma3_1b_lora_finetune",
     pretrained_checkpoint="/models/gemma-3-1b-it",
-    peft="lora",  # or "dora"
+    peft_scheme="lora",  # or "dora"
     train_iters=1000,
     global_batch_size=128,
+    finetune_lr=1e-4,
+    # Uses TP=1, PP=1 (8 GPUs) automatically
 )
 ```
 
-### Recommended Configurations
+### Command-Line Training
 
-| Model | Mode | TP | PP | Global Batch Size | Learning Rate |
-|-------|------|----|----|-------------------|---------------|
-| Gemma 3 1B | Full SFT | 1 | 1 | 64-128 | 5e-6 |
-| Gemma 3 1B | LoRA/DoRA | 1 | 1 | 128-256 | 1e-4 |
+**Full Finetuning:**
+```bash
+uv run python -m torch.distributed.run --nproc-per-node=8 run/run_recipe.py \
+  --pretrained-checkpoint /models/gemma-3-1b-it \
+  --recipe gemma3_1b_sft_config \
+  train.global_batch_size=64 \
+  train.train_iters=1000 \
+  checkpoint.save=$SAVE_DIR/gemma3_1b_finetune
+```
+
+**LoRA Finetuning:**
+```bash
+uv run python -m torch.distributed.run --nproc-per-node=8 run/run_recipe.py \
+  --pretrained-checkpoint /models/gemma-3-1b-it \
+  --recipe gemma3_1b_peft_config \
+  --peft_scheme lora \
+  train.global_batch_size=128 \
+  checkpoint.save=$SAVE_DIR/gemma3_1b_lora
+```
 
 ## Examples
 - Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
@@ -170,7 +182,7 @@ config = gemma3_1b_finetune_config(
 - Gemma 3 1B: https://huggingface.co/google/gemma-3-1b-it
 
 ## Related Docs
-- Gemma3 Vision-Language Models: [Gemma 3 VL](../vlm/gemma3-vl.md)
+- Gemma3 Vision-Language Models: [Gemma 3 VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gemma/gemma3_vl/README.md)
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)

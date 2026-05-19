@@ -1,0 +1,138 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Processing functions for OpenMathInstruct-2 dataset.
+
+Dataset: https://huggingface.co/datasets/nvidia/OpenMathInstruct-2
+
+OpenMathInstruct-2 contains math problems with generated solutions. Each example
+has ``problem``, ``generated_solution``, and ``expected_answer`` fields.
+"""
+
+import re
+from typing import Any, Optional
+
+from megatron.bridge.data.builders.hf_dataset import ProcessExampleOutput
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
+
+
+def process_openmathinstruct2_example(
+    example: dict[str, Any], _tokenizer: Optional[MegatronTokenizer] = None
+) -> ProcessExampleOutput:
+    """Process a single OpenMathInstruct-2 example into the required format.
+
+    Transforms a raw OpenMathInstruct-2 dataset example into the standard format
+    expected by the HFDatasetBuilder for fine-tuning.
+
+    Args:
+        example: Raw example containing 'problem', 'generated_solution', and 'expected_answer'
+        tokenizer: Optional tokenizer (not used in this processor)
+
+    Returns:
+        ProcessExampleOutput with formatted input/output and original answers
+
+    Example:
+        >>> example = {
+        ...     "problem": "What is 2 + 3?",
+        ...     "generated_solution": "We add 2 and 3 to get 5.",
+        ...     "expected_answer": "5",
+        ... }
+        >>> result = process_openmathinstruct2_example(example)
+        >>> print(result["input"])
+        Problem: What is 2 + 3? Solution:
+    """
+    _input = f"Problem: {example['problem']} Solution:"
+    _output = example["generated_solution"]
+    expected_answer = example["expected_answer"]
+
+    return ProcessExampleOutput(input=_input, output=_output, original_answers=[expected_answer])
+
+
+def _strip_intermediate_boxed(text: str) -> str:
+    """Replace all \\boxed{content} occurrences in text with just content.
+
+    Uses brace-depth counting to handle nested braces correctly
+    (e.g. \\boxed{\\frac{1}{2}} → \\frac{1}{2}).
+    """
+    marker = r"\boxed{"
+    result = []
+    i = 0
+    while i < len(text):
+        idx = text.find(marker, i)
+        if idx == -1:
+            result.append(text[i:])
+            break
+        result.append(text[i:idx])
+        depth = 0
+        end = -1
+        for j in range(idx + len(marker) - 1, len(text)):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end == -1:
+            # malformed \boxed{, keep as-is
+            result.append(text[idx:])
+            break
+        result.append(text[idx + len(marker) : end])
+        i = end + 1
+    return "".join(result)
+
+
+def process_openmathinstruct2_thinking_packed_example(example: dict, _tokenizer=None) -> dict:
+    """Process OpenMathInstruct-2 example into analysis+final channel format.
+
+    Puts the CoT reasoning (generated_solution without the trailing \\boxed{N}) into
+    the 'thinking' field (rendered as <|channel|>analysis by the GPT-OSS chat template)
+    and the final answer as '#### N' in the 'content' field (rendered as <|channel|>final).
+
+    This separates the reasoning chain from the answer delivery, matching the intended
+    GPT-OSS channel structure for math problem solving.
+    """
+    solution = example["generated_solution"]
+    expected_answer = str(example["expected_answer"])
+
+    # Extract the reasoning prefix: everything before the final \boxed{N}
+    marker = r"\boxed{"
+    idx = solution.rfind(marker)
+    if idx != -1:
+        depth = 0
+        end = -1
+        for i in range(idx + len(marker) - 1, len(solution)):
+            if solution[i] == "{":
+                depth += 1
+            elif solution[i] == "}":
+                depth -= 1
+            if depth == 0:
+                end = i
+                break
+        thinking = re.sub(r"\$?\s*$", "", solution[:idx]).rstrip() if end != -1 else solution.rstrip()
+    else:
+        thinking = solution.rstrip()
+
+    # Strip any intermediate \boxed{} from the reasoning (replace with just content)
+    thinking = _strip_intermediate_boxed(thinking)
+
+    return {
+        "input": "",
+        "output": "",
+        "messages": [
+            {"role": "user", "content": example["problem"]},
+            {"role": "assistant", "thinking": thinking, "content": f"#### {expected_answer}"},
+        ],
+        "original_answers": [expected_answer],
+    }

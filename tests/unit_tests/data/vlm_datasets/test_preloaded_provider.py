@@ -101,7 +101,7 @@ def test_load_and_build_provider(monkeypatch):
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: _DummyProcessor()))
 
     provider = pre.PreloadedVLMConversationProvider(
-        sequence_length=16, hf_processor_path="dummy/model", train_data_path=path
+        seq_length=16, hf_processor_path="dummy/model", train_data_path=path
     )
 
     ctx = DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0)

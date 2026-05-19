@@ -20,9 +20,37 @@ from typing import Iterable, List, Optional, Tuple
 
 import torch
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.utils import unwrap_model
 from rich.table import Table
 from transformers.configuration_utils import PretrainedConfig
+
+
+def unwrap_model(model, module_instances=None):
+    """Unwrap a model (or list of models) to the underlying module.
+    Extends ``megatron.core.utils.unwrap_model`` with awareness of ``MegatronFSDP``.
+    """
+    if module_instances is None:
+        from megatron.core.distributed import DistributedDataParallel as DDP
+        from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
+        from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+            FullyShardedDataParallel as megatron_FSDP,
+        )
+        from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
+        from megatron.core.transformer.module import Float16Module
+
+        module_instances = (DDP, torch_FSDP, megatron_FSDP, Float16Module, MegatronFSDP)
+
+    return_list = True
+    if not isinstance(model, list):
+        model = [model]
+        return_list = False
+    unwrapped_model = []
+    for model_module in model:
+        while isinstance(model_module, module_instances):
+            model_module = model_module.module
+        unwrapped_model.append(model_module)
+    if not return_list:
+        return unwrapped_model[0]
+    return unwrapped_model
 
 
 def weights_verification_table(bridge, megatron_model) -> Table:
@@ -183,6 +211,16 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
     if obj is None:
         return obj
 
+    # Explicitly drop process group objects without importing their classes directly.
+    cls = obj if isinstance(obj, type) else type(obj)
+    cls_module = getattr(cls, "__module__", "")
+    cls_name = getattr(cls, "__qualname__", getattr(cls, "__name__", ""))
+    if (cls_module, cls_name) in {
+        ("megatron.core.process_groups_config", "ProcessGroupCollection"),
+        ("torch._C._distributed_c10d", "ProcessGroup"),
+    }:
+        return None
+
     # Check if object is a problematic callable
     if callable(obj):
         # Allow classes/types but remove function objects, methods, partials
@@ -263,6 +301,18 @@ def get_causal_lm_class_name_via_auto_map(
     return None
 
 
+def conform_config_to_reference(
+    hf_config_dict: dict[str, object], reference_config: dict[str, object]
+) -> dict[str, object]:
+    """Return a projected hf_config_dict onto the reference key set, imputing missing keys with reference values."""
+    reference_config_keys = set(reference_config.keys())
+    filtered_config_dict = {key: value for (key, value) in hf_config_dict.items() if key in reference_config_keys}
+    for key, value in reference_config.items():
+        if key not in filtered_config_dict:
+            filtered_config_dict[key] = value
+    return filtered_config_dict
+
+
 def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tensor]]:
     """Return an iterator over persistent module buffers, yielding both the name of the buffer as well as the buffer itself."""
 
@@ -272,3 +322,13 @@ def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tens
             if local_name not in getattr(mod, "_non_persistent_buffers_set", set()):
                 full_name = f"{mod_prefix + '.' if mod_prefix else ''}{local_name}"
                 yield full_name, buffer
+
+
+def is_modelopt_dynamic_module(module):
+    """Check if a module is a modelopt dynamic module."""
+    try:
+        from modelopt.torch.opt.dynamic import DynamicModule
+
+        return isinstance(module, DynamicModule)
+    except ImportError:
+        return False

@@ -1,0 +1,64 @@
+name: Model support request
+description: Request conversion support, recipes, or tests for a new model family.
+title: "[model] "
+labels:
+  - feature
+  - area:model
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to request support for a new model. Include the upstream model reference and the minimum deliverables needed to make the request actionable.
+
+        **We encourage you to try adding model support yourself first!** Megatron Bridge includes an [AI-assisted model onboarding guide](../../docs/adding-new-models.md) that walks you through creating bridges, providers, recipes, and tests. Many models share architectural patterns with already-supported families, making self-service onboarding straightforward. If you have a working implementation, please open a PR — we'll help review and merge it.
+  - type: input
+    id: hf-repo
+    attributes:
+      label: Hugging Face repository
+      description: Link to the upstream model repository or model card.
+      placeholder: https://huggingface.co/<org>/<model>
+    validations:
+      required: true
+  - type: dropdown
+    id: architecture-family
+    attributes:
+      label: Architecture family
+      description: Pick the closest fit for the requested model.
+      options:
+        - Dense decoder-only (e.g. Llama, Qwen, Gemma, Mistral, Nemotron)
+        - MoE decoder-only (e.g. DeepSeek V2/V3, OLMoE, Qwen3-MoE, MiniMax-M2)
+        - VLM / multimodal (e.g. Qwen-VL, Gemma-VL, Nemotron-VL)
+        - SSM / hybrid (e.g. Mamba, Nemotron-H)
+        - Encoder-decoder (e.g. T5)
+        - Other / unsure
+    validations:
+      required: true
+  - type: checkboxes
+    id: deliverables
+    attributes:
+      label: Required deliverables
+      description: Select the deliverables that are expected for this model request.
+      options:
+        - label: Model providers
+        - label: HF conversion bridge
+        - label: Unit tests (config and bridge)
+        - label: Model conversion functional tests
+        - label: Optimal pretraining recipe
+        - label: Optimal finetuning recipe
+        - label: Recipe unit tests
+        - label: Recipe functional tests
+        - label: End-to-end CI coverage
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Owner if known
+      description: If someone is already planning to work on this, add their GitHub handle.
+      placeholder: "@github-handle"
+  - type: textarea
+    id: extra-context
+    attributes:
+      label: Extra context
+      description: Add usage goals, compatibility constraints, links to related issues, or any other context.

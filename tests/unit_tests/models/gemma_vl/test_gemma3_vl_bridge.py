@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -28,7 +28,10 @@ from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 @pytest.fixture
 def mock_text_config():
     """Create a mock text config for Gemma3 VL."""
-    config = Mock()
+    # Use spec=[] so hasattr() only returns True for explicitly-set attributes,
+    # matching real HF config behaviour (Gemma3 text config has no MLA fields
+    # like q_lora_rank, so they must not appear in the provider kwargs).
+    config = Mock(spec=[])
     config.num_hidden_layers = 28
     config.hidden_size = 2560
     config.intermediate_size = 15360
@@ -44,6 +47,9 @@ def mock_text_config():
     config.rope_theta = 1000000.0
     config.query_pre_attn_scalar = 256
     config.rope_scaling = None
+    config.rope_parameters = None
+    config.hidden_act = "gelu_pytorch_tanh"
+    config.torch_dtype = "bfloat16"
     return config
 
 
@@ -195,7 +201,7 @@ class TestGemma3VLBridgeProviderBridge:
 
         # Should use defaults
         assert provider.vision_start_token_id == 255999
-        assert provider.image_token_id == 151655  # Default from bridge
+        assert provider.image_token_id == 262144  # Default from bridge
 
     def test_provider_bridge_with_rope_scaling(self, gemma3_vl_bridge, mock_hf_pretrained):
         """Test provider_bridge with RoPE scaling configuration."""
@@ -206,38 +212,13 @@ class TestGemma3VLBridgeProviderBridge:
 
         assert provider.rope_scaling_factor == 2.0
 
-    @patch.object(Gemma3VLBridge, "dtype_from_hf")
-    def test_provider_bridge_dtype_handling(self, mock_dtype_from_hf, gemma3_vl_bridge, mock_hf_pretrained):
-        """Test provider_bridge handles dtype correctly."""
-        mock_dtype_from_hf.return_value = torch.float16
-
+    def test_provider_bridge_hardcoded_bf16(self, gemma3_vl_bridge, mock_hf_pretrained):
+        """Test provider_bridge hardcodes bf16 dtype."""
         provider = gemma3_vl_bridge.provider_bridge(mock_hf_pretrained)
 
-        assert provider.fp16 is True
-        assert provider.bf16 is False
-        assert provider.params_dtype == torch.float16
-
-    @patch.object(Gemma3VLBridge, "dtype_from_hf")
-    def test_provider_bridge_bfloat16_handling(self, mock_dtype_from_hf, gemma3_vl_bridge, mock_hf_pretrained):
-        """Test provider_bridge handles bfloat16 correctly."""
-        mock_dtype_from_hf.return_value = torch.bfloat16
-
-        provider = gemma3_vl_bridge.provider_bridge(mock_hf_pretrained)
-
-        assert provider.fp16 is False
+        # Gemma3VL bridge hardcodes bf16 to match baseline
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
-
-    @patch.object(Gemma3VLBridge, "dtype_from_hf")
-    def test_provider_bridge_float32_handling(self, mock_dtype_from_hf, gemma3_vl_bridge, mock_hf_pretrained):
-        """Test provider_bridge handles float32 correctly."""
-        mock_dtype_from_hf.return_value = torch.float32
-
-        provider = gemma3_vl_bridge.provider_bridge(mock_hf_pretrained)
-
-        assert provider.fp16 is False
-        assert provider.bf16 is False
-        assert provider.params_dtype == torch.float32
 
 
 class TestGemma3VLBridgeMappingRegistry:
@@ -383,7 +364,7 @@ class TestGemma3VLBridgeEdgeCases:
         minimal_config = Mock()
 
         # Create minimal text config
-        text_config = Mock()
+        text_config = Mock(spec=[])
         text_config.num_hidden_layers = 18
         text_config.hidden_size = 2048
         text_config.intermediate_size = 8192
@@ -399,6 +380,9 @@ class TestGemma3VLBridgeEdgeCases:
         text_config.rope_theta = 1000000.0
         text_config.query_pre_attn_scalar = 256
         text_config.rope_scaling = None
+        text_config.rope_parameters = None
+        text_config.hidden_act = "gelu_pytorch_tanh"
+        text_config.torch_dtype = "bfloat16"
 
         # Create minimal vision config
         vision_config = SiglipVisionConfig()

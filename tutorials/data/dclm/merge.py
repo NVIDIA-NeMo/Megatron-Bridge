@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import argparse
+import glob
+import os
 import subprocess
 import time
 
@@ -54,10 +56,27 @@ def merge_data(
     start_time = time.time()
     print("Merging files...")
 
-    cmd = f"cd {source_dir} && awk '1' *.jsonl > {path_to_save}"
-    if remove_small_files:
-        cmd += " && rm shard_*"
-    subprocess.run(cmd, shell=True, check=True)
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(source_dir)
+        jsonl_files = glob.glob("*.jsonl")
+
+        if not jsonl_files:
+            print("No matching JSONL files found")
+            return
+
+        # Use awk to merge files
+        awk_cmd = ["awk", "1"] + jsonl_files
+        with open(path_to_save, "w") as output_file:
+            subprocess.run(awk_cmd, stdout=output_file, check=True)
+
+        # Remove small files if requested
+        if remove_small_files:
+            shard_files = glob.glob("shard_*")
+            for shard_file in shard_files:
+                os.remove(shard_file)
+    finally:
+        os.chdir(original_cwd)
 
     end_time = time.time()
     elapsed_minutes = np.round((end_time - start_time) / 60, 0)

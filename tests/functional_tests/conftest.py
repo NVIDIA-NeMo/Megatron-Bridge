@@ -15,6 +15,7 @@
 import logging
 import os
 import tempfile
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -35,7 +36,9 @@ def ensure_test_data(tmp_path_factory):
 
         try:
             # Download assets to data_path
-            from tests.functional_tests.data.download_unit_tests_dataset import get_oldest_release_and_assets
+            from tests.functional_tests.test_groups.data.download_unit_tests_dataset import (
+                get_oldest_release_and_assets,
+            )
 
             get_oldest_release_and_assets(assets_dir=str(data_path))
 
@@ -124,13 +127,15 @@ def shared_tmp_dir():
         yield tmp_dir
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(autouse=True)
 def reset_cuda():
     """Reset CUDA state between tests."""
     yield
 
-    # Clear CUDA cache after test
     if torch.cuda.is_available():
+        import gc
+
+        gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 
@@ -152,8 +157,22 @@ def reset_env_vars():
 @pytest.fixture(autouse=True)
 def reset_te_debug_state():
     """Ensure Transformer Engine debug state is reset after each test."""
-    from transformer_engine.debug.pytorch.debug_state import TEDebugState
+    try:
+        from transformer_engine.debug.pytorch.debug_state import TEDebugState
+    except (ImportError, ModuleNotFoundError):
+        yield
+        return
 
     yield
 
-    TEDebugState._reset()
+    try:
+        TEDebugState._reset()
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def mock_datasets_file_lock():
+    """Prevent the HF datasets library from writing a lock file in the read-only test data directory."""
+    with patch("datasets.builder.FileLock", return_value=MagicMock()):
+        yield

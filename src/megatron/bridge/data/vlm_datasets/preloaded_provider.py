@@ -180,7 +180,7 @@ class PreloadedVLMConversationProvider(DatasetProvider):
     """
 
     # Required to match model.seq_length
-    sequence_length: int
+    seq_length: int
 
     # HF processor/model identifier (e.g., "Qwen/Qwen2.5-VL-3B-Instruct")
     hf_processor_path: str = "Qwen/Qwen2.5-VL-3B-Instruct"
@@ -198,6 +198,9 @@ class PreloadedVLMConversationProvider(DatasetProvider):
 
     # Default dataloader type for VLM providers
     dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
+
+    # Enable batch-level online sequence packing
+    pack_sequences_in_batch: bool = False
 
     def _build_split_dataset(
         self,

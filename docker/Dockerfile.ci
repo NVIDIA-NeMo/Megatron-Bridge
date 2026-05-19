@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM nvcr.io/nvidia/pytorch:25.09-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.04-py3
+FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 ENV PATH="/root/.local/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
@@ -21,22 +22,85 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 ENV UV_LINK_MODE=copy
 ENV UV_VERSION="0.7.2"
-
+ENV NVTE_BUILD_NUM_PHILOX_ROUNDS=3
 RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
-    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
+    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
+    # Address CVE-2025-68973
+    apt-get update && apt install -y --only-upgrade gnupg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+##############################################################################
+##
+## Install DeepEP and nvshmem
+##
+##############################################################################
+
+ARG INSTALL_DEEPEP=True
+ARG DEEPEP_COMMIT=34152ae28f80bcc3ee38d7a12cb2ad87cfd4ea72
+
+ENV HYBRID_EP_MULTINODE=1
+ENV RDMA_CORE_HOME=/opt/rdma-core/build
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/:$LD_LIBRARY_PATH
+RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
+    if [ "$INSTALL_DEEPEP" = "True" ]; then \
+    # Upgrade system rdma-core to v60; libibverbs-dev supplies the unversioned
+    # libibverbs.so symlink required at link time.
+    apt-get update && apt-get install -y --allow-change-held-packages \
+        rdma-core libibverbs-dev && \
+    apt-get clean && \
+    ARCH_LIB=$(dpkg-architecture -qDEB_HOST_MULTIARCH) && \
+    # libmlx5-dev is not available in the apt sources; create the unversioned
+    # symlink from the versioned one as a fallback for the DeepEP build.
+    test -f /usr/lib/${ARCH_LIB}/libmlx5.so || \
+        ln -sf /usr/lib/${ARCH_LIB}/libmlx5.so.1 /usr/lib/${ARCH_LIB}/libmlx5.so && \
+    # Expose the system install under RDMA_CORE_HOME so DeepEP setup.py finds
+    # $RDMA_CORE_HOME/include and $RDMA_CORE_HOME/lib without a separate source build.
+    mkdir -p ${RDMA_CORE_HOME} && \
+    ln -sfn /usr/include ${RDMA_CORE_HOME}/include && \
+    ln -sfn /usr/lib/${ARCH_LIB} ${RDMA_CORE_HOME}/lib && \
+    git clone https://github.com/deepseek-ai/DeepEP.git && \
+    pushd DeepEP && \
+        git pull && \
+        git fetch origin $DEEPEP_COMMIT && \
+        git checkout FETCH_HEAD && \
+        patch -p1 < /opt/deepep.patch && \
+        pip install --no-cache-dir nvidia-nvshmem-cu13==3.6.5 && \
+        # Create symlink for libnvshmem_host.so (required for DeepEP fabric handle operations)
+        NVSHMEM_LIB_PATH=$(pip show nvidia-nvshmem-cu13 | grep "Location:" | cut -d' ' -f2)/nvidia/nvshmem/lib && \
+        ln -sf ${NVSHMEM_LIB_PATH}/libnvshmem_host.so.3 ${NVSHMEM_LIB_PATH}/libnvshmem_host.so && \
+        apt-get update && \
+        apt-get install -y --no-install-recommends libnvidia-ml-dev && \
+        TORCH_CUDA_ARCH_LIST="9.0 10.0 12.0" pip install --no-cache-dir --no-build-isolation -v . && \
+        apt-get purge -y libnvidia-ml-dev && \
+        apt-get autoremove -y && \
+        rm -rf /var/lib/apt/lists/* && \
+    popd; \
+    fi
 
 COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
 COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
-COPY 3rdparty/Megatron-LM/pyproject.toml /opt/Megatron-Bridge/3rdparty/Megatron-LM/
+COPY 3rdparty/Megatron-LM/pyproject.toml 3rdparty/Megatron-LM/setup.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/
+COPY 3rdparty/Megatron-LM/megatron/training/__init__.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/training/
 COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
+COPY 3rdparty/Megatron-LM/megatron/core/datasets/Makefile 3rdparty/Megatron-LM/megatron/core/datasets/helpers.cpp /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/datasets/
+
+# Build arg to skip --locked when testing with different MCore versions
+ARG MCORE_TRIGGERED_TESTING=false
+ARG UV_CACHE_PRUNE_ARGS
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --only-group build && \
-    uv sync \
-    --link-mode copy \
-    --locked \
-    --all-extras \
-    --all-groups && \
-    uv cache prune
+    export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+    if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
+        echo "⚙️ MCore testing mode: skipping --locked flag"; \
+        uv sync --only-group build && \
+        uv sync --link-mode copy --all-extras --all-groups; \
+    else \
+        uv sync --locked --only-group build && \
+        uv sync --link-mode copy --locked --all-extras --all-groups; \
+    fi && \
+    uv cache prune ${UV_CACHE_PRUNE_ARGS}
+
+COPY --chmod=644 . /opt/Megatron-Bridge

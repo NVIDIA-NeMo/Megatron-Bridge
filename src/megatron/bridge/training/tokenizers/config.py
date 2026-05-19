@@ -13,12 +13,16 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from pathlib import Path
+from typing import Any, Literal, Optional, Union
 
 
 @dataclass
 class TokenizerConfig:
     """Configuration settings for the tokenizer."""
+
+    metadata_path: Optional[Union[str | dict]] = None
+    """Path to the tokenizer metadata file."""
 
     vocab_size: Optional[int] = None
     """Size of vocab before EOD or padding."""
@@ -43,13 +47,21 @@ class TokenizerConfig:
             "Llama2Tokenizer",
             "TikTokenizer",
             "MultimodalTokenizer",
+            "NullMultimodalTokenizer",
             "NullTokenizer",
+            "SFTTokenizer",
         ]
     ] = None
     """What type of tokenizer to use."""
 
-    tokenizer_model: Optional[str] = None
-    """Sentencepiece tokenizer model."""
+    tokenizer_model: Optional[Union[str, Path]] = None
+    """Sentencepiece tokenizer model or the `pretrained_model_name_or_path` for a HuggingFace tokenizer."""
+
+    special_tokens: Optional[list[str]] = None
+    """List of special tokens. For TikToken, needs to have ["<unk>", "<s>", "</s>"]"""
+
+    chat_template: Optional[str] = None
+    """Custom chat template in jinja format for conversation formatting"""
 
     tiktoken_pattern: Optional[str] = None
     """Which tiktoken pattern to use. Options: [v1, v2]"""
@@ -61,8 +73,8 @@ class TokenizerConfig:
     """List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>"]"""
 
     tokenizer_prompt_format: Optional[str] = None
-    special_tokens: Optional[list[str]] = None
     image_tag_type: Optional[str] = None
+    force_system_message: Optional[bool] = False
 
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
     """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
@@ -70,12 +82,26 @@ class TokenizerConfig:
     Common options include:
         - use_fast (bool): Whether to use fast tokenizer implementation
         - trust_remote_code (bool): Whether to trust remote code when loading tokenizer
-        - chat_template (str): Custom chat template string for conversation formatting
+        - include_special_tokens (bool): Whether to include special tokens when converting text to ids
 
     Example:
         hf_tokenizer_kwargs = {
             "use_fast": True,
             "trust_remote_code": True,
-            "chat_template": "custom_template_string"
+            "include_special_tokens": True
+        }
+    """
+
+    sp_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
+    """Additional keyword arguments to pass to SentencePiece tokenizer.
+
+    Common options include:
+        - legacy (bool): Whether to use legacy format of sentencepiece tokenizer
+        - ignore_extra_whitespaces (bool): Whether to ignore extra whitespaces in the input text while encoding
+
+    Example:
+        sp_tokenizer_kwargs = {
+            "legacy": True,
+            "ignore_extra_whitespaces": False,
         }
     """

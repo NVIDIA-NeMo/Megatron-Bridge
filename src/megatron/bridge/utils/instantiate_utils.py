@@ -17,6 +17,7 @@
 
 import copy
 import functools
+import inspect
 import logging
 from enum import Enum
 from textwrap import dedent
@@ -30,6 +31,38 @@ class InstantiationException(Exception):
     """Custom exception type for instantiation errors."""
 
     ...
+
+
+_ALLOWED_TARGET_PREFIXES: set[str] = {
+    "megatron.",
+    "torch.",
+    "nvidia.",
+    "transformers.",
+    "numpy.",
+    "nemo.",
+}
+
+
+def register_allowed_target_prefix(prefix: str) -> None:
+    """Register an additional allowed module prefix for _target_ instantiation.
+
+    This allows extending the default allowlist for use cases that require
+    instantiating classes from other packages.
+    """
+    if not isinstance(prefix, str) or not prefix.strip():
+        raise ValueError(f"Prefix must be a non-empty string, got {prefix!r}")
+    _ALLOWED_TARGET_PREFIXES.add(prefix)
+
+
+def _validate_target_prefix(*, target: str, full_key: str) -> None:
+    """Validate that a _target_ string starts with an allowed module prefix."""
+    if not any(target.startswith(prefix) for prefix in _ALLOWED_TARGET_PREFIXES):
+        raise InstantiationException(
+            f"Instantiation of '{target}' is not allowed. "
+            f"The target must start with one of the allowed prefixes: {sorted(_ALLOWED_TARGET_PREFIXES)}. "
+            f"Use register_allowed_target_prefix() to add additional allowed prefixes."
+            + (f"\nfull_key: {full_key}" if full_key else "")
+        )
 
 
 class InstantiationMode(Enum):
@@ -46,6 +79,7 @@ class _Keys(str, Enum):
     PARTIAL = "_partial_"
     CALL = "_call_"
     ARGS = "_args_"
+    NAME = "_name_"
 
 
 def instantiate(
@@ -236,22 +270,12 @@ def instantiate_node(
                     if OmegaConf.is_missing(node, key) and is_partial:
                         continue
                     value = node[key]
-                    try:
-                        value = instantiate_node(value, mode=mode)
-                    except (ImportError, InstantiationException) as e:
-                        if mode == InstantiationMode.STRICT:
-                            raise InstantiationException(
-                                f"Error instantiating {value} for key {full_key}.{key}: {e}"
-                            ) from e
-                        else:
-                            value = None
-                            logging.warning(
-                                f"Error instantiating {value} for key {full_key}.{key}. "
-                                f"Using None instead in lenient mode."
-                            )
+                    value = instantiate_node(value, mode=mode)
                     kwargs[key] = _convert_node(value)
 
             assert callable(_target_)
+            # Drop unexpected kwargs in lenient mode or raise in strict mode
+            kwargs = _filter_kwargs_for_target(_target_, kwargs, full_key, mode)
             return _call_target(_target_, partial, args, kwargs, full_key)
         else:
             dict_items = {}
@@ -356,6 +380,59 @@ def _convert_target_to_string(t: Any) -> Any:
         return t
 
 
+def _filter_kwargs_for_target(
+    target: Callable[..., Any] | type,
+    kwargs: dict[str, Any],
+    full_key: str,
+    mode: InstantiationMode,
+) -> dict[str, Any]:
+    """Drop unexpected keyword arguments for a target and warn.
+
+    If the target accepts ``**kwargs`` we forward everything. Otherwise we
+    inspect the signature and remove keys not present as keyword-capable
+    parameters, emitting a warning with the dropped keys.
+    """
+    try:
+        signature = inspect.signature(target)
+    except (TypeError, ValueError):
+        # Some builtins or C-extensions may not have an inspectable signature.
+        return kwargs
+
+    parameters = signature.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return kwargs
+
+    allowed_keys = {
+        name
+        for name, param in parameters.items()
+        if param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+
+    unexpected = set(kwargs.keys()) - allowed_keys
+    if _Keys.ARGS in unexpected:
+        unexpected.remove(_Keys.ARGS)
+
+    if not unexpected:
+        return kwargs
+
+    target_str = _convert_target_to_string(target)
+    if mode == InstantiationMode.LENIENT:
+        # Warn and drop the unexpected keys
+        warning_msg = f"Dropping unexpected config keys for target '{target_str}': {sorted(unexpected)}"
+        if full_key:
+            warning_msg += f"\nfull_key: {full_key}"
+        logging.warning(warning_msg)
+        filtered = {k: v for k, v in kwargs.items() if k in allowed_keys}
+        if _Keys.ARGS in kwargs:
+            filtered[_Keys.ARGS] = kwargs[_Keys.ARGS]
+        return filtered
+    else:
+        msg = f"Unexpected config keys for target '{target_str}': {sorted(unexpected)}"
+        if full_key:
+            msg += f"\nfull_key: {full_key}"
+        raise InstantiationException(msg)
+
+
 def _prepare_input_dict_or_list(d: Union[dict[Any, Any], list[Any]]) -> Any:
     res: Any
     if isinstance(d, dict):
@@ -384,6 +461,7 @@ def _resolve_target(
 ) -> Union[type, Callable[..., Any], object]:
     """Resolve target string, type or callable into type or callable."""
     if isinstance(target, str):
+        _validate_target_prefix(target=target, full_key=full_key)
         try:
             target = _locate(target)
         except Exception as e:
