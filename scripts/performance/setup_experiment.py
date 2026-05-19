@@ -60,6 +60,25 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
+def _filter_run_script_args(argv: List[str]) -> List[str]:
+    """Drop launcher-only args before forwarding argv to the rank-local script."""
+    filtered_args = []
+    skip_next = False
+
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--additional_slurm_params":
+            skip_next = True
+            continue
+        if arg.startswith("--additional_slurm_params="):
+            continue
+        filtered_args.append(arg)
+
+    return filtered_args
+
+
 def check_training_finished(log_file_path: str) -> bool:
     """Check if training is finished."""
     with open(log_file_path, "r") as f:
@@ -394,7 +413,7 @@ def main(
         path=str(run_script_path),
         entrypoint="python",
         env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
-        args=list(sys.argv[1:]),
+        args=_filter_run_script_args(sys.argv[1:]),
     )
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
