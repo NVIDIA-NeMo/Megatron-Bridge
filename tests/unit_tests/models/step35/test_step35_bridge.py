@@ -73,8 +73,8 @@ class _FakeProvider:
         self.num_query_groups = None
         self.num_moe_experts = None
         self.moe_router_topk = None
-        self.head_wise_attn_gate = None
-        self.attention_output_gate = True
+        self.head_wise_attn_gate = True
+        self.attention_output_gate = None
         self.layer_types = None
         self.sliding_attention_setting = None
         self.rotary_base = None
