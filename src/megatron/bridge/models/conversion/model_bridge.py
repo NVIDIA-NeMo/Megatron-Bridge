@@ -1947,11 +1947,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         return create_bridge_decorator(source=source, target=target, provider=provider, model_type=model_type)
 
 
-def is_tensor_parallel(param) -> bool:
-    """Check if a parameter is tensor parallel distributed."""
-    return hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
-
-
 # Core dispatch functions
 @dispatch
 def get_model_bridge(hf_architecture, hf_config=None) -> "MegatronModelBridge":
