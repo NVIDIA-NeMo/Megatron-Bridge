@@ -533,6 +533,7 @@ def training_log(
     pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
     loaded_iteration: int = 0,
+    seq_length: Optional[int] = None,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -931,7 +932,58 @@ def training_log(
         # Calculate GPU utilization
         num_flops = None
         if hasattr(config.model, "kv_channels") and hasattr(config.model, "num_attention_heads"):
-            num_flops = num_floating_point_operations(config, batch_size)
+            # Prefer per-microbatch FLOPS accumulators populated by forward_step
+            # (e.g. vlm_step). They carry the true Σs / Σs² / vision-patches under
+            # variable-length batches; fall back to the fixed-length assumption
+            # (batch_size * seq_length) only when no accumulation happened.
+            # This keeps the per-step TFLOP/s/GPU shown here consistent with the
+            # `floating_point_operations_so_far` accumulated by the main loop.
+            #
+            # VPP correction: forward_step_func is called once per virtual-stage
+            # per microbatch, so the accumulators over-count by vp_size. Divide
+            # them back so the FLOPS formula (which already covers all layers)
+            # receives the correct per-microbatch totals.
+            # Coerce accumulators to int — getattr on MagicMock test doubles
+            # returns a MagicMock (not the default), which breaks numeric ops.
+            local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
+            local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
+            local_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
+            if not isinstance(local_seqlen_sum, int):
+                local_seqlen_sum = 0
+            if not isinstance(local_seqlen_sq_sum, int):
+                local_seqlen_sq_sum = 0
+            if not isinstance(local_vision_patches, int):
+                local_vision_patches = 0
+            num_vision_patches = local_vision_patches * config.data_parallel_size if local_vision_patches > 0 else 0
+
+            vp_size = getattr(config.model, "virtual_pipeline_model_parallel_size", None)
+            if isinstance(vp_size, int) and vp_size > 1:
+                local_seqlen_sum = local_seqlen_sum // vp_size
+                local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
+                num_vision_patches = num_vision_patches // vp_size
+
+            if local_seqlen_sum > 0:
+                seqlen_sum = local_seqlen_sum * config.data_parallel_size
+                seqlen_squared_sum = local_seqlen_sq_sum * config.data_parallel_size
+                num_flops = num_floating_point_operations(
+                    config,
+                    batch_size,
+                    seqlen_sum=seqlen_sum,
+                    seqlen_squared_sum=seqlen_squared_sum,
+                    num_vision_patches=num_vision_patches,
+                )
+            elif seq_length is not None:
+                seqlen_sum = batch_size * seq_length
+                seqlen_squared_sum = batch_size * seq_length**2
+                num_flops = num_floating_point_operations(
+                    config,
+                    batch_size,
+                    seqlen_sum=seqlen_sum,
+                    seqlen_squared_sum=seqlen_squared_sum,
+                    num_vision_patches=num_vision_patches,
+                )
+            else:
+                num_flops = num_floating_point_operations(config, batch_size)
             per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
             print_rank_0(
                 f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"

@@ -31,7 +31,7 @@ def _load_module():
         Path(__file__).resolve().parents[3]
         / "examples"
         / "models"
-        / "vlm"
+        / "qwen"
         / "qwen3_omni"
         / "convert_omni_bench_to_jsonl.py"
     )

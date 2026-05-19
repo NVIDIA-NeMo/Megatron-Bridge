@@ -379,11 +379,9 @@ cfg = nemotron_nano_12b_v2_peft_config(
 
 ### Nemotron H
 - Nemotron H recipes: [bridge.recipes.nemotronh](../../apidocs/bridge/bridge.recipes.nemotronh.md)
-- Nemotron H model providers: [bridge.models.nemotronh](../../apidocs/bridge/bridge.models.nemotronh.md)
 
 ### Nemotron Nano v2
 - Nemotron Nano v2 recipes: [bridge.recipes.nemotronh.nemotron_nano_v2](../../apidocs/bridge/bridge.recipes.nemotronh.md)
-- Nemotron Nano v2 model providers: [bridge.models.nemotronh.NemotronNanoModelProvider9Bv2](../../apidocs/bridge/bridge.models.nemotronh.md)
 
 ## Performance Optimizations
 
