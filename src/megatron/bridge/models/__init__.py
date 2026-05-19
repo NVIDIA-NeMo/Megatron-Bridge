@@ -62,6 +62,7 @@ from megatron.bridge.models.gemma_vl import (
 )
 from megatron.bridge.models.glm import (
     GLM45Bridge,
+    GLM47FlashBridge,
 )
 from megatron.bridge.models.glm_moe_dsa import (
     GLM5Bridge,
@@ -194,6 +195,7 @@ __all__ = [
     "Gemma2ModelProvider9B",
     "Gemma2ModelProvider27B",
     "GLM45Bridge",
+    "GLM47FlashBridge",
     "GLM5Bridge",
     "GLM45VBridge",
     "GLM45VModelProvider",
