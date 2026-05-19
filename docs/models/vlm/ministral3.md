@@ -51,7 +51,7 @@ Ministral 3 combines efficient language modeling with multimodal capabilities:
 
 ## Examples
 
-For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Ministral 3 Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/ministral3/README.md).
+For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Ministral 3 Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/ministral/ministral3/README.md).
 
 ## Hugging Face Model Cards
 
