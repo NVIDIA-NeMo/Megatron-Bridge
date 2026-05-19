@@ -209,7 +209,8 @@ def export_megatron_to_hf(
         for candidate in [ckpt_path, *ckpt_path.glob("iter_*")]:
             rc = candidate / "run_config.yaml"
             if rc.exists():
-                cfg = yaml.safe_load(open(rc))
+                with open(rc) as f:
+                    cfg = yaml.safe_load(f)
                 saved_layout = cfg.get("model", {}).get("pipeline_model_parallel_layout")
                 if isinstance(saved_layout, list):
                     model_provider.pipeline_model_parallel_layout = saved_layout
