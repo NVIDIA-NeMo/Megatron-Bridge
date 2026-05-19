@@ -83,13 +83,19 @@ def mock_hf_pretrained(mock_hf_config):
     """Create a mock HF pretrained VLM."""
     pretrained = Mock(spec=PreTrainedVLM)
     pretrained.config = mock_hf_config
+    pretrained.state = Mock()
+    pretrained.state.source = Mock()
+    pretrained.state.source.get_all_keys.return_value = []
+    pretrained.state.source.has_glob.return_value = False
     return pretrained
 
 
 @pytest.fixture
-def glm_45v_bridge():
+def glm_45v_bridge(mock_hf_pretrained):
     """Create a GLM45VBridge instance."""
-    return GLM45VBridge()
+    bridge = GLM45VBridge()
+    bridge.hf_pretrained = mock_hf_pretrained
+    return bridge
 
 
 class TestGLM45VBridgeInitialization:

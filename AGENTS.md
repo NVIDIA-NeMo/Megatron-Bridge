@@ -8,7 +8,19 @@
 
 The `skills/` directory contains structured guides for common tasks (adding
 models, running experiments, debugging multi-node jobs, performance tuning,
-etc.). Read the relevant `SKILL.md` before starting a task it covers.
+etc.). **Always read the relevant `SKILL.md` before starting any task it
+covers — skills are mandatory context, not optional background reading.**
+
+**Workflow — mandatory order for every task:**
+1. **Pull information first.** Read the commit, PR, error log, file, or
+   whatever artifact the task is about. Do not reason about it yet.
+2. **Select and invoke the skill.** Based on what you just read, identify
+   the relevant skill and invoke it before forming any answer or plan.
+3. **Answer or implement.** Only after the skill is loaded, use its context
+   to reason, diagnose, or write code.
+
+Never skip or reorder these steps. Do not wait for the user to name the right
+skill keyword — infer it from the artifact you read.
 
 ## Boundaries
 
@@ -48,7 +60,7 @@ etc.). Read the relevant `SKILL.md` before starting a task it covers.
 
 Lint and format are enforced by pre-commit hooks (ruff). See @ruff.toml for
 the authoritative rules. For judgment calls not covered by tooling, see
-@skills/code-style/SKILL.md. Key points the linter cannot catch:
+@skills/linting-and-formatting/SKILL.md. Key points the linter cannot catch:
 
 - Type hints required on all public API functions (`X | None`, not `Optional[X]`)
 - Google-style docstrings on public classes and functions

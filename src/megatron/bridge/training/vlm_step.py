@@ -278,8 +278,13 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     enable_packing = getattr(cfg.dataset, "pack_sequences_in_batch", False)
 
     if not enable_packing:
-        # When using pipeline parallelism, ensure fixed shapes equal to cfg.model.seq_length
-        if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1:
+        # PP needs fixed activation shapes across stages. EP/HybridEP also needs
+        # matching token dimensions across the expert group for routing metadata.
+        requires_fixed_seq_len = (
+            getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1
+            or getattr(cfg.model, "expert_model_parallel_size", 1) > 1
+        )
+        if requires_fixed_seq_len:
             seq_len = cfg.model.seq_length
 
             tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
@@ -429,6 +434,22 @@ def forward_step(
             visual_inputs,
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
+
+    # Accumulate FLOPS metadata across micro-batches.
+    # Each micro-batch contributes its actual padded seq_length (not cfg.model.seq_length).
+    # train.py resets these before each step and reads accumulated values afterwards.
+    if tokens is not None:
+        mbs = tokens.shape[0]
+        seq_len = tokens.shape[1]
+        state._flops_seqlen_sum = getattr(state, "_flops_seqlen_sum", 0) + mbs * seq_len
+        state._flops_seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0) + mbs * seq_len**2
+    if visual_inputs is not None:
+        for attr in ("image_grid_thw", "video_grid_thw"):
+            grid = getattr(visual_inputs, attr, None)
+            if grid is not None and grid.numel() > 0:
+                state._flops_vision_patches = getattr(state, "_flops_vision_patches", 0) + int(
+                    grid.prod(dim=-1).sum().item()
+                )
 
     forward_args = {
         "input_ids": tokens,

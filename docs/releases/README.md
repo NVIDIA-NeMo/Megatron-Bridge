@@ -7,6 +7,7 @@ This directory contains release information, version history, and known issues f
 | Document | Purpose | When to Read |
 |----------|---------|--------------|
 | **[Release Process](release-process.md)** | Release cycle, RC cadence, code-freeze, golden values, CI annotations | Participating in or understanding a release |
+| **[Cherrypick Policy](cherrypick-policy.md)** | Rules for what may land on release branches during code-freeze and absolute freeze | Cherry-picking or reviewing during a release window |
 | **[Software Versions](software-versions.md)** | Current software versions and dependencies | Checking compatibility, planning upgrades |
 | **[Changelog](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases)** | Detailed release history and changes | Understanding what changed in each release |
 | **[Known Issues](known-issues.md)** | Known bugs, limitations, and workarounds | Troubleshooting issues, planning workarounds |
@@ -29,6 +30,9 @@ This directory contains release information, version history, and known issues f
 
 **🔍 Troubleshoot a problem**
 → Check [Known Issues](known-issues.md) for reported issues and solutions
+
+**🍒 Cherry-pick during a release**
+→ See [Cherrypick Policy](cherrypick-policy.md) for what is allowed on release branches during code-freeze and absolute freeze
 
 ## Release Information Overview
 

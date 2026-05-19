@@ -1,6 +1,7 @@
 ---
 name: adding-model-support
-description: Guide for adding support for new LLM or VLM models in Megatron-Bridge. Covers bridge, provider, recipe, tests, docs, and examples. Use when the user asks to add, support, onboard, or integrate a new model, or when creating bridges, providers, or recipes for a new model family.
+description: Guide for adding support for new LLM or VLM models in Megatron-Bridge. Covers bridge, provider, recipe, tests, docs, and examples.
+when_to_use: User asks to add, onboard, or integrate a new model family; 'add Qwen4 support', 'onboard Llama 5', 'create a bridge for X', 'write a recipe for Y'.
 ---
 
 # Adding New Model Support in Megatron-Bridge
@@ -59,7 +60,7 @@ grad norms) instead of raising an error.
 
 1. **Standalone script** (recommended for user-facing models) — Write a
    `dequant_fp8_for_bridge.py` in the model's examples folder.
-   Reference: `examples/models/vlm/ministral3/dequant_fp8_for_bridge.py`.
+   Reference: `examples/models/ministral/ministral3/dequant_fp8_for_bridge.py`.
    The pattern is: `w_bf16 = fp8_weight.to(bfloat16) * weight_scale_inv`.
 
 2. **In-bridge hook** — Override `maybe_modify_loaded_hf_weight()` in the bridge class to
@@ -342,12 +343,10 @@ For detailed test patterns, see @skills/adding-model-support/tests-and-examples.
 
 ### Examples
 
-LLM examples: `examples/models/<model>/`
-VLM examples: `examples/models/vlm/<model>/`
+Model examples: `examples/models/<brand>/<model>/`
 
 ```text
-examples/models/<model>/          # LLM
-examples/models/vlm/<model>/      # VLM
+examples/models/<brand>/<model>/
 ├── README.md
 ├── conversion.sh        # HF↔Megatron conversion commands (real model)
 ├── inference.sh         # Generation commands (real model, reasonable output)
