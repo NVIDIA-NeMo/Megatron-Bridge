@@ -98,7 +98,7 @@ class Step35DecoderLayer(TransformerLayer):
     ):
         pp_rank = get_pg_rank(pg_collection.pp)
         if is_mtp_layer:
-          layer_idx = layer_number + config.num_layers + get_transformer_layer_offset(config, vp_stage, pp_rank) - 1
+            layer_idx = layer_number + config.num_layers + get_transformer_layer_offset(config, vp_stage, pp_rank) - 1
         elif add_layer_offset:
             layer_idx = layer_number + get_transformer_layer_offset(config, vp_stage, pp_rank) - 1
         else:
