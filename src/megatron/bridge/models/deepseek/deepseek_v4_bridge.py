@@ -90,19 +90,6 @@ except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
 
-# Register deepseek_v4 model type for transformers versions that lack native support.
-try:
-    from transformers import AutoConfig
-    from transformers.configuration_utils import PretrainedConfig
-
-    class _DeepseekV4Config(PretrainedConfig):
-        model_type = "deepseek_v4"
-
-    AutoConfig.register("deepseek_v4", _DeepseekV4Config)
-except (ValueError, ImportError):
-    pass  # already registered natively or import error
-
-
 _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO = {
     "sliding_attention": 0,
     "compressed_sparse_attention": 4,

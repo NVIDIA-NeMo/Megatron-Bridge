@@ -12,20 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional toy-model conversion test scaffold for DeepSeek V4.
-
-The test is skipped until the required DeepSeek V4 modeling classes are
-available from Transformers and Megatron-Core in the test environment.
-"""
+"""Functional toy-model conversion tests for DeepSeek V4."""
 
 import importlib.util
+import json
+import subprocess
+from pathlib import Path
 
 import pytest
 
 
 def _has_dsv4_in_transformers() -> bool:
     try:
-        from transformers import DeepseekV4ForCausalLM  # noqa: F401
+        from transformers import DeepseekV4Config, DeepseekV4ForCausalLM  # noqa: F401
 
         return True
     except Exception:
@@ -104,12 +103,159 @@ HF_DEEPSEEK_V4_TOY_MODEL_CONFIG = {
 }
 
 
+def _hf_to_bridge_state_dict(hf_state_dict: dict, num_layers: int) -> dict:
+    """Translate native Transformers DSv4 parameter names to the released checkpoint layout."""
+    bridge_state = {}
+
+    def copy(src: str, dst: str) -> None:
+        if src in hf_state_dict:
+            bridge_state[dst] = hf_state_dict[src].detach().cpu().contiguous()
+
+    copy("model.embed_tokens.weight", "embed.weight")
+    copy("lm_head.weight", "head.weight")
+    copy("model.norm.weight", "norm.weight")
+    copy("model.hc_head.hc_fn", "hc_head_fn")
+    copy("model.hc_head.hc_base", "hc_head_base")
+    copy("model.hc_head.hc_scale", "hc_head_scale")
+
+    for layer_idx in range(num_layers):
+        hf_prefix = f"model.layers.{layer_idx}"
+        ckpt_prefix = f"layers.{layer_idx}"
+
+        copy(f"{hf_prefix}.input_layernorm.weight", f"{ckpt_prefix}.attn_norm.weight")
+        copy(f"{hf_prefix}.post_attention_layernorm.weight", f"{ckpt_prefix}.ffn_norm.weight")
+        copy(f"{hf_prefix}.self_attn.q_a_proj.weight", f"{ckpt_prefix}.attn.wq_a.weight")
+        copy(f"{hf_prefix}.self_attn.q_a_norm.weight", f"{ckpt_prefix}.attn.q_norm.weight")
+        copy(f"{hf_prefix}.self_attn.q_b_proj.weight", f"{ckpt_prefix}.attn.wq_b.weight")
+        copy(f"{hf_prefix}.self_attn.kv_proj.weight", f"{ckpt_prefix}.attn.wkv.weight")
+        copy(f"{hf_prefix}.self_attn.kv_norm.weight", f"{ckpt_prefix}.attn.kv_norm.weight")
+        copy(f"{hf_prefix}.self_attn.o_a_proj.weight", f"{ckpt_prefix}.attn.wo_a.weight")
+        copy(f"{hf_prefix}.self_attn.o_b_proj.weight", f"{ckpt_prefix}.attn.wo_b.weight")
+        copy(f"{hf_prefix}.self_attn.sinks", f"{ckpt_prefix}.attn.attn_sink")
+
+        compressor_prefix = f"{hf_prefix}.self_attn.compressor"
+        copy(f"{compressor_prefix}.kv_proj.weight", f"{ckpt_prefix}.attn.compressor.wkv.weight")
+        copy(f"{compressor_prefix}.gate_proj.weight", f"{ckpt_prefix}.attn.compressor.wgate.weight")
+        copy(f"{compressor_prefix}.position_bias", f"{ckpt_prefix}.attn.compressor.ape")
+        copy(f"{compressor_prefix}.kv_norm.weight", f"{ckpt_prefix}.attn.compressor.norm.weight")
+
+        indexer_prefix = f"{compressor_prefix}.indexer"
+        copy(f"{indexer_prefix}.q_b_proj.weight", f"{ckpt_prefix}.attn.indexer.wq_b.weight")
+        copy(f"{indexer_prefix}.weights_proj.weight", f"{ckpt_prefix}.attn.indexer.weights_proj.weight")
+        copy(f"{indexer_prefix}.kv_proj.weight", f"{ckpt_prefix}.attn.indexer.compressor.wkv.weight")
+        copy(f"{indexer_prefix}.gate_proj.weight", f"{ckpt_prefix}.attn.indexer.compressor.wgate.weight")
+        copy(f"{indexer_prefix}.position_bias", f"{ckpt_prefix}.attn.indexer.compressor.ape")
+        copy(f"{indexer_prefix}.kv_norm.weight", f"{ckpt_prefix}.attn.indexer.compressor.norm.weight")
+
+        copy(f"{hf_prefix}.mlp.gate.weight", f"{ckpt_prefix}.ffn.gate.weight")
+        if f"{hf_prefix}.mlp.gate.e_score_correction_bias" in hf_state_dict:
+            copy(f"{hf_prefix}.mlp.gate.e_score_correction_bias", f"{ckpt_prefix}.ffn.gate.bias")
+        copy(f"{hf_prefix}.mlp.gate.tid2eid", f"{ckpt_prefix}.ffn.gate.tid2eid")
+
+        gate_up = hf_state_dict[f"{hf_prefix}.mlp.experts.gate_up_proj"].detach().cpu()
+        gate, up = gate_up.chunk(2, dim=1)
+        down = hf_state_dict[f"{hf_prefix}.mlp.experts.down_proj"].detach().cpu()
+        for expert_idx in range(gate.shape[0]):
+            bridge_state[f"{ckpt_prefix}.ffn.experts.{expert_idx}.w1.weight"] = gate[expert_idx].contiguous()
+            bridge_state[f"{ckpt_prefix}.ffn.experts.{expert_idx}.w3.weight"] = up[expert_idx].contiguous()
+            bridge_state[f"{ckpt_prefix}.ffn.experts.{expert_idx}.w2.weight"] = down[expert_idx].contiguous()
+
+        copy(f"{hf_prefix}.mlp.shared_experts.gate_proj.weight", f"{ckpt_prefix}.ffn.shared_experts.w1.weight")
+        copy(f"{hf_prefix}.mlp.shared_experts.up_proj.weight", f"{ckpt_prefix}.ffn.shared_experts.w3.weight")
+        copy(f"{hf_prefix}.mlp.shared_experts.down_proj.weight", f"{ckpt_prefix}.ffn.shared_experts.w2.weight")
+        copy(f"{hf_prefix}.attn_hc.fn", f"{ckpt_prefix}.hc_attn_fn")
+        copy(f"{hf_prefix}.attn_hc.base", f"{ckpt_prefix}.hc_attn_base")
+        copy(f"{hf_prefix}.attn_hc.scale", f"{ckpt_prefix}.hc_attn_scale")
+        copy(f"{hf_prefix}.ffn_hc.fn", f"{ckpt_prefix}.hc_ffn_fn")
+        copy(f"{hf_prefix}.ffn_hc.base", f"{ckpt_prefix}.hc_ffn_base")
+        copy(f"{hf_prefix}.ffn_hc.scale", f"{ckpt_prefix}.hc_ffn_scale")
+
+    return bridge_state
+
+
 class TestDeepSeekV4Conversion:
     """Toy HF-to-Megatron roundtrip coverage for DeepSeek V4."""
 
-    def test_placeholder(self):
-        """Sentinel test that fails closed once the skip conditions no longer apply."""
-        pytest.fail(
-            "DSv4 prerequisites are now available — replace this placeholder with a real toy "
-            "HF-to-Megatron roundtrip using HF_DEEPSEEK_V4_TOY_MODEL_CONFIG."
+    @pytest.fixture(scope="class")
+    def deepseek_v4_toy_model_path(self, tmp_path_factory):
+        import torch
+        from safetensors.torch import save_file
+        from tokenizers import Tokenizer
+        from tokenizers.models import WordLevel
+        from tokenizers.pre_tokenizers import Whitespace
+        from transformers import DeepseekV4Config, DeepseekV4ForCausalLM, PreTrainedTokenizerFast
+
+        temp_dir = tmp_path_factory.mktemp("deepseek_v4_toy_model")
+        model_dir = temp_dir / "deepseek_v4_toy"
+        model_dir.mkdir()
+
+        torch.manual_seed(1234)
+        config = DeepseekV4Config(**HF_DEEPSEEK_V4_TOY_MODEL_CONFIG)
+        config.torch_dtype = torch.bfloat16
+        model = DeepseekV4ForCausalLM(config).bfloat16()
+        bridge_state = _hf_to_bridge_state_dict(model.state_dict(), config.num_hidden_layers)
+        for key in list(bridge_state):
+            if key.endswith(".tid2eid"):
+                bridge_state[key] = bridge_state[key].to(torch.int32)
+
+        vocab = {"<pad>": 0, "<bos>": 1, "<eos>": 2, "<unk>": 3}
+        vocab.update({f"tok_{idx}": idx for idx in range(4, 128)})
+        tokenizer_model = Tokenizer(WordLevel(vocab=vocab, unk_token="<unk>"))
+        tokenizer_model.pre_tokenizer = Whitespace()
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_object=tokenizer_model,
+            bos_token="<bos>",
+            eos_token="<eos>",
+            pad_token="<pad>",
+            unk_token="<unk>",
         )
+        tokenizer.save_pretrained(model_dir)
+
+        config.save_pretrained(model_dir)
+        with open(model_dir / "config.json", "w") as f:
+            json.dump(config.to_dict(), f, indent=2)
+        save_file(bridge_state, model_dir / "model.safetensors")
+        return str(model_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_deepseek_v4_roundtrip_ep(self, deepseek_v4_toy_model_path, tmp_path):
+        test_output_dir = tmp_path / "deepseek_v4_ep"
+        test_output_dir.mkdir(exist_ok=True)
+
+        cmd = [
+            "python",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "--nnodes=1",
+            "-m",
+            "coverage",
+            "run",
+            "--data-file=/opt/Megatron-Bridge/.coverage",
+            "--source=/opt/Megatron-Bridge/",
+            "--parallel-mode",
+            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
+            "--hf-model-id",
+            deepseek_v4_toy_model_path,
+            "--output-dir",
+            str(test_output_dir),
+            "--tp",
+            "1",
+            "--pp",
+            "1",
+            "--ep",
+            "2",
+        ]
+
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+        )
+
+        if result.returncode != 0:
+            print(f"STDOUT: {result.stdout}")
+            print(f"STDERR: {result.stderr}")
+        assert result.returncode == 0, f"DeepSeek V4 conversion failed with {result.returncode}"
+
+        converted_dir = test_output_dir / Path(deepseek_v4_toy_model_path).name
+        assert (converted_dir / "config.json").exists()
+        assert list(converted_dir.glob("*.safetensors"))
