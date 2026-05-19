@@ -32,14 +32,17 @@ def _has_dsv4_in_transformers() -> bool:
 
 
 def _has_dsv4_in_mcore() -> bool:
-    return all(
-        importlib.util.find_spec(mod) is not None
-        for mod in (
-            "megatron.core.transformer.hyper_connection",
-            "megatron.core.transformer.experimental_attention_variant.csa",
-            "megatron.core.transformer.experimental_attention_variant.deepseek_v4_hybrid_attention",
+    try:
+        return all(
+            importlib.util.find_spec(mod) is not None
+            for mod in (
+                "megatron.core.transformer.hyper_connection",
+                "megatron.core.transformer.experimental_attention_variant.csa",
+                "megatron.core.transformer.experimental_attention_variant.deepseek_v4_hybrid_attention",
+            )
         )
-    )
+    except ModuleNotFoundError:
+        return False
 
 
 pytestmark = [
