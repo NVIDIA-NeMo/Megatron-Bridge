@@ -19,6 +19,7 @@ VERIFY_PATH = (
     / "examples"
     / "models"
     / "megatron_mimo"
+    / "megatron_mimo"
     / "whisper"
     / "verify_whisper_conversion.py"
 )
