@@ -57,7 +57,7 @@ pytestmark = [
 # Toy config tuned to satisfy DSv4 invariants at minimum size:
 #   - len(compress_ratios) == num_hidden_layers + num_nextn_predict_layers
 #   - sliding_window <= max_position_embeddings
-#   - vocab_size large enough for hash routing in the first dense_replace block
+#   - vocab_size large enough for hash routing and divisible by the DSv4 provider's 1280 vocab padding
 #   - n_routed_experts divisible by num_experts_per_tok and the EP sizes we test
 HF_DEEPSEEK_V4_TOY_MODEL_CONFIG = {
     "architectures": ["DeepseekV4ForCausalLM"],
@@ -98,7 +98,7 @@ HF_DEEPSEEK_V4_TOY_MODEL_CONFIG = {
         "original_max_position_embeddings": 4096,
         "type": "yarn",
     },
-    "vocab_size": 8192,
+    "vocab_size": 12800,
     "torch_dtype": "bfloat16",
 }
 
