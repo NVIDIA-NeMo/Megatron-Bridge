@@ -20,24 +20,6 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
 
-def _freeze_non_layer_norm_hook(model):
-    """Pre-wrap hook: freeze all params except layer norm."""
-    total, frozen = 0, 0
-    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-    for model_module in model:
-        for name, param in model_module.named_parameters():
-            total += 1
-            if "linear_qkv.layer_norm_weight" in name:
-                param.requires_grad_(True)
-                print(f"[train] rank {rank} will train {name}, shape: {param.shape}", flush=True)
-            else:
-                param.requires_grad_(False)
-                frozen += 1
-                print(f"[freeze] rank {rank} will freeze {name}, shape: {param.shape}", flush=True)
-    print(f"[freeze] frozen {frozen}/{total} params", flush=True)
-    return model
-
-
 def step35_196b_a11b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for stepfun-ai/Step-3.5-Flash.
 
@@ -124,8 +106,5 @@ def step35_196b_a11b_pretrain_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = False
 
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
-
-    # Freeze all params except layer norm.
-    cfg.model.register_pre_wrap_hook(_freeze_non_layer_norm_hook)
 
     return cfg
