@@ -30,7 +30,8 @@ how many layers via `recompute_num_layers`.
    borderline OOMs are caused by memory fragmentation, not capacity. This
    fixes it at zero cost. See @skills/perf-memory-tuning/SKILL.md.
 2. Start with `recompute_granularity=selective`, `recompute_modules=[core_attn]`
-   (often already the default in recipes).
+   for dense or attention-memory-heavy recipes. For MoE recipes, also test
+   `moe_act` early because it can save MoE-side activation memory at low cost.
 3. Add `layernorm` to recompute modules — nearly free compute-wise but saves
    negligible memory. Only helps in extremely borderline cases.
 4. Add `mlp` as a last resort — saves ~3 GB but costs ~16% GPU utilization on
@@ -129,6 +130,21 @@ Key takeaways:
 - Combining `mlp` + `core_attn` is slightly worse than `mlp` alone
 - For this workload, the actual OOM fix was `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
   (memory fragmentation, not capacity). See @skills/perf-memory-tuning/SKILL.md.
+
+Qwen3 30B A3B pretrain on 16x H100, BF16, all-to-all dispatch, CUDA graphs off,
+EP overlap off, MBS=1:
+
+| recompute_modules | Step time | Peak Mem (GB) | Result |
+|---|---:|---:|---|
+| None | 42.21 s | 61.35 | Baseline |
+| [core_attn] | 42.92 s | 63.14 | Slight slowdown, no peak-memory win |
+| [moe_act] | 41.79 s | 58.93 | About 2.4 GB lower peak, no measured tax |
+| [mlp] | 41.09 s | 61.35 | No observed peak-memory win on this MoE shape |
+
+MBS=2 stress rows with `[moe_act]` and `[mlp]` both OOMed after one iteration
+with about 73.4 GiB already allocated by PyTorch. For this recipe, `moe_act` is
+the best first selective recompute knob when a few GB are needed, but recompute
+alone was not enough to double the micro-batch size.
 
 ## Code Anchors
 

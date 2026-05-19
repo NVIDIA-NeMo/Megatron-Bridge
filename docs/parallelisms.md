@@ -463,6 +463,14 @@ the primary scaling dimension.
 | 100-500B | TP=2-4 + PP=8-16 + EP=8-32 |
 | 500B+ | TP=2 + PP=16 + EP=32-64 |
 
+Measured short-run example: on Qwen3 30B A3B, H100 BF16, 16 GPUs,
+all-to-all dispatch, and EP overlap enabled, `TP=1, PP=1, EP=16` and
+`TP=1, PP=1, EP=8` both ran near 31 s/step after warmup. The EP=8 row used
+about 7 GB more peak memory, while `TP=2, PP=1, EP=16` roughly doubled steady
+step time despite lowering peak memory. For this class of small-active-parameter
+MoE run, increase TP only when memory requires it, and treat lower EP as a
+memory-for-communication trade.
+
 ### By Hardware Topology
 
 - **Single node with NVLink**: maximize TP within the node (up to TP=8).

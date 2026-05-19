@@ -52,6 +52,14 @@ Key patterns:
 - ETP (expert tensor parallelism) is rarely used. Llama 4 is an
   exception (ETP=4).
 
+Measured Qwen3 30B-A3B note, 2026-05-18: on 16 H100 GPUs with BF16,
+all-to-all dispatch, EP overlap on, CUDA graphs off, GBS=1024, and MBS=1,
+`TP=1, PP=1, EP=16` and `TP=1, PP=1, EP=8` were effectively tied at about
+31 seconds/step after warmup. EP=8 cost about 7 GB more peak memory. `TP=2,
+PP=1, EP=16` dropped memory but regressed to about 60 seconds/step. `PP=2,
+VPP=2, EP=8` was valid but did not beat the simpler PP=1 layouts. Use TP
+increases here as a memory-fit lever, not as the first throughput knob.
+
 These are starting points, not hard rules. Always profile the first
 iteration to verify memory and communication.
 

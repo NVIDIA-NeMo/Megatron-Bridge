@@ -180,6 +180,14 @@ For MoE training, it is often better to start with selective recomputation of
 MoE-side modules, normalization, activation functions, or model-specific
 up-projection modules than to enable blanket full recomputation immediately.
 
+Measured short-run example: on Qwen3 30B A3B, H100 BF16, 16 GPUs,
+all-to-all dispatch, CUDA graphs off, and EP overlap off, selective `moe_act`
+recompute reduced observed peak allocation from about 61.4 GB to 58.9 GB at
+MBS=1 without a visible step-time penalty. Selective `core_attn` was slightly
+slower and did not reduce the observed peak on that shape. Selective `moe_act`
+and `mlp` still OOMed at MBS=2, so recompute alone was not enough to double the
+micro-batch size.
+
 ## Feature Interactions
 
 - TE-scoped CUDA graphs are usually paired with selective recomputation rather
