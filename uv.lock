@@ -17,6 +17,7 @@ overrides = [
     { name = "langchain", specifier = ">=0.3.28" },
     { name = "langchain-core", specifier = ">=0.3.80" },
     { name = "mlflow", specifier = ">=3.9.0" },
+    { name = "nvidia-cudnn-frontend", specifier = "==1.23.0" },
     { name = "nvidia-modelopt", specifier = "==0.44.0rc5", index = "https://pypi.nvidia.com/" },
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
     { name = "torch", marker = "sys_platform == 'never'" },
