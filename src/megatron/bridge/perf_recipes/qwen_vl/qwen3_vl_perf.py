@@ -23,9 +23,9 @@ Naming convention::
 """
 
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
-from megatron.bridge.recipes.qwen.qwen3_moe import (
-    qwen3_30b_a3b_pretrain_config,
-    qwen3_235b_a22b_pretrain_config,
+from megatron.bridge.recipes.qwen_vl.qwen3_vl import (
+    qwen3_vl_30b_a3b_pretrain_mock_config,
+    qwen3_vl_235b_a22b_pretrain_mock_config,
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -38,7 +38,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× GB300, BF16, EP=64."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -50,6 +50,8 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -74,7 +76,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
 def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× GB300, FP8 current-scaling, EP=64."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -86,6 +88,8 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -110,7 +114,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× GB300, MXFP8, EP=64."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -122,6 +126,8 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -151,7 +157,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× GB200, BF16, PP=8 EP=8."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -163,6 +169,8 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -187,7 +195,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
 def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× GB200, FP8 current-scaling, PP=8 EP=8."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -199,6 +207,8 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -223,7 +233,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
 
 def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× GB200, MXFP8, PP=8 EP=8."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -235,6 +245,8 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -264,7 +276,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 def qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× B200, BF16, PP=8 VP=4 EP=8."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -276,6 +288,8 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -296,7 +310,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
 
 def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× B200, FP8 current-scaling, PP=8 VP=4 EP=8."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -308,6 +322,8 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -328,7 +344,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
 
 def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× B200, MXFP8, PP=8 VP=4 EP=8."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -340,6 +356,8 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -366,7 +384,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
 
 def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 256× H100, BF16, TP=2 PP=8 VP=4 EP=32."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -378,6 +396,8 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
@@ -398,7 +418,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
 
 def qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 256× H100, FP8 current-scaling, TP=2 PP=8 VP=4 EP=32."""
-    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -410,6 +430,8 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
@@ -435,7 +457,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× GB300, BF16, EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -447,6 +469,8 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -471,7 +495,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× GB300, FP8 current-scaling, EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -483,6 +507,8 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -507,7 +533,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× GB300, MXFP8, EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -519,6 +545,8 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -548,7 +576,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× GB200, BF16, EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -560,6 +588,8 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -584,7 +614,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× GB200, FP8 current-scaling, EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -596,6 +626,8 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -620,7 +652,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× GB200, MXFP8, EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -632,6 +664,8 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -661,7 +695,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× B200, BF16, EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -673,6 +707,8 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -694,7 +730,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× B200, FP8 current-scaling, EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -706,6 +742,8 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -727,7 +765,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× B200, MXFP8, EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -739,6 +777,8 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -765,7 +805,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 16× H100, BF16, PP=2 VP=12 EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -777,6 +817,8 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -800,7 +842,7 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
 def qwen3_vl_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 16× H100, FP8 current-scaling, PP=2 VP=12 EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
@@ -812,6 +854,8 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
