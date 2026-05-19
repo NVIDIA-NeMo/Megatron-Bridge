@@ -99,8 +99,7 @@ def convert(source_dir: str, output_dir: str, max_count: int) -> None:
             _ensure_extracted(subset_dir, "train_images.zip")
 
             parquet_files = sorted(
-                f for f in os.listdir(subset_dir)
-                if f.startswith("train-") and f.endswith(".parquet")
+                f for f in os.listdir(subset_dir) if f.startswith("train-") and f.endswith(".parquet")
             )
             if not parquet_files:
                 logger.debug("No train parquets in subset %s, skipping", subset)
@@ -109,16 +108,15 @@ def convert(source_dir: str, output_dir: str, max_count: int) -> None:
             for pf in parquet_files:
                 df = pd.read_parquet(os.path.join(subset_dir, pf))
                 pf_stem = pf.replace(".parquet", "")
-                for idx, (_, row) in enumerate(tqdm(df.iterrows(), total=len(df), desc=f"{subset}/{pf}", unit="sample")):
+                for idx, (_, row) in enumerate(
+                    tqdm(df.iterrows(), total=len(df), desc=f"{subset}/{pf}", unit="sample")
+                ):
                     if row["images"] is None or len(row["images"]) == 0:
                         total_skipped += 1
                         continue
 
                     try:
-                        imgs = [
-                            open(os.path.join(subset_dir, ref["path"]), "rb").read()
-                            for ref in row["images"]
-                        ]
+                        imgs = [open(os.path.join(subset_dir, ref["path"]), "rb").read() for ref in row["images"]]
                     except Exception as exc:
                         logger.warning("Skipping %s/%s idx=%d: %s", subset, pf, idx, exc)
                         total_skipped += 1
@@ -129,16 +127,22 @@ def convert(source_dir: str, output_dir: str, max_count: int) -> None:
                     if n_placeholders != len(imgs):
                         logger.warning(
                             "Skipping %s/%s idx=%d: %d <image> placeholders but %d images",
-                            subset, pf, idx, n_placeholders, len(imgs),
+                            subset,
+                            pf,
+                            idx,
+                            n_placeholders,
+                            len(imgs),
                         )
                         total_skipped += 1
                         continue
 
-                    sink.write({
-                        "__key__": f"{subset}__{pf_stem}__{idx:06d}",
-                        "jpgs": pickle.dumps(imgs),
-                        "json": json.dumps(conversation).encode(),
-                    })
+                    sink.write(
+                        {
+                            "__key__": f"{subset}__{pf_stem}__{idx:06d}",
+                            "jpgs": pickle.dumps(imgs),
+                            "json": json.dumps(conversation).encode(),
+                        }
+                    )
                     total_written += 1
 
     logger.info("Wrote %d samples (%d skipped) → %s", total_written, total_skipped, output_dir)
