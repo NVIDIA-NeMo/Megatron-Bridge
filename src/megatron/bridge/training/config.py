@@ -715,6 +715,9 @@ class LoggerConfig(MTrainLoggerConfig):
     mlflow_description: Optional[str] = None
     """Optional description for the MLFlow run, rendered in the UI Description panel."""
 
+    mlflow_log_artifacts: bool = True
+    """Whether to upload checkpoint artifacts to MLFlow via HTTP after each save."""
+
     comet_project: Optional[str] = None
     """The Comet ML project name. Comet logging is disabled when this is None."""
 

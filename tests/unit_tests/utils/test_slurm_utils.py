@@ -128,6 +128,29 @@ class TestParseSLURMNodelist:
         """Test parsing preserves zero-padded numbers."""
         assert _parse_slurm_nodelist("node[001-100]") == "node001"
 
+    def test_mixed_entries_bracket_in_middle(self):
+        """First entry is a plain node; a bracketed entry appears later in the list."""
+        nodelist = "nodeA,nodeB[001,003],nodeC"
+        assert _parse_slurm_nodelist(nodelist) == "nodeA"
+
+    def test_mixed_entries_bracket_first(self):
+        """First entry uses bracket expansion, followed by plain nodes."""
+        nodelist = "nodeA[001-003],nodeB,nodeC"
+        assert _parse_slurm_nodelist(nodelist) == "nodeA001"
+
+    def test_multiple_bracket_groups(self):
+        """Multiple bracketed groups in the list — must not merge them."""
+        assert _parse_slurm_nodelist("nodeA[001-003],nodeB[005-007]") == "nodeA001"
+
+    def test_mixed_plain_and_bracketed_entries(self):
+        """Long list of plain hostnames with a bracketed entry buried in the middle."""
+        nodelist = (
+            "hostA01,hostA02,hostB01,hostA03,hostA04,hostB02,"
+            "hostC[10,12],hostA05,hostB03,hostC04,hostA06,"
+            "hostC05,hostA07,hostB04,hostA08"
+        )
+        assert _parse_slurm_nodelist(nodelist) == "hostA01"
+
 
 class TestResolveSLURMMasterAddr:
     """Test resolve_slurm_master_addr function."""
