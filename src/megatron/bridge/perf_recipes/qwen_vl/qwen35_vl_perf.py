@@ -67,7 +67,7 @@ def _qwen35_vl_perf_common(cfg: ConfigContainer) -> None:
     cfg.model.freeze_vision_model = False
 
 
-def _qwen35_vl_perf_post(cfg: ConfigContainer) -> None:
+def _qwen35_vl_perf_post(cfg: ConfigContainer, *, clear_cuda_graph_scope: bool = False) -> None:
     """VLM post-overrides that must run after ``_benchmark_common``.
 
     Qwen3.5-VL disables RoPE fusion and CUDA graphs for VLM variable-length
@@ -75,6 +75,8 @@ def _qwen35_vl_perf_post(cfg: ConfigContainer) -> None:
     """
     cfg.model.apply_rope_fusion = False
     cfg.model.cuda_graph_impl = "none"
+    if clear_cuda_graph_scope:
+        cfg.model.cuda_graph_scope = None
     cfg.optimizer.overlap_param_gather = False
 
 
@@ -350,7 +352,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_perf_post(cfg, clear_cuda_graph_scope=True)
     return cfg
 
 
@@ -542,7 +544,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_perf_post(cfg, clear_cuda_graph_scope=True)
     return cfg
 
 
@@ -592,7 +594,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_perf_post(cfg, clear_cuda_graph_scope=True)
     return cfg
 
 
@@ -791,7 +793,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_perf_post(cfg, clear_cuda_graph_scope=True)
     return cfg
 
 
@@ -841,7 +843,7 @@ def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_perf_post(cfg, clear_cuda_graph_scope=True)
     return cfg
 
 

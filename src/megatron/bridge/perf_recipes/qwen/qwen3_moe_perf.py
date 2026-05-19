@@ -1593,6 +1593,7 @@ def qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    cfg.model.moe_hybridep_num_sms = 16
     return cfg
 
 
@@ -1640,6 +1641,8 @@ def qwen3_next_80b_a3b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_force_load_balancing = True
 
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.expert_model_parallel_size = 64
     cfg.model.expert_tensor_parallel_size = 1
     cfg.train.global_batch_size = 1024
@@ -1691,10 +1694,14 @@ def qwen3_next_80b_a3b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_force_load_balancing = True
 
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.expert_model_parallel_size = 128
     cfg.model.expert_tensor_parallel_size = 1
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
