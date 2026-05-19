@@ -1212,6 +1212,8 @@ def save_checkpoint(
             )
 
         def mlflow_finalize_fn() -> None:
+            if not state.cfg.logger.mlflow_log_artifacts:
+                return
             mlflow_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
