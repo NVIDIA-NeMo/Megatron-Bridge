@@ -24,6 +24,7 @@ from torch.distributed.run import main as torchrun_main
 from megatron.bridge.recipes.qwen import qwen3_4b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
+from tests.functional_tests.test_groups.ckpts.utils import ensure_mcore_checkpoint_dir
 
 
 BASE_DIR = "/workspace/test_ckpts/qwen3_4b"
@@ -159,7 +160,7 @@ class TestQwen3Ckpt:
             ],
         )
 
-        # Run MLM script
+        ensure_mcore_checkpoint_dir(MCORE_CKPT)
         torchrun_main()
 
     def test_remove_artifacts(self):

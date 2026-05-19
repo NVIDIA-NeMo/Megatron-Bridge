@@ -12,4 +12,4 @@ PEFT on image-text datasets. The finetuned model can be re-exported to
 
 For the full setup, conversion, inference, training, and LoRA merge /
 adapter export workflows, see
-[`examples/models/vlm/gemma4_vl/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/gemma4_vl/README.md).
+[`examples/models/gemma/gemma4_vl/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gemma/gemma4_vl/README.md).
