@@ -65,9 +65,9 @@ def patch_kimi_vision_processor(hf_model_path: str):
         pass
 
 
-def pre_expand_image_tokens(input_ids, grid_thws, image_token_id, spatial_merge_size=2):
-    """Pre-expand single image placeholders to N placeholders matching vision
-    feature count.
+def pre_expand_vision_tokens(input_ids, grid_thws, vision_token_id, spatial_merge_size=2):
+    """Pre-expand single vision placeholders (image or video) to N placeholders
+    matching vision feature count.
 
     With PP > 1 the pipeline schedule needs to know the actual sequence length
     upfront.  Dynamic expansion inside the model changes seq_length during
@@ -86,8 +86,8 @@ def pre_expand_image_tokens(input_ids, grid_thws, image_token_id, spatial_merge_
     expanded = []
     feat_idx = 0
     for token_id in input_ids[0]:
-        if token_id.item() == image_token_id and feat_idx < len(feature_counts):
-            expanded.extend([image_token_id] * feature_counts[feat_idx])
+        if token_id.item() == vision_token_id and feat_idx < len(feature_counts):
+            expanded.extend([vision_token_id] * feature_counts[feat_idx])
             feat_idx += 1
         else:
             expanded.append(token_id.item())
@@ -177,12 +177,13 @@ def process_video_inputs(processor, video_path: str, prompt: str, *, fps: float 
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     text_inputs = processor(text=[text], padding=True, return_tensors="pt")
     video_proc = processor.video_processor(videos=[frames], return_tensors="pt", do_sample_frames=False)
-    # processor(text=...) without videos produces a single <|video_pad|> placeholder (id 151656).
+    # processor(text=...) without videos produces a single <|video_pad|> placeholder.
     # Pre-expand to match actual vision feature count so PP send/recv shapes are correct.
-    input_ids = pre_expand_image_tokens(
+    video_token_id = processor.tokenizer.convert_tokens_to_ids("<|video_pad|>")
+    input_ids = pre_expand_vision_tokens(
         text_inputs["input_ids"],
         video_proc["video_grid_thw"],
-        image_token_id=151656,  # <|video_pad|> for Qwen-VL family
+        vision_token_id=video_token_id,
     )
     return input_ids, video_proc.get("pixel_values_videos"), video_proc.get("video_grid_thw")
 
@@ -234,7 +235,7 @@ def _process_kimi_inputs(processor, image_path, prompt, image_token_id):
     ]
     inputs = processor(messages=messages)
     grid_thws = getattr(inputs, "grid_thws", None)
-    input_ids = pre_expand_image_tokens(inputs.input_ids, grid_thws, image_token_id)
+    input_ids = pre_expand_vision_tokens(inputs.input_ids, grid_thws, image_token_id)
     return input_ids, inputs.pixel_values, grid_thws, None, None
 
 

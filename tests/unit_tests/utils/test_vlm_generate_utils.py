@@ -141,13 +141,14 @@ class TestProcessVideoInputs:
     def test_video_path_pre_expands_video_tokens(self):
         """Video path: fetch_video → processor → video_processor → pre-expand <|video_pad|>."""
         # Single <|video_pad|> placeholder (id 151656). With grid_thw=[1, 4, 4] and
-        # spatial_merge_size=2, pre_expand_image_tokens expands it to 1*(4//2)*(4//2)=4 tokens.
+        # spatial_merge_size=2, pre_expand_vision_tokens expands it to 1*(4//2)*(4//2)=4 tokens.
         text_input_ids = torch.tensor([[100, 151656, 200]])
         video_grid_thw = torch.tensor([[1, 4, 4]])
 
         proc = mock.MagicMock()
         proc.apply_chat_template.return_value = "VID_TEMPLATED"
         proc.return_value = {"input_ids": text_input_ids}
+        proc.tokenizer.convert_tokens_to_ids.return_value = 151656
         proc.video_processor.return_value = {
             "video_grid_thw": video_grid_thw,
             "pixel_values_videos": "VID_PIXELS",

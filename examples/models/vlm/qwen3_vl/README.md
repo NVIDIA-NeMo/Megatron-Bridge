@@ -113,6 +113,12 @@ See the [peft.sh](peft.sh) script for LoRA fine-tuning with sequence-packing.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
+## Controlling visual tokens computation budget
+Three independent CLI-overridable controls bound a sample's GPU cost. They compose:
+- **`dataset.min_pixels` / `dataset.max_pixels`** — image/frame resolutions lower and upper bound (defaults `200704` / `1003520`). 
+- **`dataset.max_num_images` / `dataset.max_num_frames`** - limit count of images/frames (defaults `10` / `60`). Too many images → sample is dropped. Too many frames → frame list truncated.
+- **`dataset.max_visual_tokens`** — limit total visual tokens across all images and frames in a sample, computed post-rescaling as `prod(T,H,W) // merge_size²` (default `16384`; set to `None` to disable). Catches cases the other two miss (few images at high resolution, or many at low resolution). Exceeding samples are dropped.
+
 ## Finetuning with Energon Dataset
 
 Follow the instructions [here](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/multimodal#pretraining) to prepare `LLaVA-Pretrain` dataset in Energon format. Change the file `.nv-meta/dataset.yaml` to the following:
@@ -132,9 +138,9 @@ We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw
 
 ## Dataset with Multiple Images
 
-Below is the example 
+Below is an example for finetuning on a dataset containing multiple images in a sample, using a subset of [TIGER-Lab/Mantis-Instruct](https://huggingface.co/datasets/TIGER-Lab/Mantis-Instruct) dataset.
 
-1. Download the LLavA-Pretrain dataset from Hugging Face and unzip the images folder (NOTE: 79GB of disk space required):
+1. Download the `llava_665k_multi` subset of TIGER-Lab/Mantis-Instruct dataset from Hugging Face and unzip the images folder (NOTE: 44GB of disk space required):
 
     ```
     pip install -U "huggingface_hub[cli]"
@@ -144,17 +150,16 @@ Below is the example
         --local-dir /path/to/Mantis-Instruct-LLaVA    
     ```
 
-3. Run the following script to convert the data to webdataset format:
+2. Run the following script to convert the data to webdataset format:
 
     ```
-    cd <megatron-lm dir>
     python examples/models/vlm/qwen3_vl/prepare_mantis_energon.py \
         --source-dir/path/to/Mantis-Instruct-LLaVA \
         --output-dir /path/to/Mantis-Instruct-LLaVA/wds \
         --max-samples-per-tar 10000
     ```
 
-4. Run the following command to convert to megatron-energon format:
+3. Run the following command to convert to megatron-energon format:
 
     ```
     cd /path/to/Mantis-Instruct-LLaVA/wds
@@ -174,7 +179,7 @@ Below is the example
     > Please enter a webdataset field name for 'answer_weights' (typing.Optional[torch.Tensor], default: None):
     ```
 
-5. Change the file `.nv-meta/dataset.yaml` to the following:
+4. Change the file `.nv-meta/dataset.yaml` to the following:
 
     ```yaml
     __module__: megatron.bridge.recipes.qwen_vl.data.energon.task_encoder
@@ -184,15 +189,8 @@ Below is the example
       conversation: json
     ```
 
-Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [peft_energon.sh](peft_energon.sh) and run the script.
+Follow previous instruction to run the finetuning with the prepared dataset.
 
-
-
-#### Controlling visual tokens computation budget
-Three independent CLI-overridable controls bound a sample's GPU cost. They compose:
-- **`dataset.min_pixels` / `dataset.max_pixels`** — image/frame resolutions lower and upper bound (defaults `200704` / `1003520`). 
-- **`dataset.max_num_images` / `dataset.max_num_frames`** - limit count of images/frames (defaults `10` / `60`). Too many images → sample is dropped. Too many frames → frame list truncated.
-- **`dataset.max_visual_tokens`** — limit total visual tokens across all images and frames in a sample, computed post-rescaling as `prod(T,H,W) // merge_size²` (default `16384`; set to `None` to disable). Catches cases the other two miss (few images at high resolution, or many at low resolution). Exceeding samples are dropped.
 
 ## Evaluation
 
