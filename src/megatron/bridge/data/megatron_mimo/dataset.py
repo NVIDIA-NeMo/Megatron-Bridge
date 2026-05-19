@@ -145,7 +145,15 @@ class MegatronMIMODataset(Dataset):
             if processor is not None:
                 # Apply HF processor to get preprocessed inputs
                 # This typically returns pixel_values for vision, input_features for audio
-                processed = processor(raw_input, return_tensors="pt")
+                kwargs = {"return_tensors": "pt"}
+                # Audio feature extractors (e.g. Whisper) warn if sampling_rate
+                # is omitted; forward the processor's native rate when available.
+                sr = getattr(processor, "sampling_rate", None) or getattr(
+                    getattr(processor, "feature_extractor", None), "sampling_rate", None
+                )
+                if sr is not None:
+                    kwargs["sampling_rate"] = sr
+                processed = processor(raw_input, **kwargs)
                 # Remove batch dimension added by processor
                 modality_inputs[modality_name] = {
                     k: v.squeeze(0) if isinstance(v, torch.Tensor) else v for k, v in processed.items()

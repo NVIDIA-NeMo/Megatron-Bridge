@@ -32,6 +32,10 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
 )
+from megatron.bridge.models.falcon_h1 import (
+    FalconH1Bridge,
+    FalconH1ModelProvider,
+)
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,
     CodeGemmaModelProvider7B,
@@ -58,6 +62,7 @@ from megatron.bridge.models.gemma_vl import (
 )
 from megatron.bridge.models.glm import (
     GLM45Bridge,
+    GLM47FlashBridge,
 )
 from megatron.bridge.models.glm_moe_dsa import (
     GLM5Bridge,
@@ -128,6 +133,9 @@ from megatron.bridge.models.qwen_audio import (
     Qwen2AudioModelProvider,
 )
 from megatron.bridge.models.qwen_omni import (
+    Qwen3OmniBridge,
+    Qwen3OmniModel,
+    Qwen3OmniModelProvider,
     Qwen25OmniBridge,
     Qwen25OmniModel,
     Qwen25OmniModelProvider,
@@ -170,6 +178,8 @@ __all__ = [
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
+    "FalconH1Bridge",
+    "FalconH1ModelProvider",
     "Gemma3ModelProvider",
     "Gemma3ModelProvider1B",
     "Gemma3ModelProvider4B",
@@ -185,6 +195,7 @@ __all__ = [
     "Gemma2ModelProvider9B",
     "Gemma2ModelProvider27B",
     "GLM45Bridge",
+    "GLM47FlashBridge",
     "GLM5Bridge",
     "GLM45VBridge",
     "GLM45VModelProvider",
@@ -249,6 +260,9 @@ __all__ = [
     "Qwen25OmniModel",
     "Qwen25OmniBridge",
     "Qwen25OmniModelProvider",
+    "Qwen3OmniModel",
+    "Qwen3OmniBridge",
+    "Qwen3OmniModelProvider",
     "SarvamMLABridge",
     "SarvamMoEBridge",
 ]

@@ -37,6 +37,8 @@ try:
 except ImportError:
     EnergyMonitor = None  # type: ignore[assignment]
 
+from megatron.core.process_groups_config import ProcessGroupCollection
+
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
@@ -149,6 +151,11 @@ class GlobalState:
         self._nvrx_straggler_created: bool = False
         self._energy_monitor: Optional[Any] = None
         self._energy_monitor_created: bool = False
+        # Eval-time context parallelism: set by the caller when eval_context_parallel_size
+        # differs from the training CP degree. ``eval_context_parallel_rebinding.eval_cp_context``
+        # reads these.
+        self._train_pgs: Optional[ProcessGroupCollection] = None
+        self._eval_pgs: Optional[ProcessGroupCollection] = None
 
     @property
     def cfg(self) -> Optional[ConfigContainer]:

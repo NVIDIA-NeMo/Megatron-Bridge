@@ -125,7 +125,10 @@ def _qwen35_vl_apply_common(
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
-    cfg.dataset.pack_sequences_in_batch = False
+    # Enable THD packing by default for SFT/PEFT: the step function builds
+    # cu_seqlens so attention skips padding FLOPs on short samples (especially
+    # when PP/EP forces micro-batches to pad to seq_length).
+    cfg.dataset.pack_sequences_in_batch = True
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -424,7 +427,7 @@ def qwen35_vl_35b_a3b_fsdp_sft_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> 
 def qwen35_vl_122b_a10b_sft_config(hf_path: str = "Qwen/Qwen3.5-122B-A10B") -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 122B-A10B (MoE).
 
-    Default configuration: 4 nodes, 32 GPUs
+    Default configuration: 6 nodes, 48 GPUs
     - TP=2, PP=6, EP=8
     - LR=2e-5 (full SFT)
     - Sequence length: 4096
