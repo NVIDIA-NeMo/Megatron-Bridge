@@ -486,7 +486,7 @@ def set_post_overrides(
                 f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} based on {num_gpus} GPUs."
             )
 
-    # MLPerf v5.1 vs Megatron-Bridge 26.04.x parity (opt-in via env). Must run
+    # MLPerf v6.0 vs Megatron-Bridge 26.04.x parity (opt-in via env). Must run
     # AFTER set_workload_base_configs / _set_common_perf_overrides (which
     # force-disables use_transformer_engine_op_fuser) AND after the recipe
     # builder has populated cfg.comm_overlap. set_post_overrides is the last
@@ -497,7 +497,7 @@ def set_post_overrides(
 
 
 def _apply_mlperf_parity_code_overrides(recipe: ConfigContainer, compute_dtype: str) -> ConfigContainer:
-    """Apply MLPerf v5.1 apples-to-apples recipe knobs; gated by MLPERF_PARITY_{F16_ATTN,FP4_ATTN,405B} env vars (set by perf_plugins)."""
+    """Apply MLPerf v6.0 apples-to-apples recipe knobs; gated by MLPERF_PARITY_{F16_ATTN,FP4_ATTN,405B} env vars (set by perf_plugins)."""
     f16_only = bool(os.environ.get("MLPERF_PARITY_F16_ATTN"))
     fp4_attn = bool(os.environ.get("MLPERF_PARITY_FP4_ATTN"))
     parity_405b = bool(os.environ.get("MLPERF_PARITY_405B"))
@@ -550,7 +550,10 @@ def _apply_mlperf_parity_code_overrides(recipe: ConfigContainer, compute_dtype: 
         else:
             skipped.append("model.tp_only_amax_red")
 
-    # Knob 5: CUDA graphs (NeMo MCORE_CUDA_GRAPH=1 + FULL_CUDA_GRAPH=1). MBridge llama recipes hardcode "none".
+    # Knob 5: CUDA graphs (NeMo MCORE_CUDA_GRAPH=1 + FULL_CUDA_GRAPH=1). Note: the
+    # pretrain_llama3.1 workload base config on GB200 already defaults cuda_graph_impl=local,
+    # so this knob is typically a no-op for that recipe. Kept for explicit gating + for
+    # recipes where the default is still "none".
     if hasattr(recipe.model, "cuda_graph_impl"):
         recipe.model.cuda_graph_impl = "local"
         applied.append("model.cuda_graph_impl=local")

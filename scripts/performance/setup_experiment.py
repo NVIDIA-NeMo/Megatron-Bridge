@@ -651,7 +651,7 @@ if __name__ == "__main__":
             task=args.task,
         )
 
-    # --mlperf_flavor: mutate args in place to apply MLPerf v5.1 apples-to-apples shape/dataset/mounts; sets MLPERF_PARITY_* env vars for perf_plugins to pick up.
+    # --mlperf_flavor: mutate args in place to apply MLPerf v6.0 apples-to-apples shape/dataset/mounts; sets MLPERF_PARITY_* env vars for perf_plugins to pick up.
     if getattr(args, "mlperf_flavor", False):
         from utils.mlperf_flavor import apply_mlperf_flavor
         apply_mlperf_flavor(args)

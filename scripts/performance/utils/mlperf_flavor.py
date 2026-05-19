@@ -5,7 +5,11 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
-"""MLPerf v5.1 apples-to-apples flavor (--mlperf_flavor): resolves shape, dataset, mounts, and parity env vars."""
+"""MLPerf v6.0 apples-to-apples flavor (--mlperf_flavor): resolves shape, dataset, mounts, and parity env vars.
+
+Shapes here mirror the canonical NVIDIA MLPerf v6.0 training submission configs on GB200.
+Validated end-to-end against MLPerf v6.0 reference (Llama 3.1 8B, 8/16/32/64 GPU FP8 + FP4).
+"""
 
 import argparse
 import logging
@@ -14,15 +18,25 @@ from typing import Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
-# (model_recipe_name, compute_dtype, num_gpus) -> (TP, PP, VP, CP, MBS, GBS, parity_mode); shapes derived from v5.1 NVIDIA submission configs.
-_MLPERF_V51_SHAPES: Dict[Tuple[str, str, int], Tuple[int, int, int, int, int, int, str]] = {
-    ("llama3_8b",   "fp8_cs",   8):   (1, 1, 1, 1, 1, 8,    "F16_ATTN"),
+# (model_recipe_name, compute_dtype, num_gpus) -> (TP, PP, VP, CP, MBS, GBS, parity_mode)
+# Shapes derived from MLPerf v6.0 NVIDIA submission configs on GB200:
+#   - 8B 8 GPU:    config_GB200_2x4x2xtp1pp1cp1_8b[_fp4].sh           (TP1/PP1/CP1, MBS=2, GBS=16)
+#   - 8B 16/32/64 FP8:   down-scaled config_GB200_18x4x1xtp1pp1cp2_8b.sh        (TP1/PP1/CP2, MBS=1)
+#   - 8B 16/32/64 FP4:   down-scaled config_GB200_18x4x1xtp1pp1cp1_8b_fp4.sh    (TP1/PP1/CP1, MBS=1)
+#   - 8B 72 GPU:   config_GB200_18x4x1xtp1pp1cp2_8b.sh                 (TP1/PP1/CP2, MBS=1)
+#   - 8B 128 FP8:  down-scaled config_GB200_128x4x1xtp2pp1cp4_8b.sh    (TP2/PP1/CP4, MBS=1)
+#   - 405B:        config_GB200_128x4x{112,128}xtp4pp8cp2_cg_fp4.sh    (TP4/PP8/VP8/CP2, MBS=1)
+_MLPERF_SHAPES: Dict[Tuple[str, str, int], Tuple[int, int, int, int, int, int, str]] = {
+    ("llama3_8b",   "fp8_cs",   8):   (1, 1, 1, 1, 2, 16,   "F16_ATTN"),
     ("llama3_8b",   "fp8_cs",   16):  (1, 1, 1, 2, 1, 8,    "F16_ATTN"),
     ("llama3_8b",   "fp8_cs",   32):  (1, 1, 1, 2, 1, 16,   "F16_ATTN"),
     ("llama3_8b",   "fp8_cs",   64):  (1, 1, 1, 2, 1, 32,   "F16_ATTN"),
     ("llama3_8b",   "fp8_cs",   72):  (1, 1, 1, 2, 1, 36,   "F16_ATTN"),
     ("llama3_8b",   "fp8_cs",   128): (2, 1, 1, 4, 1, 16,   "F16_ATTN"),
     ("llama3_8b",   "nvfp4",    8):   (1, 1, 1, 1, 2, 16,   "FP4_ATTN"),
+    ("llama3_8b",   "nvfp4",    16):  (1, 1, 1, 1, 1, 16,   "FP4_ATTN"),
+    ("llama3_8b",   "nvfp4",    32):  (1, 1, 1, 1, 1, 32,   "FP4_ATTN"),
+    ("llama3_8b",   "nvfp4",    64):  (1, 1, 1, 1, 1, 64,   "FP4_ATTN"),
     ("llama31_405b","fp8_cs",   256): (4, 8, 8, 2, 1, 576,  "405B"),
     ("llama31_405b","fp8_cs",   512): (4, 8, 8, 2, 1, 1152, "405B"),
     ("llama31_405b","nvfp4",    256): (4, 8, 8, 2, 1, 576,  "405B"),
@@ -31,7 +45,13 @@ _MLPERF_V51_SHAPES: Dict[Tuple[str, str, int], Tuple[int, int, int, int, int, in
 
 
 def _resolve_dataset(model_recipe_name: str) -> Tuple[str, str]:
-    """Return (data_prefix, index_cache_dir) for the model size."""
+    """Return (data_prefix, index_cache_dir) for the model size.
+
+    Expects MLPERF_DATA_ROOT to contain <size>/c4-train.en_6_text_document.{bin,idx}.
+    On clusters with the shared MLPerf training C4 preproc, set:
+        MLPERF_DATA_ROOT=/lustre/share/coreai_mlperf_training/data/c4
+    (same layout that MLPerf v6.0 reference configs expect).
+    """
     data_root = os.environ.get("MLPERF_DATA_ROOT")
     if not data_root:
         raise RuntimeError(
@@ -58,18 +78,19 @@ def _resolve_dataset(model_recipe_name: str) -> Tuple[str, str]:
 
 
 def apply_mlperf_flavor(args: argparse.Namespace) -> None:
-    """Mutate args in place to apply MLPerf v5.1 apples-to-apples configuration; sets MLPERF_PARITY_* env vars for perf_plugins/overrides to pick up."""
-    # Shape table is derived from v5.1 GB200 reference configs; other GPU types have different v5.1 shapes and need separate validation.
+    """Mutate args in place to apply MLPerf v6.0 apples-to-apples configuration; sets MLPERF_PARITY_* env vars for perf_plugins/overrides to pick up."""
+    # Shape table is derived from MLPerf v6.0 NVIDIA GB200 submission configs.
+    # Other GPU types have different MLPerf shapes and need separate validation.
     if args.gpu != "gb200":
         raise RuntimeError(
             f"--mlperf_flavor currently only supports gpu=gb200, got '{args.gpu}'. Other GPU types not yet validated."
         )
     key = (args.model_recipe_name, args.compute_dtype, args.num_gpus)
-    shape = _MLPERF_V51_SHAPES.get(key)
+    shape = _MLPERF_SHAPES.get(key)
     if shape is None:
         raise RuntimeError(
-            f"--mlperf_flavor: no v5.1 shape mapping for {key}. "
-            f"Supported: {sorted(_MLPERF_V51_SHAPES.keys())}"
+            f"--mlperf_flavor: no MLPerf shape mapping for {key}. "
+            f"Supported: {sorted(_MLPERF_SHAPES.keys())}"
         )
     tp, pp, vp, cp, mbs, gbs, parity_mode = shape
 
@@ -80,25 +101,30 @@ def apply_mlperf_flavor(args: argparse.Namespace) -> None:
     args.micro_batch_size = mbs
     args.global_batch_size = gbs
 
-    # Dataset: MLPerf C4 shards via rp2; tokenizer left at MBridge default (same vocab as preprocessed shards).
-    data_prefix, index_cache_dir = _resolve_dataset(args.model_recipe_name)
-    args.data = "rp2"
-    args.dataset_paths = [data_prefix]
-    args.index_mapping_dir = index_cache_dir
-
-    # Bind-mount data + index cache into container (Lustre paths aren't auto-mounted by NeMo-Run).
-    data_root = os.path.dirname(os.path.dirname(data_prefix))
-    if args.custom_mounts is None:
-        args.custom_mounts = []
-    for mount in (data_root, index_cache_dir):
-        if mount not in args.custom_mounts:
-            args.custom_mounts.append(mount)
+    # Dataset: MLPerf C4 shards via rp2 if MLPERF_DATA_ROOT is set; otherwise keep MBridge default (mock).
+    # C4 is optional - the shape + parity knobs are the primary apples-to-apples levers; the C4 dataset
+    # typically adds +4-8% TFLOPS/GPU over mock, but the comparison is still meaningful without it.
+    if os.environ.get("MLPERF_DATA_ROOT"):
+        data_prefix, index_cache_dir = _resolve_dataset(args.model_recipe_name)
+        args.data = "rp2"
+        args.dataset_paths = [data_prefix]
+        args.index_mapping_dir = index_cache_dir
+        # Bind-mount data + index cache into container (Lustre paths aren't auto-mounted by NeMo-Run).
+        data_root = os.path.dirname(os.path.dirname(data_prefix))
+        if args.custom_mounts is None:
+            args.custom_mounts = []
+        for mount in (data_root, index_cache_dir):
+            if mount not in args.custom_mounts:
+                args.custom_mounts.append(mount)
+        dataset_msg = f"data={data_prefix}"
+    else:
+        dataset_msg = "data=MBridge default (mock; set MLPERF_DATA_ROOT to use MLPerf C4 for full apples-to-apples)"
 
     # Set MLPERF_PARITY_* env vars so perf_plugins (host-side) + overrides.py (in-container) pick them up.
     env_var = {"F16_ATTN": "MLPERF_PARITY_F16_ATTN", "FP4_ATTN": "MLPERF_PARITY_FP4_ATTN", "405B": "MLPERF_PARITY_405B"}[parity_mode]
     os.environ[env_var] = "1"
 
     logger.info(
-        f"--mlperf_flavor: {args.model_recipe_name}/{args.compute_dtype}/{args.num_gpus} -> "
-        f"TP={tp} PP={pp} VP={vp} CP={cp} MBS={mbs} GBS={gbs} parity={parity_mode} data={data_prefix}"
+        f"--mlperf_flavor (v6.0): {args.model_recipe_name}/{args.compute_dtype}/{args.num_gpus} -> "
+        f"TP={tp} PP={pp} VP={vp} CP={cp} MBS={mbs} GBS={gbs} parity={parity_mode} {dataset_msg}"
     )

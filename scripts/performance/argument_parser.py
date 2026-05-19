@@ -324,7 +324,7 @@ def parse_cli_args():
     data_args.add_argument(
         "--mlperf_flavor",
         action="store_true",
-        help="Apply MLPerf v5.1 apples-to-apples config: forces v5.1 shape per (model_recipe_name, compute_dtype, num_gpus), enables MLPerf-parity recipe/env knobs, and swaps to MLPerf C4 dataset. See utils/mlperf_flavor.py.",
+        help="Apply MLPerf v6.0 apples-to-apples config: forces canonical MLPerf v6.0 shape per (model_recipe_name, compute_dtype, num_gpus), enables MLPerf-parity recipe/env knobs (TE op fuser, BUCKET=768MB, AMAX, CUDA_GRAPH, FP8_DPA-FP4, CUDA_DEVICE_MAX_CONNECTIONS=1, NCCL_{MIN,MAX}_CTAS, NVTE_DPA_FP8_RECIPE), and swaps to MLPerf C4 dataset. GB200 only. See utils/mlperf_flavor.py.",
     )
 
     # Tokenizer configuration

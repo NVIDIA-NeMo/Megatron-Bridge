@@ -512,13 +512,13 @@ class PerfEnvPlugin(Plugin):
         if self.compute_dtype == "nvfp4":
             executor.env_vars["NVTE_USE_FAST_MATH"] = "1"
 
-        # MLPerf v5.1 apples-to-apples parity (opt-in). Runs LAST so it can
+        # MLPerf v6.0 apples-to-apples parity (opt-in). Runs LAST so it can
         # override defaults set by earlier methods (e.g. CUDA_DEVICE_MAX_CONNECTIONS,
         # which _set_num_cuda_device_max_connections set to 32 for GB200).
         self._set_mlperf_parity_env_overrides(executor)
 
     def _set_mlperf_parity_env_overrides(self, executor: "run.Executor"):
-        """Forward MLPerf v5.1 parity env vars host->container; gated by MLPERF_PARITY_{F16_ATTN,FP4_ATTN,405B}; pairs with overrides.py for recipe knobs."""
+        """Forward MLPerf v6.0 parity env vars host->container; gated by MLPERF_PARITY_{F16_ATTN,FP4_ATTN,405B}; pairs with overrides.py for recipe knobs."""
         f16_only = bool(os.environ.get("MLPERF_PARITY_F16_ATTN"))
         fp4_attn = bool(os.environ.get("MLPERF_PARITY_FP4_ATTN"))
         parity_405b = bool(os.environ.get("MLPERF_PARITY_405B"))
@@ -537,17 +537,17 @@ class PerfEnvPlugin(Plugin):
         if bucket_mb:
             executor.env_vars["MLPERF_PARITY_BUCKET_MB"] = bucket_mb
 
-        # DPA recipe + FP4 NVFP4 quantization flags (effective env from v5.1 config source chains).
+        # DPA recipe + FP4 NVFP4 quantization flags (effective env from v6.0 config source chains).
         if fp4_attn:
-            # v5.1 8B FP4: config_common_fp4.sh + _fp8attn.sh effective env (CurrentScaling wins).
+            # v6.0 8B FP4: config_common_fp4.sh + _fp8attn.sh effective env (CurrentScaling wins).
             executor.env_vars["NVTE_DPA_FP8_RECIPE"] = "Float8CurrentScaling"
             executor.env_vars["NVTE_NVFP4_DISABLE_RHT"] = "1"
             executor.env_vars["NVTE_DPA_FP8CS_O_in_F16"] = "1"
             executor.env_vars["NVTE_DPA_FP8_FORMAT"] = "HYBRID"
         elif f16_only or parity_405b:
-            # v5.1 8B FP8, 405B FP8, 405B FP4 all set NVTE_DPA_FP8_RECIPE=F16 (no _fp8attn.sh in source chain).
+            # v6.0 8B FP8, 405B FP8, 405B FP4 all set NVTE_DPA_FP8_RECIPE=F16 (no _fp8attn.sh in source chain).
             executor.env_vars["NVTE_DPA_FP8_RECIPE"] = "F16"
-            # v5.1 405B FP4 also sets NVFP4 quantization flags (config_common_fp4.sh, no _8b.sh override for 405B).
+            # v6.0 405B FP4 also sets NVFP4 quantization flags (config_common_fp4.sh, no _8b.sh override for 405B).
             if parity_405b and self.compute_dtype == "nvfp4":
                 executor.env_vars["NVTE_NVFP4_DISABLE_RHT"] = "1"
                 executor.env_vars["NVTE_NVFP4_DISABLE_STOCHASTIC_ROUNDING"] = "1"
