@@ -206,6 +206,14 @@ class Step35Bridge(MegatronModelBridge):
         provider.num_query_groups = hf_config.num_attention_groups
         provider.num_moe_experts = hf_config.moe_num_experts
         provider.moe_router_topk = hf_config.moe_top_k
+        # HF Step3.5 config.json carries the singular ``share_expert_dim`` field
+        # (per-shared-expert intermediate size, e.g. 1280). MCore's MoE block
+        # uses ``moe_shared_expert_intermediate_size`` to size the shared-expert
+        # FFN (mlp.shared_experts.linear_fc1 / linear_fc2). Forward it here so
+        # the shared-expert branch is built end-to-end.
+        provider.moe_shared_expert_intermediate_size = getattr(
+            hf_config, "share_expert_dim", getattr(hf_config, "share_expert_dims", None)
+        )
         provider.head_wise_attn_gate = hf_config.use_head_wise_attn_gate
         if provider.head_wise_attn_gate:
             assert provider.attention_output_gate is False, (
@@ -280,6 +288,8 @@ class Step35Bridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
             # Dense MLP fc2 (layers 0–2)
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
+            # Shared expert fc2 (runs alongside routed experts on MoE layers)
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.share_expert.down_proj.weight",
             # MoE router
             "decoder.layers.*.mlp.router.weight": "model.layers.*.moe.gate.weight",
             # MoE router bias
@@ -313,9 +323,11 @@ class Step35Bridge(MegatronModelBridge):
                     gate="model.layers.*.moe.gate_proj.weight",
                     up="model.layers.*.moe.up_proj.weight",
                 ),
-                # Shared expert fc1
+                # Shared expert fc1 (gate+up concatenated). MCore names the shared
+                # expert ``mlp.shared_experts`` (plural) — matches DeepSeek / GLM /
+                # Sarvam bridges and is what TransformerLayerSubmodules expects.
                 GatedMLPMapping(
-                    megatron_param="decoder.layers.*.mlp.shared_expert.linear_fc1.weight",
+                    megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
                     gate="model.layers.*.share_expert.gate_proj.weight",
                     up="model.layers.*.share_expert.up_proj.weight",
                 ),
