@@ -6,7 +6,7 @@ The bridge supports four published variants out of the same code path. The on-di
 
 ## MCore Dev Branch Requirement
 
-DSv4 imports require MCore changes that are not yet on a tagged release: PR [#3430](https://github.com/NVIDIA/Megatron-LM/pull/3430), PR [#4458](https://github.com/NVIDIA/Megatron-LM/pull/4458), PR [#4481](https://github.com/NVIDIA/Megatron-LM/pull/4481), and PR [#4518](https://github.com/NVIDIA/Megatron-LM/pull/4518). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch:
+DSv4 imports require MCore changes that are not yet on a tagged release: PR [#3430](https://github.com/NVIDIA/Megatron-LM/pull/3430), PR [#4458](https://github.com/NVIDIA/Megatron-LM/pull/4458), PR [#4481](https://github.com/NVIDIA/Megatron-LM/pull/4481), and PR [#4518](https://github.com/NVIDIA/Megatron-LM/pull/4518), and PR [#4839](https://github.com/NVIDIA/Megatron-LM/pull/4839). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch:
 
 ```bash
 ./scripts/switch_mcore.sh dev
