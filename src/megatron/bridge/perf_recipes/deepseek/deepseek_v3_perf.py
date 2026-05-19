@@ -570,10 +570,12 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 1024× H100, FP8-SC (VP=2, no custom PP layout)."""
+    """DeepSeek V3 pretrain: 1024× H100, FP8-SC (VP=2, auto-applied default PP layout)."""
     cfg = deepseek_v3_pretrain_1024gpu_h100_fp8cs_config()
     cfg.model.virtual_pipeline_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_layout = None
+    # DeepSeek-V3 has 61 layers; (61 // PP) % VP != 0 for (PP=8, VP=2), so a custom layout
+    # is required. The helper's default layout map provides one for this (pp, vp) pair.
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
     return cfg
 
 
