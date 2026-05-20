@@ -343,10 +343,10 @@ For detailed test patterns, see @skills/adding-model-support/tests-and-examples.
 
 ### Examples
 
-Model examples: `examples/models/<brand>/<model>/`
+Model examples: `examples/models/<family>/<model>/`
 
 ```text
-examples/models/<brand>/<model>/
+examples/models/<family>/<model>/
 ├── README.md
 ├── conversion.sh        # HF↔Megatron conversion commands (real model)
 ├── inference.sh         # Generation commands (real model, reasonable output)

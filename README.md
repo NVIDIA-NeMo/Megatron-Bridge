@@ -168,7 +168,7 @@ For a deeper dive into conversion design and advanced usage, see the [models REA
 
 Megatron Bridge provides out-of-the-box bridges and training recipes for a wide range of models, built on top of base model architectures from [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core). Refer to the [models directory](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models) for the full list of model bridges.
 
-| Brand / family | Supported variants | Recipes and examples |
+| Family | Supported variants | Recipes and examples |
 |----------------|--------------------|----------------------|
 | **Bailing** | [Ling 2.0 (Bailing)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/bailing) | [examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/bailing) |
 | **DeepSeek** | [DeepSeek V2 / V2 Lite](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/deepseek), [DeepSeek V3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/deepseek), [DeepSeek V4](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/deepseek_v4) | [DeepSeek V2 recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/deepseek/deepseek_v2.py), [DeepSeek V3 recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/deepseek/deepseek_v3.py), [DeepSeek V4 examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/deepseek_v4) |

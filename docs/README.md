@@ -16,7 +16,7 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 → See [Training Documentation](training/README.md) for comprehensive training guides
 
 **📚 Find model documentation**
-→ Browse [Supported Models](models/README.md), organized by brand and model variant
+→ Browse [Supported Models](models/README.md), organized by family and model variant
 
 **🔧 Migrate from NeMo 2 or Megatron-LM**
 → Check [NeMo 2 Migration Guide](nemo2-migration-guide.md) or [Megatron-LM Migration Guide](megatron-lm-to-megatron-bridge.md)
@@ -76,7 +76,7 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 
 | Document | Purpose | When to Read |
 |----------|---------|--------------|
-| **[Supported Models](models/README.md)** | Brand-organized model documentation | Working with supported model variants |
+| **[Supported Models](models/README.md)** | Family-organized model documentation | Working with supported model variants |
 | **[Adding New Models](adding-new-models.md)** | Guide for adding model support | Extending model support |
 
 ### Training and Customization
@@ -185,9 +185,9 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 
 #### [models/](models/README.md)
 
-- Brand folders such as **[qwen/](models/qwen/index.md)**, **[gemma/](models/gemma/index.md)**, and **[nemotron/](models/nemotron/index.md)**
+- Family folders such as **[qwen/](models/qwen/index.md)**, **[gemma/](models/gemma/index.md)**, and **[nemotron/](models/nemotron/index.md)**
   - Model-variant guides for conversion, training recipes, and architecture notes
-  - Multimodal variants live with their brand families
+  - Multimodal variants live with their model families
 
 #### [training/](training/README.md)
 
@@ -235,7 +235,7 @@ graph TD
     I --> N[Data Parallelism<br/>DDP]
     I --> O[Model Parallelism<br/>TP/PP/VPP]
     
-    D --> P[Brand Index<br/>Model Variants]
+    D --> P[Family Index<br/>Model Variants]
     D --> Q[Model Pages<br/>Recipes and Conversion]
     
     style A fill:#e1f5fe

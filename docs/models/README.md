@@ -1,12 +1,12 @@
 # Supported Models
 
-This directory contains brand-organized documentation for models supported by
+This directory contains family-organized documentation for models supported by
 Megatron Bridge. Each model page covers supported variants, Hugging Face <->
 Megatron Bridge conversion, training recipe links, and model-specific notes.
 
-## Brand Index
+## Family Index
 
-| Brand / family | Model documentation |
+| Family | Model documentation |
 |----------------|---------------------|
 | **DeepSeek** | [DeepSeek V2](deepseek/deepseek-v2.md), [DeepSeek V3](deepseek/deepseek-v3.md), [DeepSeek V4](deepseek/deepseek-v4.md) |
 | **Gemma** | [Gemma 2](gemma/gemma2.md), [Gemma 3](gemma/gemma3.md), [Gemma 3 VL](gemma/gemma3-vl.md), [Gemma 4 VL](gemma/gemma4-vl.md) |
@@ -25,7 +25,7 @@ Megatron Bridge conversion, training recipe links, and model-specific notes.
 ### I want to
 
 **Find model-specific docs**
--> Browse the brand index above or use the navigation for the model's brand.
+-> Browse the family index above or use the navigation for the model's family.
 
 **Convert models between formats**
 -> See [Bridge Guide](../bridge-guide.md) for Hugging Face <-> Megatron
