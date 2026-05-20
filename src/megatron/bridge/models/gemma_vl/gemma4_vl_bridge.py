@@ -75,7 +75,9 @@ class Gemma4VLBridge(MegatronModelBridge):
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
 
-        if not getattr(text_config, "enable_moe_block", False) and getattr(text_config, "hidden_size_per_layer_input", 0):
+        if not getattr(text_config, "enable_moe_block", False) and getattr(
+            text_config, "hidden_size_per_layer_input", 0
+        ):
             raise ValueError(
                 f"Gemma4VLBridge only supports MoE models (enable_moe_block=True) or model without hidden_size_per_layer_input. "
                 f"Model '{getattr(hf_config, '_name_or_path', 'unknown')}' has enable_moe_block=False and hidden_size_per_layer_input={getattr(text_config, 'hidden_size_per_layer_input')}."
@@ -105,6 +107,8 @@ class Gemma4VLBridge(MegatronModelBridge):
         # Global attention overrides
         provider.global_head_dim = getattr(text_config, "global_head_dim", 512)
         provider.num_global_key_value_heads = getattr(text_config, "num_global_key_value_heads", 2)
+
+        provider.attention_k_eq_v = getattr(text_config, "attention_k_eq_v", False)
 
         # Parse partial_rotary_factor
         rope_params = getattr(text_config, "rope_parameters", {})
@@ -354,11 +358,9 @@ class Gemma4VLBridge(MegatronModelBridge):
             ),
             # MoE Router
             "language_model.decoder.layers.*.mlp.router.weight": ("model.language_model.layers.*.router.proj.weight"),
-
             "language_model.decoder.layers.*.mlp.linear_fc2.weight": (
                 "model.language_model.layers.*.mlp.down_proj.weight"
             ),
-
             "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.language_model.layers.*.post_attention_layernorm.weight",
         }
 
