@@ -61,7 +61,7 @@ class TestOptimizerUtils:
         assert optim_cfg.lr == 3e-4
         assert optim_cfg.weight_decay == 0.01
         assert optim_cfg.muon_extra_scale_factor == 1.01
-        assert getattr(optim_cfg, "muon_use_nesterov", getattr(optim_cfg, "muon_nesterov", None)) is False
+        assert optim_cfg.muon_nesterov is False
         assert optim_cfg.muon_momentum == 0.98
         assert optim_cfg.bf16 is True
 
@@ -85,7 +85,7 @@ class TestOptimizerUtils:
         assert optim_cfg.lion_beta2 == 0.95
         assert optim_cfg.muon_scalar_optimizer == "lion"
         assert optim_cfg.muon_extra_scale_factor == 1.01
-        assert getattr(optim_cfg, "muon_use_nesterov", getattr(optim_cfg, "muon_nesterov", None)) is False
+        assert optim_cfg.muon_nesterov is False
         assert optim_cfg.muon_momentum == 0.98
         assert optim_cfg.bf16 is True
 

@@ -20,24 +20,13 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
+from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
+from megatron.core.energy_monitor import EnergyMonitor
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.utils.tensorboard.writer import SummaryWriter
-
-
-# TODO: Remove try/except guards once these land in mcore dev.
-try:
-    from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
-except ImportError:
-    get_async_strategy = None  # type: ignore[assignment]
-
-try:
-    from megatron.core.energy_monitor import EnergyMonitor
-except ImportError:
-    EnergyMonitor = None  # type: ignore[assignment]
-
-from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
@@ -412,21 +401,9 @@ class GlobalState:
             and self.cfg.checkpoint.save is not None
             and self.cfg.checkpoint.async_save
         ):
-            if get_async_strategy is not None:
-                # mcore main path: get_async_strategy selects nvrx vs mcore backend
-                async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
-                async_calls_queue_cls = async_modules["AsyncCallsQueue"]
-                get_write_results_queue_fn = async_modules["get_write_results_queue"]
-            else:
-                # mcore dev path: nvrx modules merged into core, no strategy selector
-                from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
-                from megatron.core.dist_checkpointing.strategies.filesystem_async import (
-                    get_write_results_queue,
-                )
-
-                async_strategy = None
-                async_calls_queue_cls = AsyncCallsQueue
-                get_write_results_queue_fn = get_write_results_queue
+            async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
+            async_calls_queue_cls = async_modules["AsyncCallsQueue"]
+            get_write_results_queue_fn = async_modules["get_write_results_queue"]
 
             self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
 
@@ -466,7 +443,6 @@ class GlobalState:
             and self._energy_monitor is None
             and self.cfg is not None
             and self.cfg.logger.log_energy
-            and EnergyMonitor is not None
         ):
             self._energy_monitor = EnergyMonitor()
             self._energy_monitor_created = True
