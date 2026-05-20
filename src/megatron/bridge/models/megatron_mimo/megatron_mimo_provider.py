@@ -253,6 +253,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                 if encoder_spec.params is None:
                     encoder_spec.params = {}
                 encoder_spec.params["pg_collection"] = pg_collection
+                transformer_config = encoder_spec.params.get("transformer_config")
+                if transformer_config is not None and getattr(pg_collection, "tp", None) is not None:
+                    transformer_config.tensor_model_parallel_size = pg_collection.tp.size()
 
         # Inject tp_group into projections
         if spec.submodules and "input_projections" in spec.submodules:
@@ -321,6 +324,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             if module_pg is not None:
                 spec = self._inject_pg_collection_into_modality_spec(spec, module_pg)
             modality_specs[module_name] = spec
+
+        # Specs may carry nested TransformerConfig instances that have not
+        # passed through the standard provider finalization path.
+        _finalize_transformer_configs_in_specs(language_spec, modality_specs)
 
         # Create MimoModel
         mimo_model_config = MimoModelConfig(
@@ -585,3 +592,35 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     "Call torch.distributed.init_process_group() first."
                 )
             self.megatron_mimo_parallelism_config.finalize(dist.get_world_size())
+
+
+def _finalize_transformer_configs_in_specs(
+    language_spec: ModuleSpec,
+    modality_specs: Dict[str, ModuleSpec],
+) -> None:
+    """Idempotently finalise any TransformerConfig found inside spec params."""
+    from megatron.bridge.models.transformer_config import TransformerConfig
+
+    def _maybe_finalize(obj: object) -> None:
+        if isinstance(obj, TransformerConfig) and hasattr(obj, "finalize"):
+            obj.finalize()
+
+    def _walk(spec: Optional[ModuleSpec]) -> None:
+        if spec is None or spec.params is None:
+            return
+        for value in spec.params.values():
+            _maybe_finalize(value)
+
+    _walk(language_spec)
+    for spec in modality_specs.values():
+        if spec is None:
+            continue
+        submodules = getattr(spec, "submodules", None) or {}
+        for encoder_spec in (submodules.get("encoders") or {}).values():
+            _walk(encoder_spec)
+        for proj_spec in submodules.get("input_projections") or []:
+            _walk(proj_spec)
+        for proj_spec in submodules.get("output_projections") or []:
+            _walk(proj_spec)
+        for decoder_spec in (submodules.get("decoders") or {}).values():
+            _walk(decoder_spec)

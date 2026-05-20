@@ -59,9 +59,19 @@ except ImportError:
     _TRANSFORMERS_HAS_QWEN3_5 = False
     Qwen3_5VisionConfig = None  # type: ignore[assignment,misc]
 
+from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
+    TENorm,
+    TERowParallelLinear,
+)
+from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
 
 
 def _check_qwen3_5_available() -> None:
@@ -186,21 +196,56 @@ class Qwen35VLModelProvider(GPTModelProvider):
             self.calculate_per_token_loss = True
         super().finalize()
 
+    def build_language_spec(
+        self, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+    ) -> TransformerBlockSubmodules | ModuleSpec:
+        """Build the hybrid language transformer-block spec with Qwen3VLSelfAttention patched in.
+
+        Single-sources the language-side spec construction used by both the
+        standard ``provide()`` path and MegatronMIMO.
+
+        ``pp_rank`` is forwarded to
+        ``get_transformer_block_with_experimental_attention_variant_spec``.
+        Standard callers leave it ``None``; MIMO callers may pass the
+        component-local PP rank explicitly.
+        """
+        return _qwen35_build_language_block_spec(self, vp_stage, pp_rank)
+
+    def build_mtp_spec(self, vp_stage: Optional[int] = None) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
+        """Build the MTP block spec (or ``None`` when MTP is disabled).
+
+        Returns ``None`` when ``provider.mtp_num_layers`` is falsy — the
+        standard ``mtp_block_spec`` helper already guards on this.
+        """
+        return _qwen35_build_mtp_block_spec(self, vp_stage)
+
+    def build_vision_encoder_spec(self) -> ModuleSpec:
+        """Build a ``ModuleSpec`` for the Qwen3.5-VL Megatron-native vision encoder.
+
+        Mirrors the vision-branch construction inside ``Qwen3VLModel.__init__``
+        but packages it as a ``ModuleSpec`` for MegatronMIMO.
+
+        The returned spec deliberately does **not** include ``pg_collection``
+        in ``params``: ``MegatronMIMOProvider._inject_pg_collection_into_modality_spec``
+        writes the per-rank ``ProcessGroupCollection`` into encoder spec params at
+        build_infra() time. Standard non-MIMO callers can mutate
+        ``spec.params["pg_collection"]`` directly before ``build_module(spec)``.
+
+        Behaviour parity with the standard non-MIMO path is preserved:
+        ``provide()`` still constructs a ``Qwen3VLModel`` whose ``__init__``
+        builds its own vision branch — this helper is an additional entry
+        point for MIMO, not a replacement.
+        """
+        return _qwen35_build_vision_encoder_spec(self)
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 VL dense model instance with vision and language components."""
-        from megatron.bridge.models.gpt_provider import mtp_block_spec
-
         language_transformer_config = self
         hf_vision_config = self.vision_config
         hf_vision_config.torch_dtype = self.params_dtype
 
-        block_spec = get_transformer_block_with_experimental_attention_variant_spec(
-            language_transformer_config,
-            vp_stage=vp_stage,
-        )
-        _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
-        mtp_spec = mtp_block_spec(self, vp_stage=vp_stage)
-        _patch_standard_attention_specs(mtp_spec, Qwen3VLSelfAttention)
+        block_spec = self.build_language_spec(vp_stage=vp_stage)
+        mtp_spec = self.build_mtp_spec(vp_stage=vp_stage)
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -358,44 +403,46 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
             self.calculate_per_token_loss = True
         super().finalize()
 
+    def build_language_spec(
+        self, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+    ) -> TransformerBlockSubmodules | ModuleSpec:
+        """Build the hybrid language transformer-block spec with Qwen3VLSelfAttention patched in.
+
+        Selectively patches only the standard (full) attention layer specs in
+        the hybrid GDN+Attention block — GDN layers are left as-is. Single-
+        sources the construction used by both ``provide()`` and MegatronMIMO.
+        See the dense provider's ``build_language_spec`` for ``pp_rank``.
+        """
+        return _qwen35_build_language_block_spec(self, vp_stage, pp_rank)
+
+    def build_mtp_spec(self, vp_stage: Optional[int] = None) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
+        """Build the MTP block spec (or ``None`` when MTP is disabled)."""
+        return _qwen35_build_mtp_block_spec(self, vp_stage)
+
+    def build_vision_encoder_spec(self) -> ModuleSpec:
+        """Build a ``ModuleSpec`` for the Qwen3.5-VL Megatron-native vision encoder.
+
+        See ``Qwen35VLModelProvider.build_vision_encoder_spec`` for the rationale —
+        same helper, MoE variant.
+        """
+        return _qwen35_build_vision_encoder_spec(self)
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 VL model instance with vision and language components.
 
-        Qwen3.5 uses a hybrid architecture (GDN + standard attention). The key
-        challenge is that Qwen3VLModel.__init__ does::
-
-            language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
-
-        which assumes a single ModuleSpec and patches ALL layers uniformly.
-        For Qwen3.5, only the standard attention layers (every 4th layer) should
-        get the Qwen3VLSelfAttention override; GDN layers must be left alone.
-
-        Solution: build the hybrid TransformerBlockSubmodules spec, selectively
-        patch only the standard attention layer specs, then pass it to
-        Qwen3VLModel. Because GPTModel → TransformerBlock already accepts
-        TransformerBlockSubmodules, we just need to bypass the uniform patch
-        in Qwen3VLModel.__init__ by calling MegatronModule.__init__ directly
-        and constructing the internals ourselves.
+        Qwen3.5 uses a hybrid architecture (GDN + standard attention). The
+        ``build_language_spec`` helper produces a ``TransformerBlockSubmodules``
+        with per-layer specs (GDN layers get ``GatedDeltaNet``; attention
+        layers get standard ``SelfAttention`` + MoE) and selectively patches
+        only the standard-attention layer specs with ``Qwen3VLSelfAttention``
+        for mRoPE support. GDN layers are left as-is.
         """
-        from megatron.bridge.models.gpt_provider import mtp_block_spec
-
         language_transformer_config = self
         hf_vision_config = self.vision_config
         hf_vision_config.torch_dtype = self.params_dtype
 
-        # Build hybrid block spec: produces TransformerBlockSubmodules with
-        # per-layer specs (GDN layers get GatedDeltaNet, attention layers get
-        # standard SelfAttention + MoE).
-        block_spec = get_transformer_block_with_experimental_attention_variant_spec(
-            language_transformer_config,
-            vp_stage=vp_stage,
-        )
-
-        # Selectively patch only the standard (full) attention layer specs
-        # with Qwen3VLSelfAttention for mRoPE support. GDN layers are left as-is.
-        _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
-        mtp_spec = mtp_block_spec(self, vp_stage=vp_stage)
-        _patch_standard_attention_specs(mtp_spec, Qwen3VLSelfAttention)
+        block_spec = self.build_language_spec(vp_stage=vp_stage)
+        mtp_spec = self.build_mtp_spec(vp_stage=vp_stage)
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -421,6 +468,84 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Provide just the language model component without vision."""
         return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+
+
+def _qwen35_build_language_block_spec(
+    provider: GPTModelProvider,
+    vp_stage: Optional[int],
+    pp_rank: Optional[int] = None,
+) -> TransformerBlockSubmodules | ModuleSpec:
+    """Build the hybrid language transformer-block spec and patch standard-attention layers.
+
+    Shared implementation used by both ``Qwen35VLModelProvider.build_language_spec``
+    and ``Qwen35VLMoEModelProvider.build_language_spec``. Mirrors the inline
+    construction that previously lived in each ``provide()``. ``pp_rank`` is
+    forwarded verbatim — ``None`` means "read from parallel_state" (standard
+    non-MIMO path); an explicit value (e.g. ``0`` from the MIMO builder
+    when PP=1 per component) bypasses the global lookup.
+    """
+    block_spec = get_transformer_block_with_experimental_attention_variant_spec(
+        provider,
+        vp_stage=vp_stage,
+        pp_rank=pp_rank,
+    )
+    _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
+    return block_spec
+
+
+def _qwen35_build_mtp_block_spec(
+    provider: GPTModelProvider,
+    vp_stage: Optional[int],
+) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
+    """Build the MTP block spec and patch standard-attention layers, or return ``None``.
+
+    ``mtp_block_spec`` returns ``None`` when ``provider.mtp_num_layers`` is
+    falsy (``gpt_provider.py:351``), so MIMO callers that disable MTP at
+    config time receive a ``None`` here and the MIMO model is built without
+    MTP layers.
+    """
+    from megatron.bridge.models.gpt_provider import mtp_block_spec
+
+    mtp_spec = mtp_block_spec(provider, vp_stage=vp_stage)
+    _patch_standard_attention_specs(mtp_spec, Qwen3VLSelfAttention)
+    return mtp_spec
+
+
+def _qwen35_build_vision_encoder_spec(provider: GPTModelProvider) -> ModuleSpec:
+    """Build a ``ModuleSpec`` for ``Qwen3VLVisionModel`` from a Qwen3.5-VL provider.
+
+    Mirrors the vision-branch construction inside ``Qwen3VLModel.__init__``
+    but packages it as a ``ModuleSpec`` for MegatronMIMO. The per-rank
+    ``pg_collection`` is injected later by ``MegatronMIMOProvider``.
+
+    The standard non-MIMO path is unchanged: ``provide()`` still constructs
+    a ``Qwen3VLModel`` whose ``__init__`` builds its own vision branch.
+    """
+    if getattr(provider, "use_hf_vision_model", False):
+        raise ValueError("use_hf_vision_model is not supported for Qwen3VLVisionModel")
+
+    vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
+    vision_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
+
+    megatron_vision_transformer_config = get_vision_model_config(provider.vision_config, megatron_config=provider)
+    megatron_vision_transformer_config.pipeline_model_parallel_size = 1
+    megatron_vision_transformer_config.first_pipeline_num_layers = None
+
+    return ModuleSpec(
+        module=Qwen3VLVisionModel,
+        params={
+            "transformer_config": megatron_vision_transformer_config,
+            "transformer_layer_spec": vision_transformer_layer_spec,
+            "patch_merger_spec": PatchMergerSubmodules(
+                patch_norm=TENorm,
+                linear_fc1=TEColumnParallelLinear,
+                linear_fc2=TERowParallelLinear,
+            ),
+            "pre_process": True,
+            "post_process": True,
+            # pg_collection injected by MegatronMIMOProvider._inject_pg_collection_into_modality_spec
+        },
+    )
 
 
 def _patch_standard_attention_specs(

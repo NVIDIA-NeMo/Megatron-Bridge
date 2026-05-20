@@ -272,7 +272,9 @@ class TestMegatronMIMOProvider:
 
     def test_inject_pg_collection_into_modality_spec(self):
         """Test pg_collection injection into modality submodule specs."""
-        encoder_spec = ModuleSpec(module=Mock, params={})
+        transformer_config = Mock()
+        transformer_config.tensor_model_parallel_size = 1
+        encoder_spec = ModuleSpec(module=Mock, params={"transformer_config": transformer_config})
         modality_spec = ModuleSpec(
             module=Mock,
             params={},
@@ -283,11 +285,15 @@ class TestMegatronMIMOProvider:
 
         mock_pg_collection = MagicMock()
         mock_pg_collection.tp = MagicMock()
+        mock_pg_collection.tp.size.return_value = 4
 
         injected_spec = provider._inject_pg_collection_into_modality_spec(modality_spec, mock_pg_collection)
 
         # Check encoder has pg_collection
         assert injected_spec.submodules["encoders"]["clip"].params["pg_collection"] == mock_pg_collection
+        assert (
+            injected_spec.submodules["encoders"]["clip"].params["transformer_config"].tensor_model_parallel_size == 4
+        )
 
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
     def test_freezing_language_model(self, mock_mimo_model):
