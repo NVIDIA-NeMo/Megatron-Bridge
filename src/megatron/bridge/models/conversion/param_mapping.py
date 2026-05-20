@@ -1223,6 +1223,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             # Other non-parallel modules
             "InferenceTopKRouter",
             "IdentityOp",
+            "LinearForLastLayer",
             "TopKRouter",
         },
     }

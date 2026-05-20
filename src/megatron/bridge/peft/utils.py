@@ -15,27 +15,36 @@
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from importlib import import_module
 from importlib.metadata import version
-from typing import Callable, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import packaging
 import torch
 import torch.nn as nn
 from megatron.core import ModelParallelConfig, parallel_state
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor, ShardedTensorFactory
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 from megatron.core.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
     scatter_to_sequence_parallel_region,
 )
 from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
+from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.router import TopKRouter
 
+from megatron.bridge.utils.activation_map import str_to_dtype
 from megatron.bridge.utils.import_utils import safe_import_from
 
 
 logger = logging.getLogger(__name__)
+
+ModelList = list[MegatronModule]
+ModelHook = Callable[[ModelList], ModelList | None]
+CheckpointPath = str | Path
 
 
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(
@@ -77,6 +86,157 @@ ModelOptLinear, HAVE_MODELOPT_LINEAR = safe_import_from("megatron.core.post_trai
 
 TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParallelGroupedLinear)
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
+
+
+def create_peft(config: Mapping[str, Any], dtype: torch.dtype | str | int | None = None) -> object | None:
+    """Create a Bridge PEFT object from a small config mapping."""
+    kwargs = dict(config)
+    peft_type = kwargs.pop("type", "lora")
+    if "rank" in kwargs:
+        kwargs["dim"] = kwargs.pop("rank")
+    if kwargs.get("dim", 0) <= 0:
+        return None
+
+    peft_cls = _import_peft_class(peft_type)
+
+    peft_fields = {field.name for field in fields(peft_cls) if field.init}
+    config_dtype = kwargs.pop("dtype", None)
+    if "lora_dtype" not in kwargs:
+        kwargs["lora_dtype"] = config_dtype if config_dtype is not None else dtype
+
+    if kwargs.get("lora_dtype") is None or "lora_dtype" not in peft_fields:
+        kwargs.pop("lora_dtype", None)
+    else:
+        kwargs["lora_dtype"] = str_to_dtype(str(kwargs["lora_dtype"]).lower())
+
+    kwargs = {key: value for key, value in kwargs.items() if key in peft_fields}
+
+    return peft_cls(**kwargs)
+
+
+def create_peft_hook(
+    peft: object,
+    training: bool = True,
+) -> ModelHook:
+    """Create a provider pre-wrap hook that applies PEFT."""
+
+    def hook(model: ModelList) -> ModelList:
+        model = _apply_peft(peft, model, training=training)
+
+        return model
+
+    return hook
+
+
+def load_peft_adapter_checkpoint(
+    model: ModelList | MegatronModule,
+    adapter_checkpoint_path: CheckpointPath,
+    peft: object,
+    strict: bool = False,
+    model_sd_kwargs: Mapping[str, object] | None = None,
+    ckpt_format: str = "torch_dist",
+    pg_collection: ProcessGroupCollection | None = None,
+    fully_parallel_load: bool = True,
+    load_strategy: object | None = None,
+) -> None:
+    """Load a PEFT adapter checkpoint into an already transformed model."""
+    from megatron.core import dist_checkpointing
+    from megatron.core.dist_checkpointing.serialization import get_default_load_sharded_strategy
+    from megatron.core.dist_checkpointing.strategies.fully_parallel import FullyParallelLoadStrategyWrapper
+
+    from megatron.bridge.training.checkpointing import apply_peft_adapter_filter_to_state_dict
+
+    model_chunks = _ensure_model_list(model)
+    sharded_state_dict = _model_state_dict(
+        model_chunks,
+        model_sd_kwargs,
+        ckpt_format,
+        pg_collection=pg_collection,
+    )
+    sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, peft)
+
+    checkpoint_path = str(adapter_checkpoint_path)
+    if load_strategy is None:
+        load_strategy = get_default_load_sharded_strategy(checkpoint_path)
+        if fully_parallel_load and parallel_state.is_initialized():
+            load_strategy = FullyParallelLoadStrategyWrapper(
+                load_strategy,
+                parallel_state.get_data_parallel_group(with_context_parallel=True),
+            )
+
+    loaded_state_dict = dist_checkpointing.load(sharded_state_dict, checkpoint_path, load_strategy)
+    for vpp_rank, model_chunk in enumerate(model_chunks):
+        model_key = "model" if len(model_chunks) == 1 else f"model{vpp_rank}"
+        if model_key not in loaded_state_dict:
+            if len(model_chunks) == 1:
+                fallback_model_key = next((key for key in loaded_state_dict if key.startswith("model")), None)
+                if fallback_model_key is not None:
+                    model_key = fallback_model_key
+                else:
+                    raise KeyError(
+                        "Expected adapter checkpoint to contain a top-level 'model' or 'model*' key, "
+                        f"but found keys: {list(loaded_state_dict.keys())}"
+                    )
+            else:
+                expected_model_keys = [f"model{rank}" for rank in range(len(model_chunks))]
+                raise KeyError(
+                    f"Expected adapter checkpoint to contain top-level key {model_key!r} "
+                    f"for virtual pipeline model chunk {vpp_rank} "
+                    f"(expected keys: {expected_model_keys}), "
+                    f"but found keys: {list(loaded_state_dict.keys())}"
+                )
+        model_chunk.load_state_dict(loaded_state_dict[model_key], strict=strict)
+
+
+def _apply_peft(peft: object, model: ModelList, training: bool = True) -> ModelList:
+    """Apply PEFT and mark adapter parameters for checkpointing."""
+    transformed_model = peft(model, training=training)
+    peft.set_params_to_save(transformed_model)
+    return transformed_model
+
+
+def _import_peft_class(peft_type: str) -> type[Any]:
+    peft_classes = {
+        "lora": ("megatron.bridge.peft.lora", "LoRA"),
+        "vlm_lora": ("megatron.bridge.peft.lora", "VLMLoRA"),
+        "canonical_lora": ("megatron.bridge.peft.canonical_lora", "CanonicalLoRA"),
+        "dora": ("megatron.bridge.peft.dora", "DoRA"),
+    }
+    if peft_type not in peft_classes:
+        supported_types = ", ".join(sorted(peft_classes))
+        raise ValueError(f"Unsupported PEFT type {peft_type!r}. Supported types: {supported_types}.")
+
+    module_name, class_name = peft_classes[peft_type]
+    try:
+        module = import_module(module_name)
+    except ImportError as err:
+        message = f"Failed to import PEFT type {peft_type!r} ({module_name}:{class_name})."
+        if peft_type in {"lora", "vlm_lora", "canonical_lora"}:
+            message += " Install Megatron Bridge with the [te] extra for Transformer Engine support."
+        raise ImportError(message) from err
+
+    return getattr(module, class_name)
+
+
+def _model_state_dict(
+    model: ModelList,
+    model_sd_kwargs: Mapping[str, object] | None = None,
+    ckpt_format: str = "torch_dist",
+    pg_collection: ProcessGroupCollection | None = None,
+) -> dict[str, Any]:
+    """Generate Bridge model checkpoint sections for an external trainer."""
+    from megatron.bridge.training.checkpointing import _generate_model_state_dict
+
+    return _generate_model_state_dict(
+        model,
+        dict(model_sd_kwargs or {}),
+        ckpt_format,
+        pg_collection=pg_collection,
+    )
+
+
+def _ensure_model_list(model: ModelList | MegatronModule) -> ModelList:
+    return model if isinstance(model, list) else [model]
 
 
 def is_modelopt_linear(m: nn.Module) -> bool:

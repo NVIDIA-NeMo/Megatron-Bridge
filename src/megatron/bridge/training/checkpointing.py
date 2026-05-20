@@ -984,10 +984,10 @@ def save_checkpoint(
                     "FSDP DTensor format requires a model, but model list is empty. "
                     "This can happen with low_memory_save=True. Use ckpt_format='torch_dist' instead."
                 )
-            state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0])
 
             # FSDP DTensor checkpoint save path using PyTorch Distributed Checkpointing
             if ckpt_cfg.async_save and HAVE_NVRX:
+                state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0])
                 planner = torch.distributed.checkpoint.DefaultSavePlanner()
                 coordinator_rank = 0
                 fs_storage_writer = FileSystemWriterAsync(
@@ -1006,15 +1006,12 @@ def save_checkpoint(
                 )
                 async_save_request = get_save_and_finalize_callbacks(fs_storage_writer, save_state_dict_ret)
             else:
-                if MultiStorageClientFeature.is_enabled():
-                    from multistorageclient.contrib.torch.filesystem import MultiStorageFileSystemWriter
-
-                    fs_storage_writer = MultiStorageFileSystemWriter(checkpoint_name)
-                else:
-                    fs_storage_writer = torch.distributed.checkpoint.FileSystemWriter(checkpoint_name)
-                torch.distributed.checkpoint.save(
-                    state_dict=state_dict,
-                    storage_writer=fs_storage_writer,
+                save_fsdp_dtensor_checkpoint(
+                    checkpoint_name,
+                    state_dict,
+                    cfg=cfg,
+                    model=model[0],
+                    barrier=False,
                 )
         else:
             # torch_dist and other formats using MCore distributed checkpointing
@@ -1673,6 +1670,56 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     preprocess_state_dict_for_uneven_dtensor(state_dict)
 
     return state_dict
+
+
+def save_fsdp_dtensor_checkpoint(
+    checkpoint_path: str | Path,
+    state_dict: dict[str, Any],
+    *,
+    cfg: Any,
+    model: MegatronModule,
+    storage_writer: Any | None = None,
+    barrier: bool = True,
+) -> Any:
+    """Preprocess and save an FSDP DTensor checkpoint with PyTorch DCP.
+
+    This exposes the Bridge preprocessing used by the trainer save path for
+    external trainers that already own the training loop.
+
+    Args:
+        checkpoint_path: Directory to write when ``storage_writer`` is not provided.
+        state_dict: Raw FSDP DTensor state dict to save.
+        cfg: Configuration object passed through to FSDP DTensor preprocessing.
+        model: Model chunk used to infer FSDP DTensor preprocessing rules.
+        storage_writer: Optional PyTorch Distributed Checkpoint storage writer.
+        barrier: Whether to run a distributed barrier after the save.
+
+    Returns:
+        The value returned by ``torch.distributed.checkpoint.save``.
+    """
+    if not HAVE_MEGATRON_FSDP:
+        raise RuntimeError("Megatron FSDP is required but not available for saving FSDP DTensor checkpoints.")
+
+    preprocessed_state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model)
+    fs_storage_writer = storage_writer
+    if fs_storage_writer is None:
+        fs_storage_writer = _create_fsdp_dtensor_storage_writer(str(checkpoint_path))
+
+    result = torch.distributed.checkpoint.save(
+        state_dict=preprocessed_state_dict,
+        storage_writer=fs_storage_writer,
+    )
+    if barrier and torch.distributed.is_initialized():
+        torch.distributed.barrier()
+    return result
+
+
+def _create_fsdp_dtensor_storage_writer(checkpoint_path: str) -> Any:
+    if MultiStorageClientFeature.is_enabled():
+        from multistorageclient.contrib.torch.filesystem import MultiStorageFileSystemWriter
+
+        return MultiStorageFileSystemWriter(checkpoint_path)
+    return torch.distributed.checkpoint.FileSystemWriter(checkpoint_path)
 
 
 def _load_model_weights_from_checkpoint(
@@ -2929,11 +2976,11 @@ def _load_base_checkpoint(
                 pg_collection=pg_collection,
             )
         elif ckpt_format == "fsdp_dtensor":
-            return _load_fsdp_dtensor_base_checkpoint(
+            return load_fsdp_dtensor_checkpoint(
                 load_dir,
                 ckpt_cfg,
-                rank0,
-                sharded_state_dict,
+                rank0=rank0,
+                sharded_state_dict=sharded_state_dict,
                 iteration=None,
                 release=False,
                 checkpoint_path_override=checkpoint_path,
@@ -3018,13 +3065,13 @@ def _load_base_checkpoint(
             pg_collection=pg_collection,
         )
     elif ckpt_format == "fsdp_dtensor":
-        return _load_fsdp_dtensor_base_checkpoint(
+        return load_fsdp_dtensor_checkpoint(
             load_dir,
             ckpt_cfg,
-            rank0,
-            sharded_state_dict,
-            iteration,
-            release,
+            rank0=rank0,
+            sharded_state_dict=sharded_state_dict,
+            iteration=iteration,
+            release=release,
             checkpointing_context=checkpointing_context,
             cfg=cfg,
         )
@@ -3032,18 +3079,18 @@ def _load_base_checkpoint(
         raise NotImplementedError(f"Checkpoint format {ckpt_format} not supported")
 
 
-def _load_fsdp_dtensor_base_checkpoint(
+def load_fsdp_dtensor_checkpoint(
     load_dir: str,
     ckpt_cfg: CheckpointConfig,
     rank0: bool,
     sharded_state_dict: Optional[dict[str, Any]],
     iteration: Optional[int],
-    release: bool,
+    release: bool = False,
     checkpoint_path_override: Optional[str] = None,
     checkpointing_context: Optional[dict[str, Any]] = None,
-    cfg: Optional[ConfigContainer] = None,
+    cfg: Any | None = None,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
-    """Load the base state_dict from an FSDP DTensor checkpoint.
+    """Load the base state dict from an FSDP DTensor checkpoint.
 
     This function preprocesses the state dict (handling expert parameters, SWiGLU, FP8)
     before loading from checkpoint, matching the preprocessing applied during save.
