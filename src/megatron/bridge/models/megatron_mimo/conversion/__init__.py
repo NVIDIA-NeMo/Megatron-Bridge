@@ -19,14 +19,6 @@ adapters register themselves via :func:`register_mimo_conversion` and
 declare a route table built from :class:`MIMOComponent` entries.
 """
 
-# Side-effect import: registers per-family adapters via the
-# ``@register_mimo_conversion`` decorator so ``get_mimo_adapter`` can dispatch
-# on a source bridge class without callers needing to import each adapter.
-from megatron.bridge.models.megatron_mimo.conversion import adapters  # noqa: F401
-from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import (
-    load_megatron_mimo_model,
-    save_megatron_mimo_model,
-)
 from megatron.bridge.models.megatron_mimo.conversion.orchestrator import (
     MegatronMIMOBridge,
     MIMOComponent,
@@ -42,6 +34,14 @@ from megatron.bridge.models.megatron_mimo.conversion.orchestrator import (
     save_hf_pretrained_mimo,
     validate_route_table,
 )
+
+
+def __getattr__(name: str):
+    if name in {"load_megatron_mimo_model", "save_megatron_mimo_model"}:
+        from megatron.bridge.models.megatron_mimo.conversion import mimo_model_io
+
+        return getattr(mimo_model_io, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

@@ -145,6 +145,7 @@ MIMOAdapter = Callable[
 
 
 _ADAPTERS: dict[type, MIMOAdapter] = {}
+_BUILTIN_ADAPTERS_IMPORTED = False
 
 
 def register_mimo_conversion(source_bridge_class: type) -> Callable[[MIMOAdapter], MIMOAdapter]:
@@ -153,6 +154,9 @@ def register_mimo_conversion(source_bridge_class: type) -> Callable[[MIMOAdapter
     def _decorator(adapter: MIMOAdapter) -> MIMOAdapter:
         if source_bridge_class in _ADAPTERS:
             existing = _ADAPTERS[source_bridge_class]
+            if existing.__module__ == adapter.__module__ and existing.__qualname__ == adapter.__qualname__:
+                _ADAPTERS[source_bridge_class] = adapter
+                return adapter
             raise ValueError(
                 f"MIMO adapter already registered for {source_bridge_class.__name__}: "
                 f"{existing.__module__}.{existing.__qualname__}"
@@ -163,8 +167,24 @@ def register_mimo_conversion(source_bridge_class: type) -> Callable[[MIMOAdapter
     return _decorator
 
 
+def _ensure_builtin_adapters_imported() -> None:
+    """Import bundled adapters on first registry lookup."""
+    global _BUILTIN_ADAPTERS_IMPORTED
+    if _BUILTIN_ADAPTERS_IMPORTED:
+        return
+
+    _BUILTIN_ADAPTERS_IMPORTED = True
+    try:
+        from megatron.bridge.models.megatron_mimo.conversion import adapters  # noqa: F401
+    except Exception:
+        _BUILTIN_ADAPTERS_IMPORTED = False
+        raise
+
+
 def get_mimo_adapter(source_bridge_class: type) -> MIMOAdapter:
     """Look up the MIMO adapter registered for a standard bridge class."""
+    if source_bridge_class not in _ADAPTERS:
+        _ensure_builtin_adapters_imported()
     try:
         return _ADAPTERS[source_bridge_class]
     except KeyError as exc:
@@ -176,12 +196,15 @@ def get_mimo_adapter(source_bridge_class: type) -> MIMOAdapter:
 
 def list_mimo_adapters() -> dict[type, MIMOAdapter]:
     """Return a copy of the adapter registry."""
+    _ensure_builtin_adapters_imported()
     return dict(_ADAPTERS)
 
 
 def _reset_registry_for_tests() -> None:
     """Clear all registered adapters. Test-only helper."""
+    global _BUILTIN_ADAPTERS_IMPORTED
     _ADAPTERS.clear()
+    _BUILTIN_ADAPTERS_IMPORTED = False
 
 
 def build_route_local_registry(
