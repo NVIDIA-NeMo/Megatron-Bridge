@@ -54,21 +54,21 @@ How to Run
 ----------
 # 8 GPUs: TP2 x PP2 x CP_train=1 x CP_eval=2 (default; shows bubble-shrink win)
 uv run python -m torch.distributed.run --nproc_per_node=8 \\
-    examples/decentralized_pg/pretrain_qwen3_eval_cp.py
+    examples/training_features/decentralized_pg/pretrain_qwen3_eval_cp.py
 
 # 8 GPUs, longer seq for the cleanest Step 7b speedup demo (~1.78x at PP=2):
 uv run python -m torch.distributed.run --nproc_per_node=8 \\
-    examples/decentralized_pg/pretrain_qwen3_eval_cp.py \\
+    examples/training_features/decentralized_pg/pretrain_qwen3_eval_cp.py \\
     --num-layers 8 --seq-length 16384
 
 # 8 GPUs at PP=4 (largest bubble win, ~1.88x):
 uv run python -m torch.distributed.run --nproc_per_node=8 \\
-    examples/decentralized_pg/pretrain_qwen3_eval_cp.py \\
+    examples/training_features/decentralized_pg/pretrain_qwen3_eval_cp.py \\
     --tp-size 1 --pp-size 4 --num-layers 8 --seq-length 16384
 
 # 4 GPUs: TP2 x PP1 x CP_train=1 x CP_eval=2 (no bubble; expect Step 7b regression)
 uv run python -m torch.distributed.run --nproc_per_node=4 \\
-    examples/decentralized_pg/pretrain_qwen3_eval_cp.py \\
+    examples/training_features/decentralized_pg/pretrain_qwen3_eval_cp.py \\
     --tp-size 2 --pp-size 1 --cp-train 1 --cp-eval 2
 
 Prerequisites
