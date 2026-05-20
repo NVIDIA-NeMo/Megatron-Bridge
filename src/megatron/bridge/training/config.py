@@ -712,6 +712,9 @@ class LoggerConfig(MTrainLoggerConfig):
     mlflow_tags: Optional[dict[str, str]] = None
     """Optional tags to apply to the MLFlow run."""
 
+    mlflow_log_artifacts: bool = True
+    """Whether to upload checkpoint artifacts to MLFlow via HTTP after each save."""
+
     comet_project: Optional[str] = None
     """The Comet ML project name. Comet logging is disabled when this is None."""
 
