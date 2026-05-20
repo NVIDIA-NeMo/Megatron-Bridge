@@ -160,7 +160,7 @@ def _set_recompute_overrides(
 def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: bool = False) -> ConfigContainer:
     """Tune configuration for MoE A2A communication overlap."""
     if moe_a2a_overlap:
-        if not hasattr(recipe, "comm_overlap") or recipe.comm_overlap is None:
+        if recipe.comm_overlap is None:
             tp_comm_overlap = bool(recipe.model.tensor_model_parallel_size > 1)
             recipe.comm_overlap = CommOverlapConfig(tp_comm_overlap=tp_comm_overlap)
         recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
