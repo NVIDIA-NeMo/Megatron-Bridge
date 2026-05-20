@@ -712,6 +712,9 @@ class LoggerConfig(MTrainLoggerConfig):
     mlflow_tags: Optional[dict[str, str]] = None
     """Optional tags to apply to the MLFlow run."""
 
+    mlflow_description: Optional[str] = None
+    """Optional description for the MLFlow run, rendered in the UI Description panel."""
+
     mlflow_log_artifacts: bool = True
     """Whether to upload checkpoint artifacts to MLFlow via HTTP after each save."""
 
@@ -744,6 +747,7 @@ class LoggerConfig(MTrainLoggerConfig):
                 self.mlflow_run_name,
                 self.mlflow_tracking_uri,
                 self.mlflow_tags,
+                self.mlflow_description,
             ]
         )
 
