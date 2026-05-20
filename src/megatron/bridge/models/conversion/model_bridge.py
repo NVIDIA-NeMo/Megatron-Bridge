@@ -969,7 +969,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 )
 
             for hf_name, tensor in converted_weights_dict.items():
-                final_tensor = tensor.cpu() if cpu else tensor.detach()
+                final_tensor = tensor.detach().cpu() if cpu else tensor.detach()
 
                 # Handle tied embeddings case
                 # TODO(yuya): fix this hard coded naming
