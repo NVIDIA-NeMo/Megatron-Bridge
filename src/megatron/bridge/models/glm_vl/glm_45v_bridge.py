@@ -19,15 +19,13 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
-from megatron.bridge.models.glm.glm_moe_mappings import (
-    GLMExpertDownProjMapping,
-    GLMExpertGateUpProjMapping,
-)
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
@@ -178,11 +176,11 @@ class GLM45VBridge(MegatronModelBridge):
         if use_fused_experts:
             mapping_list.extend(
                 [
-                    GLMExpertGateUpProjMapping(
+                    FusedGatedExpertMapping(
                         megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
                         hf_param=f"model.language_model.layers.*.mlp.experts.gate_up_proj{gate_up_suffix}",
                     ),
-                    GLMExpertDownProjMapping(
+                    FusedExpertMapping(
                         megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
                         hf_param=f"model.language_model.layers.*.mlp.experts.down_proj{down_suffix}",
                     ),

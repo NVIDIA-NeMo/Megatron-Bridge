@@ -34,8 +34,20 @@ class MockMegatronModule(MegatronModule):
 class TestProvider(ModelProviderMixin):
     """A concrete implementation of ModelProviderMixin for testing."""
 
+    def __init__(self) -> None:
+        self.tensor_model_parallel_size = 1
+        self.pipeline_model_parallel_size = 1
+        self.expert_model_parallel_size = 1
+        self.expert_tensor_parallel_size = 1
+        self.virtual_pipeline_model_parallel_size = None
+        self.context_parallel_size = 1
+        self.sequence_parallel = False
+
     def provide(self, pre_process=None, post_process=None) -> MockMegatronModule:
         return MockMegatronModule()
+
+    def finalize(self) -> None:
+        self.finalized = True
 
 
 @pytest.fixture

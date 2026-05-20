@@ -789,8 +789,8 @@ def _initialize_distributed(
         if parallel_state.model_parallel_is_initialized():
             print("model parallel is already initialized")
         else:
-            # Guard for main/dev branch submodule compat: hybrid_context_parallel was added in the dev branch.
-            # TODO: remove guard once the addition lands in main and Bridge pins the new main commit.
+            # Guard for main/dev branch submodule compat: dev exposes dynamic_context_parallel instead.
+            # TODO(mcore-dev): remove once dev exposes hybrid_context_parallel or Bridge migrates the config.
             _init_mp_params = set(inspect.signature(parallel_state.initialize_model_parallel).parameters)
             _optional_kwargs = {}
             if "hybrid_context_parallel" in _init_mp_params:

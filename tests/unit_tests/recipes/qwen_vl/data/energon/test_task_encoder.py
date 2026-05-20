@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import torch
+from megatron.energon import SkipSample
 from PIL import Image
 
 from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
@@ -164,7 +165,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.encoder = QwenVLTaskEncoder(
             tokenizer=self.tokenizer,
             image_processor=self.image_processor,
-            max_padding_length=128,
+            max_padding_length=512,
             patch_size=14,
             spatial_merge_size=2,
         )
@@ -359,6 +360,213 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.assertIn("input_ids", encoded_dict)
         # Ensure __subflavors__ is removed
         self.assertNotIn("__subflavors__", encoded_dict)
+
+
+class TestQwenVLTaskEncoderLimits(unittest.TestCase):
+    """Tests for the per-sample budget limits added to QwenVLTaskEncoder."""
+
+    def setUp(self):
+        self.tokenizer = MagicMock()
+        self.tokenizer.pad_token_id = 0
+        self.tokenizer.eos_token_id = 1
+        self.tokenizer.image_token_id = 151655
+        self.tokenizer.video_token_id = 151656
+        self.tokenizer.convert_tokens_to_ids.side_effect = lambda x: {
+            "<image>": 151655,
+            "<video>": 151656,
+        }.get(x, 10)
+        self.image_processor = MagicMock()
+
+    def _make_encoder(self, **kwargs):
+        defaults = dict(
+            tokenizer=self.tokenizer,
+            image_processor=self.image_processor,
+            max_padding_length=512,
+            patch_size=14,
+            spatial_merge_size=2,
+        )
+        defaults.update(kwargs)
+        return QwenVLTaskEncoder(**defaults)
+
+    def _make_sample(self, *, n_images=0, n_videos=0, frames_per_video=0, conversation_text="Look <image>"):
+        imgs = [Image.new("RGB", (4, 4), color="red") for _ in range(n_images)] or None
+        if n_videos:
+            videos = [
+                [Image.new("RGB", (4, 4), color="blue") for _ in range(frames_per_video)] for _ in range(n_videos)
+            ]
+        else:
+            videos = None
+        return ChatMLSample(
+            __key__="key",
+            __restore_key__="restore_key",
+            __subflavor__={},
+            __subflavors__={},
+            imgs=imgs,
+            videos=videos,
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": conversation_text},
+                    {"role": "assistant", "content": "Nice"},
+                ]
+            ),
+        )
+
+    def test_default_limits_set_on_init(self):
+        enc = self._make_encoder()
+        self.assertEqual(enc.max_num_images, 10)
+        self.assertEqual(enc.max_num_frames, 60)
+        self.assertEqual(enc.max_visual_tokens, 16384)
+
+    def test_init_accepts_none_to_disable_limits(self):
+        enc = self._make_encoder(max_num_images=None, max_num_frames=None, max_visual_tokens=None)
+        self.assertIsNone(enc.max_num_images)
+        self.assertIsNone(enc.max_num_frames)
+        self.assertIsNone(enc.max_visual_tokens)
+
+    def test_max_num_images_skip_when_exceeded(self):
+        # Configure the processor so that, IF we got to it, encoding would succeed.
+        # The point of this test is that we should *not* get to it.
+        self.image_processor.side_effect = AssertionError("processor must not be called when sample is skipped")
+
+        enc = self._make_encoder(max_num_images=2)
+        sample = self._make_sample(n_images=3)
+        with self.assertRaises(SkipSample):
+            enc.encode_sample(sample)
+
+    def test_max_num_images_none_disables_check(self):
+        # Even with many images, no SkipSample should be raised here — we expect the
+        # call to fail later inside processing instead, which is fine for this test.
+        enc = self._make_encoder(max_num_images=None, max_visual_tokens=None)
+        sample = self._make_sample(n_images=50)
+        # A non-SkipSample error is acceptable; we only assert SkipSample is NOT raised.
+        with self.assertRaises(Exception) as cm:
+            enc.encode_sample(sample)
+        self.assertNotIsInstance(cm.exception, SkipSample)
+
+    def test_max_num_frames_truncates_in_place(self):
+        # process_vision routes videos through processor.video_processor, so we
+        # capture the videos arg there.
+        captured = {}
+
+        def video_processor_side_effect(videos=None, **kwargs):
+            captured["videos"] = videos
+            return {
+                "video_grid_thw": torch.tensor([[1, 14, 14]]),
+                "pixel_values_videos": torch.randn(1, 3, 14, 14),
+            }
+
+        self.image_processor.video_processor.side_effect = video_processor_side_effect
+        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 151656, 12, 13])]
+        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
+
+        enc = self._make_encoder(max_num_frames=4, max_visual_tokens=None)
+        sample = self._make_sample(n_videos=1, frames_per_video=10, conversation_text="Watch <video>")
+        enc.encode_sample(sample)
+
+        # videos arg passed to processor should have a single clip of 4 frames.
+        self.assertIsNotNone(captured["videos"])
+        self.assertEqual(len(captured["videos"]), 1)
+        self.assertEqual(len(captured["videos"][0]), 4)
+
+    def test_max_num_frames_keeps_short_videos_intact(self):
+        captured = {}
+
+        def video_processor_side_effect(videos=None, **kwargs):
+            captured["videos"] = videos
+            return {
+                "video_grid_thw": torch.tensor([[1, 14, 14]]),
+                "pixel_values_videos": torch.randn(1, 3, 14, 14),
+            }
+
+        self.image_processor.video_processor.side_effect = video_processor_side_effect
+        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 151656, 12, 13])]
+        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
+
+        enc = self._make_encoder(max_num_frames=10, max_visual_tokens=None)
+        sample = self._make_sample(n_videos=1, frames_per_video=3, conversation_text="Watch <video>")
+        enc.encode_sample(sample)
+
+        self.assertEqual(len(captured["videos"][0]), 3)
+
+    def test_max_visual_tokens_skip_when_exceeded(self):
+        # 1 image of grid (1, 28, 28); merge_length = 2**2 = 4 -> 1*28*28/4 = 196 tokens.
+        def processor_side_effect(images=None, videos=None, **kwargs):
+            return {
+                "image_grid_thw": torch.tensor([[1, 28, 28]]),
+                "pixel_values": torch.randn(1, 3, 28, 28),
+            }
+
+        self.image_processor.side_effect = processor_side_effect
+
+        enc = self._make_encoder(max_visual_tokens=100)  # 196 > 100 -> skip
+        sample = self._make_sample(n_images=1)
+        with self.assertRaises(SkipSample):
+            enc.encode_sample(sample)
+
+    def test_max_visual_tokens_none_disables_check(self):
+        # 196 visual tokens — would trigger the limit at 100, but None disables it.
+        def processor_side_effect(images=None, videos=None, **kwargs):
+            return {
+                "image_grid_thw": torch.tensor([[1, 28, 28]]),
+                "pixel_values": torch.randn(1, 3, 28, 28),
+            }
+
+        self.image_processor.side_effect = processor_side_effect
+        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 151655, 12, 13])]
+        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
+
+        enc = self._make_encoder(max_visual_tokens=None)
+        sample = self._make_sample(n_images=1)
+        encoded = enc.encode_sample(sample)
+        self.assertIsInstance(encoded, QwenVLTaskSample)
+
+    def test_visual_tokens_exceeding_seq_len_raises_skip(self):
+        # The post-expansion length depends on visual tokens, so a small seq_len
+        # paired with many visual tokens triggers the SkipSample branch.
+        def processor_side_effect(images=None, videos=None, **kwargs):
+            return {
+                "image_grid_thw": torch.tensor([[1, 28, 28]]),  # 196 visual tokens
+                "pixel_values": torch.randn(1, 3, 28, 28),
+            }
+
+        self.image_processor.side_effect = processor_side_effect
+        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 151655, 12, 13])]
+        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
+
+        # max_visual_tokens=None to bypass that earlier guard, seq_len small so the
+        # later branch fires.
+        enc = self._make_encoder(max_padding_length=50, max_visual_tokens=None)
+        sample = self._make_sample(n_images=1)
+        with self.assertRaises(SkipSample):
+            enc.encode_sample(sample)
+
+
+class TestProcessVisionVideoBranch(unittest.TestCase):
+    """Verify that process_vision routes videos through processor.video_processor with do_sample_frames=False."""
+
+    def test_video_processor_called_with_do_sample_frames_false(self):
+        processor = MagicMock()
+        processor.video_processor = MagicMock(
+            return_value={
+                "video_grid_thw": torch.tensor([[1, 14, 14]]),
+                "pixel_values_videos": torch.randn(1, 3, 14, 14),
+            }
+        )
+
+        videos = [[Image.new("RGB", (4, 4), color="blue") for _ in range(3)]]
+        res = process_vision(processor, images=None, videos=videos)
+
+        # Top-level processor must NOT be called for videos in this path.
+        processor.assert_not_called()
+        # video_processor must be called with do_sample_frames=False.
+        processor.video_processor.assert_called_once()
+        kwargs = processor.video_processor.call_args.kwargs
+        self.assertIs(kwargs.get("do_sample_frames"), False)
+        self.assertEqual(kwargs.get("return_tensors"), "pt")
+        self.assertIs(kwargs.get("videos"), videos)
+
+        self.assertIn("video_grid_thw", res)
+        self.assertIsNotNone(res["video_grid_thw"])
 
 
 if __name__ == "__main__":
