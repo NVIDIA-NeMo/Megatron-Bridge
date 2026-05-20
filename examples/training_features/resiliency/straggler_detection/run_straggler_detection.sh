@@ -16,9 +16,9 @@
 # NVRx Straggler Detection Example Launch Script
 #
 # Usage:
-#   ./examples/resiliency/straggler_detection/run_straggler_detection.sh
-#   ./examples/resiliency/straggler_detection/run_straggler_detection.sh --nproc 4
-#   ./examples/resiliency/straggler_detection/run_straggler_detection.sh --train-iters 200
+#   ./examples/training_features/resiliency/straggler_detection/run_straggler_detection.sh
+#   ./examples/training_features/resiliency/straggler_detection/run_straggler_detection.sh --nproc 4
+#   ./examples/training_features/resiliency/straggler_detection/run_straggler_detection.sh --train-iters 200
 
 set -euo pipefail
 
