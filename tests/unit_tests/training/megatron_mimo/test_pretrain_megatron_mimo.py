@@ -44,14 +44,10 @@ def _make_setup_output(module_to_grid_map):
     )
 
 
-@patch(
-    "megatron.bridge.training.setup_megatron_mimo.is_current_rank_in_grid",
-    side_effect=lambda grid: grid.rank_offset <= 4 < (grid.rank_offset + grid.size),
-)
-@patch("megatron.bridge.training.setup_megatron_mimo.dist")
-def test_set_megatron_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mock_dist, _mock_in_grid):
-    """_set_megatron_mimo_random_seeds should derive TP/PP ranks from grids and call model_parallel_cuda_manual_seed."""
-    from megatron.bridge.training.setup_megatron_mimo import _set_megatron_mimo_random_seeds
+@patch("megatron.bridge.models.megatron_mimo.build_model.dist")
+def test_set_megatron_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mock_dist):
+    """_set_per_module_random_seeds should derive TP/PP ranks from grids and call model_parallel_cuda_manual_seed."""
+    from megatron.bridge.models.megatron_mimo.build_model import _set_per_module_random_seeds
 
     mock_dist.get_rank.return_value = 4  # e.g. first rank of vision encoder
 
@@ -63,29 +59,25 @@ def test_set_megatron_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mo
     grid = MagicMock()
     grid.rank_offset = 4
     grid.size = 4
+    grid.is_current_rank_in_grid.return_value = True
     grid.get_pg.side_effect = lambda dims: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
 
     megatron_mimo_infra = SimpleNamespace(module_to_grid_map={"vision": grid})
-    cfg = SimpleNamespace(rng=SimpleNamespace(seed=42))
 
-    with patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
+    with patch("megatron.bridge.models.megatron_mimo.build_model.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
         import torch
 
         with patch.object(torch.cuda, "device_count", return_value=1):
-            _set_megatron_mimo_random_seeds(cfg, megatron_mimo_infra)
+            _set_per_module_random_seeds(megatron_mimo_infra, seed=42)
 
         # pp_rank=0, so seed stays 42. tp_rank=0 passed explicitly.
         mock_seed.assert_called_once_with(42, tp_rank=0, ep_rank=0, etp_rank=0)
 
 
-@patch(
-    "megatron.bridge.training.setup_megatron_mimo.is_current_rank_in_grid",
-    side_effect=lambda grid: grid.rank_offset <= 2 < (grid.rank_offset + grid.size),
-)
-@patch("megatron.bridge.training.setup_megatron_mimo.dist")
-def test_set_megatron_mimo_random_seeds_offsets_by_pp_rank(mock_dist, _mock_in_grid):
+@patch("megatron.bridge.models.megatron_mimo.build_model.dist")
+def test_set_megatron_mimo_random_seeds_offsets_by_pp_rank(mock_dist):
     """PP rank > 0 should offset the seed by 100 * pp_rank."""
-    from megatron.bridge.training.setup_megatron_mimo import _set_megatron_mimo_random_seeds
+    from megatron.bridge.models.megatron_mimo.build_model import _set_per_module_random_seeds
 
     mock_dist.get_rank.return_value = 2
 
@@ -97,16 +89,16 @@ def test_set_megatron_mimo_random_seeds_offsets_by_pp_rank(mock_dist, _mock_in_g
     grid = MagicMock()
     grid.rank_offset = 0
     grid.size = 4
+    grid.is_current_rank_in_grid.return_value = True
     grid.get_pg.side_effect = lambda dims: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
 
     megatron_mimo_infra = SimpleNamespace(module_to_grid_map={"llm": grid})
-    cfg = SimpleNamespace(rng=SimpleNamespace(seed=42))
 
-    with patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
+    with patch("megatron.bridge.models.megatron_mimo.build_model.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
         import torch
 
         with patch.object(torch.cuda, "device_count", return_value=1):
-            _set_megatron_mimo_random_seeds(cfg, megatron_mimo_infra)
+            _set_per_module_random_seeds(megatron_mimo_infra, seed=42)
 
         # seed = 42 + 100 * 1 = 142, tp_rank=1
         mock_seed.assert_called_once_with(142, tp_rank=1, ep_rank=0, etp_rank=0)
@@ -246,12 +238,10 @@ def test_setup_megatron_mimo_asserts_when_constructor_fields_missing(
     mock_infra.module_to_grid_map = {"language": MagicMock()}
     mock_infra.topology = {"language": []}
     mock_infra.module_output_ndim = {"language": 3}
-    cfg.model.build_infra.return_value = mock_infra
-    cfg.model.provide_distributed_model.return_value = [MagicMock()]
+    model = MagicMock()
 
     with (
-        patch("megatron.bridge.training.setup_megatron_mimo.validate_no_stub_ranks"),
-        patch("megatron.bridge.training.setup_megatron_mimo._set_megatron_mimo_random_seeds"),
+        patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, mock_infra)),
         patch("megatron.bridge.training.setup_megatron_mimo.build_pg_collection_for_schedule"),
         patch("megatron.bridge.training.setup_megatron_mimo.get_module_to_grid_tuple"),
         patch("megatron.bridge.training.setup_megatron_mimo.MultiModulePipelineCommunicator"),
