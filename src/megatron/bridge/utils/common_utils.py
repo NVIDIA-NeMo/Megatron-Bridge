@@ -253,18 +253,26 @@ def hook_hf_module_setattr_for_tp_grad_sync(module: torch.nn.Module) -> torch.nn
 
 def extract_expert_number_from_param(param_name: str) -> int:
     """Extract the expert number from a parameter name.
+
     Args:
         param_name: The parameter name to extract the expert number from.
+
     Returns:
         The expert number.
     """
-    pattern = r"(?:experts\.|weight|bias)(\d+)"
-    match = re.search(pattern, param_name)
-    if not match:
-        raise ValueError(
-            f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
-        )
-    return int(match.group(1))
+    patterns = (
+        r"local_experts\.(\d+)",
+        r"(?:weight|bias)(\d+)",
+        r"experts\.(\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, param_name)
+        if match:
+            return int(match.group(1))
+    raise ValueError(
+        f"No expert number found in parameter name: {param_name}. "
+        f"Please update the regex patterns {patterns} if necessary."
+    )
 
 
 def disable_mtp_for_inference(m: torch.nn.Module) -> None:

@@ -763,8 +763,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         local_expert_number = global_expert_number % num_experts_per_rank
 
-        # Compute global expert numbers for all EP ranks
-        # use regex to replace the local expert number with the global expert number
+        # Compute global expert numbers for all EP ranks. HF MoE params use
+        # experts.N naming here; local_experts.N would require a separate pattern.
         gathered_expert_param_names = [
             re.sub(
                 r"experts\.(\d+)", f"experts.{int(local_expert_number) + num_experts_per_rank * i}", str(hf_param_name)
@@ -904,6 +904,14 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
                     )
                 hf_weights = hf_weights.to(target_param.dtype)
 
+            actual_dim0_size = hf_weights.shape[0]
+            expect_dim0_size = target_param.shape[0] * self.tp_size
+            if actual_dim0_size != expect_dim0_size:
+                assert self.megatron_param in {"embedding.word_embeddings.weight", "output_layer.weight"}, (
+                    f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
+                )
+                hf_weights = _pad_right_dim0(hf_weights, pad_size=expect_dim0_size - actual_dim0_size)
+
             # For bias (1D), we still split along dim 0
             # For weight (2D), we split along dim 0 (output dimension)
             full_size = hf_weights.shape[0]
@@ -952,6 +960,11 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
+
+
+def _pad_right_dim0(x: torch.Tensor, pad_size: int) -> torch.Tensor:
+    padder = torch.zeros((pad_size, *x.shape[1:]), dtype=x.dtype, device=x.device)
+    return torch.cat([x, padder], dim=0)
 
 
 class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
@@ -1185,6 +1198,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         "column": {
             "ColumnParallelLinear",
             "LinearCrossEntropyModule",
+            "QuantColumnParallelLinear",
             "TEColumnParallelLinear",
             "TELayerNormColumnParallelLinear",
             "InferenceLayerNormColumnParallelLinear",
@@ -1195,6 +1209,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         },
         "row": {
             "RowParallelLinear",
+            "QuantRowParallelLinear",
             "TERowParallelLinear",
             "InferenceRowParallelLinear",
             "TERowParallelGroupedLinear",
@@ -1210,9 +1225,11 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             # Other non-parallel modules
             "InferenceTopKRouter",
             "IdentityOp",
+            "LinearForLastLayer",
             "TopKRouter",
         },
     }
+    _FUSED_LAYER_NORM_COLUMN_PARALLEL_SUBSTRING = "LayerNormColumnParallelLinear"
 
     @classmethod
     def register_module_type(cls, module_name: str, parallelism_type: str):
@@ -1269,7 +1286,8 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Handle fused modules like TELayerNormColumnParallelLinear
         # These modules have both column-parallel weights (weight, bias)
         # and replicated layer norm weights (layer_norm_weight, layer_norm_bias)
-        if module_type in ("TELayerNormColumnParallelLinear", "InferenceLayerNormColumnParallelLinear"):
+        is_layernorm_column_parallel = self._FUSED_LAYER_NORM_COLUMN_PARALLEL_SUBSTRING in module_type
+        if is_layernorm_column_parallel:
             # Check the actual parameter name to determine the correct parallelism type
             if self.megatron_param and (
                 self.megatron_param.endswith("layer_norm_weight") or self.megatron_param.endswith("layer_norm_bias")

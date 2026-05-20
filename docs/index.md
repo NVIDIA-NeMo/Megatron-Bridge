@@ -3,12 +3,18 @@
 ```
 
 ```{toctree}
+:caption: Performance
+:hidden:
+
+performance-summary.md
+performance-summary-archive.md
+```
+
+```{toctree}
 :caption: Guides
 :hidden:
 
 parallelisms.md
-performance-summary.md
-performance-summary-archive.md
 performance-guide.md
 recipe-usage.md
 nemo2-migration-guide.md

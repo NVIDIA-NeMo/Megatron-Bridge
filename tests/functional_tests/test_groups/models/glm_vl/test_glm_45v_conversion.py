@@ -88,6 +88,39 @@ HF_GLM_45V_TOY_MODEL_CONFIG = {
 }
 
 
+def _save_minimal_fast_tokenizer(save_directory: Path) -> None:
+    """Save a small tokenizer.json so Transformers 5.x can load the toy checkpoint offline."""
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import PreTrainedTokenizerFast
+
+    end_of_text = "<|endoftext|>"
+    unknown = "<unk>"
+    tokenizer = Tokenizer(
+        WordLevel(
+            {
+                end_of_text: 0,
+                unknown: 1,
+                "<|image|>": 2,
+                "<|video|>": 3,
+            },
+            unk_token=unknown,
+        )
+    )
+    tokenizer.pre_tokenizer = Whitespace()
+
+    hf_tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer,
+        bos_token=end_of_text,
+        eos_token=end_of_text,
+        pad_token=end_of_text,
+        unk_token=unknown,
+        model_max_length=HF_GLM_45V_TOY_MODEL_CONFIG["text_config"]["max_position_embeddings"],
+    )
+    hf_tokenizer.save_pretrained(save_directory)
+
+
 class TestGLM45VConversion:
     """
     Test GLM-4.5V model conversion from local HuggingFace model with different parallelism configurations.
@@ -133,28 +166,10 @@ class TestGLM45VConversion:
             print(f"Before save - {name}: {param.dtype}")
             break  # Just check the first parameter
 
-        # Download and save tokenizer from a reference Qwen25 VL model
-        # We use the smallest available Qwen25 VL model for tokenizer artifacts
-        try:
-            from transformers import AutoTokenizer
-
-            tokenizer = AutoTokenizer.from_pretrained("zai-org/GLM-4.5V")
-            tokenizer.save_pretrained(model_dir)
-        except Exception as e:
-            print(f"Warning: Could not download tokenizer, creating minimal tokenizer files: {e}")
-            # Create minimal tokenizer files if download fails
-            # This is a fallback for offline environments
-            tokenizer_config = {
-                "tokenizer_class": "Qwen2Tokenizer",
-                "vocab_size": 151936,
-                "bos_token": "<|endoftext|>",
-                "eos_token": "<|endoftext|>",
-                "pad_token": "<|endoftext|>",
-                "unk_token": "<|endoftext|>",
-            }
-
-            with open(model_dir / "tokenizer_config.json", "w") as f:
-                json.dump(tokenizer_config, f, indent=2)
+        # The conversion only needs tokenizer artifacts to be loadable and saveable.
+        # A deterministic fast tokenizer keeps this fixture independent of optional
+        # tiktoken/sentencepiece installs required by the full GLM tokenizer.
+        _save_minimal_fast_tokenizer(model_dir)
 
         # Save model and config to directory
         model.save_pretrained(model_dir, safe_serialization=True)
