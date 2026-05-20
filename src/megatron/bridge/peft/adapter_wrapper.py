@@ -100,6 +100,15 @@ class AdapterWrapper(nn.Module):
         super(AdapterWrapper, self).__init__()
         self.to_wrap = to_wrap
         self.adapter = adapter
+        self._adapter_enabled = True
+
+    def enable_adapter_layers(self) -> None:
+        """Enable the adapter layers, allowing them to contribute to the forward pass output."""
+        self._adapter_enabled = True
+
+    def disable_adapter_layers(self) -> None:
+        """Disable the adapter layers, making the forward pass return only the base module output."""
+        self._adapter_enabled = False
 
     def base_linear_forward(
         self, x: torch.Tensor, *args: Any, **kwargs: Any
@@ -146,6 +155,11 @@ class AdapterWrapper(nn.Module):
             linear_output, bias, layernorm_output = linear_output
 
         return linear_output, bias, layernorm_output
+
+    def adapter_forward(self, adapter: nn.Module, x: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+        """Run an adapter with the wrapped module's forwarded arguments."""
+
+        return adapter(x, *args, **kwargs)
 
     def state_dict(
         self, destination: Optional[Dict[str, Any]] = None, prefix: str = "", keep_vars: bool = False
@@ -195,7 +209,7 @@ class AdapterWrapper(nn.Module):
             The combined sharded state dictionary.
         """
         adapter_sharded_state_dict_kwargs = {}
-        if isinstance(self.adapter, ParallelLinearAdapter) and "in_proj" in self.adapter.base_linear_name:
+        if isinstance(self.adapter, ParallelLinearAdapter) and "mixer.in_proj" in self.adapter.base_linear_name:
             adapter_sharded_state_dict_kwargs["mamba_dim_info"] = _compute_mamba_dim_info(self.to_wrap)
 
         sharded_state_dict = {}

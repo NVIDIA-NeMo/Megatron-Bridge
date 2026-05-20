@@ -1,5 +1,51 @@
 # Software Component Versions
 
+## NeMo Framework 26.04
+
+| Software Component | Version |
+|-------------------|---------|
+| PyTorch | 2.11.0a0+eb65b36914.nv26.02 |
+| Megatron Core | 0.17.0 |
+| Transformer Engine | 2.14+71bbefb |
+| Megatron-Bridge | 0.4.0 |
+| Megatron-FSDP | 0.4.0 |
+| Export-Deploy | 0.5.0 |
+| Evaluator | 0.2.5 |
+| NeMo Run | 0.9.0 |
+| Nvidia-ModelOpt | 0.43.0 |
+| CUDA | 13.1.1 |
+| cuDNN | 9.20.0.48-1 |
+| TRT-LLM | 1.2.0 |
+| vLLM | 0.17.1 |
+
+```{note}
+NVIDIA NeMo™ Framework Training container is built on top of NVIDIA Optimized Frameworks PyTorch 26.02 container: https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html
+```
+
+## NeMo Framework 26.02
+
+| Software Component | Version |
+|-------------------|---------|
+| PyTorch | 2.10.0a0 |
+| Megatron Core | main:0.16.0 |
+| Transformer Engine | 2.12 |
+| Megatron-Bridge | 0.3.0 |
+| Megatron-FSDP | 0.3.0 |
+| Export-Deploy | 0.4.0 |
+| Evaluator | 0.1.74 |
+| NeMo | 2.7.0 |
+| NeMo Run | 0.8.0 |
+| Nvidia-ModelOpt | 0.41.0 |
+| NVRX | 0.5.0 |
+| CUDA | 13.0.2 |
+| cuDNN | 9.18.0.50 |
+| TRT-LLM | 1.1.0 |
+| vLLM | 0.14.1 |
+
+```{note}
+NVIDIA NeMo™ Framework Training container is built on top of NVIDIA Optimized Frameworks PyTorch 25.06 container: https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html
+```
+
 ## NeMo Framework 25.11
 
 | Software Component | Version |
@@ -22,7 +68,6 @@
 ```{note}
 NVIDIA NeMo™ Framework Training container is built on top of NVIDIA Optimized Frameworks PyTorch 25.06 container: https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html
 ```
-
 
 ## NeMo Framework 25.09
 
@@ -48,4 +93,3 @@ NVIDIA NeMo™ Framework Training container is built on top of NVIDIA Optimized 
 ```{note}
 NVIDIA NeMo™ Framework Training container is built on top of NVIDIA Optimized Frameworks PyTorch 25.06 container: https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html
 ```
-

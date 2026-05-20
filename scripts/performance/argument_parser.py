@@ -15,6 +15,7 @@
 import argparse
 import logging
 import os
+import re
 from pathlib import Path
 
 from nemo_run.config import get_nemorun_home
@@ -26,15 +27,51 @@ DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", Path.home() / ".cache" / "nemo")
 VALID_CUDA_GRAPH_IMPLS = ["none", "local", "transformer_engine"]
 VALID_CUDA_GRAPH_SCOPES = ["full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
 
+NUM_GPUS_PER_NODE_MAP = {
+    "h100": 8,
+    "b200": 8,
+    "b300": 8,
+    "gb200": 4,
+    "gb300": 4,
+    "vr200": 4,
+    "r100": 1,
+}
+
 
 def list_of_strings(arg):
     """Split a comma-separated string into a list of substrings."""
     return arg.split(",")
 
 
+def list_of_ints(arg):
+    """Split a comma-separated string into a list of integers."""
+    if arg is None:
+        raise argparse.ArgumentTypeError("empty argument list")
+    try:
+        result = [int(p, 10) for p in list_of_strings(arg)]
+    except Exception:
+        raise argparse.ArgumentTypeError(f"invalid comma-separated integer list: {arg!r}") from None
+
+    return result
+
+
 def to_dict(arg):
     """Split a comma-separated string into a dictionary of key-value pairs."""
     return dict(item.split("=") for item in arg.split(","))
+
+
+def parse_kv(s: str):
+    """Parse a key-value pair from a string."""
+    KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")  # Useful check for errors like hyphen in var names
+    if "=" not in s:
+        raise argparse.ArgumentTypeError(f"Expected KEY=VALUE, got {s!r}")
+
+    key, value = s.split("=", 1)
+
+    if not KEY_RE.match(key):
+        raise argparse.ArgumentTypeError(f"Invalid env var name: {key!r}")
+
+    return key, value
 
 
 def lower_str(arg):
@@ -131,6 +168,13 @@ def parse_cli_args():
         argument_default=None,
     )
     parser.add_argument(
+        "--domain",
+        type=lower_str,
+        choices=["llm", "vlm", "qwen3vl", "diffusion"],
+        help="Domain to use for experiment.",
+        default="llm",
+    )
+    parser.add_argument(
         "-m",
         "--model_family_name",
         type=lower_str,
@@ -149,12 +193,6 @@ def parse_cli_args():
         action="store_true",
         help="Use library recipes. Disabled by default.",
         default=False,
-    )
-    parser.add_argument(
-        "-hf",
-        "--hf_token",
-        type=str,
-        help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
     )
     parser.add_argument(
         "-nh",
@@ -187,6 +225,43 @@ def parse_cli_args():
         type=int,
         help="Number of gpus.",
         required=True,
+    )
+    parser.add_argument(
+        "--hidden_size",
+        type=int,
+        help="Hidden size to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--num_layers",
+        type=int,
+        help="Number of layers to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--pipeline_model_parallel_layout",
+        type=str,
+        help="Pipeline model parallel layout to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--first_k_dense_replace",
+        type=int,
+        help="Number of MoE layers to be converted to dense layers. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-d",
+        "--dryrun",
+        help="Dry-run mode. In setup_experiment.py: prints the sbatch script without launching. "
+        "In run_script.py / run_recipe.py: builds the full ConfigContainer with all overrides, "
+        "saves it to --save_config_filepath (default: ConfigContainer.yaml), and exits without training.",
+        required=False,
+        action="store_true",
     )
 
     # Training
@@ -232,9 +307,6 @@ def parse_cli_args():
     checkpointing_args.add_argument("--load_dir", type=str, help="Directory to load checkpoints")
     checkpointing_args.add_argument("--save_interval", type=int, help="Number of iterations between checkpoint saves")
     checkpointing_args.add_argument("--most_recent_k", type=int, help="Number of latest checkpoints to keep")
-    checkpointing_args.add_argument(
-        "--save_config_filepath", type=str, help="Path to save the task configuration file"
-    )
 
     # Data
     data_args = parser.add_argument_group("Data arguments")
@@ -247,14 +319,14 @@ def parse_cli_args():
     )
     data_args.add_argument("--dataset_paths", nargs="*", help="Dataset paths (for rp2 dataset)")
     data_args.add_argument("--dataset_root", type=str, help="Dataset root directory (for squad datasets)")
-    parser.add_argument("--index_mapping_dir", type=str, help="Index mapping directory (for rp2 dataset)")
+    data_args.add_argument("--index_mapping_dir", type=str, help="Index mapping directory (for rp2 dataset)")
     data_args.add_argument("--dataset_name", type=str, help="Dataset name (deprecated)")
     data_args.add_argument("--packed_sequence", action="store_true", help="Use packed sequences")
     data_args.add_argument("--head_only", action="store_true", help="Use only head data (for rp2 dataset)")
 
     # Tokenizer configuration
     tokenizer_args = parser.add_argument_group("Tokenizer arguments")
-    data_args.add_argument(
+    tokenizer_args.add_argument(
         "--tokenizer_type",
         type=str,
         choices=["NullTokenizer", "HuggingFaceTokenizer", "SentencePieceTokenizer"],
@@ -263,6 +335,18 @@ def parse_cli_args():
         "--tokenizer_model", type=str, help="Path to tokenizer model (automatically provided by launcher)"
     )
     tokenizer_args.add_argument("--vocab_size", type=int, default=32000, help="Vocabulary size for NullTokenizer")
+    hf_mode = tokenizer_args.add_mutually_exclusive_group()
+    hf_mode.add_argument(
+        "-hf",
+        "--hf_token",
+        type=str,
+        help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
+    )
+    hf_mode.add_argument(
+        "--offline",
+        action="store_true",
+        help="Enable offline HuggingFace Hub mode by setting HF_HUB_OFFLINE=1.",
+    )
 
     # Parallelism
     parallelism_args = parser.add_argument_group("Parallelism arguments")
@@ -332,8 +416,8 @@ def parse_cli_args():
         "-gn",
         "--gpus_per_node",
         type=int,
-        help="Number of gpus per node. Defaults to 8",
-        default=8,
+        help="Number of gpus per node. Defaults to None. If not provided, will be inferred from the GPU type.",
+        default=None,
     )
     slurm_args.add_argument(
         "-i",
@@ -359,7 +443,16 @@ def parse_cli_args():
         "--custom_env_vars",
         type=to_dict,
         help="Comma separated string of environment variables",
-        default=[],
+        default={},
+    )
+    slurm_args.add_argument(
+        "-E",
+        "--env",
+        action="append",
+        type=parse_kv,
+        metavar="KEY=VALUE",
+        help="Set environment variable (repeatable arg). This is an alternative to --custom_env_vars \
+        (--custom_env_vars is preferred for most cases). Example: -E var1=value1,value2 -E var2=value3",
     )
     slurm_args.add_argument(
         "-cs",
@@ -367,6 +460,14 @@ def parse_cli_args():
         type=list_of_strings,
         help="Comma separated string of srun arguments",
         default=[],
+    )
+    slurm_args.add_argument(
+        "-cb",
+        "--custom_bash_cmds",
+        nargs="*",
+        action="append",
+        help="List of bash commands to execute before the main command",
+        default=None,
     )
     slurm_args.add_argument(
         "--gres",
@@ -382,6 +483,22 @@ def parse_cli_args():
         "Use semicolons (;) to separate parameters when values contain commas. "
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
         required=False,
+    )
+    slurm_args.add_argument(
+        "--packager",
+        type=str,
+        choices=["git", "none"],
+        default="git",
+        help="How code is packaged for the job. 'git' snapshots the repo at submission time (default). "
+        "'none' skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.",
+        required=False,
+    )
+    slurm_args.add_argument(
+        "--enable_pct_binding",
+        type=bool_arg,
+        help="Enable PCT binding. Enabled by default.",
+        required=False,
+        default=True,
     )
 
     # DGXCloud
@@ -435,15 +552,44 @@ def parse_cli_args():
         required=False,
     )
 
+    # Kubeflow
+    kubeflow_args = parser.add_argument_group("Kubeflow arguments")
+    kubeflow_args.add_argument(
+        "--kubeflow_namespace",
+        type=str,
+        help="Kubernetes namespace for Kubeflow TrainJob. When set, uses the Kubeflow executor instead of Slurm.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_workdir_pvc",
+        type=str,
+        help="PVC name for syncing job workdir (launch scripts, packaged code) to the cluster before launch.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_workdir_pvc_path",
+        type=str,
+        help="Mount path for the workdir PVC inside the training pod. Defaults to '/nemo_run'.",
+        default="/nemo_run",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_image_pull_secrets",
+        type=list_of_strings,
+        help="Comma-separated list of Kubernetes image pull secret names.",
+        required=False,
+        default=[],
+    )
+
     # For performance
     performance_args = parser.add_argument_group("Performance arguments")
     performance_args.add_argument(
         "-g",
         "--gpu",
         type=str,
-        choices=["h100", "b200", "gb200", "gb300"],
+        choices=NUM_GPUS_PER_NODE_MAP.keys(),
         help="Target gpu type.",
-        required=False,
+        required=True,
     )
     performance_args.add_argument(
         "-c",
@@ -455,11 +601,29 @@ def parse_cli_args():
         default="bf16",
     )
     performance_args.add_argument(
+        "--optimizer_type",
+        type=str,
+        choices=["adam", "muon"],
+        help="Optimizer type for recipes that support it (e.g. Kimi-K2). Defaults to muon.",
+        required=False,
+        default="muon",
+    )
+    performance_args.add_argument(
         "-vb",
         "--enable_vboost",
         help="Enable VBoost which steers more power towards tensor cores. Disabled by default",
         type=bool_arg,
         required=False,
+    )
+    performance_args.add_argument(
+        "-lgc",
+        "--lock_gpu_freq",
+        help="Lock GPU graphics clock to the specified frequency in MHz via "
+        "`sudo nvidia-smi -lgc <freq>`. Runs once per node before training. "
+        "Use `nvidia-smi -rgc` to reset after the job.",
+        type=int,
+        required=False,
+        default=None,
     )
     performance_args.add_argument(
         "-en",
@@ -468,15 +632,68 @@ def parse_cli_args():
         action="store_true",
     )
     performance_args.add_argument(
-        "--profiling_start_step", type=int, help="Defines start step for profiling", required=False, default=10
+        "--export_nsys_sqlite",
+        help="Export a SQLite report after Nsys profiling finishes. Requires --enable_nsys.",
+        action="store_true",
     )
     performance_args.add_argument(
-        "--profiling_stop_step", type=int, help="Defines stop step for profiling", required=False, default=11
+        "-pyp",
+        "--pytorch_profiler",
+        type=bool_arg,
+        help="Enable PyTorch profiler. Disabled by default",
+        required=False,
+        default=False,
+    )
+    performance_args.add_argument(
+        "--profiling_start_step",
+        type=int,
+        help="Defines start step for profiling",
+        required=False,
+        default=10,
+    )
+    performance_args.add_argument(
+        "--profiling_stop_step",
+        type=int,
+        help="Defines stop step for profiling",
+        required=False,
+        default=11,
+    )
+    performance_args.add_argument(
+        "-mh",
+        "--record_memory_history",
+        type=bool_arg,
+        help="Enable PyTorch profiler memory history recording. Enabled by default (if pytorch_profiler is enabled)",
+        required=False,
+        default=True,
     )
     performance_args.add_argument(
         "--profiling_gpu_metrics",
         help="Enable nsys gpu metrics. Disabled by default.",
         action="store_true",
+    )
+    performance_args.add_argument(
+        "--profiling_ranks",
+        type=list_of_ints,
+        metavar="N[,N...]",
+        help="List of ranks to target for profiling (defaults to just first rank)",
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--nsys_trace",
+        type=list_of_strings,
+        metavar="TRACE[,TRACE...]",
+        help="Comma-separated list of events to trace during nsys profiling (e.g., 'cuda,nvtx'). Defaults to nemo_run defaults.",
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--nsys_extra_args",
+        type=list_of_strings,
+        metavar="ARG[,ARG...]",
+        help="Comma-separated list of additional nsys arguments. Will be combined with default args.",
+        required=False,
+        default=None,
     )
     performance_args.add_argument(
         "--use_tokendrop",
@@ -487,6 +704,12 @@ def parse_cli_args():
     performance_args.add_argument(
         "--use_megatron_fsdp",
         help="Use Megatron FSDP. Disabled by default.",
+        type=bool_arg,
+        required=False,
+    )
+    performance_args.add_argument(
+        "--nccl_ub",
+        help="Enable NCCL user buffer for FSDP communication. Disabled by default.",
         type=bool_arg,
         required=False,
     )
@@ -527,6 +750,20 @@ def parse_cli_args():
         type=list_of_strings,
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
+    )
+    performance_args.add_argument(
+        "--moe_flex_dispatcher_backend",
+        type=lambda x: None if x == "None" else x,
+        help="MoE flex dispatcher backend. Options- deepep, hybridep, None. If None, will use alltoall dispatcher.",
+        choices=["deepep", "hybridep", None],
+        required=False,
+        default=-1,
+    )
+    performance_args.add_argument(
+        "--deterministic",
+        help="Enable bit-exact deterministic training. Sets NCCL/cuBLAS/TE env vars "
+        "and disables fused cross-entropy loss and TP comm overlap.",
+        action="store_true",
     )
 
     # Logging
@@ -574,16 +811,36 @@ def parse_cli_args():
         required=False,
         default=None,
     )
-
-    parser.add_argument(
-        "-d",
-        "--dryrun",
-        help="If true, prints sbatch script to terminal without launching experiment.",
-        required=False,
+    logging_args.add_argument("--save_config_filepath", type=str, help="Path to save the task configuration file")
+    logging_args.add_argument(
+        "--dump_env",
         action="store_true",
+        help="Write environment variables to /nemo_run/env_<SLURM_JOB_ID>.log on rank 0. "
+        "Useful for post-run debugging of NCCL, CUDA, and SLURM settings.",
     )
 
-    # Testing parameters
+    # Config variant selection
+    config_variant_args = parser.add_argument_group("Config variant arguments")
+    config_variant_args.add_argument(
+        "-cv",
+        "--config_variant",
+        type=str,
+        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v2' ('v1' if 'v2' doens't exist). Use --list_config_variants to see available options.",
+        default="v2",
+    )
+    config_variant_args.add_argument(
+        "--list_config_variants",
+        action="store_true",
+        help="List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).",
+    )
+
+    _testing_args(parser)
+
+    return parser
+
+
+def _testing_args(parser):
+    """Add testing-related arguments to the parser."""
     testing_args = parser.add_argument_group("Testing arguments")
     testing_args.add_argument(
         "--is_long_convergence_run",
@@ -607,8 +864,6 @@ def parse_cli_args():
         default=0.70,
         help="Percentage of iterations to skip for timing comparison (default: 0.75 = 75%%)",
     )
-
-    # Convergence loss validation parameters
     testing_args.add_argument(
         "--correlation_threshold", type=float, default=0.95, help="Correlation threshold for loss curve validation"
     )
@@ -634,5 +889,18 @@ def parse_cli_args():
         default=0.20,
         help="Percentage of loss points to skip from beginning for convergence analysis",
     )
-
-    return parser
+    testing_args.add_argument(
+        "--memory_threshold", type=float, default=0.05, help="Memory validation threshold (default: 0.05 = 5%%)"
+    )
+    testing_args.add_argument(
+        "--eval_time_start_step",
+        type=int,
+        default=None,
+        help="Start step (0-indexed, inclusive) for timing average window. Overrides skip_first_percent_time when set.",
+    )
+    testing_args.add_argument(
+        "--eval_time_end_step",
+        type=int,
+        default=None,
+        help="End step (0-indexed, exclusive) for timing average window. If None, averages to end.",
+    )

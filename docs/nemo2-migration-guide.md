@@ -26,7 +26,7 @@ Megatron Bridge offers model providers that directly map to NeMo 2.0 model confi
 ### Supported Model Families
 
 Megatron Bridge supports the following model families with preset providers:
-- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaProvider`
+- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaModelProvider`
 - **Llama**: Llama2, Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
 - **Qwen**: Qwen2, Qwen2.5, Qwen3, Qwen3MoE, Qwen2.5VL
 - **DeepSeek**: DeepSeek, DeepSeekV2, DeepSeekV2Lite, DeepSeekV3, Moonlight
@@ -1751,10 +1751,10 @@ Megatron Bridge supports standard PyTorch distributed execution patterns:
 
 ```bash
 # Direct script execution with torchrun
-python -m torch.distributed.run --nproc_per_node=8 my_training_script.py
+uv run python -m torch.distributed.run --nproc_per_node=8 my_training_script.py
 
 # Multi-node execution
-torchrun --nnodes=4 --nproc_per_node=8 \
+uv run python -m torch.distributed.run --nnodes=4 --nproc_per_node=8 \
     --master_addr="node0" --master_port=12345 \
     my_training_script.py
 ```

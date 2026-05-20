@@ -494,6 +494,75 @@ class WandbPlugin(Plugin):
 
 
 @dataclass
+class CometPluginScriptArgs:
+    """Arguments for CometPlugin to pass to run.Script."""
+
+    project: str
+    workspace: Optional[str]
+    name: Optional[str]
+
+
+def _default_comet_converter(args: CometPluginScriptArgs) -> List[str]:
+    """Default converter for CometPlugin that generates CLI overrides."""
+    cli_overrides = [f"logger.comet_project={args.project}"]
+    if args.workspace:
+        cli_overrides.append(f"logger.comet_workspace={args.workspace}")
+    if args.name:
+        cli_overrides.append(f"logger.comet_experiment_name={args.name}")
+    return cli_overrides
+
+
+@dataclass(kw_only=True)
+class CometPlugin(Plugin):
+    """
+    A plugin for setting up Comet ML configuration.
+
+    This plugin sets up Comet ML logging configuration. The plugin is only activated
+    if the ``COMET_API_KEY`` environment variable is set.
+    The ``COMET_API_KEY`` environment variable will also be set in the executor's environment variables.
+    Follow https://www.comet.com/docs/v2/guides/getting-started/quickstart/ to retrieve your ``COMET_API_KEY``.
+
+    Args:
+        project (str): The Comet ML project name.
+        name (Optional[str]): The name for the Comet ML experiment.
+        workspace (Optional[str]): The Comet ML workspace.
+        script_args_converter_fn (Optional[Callable]): A function that takes CometPluginScriptArgs
+                                                        and returns a list of CLI arguments.
+    """
+
+    project: str
+    name: Optional[str] = None
+    workspace: Optional[str] = None
+    script_args_converter_fn: Optional[Callable[[CometPluginScriptArgs], List[str]]] = None
+
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+        if not HAVE_NEMO_RUN:
+            raise ImportError(MISSING_NEMO_RUN_MSG)
+
+        if "COMET_API_KEY" in os.environ:
+            executor.env_vars["COMET_API_KEY"] = os.environ["COMET_API_KEY"]
+
+            if isinstance(task, Script):
+                script_args = CometPluginScriptArgs(
+                    project=self.project,
+                    workspace=self.workspace,
+                    name=self.name,
+                )
+
+                converter = self.script_args_converter_fn or _default_comet_converter
+                cli_overrides = converter(script_args)
+
+                task.args.extend(cli_overrides)
+                logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+            else:
+                raise NotImplementedError("CometPlugin is only supported for run.Script tasks")
+        else:
+            logger.warning(
+                f"Warning: The {self.__class__.__name__} will have no effect as COMET_API_KEY environment variable is not set."
+            )
+
+
+@dataclass
 class PerfEnvPluginScriptArgs:
     """Arguments for PerfEnvPlugin to pass to run.Script."""
 

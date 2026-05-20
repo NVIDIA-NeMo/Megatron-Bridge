@@ -13,9 +13,14 @@
 # limitations under the License.
 
 
+from unittest.mock import patch
+
 from transformers.configuration_utils import PretrainedConfig
 
-from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
+from megatron.bridge.models.conversion.utils import (
+    get_causal_lm_class_name_via_auto_map,
+    is_modelopt_dynamic_module,
+)
 
 
 class DummyConfig(PretrainedConfig):
@@ -42,7 +47,10 @@ def test_returns_class_name_when_auto_map_present():
 
 
 def test_splits_on_last_dot():
-    config = DummyConfig(auto_map={"AutoModelForCausalLM": "pkg.subpkg.module.DeepClass"}, name_or_path="repo/id")
+    config = DummyConfig(
+        auto_map={"AutoModelForCausalLM": "pkg.subpkg.module.DeepClass"},
+        name_or_path="repo/id",
+    )
     result = get_causal_lm_class_name_via_auto_map(config)
     assert result == "DeepClass"
 
@@ -51,3 +59,17 @@ def test_returns_none_when_key_missing():
     config = DummyConfig(auto_map={"AutoModel": "some.module.Class"}, name_or_path="repo/id")
     result = get_causal_lm_class_name_via_auto_map(config)
     assert result is None
+
+
+def test_is_modelopt_dynamic_module_returns_false_when_modelopt_not_installed():
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _block_modelopt(name, *args, **kwargs):
+        if name == "modelopt.torch.opt.dynamic" or name.startswith("modelopt"):
+            raise ImportError("No module named 'modelopt'")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_block_modelopt):
+        assert is_modelopt_dynamic_module(object()) is False

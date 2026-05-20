@@ -1,0 +1,73 @@
+name: Support request
+description: Ask for help using Megatron Bridge or understanding expected behavior.
+title: "[support] "
+labels:
+  - support
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for help requests, usage questions, or cases where the behavior may be correct but unclear.
+  - type: textarea
+    id: user-problem
+    attributes:
+      label: User problem
+      description: What are you trying to do, and where are you stuck?
+      placeholder: Describe the workflow, command, or integration point that is blocking you.
+    validations:
+      required: true
+  - type: textarea
+    id: desired-outcome
+    attributes:
+      label: Desired outcome
+      description: What answer, behavior, or guidance would unblock you?
+      placeholder: Describe the outcome or explanation you need.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds considered
+      description: What have you already tried?
+      placeholder: Include experiments, docs consulted, or related issues/PRs.
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Choose the closest primary area.
+      options:
+        - area:model
+        - area:recipe
+        - area:training
+        - area:data
+        - area:ckpt
+        - area:peft
+        - area:perf
+        - area:build
+        - area:misc
+        - unsure
+    validations:
+      required: true
+  - type: dropdown
+    id: urgency
+    attributes:
+      label: Urgency / use case
+      description: How urgent is this request for your current work?
+      options:
+        - Blocking current work
+        - Important but not blocking
+        - Nice to have guidance
+        - General question
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include branch or commit, container, machine setup, or dependency versions if relevant.
+      placeholder: |
+        Branch / commit:
+        Container or environment:
+        GPU / machine:
+        Python / CUDA / PyTorch:

@@ -12,7 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Parallelism presets for GPT performance configs."""
+"""Parallelism presets for GPT performance configs.
+
+Config naming convention:
+    {MODEL}_{SIZE}_{TASK}_CONFIG_{GPU}_{PRECISION}_{VERSION}
+
+V1: GBS=512
+V2: GBS=1280
+
+Use --config_variant to select a variant.
+Use --list_config_variants to see available variants interactively.
+"""
 
 from dataclasses import replace
 
@@ -28,9 +38,11 @@ BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
 )
 
 
-# GPT-OSS 120B presets ---------------------------------------------------------
+# =============================================================================
+# GPT-OSS 120B Pretrain - V1 (GBS=512)
+# =============================================================================
 
-GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16 = replace(
+GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
     micro_batch_size=4,
@@ -39,7 +51,7 @@ GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16 = replace(
 )
 
 
-GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16 = replace(
+GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_V1 = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
     micro_batch_size=4,
@@ -47,7 +59,16 @@ GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16 = replace(
 )
 
 
-GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16 = replace(
+GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
+    BASE_GPT_OSS_120B_CONFIG,
+    expert_model_parallel_size=64,
+    micro_batch_size=4,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+)
+
+
+GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
     micro_batch_size=4,
@@ -55,16 +76,89 @@ GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16 = replace(
 )
 
 
-GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16 = replace(
+GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     BASE_GPT_OSS_120B_CONFIG,
     pipeline_model_parallel_size=4,
     recompute_modules=["layernorm", "moe_act"],
 )
 
+GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V1
+GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_V1
+GPT_OSS_120B_PRETRAIN_CONFIG_B300_FP8_MX_V1 = GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16_V1
+GPT_OSS_120B_PRETRAIN_CONFIG_B200_FP8_MX_V1 = GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_V1
+GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V1
+
+
+# =============================================================================
+# GPT-OSS 120B Pretrain - V2 (GBS=1280)
+# =============================================================================
+
+GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V2 = replace(
+    GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V1,
+    global_batch_size=1280,
+)
+
+
+GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_V2 = replace(
+    GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_V1,
+    global_batch_size=1280,
+    moe_a2a_overlap=True,
+)
+
+
+GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16_V2 = replace(
+    GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16_V1,
+    global_batch_size=1280,
+    expert_model_parallel_size=8,
+    moe_flex_dispatcher_backend="hybridep",
+)
+
+
+GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_V2 = replace(
+    GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_V1,
+    global_batch_size=1280,
+    expert_model_parallel_size=8,
+)
+
+
+GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V2 = replace(
+    GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V1,
+    global_batch_size=1280,
+)
+
+GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_V2 = GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V2
+GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_V2 = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_V2
+GPT_OSS_120B_PRETRAIN_CONFIG_B300_FP8_MX_V2 = GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16_V2
+GPT_OSS_120B_PRETRAIN_CONFIG_B200_FP8_MX_V2 = GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_V2
+GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_V2 = GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V2
+
+GPT_OSS_120B_PRETRAIN_CONFIG_VR200_BF16_V2 = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_V2
+GPT_OSS_120B_PRETRAIN_CONFIG_VR200_FP8_MX_V2 = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_V2
+
 
 __all__ = [
-    "GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16",
-    "GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16",
-    "GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16",
-    "GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16",
+    # V1 (GBS=512)
+    "GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V1",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_V1",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_V1",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16_V1",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_B300_FP8_MX_V1",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_V1",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_B200_FP8_MX_V1",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V1",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_V1",
+    # V2 (GBS=1280)
+    "GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_B300_FP8_MX_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_B200_FP8_MX_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_VR200_BF16_V2",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_VR200_FP8_MX_V2",
 ]

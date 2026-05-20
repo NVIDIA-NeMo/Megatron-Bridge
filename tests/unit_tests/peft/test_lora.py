@@ -24,8 +24,18 @@ import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.peft import canonical_lora as canonical_lora_module
+from megatron.bridge.peft import lora as lora_module
+from megatron.bridge.peft import utils as peft_utils
+from megatron.bridge.peft.canonical_lora import CanonicalLoRA
 from megatron.bridge.peft.lora import LoRA, LoRAMerge, VLMLoRA
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.utils import (
+    AdapterAttributes,
+    GroupedExpertLinearAdapter,
+    get_adapter_attributes_from_linear,
+    is_modelopt_linear,
+)
 
 
 class SimpleModel(nn.Module):
@@ -70,6 +80,116 @@ class NestedModel(nn.Module):
         )
 
 
+class MockMegatronLinear(nn.Module):
+    """Mock Megatron linear layer that's not nn.Linear to trigger parallel adapter path."""
+
+    def __init__(self, in_features, out_features, moe_router_topk=None):
+        """Initialize with given dimensions and optional moe_router_topk on the mock config."""
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features)
+        self.in_features = in_features
+        self.out_features = out_features
+
+        class MockConfig:
+            def __init__(self):
+                self.sequence_parallel = False
+                self.moe_router_topk = moe_router_topk
+                self.expert_tensor_parallel_size = 1
+                self.expert_model_parallel_size = 1
+                self.params_dtype = torch.float32
+                self.perform_initialization = True
+                self.use_cpu_initialization = False
+                self.cpu_offloading = False
+                self.cpu_offloading_activations = False
+
+        self.config = MockConfig()
+
+    def forward(self, x):
+        """Return (output, None) tuple like Megatron parallel linear layers."""
+        return self.linear(x), None
+
+
+class MoEModel(nn.Module):
+    """Model with dense and expert linear layers for testing normalize_moe_lora."""
+
+    def __init__(self, moe_router_topk=2):
+        """Build a model with dense MLP, routed experts, and shared experts."""
+        super().__init__()
+        self.decoder = nn.Module()
+        self.decoder.layers = nn.ModuleList([nn.Module()])
+
+        layer = self.decoder.layers[0]
+        layer.self_attention = nn.Module()
+        layer.self_attention.linear_proj = MockMegatronLinear(512, 512, moe_router_topk=moe_router_topk)
+        layer.mlp = nn.Module()
+        layer.mlp.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
+        layer.mlp.linear_fc2 = MockMegatronLinear(2048, 512, moe_router_topk=moe_router_topk)
+        layer.mlp.experts = nn.Module()
+        layer.mlp.experts.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
+        layer.mlp.experts.linear_fc2 = MockMegatronLinear(2048, 512, moe_router_topk=moe_router_topk)
+        layer.mlp.shared_experts = nn.Module()
+        layer.mlp.shared_experts.linear_fc1 = MockMegatronLinear(512, 2048, moe_router_topk=moe_router_topk)
+
+
+class GroupedExpertModel(nn.Module):
+    """Model with a grouped MoE expert linear for per-expert LoRA tests."""
+
+    def __init__(self):
+        super().__init__()
+        self.decoder = nn.Module()
+        self.decoder.layers = nn.ModuleList([nn.Module()])
+
+        layer = self.decoder.layers[0]
+        layer.mlp = nn.Module()
+        layer.mlp.experts = nn.Module()
+        grouped_linear = MockMegatronLinear(2048, 512)
+        grouped_linear.num_gemms = 2
+        layer.mlp.experts.linear_fc2 = grouped_linear
+
+
+G_MODEL_OPT_LINEAR_MODULE = "megatron.core.post_training.modelopt.layers"
+
+
+class _ModelOptConfig:
+    sequence_parallel = False
+    use_transformer_engine_op_fuser = False
+    moe_router_topk = None
+
+
+def _init_modelopt_linear(self, in_features: int = 4, out_features: int = 3, bias: bool = False) -> None:
+    nn.Linear.__init__(self, in_features, out_features, bias=bias)
+    self.config = _ModelOptConfig()
+
+
+def _modelopt_forward(self, x: torch.Tensor) -> tuple[torch.Tensor, None]:
+    return nn.Linear.forward(self, x), None
+
+
+def _make_modelopt_linear_class(
+    class_name: str = "Linear", module_name: str = G_MODEL_OPT_LINEAR_MODULE
+) -> type[nn.Linear]:
+    return type(
+        class_name,
+        (nn.Linear,),
+        {
+            "__module__": module_name,
+            "__init__": _init_modelopt_linear,
+            "forward": _modelopt_forward,
+        },
+    )
+
+
+ModelOptLinear = _make_modelopt_linear_class()
+WrongModuleLinear = _make_modelopt_linear_class(module_name=__name__)
+WrongNameModelOptLinear = _make_modelopt_linear_class(class_name="ModelOptLinear")
+
+
+class _UnexpectedLinearAdapter(nn.Module):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__()
+        raise AssertionError("ModelOpt Linear should not use the nn.Linear adapter path")
+
+
 class TestLoRA:
     """Test suite for LoRA PEFT implementation."""
 
@@ -84,6 +204,7 @@ class TestLoRA:
         assert lora.dropout_position == "pre"
         assert lora.lora_A_init_method == "xavier"
         assert lora.lora_B_init_method == "zero"
+        assert lora.share_expert_adapters is True
 
         # Test custom initialization
         custom_lora = LoRA(
@@ -93,6 +214,7 @@ class TestLoRA:
             dropout=0.1,
             dropout_position="post",
             lora_A_init_method="uniform",
+            share_expert_adapters=False,
         )
         assert custom_lora.target_modules == ["linear_qkv"]
         assert custom_lora.dim == 16
@@ -100,6 +222,7 @@ class TestLoRA:
         assert custom_lora.dropout == 0.1
         assert custom_lora.dropout_position == "post"
         assert custom_lora.lora_A_init_method == "uniform"
+        assert custom_lora.share_expert_adapters is False
 
     def test_lora_transform_simple_model(self):
         """Test LoRA transformation on a simple model."""
@@ -161,6 +284,30 @@ class TestLoRA:
             assert isinstance(layer["mlp"]["linear_fc1"], LinearAdapter)
             assert isinstance(layer["mlp"]["linear_fc2"], LinearAdapter)
 
+    def test_lora_grouped_expert_transform_can_use_per_expert_adapters(self):
+        """Grouped expert linears should get one LoRA adapter per local expert when requested."""
+        model = GroupedExpertModel()
+        lora = LoRA(target_modules=["linear_fc2"], share_expert_adapters=False)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=True,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
+            transformed_model = lora(model, training=True)
+
+        adapted = transformed_model.decoder.layers[0].mlp.experts.linear_fc2
+        assert isinstance(adapted, LoRALinear)
+        assert isinstance(adapted.adapter, GroupedExpertLinearAdapter)
+        assert adapted.adapter.linear_in.weight.shape == torch.Size([2, 32, 2048])
+        assert adapted.adapter.linear_out.weight.shape == torch.Size([2, 512, 32])
+
     def test_lora_wildcard_matching(self):
         """Test LoRA transformation with wildcard patterns."""
         model = NestedModel()
@@ -184,6 +331,36 @@ class TestLoRA:
         assert isinstance(transformed_model.layers[1]["mlp"]["linear_fc1"], nn.Linear)
         assert isinstance(transformed_model.layers[1]["mlp"]["linear_fc2"], nn.Linear)
 
+    def test_lora_warns_on_unmatched_target_module(self, caplog):
+        """Typos in target_modules should surface a warning so misconfigurations are visible
+        without breaking recipes whose defaults are wider than the model exposes."""
+        model = SimpleModel()
+        lora = LoRA(target_modules=["linear_qkb"])  # typo for linear_qkv
+
+        with caplog.at_level("WARNING", logger="megatron.bridge.peft.module_matcher"):
+            lora(model, training=True)
+
+        assert any("No modules matched" in r.message and "linear_qkb" in r.message for r in caplog.records)
+
+    def test_lora_respects_target_modules_mutation_after_construction(self):
+        """Recipes commonly mutate ``target_modules`` after constructing the PEFT object.
+
+        Validation must reflect the *current* value of ``target_modules`` at apply time,
+        not the defaults captured at construction. Pre-fix this would raise because the
+        original three default targets (``linear_proj``, ``linear_fc1``, ``linear_fc2``)
+        were still tracked even after the user narrowed the list to ``["linear_qkv"]``.
+        """
+        model = SimpleModel()
+        lora = LoRA()  # defaults: ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+        lora.target_modules = ["linear_qkv"]  # user narrows targets after construction
+
+        transformed = lora(model, training=True)
+
+        assert isinstance(transformed.linear_qkv, LinearAdapter)
+        assert isinstance(transformed.linear_proj, nn.Linear)
+        assert isinstance(transformed.linear_fc1, nn.Linear)
+        assert isinstance(transformed.linear_fc2, nn.Linear)
+
     def test_lora_adapter_properties(self):
         """Test that LoRA adapters have correct properties."""
         model = SimpleModel()
@@ -195,9 +372,10 @@ class TestLoRA:
         # Check adapter properties
         adapter = transformed_model.linear_qkv
         assert hasattr(adapter, "dim")
+        assert hasattr(adapter, "alpha")
         assert hasattr(adapter, "scale")
-        assert hasattr(adapter, "lora_a")
-        assert hasattr(adapter, "lora_b")
+        assert hasattr(adapter, "linear_in")
+        assert hasattr(adapter, "linear_out")
         assert hasattr(adapter, "dropout")
 
         assert adapter.dim == 16
@@ -219,8 +397,8 @@ class TestLoRA:
             assert not linear_adapter.bias.requires_grad
 
         # Check that LoRA parameters are trainable
-        assert linear_adapter.lora_a.weight.requires_grad
-        assert linear_adapter.lora_b.weight.requires_grad
+        assert linear_adapter.linear_in.weight.requires_grad
+        assert linear_adapter.linear_out.weight.requires_grad
 
     def test_lora_forward_pass(self):
         """Test that LoRA adapted models can perform forward passes."""
@@ -333,36 +511,293 @@ class TestLoRA:
             assert isinstance(chunk.linear_fc2, LinearAdapter)
 
 
+class TestModelOptLinear:
+    """Unit tests for ModelOpt Linear LoRA routing."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_modelopt_linear_import(self):
+        with (
+            patch.object(peft_utils, "HAVE_MODELOPT_LINEAR", True),
+            patch.object(peft_utils, "ModelOptLinear", ModelOptLinear),
+        ):
+            yield
+
+    def test_is_modelopt_linear_matches_only_modelopt_linear(self) -> None:
+        assert is_modelopt_linear(ModelOptLinear())
+
+        assert not is_modelopt_linear(WrongModuleLinear())
+        assert not is_modelopt_linear(WrongNameModelOptLinear())
+        assert not is_modelopt_linear(nn.Linear(4, 3))
+
+    def test_is_modelopt_linear_returns_false_when_modelopt_linear_unavailable(self) -> None:
+        with patch.object(peft_utils, "HAVE_MODELOPT_LINEAR", False):
+            assert not is_modelopt_linear(ModelOptLinear())
+
+    def test_get_adapter_attributes_modelopt_linear(self) -> None:
+        linear = ModelOptLinear(in_features=5, out_features=7)
+        linear.config.sequence_parallel = True
+        linear.parallel_mode = None
+
+        attrs = get_adapter_attributes_from_linear(linear)
+
+        assert attrs == AdapterAttributes(
+            input_is_parallel=False,
+            in_features=5,
+            out_features=7,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=False,
+        )
+
+    def test_lora_wraps_modelopt_linear_with_parallel_adapter(self) -> None:
+        linear = ModelOptLinear(in_features=5, out_features=7)
+        parallel_adapter = nn.Identity()
+        lora = LoRA(target_modules=["linear_proj"], dim=2, alpha=4)
+
+        with (
+            patch.object(lora_module, "LinearAdapter", _UnexpectedLinearAdapter),
+            patch.object(lora_module, "ParallelLinearAdapter", return_value=parallel_adapter) as mock_adapter,
+        ):
+            transformed = lora.transform(linear, name="linear_proj")
+
+        assert isinstance(linear, nn.Linear)
+        assert is_modelopt_linear(linear)
+        assert isinstance(transformed, LoRALinear)
+        assert transformed.to_wrap is linear
+        assert transformed.adapter is parallel_adapter
+        mock_adapter.assert_called_once()
+        assert mock_adapter.call_args.args[:3] == (5, 7, 2)
+        assert mock_adapter.call_args.kwargs["base_linear_is_parallel"] is False
+
+    def test_canonical_lora_wraps_modelopt_linear_with_parallel_adapter(self) -> None:
+        linear = ModelOptLinear(in_features=5, out_features=7)
+        parallel_adapter = nn.Identity()
+        lora = CanonicalLoRA(target_modules=["linear_proj"], dim=2, alpha=4)
+
+        with (
+            patch.object(canonical_lora_module, "LinearAdapter", _UnexpectedLinearAdapter),
+            patch.object(
+                canonical_lora_module, "ParallelLinearAdapter", return_value=parallel_adapter
+            ) as mock_adapter,
+        ):
+            transformed = lora.transform(linear, name="linear_proj")
+
+        assert isinstance(linear, nn.Linear)
+        assert is_modelopt_linear(linear)
+        assert isinstance(transformed, LoRALinear)
+        assert transformed.to_wrap is linear
+        assert transformed.adapter is parallel_adapter
+        mock_adapter.assert_called_once()
+        assert mock_adapter.call_args.args[:2] == (5, 7)
+        assert mock_adapter.call_args.kwargs["dim"] == 2
+        assert mock_adapter.call_args.kwargs["base_linear_is_parallel"] is False
+
+
+class TestLoRANormalizeMoE:
+    """Tests for LoRA normalize_moe_lora feature."""
+
+    def test_normalize_moe_lora_reduces_expert_dim(self):
+        """Expert layers should get dim // moe_router_topk when normalize_moe_lora is enabled."""
+        model = MoEModel(moe_router_topk=2)
+        lora = LoRA(target_modules=["linear_fc1", "linear_fc2", "linear_proj"], dim=32, normalize_moe_lora=True)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
+            with patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+                lora(model, training=True)
+
+        expert_calls = {}
+        non_expert_calls = {}
+        for call in mock_adapter.call_args_list:
+            name = call.kwargs.get("base_linear_name", "")
+            dim_used = call.args[2] if len(call.args) > 2 else call.kwargs.get("dim")
+            if ".mlp.experts." in name and ".shared_experts." not in name:
+                expert_calls[name] = dim_used
+            else:
+                non_expert_calls[name] = dim_used
+
+        assert len(expert_calls) > 0, "Should have expert adapter calls"
+        assert len(non_expert_calls) > 0, "Should have non-expert adapter calls"
+
+        for name, dim_used in expert_calls.items():
+            assert dim_used == 16, f"Expert layer {name} should get dim=16 (32 // 2), got {dim_used}"
+
+        for name, dim_used in non_expert_calls.items():
+            assert dim_used == 32, f"Non-expert layer {name} should get full dim=32, got {dim_used}"
+
+    def test_normalize_moe_lora_disabled_uses_full_dim(self):
+        """All layers should get full dim when normalize_moe_lora is False (default)."""
+        model = MoEModel(moe_router_topk=2)
+        lora = LoRA(target_modules=["linear_fc1", "linear_fc2"], dim=32, normalize_moe_lora=False)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
+            with patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+                lora(model, training=True)
+
+        for call in mock_adapter.call_args_list:
+            dim_used = call.args[2] if len(call.args) > 2 else call.kwargs.get("dim")
+            assert dim_used == 32, f"All layers should get full dim=32 when normalize_moe_lora=False, got {dim_used}"
+
+    def test_normalize_moe_lora_indivisible_dim_raises(self):
+        """Should raise ValueError when dim is not divisible by moe_router_topk."""
+        model = MoEModel(moe_router_topk=3)
+        lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
+            with patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+                with pytest.raises(ValueError, match="must be divisible by moe_router_topk"):
+                    lora(model, training=True)
+
+    def test_normalize_moe_lora_shared_experts_get_full_dim(self):
+        """Shared expert layers should get full dim (they are excluded by is_expert_linear)."""
+        model = MoEModel(moe_router_topk=2)
+        lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
+            with patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+                lora(model, training=True)
+
+        for call in mock_adapter.call_args_list:
+            name = call.kwargs.get("base_linear_name", "")
+            dim_used = call.args[2] if len(call.args) > 2 else call.kwargs.get("dim")
+            if ".shared_experts." in name:
+                assert dim_used == 32, f"Shared expert {name} should get full dim=32, got {dim_used}"
+
+    def test_normalize_moe_lora_aligns_shared_expert_dim_to_expert_tp(self):
+        """Normalized expert fc1 adapters should round up to the expert-TP granularity when needed."""
+        model = MoEModel(moe_router_topk=8)
+        lora = LoRA(target_modules=["linear_fc1"], dim=8, normalize_moe_lora=True)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with (
+            patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
+            patch(
+                "megatron.bridge.peft.lora.parallel_state.get_expert_tensor_parallel_world_size",
+                return_value=2,
+            ),
+            patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter,
+        ):
+            mock_adapter.return_value = nn.Linear(1, 1)
+            lora(model, training=True)
+
+        expert_dims = {
+            call.kwargs.get("base_linear_name", ""): (call.args[2] if len(call.args) > 2 else call.kwargs.get("dim"))
+            for call in mock_adapter.call_args_list
+            if ".mlp.experts." in call.kwargs.get("base_linear_name", "")
+            and ".shared_experts." not in call.kwargs.get("base_linear_name", "")
+        }
+
+        assert expert_dims
+        for name, dim_used in expert_dims.items():
+            assert dim_used == 2, f"Expert layer {name} should round up to dim=2 for expert TP=2, got {dim_used}"
+
+    def test_lora_grouped_expert_normalized_dim_aligns_to_expert_tp(self):
+        """Per-expert grouped adapters should round normalized dims up to expert-TP granularity."""
+        model = GroupedExpertModel()
+        model.decoder.layers[0].mlp.experts.linear_fc2.config.moe_router_topk = 8
+        lora = LoRA(target_modules=["linear_fc2"], dim=8, normalize_moe_lora=True, share_expert_adapters=False)
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with (
+            patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
+            patch(
+                "megatron.bridge.peft.lora.parallel_state.get_expert_tensor_parallel_world_size",
+                return_value=2,
+            ),
+            patch("megatron.bridge.peft.lora.GroupedExpertLinearAdapter") as mock_adapter,
+        ):
+            mock_adapter.return_value = nn.Identity()
+            lora(model, training=True)
+
+        dim_used = (
+            mock_adapter.call_args.args[2]
+            if len(mock_adapter.call_args.args) > 2
+            else mock_adapter.call_args.kwargs.get("dim")
+        )
+        assert dim_used == 2
+
+    def test_normalize_moe_lora_no_op_on_dense_model(self):
+        """normalize_moe_lora=True with a non-MoE model should be a no-op (full dim everywhere)."""
+        model = SimpleModel()
+        lora = LoRA(target_modules=["linear_fc1", "linear_fc2"], dim=32, normalize_moe_lora=True)
+
+        transformed_model = lora(model, training=True)
+
+        assert isinstance(transformed_model.linear_fc1, LinearAdapter)
+        assert isinstance(transformed_model.linear_fc2, LinearAdapter)
+        assert transformed_model.linear_fc1.dim == 32
+        assert transformed_model.linear_fc2.dim == 32
+
+
 class TestLoRAMerge:
     """Test suite for LoRA merge functionality."""
 
     def test_lora_merge_initialization(self):
         """Test LoRAMerge class initialization."""
         merge = LoRAMerge()
-        assert hasattr(merge, "transform")
-
-    def test_lora_merge_transform(self):
-        """Test LoRA weight merging behavior with LinearAdapter instances."""
-        # Create model and apply LoRA
-        model = SimpleModel()
-        lora = LoRA(dim=8, alpha=16)
-        adapted_model = lora(model, training=True)
-
-        # Get original weights
-        original_weight = adapted_model.linear_qkv.weight.data.clone()
-
-        # Create merge instance and apply
-        merge = LoRAMerge()
-        merged_model = merge(adapted_model, training=False)
-
-        # Note: LoRAMerge only handles LoRALinear instances (Megatron modules),
-        # not LinearAdapter instances (regular nn.Linear modules).
-        # So for SimpleModel, the modules should remain as LinearAdapter unchanged.
-        assert isinstance(merged_model.linear_qkv, LinearAdapter)
-
-        # Weights should be unchanged since merge doesn't apply to LinearAdapter
-        merged_weight = merged_model.linear_qkv.weight.data
-        assert torch.equal(original_weight, merged_weight)
+        assert hasattr(merge, "merge")
+        assert not hasattr(merge, "transform")
 
     def test_lora_merge_with_lora_linear(self):
         """Test LoRA weight merging with LoRALinear instances (the intended use case)."""
@@ -376,6 +811,7 @@ class TestLoRAMerge:
                 super().__init__()
                 self.alpha = 16
                 self.dim = 8
+                self.is_expert = False
                 self.linear_in = nn.Linear(64, 8, bias=False)
                 self.linear_out = nn.Linear(8, 128, bias=False)
 
@@ -385,19 +821,18 @@ class TestLoRAMerge:
                     self.linear_out.weight.data.fill_(0.05)
 
         adapter = MockAdapter()
-
-        # Create LoRALinear instance (what LoRA creates for Megatron modules)
-        lora_linear = LoRALinear(base_module, adapter)
-
-        # Create merge instance and apply
         merge = LoRAMerge()
-        merged_result = merge.transform(lora_linear)
-
-        # Should return the LoRALinear wrapper (matches NeMo behavior)
-        assert merged_result is lora_linear
+        merged_weight = merge.merge(
+            base_module.weight,
+            adapter.linear_out.weight,
+            adapter.linear_in.weight,
+            adapter.alpha,
+            adapter.dim,
+            tp_size=1,
+            tp_group=None,
+        )
 
         # The underlying weight should be modified (merged)
-        merged_weight = lora_linear.to_wrap.weight.data
         assert not torch.equal(original_weight, merged_weight)
 
         # The change should equal the LoRA adaptation
@@ -405,30 +840,171 @@ class TestLoRAMerge:
         expected_merged = original_weight + expected_lora_weight
         assert torch.allclose(merged_weight, expected_merged, atol=1e-6)
 
-    def test_lora_merge_non_lora_modules(self):
-        """Test that non-LoRA modules are unchanged during merge."""
-        model = SimpleModel()
+    def test_lora_merge_tp1_baseline(self):
+        """Test LoRA merge with TP=1 (no sharding) as baseline."""
+        # Create a mock base module
+        in_features, out_features, dim = 64, 128, 8
+        base_module = nn.Linear(in_features, out_features)
+        original_weight = base_module.weight.data.clone()
+
+        # Create a mock LoRA adapter
+        class MockAdapter(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.alpha = 16
+                self.dim = dim
+                self.is_expert = False
+                self.linear_in = nn.Linear(in_features, dim, bias=False)
+                self.linear_out = nn.Linear(dim, out_features, bias=False)
+
+                # Initialize with known values
+                with torch.no_grad():
+                    self.linear_in.weight.data.fill_(0.1)
+                    self.linear_out.weight.data.fill_(0.05)
+
+        adapter = MockAdapter()
         merge = LoRAMerge()
+        merged_weight = merge.merge(
+            base_module.weight,
+            adapter.linear_out.weight,
+            adapter.linear_in.weight,
+            adapter.alpha,
+            adapter.dim,
+            tp_size=1,
+            tp_group=None,
+        )
 
-        # Apply merge to model without LoRA (should be no-op)
-        original_linear = model.linear_qkv
-        merged_model = merge(model, training=False)
+        expected_lora_weight = (adapter.alpha / adapter.dim) * (adapter.linear_out.weight @ adapter.linear_in.weight)
+        expected_merged = original_weight + expected_lora_weight
+        assert torch.allclose(merged_weight, expected_merged, atol=1e-6)
 
-        # Should be unchanged
-        assert merged_model.linear_qkv is original_linear
+    def test_lora_merge_column_parallel_tp2(self):
+        """Test LoRA merge with TP=2 for ColumnParallelLinear (sharded linear_in)."""
+        # ColumnParallelLinear shards output dimension and linear_in's first dimension
+        in_features, out_features_per_rank, dim_per_rank = 64, 64, 4  # Total: out=128, dim=8
+        dim_total = dim_per_rank * 2
+        alpha = 16
+
+        # Create base module (already sharded)
+        base_module = nn.Linear(in_features, out_features_per_rank)
+        original_weight = base_module.weight.data.clone()
+
+        # Create sharded LoRA adapter (simulating what's on one rank)
+        class MockAdapter(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.alpha = alpha
+                self.dim = dim_total
+                self.is_expert = False
+                # linear_in is sharded: (dim/TP, in_features)
+                self.linear_in = nn.Linear(in_features, dim_per_rank, bias=False)
+                # linear_out is sharded on output: (out_features/TP, dim)
+                self.linear_out = nn.Linear(dim_total, out_features_per_rank, bias=False)
+
+                with torch.no_grad():
+                    self.linear_in.weight.data.fill_(0.1)
+                    self.linear_out.weight.data.fill_(0.05)
+
+        adapter = MockAdapter()
+
+        # Mock the distributed environment for TP=2
+        tp_size = 2
+        with patch("megatron.bridge.peft.lora.dist") as mock_dist:
+            # Mock all_gather to simulate gathering from 2 ranks
+            def mock_all_gather(tensor_list, tensor, group=None):
+                # Simulate gathering: each rank has identical shards for this test
+                for i in range(tp_size):
+                    tensor_list[i].copy_(tensor)
+
+            mock_dist.all_gather.side_effect = mock_all_gather
+
+            # Apply merge
+            merge = LoRAMerge()
+            merged_weight = merge.merge(
+                base_module.weight,
+                adapter.linear_out.weight,
+                adapter.linear_in.weight,
+                adapter.alpha,
+                adapter.dim,
+                tp_size=tp_size,
+                tp_group=None,
+            )
+
+        # Verify the merge used gathered weights
+        # Reconstruct what the full linear_in would be after gathering
+        linear_in_full = torch.cat([adapter.linear_in.weight.data] * tp_size, dim=0)
+
+        # Expected merge with full linear_in
+        expected_lora_weight = (alpha / dim_total) * (adapter.linear_out.weight @ linear_in_full)
+        expected_merged = original_weight + expected_lora_weight
+
+        assert torch.allclose(merged_weight, expected_merged, atol=1e-6)
+
+    def test_lora_merge_row_parallel_tp2(self):
+        """Test LoRA merge with TP=2 for RowParallelLinear (sharded linear_out)."""
+        # RowParallelLinear shards input dimension
+        in_features_per_rank, out_features, dim_total = 32, 128, 8  # Total: in=64
+        alpha = 16
+
+        # Create base module (already sharded on input)
+        base_module = nn.Linear(in_features_per_rank, out_features)
+        original_weight = base_module.weight.data.clone()
+
+        # Create sharded LoRA adapter (simulating what's on one rank)
+        class MockAdapter(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.alpha = alpha
+                self.dim = dim_total
+                self.is_expert = False
+                # linear_in is sharded on input: (dim, in_features/TP)
+                self.linear_in = nn.Linear(in_features_per_rank, dim_total, bias=False)
+                # linear_out is sharded on output for gathering: (out_features/TP, dim)
+                self.linear_out = nn.Linear(dim_total, out_features // 2, bias=False)
+
+        adapter = MockAdapter()
+
+        # Mock the distributed environment for TP=2
+        tp_size = 2
+        with patch("megatron.bridge.peft.lora.dist") as mock_dist:
+            # Mock all_gather to simulate gathering from 2 ranks
+            def mock_all_gather(tensor_list, tensor, group=None):
+                # Simulate gathering: each rank has identical shards for this test
+                for i in range(tp_size):
+                    tensor_list[i].copy_(tensor)
+
+            mock_dist.all_gather.side_effect = mock_all_gather
+
+            # Apply merge
+            merge = LoRAMerge()
+            merged_weight = merge.merge(
+                base_module.weight,
+                adapter.linear_out.weight,
+                adapter.linear_in.weight,
+                adapter.alpha,
+                adapter.dim,
+                tp_size=tp_size,
+                tp_group=None,
+            )
+
+        # Verify the merge used gathered weights
+        # Reconstruct what the full linear_out would be after gathering
+        linear_out_full = torch.cat([adapter.linear_out.weight.data] * tp_size, dim=0)
+
+        # Expected merge with full linear_out
+        expected_lora_weight = (alpha / dim_total) * (linear_out_full @ adapter.linear_in.weight)
+        expected_merged = original_weight + expected_lora_weight
+
+        assert torch.allclose(merged_weight, expected_merged, atol=1e-6)
 
 
 class TestLoRAIntegration:
     """Integration tests for LoRA functionality."""
 
     def test_lora_full_pipeline(self):
-        """Test complete LoRA application and merge pipeline."""
+        """Test complete LoRA application and training pipeline."""
         # Create base model
         model = SimpleModel()
-        original_weights = {}
-        for name, module in model.named_modules():
-            if isinstance(module, nn.Linear):
-                original_weights[name] = module.weight.data.clone()
 
         # Apply LoRA
         lora = LoRA(dim=4, alpha=8)
@@ -450,17 +1026,7 @@ class TestLoRAIntegration:
         loss.backward()
         optimizer.step()
 
-        # Merge LoRA weights
-        merge = LoRAMerge()
-        merged_model = merge(adapted_model, training=False)
-
-        # Note: LoRAMerge only handles LoRALinear instances (Megatron modules),
-        # not LinearAdapter instances (regular nn.Linear modules).
-        # So for SimpleModel, merge should be a no-op.
-        assert isinstance(merged_model.linear_qkv, LinearAdapter)
-
-        # The module should be unchanged since LoRAMerge doesn't affect LinearAdapter
-        assert merged_model.linear_qkv is adapted_model.linear_qkv
+        assert isinstance(adapted_model.linear_qkv, LinearAdapter)
 
     def test_lora_parameter_efficiency(self):
         """Test that LoRA significantly reduces trainable parameters."""
@@ -494,13 +1060,13 @@ class TestLoRAIntegration:
         adapted_model2 = lora2(model2, training=True)
 
         # LoRA weights should be identical with same seed
-        lora_a_1 = adapted_model1.linear_qkv.lora_a.weight.data
-        lora_a_2 = adapted_model2.linear_qkv.lora_a.weight.data
-        assert torch.equal(lora_a_1, lora_a_2)
+        linear_in_1 = adapted_model1.linear_qkv.linear_in.weight.data
+        linear_in_2 = adapted_model2.linear_qkv.linear_in.weight.data
+        assert torch.equal(linear_in_1, linear_in_2)
 
-        lora_b_1 = adapted_model1.linear_qkv.lora_b.weight.data
-        lora_b_2 = adapted_model2.linear_qkv.lora_b.weight.data
-        assert torch.equal(lora_b_1, lora_b_2)
+        linear_out_1 = adapted_model1.linear_qkv.linear_out.weight.data
+        linear_out_2 = adapted_model2.linear_qkv.linear_out.weight.data
+        assert torch.equal(linear_out_1, linear_out_2)
 
     def test_lora_transform_idempotent(self):
         """Test that LoRA transform is idempotent (applying twice has same effect as applying once)."""
@@ -535,10 +1101,10 @@ class TestLoRAIntegration:
 
         # Verify the LoRA parameters are identical
         assert torch.equal(
-            first_transform.linear_qkv.lora_a.weight.data, second_transform.linear_qkv.lora_a.weight.data
+            first_transform.linear_qkv.linear_in.weight.data, second_transform.linear_qkv.linear_in.weight.data
         )
         assert torch.equal(
-            first_transform.linear_qkv.lora_b.weight.data, second_transform.linear_qkv.lora_b.weight.data
+            first_transform.linear_qkv.linear_out.weight.data, second_transform.linear_qkv.linear_out.weight.data
         )
 
 
@@ -579,13 +1145,19 @@ class TestLoRAMegatronIntegration:
             )
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
         from megatron.bridge.training.initialize import _set_random_seed
+
+        # Create pg_collection from initialized mpu
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         _set_random_seed(
             seed_=1234,
             data_parallel_random_init=False,
             te_rng_tracker=True,
             inference_rng_tracker=False,
+            pg_collection=pg_collection,
         )
 
         yield
@@ -636,6 +1208,11 @@ class TestLoRAMegatronIntegration:
             ffn_hidden_size=256,
         )
 
+        # Attach real pg_collection from initialized parallel state
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
         # Create LoRA instance targeting linear layers
         lora = LoRA(
             target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"], dim=8, alpha=16, dropout=0.0
@@ -680,70 +1257,6 @@ class TestLoRAMegatronIntegration:
         efficiency_ratio = trainable_params / total_params
         assert efficiency_ratio < 0.3, f"LoRA should be parameter efficient, got ratio: {efficiency_ratio}"
 
-    def test_lora_merge_with_megatron_model(self):
-        """Test LoRA merge functionality with Megatron models using pre-wrap hooks."""
-
-        # Create minimal config
-        model_provider = GPTModelProvider(
-            num_layers=1,
-            hidden_size=64,
-            num_attention_heads=2,
-            vocab_size=100,
-            ffn_hidden_size=128,
-        )
-
-        # Create LoRA and register hook
-        lora = LoRA(dim=4, alpha=8)
-        lora_hook = self._create_lora_pre_wrap_hook(lora)
-        model_provider.register_pre_wrap_hook(lora_hook)
-        model_provider.finalize()
-
-        # Get LoRA-adapted model using hook
-        adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
-        adapted_model = [chunk.cuda() for chunk in adapted_model]
-
-        # Count LoRA modules before merge
-        lora_modules_before = 0
-        original_weights = {}
-        for chunk in adapted_model:
-            for name, module in chunk.named_modules():
-                if isinstance(module, LoRALinear):
-                    lora_modules_before += 1
-                    # Store original weights to verify they change after merge
-                    original_weights[name] = module.to_wrap.weight.data.clone()
-
-        assert lora_modules_before > 0, "Should have some LoRA modules before merge"
-
-        # Simulate training by making adapter weights non-zero
-        # (LoRA adapters start at zero, so merge would be no-op without this)
-        for chunk in adapted_model:
-            for name, module in chunk.named_modules():
-                if isinstance(module, LoRALinear):
-                    # Make adapter weights non-zero to simulate training
-                    with torch.no_grad():
-                        module.adapter.linear_in.weight.data.fill_(0.1)
-                        module.adapter.linear_out.weight.data.fill_(0.05)
-
-        # Apply merge
-        merge = LoRAMerge()
-        merged_model = merge(adapted_model, training=False)
-
-        # Count LoRA modules after merge
-        lora_modules_after = 0
-        weights_changed = 0
-        for chunk in merged_model:
-            for name, module in chunk.named_modules():
-                if isinstance(module, LoRALinear):
-                    lora_modules_after += 1
-                    # Check if weights were actually merged (changed)
-                    if name in original_weights:
-                        if not torch.equal(original_weights[name], module.to_wrap.weight.data):
-                            weights_changed += 1
-
-        # LoRAMerge keeps the LoRALinear wrappers but merges the weights
-        assert lora_modules_after == lora_modules_before, "LoRAMerge keeps LoRALinear wrappers"
-        assert weights_changed > 0, "LoRAMerge should change the underlying weights"
-
     def test_lora_different_targets(self):
         """Test LoRA with different target module configurations using pre-wrap hooks."""
 
@@ -764,6 +1277,10 @@ class TestLoRAMegatronIntegration:
                 vocab_size=100,
                 ffn_hidden_size=128,
             )
+
+            from megatron.core.process_groups_config import ProcessGroupCollection
+
+            model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
             # Create LoRA and register hook
             lora = LoRA(target_modules=targets, dim=4, alpha=8)
@@ -793,6 +1310,10 @@ class TestLoRAMegatronIntegration:
             vocab_size=100,
             ffn_hidden_size=128,
         )
+
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         # Create LoRA instance
         lora = LoRA(target_modules=["linear_qkv", "linear_proj"], dim=4, alpha=8)
