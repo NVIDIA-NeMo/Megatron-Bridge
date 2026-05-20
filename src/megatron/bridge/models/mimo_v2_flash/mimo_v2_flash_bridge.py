@@ -128,7 +128,7 @@ def _dequant_fp8_blockwise(weight: torch.Tensor, scale_inv: torch.Tensor) -> tor
     sM, sN = scale_inv.shape
     bM, bN = M // sM, N // sN
     scale_full = scale_inv.repeat_interleave(bM, dim=0).repeat_interleave(bN, dim=1)
-    return weight.float() * scale_full
+    return (weight.float() * scale_full).to(torch.bfloat16)
 
 
 @MegatronModelBridge.register_bridge(

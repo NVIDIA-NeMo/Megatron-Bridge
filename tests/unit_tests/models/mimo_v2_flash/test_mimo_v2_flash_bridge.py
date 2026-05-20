@@ -391,11 +391,11 @@ class TestDequantFP8Blockwise:
     """Test FP8 block-wise dequantization."""
 
     def test_scale_inv_applied_per_block(self):
-        """scale_inv value is multiplied block-wise, output is fp32."""
+        """scale_inv value is multiplied block-wise, output is bf16."""
         weight = torch.ones(256, 256, dtype=torch.float8_e4m3fn)
         scale_inv = torch.full((2, 2), 2.0)
         result = _dequant_fp8_blockwise(weight, scale_inv)
-        assert result.dtype == torch.float32
+        assert result.dtype == torch.bfloat16
         assert result.shape == (256, 256)
         assert torch.all(result == 2.0)
 
@@ -434,5 +434,5 @@ class TestMaybeModifyLoadedHFWeight:
         sinv = torch.full((1, 1), 3.0)
         state = {"layer.weight": w, "layer.weight_scale_inv": sinv}
         result = bridge.maybe_modify_loaded_hf_weight("layer.weight", state)
-        assert result.dtype == torch.float32
+        assert result.dtype == torch.bfloat16
         assert torch.all(result == 3.0)

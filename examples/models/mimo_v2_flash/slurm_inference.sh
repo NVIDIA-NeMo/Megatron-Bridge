@@ -95,6 +95,11 @@ CMD="$CMD --trust-remote-code"
 echo "Executing: $CMD"
 
 $SRUN_CMD bash -c "cd $WORKDIR && $CMD"
+RUN_EXIT=$?
+if [ $RUN_EXIT -ne 0 ]; then
+    echo "ERROR: Inference failed (exit $RUN_EXIT)"
+    exit $RUN_EXIT
+fi
 
 echo "======================================"
 echo "Inference completed"
