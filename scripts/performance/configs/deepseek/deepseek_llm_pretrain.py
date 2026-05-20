@@ -77,6 +77,10 @@ def deepseek_v3_pretrain_config_gb300(
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
+    if precision == "fp8_mx":
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_mlp_glu_interleave_size = 32
+
     return cfg
 
 
@@ -111,6 +115,10 @@ def deepseek_v3_pretrain_config_gb200(
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
+
+    if precision == "fp8_mx":
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_mlp_glu_interleave_size = 32
 
     return cfg
 

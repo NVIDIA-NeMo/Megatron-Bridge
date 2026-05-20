@@ -319,6 +319,7 @@ class PerfEnvPlugin(Plugin):
             if model_family_name == "deepseek":
                 if compute_dtype == "fp8_mx":
                     del_cudnn_ln = False
+                    executor.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = "1"
             if model_family_name == "kimi":
                 if compute_dtype == "fp8_mx":
                     del_cudnn_ln = False
