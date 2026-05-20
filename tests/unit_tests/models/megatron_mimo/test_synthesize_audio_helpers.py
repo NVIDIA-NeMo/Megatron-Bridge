@@ -13,14 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 
-SYNTH_PATH = (
-    Path(__file__).resolve().parents[4]
-    / "examples"
-    / "models"
-    / "megatron_mimo"
-    / "megatron_mimo"
-    / "synthesize_llava_pretrain_audio.py"
-)
+SYNTH_PATH = Path(__file__).resolve().parents[4] / "examples" / "megatron_mimo" / "synthesize_llava_pretrain_audio.py"
 
 
 @pytest.fixture(scope="module")

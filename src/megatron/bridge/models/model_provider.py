@@ -16,7 +16,7 @@ import abc
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, Mapping, Self, TypedDict, TypeVar, Union
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -31,14 +31,9 @@ except ImportError:
 
         Unpack = MagicMock()
 
-
-from typing import Callable
-
 import torch
 from megatron.core import parallel_state, tensor_parallel
-from megatron.core.distributed import (
-    DistributedDataParallelConfig,
-)
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
@@ -103,6 +98,38 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             ModelT: The Megatron model instance.
         """
         pass
+
+    @abc.abstractmethod
+    def finalize(self) -> None:
+        """Finalize provider state after configuration overrides are applied."""
+        pass
+
+    def apply_overrides_and_finalize(
+        self,
+        dtype: torch.dtype | None = None,
+        overrides: Mapping[str, object] | None = None,
+    ) -> Self:
+        """Apply dtype and attribute overrides, then finalize this provider.
+
+        Args:
+            dtype: Optional parameter dtype. Also sets ``fp16`` and ``bf16``.
+            overrides: Provider attributes to set before finalization.
+
+        Returns:
+            This provider.
+        """
+        if dtype is not None:
+            self.params_dtype = dtype
+            self.fp16 = dtype == torch.float16
+            self.bf16 = dtype == torch.bfloat16
+
+        for name, value in (overrides or {}).items():
+            if not hasattr(self, name):
+                raise AttributeError(f"{type(self).__name__} has no attribute {name!r}.")
+            setattr(self, name, value)
+
+        self.finalize()
+        return self
 
     def provide_distributed_model(
         self,
