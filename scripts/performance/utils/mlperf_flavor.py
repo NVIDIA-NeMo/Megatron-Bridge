@@ -14,33 +14,45 @@ Validated end-to-end against MLPerf v6.0 reference (Llama 3.1 8B, 8/16/32/64 GPU
 import argparse
 import logging
 import os
-from typing import Dict, Tuple
+import sys
+from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# (model_recipe_name, compute_dtype, num_gpus) -> (TP, PP, VP, CP, MBS, GBS, parity_mode)
-# Shapes derived from MLPerf v6.0 NVIDIA submission configs on GB200:
-#   - 8B 8 GPU:    config_GB200_2x4x2xtp1pp1cp1_8b[_fp4].sh           (TP1/PP1/CP1, MBS=2, GBS=16)
-#   - 8B 16/32/64 FP8:   down-scaled config_GB200_18x4x1xtp1pp1cp2_8b.sh        (TP1/PP1/CP2, MBS=1)
-#   - 8B 16/32/64 FP4:   down-scaled config_GB200_18x4x1xtp1pp1cp1_8b_fp4.sh    (TP1/PP1/CP1, MBS=1)
-#   - 8B 72 GPU:   config_GB200_18x4x1xtp1pp1cp2_8b.sh                 (TP1/PP1/CP2, MBS=1)
-#   - 8B 128 FP8:  down-scaled config_GB200_128x4x1xtp2pp1cp4_8b.sh    (TP2/PP1/CP4, MBS=1)
-#   - 405B:        config_GB200_128x4x{112,128}xtp4pp8cp2_cg_fp4.sh    (TP4/PP8/VP8/CP2, MBS=1)
-_MLPERF_SHAPES: Dict[Tuple[str, str, int], Tuple[int, int, int, int, int, int, str]] = {
-    ("llama3_8b",   "fp8_cs",   8):   (1, 1, 1, 1, 2, 16,   "F16_ATTN"),
-    ("llama3_8b",   "fp8_cs",   16):  (1, 1, 1, 2, 1, 8,    "F16_ATTN"),
-    ("llama3_8b",   "fp8_cs",   32):  (1, 1, 1, 2, 1, 16,   "F16_ATTN"),
-    ("llama3_8b",   "fp8_cs",   64):  (1, 1, 1, 2, 1, 32,   "F16_ATTN"),
-    ("llama3_8b",   "fp8_cs",   72):  (1, 1, 1, 2, 1, 36,   "F16_ATTN"),
-    ("llama3_8b",   "fp8_cs",   128): (2, 1, 1, 4, 1, 16,   "F16_ATTN"),
-    ("llama3_8b",   "nvfp4",    8):   (1, 1, 1, 1, 2, 16,   "FP4_ATTN"),
-    ("llama3_8b",   "nvfp4",    16):  (1, 1, 1, 1, 1, 16,   "FP4_ATTN"),
-    ("llama3_8b",   "nvfp4",    32):  (1, 1, 1, 1, 1, 32,   "FP4_ATTN"),
-    ("llama3_8b",   "nvfp4",    64):  (1, 1, 1, 1, 1, 64,   "FP4_ATTN"),
-    ("llama31_405b","fp8_cs",   256): (4, 8, 8, 2, 1, 576,  "405B"),
-    ("llama31_405b","fp8_cs",   512): (4, 8, 8, 2, 1, 1152, "405B"),
-    ("llama31_405b","nvfp4",    256): (4, 8, 8, 2, 1, 576,  "405B"),
-    ("llama31_405b","nvfp4",    512): (4, 8, 8, 2, 1, 1152, "405B"),
+# (model_recipe_name, compute_dtype, num_gpus, gpu) -> (TP, PP, VP, CP, MBS, GBS, parity_mode)
+# Shapes derived from MLPerf v6.0 NVIDIA submission configs (per-gpu source-of-truth differs):
+#   - GB200 8B 8 GPU:   config_GB200_2x4x2xtp1pp1cp1_8b[_fp4].sh       (TP1/PP1/CP1, MBS=2, GBS=16)
+#   - GB200 8B 72 GPU:  config_GB200_18x4x1xtp1pp1cp2_8b.sh            (TP1/PP1/CP2, MBS=1)
+#   - GB200 8B 128 FP8: down-scaled config_GB200_128x4x1xtp2pp1cp4_8b.sh (TP2/PP1/CP4, MBS=1)
+#   - GB200 405B:       config_GB200_128x4x{112,128}xtp4pp8cp2_cg_fp4.sh (TP4/PP8/VP8/CP2, MBS=1)
+#   - GB300 405B:       config_GB300_128x4x56xtp2pp8cp2_cg_fp4.sh      (TP2/PP8/VP8/CP2, MBS=1)
+# Note: 16/32/64/128 GPU entries for 8B are down-scaled from canonical 72/512 GPU shapes (same TP/PP/CP).
+_MLPERF_SHAPES: Dict[Tuple[str, str, int, str], Tuple[int, int, Optional[int], int, int, int, str]] = {
+    # 8B PP=1 -> VP=None (Megatron rejects VP>0 with PP=1; matches INTERLEAVED_PIPELINE=null in optimized.git).
+    ("llama3_8b",   "fp8_cs",   8,   "gb200"): (1, 1, None, 1, 2, 16,   "F16_ATTN"),
+    ("llama3_8b",   "fp8_cs",   16,  "gb200"): (1, 1, None, 2, 1, 8,    "F16_ATTN"),
+    ("llama3_8b",   "fp8_cs",   32,  "gb200"): (1, 1, None, 2, 1, 16,   "F16_ATTN"),
+    ("llama3_8b",   "fp8_cs",   64,  "gb200"): (1, 1, None, 2, 1, 32,   "F16_ATTN"),
+    ("llama3_8b",   "fp8_cs",   72,  "gb200"): (1, 1, None, 2, 1, 36,   "F16_ATTN"),
+    ("llama3_8b",   "fp8_cs",   128, "gb200"): (2, 1, None, 4, 1, 16,   "F16_ATTN"),
+    ("llama3_8b",   "nvfp4",    8,   "gb200"): (1, 1, None, 1, 2, 16,   "FP4_ATTN"),
+    ("llama3_8b",   "nvfp4",    16,  "gb200"): (1, 1, None, 1, 1, 16,   "FP4_ATTN"),
+    ("llama3_8b",   "nvfp4",    32,  "gb200"): (1, 1, None, 1, 1, 32,   "FP4_ATTN"),
+    ("llama3_8b",   "nvfp4",    64,  "gb200"): (1, 1, None, 1, 1, 64,   "FP4_ATTN"),
+    # 405B entries deferred: GB200 + GB300 not yet validated against MLPerf-canonical GBS=896 shapes.
+    # 8B FP8 GB300 — same shapes as GB200 (canonical optimized.git configs use identical TP/PP/CP/MBS).
+    ("llama3_8b",   "fp8_cs",   8,   "gb300"): (1, 1, None, 1, 2, 16,   "F16_ATTN"),
+    ("llama3_8b",   "fp8_cs",   16,  "gb300"): (1, 1, None, 2, 1, 8,    "F16_ATTN"),
+    ("llama3_8b",   "fp8_cs",   32,  "gb300"): (1, 1, None, 2, 1, 16,   "F16_ATTN"),
+    ("llama3_8b",   "fp8_cs",   64,  "gb300"): (1, 1, None, 2, 1, 32,   "F16_ATTN"),
+    ("llama3_8b",   "fp8_cs",   72,  "gb300"): (1, 1, None, 2, 1, 36,   "F16_ATTN"),
+    ("llama3_8b",   "fp8_cs",   128, "gb300"): (2, 1, None, 4, 1, 16,   "F16_ATTN"),
+    # 8B FP4 GB300 — same shapes as GB200.
+    ("llama3_8b",   "nvfp4",    8,   "gb300"): (1, 1, None, 1, 2, 16,   "FP4_ATTN"),
+    ("llama3_8b",   "nvfp4",    16,  "gb300"): (1, 1, None, 1, 1, 16,   "FP4_ATTN"),
+    ("llama3_8b",   "nvfp4",    32,  "gb300"): (1, 1, None, 1, 1, 32,   "FP4_ATTN"),
+    ("llama3_8b",   "nvfp4",    64,  "gb300"): (1, 1, None, 1, 1, 64,   "FP4_ATTN"),
+    ("llama3_8b",   "nvfp4",    72,  "gb300"): (1, 1, None, 1, 1, 72,   "FP4_ATTN"),
 }
 
 
@@ -81,11 +93,11 @@ def apply_mlperf_flavor(args: argparse.Namespace) -> None:
     """Mutate args in place to apply MLPerf v6.0 apples-to-apples configuration; sets MLPERF_PARITY_* env vars for perf_plugins/overrides to pick up."""
     # Shape table is derived from MLPerf v6.0 NVIDIA GB200 submission configs.
     # Other GPU types have different MLPerf shapes and need separate validation.
-    if args.gpu != "gb200":
+    if args.gpu not in ("gb200", "gb300"):
         raise RuntimeError(
-            f"--mlperf_flavor currently only supports gpu=gb200, got '{args.gpu}'. Other GPU types not yet validated."
+            f"--mlperf_flavor currently only supports gpu in (gb200, gb300), got '{args.gpu}'. Other GPU types not yet validated."
         )
-    key = (args.model_recipe_name, args.compute_dtype, args.num_gpus)
+    key = (args.model_recipe_name, args.compute_dtype, args.num_gpus, args.gpu)
     shape = _MLPERF_SHAPES.get(key)
     if shape is None:
         raise RuntimeError(
@@ -123,6 +135,24 @@ def apply_mlperf_flavor(args: argparse.Namespace) -> None:
     # Set MLPERF_PARITY_* env vars so perf_plugins (host-side) + overrides.py (in-container) pick them up.
     env_var = {"F16_ATTN": "MLPERF_PARITY_F16_ATTN", "FP4_ATTN": "MLPERF_PARITY_FP4_ATTN", "405B": "MLPERF_PARITY_405B"}[parity_mode]
     os.environ[env_var] = "1"
+
+    # Forward shape + data to inner script (setup_experiment.py forwards original sys.argv).
+    shape_argv = [
+        "--tensor_model_parallel_size", str(tp),
+        "--pipeline_model_parallel_size", str(pp),
+        "--context_parallel_size", str(cp),
+        "--micro_batch_size", str(mbs),
+        "--global_batch_size", str(gbs),
+    ]
+    if vp is not None:
+        shape_argv.extend(["--virtual_pipeline_model_parallel_size", str(vp)])
+    sys.argv.extend(shape_argv)
+    if os.environ.get("MLPERF_DATA_ROOT"):
+        sys.argv.extend([
+            "--data", "rp2",
+            "--dataset_paths", data_prefix,
+            "--index_mapping_dir", index_cache_dir,
+        ])
 
     logger.info(
         f"--mlperf_flavor (v6.0): {args.model_recipe_name}/{args.compute_dtype}/{args.num_gpus} -> "
