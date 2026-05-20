@@ -629,16 +629,8 @@ def train(
             if energy_monitor is not None:
                 energy_monitor.pause()
             timers("interval-time").stop()
-            if config.optimizer.reuse_grad_buf_for_mxfp8_param_ag and config.ddp.overlap_param_gather:
-                # disable_forward_pre_hook(param_sync=True) below force-syncs params for eval.
-                # Copy the main params to param buffer before the forced AllGather.
-                for model_chunk in model:
-                    model_chunk.zero_grad_buffer()
-                for optim_instance in optimizer.chained_optimizers:
-                    if isinstance(optim_instance, DistributedOptimizer):
-                        optim_instance._copy_main_params_to_param_buffer()
             if should_toggle_forward_pre_hook:
-                disable_forward_pre_hook(model)
+                disable_forward_pre_hook(model, optimizer=optimizer)
                 pre_hook_enabled = False
             if train_config.manual_gc and train_config.manual_gc_eval:
                 # Collect all objects.
@@ -682,6 +674,7 @@ def train(
         )
         maybe_check_weight_hash_across_dp_replicas(
             model,
+            optimizer,
             config.train.check_weight_hash_across_dp_replicas_interval,
             global_state.train_state.step,
             should_toggle_forward_pre_hook,
@@ -745,7 +738,7 @@ def train(
 
     # Close out pre-hooks if using distributed optimizer and overlapped param gather.
     if pre_hook_enabled:
-        disable_forward_pre_hook(model)
+        disable_forward_pre_hook(model, optimizer=optimizer)
 
     # This will finalize all unfinalized async request and terminate
     # a persistent async worker if persistent ckpt worker is enabled
@@ -1035,6 +1028,7 @@ def maybe_report_stragglers(
 
 def maybe_check_weight_hash_across_dp_replicas(
     model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     check_weight_hash_across_dp_replicas_interval: Optional[int],
     iteration: int,
     should_toggle_forward_pre_hook: bool,
@@ -1043,6 +1037,7 @@ def maybe_check_weight_hash_across_dp_replicas(
 
     Args:
         model: List of model chunks to validate.
+        optimizer: Optimizer used to stage params before disabling the pre-hook.
         check_weight_hash_across_dp_replicas_interval: Interval at which to verify; ``None`` to skip.
         iteration: Zero-based training iteration counter.
         should_toggle_forward_pre_hook: Whether the pre-hook must be disabled during the check.
@@ -1053,7 +1048,7 @@ def maybe_check_weight_hash_across_dp_replicas(
         return
 
     if should_toggle_forward_pre_hook:
-        disable_forward_pre_hook(model)
+        disable_forward_pre_hook(model, optimizer=optimizer)
     assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
         "Parameter hashes not matching across DP replicas"
     )
@@ -1111,24 +1106,32 @@ def enable_forward_pre_hook(model: list[DDP]) -> None:
         model_chunk.enable_forward_pre_hook()
 
 
-def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
+def disable_forward_pre_hook(
+    model: list[DDP], optimizer: Optional[MegatronOptimizer] = None, param_sync: bool = True
+) -> None:
     """Disable forward pre-hook for all model chunks.
 
     Args:
         model: list of model chunks wrapped in DDP
+        optimizer: Optional optimizer used to stage params before forced sync.
         param_sync: Whether to synchronize parameters across model chunks
     """
+    if param_sync and optimizer is not None:
+        optimizer.prepare_model_params_for_param_sync()
     for model_chunk in model:
         assert isinstance(model_chunk, DDP)
         model_chunk.disable_forward_pre_hook(param_sync=param_sync)
 
 
-def force_param_sync(model: list[DDP]) -> None:
+def force_param_sync(model: list[DDP], optimizer: Optional[MegatronOptimizer] = None) -> None:
     """Force parameter synchronization for all model chunks.
 
     Args:
         model: list of model chunks wrapped in DDP.
+        optimizer: Optional optimizer used to stage params before forced sync.
     """
+    if optimizer is not None:
+        optimizer.prepare_model_params_for_param_sync()
     for model_chunk in model:
         assert isinstance(model_chunk, DDP)
         model_chunk.start_param_sync(force_sync=True)
@@ -1279,7 +1282,7 @@ def save_checkpoint_and_time(
         state.cfg.ddp.overlap_param_gather,
     )
     if should_force_param_sync:
-        force_param_sync(model)
+        force_param_sync(model, optimizer=optimizer)
 
     # Free overlap param-gather buffers and release cached GPU memory so
     # that the async checkpoint worker process has enough GPU headroom for
