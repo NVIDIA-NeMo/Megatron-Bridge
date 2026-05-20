@@ -24,8 +24,8 @@
 # TP does NOT reduce expert memory — increase EP instead.
 # Recommended: TP=2, EP=32, PP=1 (64 GPUs, 8 nodes).
 #
-# Loads the HF checkpoint, converts to Megatron in-memory, and runs greedy
-# text generation via examples/conversion/hf_to_megatron_generate_text.py.
+# Loads the HF checkpoint, converts to Megatron in-memory, and runs efficient
+# text generation via examples/inference/text_generation.py.
 #
 # Requirements: transformers >= 5.2.0
 #
@@ -114,11 +114,12 @@ print(m.group(1) + m.group(2) if m else s.split(',')[0])
       --node_rank=\$SLURM_PROCID \
       --master_addr=\$MASTER_ADDR \
       --master_port=29500 \
-      examples/conversion/hf_to_megatron_generate_text.py \
+      examples/inference/text_generation.py \
       --hf_model_path $HF_MODEL_PATH \
       --prompt '$PROMPT' \
       --max_new_tokens $MAX_NEW_TOKENS \
-      --tp $TP --ep $EP --pp $PP
+      --tp $TP --ep $EP --pp $PP \
+      --use-coordinator
   "
 
 echo "======================================"

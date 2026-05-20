@@ -27,10 +27,13 @@ set -xeuo pipefail
 GLM47_FLASH_HF="${GLM47_FLASH_HF:-zai-org/GLM-4.7-Flash}"
 PROMPT="${PROMPT:-What is artificial intelligence?}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-100}"
+COORDINATOR_HOST="${COORDINATOR_HOST:-127.0.0.1}"
 
 uv run python -m torch.distributed.run --nproc_per_node=8 \
-    examples/conversion/hf_to_megatron_generate_text.py \
+    examples/inference/text_generation.py \
     --hf_model_path "$GLM47_FLASH_HF" \
     --prompt "$PROMPT" \
     --max_new_tokens "$MAX_NEW_TOKENS" \
-    --tp 1 --pp 1 --ep 8
+    --tp 1 --pp 1 --ep 8 \
+    --use-coordinator \
+    --coordinator-host "$COORDINATOR_HOST"

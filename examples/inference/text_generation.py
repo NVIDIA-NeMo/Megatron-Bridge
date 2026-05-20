@@ -347,10 +347,23 @@ def _build_inference_config(
             f"but --max_seq_length is {args.max_seq_length}."
         )
 
+    max_requests = args.max_batch_size or len(prompts)
+    if max_requests % args.tp != 0:
+        rounded_max_requests = ((max_requests + args.tp - 1) // args.tp) * args.tp
+        if args.max_batch_size is not None:
+            raise ValueError(
+                f"--max_batch_size must be divisible by --tp ({args.tp}); got --max_batch_size {args.max_batch_size}."
+            )
+        print_rank_0(
+            f"Rounding max batch size from {max_requests} to {rounded_max_requests} "
+            f"so it is divisible by tensor parallel size {args.tp}."
+        )
+        max_requests = rounded_max_requests
+
     return InferenceConfig(
         block_size_tokens=args.block_size_tokens,
         buffer_size_gb=args.kv_cache_buffer_size_gb,
-        max_requests=args.max_batch_size or len(prompts),
+        max_requests=max_requests,
         max_tokens=args.max_tokens,
         max_sequence_length=args.max_seq_length,
         mamba_inference_state_config=MambaInferenceStateConfig.from_model(model),

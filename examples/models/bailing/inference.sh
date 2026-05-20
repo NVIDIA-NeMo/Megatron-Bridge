@@ -15,28 +15,35 @@
 
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
+COORDINATOR_HOST=${COORDINATOR_HOST:-127.0.0.1}
 
 # Inference with Hugging Face checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_text.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/text_generation.py \
     --hf_model_path inclusionAI/Ling-flash-2.0 \
     --prompt "Hello, how are you?" \
     --max_new_tokens 64 \
     --tp 2 --ep 4 \
+    --use-coordinator \
+    --coordinator-host "${COORDINATOR_HOST}" \
     --trust-remote-code
 
 # Inference with imported Megatron checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_text.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/text_generation.py \
     --hf_model_path inclusionAI/Ling-flash-2.0 \
     --megatron_model_path ${WORKSPACE}/models/Ling-flash-2.0/iter_0000000 \
     --prompt "Hello, how are you?" \
     --max_new_tokens 64 \
     --tp 2 --ep 4 \
+    --use-coordinator \
+    --coordinator-host "${COORDINATOR_HOST}" \
     --trust-remote-code
 
 # Inference with exported HF checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_text.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/text_generation.py \
     --hf_model_path ${WORKSPACE}/models/Ling-flash-2.0-hf-export \
     --prompt "Hello, how are you?" \
     --max_new_tokens 64 \
     --tp 2 --ep 4 \
+    --use-coordinator \
+    --coordinator-host "${COORDINATOR_HOST}" \
     --trust-remote-code

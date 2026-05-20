@@ -87,11 +87,12 @@ echo "Warming uv cache"
 printf -v HF_MODEL_ARG "%q" "$HF_MODEL_ID"
 printf -v PROMPT_ARG "%q" "$PROMPT"
 
-CMD="uv run --no-sync python examples/conversion/hf_to_megatron_generate_text.py"
+CMD="uv run --no-sync python examples/inference/text_generation.py"
 CMD="$CMD --hf_model_path $HF_MODEL_ARG"
 CMD="$CMD --prompt $PROMPT_ARG"
 CMD="$CMD --max_new_tokens $MAX_NEW_TOKENS"
 CMD="$CMD --tp 1 --pp 1 --ep 32"
+CMD="$CMD --use-coordinator"
 
 echo "Executing: $CMD"
 
