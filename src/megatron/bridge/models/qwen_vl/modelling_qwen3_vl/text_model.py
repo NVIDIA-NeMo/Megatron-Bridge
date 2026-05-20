@@ -32,6 +32,7 @@ from torch import Tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLTransformerBlock
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import split_data_cp_rank
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
@@ -175,9 +176,31 @@ class Qwen3VLGPTModel(GPTModel):
             **(extra_block_kwargs or {}),
         )
 
-        # MTP calls self.embedding directly (bypassing the manual SP scatter that
-        # model.py does for the combined VL embeddings). Temporarily wrap the embedding
-        # to apply the SP scatter so its output shape matches hidden_states.
+        # MTP calls self.embedding directly. Mirror the VL path's CP/SP handling so
+        # MCore MTP rolls and embeds tensors with the same sequence sharding as
+        # hidden_states.
+        postprocess_input_ids = input_ids
+        postprocess_position_ids = position_ids
+        cp_size = self.pg_collection.cp.size()
+        if self.mtp_process and cp_size > 1 and packed_seq_params is None:
+            cp_rank = self.pg_collection.cp.rank()
+            postprocess_input_ids = split_data_cp_rank(
+                postprocess_input_ids,
+                cp_size,
+                postprocess_input_ids.dim() - 1,
+                cp_rank,
+            )
+            if postprocess_position_ids is not None:
+                postprocess_position_ids = split_data_cp_rank(
+                    postprocess_position_ids,
+                    cp_size,
+                    postprocess_position_ids.dim() - 1,
+                    cp_rank,
+                )
+
+        # MTP's embedding call still bypasses the manual SP scatter that model.py
+        # does for the combined VL embeddings. Temporarily wrap the embedding to
+        # apply SP scatter so its output shape matches hidden_states.
         # We write to self.__dict__ directly to bypass nn.Module.__setattr__'s type
         # check, which rejects non-Module values for registered child modules.
         _shadow_embedding = False
@@ -192,27 +215,28 @@ class Qwen3VLGPTModel(GPTModel):
             self.__dict__["embedding"] = _sp_scatter_embedding
             _shadow_embedding = True
 
-        result = self._postprocess(
-            hidden_states=hidden_states,
-            input_ids=input_ids,
-            position_ids=position_ids,
-            labels=labels,
-            rotary_pos_emb=rotary_pos_emb,
-            rotary_pos_cos=rotary_pos_cos,
-            rotary_pos_sin=rotary_pos_sin,
-            mtp_in_postprocess=self.mtp_process,
-            loss_mask=loss_mask,
-            decoder_input=decoder_input,
-            attention_mask=attention_mask,
-            inference_params=inference_params,
-            packed_seq_params=packed_seq_params,
-            sequence_len_offset=sequence_len_offset,
-            runtime_gather_output=runtime_gather_output,
-            extra_block_kwargs=extra_block_kwargs,
-            inference_context=inference_context,
-        )
-
-        if _shadow_embedding:
-            del self.__dict__["embedding"]
+        try:
+            result = self._postprocess(
+                hidden_states=hidden_states,
+                input_ids=postprocess_input_ids,
+                position_ids=postprocess_position_ids,
+                labels=labels,
+                rotary_pos_emb=rotary_pos_emb,
+                rotary_pos_cos=rotary_pos_cos,
+                rotary_pos_sin=rotary_pos_sin,
+                mtp_in_postprocess=self.mtp_process,
+                loss_mask=loss_mask,
+                decoder_input=decoder_input,
+                attention_mask=attention_mask,
+                inference_params=inference_params,
+                packed_seq_params=packed_seq_params,
+                sequence_len_offset=sequence_len_offset,
+                runtime_gather_output=runtime_gather_output,
+                extra_block_kwargs=extra_block_kwargs,
+                inference_context=inference_context,
+            )
+        finally:
+            if _shadow_embedding:
+                del self.__dict__["embedding"]
 
         return result
