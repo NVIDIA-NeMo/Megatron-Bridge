@@ -68,6 +68,7 @@ class Gemma3ModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
 
     # attention
+    qk_layernorm: bool = True
     window_size: tuple = 512  # local
     interleaved_attn_pattern: tuple = (5, 1)  # (local, global)
     attention_dropout: float = 0.0
@@ -85,7 +86,6 @@ class Gemma3ModelProvider(GPTModelProvider):
     # Do not change
     is_vision_language: bool = False
     flash_decode: bool = False
-    gradient_accumulation_fusion: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["Gemma3ModelProvider"], ModuleSpec]] = field(
         default_factory=lambda: gemma3_layer_spec
     )
@@ -218,8 +218,8 @@ def gemma3_layer_spec(config) -> ModuleSpec:
                 submodules=SelfAttentionSubmodules(
                     linear_qkv=TELayerNormColumnParallelLinear,
                     core_attention=Gemma3TEDotProductAttention,  # mixed gloabl/local attn
-                    q_layernorm=TENorm,
-                    k_layernorm=TENorm,
+                    q_layernorm=TENorm if config.qk_layernorm else None,
+                    k_layernorm=TENorm if config.qk_layernorm else None,
                     linear_proj=TERowParallelLinearLayerNorm,  # post attn RMSNorm
                 ),
             ),
@@ -302,7 +302,7 @@ class Gemma3TEDotProductAttention(TEDotProductAttention):
         config = copy.deepcopy(config)
         if _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
             # local attention, (q, k)
-            config.window_size = (config.window_size, 0)
+            config.window_size = (config.window_size - 1, 0)
         else:
             # global attention
             config.window_size = None

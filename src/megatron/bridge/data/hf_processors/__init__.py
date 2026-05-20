@@ -19,9 +19,13 @@ This module contains processing functions that conform to the ProcessExampleFn p
 and are designed to work with the HFDatasetConfig and HFDatasetBuilder classes.
 """
 
+from .gsm8k import process_gsm8k_example
+from .openmathinstruct2 import process_openmathinstruct2_example
 from .squad import process_squad_example
 
 
 __all__ = [
+    "process_gsm8k_example",
+    "process_openmathinstruct2_example",
     "process_squad_example",
 ]

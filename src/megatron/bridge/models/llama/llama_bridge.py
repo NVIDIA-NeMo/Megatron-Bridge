@@ -61,7 +61,6 @@ class LlamaBridge(MegatronModelBridge):
         # Llama-specific Megatron defaults
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.hidden_dropout = 0.0
         provider.bias_activation_fusion = True
         provider.masked_softmax_fusion = True

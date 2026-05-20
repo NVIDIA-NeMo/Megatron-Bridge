@@ -14,6 +14,15 @@
 
 """Compatibility utilities for HuggingFace transformers 5.0+ configs."""
 
+import transformers.utils.import_utils as _hf_import_utils
+
+
+# Shim for is_torch_fx_available, removed in transformers 5.x but still
+# referenced by some custom model repos (e.g. Kimi-K2's modeling_deepseek.py).
+# torch.fx has been stable since PyTorch 1.10, so always return True.
+if not hasattr(_hf_import_utils, "is_torch_fx_available"):
+    _hf_import_utils.is_torch_fx_available = lambda: True
+
 
 def rope_theta_from_hf(config) -> float:
     """Extract rope_theta from a HuggingFace config.
@@ -181,4 +190,34 @@ def rope_scaling_factor_from_hf(config, default: float = 1.0) -> float:
                 return factor
 
     # Return default if no scaling factor found
+    return default
+
+
+def full_attention_interval_from_hf(config, default: int = 4) -> int:
+    """Extract the full-attention interval from a Qwen3-Next-style HuggingFace config.
+
+    In transformers <5.5 the interval was stored directly as
+    ``config.full_attention_interval``. In transformers >=5.5 the field was
+    removed; the kwarg is consumed in ``__post_init__`` and converted into
+    ``config.layer_types`` (a list whose ``i``-th entry is ``"linear_attention"``
+    or ``"full_attention"`` according to ``(i + 1) % interval``). This helper
+    handles both layouts.
+
+    Args:
+        config: HuggingFace configuration object (e.g. ``Qwen3NextConfig``).
+        default: Value to return if neither layout is present.
+
+    Returns:
+        int: The interval at which standard attention layers appear.
+    """
+    interval = getattr(config, "full_attention_interval", None)
+    if interval is not None:
+        return interval
+
+    layer_types = getattr(config, "layer_types", None)
+    if layer_types:
+        for i, layer_type in enumerate(layer_types):
+            if layer_type == "full_attention":
+                return i + 1
+
     return default

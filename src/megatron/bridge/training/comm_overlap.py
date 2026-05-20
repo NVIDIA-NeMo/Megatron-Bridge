@@ -18,10 +18,12 @@ from typing import Optional
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
-from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+from megatron.bridge.utils.cuda_graph import has_cuda_graph_module
 
 
 try:
@@ -419,7 +421,7 @@ class CommOverlapConfig:
 
     def _get_model_comm_overlap_cfgs(
         self,
-        model_cfg: GPTModelProvider | T5ModelProvider,
+        model_cfg: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
         ddp_config: DistributedDataParallelConfig,
     ) -> _CommOverlapConfig:
         comm_overlap_cfg = _CommOverlapConfig()
@@ -518,26 +520,10 @@ class CommOverlapConfig:
                 model_cfg.overlap_moe_expert_parallel_comm
                 or self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm
             ), "overlap_moe_expert_parallel_comm is required for delay_wgrad_compute"
-            assert not model_cfg.moe_use_legacy_grouped_gemm, (
-                "delay_wgrad_compute is not supported with legacy groupedgemm implementation"
-            )
 
-            # CUDA graph scope-specific validations for delayed wgrad.
-            cuda_graph_scope = getattr(model_cfg, "cuda_graph_scope", []) or []
-            if isinstance(cuda_graph_scope, str):
-                cuda_graph_scope = cuda_graph_scope.split(",") if cuda_graph_scope else []
-            elif not isinstance(cuda_graph_scope, list):
-                cuda_graph_scope = [cuda_graph_scope]
-            attn_scope_enabled = (
-                CudaGraphScope.attn in cuda_graph_scope
-                or CudaGraphScope.attn.value in cuda_graph_scope
-                or f"CudaGraphScope.{CudaGraphScope.attn.value}" in cuda_graph_scope
-            )
-            moe_router_scope_enabled = (
-                CudaGraphScope.moe_router in cuda_graph_scope
-                or CudaGraphScope.moe_router.value in cuda_graph_scope
-                or f"CudaGraphScope.{CudaGraphScope.moe_router.value}" in cuda_graph_scope
-            )
+            # CUDA graph module-specific validations for delayed wgrad.
+            attn_scope_enabled = has_cuda_graph_module(model_cfg, "attn")
+            moe_router_scope_enabled = has_cuda_graph_module(model_cfg, "moe_router")
             wgrad_in_graph_scope = attn_scope_enabled or (
                 moe_router_scope_enabled
                 and getattr(model_cfg, "moe_shared_expert_intermediate_size", None) is not None
@@ -560,7 +546,9 @@ class CommOverlapConfig:
         comm_overlap_cfg = self._override_user_cfgs(comm_overlap_cfg)
         return comm_overlap_cfg
 
-    def _get_optimizer_overlap_cfgs(self, model_cfg: GPTModelProvider | T5ModelProvider) -> _CommOverlapConfig:
+    def _get_optimizer_overlap_cfgs(
+        self, model_cfg: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig
+    ) -> _CommOverlapConfig:
         vp_size = model_cfg.virtual_pipeline_model_parallel_size
         if vp_size is None:
             vp_size = 1
@@ -602,7 +590,7 @@ class CommOverlapConfig:
 
     def setup(
         self,
-        model_config: GPTModelProvider | T5ModelProvider,
+        model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
         optimizer_config: OptimizerConfig,
         ddp_config: DistributedDataParallelConfig,
     ) -> None:

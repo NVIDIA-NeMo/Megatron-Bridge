@@ -20,12 +20,13 @@ import warnings
 from dataclasses import dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
 from functools import lru_cache
-from typing import Any, Optional, Type, TypeVar
+from typing import Any, Mapping, Optional, Type, TypeVar
 
 import yaml
 from megatron.core.msc_utils import MultiStorageClientFeature
 from omegaconf import OmegaConf
 
+from megatron.bridge.models.common import Serializable
 from megatron.bridge.utils.instantiate_utils import InstantiationMode, instantiate
 from megatron.bridge.utils.yaml_utils import safe_yaml_representers
 
@@ -33,6 +34,40 @@ from megatron.bridge.utils.yaml_utils import safe_yaml_representers
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound="_ConfigContainerBase")
+
+
+def create_ddp_config(
+    wrap_with_ddp: bool = True,
+    use_distributed_optimizer: bool = True,
+    use_megatron_fsdp: bool = False,
+    overrides: Mapping[str, object] | None = None,
+    finalize: bool = True,
+) -> object | None:
+    """Create a finalized Bridge DDP config for external model construction."""
+    if not wrap_with_ddp:
+        return None
+
+    from megatron.bridge.training.config import DistributedDataParallelConfig
+
+    ddp_config = {
+        "use_distributed_optimizer": use_distributed_optimizer,
+    }
+    if use_megatron_fsdp:
+        ddp_config.update(
+            {
+                "use_distributed_optimizer": True,
+                "check_for_nan_in_grad": True,
+                "use_megatron_fsdp": True,
+                "data_parallel_sharding_strategy": "optim_grads_params",
+                "overlap_grad_reduce": True,
+            }
+        )
+    ddp_config.update(overrides or {})
+
+    config = DistributedDataParallelConfig(**ddp_config)
+    if finalize:
+        config.finalize()
+    return config
 
 
 def apply_run_config_backward_compat(config_dict: dict[str, Any]) -> dict[str, Any]:
@@ -262,6 +297,7 @@ class _ConfigContainerBase:
 
         Handles:
         - ConfigContainer instances (using to_dict)
+        - Serializable instances (using as_dict)
         - Classes which implement a to_cfg_dict method
         - Regular dataclasses (converting each non-private field)
         - Lists and tuples (converting each element)
@@ -276,9 +312,15 @@ class _ConfigContainerBase:
         """
         if isinstance(value, _ConfigContainerBase):
             return value.to_dict()
+        elif isinstance(value, Serializable):
+            return value.as_dict()
         elif hasattr(value, "to_cfg_dict"):
             # Allow non-Container classes to implement own custom method
             return value.to_cfg_dict()
+        elif hasattr(value, "input_data") and type(value).__module__.startswith("megatron.core"):
+            # PipelineParallelLayerLayout: serialize as the original plain list
+            # so it can be deserialized without special instantiation logic.
+            return value.input_data
         elif is_dataclass(value) and not isinstance(value, type):
             # Handle regular dataclasses
             result = {}

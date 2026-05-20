@@ -253,18 +253,44 @@ def hook_hf_module_setattr_for_tp_grad_sync(module: torch.nn.Module) -> torch.nn
 
 def extract_expert_number_from_param(param_name: str) -> int:
     """Extract the expert number from a parameter name.
+
     Args:
         param_name: The parameter name to extract the expert number from.
+
     Returns:
         The expert number.
     """
-    pattern = r"(?:experts\.|weight|bias)(\d+)"
-    match = re.search(pattern, param_name)
-    if not match:
-        raise ValueError(
-            f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
-        )
-    return int(match.group(1))
+    patterns = (
+        r"local_experts\.(\d+)",
+        r"(?:weight|bias)(\d+)",
+        r"experts\.(\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, param_name)
+        if match:
+            return int(match.group(1))
+    raise ValueError(
+        f"No expert number found in parameter name: {param_name}. "
+        f"Please update the regex patterns {patterns} if necessary."
+    )
+
+
+def disable_mtp_for_inference(m: torch.nn.Module) -> None:
+    """Disable Multi-Token Prediction (MTP) on a Megatron model for inference.
+
+    MTP is only used during training. Setting ``mtp_num_layers = None`` and
+    clearing ``mtp_process`` on the language model prevents hangs on NCCL
+    collectives during inference.
+
+    Args:
+        m: A Megatron model (or DDP-wrapped model) to disable MTP on.
+    """
+    m.config.mtp_num_layers = None
+    m.config.grad_scale_func = None
+    inner = m.module if hasattr(m, "module") else m
+    lang = getattr(inner, "language_model", inner)
+    if hasattr(lang, "mtp_process"):
+        lang.mtp_process = False
 
 
 def resolve_path(path: str) -> Path:

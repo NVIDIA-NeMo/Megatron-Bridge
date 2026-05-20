@@ -160,6 +160,7 @@ def main(
         export_extra_modules=export_extra_modules_flag,
         dtype=torch_dtype,
         export_dir=export_dir,
+        moe_router_dtype=getattr(unwrapped_model.config, "moe_router_dtype", None),
         trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model_id),
     )
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""Merge Megatron-Bridge LoRA adapters back into dense model weights (model-agnostic).
+"""Export Megatron-Bridge LoRA adapters as merged Hugging Face weights.
 
 The script expects two checkpoints:
 1. A **LoRA fine-tuning checkpoint** that contains the adapter weights.
@@ -27,12 +27,23 @@ DeepSeek, Phi, etc.).
 
 Usage
 -----
-python merge_lora.py \
-    --lora-checkpoint path/to/finetune_ckpt \
-    --hf-model-path   path/to/hf_model \
-    --output          path/to/merged_ckpt \
-    [--pretrained path/to/base_ckpt] \
-    [--tp 1] [--pp 1] [--ep 1] [--cpu]
+CPU-only (single process, no GPU required)::
+
+    python merge_lora.py \
+        --lora-checkpoint path/to/finetune_ckpt \
+        --hf-model-path   path/to/hf_model \
+        --output          path/to/merged_hf_ckpt \
+        [--pretrained path/to/base_ckpt] \
+        --cpu
+
+GPU with tensor/pipeline/expert parallelism::
+
+    torchrun --nproc_per_node <N> merge_lora.py \
+        --lora-checkpoint path/to/finetune_ckpt \
+        --hf-model-path   path/to/hf_model \
+        --output          path/to/merged_hf_ckpt \
+        [--pretrained path/to/base_ckpt] \
+        [--tp 1] [--pp 1] [--ep 1]
 """
 
 from __future__ import annotations
@@ -40,21 +51,18 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Optional
 
 import torch
 from megatron.core import dist_checkpointing
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.peft.lora import LoRA, LoRAMerge, VLMLoRA
-from megatron.bridge.peft.lora_layers import LoRALinear
+from megatron.bridge.peft.lora import LoRA, VLMLoRA
 from megatron.bridge.training.checkpointing import (
     _generate_model_state_dict,
     apply_peft_adapter_filter_to_state_dict,
 )
-from megatron.bridge.training.model_load_save import save_megatron_model
 from megatron.bridge.training.utils.checkpoint_utils import read_run_config
-from megatron.bridge.utils.common_utils import print_rank_0
+from megatron.bridge.utils.common_utils import print_rank_0, resolve_path
 
 
 logger = logging.getLogger(__name__)
@@ -68,11 +76,11 @@ logger = logging.getLogger(__name__)
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Merge Megatron-Bridge LoRA adapters into base weights",
+        description="Export Megatron-Bridge LoRA adapters as merged Hugging Face weights",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--lora-checkpoint", required=True, help="LoRA fine-tuning checkpoint directory")
-    parser.add_argument("--output", required=True, help="Where to store the merged checkpoint")
+    parser.add_argument("--output", required=True, help="Where to store the merged Hugging Face checkpoint")
     parser.add_argument(
         "--hf-model-path",
         required=True,
@@ -88,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallel size")
-    parser.add_argument("--cpu", action="store_true", help="Load and merge entirely on CPU (no GPU required)")
+    parser.add_argument("--cpu", action="store_true", help="Load and export entirely on CPU (no GPU required)")
 
     return parser.parse_args()
 
@@ -98,9 +106,9 @@ def parse_args() -> argparse.Namespace:
 # -----------------------------------------------------------------------------
 
 
-def _resolve_pretrained(lora_dir: Path, explicit: Optional[str]) -> Path:
+def _resolve_pretrained(lora_dir: Path, explicit: str | None) -> Path:
     if explicit:
-        return Path(explicit).expanduser().resolve()
+        return resolve_path(explicit)
     cfg_path = lora_dir / "run_config.yaml"
     if not cfg_path.exists():
         raise FileNotFoundError("run_config.yaml not found in LoRA checkpoint and --pretrained not supplied")
@@ -108,7 +116,7 @@ def _resolve_pretrained(lora_dir: Path, explicit: Optional[str]) -> Path:
     base = cfg.get("checkpoint", {}).get("pretrained_checkpoint")
     if base is None:
         raise ValueError("pretrained_checkpoint missing in run_config.yaml; pass --pretrained")
-    return Path(base).expanduser().resolve()
+    return resolve_path(base)
 
 
 # -----------------------------------------------------------------------------
@@ -124,19 +132,20 @@ def merge_lora(
     args: argparse.Namespace,
 ) -> None:
     """
-    Merge LoRA adapter weights back into the base model.
+    Export LoRA adapter weights merged into the base model.
 
     Args:
         base_dir (Path): Path to the directory containing the base model checkpoint (the dense, pre-trained model).
         lora_dir (Path): Path to the directory containing the LoRA fine-tuned checkpoint.
-        out_dir (Path): Path to the directory where the merged model checkpoint should be saved.
+        out_dir (Path): Path to the directory where the merged Hugging Face checkpoint should be saved.
         hf_model_path (str): HuggingFace model name or local path to the model architecture/configuration.
         args (argparse.Namespace): Command-line arguments containing parallelism and device settings.
 
     This routine reconstructs the model architecture from HuggingFace config,
     loads the dense base model weights, then loads the LoRA adapter weights
-    (optionally reading LoRA hyperparameters from run_config.yaml), and merges
-    the LoRA deltas back into the model weights, resulting in a fully merged checkpoint.
+    (optionally reading LoRA hyperparameters from run_config.yaml), and exports
+    Hugging Face weights with the LoRA deltas merged through the standard bridge
+    conversion path.
     """
     print_rank_0(f"Loading base model from {base_dir}")
     bridge = AutoBridge.from_hf_pretrained(hf_model_path, trust_remote_code=True)
@@ -150,7 +159,11 @@ def merge_lora(
     model_provider.expert_tensor_parallel_size = 1
     model_provider.pipeline_dtype = torch.bfloat16
     if args.cpu:
-        assert args.tp == args.pp == args.ep == 1, "TP, PP, and EP must be 1 when using CPU merge"
+        if args.tp != 1 or args.pp != 1 or args.ep != 1:
+            logger.warning("TP, PP, and EP must be 1 when using CPU merge. Setting to 1.")
+            args.tp = 1
+            args.pp = 1
+            args.ep = 1
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group("gloo")
     model_provider.initialize_model_parallel(seed=0)
@@ -219,28 +232,12 @@ def merge_lora(
     # Load adapter weights into the base model (strict=False so missing dense weights are ignored)
     model[0].load_state_dict(adapter_sd, strict=False)
 
-    # 4) Merge adapters
-    merge = LoRAMerge()
-    merged_model = merge(model[0], training=False)
-    for m in merged_model.modules():
-        if hasattr(m, "adapter"):
-            delattr(m, "adapter")
-
-    # Recursively replace any remaining LoRALinear wrappers with their underlying linear modules
-    def _unwrap_lora(module):
-        for name, child in list(module.named_children()):
-            if isinstance(child, LoRALinear):
-                setattr(module, name, child.to_wrap)
-            else:
-                _unwrap_lora(child)
-
-    _unwrap_lora(merged_model)
-
+    # 4) Export with adapters merged through the same path used by conversion.
     out_dir.mkdir(parents=True, exist_ok=True)
-    print_rank_0(f"Saving merged checkpoint to {out_dir}")
-    save_megatron_model([merged_model], out_dir)
+    print_rank_0(f"Saving merged Hugging Face checkpoint to {out_dir}")
+    bridge.save_hf_pretrained(model, out_dir, source_path=hf_model_path, merge_adapter_weights=True)
 
-    print_rank_0("Merge complete ✔")
+    print_rank_0("Merge complete")
 
 
 # -----------------------------------------------------------------------------
@@ -249,13 +246,13 @@ def merge_lora(
 
 
 def main() -> None:
-    """Main function to merge LoRA adapter weights back into the base model."""
+    """Main function to export LoRA adapter weights merged into the base model."""
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
 
-    lora_dir = Path(args.lora_checkpoint).expanduser().resolve()
+    lora_dir = resolve_path(args.lora_checkpoint)
     if not lora_dir.exists():
         raise FileNotFoundError(f"LoRA checkpoint not found: {lora_dir}")
     base_dir = _resolve_pretrained(lora_dir, args.pretrained)
@@ -265,19 +262,16 @@ def main() -> None:
         merge_lora(
             base_dir=base_dir,
             lora_dir=lora_dir,
-            out_dir=Path(args.output).expanduser().resolve(),
+            out_dir=resolve_path(args.output),
             hf_model_path=args.hf_model_path,
             args=args,
         )
     except torch.cuda.OutOfMemoryError:
-        logger.error("Out of memory error during merge. Trying CPU merge...")
-        merge_lora(
-            base_dir=base_dir,
-            lora_dir=lora_dir,
-            out_dir=Path(args.output).expanduser().resolve(),
-            hf_model_path=args.hf_model_path,
-            args=args,
-        )
+        logger.warning("CUDA out of memory during merge. Please rerun this script on CPU by adding the `--cpu` flag.")
+        raise SystemExit(1)
+    finally:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":

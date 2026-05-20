@@ -12,29 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict
-
 import torch
-from megatron.core import parallel_state
 from transformers import Glm4vMoeForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
-from megatron.bridge.models.glm.glm_moe_mappings import (
-    GLMExpertDownProjMapping,
-    GLMExpertGateUpProjMapping,
-)
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 @MegatronModelBridge.register_bridge(source=Glm4vMoeForConditionalGeneration, target=GLM45VModel)
@@ -91,13 +85,6 @@ class GLM45VBridge(MegatronModelBridge):
             video_token_id=getattr(text_config, "video_token_id", 151364),
         )
         return provider
-
-    def build_conversion_tasks(self, hf_pretrained, megatron_model):
-        """Override to store config before mapping_registry is called."""
-        self._hf_config = hf_pretrained.config
-        self._hf_state_source = hf_pretrained.state.source
-        self._hf_keys = list(self._hf_state_source.get_all_keys())
-        return super().build_conversion_tasks(hf_pretrained, megatron_model)
 
     @classmethod
     def get_hf_tokenizer_kwargs(cls) -> dict:
@@ -189,11 +176,11 @@ class GLM45VBridge(MegatronModelBridge):
         if use_fused_experts:
             mapping_list.extend(
                 [
-                    GLMExpertGateUpProjMapping(
+                    FusedGatedExpertMapping(
                         megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
                         hf_param=f"model.language_model.layers.*.mlp.experts.gate_up_proj{gate_up_suffix}",
                     ),
-                    GLMExpertDownProjMapping(
+                    FusedExpertMapping(
                         megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
                         hf_param=f"model.language_model.layers.*.mlp.experts.down_proj{down_suffix}",
                     ),
@@ -215,78 +202,33 @@ class GLM45VBridge(MegatronModelBridge):
             )
         return MegatronMappingRegistry(*mapping_list)
 
+    def _hf_source_and_keys(self):
+        """Return HF state source and cached key order for expert-mapping helpers."""
+        hf_source = self.hf_pretrained.state.source
+        if getattr(self, "_cached_hf_state_source", None) is not hf_source:
+            self._cached_hf_state_source = hf_source
+            self._cached_hf_keys = hf_source.get_all_keys()
+        return hf_source, self._cached_hf_keys
+
     def _uses_fused_experts(self) -> bool:
-        hf_keys = getattr(self, "_hf_keys", None)
+        hf_source, hf_keys = self._hf_source_and_keys()
         if hf_keys:
             if any("mlp.experts.gate_up_proj" in key for key in hf_keys) or any(
                 "mlp.experts.down_proj" in key for key in hf_keys
             ):
                 return True
 
-        hf_source = getattr(self, "_hf_state_source", None)
         if hf_source is not None:
             return hf_source.has_glob("*mlp.experts.gate_up_proj*") or hf_source.has_glob("*mlp.experts.down_proj*")
 
         return False
 
     def _hf_expert_suffix(self, base_name: str) -> str:
-        hf_keys = getattr(self, "_hf_keys", None) or []
+        hf_source, hf_keys = self._hf_source_and_keys()
         if any(f"{base_name}.weight" in key for key in hf_keys):
             return ".weight"
 
-        hf_source = getattr(self, "_hf_state_source", None)
         if hf_source is not None and hf_source.has_glob(f"*{base_name}.weight"):
             return ".weight"
 
         return ""
-
-    def maybe_modify_converted_hf_weight(
-        self,
-        task,
-        converted_weights_dict: Dict[str, torch.Tensor],
-        hf_state_dict,
-    ) -> Dict[str, torch.Tensor]:
-        if not isinstance(task.mapping, (GLMExpertGateUpProjMapping, GLMExpertDownProjMapping)):
-            return converted_weights_dict
-
-        if not converted_weights_dict:
-            return {}
-
-        text_config = getattr(self._hf_config, "text_config", self._hf_config)
-        num_experts = text_config.n_routed_experts
-        ep_size = parallel_state.get_expert_model_parallel_world_size()
-        experts_per_rank = num_experts // ep_size
-
-        try:
-            local_expert_number = extract_expert_number_from_param(task.param_name) % experts_per_rank
-        except ValueError:
-            return converted_weights_dict
-
-        if not hasattr(self, "hf_weights_cache"):
-            self.hf_weights_cache = {}
-
-        for key, value in converted_weights_dict.items():
-            if key not in self.hf_weights_cache:
-                self.hf_weights_cache[key] = {}
-
-            if ep_size == 1:
-                self.hf_weights_cache[key][local_expert_number] = value
-            else:
-                if value.shape[0] != ep_size:
-                    raise ValueError(f"Expected EP dim {ep_size} for {key}, got {value.shape}.")
-                for i, exp_val in enumerate(value):
-                    global_expert_number = local_expert_number + (i * experts_per_rank)
-                    self.hf_weights_cache[key][global_expert_number] = exp_val
-
-            if len(self.hf_weights_cache[key]) == num_experts:
-                merged = torch.stack([self.hf_weights_cache[key][i] for i in range(num_experts)], dim=0)
-                if key in hf_state_dict:
-                    expected = hf_state_dict[key].shape
-                    if merged.shape != expected and merged.transpose(-1, -2).shape == expected:
-                        merged = merged.transpose(-1, -2).contiguous()
-                del self.hf_weights_cache[key]
-                return {key: merged}
-
-            return {}
-
-        return {}

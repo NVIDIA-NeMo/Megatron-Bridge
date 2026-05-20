@@ -66,13 +66,15 @@ lora_config = LoRA(
 ```
 
 #### Key Parameters
-The following table lists key hyperparameters for configuring DoRA, which control its module targeting, adaptation rank, scaling behavior, and regularization strategy.
+The following table lists key hyperparameters for configuring LoRA, which control its module targeting, adaptation rank, scaling behavior, and regularization strategy.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `target_modules` | `List[str]` | All linear layers | Modules to apply DoRA to |
+| `target_modules` | `List[str]` | All linear layers | Modules to apply LoRA to |
 | `dim` | `int` | `32` | Rank of the low-rank adaptation |
-| `alpha` | `float` | `16` | Scaling parameter for DoRA |
-| `dropout` | `float` | `0.0` | Dropout rate for DoRA layers |
+| `alpha` | `float` | `32` | Scaling parameter for LoRA |
+| `dropout` | `float` | `0.0` | Dropout rate for LoRA layers |
+| `normalize_moe_lora` | `bool` | `False` | Reduce expert-layer rank to `dim // moe_router_topk` while keeping dense layers at the full rank |
+| `share_expert_adapters` | `bool` | `True` | Share one adapter across all local experts on an EP rank instead of creating one adapter per local expert |
 
 #### Target Modules
 The following table lists specific submodules within transformer architectures that are commonly targeted for LoRA, enabling efficient fine-tuning of attention and feedforward components:
@@ -92,6 +94,34 @@ lora_config = LoRA(
         "*.layers.0.*.linear_qkv",   # First layer only
         "*.layers.1.*.linear_qkv",   # Second layer only
     ]
+)
+```
+
+#### MoE Expert Adapter Modes
+
+`LoRA` and `CanonicalLoRA` expose two MoE-specific controls for grouped expert
+MLP layers such as `linear_fc1`, `linear_fc2`, `linear_fc1_up`, and
+`linear_fc1_gate`:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `share_expert_adapters` | `bool` | `True` | Preserve the original behavior and share one adapter across all local experts on each EP rank |
+| `normalize_moe_lora` | `bool` | `False` | Use `dim // moe_router_topk` for expert layers only so MoE adapter capacity stays comparable to a dense model |
+
+- `share_expert_adapters=True` keeps the original shared-adapter behavior for grouped expert linears.
+- `share_expert_adapters=False` opts into per-local-expert adapters.
+- `normalize_moe_lora=True` only changes expert layers; non-expert layers still use the full `dim`.
+- `dim` must be divisible by `moe_router_topk` when `normalize_moe_lora=True`.
+- When expert tensor parallelism shards a non-input-parallel expert layer, Megatron Bridge may round the effective expert rank up to the expert-TP granularity so the adapter can be partitioned cleanly.
+
+```python
+from megatron.bridge.peft.lora import LoRA
+
+lora_config = LoRA(
+    target_modules=["linear_fc1", "linear_fc2"],
+    dim=8,
+    normalize_moe_lora=True,
+    share_expert_adapters=False,
 )
 ```
 
@@ -143,10 +173,10 @@ Note: dimensions of weight matrices are as follows:
 
 $$
 \begin{align}
-W_q:     &\ h \times n_q d          \qquad & A_q:     &\ h \times r \qquad  & B_q:     &\ r \times n_q d \\
-W_k:     &\ h \times n_{kv} d       \qquad & A_k:     &\ h \times r \qquad  & B_k:     &\ r \times n_{kv} d \\
-W_v:     &\ h \times n_{kv} d       \qquad & A_v:     &\ h \times r \qquad  & B_v:     &\ r \times n_{kv} d \\
-W_{qkv}: &\ h \times (n_q+2n_{kv})d \qquad & A_{qkv}: &\ h \times r \qquad  & B_{qkv}: &\ r \times (n_q+2n_{kv})d
+W_q:     &\ n_q d \times h          \qquad & A_q:     &\ r \times h \qquad  & B_q:     &\ n_q d \times r \\
+W_k:     &\ n_{kv} d \times h       \qquad & A_k:     &\ r \times h \qquad  & B_k:     &\ n_{kv} d \times r \\
+W_v:     &\ n_{kv} d \times h       \qquad & A_v:     &\ r \times h \qquad  & B_v:     &\ n_{kv} d \times r \\
+W_{qkv}: &\ (n_q+2n_{kv})d \times h \qquad & A_{qkv}: &\ r \times h \qquad  & B_{qkv}: &\ (n_q+2n_{kv})d \times r
 \end{align}
 $$
 
@@ -177,6 +207,9 @@ canonical_lora_config = CanonicalLoRA(
 )
 ```
 
+`CanonicalLoRA` exposes the same `normalize_moe_lora` and
+`share_expert_adapters` controls as `LoRA` for MoE expert layers.
+
 #### Key Parameters
 
 | Parameter | Type | Default | Description |
@@ -188,6 +221,8 @@ canonical_lora_config = CanonicalLoRA(
 | `dropout_position` | `Literal["pre", "post"]` | `"pre"` | Position for applying dropout |
 | `lora_A_init_method` | `str` | `"xavier"` | Initialization method for LoRA A matrix |
 | `lora_B_init_method` | `str` | `"zero"` | Initialization method for LoRA B matrix |
+| `normalize_moe_lora` | `bool` | `False` | Reduce expert-layer rank to `dim // moe_router_topk` while keeping dense layers at the full rank |
+| `share_expert_adapters` | `bool` | `True` | Share one adapter across all local experts on an EP rank instead of creating one adapter per local expert |
 
 #### Target Modules for Canonical LoRA
 
@@ -232,7 +267,7 @@ The following parameters define how LoRA is applied to your model. They control 
 |-----------|------|---------|-------------|
 | `target_modules` | `List[str]` | All linear layers | Modules to apply DoRA to |
 | `dim` | `int` | `32` | Rank of the low-rank adaptation |
-| `alpha` | `float` | `16` | Scaling parameter for DoRA |
+| `alpha` | `float` | `64` | Scaling parameter for DoRA |
 | `dropout` | `float` | `0.0` | Dropout rate for DoRA layers |
 
 ## Full Configuration Example

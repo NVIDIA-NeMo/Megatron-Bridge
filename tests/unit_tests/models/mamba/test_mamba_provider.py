@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 
 import torch
 
+from megatron.bridge.models.mamba import mamba_provider
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
@@ -43,9 +44,7 @@ class TestMambaModelProvider:
         assert provider.fp16 is False
         assert provider.bf16 is True
         assert provider.mamba_num_groups == 8
-        assert provider.hybrid_attention_ratio == 0.0
-        assert provider.hybrid_mlp_ratio == 0.0
-        assert provider.hybrid_override_pattern is None
+        assert provider.hybrid_layer_pattern is None
         assert provider.seq_length == 8192
         assert provider.position_embedding_type == "none"
         assert provider.rotary_percent == 1.0
@@ -67,17 +66,16 @@ class TestMambaModelProvider:
     def test_mamba_provider_with_hybrid_configuration(self):
         """Test MambaModelProvider with hybrid attention/MLP configuration."""
         provider = MambaModelProvider(
-            num_layers=12,
             hidden_size=768,
             num_attention_heads=8,
             hybrid_attention_ratio=0.25,
             hybrid_mlp_ratio=0.1,
-            hybrid_override_pattern="M-M-M*-M-M-M-M*-M-M-M-M-",
+            hybrid_layer_pattern="M-M-M*-M-M-M-M*-M-M-M-M-",
         )
 
         assert provider.hybrid_attention_ratio == 0.25
         assert provider.hybrid_mlp_ratio == 0.1
-        assert provider.hybrid_override_pattern == "M-M-M*-M-M-M-M*-M-M-M-M-"
+        assert provider.hybrid_layer_pattern == "M-M-M*-M-M-M-M*-M-M-M-M-"
 
     def test_provide_method_basic(self):
         """Test the provide method creates a Mamba model."""
@@ -303,3 +301,17 @@ class TestMambaModelProvider:
         assert provider.hidden_dropout == 0.1
         assert provider.attention_dropout == 0.2
         assert provider.layernorm_epsilon == 1e-6
+
+    def test_finalize_uses_compatible_hybrid_layer_count(self):
+        """Test finalize derives num_layers with MCore's hybrid layer helper."""
+        provider = MambaModelProvider(
+            hidden_size=768,
+            num_attention_heads=8,
+            hybrid_layer_pattern="M-M-|M-M*-/MM/MM",
+        )
+
+        with patch.object(mamba_provider.TransformerConfig, "finalize", autospec=True) as mock_finalize:
+            provider.finalize()
+
+        assert provider.num_layers == 9
+        mock_finalize.assert_called_once_with(provider)

@@ -31,7 +31,7 @@ from transformers import AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
 
 
 class SingleBatchIterator:
@@ -128,6 +128,23 @@ def main(args) -> None:
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
 
+        # Read pipeline layout from checkpoint for PP > 1
+        if pp > 1:
+            from pathlib import Path
+
+            import yaml
+
+            ckpt_path = Path(args.megatron_model_path)
+            for candidate in [ckpt_path, *ckpt_path.glob("iter_*")]:
+                rc = candidate / "run_config.yaml"
+                if rc.exists():
+                    with open(rc) as f:
+                        cfg = yaml.safe_load(f)
+                    saved_layout = cfg.get("model", {}).get("pipeline_model_parallel_layout")
+                    if isinstance(saved_layout, list):
+                        model_provider.pipeline_model_parallel_layout = saved_layout
+                        break
+
         # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
@@ -167,13 +184,10 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
-    # TEMP FIX for inference failure when mtp_num_layers is not None
-    for m in model:
-        m.config.mtp_num_layers = None
-
     model = [m.cuda() for m in model]
     for m in model:
         m.eval()
+        disable_mtp_for_inference(m)
 
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(

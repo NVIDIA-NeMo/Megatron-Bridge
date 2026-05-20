@@ -74,7 +74,6 @@ class OlMoEBridge(MegatronModelBridge):
         # OlMoE-specific architecture settings
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.hidden_dropout = 0.0
         provider.share_embeddings_and_output_weights = False
@@ -89,6 +88,8 @@ class OlMoEBridge(MegatronModelBridge):
         provider.moe_router_load_balancing_type = "seq_aux_loss"
         provider.moe_router_pre_softmax = True
         provider.moe_grouped_gemm = True
+        if hasattr(hf_config, "scoring_func") and hf_config.scoring_func != "softmax":
+            raise ValueError(f"OlMoE only supports scoring_func='softmax', got {hf_config.scoring_func!r}")
         provider.moe_router_score_function = "softmax"
         provider.moe_permute_fusion = True
         provider.moe_router_dtype = "fp32"

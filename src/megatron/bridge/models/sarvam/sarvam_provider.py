@@ -37,6 +37,35 @@ if TYPE_CHECKING:
     from megatron.core.transformer import ModuleSpec
 
 
+def _get_sarvam_moe_pipeline_layout(pp_size: int):
+    """Return supported pipeline layouts for Sarvam MoE's 19 decoder layers."""
+    map_pp_to_layout = {
+        1: None,
+        2: [["embedding"] + ["decoder"] * 10, ["decoder"] * 9 + ["loss"]],
+        4: [["embedding"] + ["decoder"] * 5, ["decoder"] * 5, ["decoder"] * 5, ["decoder"] * 4 + ["loss"]],
+        8: [
+            ["embedding"] + ["decoder"] * 3,
+            ["decoder"] * 3,
+            ["decoder"] * 3,
+            ["decoder"] * 2,
+            ["decoder"] * 2,
+            ["decoder"] * 2,
+            ["decoder"] * 2,
+            ["decoder"] * 2 + ["loss"],
+        ],
+    }
+    if pp_size not in map_pp_to_layout:
+        raise ValueError(
+            f"Unsupported PP size {pp_size} for Sarvam MoE pipeline layout. "
+            f"Supported sizes: {sorted(map_pp_to_layout)}. "
+            "Set pipeline_model_parallel_layout explicitly for other PP sizes."
+        )
+    layout = map_pp_to_layout[pp_size]
+    if layout is not None:
+        layout = [list(stage) for stage in layout]
+    return layout
+
+
 @dataclass
 class SarvamMoEModelProvider(GPTModelProvider):
     """Sarvam 30B model provider."""
@@ -102,6 +131,24 @@ class SarvamMoEModelProvider(GPTModelProvider):
 
     # GQA
     num_query_groups: int = 4
+
+    def finalize(self) -> None:
+        """Apply supported pipeline layouts for Sarvam MoE's 19-layer decoder stack.
+
+        Sarvam MoE has 19 transformer layers, so uneven PP requires an explicit
+        layout rather than a generic first-stage override. Use known-good
+        layouts for PP=2/4/8 unless the caller has already configured a custom
+        flexible pipeline split.
+        """
+        pp = self.pipeline_model_parallel_size or 1
+        has_explicit_flexible_pp = (
+            getattr(self, "pipeline_model_parallel_layout", None) is not None
+            or getattr(self, "num_layers_in_first_pipeline_stage", None) is not None
+            or getattr(self, "num_layers_in_last_pipeline_stage", None) is not None
+        )
+        if pp > 1 and self.num_layers % pp != 0 and not has_explicit_flexible_pp:
+            self.pipeline_model_parallel_layout = _get_sarvam_moe_pipeline_layout(pp)
+        super().finalize()
 
 
 @dataclass

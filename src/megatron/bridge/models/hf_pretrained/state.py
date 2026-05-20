@@ -584,6 +584,7 @@ class SafeTensorsStateSource(StateSource):
         if not keys_to_load:
             return {}
 
+        import time
         from glob import glob as file_glob
 
         from safetensors import safe_open
@@ -591,6 +592,8 @@ class SafeTensorsStateSource(StateSource):
         loaded_tensors = {}
         remaining_keys = set(keys_to_load)
         key_to_filename_map = self.key_to_filename_map
+
+        max_retries = 3
 
         if key_to_filename_map:
             file_to_keys_map = defaultdict(list)
@@ -602,11 +605,22 @@ class SafeTensorsStateSource(StateSource):
             for filename, keys_in_file in file_to_keys_map.items():
                 file_path = self.path / filename
                 if file_path.exists():
-                    with safe_open(file_path, framework="pt", device="cpu") as f:
-                        for key in keys_in_file:
-                            if key in f.keys():
-                                loaded_tensors[key] = f.get_tensor(key)
-                                remaining_keys.discard(key)
+                    for attempt in range(max_retries):
+                        with safe_open(file_path, framework="pt", device="cpu") as f:
+                            file_keys = set(f.keys())
+                            for key in keys_in_file:
+                                if key in file_keys and key not in loaded_tensors:
+                                    loaded_tensors[key] = f.get_tensor(key)
+                                    remaining_keys.discard(key)
+                        still_missing = [k for k in keys_in_file if k in remaining_keys]
+                        if not still_missing:
+                            break
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                f"Retry {attempt + 1}/{max_retries}: {len(still_missing)} keys "
+                                f"not found in {filename}, retrying after delay..."
+                            )
+                            time.sleep(1.0 * (attempt + 1))
 
         if remaining_keys:
             safetensor_files = file_glob(str(self.path / "*.safetensors"))
@@ -961,8 +975,16 @@ class SafeTensorsStateSource(StateSource):
         if is_saver_rank:
             missing_keys = assigned_expected_keys - set(buffered_tensors.keys())
             if missing_keys:
-                missing_str = ", ".join(sorted(missing_keys))
-                print(f"Rank {rank}: Missing tensors for keys: {missing_str}", flush=True)
+                missing_keys_sorted = sorted(missing_keys)
+                missing_preview = ", ".join(missing_keys_sorted[:20])
+                missing_suffix = ""
+                if len(missing_keys_sorted) > 20:
+                    missing_suffix = f", ... (+{len(missing_keys_sorted) - 20} more)"
+                print(
+                    f"Rank {rank}: Missing {len(missing_keys_sorted)} tensors for keys: "
+                    f"{missing_preview}{missing_suffix}",
+                    flush=True,
+                )
 
             for fname in assigned_filenames:
                 keys_for_file = filename_to_keys_map[fname]
@@ -972,23 +994,24 @@ class SafeTensorsStateSource(StateSource):
                 save_file(tensors_to_save, output_path / fname)
                 actually_saved_keys.update(tensors_to_save.keys())
 
-        # Gather all saved keys from all ranks to rank 0
+        # Rank 0 builds the index from the files that were actually written.
+        # This avoids all_gather_object on very large key lists, which can
+        # allocate excessive CUDA memory in distributed runs.
         if is_distributed:
-            # Convert set to list for gathering
-            local_saved_keys_list = list(actually_saved_keys) if is_saver_rank else []
-            gathered_keys = [None] * world_size
-            torch.distributed.all_gather_object(gathered_keys, local_saved_keys_list)
+            torch.distributed.barrier()
 
             if rank == 0:
-                # Aggregate all saved keys from all ranks
+                from safetensors import safe_open
+
                 all_saved_keys_aggregated = set()
-                for keys_list in gathered_keys:
-                    if keys_list:
-                        all_saved_keys_aggregated.update(keys_list)
+                for fname in all_filenames:
+                    file_path = output_path / fname
+                    if not file_path.exists():
+                        continue
+                    with safe_open(file_path, framework="pt", device="cpu") as f:
+                        all_saved_keys_aggregated.update(f.keys())
             else:
                 all_saved_keys_aggregated = set()
-
-            torch.distributed.barrier()
         else:
             all_saved_keys_aggregated = actually_saved_keys
 
@@ -1010,3 +1033,6 @@ class SafeTensorsStateSource(StateSource):
                 output_index_file = output_path / "model.safetensors.index.json"
                 with open(output_index_file, "w") as f:
                     json.dump(new_index_data, f, indent=4)
+
+        if is_distributed:
+            torch.distributed.barrier()

@@ -15,9 +15,13 @@
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
 
 
-def get_common_mapping_list() -> list:
+def get_common_mapping_list(hf_config=None) -> list:
     """
     Returns a list of common parameter mappings for the DeepSeek family of models.
+
+    Args:
+        hf_config: Optional HuggingFace config. If provided and contains MTP layers,
+                   MTP mappings will be included.
     """
     param_mappings = {
         # Embed
@@ -41,6 +45,7 @@ def get_common_mapping_list() -> list:
         # MoE
         "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
         "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
+        "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "model.layers.*.mlp.experts.*.down_proj.weight",
         "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.shared_experts.down_proj.weight",
         # LM Head
         "decoder.final_layernorm.weight": "model.norm.weight",
@@ -54,8 +59,6 @@ def get_common_mapping_list() -> list:
         # For models without MLA
         "decoder.layers.*.self_attention.linear_q_proj.weight": "model.layers.*.self_attn.q_proj.weight",
     }
-
-    # TODO: mtp layers
 
     mapping_list = []
     # Convert each dictionary entry to AutoMapping(hf_param, megatron_param)
@@ -75,11 +78,85 @@ def get_common_mapping_list() -> list:
                 up="model.layers.*.mlp.experts.*.up_proj.weight",
             ),
             GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                gate="model.layers.*.mlp.experts.*.gate_proj.weight",
+                up="model.layers.*.mlp.experts.*.up_proj.weight",
+            ),
+            GatedMLPMapping(
                 megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
                 gate="model.layers.*.mlp.shared_experts.gate_proj.weight",
                 up="model.layers.*.mlp.shared_experts.up_proj.weight",
             ),
         ]
     )
+
+    if hf_config is not None:
+        # Add MTP mappings if config has MTP layers
+        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
+        if num_mtp_layers > 0:
+            num_transformer_layers = hf_config.num_hidden_layers
+
+            for mtp_layer in range(num_mtp_layers):
+                # Add layer-specific mappings for MTP transformer layers
+                for megatron_param, hf_param in param_mappings.items():
+                    megatron_param_mtp = (
+                        megatron_param.replace(".*", ".*.mtp_model_layer", 1)
+                        .replace("decoder", "mtp")
+                        .replace(".*", f".{mtp_layer}", 1)
+                    )
+                    hf_param_mtp = hf_param.replace("layers.*", f"layers.{mtp_layer + num_transformer_layers}")
+                    mapping_list.append(AutoMapping(megatron_param=megatron_param_mtp, hf_param=hf_param_mtp))
+
+                # Add MTP-specific normalization and projection layers
+                mapping_list.extend(
+                    [
+                        AutoMapping(
+                            megatron_param=f"mtp.layers.{mtp_layer}.enorm.weight",
+                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.enorm.weight",
+                        ),
+                        AutoMapping(
+                            megatron_param=f"mtp.layers.{mtp_layer}.hnorm.weight",
+                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.hnorm.weight",
+                        ),
+                        AutoMapping(
+                            megatron_param=f"mtp.layers.{mtp_layer}.eh_proj.weight",
+                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.eh_proj.weight",
+                        ),
+                        AutoMapping(
+                            megatron_param=f"mtp.layers.{mtp_layer}.final_layernorm.weight",
+                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.shared_head.norm.weight",
+                        ),
+                        AutoMapping(
+                            megatron_param=f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.router.expert_bias",
+                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.gate.e_score_correction_bias",
+                        ),
+                    ]
+                )
+
+                # Add MTP Gated MLP mappings
+                mapping_list.extend(
+                    [
+                        GatedMLPMapping(
+                            megatron_param=f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.linear_fc1.weight",
+                            gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.gate_proj.weight",
+                            up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.up_proj.weight",
+                        ),
+                        GatedMLPMapping(
+                            megatron_param=f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.shared_experts.linear_fc1.weight",
+                            gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.shared_experts.gate_proj.weight",
+                            up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.shared_experts.up_proj.weight",
+                        ),
+                        GatedMLPMapping(
+                            megatron_param=f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.experts.linear_fc1.weight*",
+                            gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.gate_proj.weight",
+                            up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.up_proj.weight",
+                        ),
+                        GatedMLPMapping(
+                            megatron_param=f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.experts.local_experts.*.linear_fc1.weight",
+                            gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.gate_proj.weight",
+                            up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.up_proj.weight",
+                        ),
+                    ]
+                )
 
     return mapping_list

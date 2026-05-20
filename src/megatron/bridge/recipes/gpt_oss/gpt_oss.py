@@ -17,9 +17,20 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.finetune_utils import (
+    default_openmathinstruct2_thinking_packed_config,
+    default_peft_config,
+)
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
+
+
+def _enable_gpt_oss_hopper_fp8_current_scaling(cfg: ConfigContainer) -> ConfigContainer:
+    """Enable Hopper FP8 current scaling for GPT-OSS recipes."""
+    cfg.mixed_precision = "bf16_with_fp8_current_scaling_mixed"
+    cfg.model.moe_router_padding_for_fp8 = True
+    return cfg
 
 
 def gpt_oss_20b_pretrain_config() -> ConfigContainer:
@@ -252,6 +263,12 @@ def gpt_oss_120b_pretrain_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = False
 
     return cfg
+
+
+def gpt_oss_20b_pretrain_fp8_current_scaling_config() -> ConfigContainer:
+    """Return a pre-training config for GPT-OSS 20B with Hopper FP8 current scaling."""
+    cfg = gpt_oss_20b_pretrain_config()
+    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
 
 
 # =============================================================================
@@ -509,6 +526,12 @@ def gpt_oss_120b_sft_config() -> ConfigContainer:
     cfg.rng.seed = 5678
 
     return cfg
+
+
+def gpt_oss_20b_sft_fp8_current_scaling_config() -> ConfigContainer:
+    """Return a full SFT config for GPT-OSS 20B with Hopper FP8 current scaling."""
+    cfg = gpt_oss_20b_sft_config()
+    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
 
 
 # =============================================================================
@@ -783,4 +806,57 @@ def gpt_oss_120b_peft_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    return cfg
+
+
+def gpt_oss_20b_peft_fp8_current_scaling_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for GPT-OSS 20B with Hopper FP8 current scaling."""
+    cfg = gpt_oss_20b_peft_config(peft_scheme=peft_scheme)
+    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
+
+
+def _enable_gpt_oss_blackwell_mxfp8(cfg: ConfigContainer) -> ConfigContainer:
+    """Enable Blackwell MXFP8 for GPT-OSS recipes."""
+    cfg.mixed_precision = get_mixed_precision_config("bf16_with_mxfp8_mixed")
+    cfg.model.moe_router_padding_for_fp8 = True
+    return cfg
+
+
+def gpt_oss_20b_pretrain_mxfp8_config() -> ConfigContainer:
+    """Return a pre-training config for GPT-OSS 20B with Blackwell MXFP8."""
+    cfg = gpt_oss_20b_pretrain_config()
+    return _enable_gpt_oss_blackwell_mxfp8(cfg)
+
+
+def gpt_oss_20b_sft_mxfp8_config() -> ConfigContainer:
+    """Return a full SFT config for GPT-OSS 20B with Blackwell MXFP8."""
+    cfg = gpt_oss_20b_sft_config()
+    cfg = _enable_gpt_oss_blackwell_mxfp8(cfg)
+    cfg.mixed_precision.fp8_param_gather = False
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    return cfg
+
+
+def gpt_oss_20b_peft_mxfp8_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for GPT-OSS 20B with Blackwell MXFP8."""
+    cfg = gpt_oss_20b_peft_config(peft_scheme=peft_scheme)
+    return _enable_gpt_oss_blackwell_mxfp8(cfg)
+
+
+def gpt_oss_20b_sft_openmathinstruct2_thinking_packed_config() -> ConfigContainer:
+    """SFT config for GPT-OSS 20B with thinking channel + packed sequences on OpenMathInstruct-2.
+
+    CoT reasoning goes into the assistant thinking field (rendered as <|channel|>analysis)
+    and the final answer (#### N) into the content field (rendered as <|channel|>final).
+    Uses packed sequences: each 4096-token sequence holds ~10-15 examples, giving ~10-15x
+    more data per step than padded training.
+    """
+    cfg = gpt_oss_20b_sft_config()
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset = default_openmathinstruct2_thinking_packed_config(seq_length=seq_length, packed_sequence=True)
     return cfg

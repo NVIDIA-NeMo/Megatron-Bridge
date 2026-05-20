@@ -14,18 +14,24 @@ All scripts dynamically import recipes from `megatron.bridge.recipes`, apply use
 
 ## Quick Start
 
-For the end-to-end overview of how recipes are structured, overridden, and launched with either `torchrun` or NeMo-Run, see the official [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
+For the end-to-end overview of how recipes are structured, overridden, and launched, see the official [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
 
-### Pretrain
+### Pretrain (single-GPU)
 
 ```bash
-torchrun --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
+uv run python run_recipe.py --recipe llama32_1b_pretrain_config
+```
+
+### Pretrain (multi-GPU)
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
 ```
 
 ### Finetune
 
 ```bash
-torchrun --nproc_per_node=8 run_recipe.py --recipe llama32_1b_finetune_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_sft_config
 ```
 
 ## Usage with Different Models
@@ -34,16 +40,16 @@ Same scripts work across all model families:
 
 ```bash
 # Llama
-torchrun --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
 
 # Gemma
-torchrun --nproc_per_node=8 run_recipe.py --recipe gemma3_1b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe gemma3_1b_pretrain_config
 
 # Qwen
-torchrun --nproc_per_node=8 run_recipe.py --recipe qwen3_8b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe qwen3_8b_pretrain_config
 
 # GPT
-torchrun --nproc_per_node=8 run_recipe.py --recipe gpt_126m_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe gpt_126m_pretrain_config
 ```
 
 ## CLI Overrides
@@ -51,7 +57,7 @@ torchrun --nproc_per_node=8 run_recipe.py --recipe gpt_126m_pretrain_config
 Override any config field using dot notation:
 
 ```bash
-torchrun --nproc_per_node=8 run_recipe.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     train.train_iters=5000 \
     optimizer.lr=0.0002 \
@@ -65,7 +71,7 @@ Configuration priority:
 2. Recipe defaults (lowest)
 
 Mode is inferred from the recipe name. If your recipe name doesn't include
-`pretrain` or `finetune`, pass `--mode` explicitly.
+`pretrain`, `finetune`, `sft`, or `peft`, pass `--mode` explicitly.
 
 ## Step Function Selection
 
@@ -76,7 +82,7 @@ Use `--step_func` to control the step function used during training. Available o
 - `llava_step` - LLaVA models
 
 ```bash
-torchrun --nproc_per_node=8 run_recipe.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py \
     --recipe qwen25_vl_pretrain_config \
     --step_func vlm_step
 ```
@@ -96,7 +102,7 @@ pip install nemo-run
 Before launching on Slurm, test your configuration locally:
 
 ```bash
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --local \
     --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
@@ -113,7 +119,7 @@ Once tested, scale to Slurm by removing `--local` and adding Slurm parameters:
 
 ```bash
 # From the cluster (LocalTunnel)
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
@@ -122,7 +128,7 @@ python launch_with_nemo_run.py \
     --account my_account
 
 # From your local machine (SSHTunnel)
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
@@ -140,7 +146,7 @@ python launch_with_nemo_run.py \
 When using containers, scripts are automatically packaged using `PatternPackager`:
 
 ```bash
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe qwen3_8b_pretrain_config \
     --nodes 4 \
@@ -156,7 +162,7 @@ python launch_with_nemo_run.py \
 > the container.
 
 ```bash
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
@@ -174,7 +180,7 @@ run from the container workspace.
 For git-based packaging:
 
 ```bash
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe llama3_8b_pretrain_config \
     --nodes 2 \
@@ -189,7 +195,7 @@ python launch_with_nemo_run.py \
 Use the fault-tolerant launcher for better resiliency:
 
 ```bash
-python launch_with_nemo_run.py \
+uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --launcher ft \

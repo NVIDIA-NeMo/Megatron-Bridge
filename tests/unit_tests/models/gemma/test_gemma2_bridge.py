@@ -320,7 +320,7 @@ class TestMegatronGemma2Bridge:
         assert result.query_pre_attn_scalar == gemma2_2b_config.query_pre_attn_scalar
         assert result.attn_logit_softcapping == gemma2_2b_config.attn_logit_softcapping
         assert result.final_logit_softcapping == gemma2_2b_config.final_logit_softcapping
-        assert result.window_size == (gemma2_2b_config.sliding_window, 0)
+        assert result.window_size == (gemma2_2b_config.sliding_window - 1, 0)
         assert result.add_bias_linear == False  # Gemma2 doesn't use bias in linear layers
         assert result.layernorm_zero_centered_gamma == True  # Gemma2-specific RMSNorm behavior
 
@@ -406,8 +406,8 @@ class TestMegatronGemma2Bridge:
         result = bridge.provider_bridge(mock_pretrained_gemma2_2b)
 
         # Check sliding window configuration specific to Gemma2
-        assert result.window_size == (gemma2_2b_config.sliding_window, 0)
-        assert result.window_size == (4096, 0)
+        assert result.window_size == (gemma2_2b_config.sliding_window - 1, 0)
+        assert result.window_size == (4095, 0)
 
     def test_provider_bridge_query_pre_attn_scalar_variants(self, mock_pretrained_gemma2_27b, gemma2_27b_config):
         """Test query_pre_attn_scalar for 27B model which has different value."""

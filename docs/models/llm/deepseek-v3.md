@@ -45,7 +45,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model deepseek-ai/DeepSeek-V3-Base \
   --megatron-path /checkpoints/deepseek_v3_megatron \
   --trust-remote-code
@@ -69,7 +69,7 @@ bridge.export_ckpt(
 ### Run Inference on Converted Checkpoint
 
 ```bash
-python examples/conversion/hf_to_megatron_generate_text.py \
+uv run python examples/conversion/hf_to_megatron_generate_text.py \
   --hf_model_path deepseek-ai/DeepSeek-V3-Base \
   --megatron_model_path /checkpoints/deepseek_v3_megatron \
   --prompt "What is artificial intelligence?" \

@@ -74,14 +74,18 @@ def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
         tokenizer_library = "sft"
         tokenizer_path = config.tokenizer_model
         kwargs["prompt_format"] = config.tokenizer_prompt_format
-    elif config.tokenizer_type in ["NullTokenizer", "NullMultimodalTokenizer"]:
-        tokenizer_library = "null-text" if config.tokenizer_type == "NullTokenizer" else "null-multimodal"
-        metadata = {"library": tokenizer_library}
+    elif config.tokenizer_type == "NullTokenizer":
+        tokenizer_library = "null-text"
+        if config.vocab_size:
+            kwargs["vocab_size"] = config.vocab_size
+        return MegatronTokenizer.from_pretrained(metadata_path={"library": tokenizer_library}, **kwargs)
+    elif config.tokenizer_type == "NullMultimodalTokenizer":
+        # NullMultimodalTokenizer still reserves the top id for the pad token, so the effective
+        # vocab size is passed as vocab_size - 1.
+        tokenizer_library = "null-multimodal"
         if config.vocab_size:
             kwargs["vocab_size"] = config.vocab_size - 1
-        tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
-
-        return tokenizer
+        return MegatronTokenizer.from_pretrained(metadata_path={"library": tokenizer_library}, **kwargs)
 
     if config.metadata_path:
         metadata = config.metadata_path

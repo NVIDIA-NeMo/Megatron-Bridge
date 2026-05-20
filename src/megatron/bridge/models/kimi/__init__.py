@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.kimi.kimi_provider import KimiK2Provider
+from megatron.bridge.models.kimi.kimi_bridge import KimiK2Bridge  # noqa: F401
 
 
 __all__ = [
-    "KimiK2Provider",
+    "KimiK2Bridge",
 ]

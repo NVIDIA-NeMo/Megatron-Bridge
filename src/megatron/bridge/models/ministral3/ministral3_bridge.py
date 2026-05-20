@@ -32,6 +32,10 @@ Supported models:
 Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 """
 
+from typing import Mapping, Union
+
+import torch
+
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -40,6 +44,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.quantization_utils import maybe_dequantize_fp8
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 
@@ -169,6 +174,46 @@ class Ministral3Bridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    def maybe_modify_loaded_hf_weight(
+        self,
+        hf_param: Union[str, dict[str, str]],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Union[torch.Tensor, dict[str, torch.Tensor]]:
+        """Load HF weights and dequantize FP8 tensors on the fly.
+
+        Ministral-3-*-Instruct-2512 stores LM weights in FP8 (float8_e4m3fn) with
+        separate ``weight_scale_inv`` scalar tensors.  The true bfloat16 weight is::
+
+            w_bf16 = fp8_weight.to(bfloat16) * weight_scale_inv
+
+        This override applies dequantization transparently so that the bridge produces
+        correct Megatron checkpoints without a separate preprocessing step.
+        """
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+
+        if isinstance(hf_weights, dict):
+            # Compound params (QKV / GatedMLP): dequantize each component individually
+            return {
+                key: self._maybe_dequantize_fp8(tensor, hf_param[key], hf_state_dict)
+                for key, tensor in hf_weights.items()
+            }
+        return self._maybe_dequantize_fp8(hf_weights, hf_param, hf_state_dict)
+
+    @staticmethod
+    def _maybe_dequantize_fp8(
+        weight: torch.Tensor,
+        param_name: str,
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Dequantize *weight* if it is stored as FP8.
+
+        Looks up ``param_name + "_scale_inv"`` in *hf_state_dict* and applies::
+
+            w_bf16 = weight.to(bfloat16) * scale_inv
+        """
+        scale_key = param_name + "_scale_inv"
+        return maybe_dequantize_fp8(weight, hf_state_dict.get(scale_key))
 
 
 # Register the bridge if Mistral3ForConditionalGeneration is available

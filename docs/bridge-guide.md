@@ -236,19 +236,19 @@ These examples can be run directly as shell commands.
 
 ```bash
 huggingface-cli login --token <your token>
-python -c "from megatron.bridge import AutoBridge; AutoBridge.import_ckpt('meta-llama/Llama-3.2-1B','./megatron_checkpoints/llama32_1b')"
+uv run python -c "from megatron.bridge import AutoBridge; AutoBridge.import_ckpt('meta-llama/Llama-3.2-1B','./megatron_checkpoints/llama32_1b')"
 ```
 
 ### Megatron → HF export (one call)
 
 ```bash
-python -c "from megatron.bridge import AutoBridge; b=AutoBridge.from_hf_pretrained('meta-llama/Llama-3.2-1B'); b.export_ckpt('./megatron_checkpoints/llama32_1b','./hf_exports/llama32_1b')"
+uv run python -c "from megatron.bridge import AutoBridge; b=AutoBridge.from_hf_pretrained('meta-llama/Llama-3.2-1B'); b.export_ckpt('./megatron_checkpoints/llama32_1b','./hf_exports/llama32_1b')"
 ```
 
 ### Create Megatron models and run locally
 
 ```bash
-python - << 'PY'
+uv run python - << 'PY'
 from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained('meta-llama/Llama-3.2-1B')
@@ -266,7 +266,7 @@ PY
 ### Launch with multiple GPUs (example)
 
 ```bash
-torchrun --nproc-per-node=2 -m examples.conversion.generate_from_hf
+uv run python -m torch.distributed.run --nproc-per-node=2 -m examples.conversion.generate_from_hf
 ```
 
 ## AutoBridge API Reference

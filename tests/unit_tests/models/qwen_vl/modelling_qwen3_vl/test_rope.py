@@ -12,7 +12,7 @@
 # See the License for the specific l
 
 """
-Run with: pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_rope.py
+Run with: uv run pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_rope.py
 """
 
 import datetime

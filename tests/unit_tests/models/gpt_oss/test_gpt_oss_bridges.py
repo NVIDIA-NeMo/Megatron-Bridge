@@ -39,6 +39,7 @@ class TestGptOssBridge:
             "torch_dtype": "bfloat16",
             "vocab_size": 201088,
             "hidden_act": "silu",
+            "sliding_window": 4096,
         }
 
     @pytest.fixture
