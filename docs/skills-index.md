@@ -26,6 +26,8 @@ skills/adding-model-support/llm-patterns
 skills/adding-model-support/vlm-patterns
 skills/adding-model-support/recipe-patterns
 skills/adding-model-support/tests-and-examples
+skills/verl-e2e-testing/SKILL
+skills/nemo-rl-e2e-testing/SKILL
 ```
 
 ```{toctree}

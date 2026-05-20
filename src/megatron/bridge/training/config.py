@@ -144,7 +144,7 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     degree instead of the training CP degree. Requires use_decentralized_pg=True. The caller
     is responsible for constructing a separate eval ProcessGroupCollection and wiring it
     through GlobalState or the evaluate() call. See eval_context_parallel_rebinding.py
-    and the examples/decentralized_pg/pretrain_qwen3_eval_cp.py showcase."""
+    and the examples/training_features/decentralized_pg/pretrain_qwen3_eval_cp.py showcase."""
 
     @property
     def lazy_init(self) -> bool:
@@ -712,6 +712,12 @@ class LoggerConfig(MTrainLoggerConfig):
     mlflow_tags: Optional[dict[str, str]] = None
     """Optional tags to apply to the MLFlow run."""
 
+    mlflow_description: Optional[str] = None
+    """Optional description for the MLFlow run, rendered in the UI Description panel."""
+
+    mlflow_log_artifacts: bool = True
+    """Whether to upload checkpoint artifacts to MLFlow via HTTP after each save."""
+
     comet_project: Optional[str] = None
     """The Comet ML project name. Comet logging is disabled when this is None."""
 
@@ -741,6 +747,7 @@ class LoggerConfig(MTrainLoggerConfig):
                 self.mlflow_run_name,
                 self.mlflow_tracking_uri,
                 self.mlflow_tags,
+                self.mlflow_description,
             ]
         )
 

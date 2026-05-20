@@ -32,6 +32,10 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
 )
+from megatron.bridge.models.falcon_h1 import (
+    FalconH1Bridge,
+    FalconH1ModelProvider,
+)
 from megatron.bridge.models.gemma import (
     Gemma2ModelProvider,
     Gemma3ModelProvider,
@@ -47,6 +51,7 @@ from megatron.bridge.models.gemma_vl import (
 )
 from megatron.bridge.models.glm import (
     GLM45Bridge,
+    GLM47FlashBridge,
 )
 from megatron.bridge.models.glm_moe_dsa import (
     GLM5Bridge,
@@ -89,6 +94,10 @@ from megatron.bridge.models.mistral import (
 )
 from megatron.bridge.models.nemotron import (
     NemotronBridge,
+)
+from megatron.bridge.models.nemotron_omni import (
+    NemotronOmniBridge,
+    NemotronOmniModel,
 )
 from megatron.bridge.models.nemotron_vl import (
     NemotronVLBridge,
@@ -158,10 +167,13 @@ __all__ = [
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
+    "FalconH1Bridge",
+    "FalconH1ModelProvider",
     "Gemma3ModelProvider",
     "GemmaModelProvider",
     "Gemma2ModelProvider",
     "GLM45Bridge",
+    "GLM47FlashBridge",
     "GLM5Bridge",
     "GLM45VBridge",
     "GLM45VModelProvider",
@@ -214,6 +226,8 @@ __all__ = [
     "NemotronVLModel",
     "NemotronVLBridge",
     "NemotronVLModelProvider",
+    "NemotronOmniBridge",
+    "NemotronOmniModel",
     # ASR Models
     "Qwen3ASRBridge",
     "Qwen3ASRModel",
