@@ -157,7 +157,7 @@ correct question is always "which communication path is exposed in this run?"
 
 - [docs/performance-guide.md](../performance-guide.md)
 - [docs/training/cuda-graphs.md](cuda-graphs.md)
-- [docs/training/hybrid-context-parallel.md](hybrid-context-parallel.md)
+- [docs/training/hierarchical-context-parallel.md](hierarchical-context-parallel.md)
 - [skills/perf-tp-dp-comm-overlap/SKILL.md](../skills/perf-tp-dp-comm-overlap/SKILL.md)
 - [skills/perf-expert-parallel-overlap/SKILL.md](../skills/perf-expert-parallel-overlap/SKILL.md)
 - [skills/perf-moe-comm-overlap/SKILL.md](../skills/perf-moe-comm-overlap/SKILL.md)
