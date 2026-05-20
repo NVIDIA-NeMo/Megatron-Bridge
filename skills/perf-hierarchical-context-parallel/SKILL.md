@@ -1,5 +1,5 @@
 ---
-name: perf-hybrid-context-parallel
+name: perf-hierarchical-context-parallel
 description: Operational guide for enabling hierarchical context parallelism in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification.
 when_to_use: Scaling context parallelism beyond KV heads, or investigating a commit that changed CP config and caused OOM or a regression; 'hierarchical_context_parallel_sizes', 'a2a+p2p', 'hierarchical CP', 'CP beyond KV heads', 'multi-level CP'.
 ---
@@ -14,7 +14,7 @@ For what hierarchical CP is, when to use it, and the decision tree
 (`a2a+p2p` vs pure `a2a` vs `p2p`), see:
 
 - @docs/training/hierarchical-context-parallel.md
-- @skills/perf-hybrid-context-parallel/card.yaml
+- @skills/perf-hierarchical-context-parallel/card.yaml
 
 ## Enablement
 
@@ -133,7 +133,7 @@ when `a2a+p2p` is used. Requires **Transformer Engine >= 1.12.0**.
 
 ## Verification
 
-No dedicated Bridge end-to-end test exists yet for HCP (see @skills/perf-hybrid-context-parallel/card.yaml
+No dedicated Bridge end-to-end test exists yet for HCP (see @skills/perf-hierarchical-context-parallel/card.yaml
 `follow_up_validation`). Use the existing unit tests and log inspection instead.
 
 Run the decentralized-PG unit test to confirm the flat-CP behavior is preserved:
