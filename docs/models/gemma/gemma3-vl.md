@@ -55,7 +55,7 @@ For checkpoint conversion, inference, finetuning recipes, and step-by-step train
 - Gemma 3 VL 27B: https://huggingface.co/google/gemma-3-27b-it
 
 ## Related Docs
-- Text-Only Models: [Gemma 3](../llm/gemma3.md)
+- Related Gemma variant: [Gemma 3](gemma3.md)
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)

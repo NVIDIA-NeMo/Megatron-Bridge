@@ -63,8 +63,7 @@ For checkpoint conversion, inference, finetuning recipes, and step-by-step train
 - Ministral 3 14B Instruct: https://huggingface.co/mistralai/Ministral-3-14B-Instruct-2512
 
 ## Related Docs
-- Related LLM: [Mistral](../llm/mistral.md)
+- Related Mistral variant: [Mistral](../mistral/mistral.md)
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-

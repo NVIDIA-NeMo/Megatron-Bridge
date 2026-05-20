@@ -33,8 +33,18 @@ bridge-tech-details.md
 :caption: Supported Models
 :hidden:
 
-models/llm/index.md
-models/vlm/index.md
+models/README.md
+models/deepseek/index.md
+models/gemma/index.md
+models/glm/index.md
+models/gpt_oss/index.md
+models/llama/index.md
+models/ministral/index.md
+models/mistral/index.md
+models/moonlight/index.md
+models/nemotron/index.md
+models/olmoe/index.md
+models/qwen/index.md
 ```
 
 ```{toctree}
@@ -106,9 +116,6 @@ skills-index
 :hidden:
 
 README.md
-models/README.md
-models/llm/README.md
-models/vlm/README.md
 releases/README.md
 training/README.md
 modelopt/README.md

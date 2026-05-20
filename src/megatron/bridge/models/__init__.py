@@ -262,7 +262,7 @@ __all__ = [
     "Qwen3ASRBridge",
     "Qwen3ASRModel",
     "Qwen3ASRModelProvider",
-    # Omni Models
+    # Qwen Omni registrations
     "Qwen25OmniModel",
     "Qwen25OmniBridge",
     "Qwen25OmniModelProvider",

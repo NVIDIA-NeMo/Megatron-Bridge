@@ -2,7 +2,7 @@
 
 This directory contains example scripts for Qwen3.5-VL vision-language models.
 
-For model introduction and architecture details, see the [Qwen3.5-VL documentation](../../../../docs/models/vlm/qwen35-vl.md).
+For model introduction and architecture details, see the [Qwen3.5-VL documentation](../../../../docs/models/qwen/qwen35-vl.md).
 
 ## Workspace Configuration
 

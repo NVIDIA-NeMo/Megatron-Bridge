@@ -65,8 +65,8 @@ For checkpoint conversion, inference, finetuning recipes, and step-by-step train
 - Qwen3.6 35B-A3B (MoE): https://huggingface.co/Qwen/Qwen3.6-35B-A3B
 
 ## Related Docs
-- Related VLM: [Qwen3-VL](qwen3-vl.md)
-- Related LLM: [Qwen](../llm/qwen.md)
+- Related Qwen variant: [Qwen3-VL](qwen3-vl.md)
+- Related Qwen variant: [Qwen](qwen.md)
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
