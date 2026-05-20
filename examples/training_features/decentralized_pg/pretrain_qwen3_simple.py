@@ -15,7 +15,7 @@
 
 """
 ==============================================================================
-Example: Qwen3_VL Pretraining with Decentralized Process Groups (Simple)
+Example: Qwen3 Pretraining with Decentralized Process Groups (Simple)
 ==============================================================================
 
 This example demonstrates the simplest way to enable decentralized process groups:
@@ -26,34 +26,39 @@ ProcessGroupCollection using HyperCommGrid based on the parallelism settings.
 
 How to Run
 ----------
-# 8 GPUs: EP8
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/decentralized_pg/pretrain_qwen3_vl_simple.py
+# 8 GPUs: TP2 x PP2 x DP2
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/training_features/decentralized_pg/pretrain_qwen3_simple.py
+
+# 4 GPUs: TP2 x PP2 x DP1
+uv run python -m torch.distributed.run --nproc_per_node=4 examples/training_features/decentralized_pg/pretrain_qwen3_simple.py
 """
 
 import torch
 
-from megatron.bridge.recipes.qwen_vl.qwen3_vl import qwen3_vl_30b_a3b_pretrain_mock_config
+from megatron.bridge.recipes.qwen.qwen3 import qwen3_4b_pretrain_config
+from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
-from megatron.bridge.training.vlm_step import forward_step
 
 
 def main() -> None:
     """Run Qwen3 pretraining with decentralized process groups enabled."""
-    # Get the standard Qwen3 4B pretrain config with overrides
-    cfg = qwen3_vl_30b_a3b_pretrain_mock_config(
-        # Use mock data for demo
-        mock=True,
-        # Parallelism
-        expert_model_parallel_size=8,
-        # Training settings (small for demo)
-        train_iters=100,
-        seq_length=1024,
-        global_batch_size=32,
-        micro_batch_size=1,
-        # LR schedule (must fit within train_iters)
-        lr_warmup_iters=10,
-        lr_decay_iters=100,
-    )
+    # Get the standard Qwen3 4B pretrain config and apply overrides directly on it.
+    # qwen3_4b_pretrain_config() takes no arguments — all overrides are applied
+    # to the returned ConfigContainer.
+    cfg = qwen3_4b_pretrain_config()
+    # Mock data: leaving cfg.dataset.blend as None (default in the recipe) yields mock data
+    # Parallelism
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 2
+    # Training settings (small for demo)
+    cfg.train.train_iters = 100
+    cfg.model.seq_length = 1024
+    cfg.dataset.seq_length = 1024
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 1
+    # LR schedule (must fit within train_iters)
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100
     # known issue with share_embeddings_and_output_weights
     cfg.model.share_embeddings_and_output_weights = False
 

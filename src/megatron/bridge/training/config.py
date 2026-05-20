@@ -144,7 +144,7 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     degree instead of the training CP degree. Requires use_decentralized_pg=True. The caller
     is responsible for constructing a separate eval ProcessGroupCollection and wiring it
     through GlobalState or the evaluate() call. See eval_context_parallel_rebinding.py
-    and the examples/decentralized_pg/pretrain_qwen3_eval_cp.py showcase."""
+    and the examples/training_features/decentralized_pg/pretrain_qwen3_eval_cp.py showcase."""
 
     @property
     def lazy_init(self) -> bool:

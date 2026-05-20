@@ -46,15 +46,15 @@ Usage:
         --nnodes=1 --nproc-per-node=2 \\
         --ft-rank_section_timeouts=setup:600,step:180,checkpointing:420 \\
         --ft-rank_out_of_section_timeout=300 \\
-        examples/resiliency/fault_tolerance/fault_tolerance_example.py
+        examples/training_features/resiliency/fault_tolerance/fault_tolerance_example.py
 
     # With fault simulation:
     uv run ft_launcher ... --max-restarts=3 \\
-        examples/resiliency/fault_tolerance/fault_tolerance_example.py --simulate-fault
+        examples/training_features/resiliency/fault_tolerance/fault_tolerance_example.py --simulate-fault
 
     # Or use the launch script:
-    ./examples/resiliency/fault_tolerance/run_fault_tolerance.sh
-    ./examples/resiliency/fault_tolerance/run_fault_tolerance.sh --simulate-fault
+    ./examples/training_features/resiliency/fault_tolerance/run_fault_tolerance.sh
+    ./examples/training_features/resiliency/fault_tolerance/run_fault_tolerance.sh --simulate-fault
 
 Documentation:
     - Megatron-Bridge: https://docs.nvidia.com/nemo/megatron-bridge/latest/training/resiliency.html

@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 import megatron.bridge.data.vlm_datasets.collate as collate
+
+
+pytestmark = pytest.mark.unit
 
 
 class _DummyProcessor:
@@ -405,3 +409,163 @@ def test_ministral3_collate_no_image_position_ids_excluded():
     vi = batch["visual_inputs"]
     assert vi is not None
     assert vi.image_position_ids is None
+
+
+# ---------------------------------------------------------------------------
+# Nemotron Omni collate — audio and video paths
+# ---------------------------------------------------------------------------
+
+NEMO_SO_TOKEN_ID = 90
+NEMO_VIDEO_TOKEN_ID = 91
+NEMO_IMAGE_TOKEN_ID = 92
+NEMO_IMG_START_TOKEN_ID = 93
+NEMO_IMG_END_TOKEN_ID = 94
+
+
+class _NemotronOmniTokenizer:
+    pad_token_id = 0
+    eos_token_id = 2
+    pad_token = "<pad>"
+    eos_token = "<eos>"
+    audio_token = "<so_embedding>"
+    added_tokens_decoder = {}
+
+    def __init__(self, tokenized_rows: list[list[int]] | None = None):
+        self.tokenized_rows = tokenized_rows or [[5, NEMO_SO_TOKEN_ID, 6, 7]]
+        self.tokenized_texts = []
+
+    def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
+        return "user <|audio_1|> assistant"
+
+    def __call__(self, texts, padding=True, truncation=True, return_tensors="pt", **kwargs):
+        self.tokenized_texts = list(texts)
+        max_len = max(len(row) for row in self.tokenized_rows)
+        out = torch.full((len(self.tokenized_rows), max_len), self.pad_token_id, dtype=torch.long)
+        for i, row in enumerate(self.tokenized_rows):
+            out[i, : len(row)] = torch.tensor(row, dtype=torch.long)
+        return {"input_ids": out}
+
+    def convert_tokens_to_ids(self, token):
+        mapping = {
+            "<so_embedding>": NEMO_SO_TOKEN_ID,
+            "<video>": NEMO_VIDEO_TOKEN_ID,
+            "<image>": NEMO_IMAGE_TOKEN_ID,
+            "<img>": NEMO_IMG_START_TOKEN_ID,
+            "</img>": NEMO_IMG_END_TOKEN_ID,
+        }
+        return mapping[token]
+
+
+class _NemotronOmniProcessor:
+    def __init__(self, tokenized_rows: list[list[int]] | None = None):
+        self.tokenizer = _NemotronOmniTokenizer(tokenized_rows)
+        self.image_processor = type("ImageProcessor", (), {"max_num_tiles": 4})()
+        self.calls = []
+
+    def apply_chat_template(self, conversations, tokenize=False, **kwargs):
+        self.calls.append(("apply_chat_template", conversations, kwargs))
+        return "video prompt"
+
+    def __call__(self, **kwargs):
+        self.calls.append(("processor", kwargs))
+        if "videos" in kwargs:
+            return {
+                "input_ids": torch.tensor([[1, NEMO_VIDEO_TOKEN_ID, 7, 8]], dtype=torch.long),
+                "pixel_values_videos": torch.ones(1, 3, 16, 16),
+            }
+        return {"input_ids": torch.tensor(self.tokenizer.tokenized_rows, dtype=torch.long)}
+
+
+def _zero_loss_mask(example, input_ids, processor, skipped_tokens):  # noqa: ARG001 - test helper signature
+    return [0] * int(input_ids.shape[0])
+
+
+def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_count(monkeypatch):
+    import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
+
+    monkeypatch.setattr(collate, "create_multiturn_loss_mask_by_search", _zero_loss_mask)
+    monkeypatch.setattr(omni_utils, "compute_mel_features", lambda waveform, sampling_rate=16000: torch.ones(9, 128))
+
+    proc = _NemotronOmniProcessor(tokenized_rows=[[5, NEMO_SO_TOKEN_ID, 6, 7]])
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": "<|audio_1|> What is spoken?"},
+                {"role": "assistant", "content": "hello"},
+            ],
+            "audio": ([0.0, 0.1, -0.1], 16000),
+        }
+    ]
+
+    batch = collate.nemotron_omni_collate_fn(examples, proc)
+
+    assert "<so_embedding>" in proc.tokenizer.tokenized_texts[0]
+    assert batch["input_ids"].tolist() == [[5, NEMO_SO_TOKEN_ID, NEMO_SO_TOKEN_ID, 6, 7]]
+    assert batch["sound_clips"].shape == (1, 9, 128)
+    assert batch["sound_length"].tolist() == [9]
+    assert batch["visual_inputs"] is None
+
+
+def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monkeypatch):
+    import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
+
+    loaded_paths = []
+    monkeypatch.setattr(collate, "create_multiturn_loss_mask_by_search", _zero_loss_mask)
+    monkeypatch.setattr(
+        omni_utils,
+        "load_audio",
+        lambda path, target_sr=16000: loaded_paths.append((path, target_sr)) or [0.0, 0.1],
+    )
+    monkeypatch.setattr(omni_utils, "compute_mel_features", lambda waveform, sampling_rate=16000: torch.ones(1, 128))
+
+    proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6, 7]])
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": "What is spoken?"},
+                {"role": "assistant", "content": "hello"},
+            ],
+            "audio_path": "/tmp/audio.wav",
+            "max_audio_duration": 1.0,
+        }
+    ]
+
+    batch = collate.nemotron_omni_collate_fn(examples, proc)
+
+    assert loaded_paths == [("/tmp/audio.wav", 16000)]
+    assert batch["input_ids"].tolist() == [[5, NEMO_SO_TOKEN_ID, 6, 7]]
+    assert batch["sound_clips"].shape == (1, 1, 128)
+    assert batch["sound_length"].tolist() == [1]
+
+
+def test_nemotron_omni_collate_video_path_wraps_visual_inputs(monkeypatch):
+    import megatron.bridge.models.nemotron_vl.nemotron_vl_utils as vl_utils
+
+    monkeypatch.setattr(collate, "create_multiturn_loss_mask_by_search", _zero_loss_mask)
+    monkeypatch.setattr(vl_utils, "maybe_path_or_url_to_data_urls", lambda *args, **kwargs: (["frame-1"], {"fps": 1}))
+    monkeypatch.setattr(vl_utils, "pil_image_from_base64", lambda data_url: f"decoded-{data_url}")
+
+    proc = _NemotronOmniProcessor()
+    examples = [
+        {
+            "conversation": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "video", "path": "/tmp/video.mp4"},
+                        {"type": "text", "text": "What happens?"},
+                    ],
+                },
+                {"role": "assistant", "content": [{"type": "text", "text": "an event"}]},
+            ]
+        }
+    ]
+
+    batch = collate.nemotron_omni_collate_fn(examples, proc)
+
+    processor_call = [call for call in proc.calls if call[0] == "processor"][0][1]
+    assert processor_call["videos"] == [["decoded-frame-1"]]
+    assert processor_call["videos_kwargs"] == {"video_metadata": {"fps": 1}}
+    assert batch["input_ids"].tolist() == [[1, NEMO_IMAGE_TOKEN_ID, 7, 8]]
+    assert batch["visual_inputs"].pixel_values.dtype == torch.bfloat16
+    assert batch["visual_inputs"].pixel_values.shape == (1, 3, 16, 16)

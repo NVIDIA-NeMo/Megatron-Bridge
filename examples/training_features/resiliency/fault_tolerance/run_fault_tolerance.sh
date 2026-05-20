@@ -19,9 +19,9 @@
 # with fault tolerance enabled.
 #
 # Usage:
-#   ./examples/resiliency/fault_tolerance/run_fault_tolerance.sh
-#   ./examples/resiliency/fault_tolerance/run_fault_tolerance.sh --simulate-fault
-#   ./examples/resiliency/fault_tolerance/run_fault_tolerance.sh --nproc 4
+#   ./examples/training_features/resiliency/fault_tolerance/run_fault_tolerance.sh
+#   ./examples/training_features/resiliency/fault_tolerance/run_fault_tolerance.sh --simulate-fault
+#   ./examples/training_features/resiliency/fault_tolerance/run_fault_tolerance.sh --nproc 4
 #
 # Fault Simulation Mode (--simulate-fault):
 #   Demonstrates fault recovery by killing a rank after a delay.

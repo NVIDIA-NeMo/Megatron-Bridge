@@ -26,15 +26,15 @@ Prerequisites:
 
 Usage:
     uv run python -m torch.distributed.run --nproc_per_node=2 \\
-        examples/resiliency/straggler_detection/straggler_detection_example.py
+        examples/training_features/resiliency/straggler_detection/straggler_detection_example.py
 
     # With more GPUs
     uv run python -m torch.distributed.run --nproc_per_node=8 \\
-        examples/resiliency/straggler_detection/straggler_detection_example.py
+        examples/training_features/resiliency/straggler_detection/straggler_detection_example.py
 
     # Customize training iterations
     uv run python -m torch.distributed.run --nproc_per_node=2 \\
-        examples/resiliency/straggler_detection/straggler_detection_example.py --train-iters 200
+        examples/training_features/resiliency/straggler_detection/straggler_detection_example.py --train-iters 200
 
 Documentation:
     - Megatron-Bridge: https://docs.nvidia.com/nemo/megatron-bridge/latest/training/resiliency.html
