@@ -155,8 +155,9 @@ class TestExaone4Bridge:
             registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.k_layernorm.weight").hf_param
             == "model.layers.0.self_attn.k_norm.weight"
         )
+        post_attn_key = "decoder.layers.0.self_attention.linear_proj.post_layernorm.weight"
         assert (
-            registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.linear_proj.post_layernorm.weight").hf_param
+            registry.megatron_to_hf_lookup(post_attn_key).hf_param
             == "model.layers.0.post_attention_layernorm.weight"
         )
         assert (

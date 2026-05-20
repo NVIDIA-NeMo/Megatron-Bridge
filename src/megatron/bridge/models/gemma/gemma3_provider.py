@@ -404,5 +404,3 @@ def _is_local_attn_layer(
 ) -> bool:
     pattern_size = sum(layer_pattern)
     return layer_number % pattern_size != 0
-
-
