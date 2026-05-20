@@ -95,6 +95,10 @@ class MockModelProvider(ModelProviderMixin):
         """Provide a mock model instance."""
         return self.model_instance
 
+    def finalize(self) -> None:
+        """Finalize mock provider."""
+        pass
+
 
 class TestCreateModel:
     """Test cases for _create_model function."""

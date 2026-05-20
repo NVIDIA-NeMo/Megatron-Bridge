@@ -273,10 +273,15 @@ def extract_sort_key(param_name: str):
     layer_match = re.search(r"layers\.(\d+)", param_name)
     if layer_match:
         numbers.append(int(layer_match.group(1)))
-    # Find expert number after bias or weight
+    # Find expert number after bias or weight for grouped experts.
     expert_match = re.search(r"(?:bias|weight)(\d+)", param_name)
     if expert_match:
         numbers.append(int(expert_match.group(1)))
+    else:
+        # SequentialMLP names use local_experts.<N> instead.
+        local_experts_match = re.search(r"local_experts\.(\d+)", param_name)
+        if local_experts_match:
+            numbers.append(int(local_experts_match.group(1)))
     # Pad to ensure consistent comparison (max 2 numbers)
     while len(numbers) < 2:
         numbers.append(-1)
