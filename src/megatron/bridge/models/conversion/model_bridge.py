@@ -280,26 +280,37 @@ def _megatron_local_name_to_global(
     # EP — fetched lazily because dense models may not have an EP group at all
     # (and for the decentralized PG path, ``pg_collection.ep`` may be ``None``).
     # For now adapters are not sharded across EP ranks.
-    is_expert_param = ".mlp.experts.linear_fc" in param_name and not ".adapter." in param_name
+    is_grouped_expert_param = ".mlp.experts.linear_fc" in param_name
+    is_local_expert_param = ".mlp.experts.local_experts." in param_name
+    is_expert_param = (is_grouped_expert_param or is_local_expert_param) and ".adapter." not in param_name
     ep_group = _get_ep_group(models) if is_expert_param else None
     if is_expert_param and ep_group is not None and get_pg_size(ep_group) > 1:
         num_experts = config.num_moe_experts
         num_experts_per_rank = num_experts // ep_group.size()
 
-        def _update_expert_number(param_name: str, param_type: str) -> str:
+        def _update_grouped_expert_number(param_name: str, param_type: str) -> str:
             """Update expert number from local to global for weight or bias parameters."""
-            local_expert_number = int(param_name.split(f".{param_type}")[-1])
+            expert_match = re.search(rf"\.{param_type}(\d+)(?=$|\.)", param_name)
+            if expert_match is None:
+                return param_name
+            local_expert_number = int(expert_match.group(1))
             global_expert_number = num_experts_per_rank * ep_group.rank() + local_expert_number
-            return param_name.replace(
-                f".{param_type}{local_expert_number}",
-                f".{param_type}{global_expert_number}",
-            )
+            return f"{param_name[: expert_match.start(1)]}{global_expert_number}{param_name[expert_match.end(1) :]}"
 
-        # Handle weight and bias parameters
-        if ".weight" in param_name:
-            param_name = _update_expert_number(param_name, "weight")
-        elif ".bias" in param_name:
-            param_name = _update_expert_number(param_name, "bias")
+        if is_local_expert_param:
+            local_experts_match = re.search(r"\.local_experts\.(\d+)\.", param_name)
+            if local_experts_match:
+                local_expert_number = int(local_experts_match.group(1))
+                global_expert_number = num_experts_per_rank * ep_group.rank() + local_expert_number
+                param_name = param_name.replace(
+                    f".local_experts.{local_expert_number}.",
+                    f".local_experts.{global_expert_number}.",
+                    1,
+                )
+        elif re.search(r"\.weight\d+(?=$|\.)", param_name):
+            param_name = _update_grouped_expert_number(param_name, "weight")
+        elif re.search(r"\.bias\d+(?=$|\.)", param_name):
+            param_name = _update_grouped_expert_number(param_name, "bias")
     return param_name
 
 
@@ -1945,11 +1956,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         """
 
         return create_bridge_decorator(source=source, target=target, provider=provider, model_type=model_type)
-
-
-def is_tensor_parallel(param) -> bool:
-    """Check if a parameter is tensor parallel distributed."""
-    return hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
 
 
 # Core dispatch functions

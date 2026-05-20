@@ -21,13 +21,13 @@ Examples demonstrating Megatron-Bridge resiliency features powered by [nvidia-re
 Detects slow-performing GPUs during training using NVRx straggler detection.
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/resiliency/straggler_detection/straggler_detection_example.py
+uv run python -m torch.distributed.run --nproc_per_node=2 examples/training_features/resiliency/straggler_detection/straggler_detection_example.py
 ```
 
 Or use the launch script:
 
 ```bash
-./examples/resiliency/straggler_detection/run_straggler_detection.sh
+./examples/training_features/resiliency/straggler_detection/run_straggler_detection.sh
 ```
 
 ### Fault Tolerance
@@ -35,13 +35,13 @@ Or use the launch script:
 Enables automatic hang detection and job restart using the `ft_launcher`.
 
 ```bash
-./examples/resiliency/fault_tolerance/run_fault_tolerance.sh
+./examples/training_features/resiliency/fault_tolerance/run_fault_tolerance.sh
 ```
 
 To test fault recovery with simulated failures:
 
 ```bash
-./examples/resiliency/fault_tolerance/run_fault_tolerance.sh --simulate-fault
+./examples/training_features/resiliency/fault_tolerance/run_fault_tolerance.sh --simulate-fault
 ```
 
 Note: Fault simulation requires careful timing - the fault must trigger after a checkpoint is saved but before training completes. See the `--simulate-fault` option in `fault_tolerance_example.py` for details.
