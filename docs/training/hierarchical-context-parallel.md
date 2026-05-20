@@ -1,11 +1,11 @@
-# Hybrid / Hierarchical Context Parallel
+# Hierarchical Context Parallel
 
-This page covers the stable Bridge-facing meaning of hierarchical context
-parallelism, especially the `a2a+p2p` transport path and
+This page covers hierarchical context parallelism in Megatron Bridge,
+especially the `a2a+p2p` transport path and
 `hierarchical_context_parallel_sizes`.
 
 For operational setup, code anchors, and verification commands, see
-[skills/perf-hybrid-context-parallel/SKILL.md](../skills/perf-hybrid-context-parallel/SKILL.md).
+[the hierarchical CP skill](../skills/perf-hybrid-context-parallel/SKILL.md).
 
 ## What It Is
 
@@ -23,11 +23,6 @@ several CP communication backends:
 **HCP (`a2a+p2p`)** exists to scale CP beyond the KV head count by combining
 a2a (fast, head-parallel) on intra-node links with p2p (async,
 sequence-parallel) on inter-node links.
-
-It is important to separate this from the upstream boolean
-`hybrid_context_parallel`, which is a different feature for balancing packed or
-variable-length workloads. The two concepts should not be treated as
-interchangeable.
 
 ### Why a2a is limited by KV heads
 
@@ -109,5 +104,5 @@ all Bridge initialization modes.
 
 - [docs/performance-guide.md](../performance-guide.md)
 - [docs/training/communication-overlap.md](communication-overlap.md)
-- [skills/perf-hybrid-context-parallel/SKILL.md](../skills/perf-hybrid-context-parallel/SKILL.md)
-- [skills/perf-hybrid-context-parallel/card.yaml](../skills/perf-hybrid-context-parallel/card.yaml)
+- [Hierarchical CP skill](../skills/perf-hybrid-context-parallel/SKILL.md)
+- [Hierarchical CP skill card](../skills/perf-hybrid-context-parallel/card.yaml)

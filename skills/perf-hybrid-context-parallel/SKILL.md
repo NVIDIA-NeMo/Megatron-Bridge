@@ -8,13 +8,12 @@ when_to_use: Scaling context parallelism beyond KV heads, or investigating a com
 
 This skill covers hierarchical context parallelism: nested context-parallel process
 groups used by `cp_comm_type="a2a+p2p"` and configured with
-`hierarchical_context_parallel_sizes`. Some file paths still contain `hybrid`
-as legacy naming; the feature described here is hierarchical CP.
+`hierarchical_context_parallel_sizes`.
 
 For what hierarchical CP is, when to use it, and the decision tree
 (`a2a+p2p` vs pure `a2a` vs `p2p`), see:
 
-- @docs/training/hybrid-context-parallel.md
+- @docs/training/hierarchical-context-parallel.md
 - @skills/perf-hybrid-context-parallel/card.yaml
 
 ## Enablement
