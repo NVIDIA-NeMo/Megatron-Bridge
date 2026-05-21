@@ -471,6 +471,8 @@ class GlobalState:
         self._comet_logger = None
         self._energy_monitor = None
         self._energy_monitor_created = False
+        if self._signal_handler is not None:
+            self._signal_handler.release()
         self._signal_handler = None
         self._straggler_timer = None
         self._nvrx_straggler_manager = None

@@ -645,7 +645,8 @@ class TestGlobalState:
             state._set_signal_handler()
 
             mock_dsh.assert_called_once_with(15)
-            assert state._signal_handler == mock_signal_handler
+            mock_signal_handler.__enter__.assert_called_once()
+            assert state._signal_handler == mock_signal_handler.__enter__.return_value
 
     def test_set_signal_handler_no_train_config(self):
         """Test _set_signal_handler without train config."""
@@ -937,7 +938,8 @@ class TestGlobalState:
         state._comet_logger = MagicMock()
         state._energy_monitor = MagicMock()
         state._energy_monitor_created = True
-        state._signal_handler = MagicMock()
+        mock_signal_handler = MagicMock()
+        state._signal_handler = mock_signal_handler
         state._straggler_timer = MagicMock()
         state._nvrx_straggler_manager = MagicMock()
         state._nvrx_straggler_created = True
@@ -954,6 +956,7 @@ class TestGlobalState:
         assert state._comet_logger is None
         assert state._energy_monitor is None
         assert state._energy_monitor_created is False
+        mock_signal_handler.release.assert_called_once()
         assert state._signal_handler is None
         assert state._straggler_timer is None
         assert state._nvrx_straggler_manager is None
