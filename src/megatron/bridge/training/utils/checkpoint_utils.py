@@ -208,10 +208,12 @@ def _has_hf_weight_files(path: str) -> bool:
 
 
 def is_hf_checkpoint_dir(path: Optional[str]) -> bool:
-    """Detect whether ``path`` looks like a HuggingFace model directory.
+    """Lightweight check for a local HuggingFace full-model directory.
 
+    This is a local directory-shape check used before entering the explicit HF
+    pretrained initialization path. It is not a full compatibility validator.
     A path qualifies as HF when ``config.json`` is present and the directory
-    contains at least one HuggingFace-style weight file. Both consolidated
+    contains at least one HuggingFace full-model weight file. Both consolidated
     (``model.safetensors``, ``pytorch_model.bin``) and sharded
     (``model-XXXXX-of-XXXXX.safetensors``, ``pytorch_model-XXXXX-of-XXXXX.bin``)
     layouts are recognised, with or without the matching ``*.index.json``
@@ -221,7 +223,7 @@ def is_hf_checkpoint_dir(path: Optional[str]) -> bool:
         path: Filesystem path to check (may be ``None``).
 
     Returns:
-        True when ``path`` looks like a HuggingFace model/checkpoint directory.
+        True when ``path`` looks like a HuggingFace full-model directory.
     """
     if path is None:
         return False
@@ -242,7 +244,6 @@ def is_checkpoint_iteration_directory(path: Optional[str]) -> bool:
       2. ``train_state.pt``  — per-iteration state file written by Bridge.
       3. ``metadata.json``   — MCore distributed checkpoint (``torch_dist``).
       4. ``.metadata``       — PyTorch DCP checkpoint (``fsdp_dtensor``).
-      5. HF full-model directory — see :func:`is_hf_checkpoint_dir`.
 
     Args:
         path: Filesystem path to check.
@@ -252,9 +253,7 @@ def is_checkpoint_iteration_directory(path: Optional[str]) -> bool:
     """
     if path is None:
         return False
-    if any(file_exists(join_paths(path, m)) for m in _ITERATION_DIR_MARKERS):
-        return True
-    return is_hf_checkpoint_dir(path)
+    return any(file_exists(join_paths(path, m)) for m in _ITERATION_DIR_MARKERS)
 
 
 def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:

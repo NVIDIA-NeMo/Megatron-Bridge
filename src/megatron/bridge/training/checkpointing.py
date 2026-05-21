@@ -231,8 +231,8 @@ def _get_checkpoint_format(checkpoint_path: str) -> str:
         # Assume fsdp_dtensor for PyTorch DCP format
         return "fsdp_dtensor"
 
-    # HuggingFace format (raw HF repo OR the extra ``iter_*/hf`` export written
-    # by Bridge with ``save_weight_format='hf'``).  Adapter-only directories also qualify.
+    # HuggingFace full-model format (raw HF repo OR the extra ``iter_*/hf`` export written
+    # by Bridge with ``also_save_hf_checkpoint=True``).
     if is_hf_checkpoint_dir(checkpoint_path):
         print_rank_0(f" Auto-detected checkpoint format as 'hf' from {checkpoint_path}.")
         return "hf"
@@ -778,7 +778,7 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
 
 
 # ============================================================================
-# HuggingFace weight format helpers (save_weight_format='hf')
+# HuggingFace sidecar export helpers (also_save_hf_checkpoint=True)
 # ============================================================================
 
 
@@ -812,9 +812,12 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
 _AUTO_BRIDGE_CACHE: dict[tuple[str, bool], Any] = {}
 
 
-def _build_auto_bridge_for_save(
-    cfg: ConfigContainer, hf_source: Optional[str] = None
-):
+def _clear_auto_bridge_cache() -> None:
+    """Clear cached AutoBridge instances for tests or multi-stage in-process runs."""
+    _AUTO_BRIDGE_CACHE.clear()
+
+
+def _build_auto_bridge_for_save(cfg: ConfigContainer, hf_source: Optional[str] = None):
     """Build (or fetch from cache) an ``AutoBridge`` instance from the resolved HF source path.
 
     Raises:
@@ -825,7 +828,7 @@ def _build_auto_bridge_for_save(
     source = hf_source or _resolve_hf_source(cfg)
     if not source:
         raise ValueError(
-            "save_weight_format='hf' requires an HF source to template config/tokenizer files. "
+            "also_save_hf_checkpoint=True requires an HF source to template config/tokenizer files. "
             "Set cfg.checkpoint.hf_source_path, cfg.model.hf_model_id "
             "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
             "an HF model id."
@@ -1206,20 +1209,16 @@ def save_checkpoint(
                         use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
                     )
 
-    # Apply PEFT filtering to save adapter-only checkpoints.  In HF export mode,
+    # Apply PEFT filtering to save adapter-only checkpoints.  In HF sidecar export mode,
     # keep the Megatron checkpoint complete and write the PEFT adapter as the
     # extra HF artifact under ``iter_*/hf/``.
-    if cfg.peft is not None and ckpt_cfg.save_weight_format != "hf":
+    if cfg.peft is not None and not ckpt_cfg.also_save_hf_checkpoint:
         state_dict = apply_peft_adapter_filter_to_state_dict(state_dict, cfg.peft)
 
-    # HuggingFace weight format ('save_weight_format=hf') is an extra export:
+    # ``also_save_hf_checkpoint=True`` is an extra export:
     # keep the complete Megatron checkpoint at ``iter_*/`` and write HF
     # artifacts under ``iter_*/hf/`` after the Megatron state is scheduled.
-    is_hf_save = (
-        ckpt_type == CheckpointType.GLOBAL
-        and ckpt_cfg.save_weight_format == "hf"
-        and bool(model)
-    )
+    is_hf_save = ckpt_type == CheckpointType.GLOBAL and ckpt_cfg.also_save_hf_checkpoint and bool(model)
     pending_hf_save_dir = _hf_weights_dir(checkpoint_name) if is_hf_save else None
     dist_save_target = checkpoint_name
 
@@ -1329,7 +1328,7 @@ def save_checkpoint(
             # [ModelOpt]: save sharded modelopt_state (skip if model is empty, e.g., low-memory save mode).
             # We always anchor modelopt_state at the iteration directory (``checkpoint_name``) so
             # that ``has_modelopt_state`` / ``load_modelopt_state`` can discover it via the
-            # standard ``<iter>/modelopt_state/`` path regardless of ``save_weight_format``.
+            # standard ``<iter>/modelopt_state/`` path regardless of HF sidecar export.
             if model:
                 # cfg.dist can be None during checkpoint conversion (save_megatron_model)
                 if not (cfg.dist and cfg.dist.use_decentralized_pg):
@@ -2047,13 +2046,13 @@ def load_checkpoint(
 
     # Finetuning directories
     pretrained_dir = cfg.checkpoint.pretrained_checkpoint
-    if pretrained_dir is not None and not checkpoint_exists(load_dir):
+    if pretrained_dir is not None and not (checkpoint_exists(load_dir) or is_hf_checkpoint_dir(load_dir)):
         print_rank_0(
             f"Checkpoint file not found in load directory {load_dir}. "
             f"Attempting to finetune with checkpoint in {pretrained_dir}"
         )
         load_dir = pretrained_dir
-        if not checkpoint_exists(load_dir):
+        if not (checkpoint_exists(load_dir) or is_hf_checkpoint_dir(load_dir)):
             raise FileNotFoundError("No checkpoint found in load directory or pretrained directory")
         cfg.checkpoint.finetune = True
 

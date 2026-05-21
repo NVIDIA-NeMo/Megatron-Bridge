@@ -653,15 +653,13 @@ class CheckpointConfig(MTrainCheckpointConfig):
     dist_ckpt_workers: int = 1
     """Specifies the number of distributed checkpoint workers for asynchronous saving."""
 
-    save_weight_format: Literal["megatron", "hf"] = "megatron"
-    """Storage format for model weights when saving checkpoints.
+    also_save_hf_checkpoint: bool = False
+    """Whether to export an additional HuggingFace artifact alongside each Megatron checkpoint.
 
-    - ``"megatron"`` (default): weights are saved together with optimizer / RNG / scheduler / rerun
-      state in a single distributed checkpoint, following the format specified by ``ckpt_format``.
-    - ``"hf"``: a complete Megatron checkpoint is still saved under each ``iter_*/`` directory,
-      including model weights, optimizer, RNG, scheduler, and rerun state.  In addition, model
-      weights are exported as HuggingFace ``*.safetensors`` under ``iter_*/hf/`` together with
-      HF ``config.json`` / tokenizer / (optional) custom modeling files.
+    When enabled, a complete Megatron checkpoint is still saved under each ``iter_*/`` directory,
+    including model weights, optimizer, RNG, scheduler, and rerun state.  In addition, model weights
+    are exported as HuggingFace ``*.safetensors`` under ``iter_*/hf/`` together with HF
+    ``config.json`` / tokenizer / (optional) custom modeling files.
 
     When ``cfg.peft`` is configured, the extra HF export writes a HuggingFace
     PEFT-compatible ``adapter_model.safetensors`` + ``adapter_config.json`` instead of the
@@ -670,7 +668,7 @@ class CheckpointConfig(MTrainCheckpointConfig):
 
     hf_source_path: Optional[str] = None
     """Override for the HuggingFace model identifier (or local path) used as a template when
-    saving/loading checkpoints with ``save_weight_format='hf'`` (or when ``pretrained_checkpoint``
+    saving/loading checkpoints with ``also_save_hf_checkpoint=True`` (or when ``pretrained_checkpoint``
     points to a HuggingFace directory).
 
     When unset, Bridge resolves a source in this order (see training checkpointing helpers):
@@ -685,7 +683,7 @@ class CheckpointConfig(MTrainCheckpointConfig):
     Required for models with custom modeling files."""
 
     hf_distributed_save: bool = False
-    """When ``save_weight_format='hf'``, enable distributed weights saving where multiple ranks
+    """When ``also_save_hf_checkpoint=True``, enable distributed weights saving where multiple ranks
     share the safetensors write workload. See ``SafeTensorsStateSource.save_generator``."""
 
     hf_save_every_n_ranks: int = 1
@@ -708,19 +706,15 @@ class CheckpointConfig(MTrainCheckpointConfig):
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
             assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
 
-        if self.save_weight_format not in ("megatron", "hf"):
-            raise ValueError(
-                f"save_weight_format must be 'megatron' or 'hf', got '{self.save_weight_format}'"
-            )
-        if self.save_weight_format == "hf":
+        if self.also_save_hf_checkpoint:
             if self.ckpt_format == "fsdp_dtensor":
                 raise ValueError(
-                    "save_weight_format='hf' is not supported together with ckpt_format='fsdp_dtensor'. "
+                    "also_save_hf_checkpoint=True is not supported together with ckpt_format='fsdp_dtensor'. "
                     "Use ckpt_format='torch_dist' when exporting additional HF weights during training."
                 )
             if self.non_persistent_ckpt_type == "local":
                 raise ValueError(
-                    "save_weight_format='hf' is not compatible with local non-persistent checkpoints. "
+                    "also_save_hf_checkpoint=True is not compatible with local non-persistent checkpoints. "
                     "Use non_persistent_ckpt_type='global' or disable non-persistent saving."
                 )
 

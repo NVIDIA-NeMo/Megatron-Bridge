@@ -31,6 +31,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_train_state_filename,
     get_hf_model_id_from_checkpoint,
     is_checkpoint_iteration_directory,
+    is_hf_checkpoint_dir,
     read_run_config,
     read_train_state,
 )
@@ -814,6 +815,18 @@ class TestCheckpointUtils:
     def test_is_iteration_dir_nonexistent(self):
         """Test that a nonexistent path returns False."""
         assert is_checkpoint_iteration_directory("/nonexistent/iter_0000000") is False
+
+    def test_hf_model_dir_is_not_iteration_dir(self, tmp_path):
+        """A raw HF model directory should not be treated as a Megatron iteration directory."""
+        hf_dir = tmp_path / "hf_model"
+        hf_dir.mkdir()
+        (hf_dir / "config.json").touch()
+        (hf_dir / "model.safetensors").touch()
+
+        assert is_hf_checkpoint_dir(str(hf_dir)) is True
+        assert is_checkpoint_iteration_directory(str(hf_dir)) is False
+        assert checkpoint_exists(str(hf_dir)) is False
+        assert checkpoint_exists(str(hf_dir)) or is_hf_checkpoint_dir(str(hf_dir))
 
     def test_checkpoint_exists_with_iteration_directory(self, tmp_path):
         """Test checkpoint_exists detects a direct iteration directory."""

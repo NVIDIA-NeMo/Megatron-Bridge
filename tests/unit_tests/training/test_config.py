@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import fields
 from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
 
@@ -1973,25 +1974,22 @@ class TestCheckpointConfig:
         assert ckpt_cfg.ckpt_step == 5000
         assert ckpt_cfg.load == "/checkpoints"
 
-    def test_save_weight_format_rejects_unknown_value(self):
-        """Test that save_weight_format only accepts Megatron or HF."""
-        ckpt_cfg = create_test_checkpoint_config(save_weight_format="invalid")
+    def test_save_weight_format_field_is_removed(self):
+        """Test that the old save_weight_format alias is no longer part of CheckpointConfig."""
+        assert "save_weight_format" not in {field.name for field in fields(CheckpointConfig)}
 
-        with pytest.raises(ValueError, match="save_weight_format must be 'megatron' or 'hf'"):
-            ckpt_cfg.finalize()
-
-    def test_hf_save_weight_format_rejects_fsdp_dtensor(self):
+    def test_also_save_hf_checkpoint_rejects_fsdp_dtensor(self):
         """Test that HF extra export is not allowed with fsdp_dtensor checkpoints."""
-        ckpt_cfg = create_test_checkpoint_config(save_weight_format="hf", ckpt_format="fsdp_dtensor")
+        ckpt_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True, ckpt_format="fsdp_dtensor")
 
-        with pytest.raises(ValueError, match="save_weight_format='hf' is not supported"):
+        with pytest.raises(ValueError, match="also_save_hf_checkpoint=True is not supported"):
             ckpt_cfg.finalize()
 
-    def test_hf_save_weight_format_rejects_local_non_persistent_checkpoint(self):
+    def test_also_save_hf_checkpoint_rejects_local_non_persistent_checkpoint(self):
         """Test that HF extra export is not allowed for local non-persistent checkpoints."""
-        ckpt_cfg = create_test_checkpoint_config(save_weight_format="hf", non_persistent_ckpt_type="local")
+        ckpt_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True, non_persistent_ckpt_type="local")
 
-        with pytest.raises(ValueError, match="save_weight_format='hf' is not compatible"):
+        with pytest.raises(ValueError, match="also_save_hf_checkpoint=True is not compatible"):
             ckpt_cfg.finalize()
 
     def test_async_save_validation_error(self):

@@ -29,6 +29,8 @@ from megatron.bridge.training.checkpointing import (
     CheckpointSaveContext,
     CheckpointType,
     DefaultCheckpointManager,
+    _build_auto_bridge_for_save,
+    _clear_auto_bridge_cache,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
@@ -118,6 +120,28 @@ class TestCheckpointUtilities:
         result = get_checkpoint_run_config_filename("/checkpoints")
         expected = "/checkpoints/run_config.yaml"
         assert result == expected
+
+    @patch("megatron.bridge.models.conversion.auto_bridge.AutoBridge.from_hf_pretrained")
+    def test_clear_auto_bridge_cache_resets_cached_bridge(self, mock_from_hf_pretrained):
+        """Test that the AutoBridge cache can be reset between multi-stage runs."""
+        cfg = Mock()
+        cfg.checkpoint.hf_source_path = "/hf/source"
+        cfg.checkpoint.hf_trust_remote_code = False
+        cfg.model.hf_model_id = None
+        cfg.tokenizer.tokenizer_model = None
+
+        first_bridge = Mock(name="first_bridge")
+        second_bridge = Mock(name="second_bridge")
+        mock_from_hf_pretrained.side_effect = [first_bridge, second_bridge]
+
+        _clear_auto_bridge_cache()
+        assert _build_auto_bridge_for_save(cfg) is first_bridge
+        assert _build_auto_bridge_for_save(cfg) is first_bridge
+
+        _clear_auto_bridge_cache()
+        assert _build_auto_bridge_for_save(cfg) is second_bridge
+
+        assert mock_from_hf_pretrained.call_count == 2
 
     def test_get_checkpoint_tracker_filename(self):
         """Test tracker filename generation for Megatron-LM compatibility."""
@@ -515,6 +539,7 @@ def save_checkpoint_fixtures():
     mock_cfg.checkpoint.ckpt_format = "torch_dist"
     mock_cfg.checkpoint.non_persistent_ckpt_type = "global"
     mock_cfg.checkpoint.save_tokenizer_assets = False  # Disable for unit tests
+    mock_cfg.checkpoint.also_save_hf_checkpoint = False
 
     # Create nested mock attributes
     mock_cfg.optimizer = Mock()
@@ -747,7 +772,7 @@ class TestSaveCheckpoint:
         state = save_checkpoint_fixtures["mock_state"]
         state.wandb_logger = Mock()
         state.cfg.checkpoint.most_recent_k = -1
-        state.cfg.checkpoint.save_weight_format = "hf"
+        state.cfg.checkpoint.also_save_hf_checkpoint = True
 
         save_checkpoint(
             state,
@@ -865,7 +890,7 @@ class TestSaveCheckpoint:
         state.wandb_logger = Mock()
         state.cfg.checkpoint.most_recent_k = -1
         state.cfg.checkpoint.async_save = True
-        state.cfg.checkpoint.save_weight_format = "hf"
+        state.cfg.checkpoint.also_save_hf_checkpoint = True
 
         save_checkpoint(
             state,
