@@ -15,12 +15,7 @@ import torch
 
 
 VERIFY_PATH = (
-    Path(__file__).resolve().parents[4]
-    / "examples"
-    / "models"
-    / "megatron_mimo"
-    / "whisper"
-    / "verify_whisper_conversion.py"
+    Path(__file__).resolve().parents[4] / "examples" / "megatron_mimo" / "whisper" / "verify_whisper_conversion.py"
 )
 
 

@@ -43,7 +43,7 @@ It is less about changing the math and more about reducing runtime overhead.
 
 | Dimension | Effect | Confidence | Why |
 |---|---|---|---|
-| `speed` | ~10-30% faster step time | medium | Replays pre-captured GPU work and reduces launch overhead. The gain is biggest when the run is visibly launch-bound. |
+| `speed` | neutral/slightly slower to ~30% faster step time | medium | Replays pre-captured GPU work and reduces launch overhead. The gain is biggest when the run is visibly launch-bound; already-optimized or communication-bound runs may not improve. |
 | `memory` | near-neutral to several GB higher, depending on scope | high | Graph buffers stay allocated for replay. TE-scoped paths can be modest, while larger models or deeper PP can make memory noticeably tighter. |
 | `scale` | neutral to slightly positive | low | Can help at scale if host overhead matters, but extra memory residency can also gate larger configs. |
 | `convergence` | no change expected | medium | Intended to preserve training math when capture constraints are satisfied. |
@@ -122,25 +122,35 @@ capture and a small model recipe.
 
 | Metric | Expected Change | Conditions | Evidence |
 |---|---|---|---|
-| `step_time` | ~10-25% down | Static shapes, launch-bound training, especially TE-scoped MoE paths | measured |
-| `tokens_per_sec` | ~10-30% up | Same as above | measured |
+| `step_time` | neutral/slightly slower to ~25% down | Static shapes, launch-bound training, especially TE-scoped MoE paths | measured |
+| `tokens_per_sec` | neutral to ~30% up | Same as above | measured |
 | `peak_memory` | flat to moderately higher | TE-scoped paths with headroom | measured |
 | `OOM risk` | up | Tight memory budget or large MoE configs | measured |
 
 Do not assume a fixed throughput gain across models. The improvement depends on
-how launch-bound the workload is and how much scope is captured.
+how launch-bound the workload is and how much scope is captured. Compare replay
+iterations after CUDA graph capture; the capture step itself is not
+steady-state timing.
 
 ## Representative Validation Patterns
 
 ### Mid-sized MoE pretrain
 
-On mid-sized MoE pretrain runs with TE-scoped graphs
-(`attn + moe_router + moe_preprocess`), the common pattern is:
+On launch-bound mid-sized MoE pretrain runs with TE-scoped graphs
+(`attn + moe_router + moe_preprocess`), the common positive pattern is:
 
 - low-teens to low-20s percent faster step time
 - corresponding throughput gains when the eager baseline is launch-bound
 - short-run loss behavior that stays close to baseline
 - little or no obvious memory penalty in the friendliest TE-scoped cases
+
+There are also valid neutral cases. In a short Qwen3 30B A3B H100 BF16
+pretrain run with the all-to-all dispatcher, TE-scoped
+`attn + moe_router + moe_preprocess` graphs captured successfully after three
+warmup steps (`48` graphable layers, about `6.9 s` capture time on rank 0) but
+replay iterations 5-8 averaged `42.00 s` versus `41.36 s` for eager. Treat this
+as evidence to validate CUDA graphs on the target dispatcher, container, and
+batch shape rather than enabling them blindly.
 
 ### Packed-sequence SFT and LoRA
 
@@ -169,6 +179,8 @@ Larger MoE runs can become memory-gated before graph replay pays off:
 - `local` `full_iteration` graphs fail when NaN-loss checking is still enabled.
 - Illegal scope combinations such as `moe` with `moe_router` fail validation.
 - Runs that fit in eager mode can OOM after enabling graphs because buffers stay pinned.
+- Short runs can show neutral or slightly slower replay time if the eager
+  baseline is already efficient or the workload is not launch-bound.
 - Full activation recompute (`recompute_granularity=full`) with TE-scoped graphs
   asserts: `full recompute is only supported with full iteration CUDA graph`.
   Disable recompute or switch to `local` implementation.

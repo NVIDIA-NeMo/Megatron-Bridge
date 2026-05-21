@@ -267,6 +267,8 @@ def run_pretrain_vl_recipe_test(
 
         # Keep runs short and consistent across tests
         config.train.train_iters = 10
+        config.train.eval_interval = None
+        config.train.eval_iters = None
         config.validation.eval_interval = 5
         config.validation.eval_iters = 2
         # Standardize batch sizes for functional tests
