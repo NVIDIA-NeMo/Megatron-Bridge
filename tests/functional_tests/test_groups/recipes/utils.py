@@ -45,7 +45,7 @@ def run_pretrain_recipe_test(
     This function runs a minimal training session to verify that:
     1. The recipe config can be loaded without errors
     2. Training can start and run for a few iterations
-    3. Checkpoints are saved correctly
+    3. Checkpoints are saved correctly when checkpointing is enabled
     4. No crashes occur during the process
 
     Args:
@@ -136,13 +136,16 @@ def run_pretrain_recipe_test(
 
         pretrain(config, forward_step)
 
-        # Basic verification that training completed successfully
-        verify_checkpoint_files(
-            config.checkpoint.save,
-            10,
-            ckpt_format=config.checkpoint.ckpt_format,
-            storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
-        )
+        # Basic verification that training completed successfully.
+        # Some architecture smoke tests intentionally disable checkpointing to
+        # keep their acceptance signal scoped to forward/backward/eval.
+        if config.checkpoint.save is not None:
+            verify_checkpoint_files(
+                config.checkpoint.save,
+                config.train.train_iters,
+                ckpt_format=config.checkpoint.ckpt_format,
+                storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+            )
 
     finally:
         clear_directories(tmp_path)
