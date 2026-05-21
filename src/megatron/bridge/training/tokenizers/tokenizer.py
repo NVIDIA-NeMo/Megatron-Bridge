@@ -5,10 +5,10 @@
 from megatron.core.tokenizers import MegatronTokenizer
 from megatron.core.tokenizers.utils.build_tokenizer import build_tokenizer as build_mcore_tokenizer
 
-from megatron.bridge.utils.common_utils import warn_rank_0
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
 
-def build_tokenizer(config, **kwargs) -> MegatronTokenizer:
+def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
     """Initialize tokenizer from megatron.core.tokenizers based on the provided configuration.
 
     Args:
@@ -19,13 +19,11 @@ def build_tokenizer(config, **kwargs) -> MegatronTokenizer:
     Returns:
         MegatronTokenizer: An instance of the initialized tokenizer.
     """
+    from megatron.bridge.utils.common_utils import warn_rank_0
 
     warn_rank_0(
         "`build_tokenizer` is deprecated and will be removed soon. "
         "Please, use `megatron.core.tokenizers.utils.build_tokenizer` instead."
     )
-
-    # Don't pad vocab size since MBridge does it's own padding
-    config.pad_vocab_size = False
 
     return build_mcore_tokenizer(config, **kwargs)

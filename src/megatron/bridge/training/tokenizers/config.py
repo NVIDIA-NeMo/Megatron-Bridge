@@ -62,6 +62,9 @@ class TokenizerConfig(MTrainTokenizerConfig):
 
     def __post_init__(self) -> None:
         """Sync with MCore values"""
+        # Don't pad vocab size since MBridge does it's own padding
+        self.pad_vocab_size = False
+
         # HuggingFace tokenizer kwargs
         self.tokenizer_hf_no_use_fast = not self.hf_tokenizer_kwargs.get("use_fast", True)
         self.tokenizer_hf_no_include_special_tokens = not self.hf_tokenizer_kwargs.get("include_special_tokens", True)
