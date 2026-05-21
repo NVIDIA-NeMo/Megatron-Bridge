@@ -10,6 +10,7 @@ Megatron Bridge supports the following LLM families:
 |-------|---------------|-------------|
 | **DeepSeek V2** | [deepseek-v2.md](deepseek-v2.md) | DeepSeek V2 model family |
 | **DeepSeek V3** | [deepseek-v3.md](deepseek-v3.md) | DeepSeek V3 model family |
+| **DeepSeek V4** | [deepseek-v4.md](deepseek-v4.md) | DeepSeek V4 model family |
 | **Gemma 2** | [gemma2.md](gemma2.md) | Google Gemma 2 models |
 | **Gemma 3** | [gemma3.md](gemma3.md) | Google Gemma 3 models |
 | **GLM-4.5** | [glm45.md](glm45.md) | GLM-4.5 model family |

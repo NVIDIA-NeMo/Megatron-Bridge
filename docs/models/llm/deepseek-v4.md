@@ -2,7 +2,7 @@
 
 [DeepSeek-V4](https://github.com/deepseek-ai/DeepSeek-V4) is the next-generation Mixture-of-Experts language model from DeepSeek-AI. It extends the V3 design with **Hyper-Connections (mHC)** for multi-stream residual mixing, **Compressed Sparse Attention (CSA)** with a learned token-importance indexer (DSA), **hash-routed MoE layers** for the first few decoder blocks, and a refined **Multi-Token Prediction (MTP)** head with separate `e_proj` / `h_proj` projections.
 
-DeepSeek V4 models are supported via the Bridge system with auto-detected configuration and weight mapping.
+DeepSeek V4 models are supported via the Bridge system with auto-detected configuration and weight mapping. Megatron Bridge also provides pretraining smoke recipes for DSv4 hybrid attention, an mHC/hash-MoE proxy, and an mHC+MTP proxy under `src/megatron/bridge/recipes/deepseek/deepseek_v4.py`.
 
 ## Model Architecture Features
 
@@ -18,6 +18,8 @@ DeepSeek V4 models are supported via the Bridge system with auto-detected config
 ## Examples, Parallelism, and Limitations
 
 For checkpoint conversion and inference scripts, recommended parallelism settings, and current known limitations, see the [DeepSeek V4 examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/deepseek_v4).
+
+The pretraining smoke recipes are intended for architecture validation. They keep TP=1 and CP=1, disable THD/Packed Sequence/Muon, and leave checkpoint save/resume as a separate validation gate.
 
 ## Hugging Face Model Cards & References
 

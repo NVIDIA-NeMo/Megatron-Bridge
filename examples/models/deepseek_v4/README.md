@@ -26,6 +26,7 @@ Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pin
 
 - `conversion.sh` imports HF weights into Megatron Bridge and exports Megatron checkpoints back to HF format.
 - `inference.sh` runs text generation against an HF or Megatron checkpoint.
+- Training smoke recipes live in `src/megatron/bridge/recipes/deepseek/deepseek_v4.py` and cover DSv4 hybrid attention, mHC/hash-MoE, and mHC+MTP architecture paths.
 
 Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each script's header comments for the expected environment variables and `#SBATCH` directives to edit before submitting.
 
@@ -54,6 +55,6 @@ DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported
 
 - **Fused mHC is not supported on H100.** Set `use_fused_mhc=False` in the bridge config when running on Hopper GPUs. Fused mHC is enabled by default and works on GB200.
 
-- **`fast_hadamard_transform` is optional.** When unavailable, DSA falls back to a PyTorch hadamard implementation. Throughput is lower but numerical behavior is unchanged.
+- **`fast_hadamard_transform` is required for DSA / CSA execution.** Install the fused package, or use an environment image that already includes it, before running DSv4 hybrid-attention training or inference paths that execute DSA.
 
 - **Logit parity is verified for Flash and Flash-Base** against the official inference stack at last-real-token logits. The remaining gap is structural, from different attention/HC kernel decompositions and accumulation precisions between MCore and official inference.

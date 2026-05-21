@@ -16,7 +16,7 @@ Text-only models for language understanding and generation tasks.
 
 **Supported LLM Families:**
 
-- DeepSeek (V2, V3)
+- DeepSeek (V2, V3, V4)
 - Gemma (2, 3)
 - GLM-4.5
 - GPT-OSS
