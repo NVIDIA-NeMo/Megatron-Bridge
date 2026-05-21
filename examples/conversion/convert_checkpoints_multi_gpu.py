@@ -53,6 +53,7 @@ Usage examples:
 """
 
 import argparse
+import datetime
 import os
 import sys
 
@@ -84,6 +85,20 @@ def _check_distributed():
         sys.exit(1)
 
 
+def _ensure_distributed_initialized(timeout_minutes: int | None):
+    _check_distributed()
+    if timeout_minutes is None:
+        return
+    if torch.distributed.is_initialized():
+        return
+
+    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
+    torch.distributed.init_process_group(
+        "nccl",
+        timeout=datetime.timedelta(minutes=timeout_minutes),
+    )
+
+
 @torchrun_main
 def import_hf_to_megatron(
     hf_model: str,
@@ -94,9 +109,10 @@ def import_hf_to_megatron(
     etp: int = 1,
     torch_dtype: str = "bfloat16",
     trust_remote_code: bool = False,
+    distributed_timeout_minutes: int | None = None,
 ) -> None:
     """Import a HuggingFace model and save it as a distributed Megatron checkpoint."""
-    _check_distributed()
+    _ensure_distributed_initialized(distributed_timeout_minutes)
     dtype = _parse_dtype(torch_dtype)
 
     print_rank_0(f"Importing: {hf_model} -> {megatron_path}")
@@ -115,6 +131,15 @@ def import_hf_to_megatron(
     model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = dtype
     model_provider.params_dtype = dtype
+    # Auto-generate pipeline layout for models that need it (e.g. DSv4 hash MoE)
+    if pp > 1 and hasattr(bridge._model_bridge, "generate_pipeline_layout"):
+        hf_config = bridge.hf_pretrained.config
+        num_layers = hf_config.num_hidden_layers
+        mtp = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
+        model_provider.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
+            num_layers, pp, mtp
+        )
+        print_rank_0(f"  Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp} MTP)")
     model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
 
@@ -151,9 +176,10 @@ def export_megatron_to_hf(
     show_progress: bool = True,
     distributed_save: bool = False,
     save_every_n_ranks: int = 1,
+    distributed_timeout_minutes: int | None = None,
 ) -> None:
     """Export a distributed Megatron checkpoint to HuggingFace format."""
-    _check_distributed()
+    _ensure_distributed_initialized(distributed_timeout_minutes)
     dtype = _parse_dtype(torch_dtype)
 
     print_rank_0(f"Exporting: {megatron_path} -> {hf_path}")
@@ -173,6 +199,23 @@ def export_megatron_to_hf(
     model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = dtype
     model_provider.params_dtype = dtype
+    # For PP > 1 export, read pipeline layout from checkpoint
+    if pp > 1:
+        from pathlib import Path
+
+        import yaml
+
+        ckpt_path = Path(megatron_path)
+        for candidate in [ckpt_path, *ckpt_path.glob("iter_*")]:
+            rc = candidate / "run_config.yaml"
+            if rc.exists():
+                with open(rc) as f:
+                    cfg = yaml.safe_load(f)
+                saved_layout = cfg.get("model", {}).get("pipeline_model_parallel_layout")
+                if isinstance(saved_layout, list):
+                    model_provider.pipeline_model_parallel_layout = saved_layout
+                    print_rank_0(f"  Read pipeline layout from checkpoint ({len(saved_layout)} stages)")
+                    break
     model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
 
@@ -218,6 +261,12 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         help="Model precision (default: bfloat16)",
     )
     parser.add_argument("--trust-remote-code", action="store_true", help="Allow custom model code execution")
+    parser.add_argument(
+        "--distributed-timeout-minutes",
+        type=int,
+        default=None,
+        help="Initialize the distributed process group with this timeout before model setup",
+    )
 
 
 def main():
@@ -255,7 +304,6 @@ def main():
         default=1,
         help="Only every N-th rank writes files (reduces I/O, only with --distributed-save)",
     )
-
     args = parser.parse_args()
 
     if not args.command:
@@ -272,6 +320,7 @@ def main():
             etp=args.etp,
             torch_dtype=args.torch_dtype,
             trust_remote_code=args.trust_remote_code,
+            distributed_timeout_minutes=args.distributed_timeout_minutes,
         )
     elif args.command == "export":
         export_megatron_to_hf(
@@ -288,6 +337,7 @@ def main():
             show_progress=not args.no_progress,
             distributed_save=args.distributed_save,
             save_every_n_ranks=args.save_every_n_ranks,
+            distributed_timeout_minutes=args.distributed_timeout_minutes,
         )
 
 

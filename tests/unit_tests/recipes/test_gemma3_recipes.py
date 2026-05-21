@@ -15,7 +15,7 @@
 #
 # Test purpose:
 # - Parametrize over all exported Gemma3 recipe functions in `megatron.bridge.recipes.gemma`.
-# - For each recipe, monkeypatch the provider class with a lightweight fake to avoid I/O.
+# - For each recipe, monkeypatch HF-dependent bridge/tokenizer calls with lightweight fakes to avoid I/O.
 # - Build a config with small, safe overrides and assert it forms a valid `ConfigContainer`.
 # - Verify tokenizer selection honors `use_null_tokenizer`, and sanity-check parallelism fields.
 #
@@ -109,21 +109,7 @@ def _assert_basic_config(cfg):
 @pytest.mark.parametrize("recipe_func", _GEMMA3_RECIPE_FUNCS)
 def test_each_gemma3_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Gemma3 recipe function builds a valid configuration."""
-    # Monkeypatch the provider classes to return fake model configs
-    from megatron.bridge.models.gemma import gemma3_provider
-
-    # Create a fake provider class that returns a fake model config
-    class FakeProvider(_FakeModelCfg):
-        def __init__(self, *args, **kwargs):
-            super().__init__()
-
-    # Monkeypatch all provider classes
-    monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider1B", FakeProvider)
-    monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider4B", FakeProvider)
-    monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider12B", FakeProvider)
-    monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider27B", FakeProvider)
-
-    # For SFT/PEFT recipes, also monkeypatch AutoBridge and AutoTokenizer
+    # For SFT/PEFT recipes, monkeypatch AutoBridge and AutoTokenizer
     is_sft_or_peft = "sft" in recipe_func.__name__.lower() or "peft" in recipe_func.__name__.lower()
     if is_sft_or_peft:
         module_name = recipe_func.__module__

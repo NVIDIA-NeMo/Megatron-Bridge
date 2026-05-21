@@ -377,7 +377,7 @@ class Qwen3VLModel(MegatronModule):
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
-        del inference_context, runtime_gather_output, mm_token_type_ids  # Unused, kept for API compatibility
+        del inference_context, mm_token_type_ids  # Unused, kept for API compatibility
         assert inference_params is None, "not support inference"
 
         vision_grid_thw = None
@@ -632,6 +632,7 @@ class Qwen3VLModel(MegatronModule):
             loss_mask=loss_mask,  # Added for THD training compatibility
             inference_params=inference_params,  # currently always None
             packed_seq_params=packed_seq_params,  # currently always None
+            runtime_gather_output=runtime_gather_output,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
             **(extra_block_kwargs or {}),

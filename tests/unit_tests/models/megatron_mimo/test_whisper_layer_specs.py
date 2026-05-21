@@ -19,14 +19,7 @@ pytest.importorskip("megatron.core.extensions.transformer_engine")
 from megatron.core.transformer.enums import AttnMaskType
 
 
-SPECS_PATH = (
-    Path(__file__).resolve().parents[4]
-    / "examples"
-    / "models"
-    / "megatron_mimo"
-    / "whisper"
-    / "whisper_layer_specs.py"
-)
+SPECS_PATH = Path(__file__).resolve().parents[4] / "examples" / "megatron_mimo" / "whisper" / "whisper_layer_specs.py"
 
 
 @pytest.fixture(scope="module")

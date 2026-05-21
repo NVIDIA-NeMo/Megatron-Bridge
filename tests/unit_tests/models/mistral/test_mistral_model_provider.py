@@ -16,7 +16,6 @@ import torch.nn.functional as F
 
 from megatron.bridge.models.mistral import (
     MistralModelProvider,
-    MistralSmall3ModelProvider24B,
 )
 
 
@@ -123,51 +122,12 @@ class TestMistralModelProvider:
         assert provider.qk_layernorm is True
 
 
-class TestMistralSmall3ModelProvider24B:
-    """Test cases for MistralSmall3ModelProvider24B class."""
-
-    def test_mistral_small3_24b_default_configuration(self):
-        """Test MistralSmall3ModelProvider24B model has correct default configuration."""
-        provider = MistralSmall3ModelProvider24B()
-
-        # Check Mistral Small3 24B specific configuration
-        assert provider.num_layers == 40
-        assert provider.hidden_size == 5120
-        assert provider.num_attention_heads == 32
-        assert provider.ffn_hidden_size == 32768
-        assert provider.share_embeddings_and_output_weights is False
-
-        # Check inherited defaults
-        assert provider.normalization == "RMSNorm"
-        assert provider.activation_func is F.silu
-        assert provider.vocab_size == 131072
-        assert provider.seq_length == 32768
-        assert provider.qk_layernorm is False
-        assert provider.add_qkv_bias is False
-
-    def test_mistral_small3_24b_override_configuration(self):
-        """Test MistralSmall3ModelProvider24B model with overridden configuration."""
-        provider = MistralSmall3ModelProvider24B(
-            seq_length=32768,
-            hidden_dropout=0.1,
-        )
-
-        # Check overridden values
-        assert provider.seq_length == 32768
-        assert provider.hidden_dropout == 0.1
-
-        # Check defaults remain
-        assert provider.num_layers == 40
-        assert provider.hidden_size == 5120
-
-
 class TestMistralProviderInheritance:
     """Test inheritance relationships between Mistral providers."""
 
     def test_mistral_models_inherit_from_base(self):
         """Test Mistral providers inherit from MistralModelProvider."""
         assert issubclass(MistralModelProvider, MistralModelProvider)
-        assert issubclass(MistralSmall3ModelProvider24B, MistralModelProvider)
 
     def test_provide_method_inherited(self):
         """Test that provide method works correctly in inherited classes."""
@@ -249,8 +209,22 @@ class TestMistralProviderQueryGroupsConsistency:
         # Uses default from base class
         assert provider.num_query_groups == 8
 
-    def test_mistral_small3_24b_num_query_groups(self):
-        """Test that MistralSmall3ModelProvider24B has correct num_query_groups."""
-        provider = MistralSmall3ModelProvider24B()
-        # Uses default from base class
+    def test_mistral_provider_accepts_large_model_config_values(self):
+        """Test that large model architecture values can be supplied without size subclasses."""
+        provider = MistralModelProvider(
+            num_layers=40,
+            hidden_size=5120,
+            ffn_hidden_size=32768,
+            num_attention_heads=32,
+            kv_channels=128,
+            seq_length=32768,
+            rotary_base=100000000.0,
+            vocab_size=131072,
+        )
+
+        assert provider.num_layers == 40
+        assert provider.hidden_size == 5120
+        assert provider.ffn_hidden_size == 32768
+        assert provider.num_attention_heads == 32
         assert provider.num_query_groups == 8
+        assert provider.vocab_size == 131072

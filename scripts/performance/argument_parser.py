@@ -759,6 +759,12 @@ def parse_cli_args():
         required=False,
         default=-1,
     )
+    performance_args.add_argument(
+        "--deterministic",
+        help="Enable bit-exact deterministic training. Sets NCCL/cuBLAS/TE env vars "
+        "and disables fused cross-entropy loss and TP comm overlap.",
+        action="store_true",
+    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")
@@ -828,7 +834,13 @@ def parse_cli_args():
         help="List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).",
     )
 
-    # Testing parameters
+    _testing_args(parser)
+
+    return parser
+
+
+def _testing_args(parser):
+    """Add testing-related arguments to the parser."""
     testing_args = parser.add_argument_group("Testing arguments")
     testing_args.add_argument(
         "--is_long_convergence_run",
@@ -892,5 +904,3 @@ def parse_cli_args():
         default=None,
         help="End step (0-indexed, exclusive) for timing average window. If None, averages to end.",
     )
-
-    return parser

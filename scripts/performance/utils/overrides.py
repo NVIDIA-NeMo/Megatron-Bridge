@@ -20,6 +20,7 @@ from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
@@ -159,6 +160,9 @@ def _set_recompute_overrides(
 def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: bool = False) -> ConfigContainer:
     """Tune configuration for MoE A2A communication overlap."""
     if moe_a2a_overlap:
+        if recipe.comm_overlap is None:
+            tp_comm_overlap = bool(recipe.model.tensor_model_parallel_size > 1)
+            recipe.comm_overlap = CommOverlapConfig(tp_comm_overlap=tp_comm_overlap)
         recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
         recipe.comm_overlap.delay_wgrad_compute = True
         recipe.model.moe_shared_expert_overlap = False
@@ -455,6 +459,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
     if args.task == "lora" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
         recipe.dist.use_tp_pp_dp_mapping = True
+
+    if args.deterministic:
+        apply_determinism_overrides(recipe)
 
     return recipe
 
