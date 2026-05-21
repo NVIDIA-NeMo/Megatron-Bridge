@@ -13,13 +13,13 @@
 # limitations under the License.
 
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
-    NemotronNano12Bv2VLModelProvider,
+    NemotronVLModelProvider,
 )
 
 
-class TestNemotronNano12Bv2VLModelProvider:
+class TestNemotronVLModelProvider:
     def test_provider_initialization_minimal(self):
-        provider = NemotronNano12Bv2VLModelProvider(
+        provider = NemotronVLModelProvider(
             hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
             hidden_size=5120,
             num_attention_heads=40,
@@ -49,7 +49,7 @@ class TestNemotronNano12Bv2VLModelProvider:
         assert callable(provider.provide_language_model)
 
     def test_provider_freeze_overrides(self):
-        provider = NemotronNano12Bv2VLModelProvider(
+        provider = NemotronVLModelProvider(
             hidden_size=5120,
             num_attention_heads=40,
             freeze_language_model=True,
