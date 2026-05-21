@@ -64,12 +64,15 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
         cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    # mcore may auto-promote cuda_graph_impl from "none" to "full_iteration" when
+    # cuda_graph_scope contains "full_iteration", so consult both fields when
+    # deciding whether CUDA graphs will actually run at training time.
     cuda_impl = getattr(cfg.model, "cuda_graph_impl", None)
-    if cuda_impl is not None:
-        if cuda_impl != "none":
-            cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
-        else:
-            cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = False
+    cuda_scope = getattr(cfg.model, "cuda_graph_scope", None) or []
+    scope_names = {s if isinstance(s, str) else getattr(s, "name", "") for s in cuda_scope}
+    graphs_active = (cuda_impl is not None and cuda_impl != "none") or "full_iteration" in scope_names
+    if cuda_impl is not None or scope_names:
+        cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = graphs_active
 
     if getattr(cfg.model, "moe_flex_dispatcher_backend", None) == "hybridep":
         cfg.model.moe_hybridep_num_sms = 32

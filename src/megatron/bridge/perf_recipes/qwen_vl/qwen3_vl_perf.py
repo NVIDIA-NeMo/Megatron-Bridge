@@ -51,7 +51,6 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -71,6 +70,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -89,7 +91,6 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -109,6 +110,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -127,7 +131,6 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -147,6 +150,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -170,7 +176,6 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -190,6 +195,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -208,7 +216,6 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -228,6 +235,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -246,7 +256,6 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -266,6 +275,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -289,7 +301,6 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -305,6 +316,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -323,7 +337,6 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -339,6 +352,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -357,7 +373,6 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -374,6 +389,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -397,7 +415,6 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
@@ -413,6 +430,9 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -431,7 +451,6 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
@@ -447,6 +466,9 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -470,7 +492,6 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -490,6 +511,9 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -508,7 +532,6 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -528,6 +551,9 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -546,7 +572,6 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -566,6 +591,9 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -589,7 +617,6 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -609,6 +636,9 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -627,7 +657,6 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -647,6 +676,9 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -665,7 +697,6 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -685,6 +716,9 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -708,7 +742,6 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -725,6 +758,9 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -743,7 +779,6 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -760,6 +795,9 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -778,7 +816,6 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -795,6 +832,9 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -818,7 +858,6 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -837,6 +876,9 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
 
 
@@ -855,7 +897,6 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
-    cfg.model.apply_rope_fusion = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -871,4 +912,7 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
     return cfg
