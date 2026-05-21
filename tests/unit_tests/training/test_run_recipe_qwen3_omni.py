@@ -61,6 +61,9 @@ def _load_run_recipe_module():
     llava_step = types.ModuleType("megatron.bridge.training.llava_step")
     llava_step.forward_step = object()
 
+    nemotron_omni_step = types.ModuleType("megatron.bridge.training.nemotron_omni_step")
+    nemotron_omni_step.forward_step = object()
+
     audio_lm_step = types.ModuleType("megatron.bridge.training.audio_lm_step")
     audio_lm_step.forward_step = object()
 
@@ -121,6 +124,7 @@ def _load_run_recipe_module():
         "megatron.bridge.training.gpt_step": gpt_step,
         "megatron.bridge.training.vlm_step": vlm_step,
         "megatron.bridge.training.llava_step": llava_step,
+        "megatron.bridge.training.nemotron_omni_step": nemotron_omni_step,
         "megatron.bridge.training.finetune": finetune_module,
         "megatron.bridge.training.pretrain": pretrain_module,
         "megatron.bridge.training.config": config_module,

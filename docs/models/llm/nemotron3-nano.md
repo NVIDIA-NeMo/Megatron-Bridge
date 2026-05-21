@@ -91,5 +91,5 @@ A LoRA checkpoint only contains the learnable adapter weights. In order to conve
 uv run python examples/peft/merge_lora.py \
 --hf-model-path $HF_MODEL_ID \
 --lora-checkpoint /path/to/lora/ckpt/iter_xxxxxxx 
---output /path/to/merged/ckpt
+--output /path/to/merged/hf/ckpt
 ```

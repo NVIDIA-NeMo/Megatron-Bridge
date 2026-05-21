@@ -91,7 +91,11 @@ def get_dataset_root(name: str) -> Path:
         Path: The path to the dataset's root directory.
     """
     output = Path(NEMO_DATASETS_CACHE) / name
-    output.mkdir(parents=True, exist_ok=True)
+    try:
+        # Shared filesystems can expose stale parent-dir state despite exist_ok=True.
+        output.mkdir(parents=True, exist_ok=True)
+    except (FileExistsError, FileNotFoundError):
+        pass
 
     return output
 

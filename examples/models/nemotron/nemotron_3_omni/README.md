@@ -96,7 +96,7 @@ the container), `uv` is resolving against a stale environment — re-run
 
 ## Checkpoint Conversion
 
-[conversion.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/conversion.sh) covers HF → Megatron import, Megatron → HF
+[conversion.sh](conversion.sh) covers HF → Megatron import, Megatron → HF
 export, and a multi-GPU HF↔Megatron round-trip verification.
 
 - **Import** writes `iter_0000000/`, `latest_train_state.pt`, and
@@ -107,6 +107,9 @@ export, and a multi-GPU HF↔Megatron round-trip verification.
   tensors (regenerated from config on the HF side):
   `sound_encoder.encoder.feature_extractor.featurizer.{fb,window}` and
   `vision_model.radio_model.input_conditioner.{norm_mean,norm_std}`.
+  `--trust-remote-code` is also required for export because the exporter
+  loads the HF config, which references the custom modeling module shipped
+  with `NemotronH_Nano_Omni_Reasoning_V3`.
 - **Round-trip** loads HF → Megatron (TP=2, EP=2) and re-exports back to HF,
   diffing every tensor; all weights should match (✅) and the same 4
   expected-missing tensors are reported on re-export. The re-exported HF
@@ -130,8 +133,8 @@ bash examples/models/nemotron/nemotron_3_omni/conversion.sh
 
 ## Inference
 
-[inference.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/inference.sh) drives
-`examples/conversion/hf_to_megatron_generate_nemotron_omni.py` over the four
+[inference.sh](inference.sh) drives
+`examples/models/nemotron/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py` over the four
 modality combinations exercised by the model:
 
 | # | Modality | GPUs | Parallelism |
@@ -144,6 +147,14 @@ modality combinations exercised by the model:
 The default assets are pulled automatically from the public HF model card
 ([`nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16`](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16/tree/main/media))
 on the first run — `curl` must be available.
+
+> **Video prerequisite:** the video paths (rows 2 and 4) sample frames via
+> [`decord`](https://github.com/dmlc/decord), which is not pulled in by any
+> pyproject extra. Install it before running those modes:
+>
+> ```bash
+> uv pip install decord
+> ```
 Override `IMAGE_PATH` / `VIDEO_PATH` / `AUDIO_PATH` with your own assets to
 use different inputs; omit `--megatron_model_path` (set `MEGATRON_PATH=""`)
 to convert HF → Megatron on the fly instead of reusing the imported
@@ -214,8 +225,8 @@ base config. Recipe base: `nemotron_omni_cord_v2_*_config` in
 
 | Mode | Script | Recipe |
 |---|---|---|
-| Full SFT | [slurm_sft_cord_v2.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_sft_cord_v2.sh) | `nemotron_omni_cord_v2_sft_config` |
-| LoRA | [slurm_peft_cord_v2.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_peft_cord_v2.sh) | `nemotron_omni_cord_v2_peft_config` |
+| Full SFT | [slurm_sft_cord_v2.sh](slurm_sft_cord_v2.sh) | `nemotron_omni_cord_v2_sft_config` |
+| LoRA | [slurm_peft_cord_v2.sh](slurm_peft_cord_v2.sh) | `nemotron_omni_cord_v2_peft_config` |
 
 Parallelism (both): TP=2, EP=8, CP=1, MBS=2, GBS=16, packed sequences,
 selective recompute. LoRA targets `linear_qkv`, `linear_proj`, `in_proj`,
@@ -235,17 +246,18 @@ embedder: frames are fused in pairs (`temporal_patch_dim=2`,
 `separate_video_embedder=True`) and audio is fed through the Parakeet
 encoder. Recipe base: `nemotron_omni_valor32k_*_config`.
 
-Prepare the Energon shards once:
+Prepare the Energon shards once. For the full walkthrough, see
+[`tutorials/data/valor32k-avqa/data-preparation.md`](../../../../tutorials/data/valor32k-avqa/data-preparation.md).
 
 ```bash
-uv run python examples/models/nemotron/nemotron_3_omni/data/build_valor32k_avqa_shards.py \
+uv run python tutorials/data/valor32k-avqa/build_valor32k_avqa_shards.py \
   --output_dir ${WORKSPACE}/datasets/valor32k_avqa
 ```
 
 | Mode | Script | Recipe |
 |---|---|---|
-| Full SFT | [slurm_sft_valor32k_avqa.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_sft_valor32k_avqa.sh) | `nemotron_omni_valor32k_sft_config` |
-| LoRA | [slurm_peft_valor32k_avqa.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/slurm_peft_valor32k_avqa.sh) | `nemotron_omni_valor32k_peft_config` |
+| Full SFT | [slurm_sft_valor32k_avqa.sh](slurm_sft_valor32k_avqa.sh) | `nemotron_omni_valor32k_sft_config` |
+| LoRA | [slurm_peft_valor32k_avqa.sh](slurm_peft_valor32k_avqa.sh) | `nemotron_omni_valor32k_peft_config` |
 
 Parallelism (both): TP=2, EP=8, CP=1, MBS=2, packed sequences, selective
 recompute. SFT uses GBS=16 and the recipe-default LR; LoRA uses GBS=64 and
@@ -268,8 +280,8 @@ finetuned Megatron checkpoint on the same datasets used for training:
 
 | Dataset | Script | Output |
 |---|---|---|
-| CORD-V2 | [cord_v2_inference.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/cord_v2_inference.py) | JSON of `{prompt, gold, prediction}` per sample plus image bytes for eyeballing |
-| VALOR32K-AVQA | [valor32k_avqa_inference.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_omni/examples/models/vlm/nemotron_3_omni/valor32k_avqa_inference.py) | Per-sample predictions and an aggregate multiple-choice accuracy |
+| CORD-V2 | [cord_v2_inference.py](cord_v2_inference.py) | JSON of `{prompt, gold, prediction}` per sample plus image bytes for eyeballing |
+| VALOR32K-AVQA | [valor32k_avqa_inference.py](valor32k_avqa_inference.py) | Per-sample predictions and an aggregate multiple-choice accuracy |
 
 Example invocations (8 GPUs, single node). The slurm scripts tag
 `OUTPUT_DIR` with the run config (`<recipe>_<sft|lora>_<RUN_TAG>`, where
@@ -305,8 +317,8 @@ uv run torchrun --nproc-per-node=8 \
 
 ## LoRA Merge
 
-After LoRA training, merge adapter weights back into the base Megatron
-checkpoint. The script reads the base checkpoint path from
+After LoRA training, export Hugging Face weights with the adapter weights
+merged into the base model. The script reads the base checkpoint path from
 `run_config.yaml` inside the LoRA checkpoint directory, so `--pretrained`
 is usually not required. Pass `--tp` to match the parallelism of the base
 checkpoint.
@@ -321,11 +333,10 @@ uv run torchrun --nproc-per-node=<NUM_GPUS> examples/peft/merge_lora.py \
     --tp <TP_SIZE>
 ```
 
-The merged checkpoint is a standard Megatron checkpoint and can be used
-directly for inference or re-exported to HF format using the standard
-export flow (see the Checkpoint Conversion section).
+The output is a merged Hugging Face checkpoint and can be used directly for
+downstream inference or serving.
 
-If the node does not have enough GPU memory, add `--cpu` to load and merge
+If the node does not have enough GPU memory, add `--cpu` to load and export
 entirely on CPU (no GPU required, but slower).
 
 ### LoRA Adapter Export

@@ -149,10 +149,9 @@ format for downstream evaluation, it is necessary to merge the LoRA adapters bac
 uv run python examples/peft/merge_lora.py \
 --hf-model-path $HF_MODEL_PATH \
 --lora-checkpoint <trained LoRA checkpoint>/iter_N \
---output <LoRA checkpoint merged>
+--output <merged HF checkpoint>
 ```
-You can now run in-framework inference with `hf_to_megatron_generate_vlm.py` by supplying the merged LoRA checkpoint.
-You can also export the merged LoRA checkpoint to Hugging Face format.
+The output is a merged Hugging Face checkpoint for downstream evaluation.
 
 
 ## Example Datasets
