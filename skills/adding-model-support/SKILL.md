@@ -60,7 +60,7 @@ grad norms) instead of raising an error.
 
 1. **Standalone script** (recommended for user-facing models) — Write a
    `dequant_fp8_for_bridge.py` in the model's examples folder.
-   Reference: `examples/models/ministral/ministral3/dequant_fp8_for_bridge.py`.
+   Reference: `examples/models/mistral/ministral3/dequant_fp8_for_bridge.py`.
    The pattern is: `w_bf16 = fp8_weight.to(bfloat16) * weight_scale_inv`.
 
 2. **In-bridge hook** — Override `maybe_modify_loaded_hf_weight()` in the bridge class to
