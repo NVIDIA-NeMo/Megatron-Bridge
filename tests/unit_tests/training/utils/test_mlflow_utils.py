@@ -345,8 +345,14 @@ class TestInstallMlflowFailureHook:
 
     @pytest.fixture(autouse=True)
     def restore_excepthook(self):
-        """Snapshot and restore sys.excepthook so tests don't leak global state."""
+        """Snapshot and restore sys.excepthook so tests don't leak global state.
+
+        Resets to ``sys.__excepthook__`` before each test so an earlier test
+        in the suite that installed our hook (e.g. via ``state.mlflow_logger``)
+        does not pollute the starting state here.
+        """
         original = sys.excepthook
+        sys.excepthook = sys.__excepthook__
         yield
         sys.excepthook = original
 
