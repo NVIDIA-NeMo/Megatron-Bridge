@@ -13,11 +13,14 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
-from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTDataset, GPTSFTPackedDataset
+from megatron.bridge.data.datasets import sft as sft_module
+from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTDataset, GPTSFTPackedDataset, get_dataset_root
 
 
 def create_mock_tokenizer():
@@ -96,6 +99,22 @@ def get_gpt_sft(tmp_path, dataset_type="sft"):
         )
 
     return dataset, num_samples
+
+
+@pytest.mark.parametrize("mkdir_error", [FileExistsError, FileNotFoundError])
+def test_get_dataset_root_ignores_shared_fs_mkdir_race(tmp_path, monkeypatch, mkdir_error):
+    """Network filesystems can leak mkdir races even with exist_ok=True."""
+    monkeypatch.setattr(sft_module, "NEMO_DATASETS_CACHE", tmp_path)
+
+    def raise_mkdir(self, parents=False, exist_ok=False):
+        assert self == tmp_path / "sft"
+        assert parents is True
+        assert exist_ok is True
+        raise mkdir_error("stale shared filesystem state")
+
+    monkeypatch.setattr(Path, "mkdir", raise_mkdir)
+
+    assert get_dataset_root("sft") == tmp_path / "sft"
 
 
 class TestDataGPTSFTDataset:

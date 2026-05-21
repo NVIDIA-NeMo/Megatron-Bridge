@@ -73,7 +73,7 @@ problems:
 For long-sequence training guidance, see:
 
 - `docs/performance-guide.md`
-- `docs/training/hybrid-context-parallel.md`
+- `docs/training/hierarchical-context-parallel.md`
 
 ## Practical Caveats
 
@@ -89,6 +89,6 @@ The most stable caveats to remember are:
 
 - [docs/training/multi-token-prediction.md](multi-token-prediction.md)
 - [docs/performance-guide.md](../performance-guide.md)
-- [docs/training/hybrid-context-parallel.md](hybrid-context-parallel.md)
+- [docs/training/hierarchical-context-parallel.md](hierarchical-context-parallel.md)
 - [skills/perf-sequence-packing/SKILL.md](../skills/perf-sequence-packing/SKILL.md)
 - [skills/perf-sequence-packing/card.yaml](../skills/perf-sequence-packing/card.yaml)

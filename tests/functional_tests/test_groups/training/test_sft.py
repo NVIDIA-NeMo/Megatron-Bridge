@@ -46,7 +46,7 @@ from tests.functional_tests.utils import (
 
 
 @dataclass
-class Llama3ModelProvider145M(GPTModelProvider):
+class Llama3TinyModelProvider(GPTModelProvider):
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
     gated_linear_unit: bool = True
@@ -142,7 +142,7 @@ class TestSupervisedFinetuning:
         if train_iters is not None:
             warmup_iters = min(warmup_iters, max(train_iters - 1, 0))
         return ConfigContainer(
-            model=Llama3ModelProvider145M(seq_length=seq_length),
+            model=Llama3TinyModelProvider(seq_length=seq_length),
             train=TrainingConfig(
                 train_iters=train_iters,
                 global_batch_size=8,

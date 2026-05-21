@@ -307,6 +307,9 @@ def _megatron_local_name_to_global(
                     f".local_experts.{global_expert_number}.",
                     1,
                 )
+        # Grouped MoE uses numeric suffixes for per-expert weight and bias
+        # parameters, e.g. .weight0 and .bias1. Shared quantizer buffers such
+        # as .weight_quantizer._amax must not go through EP renumbering.
         elif re.search(r"\.weight\d+(?=$|\.)", param_name):
             param_name = _update_grouped_expert_number(param_name, "weight")
         elif re.search(r"\.bias\d+(?=$|\.)", param_name):

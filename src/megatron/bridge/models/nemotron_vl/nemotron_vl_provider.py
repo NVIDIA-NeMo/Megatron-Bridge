@@ -26,7 +26,7 @@ from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
 @dataclass
-class NemotronNano12Bv2VLModelProvider(MambaModelProvider):
+class NemotronVLModelProvider(MambaModelProvider):
     """Configuration provider for Nemotron-VL models.
 
     Inlines NemotronH + NemotronNano12Bv2 defaults directly.
