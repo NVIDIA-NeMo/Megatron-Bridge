@@ -441,9 +441,9 @@ def num_floating_point_operations(
             if cfg.model.moe_shared_expert_intermediate_size is None
             else cfg.model.moe_shared_expert_intermediate_size
         )
-        # SwiGLU: h->2*ffn_h and ffn_h->h = 3 projections; non-SwiGLU: h->ffn_h and ffn_h->h = 2 projections.
+        # GLU: h->2*ffn_h and ffn_h->h = 3 projections; non-GLU: h->ffn_h and ffn_h->h = 2 projections.
         ffn_expansion_factor = (
-            3 if (cfg.model.gated_linear_unit is True and cfg.model.activation_func == F.silu) else 2
+            3 if cfg.model.gated_linear_unit is True else 2
         )
 
         if cfg.model.multi_latent_attention:
