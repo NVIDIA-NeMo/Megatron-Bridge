@@ -14,10 +14,13 @@
 # limitations under the License.
 
 
+import json
 import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+from transformers.configuration_utils import PretrainedConfig
 
 
 # Add the src directory to Python path for imports
@@ -119,6 +122,33 @@ def test_copy_custom_modeling_files_nonexistent_source():
         print("✅ test_copy_custom_modeling_files_nonexistent_source passed")
 
 
+def test_hub_download_cleans_local_dir_cache():
+    """Test Hub downloads do not leave local_dir cache metadata in the export directory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+
+        def fake_hf_hub_download(repo_id, filename, local_dir, local_dir_use_symlinks):
+            del repo_id, local_dir_use_symlinks
+            local_dir = Path(local_dir)
+            (local_dir / filename).write_text("# downloaded file")
+            metadata_dir = local_dir / ".cache" / "huggingface" / "download"
+            metadata_dir.mkdir(parents=True)
+            (metadata_dir / f"{filename}.metadata").write_text("metadata")
+
+        base = MockPreTrainedBase()
+        with patch("huggingface_hub.list_repo_files", return_value=["nano_v3_reasoning_parser.py"]):
+            with patch("huggingface_hub.hf_hub_download", side_effect=fake_hf_hub_download):
+                copied_files = base._copy_custom_modeling_files(
+                    "org/repo", target_dir, file_patterns=["*reasoning_parser.py"]
+                )
+
+        assert copied_files == ["nano_v3_reasoning_parser.py"]
+        assert (target_dir / "nano_v3_reasoning_parser.py").exists()
+        assert not (target_dir / ".cache").exists()
+
+
 def test_save_artifacts_with_trust_remote_code_true():
     """Test save_artifacts preserves custom files when trust_remote_code=True."""
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -175,6 +205,53 @@ def test_save_artifacts_with_trust_remote_code_false():
         assert not (target_dir / "modeling_custom.py").exists()
 
         print("✅ test_save_artifacts_with_trust_remote_code_false passed")
+
+
+def test_save_artifacts_strips_auto_map_without_trust_remote_code():
+    """Test save_artifacts drops remote-code auto_map when remote code is not preserved."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        target_dir = tmp_path / "target"
+
+        base = MockPreTrainedBase(trust_remote_code=False)
+        config = PretrainedConfig()
+        config.auto_map = {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
+        base._config = config
+
+        base.save_artifacts(target_dir)
+
+        saved_config = json.loads((target_dir / "config.json").read_text())
+        assert "auto_map" not in saved_config
+        assert config.auto_map == {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
+
+
+def test_save_artifacts_preserves_auto_map_with_trust_remote_code():
+    """Test save_artifacts keeps auto_map when remote code is preserved."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        target_dir = tmp_path / "target"
+
+        base = MockPreTrainedBase(trust_remote_code=True)
+        config = PretrainedConfig()
+        config.auto_map = {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
+        base._config = config
+
+        base.save_artifacts(target_dir)
+
+        saved_config = json.loads((target_dir / "config.json").read_text())
+        assert saved_config["auto_map"] == {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
 
 
 def test_save_artifacts_without_model_name_or_path():
@@ -459,8 +536,11 @@ def main():
     try:
         test_copy_custom_modeling_files_basic()
         test_copy_custom_modeling_files_nonexistent_source()
+        test_hub_download_cleans_local_dir_cache()
         test_save_artifacts_with_trust_remote_code_true()
         test_save_artifacts_with_trust_remote_code_false()
+        test_save_artifacts_strips_auto_map_without_trust_remote_code()
+        test_save_artifacts_preserves_auto_map_with_trust_remote_code()
         test_save_artifacts_without_model_name_or_path()
         test_copy_handles_permission_errors()
 
