@@ -30,6 +30,9 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl._mcore_compat import (
+    ensure_mtp_checkpointed_forward_accepts_padding_mask,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLTransformerBlock
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -60,6 +63,9 @@ class Qwen3VLGPTModel(GPTModel):
         vp_stage: Optional[int] = None,
         pg_collection: ProcessGroupCollection = None,
     ) -> None:
+        if mtp_block_spec is not None:
+            ensure_mtp_checkpointed_forward_accepts_padding_mask()
+
         super().__init__(
             config=config,
             transformer_layer_spec=transformer_layer_spec,
