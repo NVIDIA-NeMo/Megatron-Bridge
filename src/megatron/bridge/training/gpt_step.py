@@ -39,6 +39,24 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 logger = logging.getLogger(__name__)
 
 
+def _uses_packed_sequence_metadata(cfg: ConfigContainer) -> bool:
+    """Return whether the dataset is expected to provide packed sequence metadata."""
+    dataset_cfg = getattr(cfg, "dataset", None)
+    packed_sequence_specs = getattr(dataset_cfg, "packed_sequence_specs", None)
+    if packed_sequence_specs is not None:
+        packed_sequence_size = getattr(packed_sequence_specs, "packed_sequence_size", None)
+        return packed_sequence_size is None or packed_sequence_size > 0
+
+    return getattr(dataset_cfg, "pack_sequences_in_batch", False)
+
+
+def _middle_pp_stage_needs_batch(cfg: ConfigContainer) -> bool:
+    """Return whether middle PP stages need batch metadata for attention."""
+    dataset_cfg = getattr(cfg, "dataset", None)
+    uses_custom_attention_mask = not getattr(dataset_cfg, "skip_getting_attention_mask_from_dataset", True)
+    return uses_custom_attention_mask or _uses_packed_sequence_metadata(cfg)
+
+
 def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int) -> dict[str, torch.Tensor]:
     """Partition THD/packed batches across context-parallel ranks.
 
@@ -166,12 +184,13 @@ def get_batch(
     # Determine pipeline stage role via process group collection
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
-    if (not is_first) and (not is_last):
+    is_middle = (not is_first) and (not is_last)
+    if is_middle and not _middle_pp_stage_needs_batch(cfg):
         return None, None, None, None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
-        use_mtp,
+        use_mtp and not is_middle,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
@@ -199,6 +218,50 @@ def get_batch(
         batch.get("cu_seqlens_unpadded"),
         batch.get("cu_seqlens_unpadded_argmin"),
     )
+
+
+def _get_total_tokens_from_cu_seqlens(
+    cu_seqlens: torch.Tensor,
+    cu_seqlens_argmin: torch.Tensor | None,
+) -> int | None:
+    """Derive the packed token count from cumulative sequence lengths."""
+    cu_seqlens = cu_seqlens.squeeze()
+    if cu_seqlens.numel() == 0:
+        return None
+
+    if cu_seqlens_argmin is not None:
+        argmin = int(cu_seqlens_argmin.squeeze().item())
+        if argmin > 0 and argmin <= cu_seqlens.numel():
+            return int(cu_seqlens[argmin - 1].item())
+
+    padding_positions = torch.nonzero(cu_seqlens < 0, as_tuple=False)
+    if padding_positions.numel() > 0:
+        first_padding_index = int(padding_positions.flatten()[0].item())
+        if first_padding_index == 0:
+            return 0
+        return int(cu_seqlens[first_padding_index - 1].item())
+
+    return int(cu_seqlens[-1].item())
+
+
+def _get_packed_total_tokens(
+    tokens: torch.Tensor | None,
+    labels: torch.Tensor | None,
+    cu_seqlens: torch.Tensor,
+    cu_seqlens_argmin: torch.Tensor | None,
+    config,
+) -> int | None:
+    """Return total tokens for hybrid packed sequence params."""
+    if tokens is not None:
+        return tokens.size(1)
+    if labels is not None:
+        return labels.size(1)
+
+    total_tokens = _get_total_tokens_from_cu_seqlens(cu_seqlens, cu_seqlens_argmin)
+    if total_tokens is not None:
+        return total_tokens
+
+    return getattr(config, "seq_length", None)
 
 
 def _forward_step_common(
@@ -258,7 +321,9 @@ def _forward_step_common(
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.
         if getattr(config, "is_hybrid_model", False):
-            packed_seq_params["total_tokens"] = tokens.size(1) if tokens is not None else labels.size(1)
+            packed_seq_params["total_tokens"] = _get_packed_total_tokens(
+                tokens, labels, cu_seqlens, cu_seqlens_argmin, config
+            )
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     with straggler_timer:
