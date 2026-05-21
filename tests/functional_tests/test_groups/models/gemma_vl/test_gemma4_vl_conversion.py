@@ -297,7 +297,7 @@ class TestGemma4VLConversion:
 
 
 class TestGemma4DenseVLConversion:
-    """Round-trip conversion test for the Gemma 4 VL MoE bridge."""
+    """Round-trip conversion test for the Gemma 4 VL Dense  bridge."""
 
     @pytest.fixture(scope="class")
     def gemma4_vl_toy_dense_model_path(self, tmp_path_factory):

@@ -79,8 +79,8 @@ class Gemma4VLBridge(MegatronModelBridge):
             text_config, "hidden_size_per_layer_input", 0
         ):
             raise ValueError(
-                f"Gemma4VLBridge only supports MoE models (enable_moe_block=True) or model without hidden_size_per_layer_input. "
-                f"Model '{getattr(hf_config, '_name_or_path', 'unknown')}' has enable_moe_block=False and hidden_size_per_layer_input={getattr(text_config, 'hidden_size_per_layer_input')}."
+                f"Gemma4VLBridge only supports MoE models (enable_moe_block=True) or dense model withouts per-layer hidden sizes. "
+                f"Model '{getattr(hf_config, '_name_or_path', 'unknown')}' has enable_moe_block=False and hidden_size_per_layer_input={getattr(text_config, 'hidden_size_per_layer_input')}. "
                 f"Dense Gemma 4 models require per-layer ffn_hidden_size support in MCore, "
                 f"which is not yet implemented."
             )

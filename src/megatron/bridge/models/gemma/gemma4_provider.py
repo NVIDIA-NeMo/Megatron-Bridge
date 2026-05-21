@@ -346,7 +346,7 @@ def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") 
     :meth:`Gemma4SelfAttention.get_query_key_value_tensors` can enforce V=K in
     the forward pass.
 
-    K-V sharing is decided base on attention_k_eq_v field.
+    K-V sharing is decided based on attention_k_eq_v field.
     Must be called after model construction so that the
     attention modules are already built.
 
