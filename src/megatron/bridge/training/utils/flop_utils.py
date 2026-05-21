@@ -522,7 +522,15 @@ def num_floating_point_operations(
                     effective_window = window_size[0] + window_size[1] + 1
                 else:
                     effective_window = window_size
-                swa_context = min(effective_window, effective_seq_length)
+                # Exact average causal SWA context:
+                # W * (W + 1) / 2 + (T - W) * W if W < T, else T * (T + 1) / 2.
+                # Both expressions are divided by T because the multiplication with T happens later.
+                if effective_window < effective_seq_length:
+                    swa_context = effective_window - effective_window * (effective_window - 1) / (
+                        2 * effective_seq_length
+                    )
+                else:
+                    swa_context = core_attn_seq_factor / 2
 
                 if window_attn_skip_freq is None:
                     num_swa_layers = num_layers
@@ -540,9 +548,8 @@ def num_floating_point_operations(
                     num_full_attn_layers = num_layers
 
                 # Full attention is quadratic in seq_len -> use core_attn_seq_factor.
-                # SWA core is bounded by window_size, so keep the averaged bound.
                 full_core = query_projection_size * core_attn_seq_factor / 2 * 2
-                swa_core = query_projection_size * swa_context / 2 * 2
+                swa_core = query_projection_size * swa_context * 2
 
                 self_attn_term = (
                     3
