@@ -35,6 +35,7 @@ from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, L
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
 from megatron.bridge.training.utils.checkpoint_utils import file_exists
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -46,6 +47,30 @@ HF_BASED_TOKENIZERS = [
     "GPT2BPETokenizer",
     "HuggingFaceTokenizer",
 ]
+
+
+def _uses_hybrid_rng_tracker(model_cfg: Any) -> bool:
+    is_hybrid_model = getattr(model_cfg, "is_hybrid_model", False)
+    if isinstance(is_hybrid_model, bool) and is_hybrid_model:
+        return True
+
+    hybrid_layer_pattern = getattr(model_cfg, "hybrid_layer_pattern", None)
+    return isinstance(hybrid_layer_pattern, str) and bool(hybrid_layer_pattern)
+
+
+def _disable_cuda_graphs_for_hybrid_load(model_cfg: Any) -> None:
+    if not _uses_hybrid_rng_tracker(model_cfg):
+        return
+
+    for name, value in (
+        ("cuda_graph_impl", "none"),
+        ("enable_cuda_graph", False),
+        ("external_cuda_graph", False),
+    ):
+        if hasattr(model_cfg, name):
+            setattr(model_cfg, name, value)
+    if hasattr(model_cfg, "cuda_graph_scope") or hasattr(model_cfg, "cuda_graph_modules"):
+        clear_cuda_graph_modules(model_cfg)
 
 
 def torch_dtype_from_mcore_config(config: Any) -> torch.dtype:
@@ -417,6 +442,7 @@ def load_megatron_model(
     model_cfg.hierarchical_context_parallel_sizes = None
     model_cfg.overlap_moe_expert_parallel_comm = False  # Required with EP=1
     model_cfg.delay_wgrad_compute = False  # Required with overlap=False
+    _disable_cuda_graphs_for_hybrid_load(model_cfg)
     if use_cpu_init:
         model_cfg.fp8 = None
         model_cfg.fp8_param = False

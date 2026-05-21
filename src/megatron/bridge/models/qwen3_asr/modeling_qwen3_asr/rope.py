@@ -32,8 +32,8 @@ def get_rope_index(
         attention_mask: Attention mask of shape (batch_size, sequence_length).
 
     Returns:
-        position_ids: Position IDs of shape (3, batch_size, sequence_length).
-        mrope_position_deltas: Position deltas of shape (batch_size, 1).
+        Tuple containing ``position_ids`` of shape ``(3, batch_size, sequence_length)``
+        and ``mrope_position_deltas`` of shape ``(batch_size, 1)``.
     """
     if attention_mask is None:
         attention_mask = torch.ones_like(input_ids)

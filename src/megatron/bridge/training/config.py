@@ -30,7 +30,6 @@ from megatron.core.optimizer import (
     ParamKey,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
@@ -139,6 +138,13 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     """Use ProcessGroupCollection passed through functions instead of relying on mcore's
     global parallel state (mpu) variables. When True, parallel groups are obtained from
     the pg_collection object rather than the global megatron.core.parallel_state module."""
+
+    eval_context_parallel_size: int | None = None
+    """If set and different from model.context_parallel_size, validation runs with this CP
+    degree instead of the training CP degree. Requires use_decentralized_pg=True. The caller
+    is responsible for constructing a separate eval ProcessGroupCollection and wiring it
+    through GlobalState or the evaluate() call. See eval_context_parallel_rebinding.py
+    and the examples/training_features/decentralized_pg/pretrain_qwen3_eval_cp.py showcase."""
 
     @property
     def lazy_init(self) -> bool:
@@ -706,6 +712,12 @@ class LoggerConfig(MTrainLoggerConfig):
     mlflow_tags: Optional[dict[str, str]] = None
     """Optional tags to apply to the MLFlow run."""
 
+    mlflow_description: Optional[str] = None
+    """Optional description for the MLFlow run, rendered in the UI Description panel."""
+
+    mlflow_log_artifacts: bool = True
+    """Whether to upload checkpoint artifacts to MLFlow via HTTP after each save."""
+
     comet_project: Optional[str] = None
     """The Comet ML project name. Comet logging is disabled when this is None."""
 
@@ -735,6 +747,7 @@ class LoggerConfig(MTrainLoggerConfig):
                 self.mlflow_run_name,
                 self.mlflow_tracking_uri,
                 self.mlflow_tags,
+                self.mlflow_description,
             ]
         )
 
@@ -1070,10 +1083,6 @@ class ConfigContainer(Container):
         if not getattr(self.model, "deterministic_mode", False):
             return
 
-        # Disallow flash attention when running deterministically
-        if getattr(self.model, "attention_backend", None) == AttnBackend.flash:
-            raise AssertionError("Flash attention can not be used in deterministic mode.")
-
         # Disallow cross-entropy loss fusion as it is not deterministic
         assert not getattr(self.model, "cross_entropy_loss_fusion", False), (
             "Cross Entropy Fusion is currently not deterministic."
@@ -1217,6 +1226,19 @@ class ConfigContainer(Container):
         if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
             self._validate_and_apply_megatron_fsdp_configs()
 
+        # Validate reuse_grad_buf_for_mxfp8_param_ag when FSDP is not enabled
+        is_fsdp = self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+        if (
+            not is_fsdp
+            and self.mixed_precision is not None
+            and self.mixed_precision.fp8_param_gather
+            and self.mixed_precision.fp8_recipe == "mxfp8"
+        ):
+            assert self.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag, (
+                "When fp8_param_gather=True and fp8_recipe='mxfp8', "
+                "reuse_grad_buf_for_mxfp8_param_ag must be set to True"
+            )
+
         # Deterministic mode validations and settings
         self._validate_and_apply_deterministic_mode()
 
@@ -1277,7 +1299,9 @@ class ConfigContainer(Container):
                 # If using distributed optimizer, must use distributed checkpointing.
                 # Legacy checkpointing uses Gloo process groups to collect full distributed
                 # optimizer state in the CPU memory of DP rank 0.
-                assert self.checkpoint.ckpt_format == "torch_dist"
+                assert self.checkpoint.ckpt_format in ["torch_dist", "fsdp_dtensor"], (
+                    "Legacy checkpointing requires ckpt_format='torch_dist' or 'fsdp_dtensor'"
+                )
 
         # Cross-validation between training and scheduler configs
         self._validate_training_scheduler_compatibility()

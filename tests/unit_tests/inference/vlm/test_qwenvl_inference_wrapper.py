@@ -34,6 +34,7 @@ class TestQwenVLInferenceWrapper:
         with patch.object(QwenVLInferenceWrapper, "__init__", lambda self, *args, **kwargs: None):
             wrapper = QwenVLInferenceWrapper.__new__(QwenVLInferenceWrapper)
             wrapper.model = mock_model
+            wrapper.inference_context = MagicMock()
             wrapper.inference_params = None
             return wrapper
 
@@ -121,5 +122,9 @@ class TestQwenVLInferenceWrapper:
 
         result = wrapper.forward_pass_without_pipeline_parallel(inference_input)
 
-        wrapper.model.assert_called_once()
+        wrapper.model.assert_called_once_with(
+            **inference_input,
+            inference_context=wrapper.inference_context,
+            runtime_gather_output=True,
+        )
         assert result.equal(torch.tensor([[[0.1, 0.9]]]))

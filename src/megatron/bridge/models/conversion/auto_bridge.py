@@ -60,7 +60,9 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForCausalLM",
     "ForConditionalGeneration",
     "NemotronH_Nano_VL_V2",
+    "NemotronH_Nano_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
+    "MinistralDiffEncoderModel",  # required for NemotronLabsDiffusion
 )
 
 # Mapping from non-standard HF architecture names to their actual transformers class names.
@@ -1487,7 +1489,7 @@ class AutoBridge(Generic[MegatronModelT]):
             return self.hf_pretrained
         return self._config_only_pretrained
 
-    @cached_property
+    @property
     def _causal_lm_architecture(self):
         """Resolve the model's CausalLM architecture for dispatch.
 

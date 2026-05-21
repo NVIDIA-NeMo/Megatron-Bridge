@@ -54,29 +54,3 @@ class MistralModelProvider(GPTModelProvider):
     params_dtype: torch.dtype = torch.bfloat16
     vocab_size: int = 32768
     bf16: bool = True
-
-
-# =============================================================================
-# Mistral Small 3 24B Model Providers
-# =============================================================================
-
-
-@dataclass
-class MistralSmall3ModelProvider24B(MistralModelProvider):
-    """
-    Config for Mistral Small 3 24B: https://huggingface.co/mistralai/Mistral-Small-24B-Instruct-2501
-    """
-
-    num_layers: int = 40
-    hidden_size: int = 5120
-    ffn_hidden_size: int = 32768
-    num_attention_heads: int = 32
-    kv_channels: int = 128
-    seq_length: int = 32768
-
-    window_size: List[int] = None
-    cp_comm_type: str = None
-    rotary_percent: float = 1.0
-    rotary_base: float = 100000000.0
-    params_dtype: torch.dtype = torch.bfloat16
-    vocab_size: int = 131072
