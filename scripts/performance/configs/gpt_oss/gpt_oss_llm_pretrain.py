@@ -18,7 +18,7 @@ from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 from utils.utils import get_workload_base_config
 
-from megatron.bridge.recipes.gpt_oss import gpt_oss_120b_pretrain_config
+from megatron.bridge.recipes.gpt_oss import gpt_oss_20b_pretrain_config, gpt_oss_120b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
@@ -35,6 +35,120 @@ def set_gpt_oss_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.model.moe_router_force_load_balancing = True
 
+def gpt_oss_20b_pretrain_config_b200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """B200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="gpt_oss",
+        model_recipe_name="gpt_oss_20b",
+        gpu="b200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = gpt_oss_20b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+    set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+def gpt_oss_20b_pretrain_config_b300(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """B300, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="gpt_oss",
+        model_recipe_name="gpt_oss_20b",
+        gpu="b300",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = gpt_oss_20b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+    set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+def gpt_oss_20b_pretrain_config_gb200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """GB200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="gpt_oss",
+        model_recipe_name="gpt_oss_20b",
+        gpu="gb200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = gpt_oss_20b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+    set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+def gpt_oss_20b_pretrain_config_gb300(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """GB300, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="gpt_oss",
+        model_recipe_name="gpt_oss_20b",
+        gpu="gb300",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = gpt_oss_20b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+    set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+def gpt_oss_20b_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="gpt_oss",
+        model_recipe_name="gpt_oss_20b",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = gpt_oss_20b_pretrain_config()
+    cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+    set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
 
 def gpt_oss_120b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"

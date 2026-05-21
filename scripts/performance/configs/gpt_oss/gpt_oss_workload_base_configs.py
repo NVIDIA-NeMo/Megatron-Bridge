@@ -29,6 +29,15 @@ from dataclasses import replace
 from utils.utils import WorkloadBaseConfig
 
 
+BASE_GPT_OSS_20B_CONFIG = WorkloadBaseConfig(
+    num_gpus=8,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=1,
+    global_batch_size=16,
+    micro_batch_size=2,
+)
+
+
 BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
     num_gpus=64,
     expert_model_parallel_size=8,
@@ -39,6 +48,59 @@ BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
 
 
 # =============================================================================
+# GPT-OSS 20B Pretrain
+# =============================================================================
+
+GPT_OSS_20B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
+    BASE_GPT_OSS_20B_CONFIG,
+    expert_model_parallel_size=2,
+)
+
+GPT_OSS_20B_PRETRAIN_CONFIG_B200_FP8_MX_V1 = BASE_GPT_OSS_20B_CONFIG
+
+GPT_OSS_20B_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
+    BASE_GPT_OSS_20B_CONFIG,
+    expert_model_parallel_size=2,
+    micro_batch_size=3,
+    global_batch_size=24,
+)
+
+GPT_OSS_20B_PRETRAIN_CONFIG_B300_FP8_MX_V1 = replace(
+    BASE_GPT_OSS_20B_CONFIG,
+    micro_batch_size=3,
+    global_batch_size=24,
+)
+
+GPT_OSS_20B_PRETRAIN_CONFIG_GB200_BF16_V1 = replace(
+    BASE_GPT_OSS_20B_CONFIG,
+    expert_model_parallel_size=2,
+)
+
+GPT_OSS_20B_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = BASE_GPT_OSS_20B_CONFIG
+
+GPT_OSS_20B_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
+    BASE_GPT_OSS_20B_CONFIG,
+    expert_model_parallel_size=2,
+    micro_batch_size=3,
+    global_batch_size=24,
+)
+
+GPT_OSS_20B_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
+    BASE_GPT_OSS_20B_CONFIG,
+    micro_batch_size=3,
+    global_batch_size=24,
+)
+
+GPT_OSS_20B_PRETRAIN_CONFIG_VR200_BF16_V1 = replace(
+    BASE_GPT_OSS_20B_CONFIG,
+    expert_model_parallel_size=2,
+    micro_batch_size=3,
+    global_batch_size=24,
+)
+
+GPT_OSS_20B_PRETRAIN_CONFIG_VR200_FP8_MX_V1 = GPT_OSS_20B_PRETRAIN_CONFIG_VR200_BF16_V1
+
+
 # GPT-OSS 120B Pretrain - V1 (GBS=512)
 # =============================================================================
 
@@ -137,6 +199,17 @@ GPT_OSS_120B_PRETRAIN_CONFIG_VR200_FP8_MX_V2 = GPT_OSS_120B_PRETRAIN_CONFIG_GB20
 
 
 __all__ = [
+    # 20B
+    "GPT_OSS_20B_PRETRAIN_CONFIG_B200_BF16_V1",
+    "GPT_OSS_20B_PRETRAIN_CONFIG_B200_FP8_MX_V1",
+    "GPT_OSS_20B_PRETRAIN_CONFIG_B300_BF16_V1",
+    "GPT_OSS_20B_PRETRAIN_CONFIG_B300_FP8_MX_V1",
+    "GPT_OSS_20B_PRETRAIN_CONFIG_GB200_BF16_V1",
+    "GPT_OSS_20B_PRETRAIN_CONFIG_GB200_FP8_MX_V1",
+    "GPT_OSS_20B_PRETRAIN_CONFIG_GB300_BF16_V1",
+    "GPT_OSS_20B_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
+    "GPT_OSS_20B_PRETRAIN_CONFIG_VR200_BF16_V1",
+    "GPT_OSS_20B_PRETRAIN_CONFIG_VR200_FP8_MX_V1",
     # V1 (GBS=512)
     "GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V1",
     "GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
