@@ -879,6 +879,101 @@ def _convert_to_openai_messages(source: dict) -> list[dict]:
     return chat
 
 
+def _derive_assistant_mask_via_prefix_diff(
+    chat: list[dict],
+    tokenizer: Any,
+    tools: Optional[list[Any]],
+    full_ids: list[int],
+) -> list[int]:
+    """Derive an assistant-only loss mask without relying on `{% generation %}` markers.
+
+    When a tokenizer's chat_template lacks `{% generation %}...{% endgeneration %}` blocks,
+    `apply_chat_template(..., return_assistant_tokens_mask=True)` silently returns an all-ones
+    mask, which would cause SFT loss to be computed on every token (system / user / tool /
+    assistant). This helper instead reconstructs the mask by re-rendering message prefixes:
+
+      1. For each assistant message at index ``i``, render ``chat[:i]`` with
+         ``add_generation_prompt=True`` — this ends with the assistant-header tokens
+         (e.g. ``<|im_start|>assistant\\n``).
+      2. Render ``chat[:i + 1]`` — this is the same prefix plus the assistant content
+         and any closing tokens (e.g. ``<|im_end|>``).
+      3. Mark ``mask[len(prefix) : len(with_assistant)]`` as ``1``. Role-header tokens
+         remain in the prefix and are therefore masked out; the closing turn token is
+         included in the loss, matching the convention used by templates that ship
+         ``{% generation %}`` blocks.
+
+    The function validates that each incremental rendering extends the previous one and
+    matches the full conversation rendering. Templates that fail this property (e.g. ones
+    that emit running summaries) are not safely incrementally renderable, and a
+    ``ValueError`` is raised so the caller can fix the template instead of training on a
+    wrong mask.
+
+    Args:
+        chat: Conversation in OpenAI ``messages`` format
+            (``[{"role": ..., "content": ...}, ...]``).
+        tokenizer: A HuggingFace ``PreTrainedTokenizerBase`` (or compatible) exposing
+            ``apply_chat_template``.
+        tools: Optional tool schema list forwarded to ``apply_chat_template``.
+        full_ids: Token IDs produced by rendering the entire ``chat``; used to size the
+            mask and to validate prefix consistency.
+
+    Returns:
+        A list of ``int`` (0 / 1) with the same length as ``full_ids``, where ``1`` marks
+        tokens that belong to an assistant turn (content + closing tokens).
+
+    Raises:
+        ValueError: If the chat template is not incrementally renderable
+            (rendering ``chat[:i]`` is not a prefix of rendering ``chat[:i + 1]``,
+            or of ``full_ids``).
+    """
+    mask = [0] * len(full_ids)
+    full_ids_list = list(full_ids)
+
+    for i, msg in enumerate(chat):
+        if msg.get("role") != "assistant":
+            continue
+
+        prefix_ids = list(
+            tokenizer.apply_chat_template(
+                chat[:i],
+                tools=tools,
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+        )
+        with_assistant_ids = list(
+            tokenizer.apply_chat_template(
+                chat[: i + 1],
+                tools=tools,
+                tokenize=True,
+            )
+        )
+
+        prefix_len = len(prefix_ids)
+        end = len(with_assistant_ids)
+
+        # The chat template must be incrementally renderable: rendering with one more
+        # message is required to extend the previous rendering, and the full rendering
+        # must agree with the intermediate one up to `end`.
+        if (
+            end <= prefix_len
+            or with_assistant_ids[:prefix_len] != prefix_ids
+            or full_ids_list[:end] != with_assistant_ids
+        ):
+            raise ValueError(
+                "Chat template is not incrementally renderable, so an assistant-only loss "
+                "mask cannot be derived without a `{% generation %}` block. Patch the "
+                "chat_template to wrap assistant content with "
+                "`{% generation %}...{% endgeneration %}`, or use the legacy special-tokens "
+                "preprocessing path (`use_hf_tokenizer_chat_template=False`)."
+            )
+
+        for j in range(prefix_len, min(end, len(mask))):
+            mask[j] = 1
+
+    return mask
+
+
 def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: Optional[list[Any]] = None) -> dict:
     """
     Preprocess messages to apply chat template and tokenize. Returns a dictionary of tokens.
@@ -931,32 +1026,32 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
     if getattr(tokenizer, "legacy", False):
         tokenizer = tokenizer._tokenizer
 
-    # assistant mask only works if chat template has generation keyword
+    # The fast path uses HF's native return_assistant_tokens_mask, which only works when
+    # the chat_template explicitly marks assistant content with {% generation %} blocks.
+    # Many widely used tokenizers (e.g. Nemotron-3-Nano, older Llama variants) ship templates
+    # without those markers; for those we derive the mask by re-rendering message prefixes
+    # so loss is still computed only on assistant tokens. See _derive_assistant_mask_via_prefix_diff.
     template_has_generation_kwd = GENERATION_REGEX.search(tokenizer.chat_template) is not None
 
-    if not template_has_generation_kwd:
-        raise ValueError(
-            "The tokenizer's chat_template does not contain a {% generation %} block, which is required "
-            "for HF's apply_chat_template to produce assistant-only loss masks via "
-            "return_assistant_tokens_mask=True. Without it, the loss mask would silently fall back to "
-            "all-ones (loss computed on the entire conversation including system/user tokens). "
-            "To fix this, either: (1) patch the chat_template to wrap assistant content with "
-            "{% generation %}...{% endgeneration %}, or (2) use the legacy special-tokens preprocessing "
-            "path instead of use_hf_tokenizer_chat_template=True."
+    if template_has_generation_kwd:
+        tokenized_chat = tokenizer.apply_chat_template(
+            chat,
+            tools=tools,
+            tokenize=True,
+            return_dict=True,
+            return_assistant_tokens_mask=True,
         )
-
-    tokenized_chat = tokenizer.apply_chat_template(
-        chat,
-        tools=tools,
-        tokenize=True,
-        return_dict=True,
-        return_assistant_tokens_mask=True,
-    )
-
-    # Choose the last conversation as answer other history are context by finding the last masked token
-    # which indicates end of context and beginning of answer
-    input_ids = tokenized_chat.get("input_ids")
-    mask = tokenized_chat["assistant_masks"]
+        input_ids = tokenized_chat.get("input_ids")
+        mask = tokenized_chat["assistant_masks"]
+    else:
+        tokenized_chat = tokenizer.apply_chat_template(
+            chat,
+            tools=tools,
+            tokenize=True,
+            return_dict=True,
+        )
+        input_ids = tokenized_chat.get("input_ids")
+        mask = _derive_assistant_mask_via_prefix_diff(chat, tokenizer, tools, input_ids)
 
     if 0 in mask:
         # traverse the list backward for first occurrence of masked token

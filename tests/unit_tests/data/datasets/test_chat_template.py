@@ -21,7 +21,11 @@ import pytest
 import torch
 
 from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTPackedDataset, create_sft_dataset
-from megatron.bridge.data.datasets.utils import _chat_preprocess, _convert_to_openai_messages
+from megatron.bridge.data.datasets.utils import (
+    _chat_preprocess,
+    _convert_to_openai_messages,
+    _derive_assistant_mask_via_prefix_diff,
+)
 
 
 class TestConvertToOpenAIMessages:
@@ -129,21 +133,53 @@ class TestChatPreprocess:
         # Verify apply_chat_template was called
         mock_hf_tokenizer.apply_chat_template.assert_called_once()
 
-    def test_chat_preprocess_without_generation_keyword(self):
-        """Test chat preprocessing raises when template lacks generation keyword."""
+    def test_chat_preprocess_without_generation_keyword_uses_prefix_diff_fallback(self):
+        """When the template lacks `{% generation %}`, the mask is derived via prefix diff.
+
+        Regression for issue #2598: previously this path produced a silent all-ones mask
+        (now: derive the assistant mask by re-rendering message prefixes so SFT loss is
+        still computed only on assistant tokens for tokenizers like Nemotron-3-Nano).
+        """
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
         mock_tokenizer = mock_hf_tokenizer
         mock_tokenizer.eos_id = 2
         mock_tokenizer.legacy = False
 
-        # Chat template without generation keyword
+        # Template without {% generation %} marker.
         mock_hf_tokenizer.chat_template = "{{ messages }}"
 
-        source = {"conversations": [{"from": "User", "value": "Test"}]}
+        # Simulated tokenizer output that is incrementally renderable:
+        #   chat[:1] + add_generation_prompt -> [10, 20]                  (user + assistant header)
+        #   chat[:2]                          -> [10, 20, 30, 40, 50]     (+ assistant content + eos)
+        def fake_apply(messages, *, tools=None, tokenize=True, return_dict=False, add_generation_prompt=False, **_):
+            if len(messages) == 0:
+                ids = []
+            elif len(messages) == 1 and add_generation_prompt:
+                ids = [10, 20]
+            elif len(messages) == 2:
+                ids = [10, 20, 30, 40, 50]
+            else:
+                raise AssertionError(f"unexpected call: messages={messages}, add_gen={add_generation_prompt}")
+            return {"input_ids": ids} if return_dict else ids
 
-        with pytest.raises(ValueError, match="does not contain a .* generation .* block"):
-            _chat_preprocess(source, mock_tokenizer)
+        mock_hf_tokenizer.apply_chat_template.side_effect = fake_apply
+
+        source = {
+            "conversations": [
+                {"from": "User", "value": "Hi"},
+                {"from": "Assistant", "value": "Hello"},
+            ]
+        }
+
+        result = _chat_preprocess(source, mock_tokenizer)
+
+        assert result["input_ids"].tolist() == [10, 20, 30, 40, 50]
+        # Only the assistant content + closing tokens (indices 2..5) are unmasked.
+        assert result["loss_mask"].tolist() == [False, False, True, True, True]
+        # Context ends at the last masked-out token; answer is the assistant span.
+        assert result["context_ids"].tolist() == [10, 20]
+        assert result["answer_ids"].tolist() == [30, 40, 50]
 
     def test_chat_preprocess_trusts_template_eos(self):
         """Test that _chat_preprocess does not append eos_id when template uses a different end token."""
@@ -198,6 +234,181 @@ class TestChatPreprocess:
 
         with pytest.raises(ValueError, match="Cannot apply chat template"):
             _chat_preprocess(source, mock_tokenizer)
+
+
+class _IncrementalTokenizer:
+    """Minimal stand-in for an HF tokenizer used by _derive_assistant_mask_via_prefix_diff.
+
+    Mimics a ChatML-shaped template:
+
+    * Every assistant message renders as ``[ASSISTANT_HEADER, *content, CLOSE]`` — the
+      role-marker tokens are part of the message itself, exactly like real templates emit
+      ``<|im_start|>assistant\\n`` before the assistant's text.
+    * Non-assistant messages render as ``[*content, CLOSE]``.
+    * ``add_generation_prompt=True`` appends ``ASSISTANT_HEADER`` at the end.
+
+    This shape guarantees that ``apply_chat_template(chat[:i], add_generation_prompt=True)``
+    is a true prefix of ``apply_chat_template(chat[:i + 1])`` whenever ``chat[i]`` is an
+    assistant message — the property the prefix-diff algorithm relies on.
+    """
+
+    # Assistant role-marker tokens (e.g. ``<|im_start|>assistant\n`` in a real tokenizer).
+    ASSISTANT_HEADER: list[int] = [777]
+    # Closing tokens appended after each message (e.g. ``<|im_end|>\n``).
+    CLOSE: list[int] = [999]
+
+    def __init__(self, content_ids_by_index: list[list[int]]):
+        self._content = content_ids_by_index
+
+    def apply_chat_template(
+        self,
+        messages,
+        *,
+        tools=None,
+        tokenize=True,
+        return_dict=False,
+        add_generation_prompt=False,
+        **_,
+    ):
+        ids: list[int] = []
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "assistant":
+                ids.extend(self.ASSISTANT_HEADER)
+            ids.extend(self._content[i])
+            ids.extend(self.CLOSE)
+        if add_generation_prompt:
+            ids.extend(self.ASSISTANT_HEADER)
+        return {"input_ids": ids} if return_dict else ids
+
+
+class TestDeriveAssistantMaskViaPrefixDiff:
+    """Direct unit coverage for the prefix-diff fallback (issue #2598)."""
+
+    def test_single_turn_marks_only_assistant(self):
+        chat = [
+            {"role": "user", "content": "u"},
+            {"role": "assistant", "content": "a"},
+        ]
+        # content per message: user=[1, 2], assistant=[3, 4, 5]
+        tok = _IncrementalTokenizer([[1, 2], [3, 4, 5]])
+        full = tok.apply_chat_template(chat)
+
+        mask = _derive_assistant_mask_via_prefix_diff(chat, tok, tools=None, full_ids=full)
+
+        # Full rendering:   [1, 2, 999, 777, 3, 4, 5, 999] — len 8
+        # Prefix (add_gen): [1, 2, 999, 777]               — len 4 (user content + close + asst header)
+        # mask[4:8] = 1 → the assistant content + closing turn token.
+        assert full == [1, 2, 999, 777, 3, 4, 5, 999]
+        assert mask == [0, 0, 0, 0, 1, 1, 1, 1]
+
+    def test_multi_turn_marks_each_assistant_span(self):
+        chat = [
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "u2"},
+            {"role": "assistant", "content": "a2"},
+        ]
+        tok = _IncrementalTokenizer([[1], [2], [3], [4]])
+        full = tok.apply_chat_template(chat)
+
+        mask = _derive_assistant_mask_via_prefix_diff(chat, tok, tools=None, full_ids=full)
+
+        # Indexing (close=999, asst_header=777):
+        #   [1, 999, 777, 2, 999, 3, 999, 777, 4, 999]
+        #    0   1    2   3   4   5   6    7   8   9
+        # First assistant span: indices 3..5 (content + close).
+        # Second assistant span: indices 8..10.
+        assert mask == [0, 0, 0, 1, 1, 0, 0, 0, 1, 1]
+
+    def test_system_prompt_is_never_marked(self):
+        chat = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": "u"},
+            {"role": "assistant", "content": "a"},
+        ]
+        tok = _IncrementalTokenizer([[1], [2], [3]])
+        full = tok.apply_chat_template(chat)
+
+        mask = _derive_assistant_mask_via_prefix_diff(chat, tok, tools=None, full_ids=full)
+
+        # Render: [1, 999, 2, 999, 777, 3, 999] — assistant span = indices 5..7.
+        assert mask == [0, 0, 0, 0, 0, 1, 1]
+
+    def test_tool_message_between_assistants_is_not_marked(self):
+        chat = [
+            {"role": "user", "content": "u"},
+            {"role": "assistant", "content": "call"},
+            {"role": "tool", "content": "result"},
+            {"role": "assistant", "content": "ans"},
+        ]
+        tok = _IncrementalTokenizer([[1], [2], [3], [4]])
+        full = tok.apply_chat_template(chat)
+
+        mask = _derive_assistant_mask_via_prefix_diff(chat, tok, tools=None, full_ids=full)
+
+        # Render: [1, 999, 777, 2, 999, 3, 999, 777, 4, 999]
+        #          0   1    2   3   4   5   6    7   8   9
+        # Tool message (index 2 in `chat`) is treated like any non-assistant turn — its
+        # tokens (5, 6) are masked out. Both assistant spans are unmasked, and the
+        # assistant header tokens (indices 2 and 7) live in the respective prefixes so
+        # they stay masked. Result is the same shape as a plain multi-turn alternation.
+        assert full == [1, 999, 777, 2, 999, 3, 999, 777, 4, 999]
+        assert mask == [0, 0, 0, 1, 1, 0, 0, 0, 1, 1]
+
+    def test_non_incremental_template_raises(self):
+        chat = [
+            {"role": "user", "content": "u"},
+            {"role": "assistant", "content": "a"},
+        ]
+
+        # Pathological tokenizer: rendering chat[:1] returns ids that are NOT a prefix of
+        # rendering chat[:2]. Simulates templates that emit running summaries / re-order.
+        class BadTokenizer:
+            def apply_chat_template(self, messages, *, tools=None, tokenize=True, return_dict=False, add_generation_prompt=False, **_):
+                if len(messages) == 0:
+                    ids = []
+                elif len(messages) == 1:
+                    ids = [100, 200, 300]  # bogus prefix not contained in full
+                else:
+                    ids = [1, 2, 3, 4, 5]
+                return {"input_ids": ids} if return_dict else ids
+
+        bad = BadTokenizer()
+        full = bad.apply_chat_template(chat)
+
+        with pytest.raises(ValueError, match="not incrementally renderable"):
+            _derive_assistant_mask_via_prefix_diff(chat, bad, tools=None, full_ids=full)
+
+    def test_no_assistant_messages_returns_zero_mask(self):
+        chat = [{"role": "user", "content": "u"}]
+        tok = _IncrementalTokenizer([[1]])
+        full = tok.apply_chat_template(chat)
+
+        mask = _derive_assistant_mask_via_prefix_diff(chat, tok, tools=None, full_ids=full)
+
+        assert mask == [0] * len(full)
+
+    def test_tools_are_forwarded_to_template(self):
+        chat = [
+            {"role": "user", "content": "u"},
+            {"role": "assistant", "content": "a"},
+        ]
+        seen_tools = []
+
+        class ToolCapturingTokenizer(_IncrementalTokenizer):
+            def apply_chat_template(self, messages, *, tools=None, **kwargs):
+                seen_tools.append(tools)
+                return super().apply_chat_template(messages, tools=tools, **kwargs)
+
+        tok = ToolCapturingTokenizer([[1], [2]])
+        full = tok.apply_chat_template(chat, tools=None)
+        tool_schemas = [{"type": "function", "function": {"name": "f"}}]
+        _derive_assistant_mask_via_prefix_diff(chat, tok, tools=tool_schemas, full_ids=full)
+
+        # The helper makes two extra calls (prefix + with_assistant) per assistant turn,
+        # both must receive the tool schemas.
+        assert seen_tools[-1] == tool_schemas
+        assert seen_tools[-2] == tool_schemas
 
 
 class TestGPTSFTChatDataset:
