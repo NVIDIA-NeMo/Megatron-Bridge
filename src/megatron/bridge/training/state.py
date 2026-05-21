@@ -278,7 +278,7 @@ class GlobalState:
                         tags=tags or None,
                         description=logger_cfg.mlflow_description,
                     )
-  
+
                     # Mark the run FAILED on uncaught Python exceptions.
                     # Local import: mlflow_utils → checkpoint_utils → state forms a
                     # cycle if install_mlflow_failure_hook is imported at module top.
