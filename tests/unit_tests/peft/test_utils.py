@@ -28,6 +28,7 @@ import torch.nn as nn
 from megatron.core.dist_checkpointing.mapping import ShardedTensorFactory
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 
+from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.utils import (
     GroupedExpertLinearAdapter,
     ParallelLinearAdapter,
@@ -1085,3 +1086,210 @@ class TestGroupedExpertLinearAdapter:
         assert sharded_weight.global_shape == (4, 2, 2)
         assert sharded_weight.global_offset == (2, 0, 0)
         assert sharded_weight.replica_id == (0, 0, 4)
+
+
+class _FakeModel:
+    """Fake model chunk for PEFT checkpoint helper tests."""
+
+    def sharded_state_dict(self, **kwargs):
+        self.kwargs = kwargs
+        return {
+            "adapter.weight": torch.tensor([1.0]),
+            "base.weight": torch.tensor([2.0]),
+            "adapter._extra_state": torch.tensor([3.0]),
+        }
+
+    def load_state_dict(self, state_dict, strict=True):
+        self.loaded_state_dict = state_dict
+        self.loaded_strict = strict
+
+
+class _FakePeft:
+    """Fake PEFT object for utility tests."""
+
+    def __call__(self, model, training: bool):
+        self.call = (model, training)
+        return model
+
+    def set_params_to_save(self, model) -> None:
+        self.saved_model = model
+
+    def adapter_key_filter(self, key: str) -> bool:
+        return key.startswith("adapter.")
+
+
+def _patch_checkpointing(monkeypatch, generate_model_state_dict, filter_state_dict) -> None:
+    monkeypatch.setattr(
+        "megatron.bridge.training.checkpointing._generate_model_state_dict",
+        generate_model_state_dict,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.training.checkpointing.apply_peft_adapter_filter_to_state_dict",
+        filter_state_dict,
+    )
+
+
+def test_create_peft_hook_sets_params_to_save() -> None:
+    base_model = [_FakeModel()]
+    peft = _FakePeft()
+
+    hook = peft_utils.create_peft_hook(peft)
+
+    assert hook(base_model) is base_model
+    assert peft.call == (base_model, True)
+    assert peft.saved_model is base_model
+
+
+def test_create_peft_returns_none_when_rank_disabled() -> None:
+    assert peft_utils.create_peft({"rank": 0}) is None
+
+
+def test_create_peft_rejects_unknown_type() -> None:
+    with pytest.raises(ValueError, match="Unsupported PEFT type"):
+        peft_utils.create_peft({"type": "not_lora", "rank": 4})
+
+
+def test_create_peft_imports_only_selected_peft_type(monkeypatch) -> None:
+    real_import_module = peft_utils.import_module
+
+    def guarded_import_module(module_name):
+        if module_name in {"megatron.bridge.peft.lora", "megatron.bridge.peft.canonical_lora"}:
+            raise AssertionError(f"unexpected import of {module_name}")
+        return real_import_module(module_name)
+
+    monkeypatch.setattr(peft_utils, "import_module", guarded_import_module)
+
+    peft = peft_utils.create_peft({"type": "dora", "rank": 4})
+
+    assert peft.__class__.__name__ == "DoRA"
+    assert peft.dim == 4
+
+
+def test_create_peft_reports_lora_import_failure(monkeypatch) -> None:
+    real_import_module = peft_utils.import_module
+
+    def failing_import_module(module_name):
+        if module_name == "megatron.bridge.peft.lora":
+            raise ModuleNotFoundError("No module named 'transformer_engine'")
+        return real_import_module(module_name)
+
+    monkeypatch.setattr(peft_utils, "import_module", failing_import_module)
+
+    with pytest.raises(ImportError, match=r"PEFT type 'lora'.*\(megatron\.bridge\.peft\.lora:LoRA\).*\[te\] extra"):
+        peft_utils.create_peft({"type": "lora", "rank": 4})
+
+
+def test_create_peft_translates_rank_and_ignores_downstream_keys() -> None:
+    peft = peft_utils.create_peft(
+        {
+            "type": "lora",
+            "rank": 4,
+            "alpha": 8,
+            "unknown_downstream_key": True,
+        },
+        dtype="bf16",
+    )
+
+    assert peft.dim == 4
+    assert peft.alpha == 8
+    assert peft.lora_dtype is torch.bfloat16
+    assert not hasattr(peft, "unknown_downstream_key")
+
+
+def test_create_peft_rejects_unknown_dtype() -> None:
+    with pytest.raises(ValueError, match="Unknown dtype"):
+        peft_utils.create_peft({"type": "lora", "rank": 4}, dtype="not_a_dtype")
+
+
+def test_load_peft_adapter_checkpoint_filters_and_loads(monkeypatch) -> None:
+    model = [_FakeModel()]
+    peft = _FakePeft()
+    calls = {}
+
+    def fake_filter(state_dict, peft):
+        return {
+            "model": {
+                key: value
+                for key, value in state_dict["model"].items()
+                if peft.adapter_key_filter(key) and "_extra_state" not in key
+            }
+        }
+
+    _patch_checkpointing(
+        monkeypatch,
+        lambda model, model_sd_kwargs, ckpt_format, pg_collection=None: {"model": model[0].sharded_state_dict()},
+        fake_filter,
+    )
+
+    def fake_load(sharded_state_dict, checkpoint_path, load_strategy):
+        calls["sharded_state_dict"] = sharded_state_dict
+        calls["checkpoint_path"] = checkpoint_path
+        calls["load_strategy"] = load_strategy
+        return {"model": {"adapter.weight": torch.tensor([4.0])}}
+
+    monkeypatch.setattr("megatron.core.dist_checkpointing.load", fake_load)
+
+    peft_utils.load_peft_adapter_checkpoint(
+        model,
+        "/adapter",
+        peft=peft,
+        strict=False,
+        fully_parallel_load=False,
+        load_strategy="strategy",
+    )
+
+    assert sorted(calls["sharded_state_dict"]["model"]) == ["adapter.weight"]
+    assert calls["checkpoint_path"] == "/adapter"
+    assert calls["load_strategy"] == "strategy"
+    assert torch.equal(model[0].loaded_state_dict["adapter.weight"], torch.tensor([4.0]))
+    assert model[0].loaded_strict is False
+
+
+def test_load_peft_adapter_checkpoint_errors_for_missing_model_key(monkeypatch) -> None:
+    model = [_FakeModel()]
+    peft = _FakePeft()
+
+    _patch_checkpointing(
+        monkeypatch,
+        lambda model, model_sd_kwargs, ckpt_format, pg_collection=None: {"model": model[0].sharded_state_dict()},
+        lambda state_dict, peft: state_dict,
+    )
+    monkeypatch.setattr(
+        "megatron.core.dist_checkpointing.load",
+        lambda sharded_state_dict, checkpoint_path, load_strategy: {"optimizer": {}},
+    )
+
+    with pytest.raises(KeyError, match="Expected adapter checkpoint"):
+        peft_utils.load_peft_adapter_checkpoint(
+            model,
+            "/adapter",
+            peft=peft,
+            fully_parallel_load=False,
+            load_strategy="strategy",
+        )
+
+
+def test_load_peft_adapter_checkpoint_errors_for_missing_virtual_model_key(monkeypatch) -> None:
+    model = [_FakeModel(), _FakeModel()]
+    peft = _FakePeft()
+
+    _patch_checkpointing(
+        monkeypatch,
+        lambda model, model_sd_kwargs, ckpt_format, pg_collection=None: {
+            f"model{index}": model_chunk.sharded_state_dict() for index, model_chunk in enumerate(model)
+        },
+        lambda state_dict, peft: state_dict,
+    )
+    monkeypatch.setattr(
+        "megatron.core.dist_checkpointing.load",
+        lambda sharded_state_dict, checkpoint_path, load_strategy: {"model0": {}},
+    )
+
+    with pytest.raises(KeyError, match="model1"):
+        peft_utils.load_peft_adapter_checkpoint(
+            model,
+            "/adapter",
+            peft=peft,
+            fully_parallel_load=False,
+            load_strategy="strategy",
+        )

@@ -39,13 +39,13 @@ from megatron.bridge.training.config import (
     RerunStateMachineConfig,
     RNGConfig,
     SchedulerConfig,
-    TokenizerConfig,
     TrainingConfig,
     ValidationConfig,
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.utils.cuda_graph import (
     cuda_graph_module_names,
     set_cuda_graph_modules,
@@ -3232,3 +3232,38 @@ class TestLoggerConfigFinalize:
         )
         with patch("importlib.import_module"):
             config.finalize()
+
+
+class TestTokenizerConfig:
+    def test_config_success(self):
+        tokenizer_model = "/path/to/tokenizer"
+        tokenizer_type = "HuggingFaceTokenizer"
+        metadata_path = "/path/to/metadata.json"
+        use_fast = False
+        legacy = True
+
+        config = TokenizerConfig(
+            tokenizer_model=tokenizer_model,
+            tokenizer_type=tokenizer_type,
+            metadata_path=metadata_path,
+            hf_tokenizer_kwargs={"use_fast": use_fast},
+            sp_tokenizer_kwargs={"legacy": legacy},
+        )
+
+        assert config.tokenizer_model == tokenizer_model
+        assert config.metadata_path == metadata_path
+        assert config.tokenizer_hf_no_use_fast == (not use_fast)
+        assert config.tokenizer_sentencepiece_legacy == legacy
+
+    def test_config_failure(self):
+        tokenizer_model = "/path/to/tokenizer"
+        tokenizer_type = "HuggingFaceTokenizer"
+        metadata_path = "/path/to/metadata.json"
+
+        with pytest.raises(TypeError, match="got an unexpected keyword argument"):
+            TokenizerConfig(
+                tokenizer_model=tokenizer_model,
+                tokenizer_type=tokenizer_type,
+                metadata_path=metadata_path,
+                random_arg=True,
+            )

@@ -39,7 +39,7 @@ skills/perf-cuda-graphs/SKILL
 skills/perf-tp-dp-comm-overlap/SKILL
 skills/perf-megatron-fsdp/SKILL
 skills/perf-sequence-packing/SKILL
-skills/perf-hybrid-context-parallel/SKILL
+skills/perf-hierarchical-context-parallel/SKILL
 skills/perf-expert-parallel-overlap/SKILL
 skills/perf-moe-comm-overlap/SKILL
 skills/perf-activation-recompute/SKILL

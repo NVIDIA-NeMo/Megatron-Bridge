@@ -125,6 +125,7 @@ def _parse_slurm_nodelist(nodelist: str) -> str:
     - Simple list: "node001,node002" -> "node001"
     - Range: "node[001-004]" -> "node001"
     - List in brackets: "node[001,003,005]" -> "node001"
+    - Mixed entries: "nodeA,nodeB[1-3],nodeC" -> "nodeA"
 
     Args:
         nodelist: The SLURM nodelist string to parse.
@@ -132,19 +133,24 @@ def _parse_slurm_nodelist(nodelist: str) -> str:
     Returns:
         The hostname of the first node in the list.
     """
-    # Handle bracket notation: "prefix[range]" or "prefix[list]"
-    if "[" in nodelist:
-        # Split into base and range part
-        # e.g., "node[001-004]" -> base="node", range_part="001-004"
-        base = nodelist.split("[")[0]
-        range_part = nodelist.split("[")[1].split("]")[0]
+    # Find the first entry by scanning for a top-level comma (i.e., one
+    # that is not inside a "[...]" group).
+    in_bracket = False
+    end = len(nodelist)
+    for i, ch in enumerate(nodelist):
+        if ch == "[":
+            in_bracket = True
+        elif ch == "]":
+            in_bracket = False
+        elif ch == "," and not in_bracket:
+            end = i
+            break
+    first = nodelist[:end].strip()
 
-        # Handle both ranges (001-004) and lists (001,003,005)
-        # Extract first element
-        first_element = range_part.split(",")[0].split("-")[0]
-
+    # If the first entry itself uses bracket expansion, expand to the first node.
+    if "[" in first:
+        base, _, rest = first.partition("[")
+        inside = rest.split("]")[0]
+        first_element = inside.split(",")[0].split("-")[0]
         return f"{base}{first_element}"
-    else:
-        # Simple comma-separated list
-        # e.g., "node001,node002,node003" -> "node001"
-        return nodelist.split(",")[0].strip()
+    return first

@@ -62,8 +62,14 @@ class Qwen2_5_VLVisualInputs:
     # Image tensors, e.g., Qwen2.5-VL processor output.
     pixel_values: Optional[torch.Tensor] = None
 
-    # Per-image temporal/spatial grid metadata (T, H, W) for videos, Qwen2.5-VL.
+    # Video tensors, e.g., Qwen2.5-VL processor output.
+    pixel_values_videos: Optional[torch.Tensor] = None
+
+    # Per-image (T, H, W) grid metadata.
     image_grid_thw: Optional[torch.Tensor] = None
+
+    # Per-video (T, H, W) grid metadata.
+    video_grid_thw: Optional[torch.Tensor] = None
 
     def as_model_kwargs(self) -> dict[str, torch.Tensor]:
         """Return a mapping of non-None fields suitable for model forward kwargs."""
@@ -78,7 +84,9 @@ class Qwen2_5_VLVisualInputs:
         """Return non-None fields with shapes normalized for model expectations.
 
         - pixel_values: [B, N, C, H, W] -> [B*N, C, H, W]
+        - pixel_values_videos: [B, N, C, H, W] -> [B*N, C, H, W]
         - image_grid_thw: [B, N, 3] -> [B*N, 3]
+        - video_grid_thw: [B, N, 3] -> [B*N, 3]
         """
         kwargs = self.as_model_kwargs()
 
@@ -87,9 +95,18 @@ class Qwen2_5_VLVisualInputs:
             b, n, c, h, w = pixel_values.shape
             kwargs["pixel_values"] = pixel_values.view(b * n, c, h, w)
 
+        pixel_values_videos = kwargs.get("pixel_values_videos")
+        if isinstance(pixel_values_videos, torch.Tensor) and pixel_values_videos.dim() == 5:
+            b, n, c, h, w = pixel_values_videos.shape
+            kwargs["pixel_values_videos"] = pixel_values_videos.view(b * n, c, h, w)
+
         image_grid_thw = kwargs.get("image_grid_thw")
         if isinstance(image_grid_thw, torch.Tensor) and image_grid_thw.dim() == 3:
             kwargs["image_grid_thw"] = image_grid_thw.view(-1, image_grid_thw.size(-1))
+
+        video_grid_thw = kwargs.get("video_grid_thw")
+        if isinstance(video_grid_thw, torch.Tensor) and video_grid_thw.dim() == 3:
+            kwargs["video_grid_thw"] = video_grid_thw.view(-1, video_grid_thw.size(-1))
 
         return kwargs
 

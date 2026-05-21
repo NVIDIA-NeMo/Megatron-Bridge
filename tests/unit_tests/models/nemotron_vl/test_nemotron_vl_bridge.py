@@ -21,7 +21,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
-    NemotronNano12Bv2VLModelProvider,
+    NemotronVLModelProvider,
 )
 
 
@@ -81,7 +81,7 @@ class TestNemotronVLBridgeProviderBridge:
         provider = nemotron_vl_bridge.provider_bridge(mock_hf_pretrained)
         provider.finalize()
 
-        assert isinstance(provider, NemotronNano12Bv2VLModelProvider)
+        assert isinstance(provider, NemotronVLModelProvider)
 
         assert provider.num_layers == 28
         assert provider.hidden_size == 5120

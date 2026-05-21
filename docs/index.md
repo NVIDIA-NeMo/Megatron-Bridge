@@ -52,7 +52,7 @@ training/megatron-fsdp.md
 training/resiliency.md
 training/mixed-precision.md
 training/cuda-graphs.md
-training/hybrid-context-parallel.md
+training/hierarchical-context-parallel.md
 training/communication-overlap.md
 training/attention-optimizations.md
 training/activation-recomputation.md
