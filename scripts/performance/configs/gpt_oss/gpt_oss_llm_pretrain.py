@@ -54,7 +54,14 @@ def gpt_oss_20b_pretrain_config_b200(
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
 
-    if precision == "fp8_mx" and config_variant == "v1":
+    # 8 GPUs
+    if precision == "bf16" and config_variant == "v1":
+        cfg.model.cuda_graph_impl = "transformer_engine"
+        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.optimizer.lr = 0.0006
+        cfg.validation.eval_interval = 768
+        cfg.scheduler.lr_warmup_iters = 128
+    elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.2
         cfg.mixed_precision.fp8_param_gather = True
@@ -63,12 +70,7 @@ def gpt_oss_20b_pretrain_config_b200(
         cfg.optimizer.lr = 0.0004
         cfg.validation.eval_interval = 768
         cfg.scheduler.lr_warmup_iters = 128
-    elif precision == "bf16" and config_variant == "v1":
-        cfg.model.cuda_graph_impl = "transformer_engine"
-        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
-        cfg.optimizer.lr = 0.0006
-        cfg.validation.eval_interval = 768
-        cfg.scheduler.lr_warmup_iters = 128
+    # 64 GPUs
     elif precision == "bf16" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
@@ -105,6 +107,34 @@ def gpt_oss_20b_pretrain_config_b300(
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+
+    # 8 GPUs
+    if precision == "bf16" and config_variant == "v1":
+        cfg.model.cuda_graph_impl = "transformer_engine"
+        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.optimizer.lr = 0.0004
+        cfg.validation.eval_interval = 512
+        cfg.scheduler.lr_warmup_iters = 192
+    elif precision == "fp8_mx" and config_variant == "v1":
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_expert_rank_capacity_factor = 1.5
+        cfg.optimizer.lr = 0.0005
+        cfg.validation.eval_interval = 512
+        cfg.scheduler.lr_warmup_iters = 256
+    # 64 GPUs
+    elif precision == "bf16" and config_variant == "v2":
+        cfg.model.cuda_graph_impl = "transformer_engine"
+        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.optimizer.lr = 0.0006
+        cfg.validation.eval_interval = 384
+        cfg.scheduler.lr_warmup_iters = 64
+    elif precision == "fp8_mx" and config_variant == "v2":
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_expert_rank_capacity_factor = 5
+        cfg.optimizer.lr = 0.0004
+        cfg.validation.eval_interval = 384
+        cfg.scheduler.lr_warmup_iters = 512
+
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -127,7 +157,47 @@ def gpt_oss_20b_pretrain_config_gb200(
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
-        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend
+
+    # 8 GPUs
+    if precision == "bf16" and config_variant == "v1":
+        cfg.model.cuda_graph_impl = "transformer_engine"
+        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.optimizer.lr = 0.0006
+        cfg.validation.eval_interval = 768
+        cfg.scheduler.lr_warmup_iters = 128
+    elif precision == "fp8_mx" and config_variant == "v1":
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_expert_rank_capacity_factor = 1.2
+        cfg.mixed_precision.fp8_param_gather = True
+        cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = True
+        cfg.model.cuda_graph_warmup_steps = 5
+        cfg.ddp.average_in_collective = True
+        cfg.optimizer.lr = 0.0004
+        cfg.validation.eval_interval = 768
+        cfg.scheduler.lr_warmup_iters = 128
+    # 72 GPUs
+    elif precision == "bf16" and config_variant == "v2":
+        cfg.model.cuda_graph_impl = "transformer_engine"
+        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.optimizer.lr = 0.0006
+        cfg.validation.eval_interval = 341
+        cfg.scheduler.lr_warmup_iters = 64
+    elif precision == "fp8_mx" and config_variant == "v2":
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_expert_rank_capacity_factor = 5
+        cfg.optimizer.lr = 0.0004
+        cfg.validation.eval_interval = 341
+        cfg.scheduler.lr_warmup_iters = 256
+    # 512 GPUs
+    elif precision == "fp8_mx" and config_variant == "v3":
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_expert_rank_capacity_factor = 7
+        cfg.model.sequence_parallel = True
+        cfg.optimizer.lr = 0.00052
+        cfg.validation.eval_interval = 192
+        cfg.scheduler.lr_warmup_iters = 32
+
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -151,6 +221,42 @@ def gpt_oss_20b_pretrain_config_gb300(
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+
+    # 8 GPUs
+    if precision == "bf16" and config_variant == "v1":
+        cfg.model.cuda_graph_impl = "transformer_engine"
+        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.optimizer.lr = 0.0004
+        cfg.validation.eval_interval = 512
+        cfg.scheduler.lr_warmup_iters = 192
+    elif precision == "fp8_mx" and config_variant == "v1":
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.ddp.average_in_collective = True
+        cfg.optimizer.lr = 0.0005
+        cfg.validation.eval_interval = 512
+        cfg.scheduler.lr_warmup_iters = 256
+    # 72 GPUs
+    elif precision == "bf16" and config_variant == "v2":
+        cfg.model.cuda_graph_impl = "transformer_engine"
+        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.optimizer.lr = 0.0006
+        cfg.validation.eval_interval = 341
+        cfg.scheduler.lr_warmup_iters = 64
+    elif precision == "fp8_mx" and config_variant == "v2":
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_expert_rank_capacity_factor = 5
+        cfg.optimizer.lr = 0.0004
+        cfg.validation.eval_interval = 341
+        cfg.scheduler.lr_warmup_iters = 256
+    # 512 GPUs
+    elif precision == "fp8_mx" and config_variant == "v3":
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_expert_rank_capacity_factor = 7
+        cfg.model.sequence_parallel = True
+        cfg.optimizer.lr = 0.00052
+        cfg.validation.eval_interval = 192
+        cfg.scheduler.lr_warmup_iters = 32
+
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -174,6 +280,28 @@ def gpt_oss_20b_pretrain_config_vr200(
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+
+    # 8 GPUs
+    if precision == "bf16" and config_variant == "v1":
+        cfg.model.cuda_graph_impl = "transformer_engine"
+        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.optimizer.lr = 0.0004
+        cfg.validation.eval_interval = 512
+        cfg.scheduler.lr_warmup_iters = 192
+    elif precision == "fp8_mx" and config_variant == "v1":
+        cfg.model.cuda_graph_impl = "transformer_engine"
+        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.optimizer.lr = 0.0005
+        cfg.validation.eval_interval = 512
+        cfg.scheduler.lr_warmup_iters = 192
+    # 64 GPUs
+    elif precision == "bf16" and config_variant == "v2":
+        cfg.model.cuda_graph_impl = "transformer_engine"
+        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.optimizer.lr = 0.0006
+        cfg.validation.eval_interval = 384
+        cfg.scheduler.lr_warmup_iters = 64
+
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
