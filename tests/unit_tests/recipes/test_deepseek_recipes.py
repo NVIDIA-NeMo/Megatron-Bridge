@@ -25,13 +25,17 @@ import importlib
 from typing import Callable
 
 import pytest
+from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+
+from megatron.bridge.recipes.deepseek import set_deepseek_v3_pipeline_model_parallel_layout
 
 
 _deepseek_module = importlib.import_module("megatron.bridge.recipes.deepseek")
 _DEEPSEEK_RECIPE_FUNCS = [
     getattr(_deepseek_module, name)
     for name in getattr(_deepseek_module, "__all__", [])
-    if callable(getattr(_deepseek_module, name, None))
+    if "_config" in name and callable(getattr(_deepseek_module, name, None))
 ]
 
 
@@ -100,3 +104,34 @@ def test_each_deepseek_recipe_builds_config(recipe_func: Callable, monkeypatch: 
     # Parallelism and shaping
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+
+def test_deepseek_v3_pipeline_layout_can_place_mtp_in_standalone_stage():
+    model_cfg = _FakeModelCfg()
+    model_cfg.num_layers = 61
+    model_cfg.mtp_num_layers = 1
+    model_cfg.pipeline_model_parallel_size = 8
+    model_cfg.virtual_pipeline_model_parallel_size = 2
+
+    set_deepseek_v3_pipeline_model_parallel_layout(model_cfg, mtp_standalone=True)
+
+    layout = model_cfg.pipeline_model_parallel_layout
+    assert layout[-2] == ["mtp"]
+    assert layout[-1] == ["loss"]
+    assert sum(stage.count("decoder") for stage in layout) == model_cfg.num_layers
+
+    parsed_layout = PipelineParallelLayerLayout(layout, pipeline_model_parallel_size=8)
+    assert parsed_layout.validate_layer_layout(model_cfg.num_layers, model_cfg.mtp_num_layers)
+    assert parsed_layout.layout[6][1] == [LayerType.mtp]
+    assert parsed_layout.layout[7][1] == [LayerType.loss]
+
+
+def test_deepseek_v3_pipeline_layout_keeps_default_mtp_with_loss():
+    model_cfg = _FakeModelCfg()
+    model_cfg.mtp_num_layers = 1
+    model_cfg.pipeline_model_parallel_size = 8
+    model_cfg.virtual_pipeline_model_parallel_size = 2
+
+    set_deepseek_v3_pipeline_model_parallel_layout(model_cfg)
+
+    assert model_cfg.pipeline_model_parallel_layout[-1][-2:] == ["mtp", "loss"]

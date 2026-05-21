@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Union
-
 import torch
 
 from megatron.bridge import AutoBridge
@@ -26,14 +24,49 @@ from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatch
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
+DEEPSEEK_V3_NUM_DECODER_LAYERS = 61
+
+
+def _build_standalone_mtp_layout(num_decoder_layers: int, total_stages: int, mtp_layers: int) -> list[list[str]]:
+    if mtp_layers <= 0:
+        raise ValueError("standalone MTP layout requires mtp_num_layers > 0")
+    if total_stages < 3:
+        raise ValueError("standalone MTP layout requires at least three PP/VPP stages")
+
+    decoder_stage_count = total_stages - 2
+    decoder_layers_per_stage, extra_decoder_layers = divmod(num_decoder_layers, decoder_stage_count)
+
+    layout = []
+    for stage_idx in range(decoder_stage_count):
+        num_layers = decoder_layers_per_stage + (1 if stage_idx < extra_decoder_layers else 0)
+        stage = ["decoder"] * num_layers
+        if stage_idx == 0:
+            stage = ["embedding"] + stage
+        layout.append(stage)
+
+    layout.append(["mtp"] * mtp_layers)
+    layout.append(["loss"])
+    return layout
+
+
 def set_deepseek_v3_pipeline_model_parallel_layout(
-    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None
+    model_cfg: GPTModelProvider, layout: str | list[list[str]] | None = None, *, mtp_standalone: bool = False
 ) -> None:
-    """Set the DeepSeek-V3 pipeline model parallel layout."""
+    """Set the DeepSeek-V3 pipeline model parallel layout.
+
+    Args:
+        model_cfg: DeepSeek-V3 model configuration to update.
+        layout: Explicit pipeline layout. When provided, this overrides the predefined layouts.
+        mtp_standalone: Place MTP layers in a standalone penultimate PP/VPP stage and loss in the
+            final stage. Defaults to colocating MTP with loss, matching existing recipes.
+    """
     mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
     last_layer = ["mtp"] * mtp_layers + ["loss"]
     pp_size = model_cfg.pipeline_model_parallel_size or 1
     vp_size = model_cfg.virtual_pipeline_model_parallel_size or 1
+    num_decoder_layers = getattr(model_cfg, "num_layers", DEEPSEEK_V3_NUM_DECODER_LAYERS)
+    if num_decoder_layers is None:
+        num_decoder_layers = DEEPSEEK_V3_NUM_DECODER_LAYERS
     layout_map = {
         (1, 1): None,
         (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
@@ -45,6 +78,12 @@ def set_deepseek_v3_pipeline_model_parallel_layout(
     }
     if layout is not None:
         model_cfg.pipeline_model_parallel_layout = layout
+    elif mtp_standalone:
+        model_cfg.pipeline_model_parallel_layout = _build_standalone_mtp_layout(
+            num_decoder_layers=num_decoder_layers,
+            total_stages=pp_size * vp_size,
+            mtp_layers=mtp_layers,
+        )
     elif (pp_size, vp_size) in layout_map:
         model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
 
