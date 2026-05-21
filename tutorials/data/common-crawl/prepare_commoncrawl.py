@@ -20,9 +20,9 @@ from pathlib import Path
 from nemo_curator.core.client import RayClient
 from nemo_curator.pipeline import Pipeline
 from nemo_curator.stages.text.download import CommonCrawlDownloadExtractStage
-from nemo_curator.stages.text.filters import RepeatingTopNGramsFilter, UrlsFilter, WordCountFilter
-from nemo_curator.stages.text.io.writer import MegatronTokenizerWriter
-from nemo_curator.stages.text.modules import ScoreFilter
+from nemo_curator.stages.text.filters import ScoreFilter
+from nemo_curator.stages.text.filters.heuristic import RepeatingTopNGramsFilter, UrlsFilter, WordCountFilter
+from nemo_curator.stages.text.io.writer.megatron_tokenizer import MegatronTokenizerWriter
 
 
 def main(args: argparse.Namespace) -> None:  # noqa: D103
@@ -102,7 +102,7 @@ def main(args: argparse.Namespace) -> None:  # noqa: D103
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     group = parser.add_argument_group(title="input data")
-    group.add_argument("--output_dir", type=str, required=True, help="Path to output directory")
+    group.add_argument("--output-dir", type=str, required=True, help="Path to output directory")
     group.add_argument(
         "--tokenizer-model", type=str, required=True, help="Hugging Face model identifier for the tokenizer"
     )

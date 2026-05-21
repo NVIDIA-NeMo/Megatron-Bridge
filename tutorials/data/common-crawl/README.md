@@ -61,7 +61,7 @@ You will need to specify a few configuration options when running the script:
 
 ```bash
 python3 prepare_commoncrawl.py \
-    --output_dir $DATASETS_PATH/CommonCrawl \
+    --output-dir $DATASETS_PATH/CommonCrawl \
     --tokenizer-model nvidia/NVIDIA-Nemotron-Nano-12B-v2 \
     --append-eod \
     --filter-data \
@@ -72,5 +72,17 @@ python3 prepare_commoncrawl.py \
 
 When the script completes, it will automatically generate a **`dataset-prefixes.txt`** file in the output directory.
 This file contains the dataset file prefixes required by **Megatron-LM** and **Megatron-Bridge** via the `--data-args-path` configuration.
+
+```
+$ cat dataset-prefixes.txt
+tokens/90ee761d922a
+tokens/9a32d2a73296
+```
+
+```
+$ ls tokens/
+ls tokens
+90ee761d922a.bin  90ee761d922a.idx  9a32d2a73296.bin  9a32d2a73296.idx
+```
 
 For more details about the new `MegatronTokenizerWriter` stage, refer to the ["megatron-tokenizer" tutorial in NeMo Curator](https://github.com/NVIDIA-NeMo/Curator/tree/main/tutorials/text/megatron-tokenizer).
