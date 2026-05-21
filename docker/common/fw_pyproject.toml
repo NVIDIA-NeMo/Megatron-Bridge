@@ -33,7 +33,7 @@ dependencies = [
     "nemo-run",
     "nvidia-lm-eval",
     "langchain~=1.0.0",
-    "langchain-core~=1.2.22", # GHSA-qh6h-p6c9-ff54
+    "langchain-core~=1.3.3", # GHSA-pjwx-r37v-7724
 ]
 
 [dependency-groups]
@@ -55,7 +55,6 @@ override-dependencies = [
     "nemo-run @ /opt/Run",
     "transformer-engine; sys_platform == 'never'",     # Installed by MBridge
     # Pinning versions to solve conflicts
-    "av==15.1.0",                               # Version 16.0.0 released recently and fails to install
     "webdataset==0.2.86",                       # fix for SB multimodal
     "pandas==2.2.3",
     "ctc_segmentation==1.7.4",
@@ -112,5 +111,8 @@ override-dependencies = [
     "cryptography>=43.0.0,<47",                          # Required by megatron-bridge, override nemo-run's constraint
     "opencv-python; sys_platform == 'never'",            # Use the dependency from the base pytorch container
     "langchain~=1.0.0",
-    "langchain-core~=1.2.22",                            # GHSA-qh6h-p6c9-ff54
+    "langchain-core~=1.3.3",                             # GHSA-pjwx-r37v-7724
+    "decord; sys_platform == 'never'",                   # Optional dependency. Resolves CVE
+    "av; sys_platform == 'never'",                       # Optional dependency. Resolves CVE
+    "opencv-python-headless; sys_platform == 'never'",   # Optional dependency. Resolves CVE
 ]

@@ -10,9 +10,9 @@ We use the following environment variables throughout this page
 - `HF_MODEL_PATH=Qwen/Qwen2.5-VL-3B-Instruct` (it can also be set to `Qwen/Qwen2.5-VL-7B-Instruct`, `Qwen/Qwen2.5-VL-32B-Instruct`, `Qwen/Qwen2.5-VL-72B-Instruct`)
 - `MEGATRON_MODEL_PATH=/models/Qwen2.5-VL-3B-Instruct` (feel free to set your own path)
 
-Unless explicitly stated, any megatron model path in the commands below should NOT contain the iteration number 
-`iter_xxxxxx`. For more details on checkpointing, please see 
-[here](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/checkpointing.html#checkpoint-contents) 
+Unless explicitly stated, any megatron model path in the commands below should NOT contain the iteration number
+`iter_xxxxxx`. For more details on checkpointing, please see
+[here](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/checkpointing.html#checkpoint-contents)
 ```
 
 ## Conversion with 🤗 Hugging Face
@@ -46,7 +46,7 @@ uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 ```
 
 Note:
-- `--megatron_model_path` is optional. If not specified, the script will convert the model and then run forward. If 
+- `--megatron_model_path` is optional. If not specified, the script will convert the model and then run forward. If
   specified, the script will just load the megatron model
 - `--max_new_tokens` controls the number of tokens to generate.
 - You can also use image URLs: `--image_path="https://example.com/image.jpg"`
@@ -54,7 +54,7 @@ Note:
 
 ## Finetuning Recipes
 Before training, ensure the following environment variables are set.
-1. `SAVE_DIR`: to specify a checkpoint and log saving directory, used in the commands below. 
+1. `SAVE_DIR`: to specify a checkpoint and log saving directory, used in the commands below.
 2. `HF_TOKEN`: to download models from HF Hub (if required).
 3. `HF_HOME`: (optional) to avoid re-downloading models and datasets every time.
 4. `WANDB_API_KEY`: (optional) to enable WandB logging.
@@ -64,7 +64,7 @@ Before training, ensure the following environment variables are set.
 Example usage for full parameter finetuning:
 
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --dataset-type hf \
@@ -79,20 +79,20 @@ checkpoint.save=$SAVE_DIR/<experiment name>
 Note:
 - The `--recipe` parameter selects the model size configuration. Available options:
   - `qwen25_vl_3b_finetune_config` - for 3B model
-  - `qwen25_vl_7b_finetune_config` - for 7B model  
+  - `qwen25_vl_7b_finetune_config` - for 7B model
   - `qwen25_vl_32b_finetune_config` - for 32B model
   - `qwen25_vl_72b_finetune_config` - for 72B model
-- The config file `examples/models/vlm/qwen_vl/conf/qwen25_vl_pretrain_override_example.yaml` contains a list of arguments 
-  that can be overridden in the command. For example, you can set `train.global_batch_size=<batch size>` in the command. 
+- The config file `examples/models/qwen/qwen_vl/conf/qwen25_vl_pretrain_override_example.yaml` contains a list of arguments
+  that can be overridden in the command. For example, you can set `train.global_batch_size=<batch size>` in the command.
 - The dataset format should be JSONL with conversation format (see dataset section below).
-- After training, you can run inference with `hf_to_megatron_generate_vlm.py` by supplying the trained megatron checkpoint. 
+- After training, you can run inference with `hf_to_megatron_generate_vlm.py` by supplying the trained megatron checkpoint.
   You can also export the trained checkpoint to Hugging Face format.
 
 ### Parameter-Efficient Finetuning (PEFT)
 Parameter-efficient finetuning (PEFT) using LoRA or DoRA is supported. You can use the `--peft_scheme` argument to enable PEFT training:
 
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --peft_scheme lora \
@@ -112,7 +112,7 @@ You can also combine PEFT with freeze options to control which components are tr
 
 Example with LoRA and freeze options:
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen25_vl.py \
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/qwen_vl/finetune_qwen25_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --peft_scheme lora \

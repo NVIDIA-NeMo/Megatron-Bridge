@@ -20,22 +20,13 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
+from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
+from megatron.core.energy_monitor import EnergyMonitor
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.utils.tensorboard.writer import SummaryWriter
-
-
-# TODO: Remove try/except guards once these land in mcore dev.
-try:
-    from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
-except ImportError:
-    get_async_strategy = None  # type: ignore[assignment]
-
-try:
-    from megatron.core.energy_monitor import EnergyMonitor
-except ImportError:
-    EnergyMonitor = None  # type: ignore[assignment]
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
@@ -149,6 +140,11 @@ class GlobalState:
         self._nvrx_straggler_created: bool = False
         self._energy_monitor: Optional[Any] = None
         self._energy_monitor_created: bool = False
+        # Eval-time context parallelism: set by the caller when eval_context_parallel_size
+        # differs from the training CP degree. ``eval_context_parallel_rebinding.eval_cp_context``
+        # reads these.
+        self._train_pgs: Optional[ProcessGroupCollection] = None
+        self._eval_pgs: Optional[ProcessGroupCollection] = None
 
     @property
     def cfg(self) -> Optional[ConfigContainer]:
@@ -277,7 +273,11 @@ class GlobalState:
 
                 active_run = mlflow.active_run()
                 if active_run is None:
-                    mlflow.start_run(run_name=run_name, tags=tags or None)
+                    mlflow.start_run(
+                        run_name=run_name,
+                        tags=tags or None,
+                        description=logger_cfg.mlflow_description,
+                    )
                 elif tags:
                     # If there is already an active run, at least set provided tags
                     mlflow.set_tags(tags)
@@ -405,21 +405,9 @@ class GlobalState:
             and self.cfg.checkpoint.save is not None
             and self.cfg.checkpoint.async_save
         ):
-            if get_async_strategy is not None:
-                # mcore main path: get_async_strategy selects nvrx vs mcore backend
-                async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
-                async_calls_queue_cls = async_modules["AsyncCallsQueue"]
-                get_write_results_queue_fn = async_modules["get_write_results_queue"]
-            else:
-                # mcore dev path: nvrx modules merged into core, no strategy selector
-                from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
-                from megatron.core.dist_checkpointing.strategies.filesystem_async import (
-                    get_write_results_queue,
-                )
-
-                async_strategy = None
-                async_calls_queue_cls = AsyncCallsQueue
-                get_write_results_queue_fn = get_write_results_queue
+            async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
+            async_calls_queue_cls = async_modules["AsyncCallsQueue"]
+            get_write_results_queue_fn = async_modules["get_write_results_queue"]
 
             self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
 
@@ -459,7 +447,6 @@ class GlobalState:
             and self._energy_monitor is None
             and self.cfg is not None
             and self.cfg.logger.log_energy
-            and EnergyMonitor is not None
         ):
             self._energy_monitor = EnergyMonitor()
             self._energy_monitor_created = True

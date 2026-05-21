@@ -45,6 +45,8 @@ PERF_ENV_VARS = {
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
     "HF_HUB_OFFLINE": "0",  # Keep HF Hub online by default; --offline flips this to 1.
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "NCCL_GRAPH_REGISTER": "0",
 }
 
 

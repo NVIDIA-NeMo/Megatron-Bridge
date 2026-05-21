@@ -231,7 +231,8 @@ class TestDataLoaders:
         dp_group = object()
         dataset_provider = mock.Mock()
 
-        fake_train_ds = mock.Mock()
+        fake_train_ds = mock.MagicMock()
+        fake_train_ds.__len__.return_value = cfg.train.global_batch_size
         fake_train_ds.collate_fn = None
         mock_build_datasets.return_value = (fake_train_ds, None, None)
         fake_train_loader = object()

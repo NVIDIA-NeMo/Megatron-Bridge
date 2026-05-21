@@ -16,7 +16,7 @@
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider1B
+from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
@@ -38,8 +38,18 @@ def gemma3_1b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config - uses provider class instead of AutoBridge
-    cfg.model = Gemma3ModelProvider1B()
+    cfg.model = Gemma3ModelProvider(
+        num_layers=26,
+        hidden_size=1152,
+        num_attention_heads=4,
+        num_query_groups=1,
+        kv_channels=256,
+        ffn_hidden_size=6912,
+        window_size=512,
+        rope_scaling_factor=1.0,
+        seq_length=SEQUENCE_LENGTH_32K,
+        vocab_size=262_144,
+    )
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"

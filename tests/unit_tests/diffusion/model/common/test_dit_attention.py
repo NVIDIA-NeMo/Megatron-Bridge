@@ -70,6 +70,7 @@ def _make_self_attn_submodules(q_layernorm=None, k_layernorm=None):
     sub = SelfAttentionSubmodules(
         linear_qkv=MagicMock(),
         core_attention=MagicMock(),
+        linear_proj=MagicMock(),
     )
     sub.q_layernorm = q_layernorm
     sub.k_layernorm = k_layernorm

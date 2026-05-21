@@ -339,7 +339,11 @@ class FinetuningDatasetBuilder:
             self.dataset_root / "packed" / f"{tokenizer_model_name}_pad_seq_to_mult{self._pad_seq_to_mult}"
         )
         if not default_pack_path.exists():
-            default_pack_path.mkdir(parents=True, exist_ok=True)
+            try:
+                # Shared filesystems can expose stale parent-dir state despite exist_ok=True.
+                default_pack_path.mkdir(parents=True, exist_ok=True)
+            except (FileExistsError, FileNotFoundError):
+                pass
             logger.info(f"Using default path for packing files: {str(default_pack_path)}")
 
         return default_pack_path

@@ -3,12 +3,18 @@
 ```
 
 ```{toctree}
+:caption: Performance
+:hidden:
+
+performance-summary.md
+performance-summary-archive.md
+```
+
+```{toctree}
 :caption: Guides
 :hidden:
 
 parallelisms.md
-performance-summary.md
-performance-summary-archive.md
 performance-guide.md
 recipe-usage.md
 nemo2-migration-guide.md
@@ -46,7 +52,7 @@ training/megatron-fsdp.md
 training/resiliency.md
 training/mixed-precision.md
 training/cuda-graphs.md
-training/hybrid-context-parallel.md
+training/hierarchical-context-parallel.md
 training/communication-overlap.md
 training/attention-optimizations.md
 training/activation-recomputation.md
