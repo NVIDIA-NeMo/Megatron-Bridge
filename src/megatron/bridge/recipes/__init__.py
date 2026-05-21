@@ -39,3 +39,4 @@ from megatron.bridge.recipes.qwen import *
 from megatron.bridge.recipes.qwen2_audio import *
 from megatron.bridge.recipes.qwen_omni import *
 from megatron.bridge.recipes.qwen_vl import *
+from megatron.bridge.recipes.step3_vl import *
