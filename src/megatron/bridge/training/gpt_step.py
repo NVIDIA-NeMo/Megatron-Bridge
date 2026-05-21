@@ -110,6 +110,7 @@ def get_batch_from_iterator(
     *,
     is_first_pp_stage: bool,
     is_last_pp_stage: bool,
+    include_full_batch_fields: bool = False,
 ) -> dict[str, torch.Tensor]:
     """Get a batch of data from the iterator.
 
@@ -117,6 +118,7 @@ def get_batch_from_iterator(
         data_iterator: The data iterator to get the batch from.
         use_mtp: Whether Multi-Token Prediction layers are enabled.
         skip_getting_attention_mask_from_dataset: If set, the dataset will pass a None attention mask.
+        include_full_batch_fields: Whether to include all standard training tensors regardless of PP stage.
 
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
@@ -126,7 +128,9 @@ def get_batch_from_iterator(
     required_device_keys = set()
     required_host_keys = set()
 
-    if not skip_getting_attention_mask_from_dataset:
+    if include_full_batch_fields:
+        required_device_keys.update(("tokens", "labels", "loss_mask", "attention_mask", "position_ids"))
+    elif not skip_getting_attention_mask_from_dataset:
         required_device_keys.add("attention_mask")
 
     if "cu_seqlens" in batch:
@@ -138,10 +142,11 @@ def get_batch_from_iterator(
         if "cu_seqlens_unpadded_argmin" in batch:
             required_host_keys.add("cu_seqlens_unpadded_argmin")
 
-    if is_first_pp_stage or use_mtp:
-        required_device_keys.update(("tokens", "position_ids"))
-    if is_last_pp_stage:
-        required_device_keys.update(("labels", "loss_mask"))
+    if not include_full_batch_fields:
+        if is_first_pp_stage or use_mtp:
+            required_device_keys.update(("tokens", "position_ids"))
+        if is_last_pp_stage:
+            required_device_keys.update(("labels", "loss_mask"))
 
     _batch_required_keys = {}
     for key, val in batch.items():
@@ -185,15 +190,17 @@ def get_batch(
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
     is_middle = (not is_first) and (not is_last)
-    if is_middle and not _middle_pp_stage_needs_batch(cfg):
+    include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
+    if is_middle and not include_full_batch_fields:
         return None, None, None, None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
-        use_mtp and not is_middle,
+        use_mtp,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
+        include_full_batch_fields=include_full_batch_fields,
     )
 
     cp_size = pg_collection.cp.size()
@@ -218,50 +225,6 @@ def get_batch(
         batch.get("cu_seqlens_unpadded"),
         batch.get("cu_seqlens_unpadded_argmin"),
     )
-
-
-def _get_total_tokens_from_cu_seqlens(
-    cu_seqlens: torch.Tensor,
-    cu_seqlens_argmin: torch.Tensor | None,
-) -> int | None:
-    """Derive the packed token count from cumulative sequence lengths."""
-    cu_seqlens = cu_seqlens.squeeze()
-    if cu_seqlens.numel() == 0:
-        return None
-
-    if cu_seqlens_argmin is not None:
-        argmin = int(cu_seqlens_argmin.squeeze().item())
-        if argmin > 0 and argmin <= cu_seqlens.numel():
-            return int(cu_seqlens[argmin - 1].item())
-
-    padding_positions = torch.nonzero(cu_seqlens < 0, as_tuple=False)
-    if padding_positions.numel() > 0:
-        first_padding_index = int(padding_positions.flatten()[0].item())
-        if first_padding_index == 0:
-            return 0
-        return int(cu_seqlens[first_padding_index - 1].item())
-
-    return int(cu_seqlens[-1].item())
-
-
-def _get_packed_total_tokens(
-    tokens: torch.Tensor | None,
-    labels: torch.Tensor | None,
-    cu_seqlens: torch.Tensor,
-    cu_seqlens_argmin: torch.Tensor | None,
-    config,
-) -> int | None:
-    """Return total tokens for hybrid packed sequence params."""
-    if tokens is not None:
-        return tokens.size(1)
-    if labels is not None:
-        return labels.size(1)
-
-    total_tokens = _get_total_tokens_from_cu_seqlens(cu_seqlens, cu_seqlens_argmin)
-    if total_tokens is not None:
-        return total_tokens
-
-    return getattr(config, "seq_length", None)
 
 
 def _forward_step_common(
@@ -321,9 +284,12 @@ def _forward_step_common(
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.
         if getattr(config, "is_hybrid_model", False):
-            packed_seq_params["total_tokens"] = _get_packed_total_tokens(
-                tokens, labels, cu_seqlens, cu_seqlens_argmin, config
-            )
+            if tokens is not None:
+                packed_seq_params["total_tokens"] = tokens.size(1)
+            elif labels is not None:
+                packed_seq_params["total_tokens"] = labels.size(1)
+            else:
+                packed_seq_params["total_tokens"] = getattr(config, "seq_length", None)
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     with straggler_timer:

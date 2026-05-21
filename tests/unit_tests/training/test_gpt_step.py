@@ -112,25 +112,30 @@ class _NoopTimer:
 class TestGetBatch:
     """Tests for the get_batch helper."""
 
-    def test_middle_pp_stage_preserves_packed_metadata(self, monkeypatch):
-        """Middle PP stages need packed metadata to preserve sequence boundaries."""
+    def test_middle_pp_stage_preserves_full_packed_batch(self, monkeypatch):
+        """Middle PP stages load full tensors when packed metadata is active."""
         _set_middle_pp_stage(monkeypatch)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
             lambda batch, cp_group: batch,
         )
 
+        tokens = _as_nocuda(torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]]))
+        labels = _as_nocuda(torch.tensor([[2, 3, 4, 5, 6, 7, 8, 9]]))
+        loss_mask = _as_nocuda(torch.ones(1, 8))
+        attention_mask = _as_nocuda(torch.ones(1, 1, 8, 8, dtype=torch.bool))
+        position_ids = _as_nocuda(torch.arange(8).unsqueeze(0))
         cu_seqlens = _as_nocuda(torch.tensor([[0, 3, 8, -1]], dtype=torch.int32))
         cu_seqlens_unpadded = _as_nocuda(torch.tensor([[0, 2, 7, -1]], dtype=torch.int32))
         cu_seqlens_argmin = torch.tensor(3)
         cu_seqlens_unpadded_argmin = torch.tensor(3)
         max_seqlen = torch.tensor([[5]], dtype=torch.int32)
         batch = {
-            "tokens": torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]]),
-            "labels": torch.tensor([[2, 3, 4, 5, 6, 7, 8, 9]]),
-            "loss_mask": torch.ones(1, 8),
-            "attention_mask": None,
-            "position_ids": torch.arange(8).unsqueeze(0),
+            "tokens": tokens,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
             "cu_seqlens": cu_seqlens,
             "cu_seqlens_argmin": cu_seqlens_argmin,
             "max_seqlen": max_seqlen,
@@ -156,11 +161,11 @@ class TestGetBatch:
             pg_collection=_MockPGCollection(),
         )
 
-        assert tokens is None
-        assert labels is None
-        assert loss_mask is None
-        assert attention_mask is None
-        assert position_ids is None
+        assert torch.equal(tokens, batch["tokens"])
+        assert torch.equal(labels, batch["labels"])
+        assert torch.equal(loss_mask, batch["loss_mask"])
+        assert torch.equal(attention_mask, batch["attention_mask"])
+        assert torch.equal(position_ids, batch["position_ids"])
         assert torch.equal(out_cu_seqlens, cu_seqlens)
         assert torch.equal(out_cu_seqlens_argmin, cu_seqlens_argmin)
         assert torch.equal(out_max_seqlen, max_seqlen)
@@ -183,8 +188,12 @@ class TestGetBatch:
         data_iterator.__next__.assert_not_called()
 
     def test_forward_common_passes_packed_seq_params_on_middle_pp_stage(self, monkeypatch):
-        """Forward path must pass packed metadata even without token tensors."""
+        """Forward path must pass packed metadata on middle PP stages."""
         sentinel_packed_seq_params = object()
+        tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]])
+        labels = torch.tensor([[2, 3, 4, 5, 6, 7, 8, 9]])
+        loss_mask = torch.ones(1, 8)
+        position_ids = torch.arange(8).unsqueeze(0)
         cu_seqlens = torch.tensor([[0, 3, 8, -1]], dtype=torch.int32)
         cu_seqlens_argmin = torch.tensor(3)
         max_seqlen = torch.tensor([[5]], dtype=torch.int32)
@@ -208,11 +217,11 @@ class TestGetBatch:
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch",
             lambda data_iterator, cfg, use_mtp, pg_collection: (
+                tokens,
+                labels,
+                loss_mask,
                 None,
-                None,
-                None,
-                None,
-                None,
+                position_ids,
                 cu_seqlens,
                 cu_seqlens_argmin,
                 max_seqlen,
@@ -225,15 +234,15 @@ class TestGetBatch:
             Mock(return_value=sentinel_packed_seq_params),
         )
 
-        output, loss_mask = _forward_step_common(state, _Iterator({}), model)
+        output, returned_loss_mask = _forward_step_common(state, _Iterator({}), model)
 
         assert torch.equal(output, torch.tensor(1.0))
-        assert loss_mask is None
+        assert torch.equal(returned_loss_mask, loss_mask)
         model.assert_called_once_with(
-            input_ids=None,
-            position_ids=None,
+            input_ids=tokens,
+            position_ids=position_ids,
             attention_mask=None,
-            labels=None,
+            labels=labels,
             packed_seq_params=sentinel_packed_seq_params,
         )
 
