@@ -14,16 +14,7 @@
 
 from unittest.mock import Mock, patch
 
-import pytest
-import torch
-
-from megatron.bridge.models.gpt_provider import (
-    GPTDistillationProvider,
-    GPTModelProvider,
-    convert_to_distillation_provider,
-)
-from megatron.bridge.models.qwen import Qwen3MoEModelProvider
-from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
 class TestGPTModelProvider:
@@ -268,26 +259,11 @@ class TestGPTModelProvider:
 
         assert provider.attention_softmax_in_fp32 is True
 
-    def test_provide_with_generation_config(self):
-        """Test provide method with generation configuration."""
-
-        generation_config = {"max_length": 100, "temperature": 0.7}
-
-        provider = GPTModelProvider(
-            num_layers=2,
-            hidden_size=128,
-            num_attention_heads=4,
-            vocab_size=1000,
-            generation_config=generation_config,
-        )
-
-        assert provider.generation_config == generation_config
-
     @patch("megatron.core.parallel_state")
     @patch("megatron.bridge.models.gpt_provider.get_gpt_modelopt_spec")
-    def test_quantization_layer_spec(self, mock_get_gpt_modelopt_spec, mock_parallel_state):
-        """Test quantization_layer_spec function."""
-        from megatron.bridge.models.gpt_provider import quantization_layer_spec
+    def test_modelopt_transformer_layer_spec(self, mock_get_gpt_modelopt_spec, mock_parallel_state):
+        """Test modelopt_transformer_layer_spec function."""
+        from megatron.bridge.models.gpt_provider import modelopt_transformer_layer_spec
 
         # Mock context parallel world size to return 1 (use_arbitrary_attention_mask will be True)
         mock_parallel_state.get_context_parallel_world_size.return_value = 1
@@ -304,7 +280,7 @@ class TestGPTModelProvider:
         mock_get_gpt_modelopt_spec.return_value = mock_spec
 
         # Call the function
-        result = quantization_layer_spec(provider)
+        result = modelopt_transformer_layer_spec(provider)
 
         # Verify the mock was called with correct parameters
         mock_get_gpt_modelopt_spec.assert_called_once_with(
@@ -318,11 +294,10 @@ class TestGPTModelProvider:
         # Verify the result
         assert result is mock_spec
 
-    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
-    def test_default_layer_spec_with_restore_modelopt_state(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
-        """Test default_layer_spec when restore_modelopt_state is True."""
+    def test_default_layer_spec_with_restore_modelopt_state(self, mock_te_full_spec, mock_te_spec):
+        """Test default_layer_spec when restore_modelopt_state is True uses TE spec."""
         from megatron.bridge.models.gpt_provider import default_layer_spec
 
         # Create a provider with restore_modelopt_state=True
@@ -334,23 +309,20 @@ class TestGPTModelProvider:
         )
 
         # Mock return values
-        mock_quant_spec.return_value = "quantization_spec"
         mock_te_full_spec.return_value = "te_full_spec"
         mock_te_spec.return_value = "te_spec"
 
         # Call the function
         result = default_layer_spec(provider)
 
-        # Should use quantization spec when restore_modelopt_state is True
-        mock_quant_spec.assert_called_once_with(provider)
+        # Should use TE spec even when restore_modelopt_state is True (all models support TE spec)
         mock_te_full_spec.assert_not_called()
-        mock_te_spec.assert_not_called()
-        assert result == "quantization_spec"
+        mock_te_spec.assert_called_once_with(provider)
+        assert result == "te_spec"
 
-    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
-    def test_default_layer_spec_with_te_full_layer_spec(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
+    def test_default_layer_spec_with_te_full_layer_spec(self, mock_te_full_spec, mock_te_spec):
         """Test default_layer_spec when use_transformer_engine_full_layer_spec is True."""
         from megatron.bridge.models.gpt_provider import default_layer_spec
 
@@ -364,7 +336,6 @@ class TestGPTModelProvider:
         )
 
         # Mock return values
-        mock_quant_spec.return_value = "quantization_spec"
         mock_te_full_spec.return_value = "te_full_spec"
         mock_te_spec.return_value = "te_spec"
 
@@ -372,15 +343,13 @@ class TestGPTModelProvider:
         result = default_layer_spec(provider)
 
         # Should use TE full spec when use_transformer_engine_full_layer_spec is True
-        mock_quant_spec.assert_not_called()
         mock_te_full_spec.assert_called_once_with(provider)
         mock_te_spec.assert_not_called()
         assert result == "te_full_spec"
 
-    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
-    def test_default_layer_spec_default_case(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
+    def test_default_layer_spec_default_case(self, mock_te_full_spec, mock_te_spec):
         """Test default_layer_spec default case (regular TE spec)."""
         from megatron.bridge.models.gpt_provider import default_layer_spec
 
@@ -394,7 +363,6 @@ class TestGPTModelProvider:
         )
 
         # Mock return values
-        mock_quant_spec.return_value = "quantization_spec"
         mock_te_full_spec.return_value = "te_full_spec"
         mock_te_spec.return_value = "te_spec"
 
@@ -402,327 +370,202 @@ class TestGPTModelProvider:
         result = default_layer_spec(provider)
 
         # Should use regular TE spec by default
-        mock_quant_spec.assert_not_called()
         mock_te_full_spec.assert_not_called()
         mock_te_spec.assert_called_once_with(provider)
         assert result == "te_spec"
 
+    def test_mtp_block_spec_returns_none_when_mtp_disabled(self):
+        """mtp_block_spec returns None when mtp_num_layers is unset."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
 
-class TestGPTDistillationProvider:
-    """Test cases for GPTDistillationProvider class."""
-
-    def test_initialization_with_teacher(self):
-        """Test GPTDistillationProvider can be initialized with a teacher."""
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-        )
-        student = GPTDistillationProvider(
-            num_layers=12,
-            hidden_size=2048,
-            num_attention_heads=16,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-            teacher=teacher,
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
         )
 
-        assert student.teacher is teacher
-        assert student.num_layers == 12
-        assert student.hidden_size == 2048
-        assert student.num_attention_heads == 16
+        assert mtp_block_spec(provider) is None
 
-    def test_initialization_without_teacher_raises_error(self):
-        """Test GPTDistillationProvider raises error when teacher is None."""
-        with pytest.raises(AssertionError, match="Teacher model must be provided"):
-            GPTDistillationProvider(
-                num_layers=12,
-                hidden_size=2048,
-                num_attention_heads=16,
-                vocab_size=1000,
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                context_parallel_size=1,
-                seq_length=1024,
-                pipeline_dtype=None,
-                teacher=None,
-            )
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
+    def test_mtp_block_spec_uses_callable_spec_directly_when_layer_specs_nonempty(self, mock_get_mtp):
+        """When the callable spec returns a non-empty block spec, use it as-is."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
 
-    def test_post_init_validates_shared_attributes(self):
-        """Test __post_init__ validates that shared attributes match between student and teacher."""
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=torch.float32,
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            mtp_num_layers=1,
         )
 
-        # Test mismatched tensor_model_parallel_size
-        with pytest.raises(ValueError):
-            GPTDistillationProvider(
-                num_layers=12,
-                hidden_size=2048,
-                num_attention_heads=16,
-                vocab_size=1000,
-                tensor_model_parallel_size=2,  # Different from teacher
-                pipeline_model_parallel_size=1,
-                context_parallel_size=1,
-                seq_length=1024,
-                pipeline_dtype=None,
-                teacher=teacher,
-            )
+        block_spec = Mock()
+        block_spec.layer_specs = ["layer_a", "layer_b"]
+        provider.transformer_layer_spec = lambda config: block_spec
 
-    def test_post_init_validates_seq_length(self):
-        """Test __post_init__ validates seq_length."""
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=2048,
-            pipeline_dtype=torch.float32,
-        )
+        mock_get_mtp.return_value = "mtp_spec"
 
-        with pytest.raises(ValueError):
-            GPTDistillationProvider(
-                num_layers=12,
-                hidden_size=2048,
-                num_attention_heads=16,
-                vocab_size=1000,
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                context_parallel_size=1,
-                seq_length=1024,  # Different from teacher
-                pipeline_dtype=torch.float32,
-                teacher=teacher,
-            )
+        result = mtp_block_spec(provider, vp_stage=None)
 
-    @patch("modelopt.torch.distill.plugins.megatron.parallel_state")
-    @patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024)
-    @patch("megatron.bridge.models.gpt_provider.MCoreGPTModel")
-    def test_provide_method_creates_distillation_model(
-        self,
-        mock_mcore_gpt,
-        mock_calc_vocab,
-        mock_mtd_parallel_state,
+        mock_get_mtp.assert_called_once_with(provider, block_spec, use_transformer_engine=True, vp_stage=None)
+        assert result == "mtp_spec"
+
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_decoder_layer_specs")
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
+    def test_mtp_block_spec_re_derives_last_decoder_spec_when_layer_specs_empty(
+        self, mock_get_mtp, mock_get_decoder_specs
     ):
-        """Test provide method creates a ModelOpt DistillationModel."""
-        mock_mtd_parallel_state.is_pipeline_first_stage.return_value = True
-        mock_mtd_parallel_state.is_pipeline_last_stage.return_value = True
+        """When the last-stage spec has empty layer_specs (MoE block spec on the last PP stage),
+        re-derive all decoder layer specs and pass the last one to get_gpt_mtp_block_spec."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
 
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-        )
-        student = GPTDistillationProvider(
-            num_layers=12,
-            hidden_size=4096,
-            num_attention_heads=16,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-            teacher=teacher,
-            kd_config=ModelOptDistillConfig(),
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            mtp_num_layers=1,
         )
 
-        # Attach minimal pg_collection needed by provider.provide
-        pg = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
-        teacher._pg_collection = pg
-        student._pg_collection = pg
+        empty_block_spec = Mock()
+        empty_block_spec.layer_specs = []
+        provider.transformer_layer_spec = lambda config: empty_block_spec
 
-        # Mock the provide method calls and modelopt functions
-        mock_student_model = Mock()
-        mock_teacher_model = Mock()
-        mock_student_model.config = Mock()
-        mock_teacher_model.config = Mock()
-        # Avoid ProjectionLayer being created here
-        mock_student_model.config.hidden_size = mock_teacher_model.config.hidden_size = 4096
-        mock_kd_model = Mock()
-        # Ensure that .parameters() callable returns an empty iterator
-        mock_teacher_model.parameters.return_value = iter(())
-        mock_kd_model.parameters.return_value = iter(())
+        dense_layer_spec = Mock(name="dense_layer_spec")
+        moe_layer_spec = Mock(name="moe_layer_spec")
+        mock_get_decoder_specs.return_value = [dense_layer_spec, moe_layer_spec]
+        mock_get_mtp.return_value = "mtp_spec"
 
-        # Set the side effects for the model provider - student first, then teacher
-        mock_mcore_gpt.side_effect = [mock_student_model, mock_teacher_model]
-        with patch("megatron.bridge.models.gpt_provider.mtd.convert", return_value=mock_kd_model):
-            result = student.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)
+        result = mtp_block_spec(provider, vp_stage=2)
 
-        # Verify that both student and teacher models were created
-        assert mock_mcore_gpt.call_count == 2
-        assert result[0] is mock_kd_model
-
-    def test_setattr_mirrors_to_teacher(self):
-        """Test __setattr__ mirrors attributes to teacher when teacher has that attribute."""
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
+        mock_get_decoder_specs.assert_called_once_with(
+            provider,
+            use_transformer_engine=True,
+            normalization=provider.normalization,
+            qk_l2_norm=provider.qk_l2_norm,
         )
-        student = GPTDistillationProvider(
-            num_layers=12,
-            hidden_size=2048,
-            num_attention_heads=16,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-            teacher=teacher,
+        mock_get_mtp.assert_called_once_with(provider, moe_layer_spec, use_transformer_engine=True, vp_stage=2)
+        assert result == "mtp_spec"
+
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
+    def test_mtp_block_spec_passes_vp_stage_to_callable_spec(self, mock_get_mtp):
+        """When the transformer_layer_spec callable accepts vp_stage, it is forwarded."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            mtp_num_layers=1,
         )
 
-        student.num_layers = 10  # This exists on teacher, so it should be mirrored
-        assert student.num_layers == 10
-        assert teacher.num_layers == 10
+        block_spec = Mock()
+        block_spec.layer_specs = ["layer_a"]
+        received_vp_stage = {}
 
-    def test_setattr_does_not_mirror_when_teacher_lacks_attribute(self):
-        """Test __setattr__ does not mirror attributes that teacher doesn't have."""
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
+        def spec_fn(config, vp_stage=None):
+            received_vp_stage["vp_stage"] = vp_stage
+            return block_spec
+
+        provider.transformer_layer_spec = spec_fn
+        mock_get_mtp.return_value = "mtp_spec"
+
+        result = mtp_block_spec(provider, vp_stage=3)
+
+        assert received_vp_stage["vp_stage"] == 3
+        mock_get_mtp.assert_called_once_with(provider, block_spec, use_transformer_engine=True, vp_stage=3)
+        assert result == "mtp_spec"
+
+    def test_dense_grouped_gemm_defaults_to_false(self):
+        """GPTModelProvider.dense_grouped_gemm defaults to False."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
         )
-        student = GPTDistillationProvider(
-            num_layers=12,
-            hidden_size=2048,
-            num_attention_heads=16,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-            teacher=teacher,
+        assert provider.dense_grouped_gemm is False
+
+    def test_dense_grouped_gemm_can_be_enabled(self):
+        """GPTModelProvider.dense_grouped_gemm is a settable bool attribute."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            dense_grouped_gemm=True,
         )
+        assert provider.dense_grouped_gemm is True
 
-        student.new_attribute = "test_value"  # Should not be reflected on teacher
-        assert student.new_attribute == "test_value"
-        assert not hasattr(teacher, "new_attribute")
+    def test_transformer_engine_layer_spec_forwards_dense_grouped_gemm_when_supported(self):
+        """When the upstream spec function exposes a dense_grouped_gemm parameter,
+        transformer_engine_layer_spec must forward the provider's value to it."""
+        from megatron.bridge.models.gpt_provider import transformer_engine_layer_spec
 
-    def test_convert_to_distillation_provider_preserves_original_provider(self):
-        """Ensure convert_to_distillation_provider retains original provider behavior."""
+        captured: dict = {}
 
-        class CustomProvider(GPTModelProvider):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                self.extra_attr = "custom-attr"
-                self.custom_provide_calls = 0
+        # Signature intentionally includes `dense_grouped_gemm` so the feature-detect
+        # branch in gpt_provider.py activates.
+        def fake_spec_supported(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=False,
+            fp8=False,
+            dense_grouped_gemm=False,
+        ):
+            captured["num_experts"] = num_experts
+            captured["moe_grouped_gemm"] = moe_grouped_gemm
+            captured["qk_layernorm"] = qk_layernorm
+            captured["fp8"] = fp8
+            captured["dense_grouped_gemm"] = dense_grouped_gemm
+            return "te_spec_supported"
 
-            def provide(self, pre_process=None, post_process=None, vp_stage=None):
-                self.custom_provide_calls += 1
-                return "custom-result"
-
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-        )
-        student = CustomProvider(
-            num_layers=12,
-            hidden_size=2048,
-            num_attention_heads=16,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            dense_grouped_gemm=True,
         )
 
-        original_bases = GPTDistillationProvider.__bases__
-        try:
-            converted = convert_to_distillation_provider(student, teacher)
+        with patch(
+            "megatron.bridge.models.gpt_provider.get_gpt_layer_with_transformer_engine_spec",
+            new=fake_spec_supported,
+        ):
+            result = transformer_engine_layer_spec(provider)
 
-            assert converted is student
-            assert isinstance(converted, GPTDistillationProvider)
-            assert isinstance(converted, CustomProvider)
-            assert converted.extra_attr == "custom-attr"
+        assert result == "te_spec_supported"
+        assert captured["dense_grouped_gemm"] is True
 
-            result = converted._super_class.provide(converted)
-            assert result == "custom-result"
-            assert converted.custom_provide_calls == 1
-        finally:
-            # Restore original bases since it was modified globally for the entire class
-            GPTDistillationProvider.__bases__ = original_bases
+    def test_transformer_engine_layer_spec_omits_dense_grouped_gemm_when_unsupported(self):
+        """When the upstream spec function does not expose a dense_grouped_gemm
+        parameter (older Megatron-Core), transformer_engine_layer_spec must not
+        pass the kwarg — otherwise the call would raise TypeError at runtime."""
+        from megatron.bridge.models.gpt_provider import transformer_engine_layer_spec
 
-    def test_converted_provider_to_cfg_dict_preserves_original_provider(self):
-        """Ensure converted provider to_cfg_dict retains original provider behavior."""
+        captured: dict = {}
 
-        teacher = Qwen3MoEModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-        )
-        student = Qwen3MoEModelProvider(
-            num_layers=12,
-            hidden_size=2048,
-            num_attention_heads=16,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
+        # Signature intentionally excludes `dense_grouped_gemm`. If the production
+        # code were to forward it, the call below would raise TypeError.
+        def fake_spec_unsupported(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=False,
+            fp8=False,
+        ):
+            captured["num_experts"] = num_experts
+            captured["moe_grouped_gemm"] = moe_grouped_gemm
+            captured["qk_layernorm"] = qk_layernorm
+            captured["fp8"] = fp8
+            return "te_spec_unsupported"
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            dense_grouped_gemm=True,
         )
 
-        original_bases = GPTDistillationProvider.__bases__
-        try:
-            converted = convert_to_distillation_provider(student, teacher)
-            cfg_dict = converted.to_cfg_dict()
+        with patch(
+            "megatron.bridge.models.gpt_provider.get_gpt_layer_with_transformer_engine_spec",
+            new=fake_spec_unsupported,
+        ):
+            result = transformer_engine_layer_spec(provider)
 
-            assert cfg_dict["_target_"] == "megatron.bridge.models.qwen.qwen_provider.Qwen3MoEModelProvider"
-        finally:
-            # Restore original bases since it was modified globally for the entire class
-            GPTDistillationProvider.__bases__ = original_bases
+        assert result == "te_spec_unsupported"
+        assert "dense_grouped_gemm" not in captured

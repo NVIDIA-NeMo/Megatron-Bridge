@@ -206,7 +206,7 @@ class TestFunctorWithPretrain:
         """Test pretrain works with a 4-arg functor."""
         gpt_model_cfg = create_test_gpt_config()
         checkpoint_cfg = create_test_checkpoint_config(save=None)
-        train_cfg = create_test_training_config(train_iters=100, skip_train=False)
+        train_cfg = create_test_training_config(train_iters=100)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -260,7 +260,7 @@ class TestFunctorWithPretrain:
         """Test pretrain works with a stateful functor that tracks calls."""
         gpt_model_cfg = create_test_gpt_config()
         checkpoint_cfg = create_test_checkpoint_config(save=None)
-        train_cfg = create_test_training_config(train_iters=100, skip_train=False)
+        train_cfg = create_test_training_config(train_iters=100)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,

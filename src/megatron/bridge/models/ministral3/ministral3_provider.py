@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-Ministral 3 Model Provider configurations for Megatron-Core.
+Ministral 3 Model Provider configuration for Megatron-Core.
 
-This module provides configuration classes for Ministral 3 models (3B, 8B, 14B variants),
-compatible with HuggingFace's Ministral-3 model configurations.
+This module provides a provider class for Ministral 3 models, compatible with
+HuggingFace's Ministral-3 model configurations.
 
 Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 
@@ -167,56 +167,6 @@ class Ministral3ModelProvider(MistralModelProvider):
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
 
-@dataclass
-class Ministral3ModelProvider3B(Ministral3ModelProvider):
-    """
-    Config for Ministral 3 3B Vision-Language Model.
-
-    Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
-
-    Model specs:
-    - 3.4B Language Model + 0.4B Vision Encoder
-    """
-
-    hidden_size: int = 3072
-    ffn_hidden_size: int = 9216
-    num_layers: int = 26
-    share_embeddings_and_output_weights: bool = True
-
-
-@dataclass
-class Ministral3ModelProvider8B(Ministral3ModelProvider):
-    """
-    Config for Ministral 3 8B Vision-Language Model.
-
-    Reference: https://huggingface.co/mistralai/Ministral-3-8B-Base-2512
-
-    Model specs:
-    - 8.4B Language Model + 0.4B Vision Encoder
-    """
-
-    hidden_size: int = 4096
-    ffn_hidden_size: int = 14336
-    num_layers: int = 34
-
-
-@dataclass
-class Ministral3ModelProvider14B(Ministral3ModelProvider):
-    """
-    Config for Ministral 3 14B Vision-Language Model.
-
-    Reference: https://huggingface.co/mistralai/Ministral-3-14B-Base-2512
-
-    Model specs:
-    - 13.5B Language Model + 0.4B Vision Encoder
-    """
-
-    hidden_size: int = 5120
-    ffn_hidden_size: int = 16384
-    num_layers: int = 40
-    rotary_base: int = 1000000000.0
-
-
 class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
     """
     Implementation of the TEDotProductAttention mechanism for Ministral (Mistral) 3 models with Llama 4-style attention scaling.
@@ -260,11 +210,17 @@ class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
             self.beta = 0  # No effect
             self.max_position_embeddings = self.config.seq_length
 
+    @staticmethod
     def _get_llama_4_attn_scale(
-        self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int
+        positions_ids: torch.Tensor, beta: float, max_position_embeddings: int, query_shape: tuple
     ) -> torch.Tensor:
         scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
-        return scaling.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        # Add dimensions to match query shape: [seq_len] -> [seq_len, 1, 1] for packed or [seq_len, 1, 1, 1] for unpacked
+        # Query can be either [seq_len, num_heads, head_dim] (packed) or [seq_len, batch, num_heads, head_dim] (unpacked)
+        num_dims_to_add = len(query_shape) - 1
+        for _ in range(num_dims_to_add):
+            scaling = scaling.unsqueeze(-1)
+        return scaling
 
     def forward(
         self,
@@ -276,6 +232,8 @@ class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
         **kwargs,
     ):
         positions_ids = torch.arange(query.shape[0], device=query.device)
-        query *= self._get_llama_4_attn_scale(positions_ids, self.beta, self.max_position_embeddings).to(query.dtype)
+        query *= self._get_llama_4_attn_scale(positions_ids, self.beta, self.max_position_embeddings, query.shape).to(
+            query.dtype
+        )
 
         return super().forward(query, key, value, attention_mask, attn_mask_type, **kwargs)

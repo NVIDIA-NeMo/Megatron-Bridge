@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, fields
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -22,6 +22,11 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.core.utils import is_te_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+    from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 
 
 @dataclass(kw_only=True)
@@ -57,6 +62,8 @@ class MixedPrecisionConfig:
     # fp4 related
     fp4: Optional[str] = None
     fp4_recipe: str = "nvfp4"
+    fp4_param: Optional[bool] = None
+    fp4_param_gather: bool = False
     # FP16 Loss scaling
     loss_scale: Optional[float] = None
     initial_loss_scale: Optional[float] = 4294967296  # 2**32
@@ -79,17 +86,23 @@ class MixedPrecisionConfig:
             if self.fp8_param_gather != value:
                 object.__setattr__(self, "fp8_param_gather", value)
 
+        # Keep fp4_param and fp4_param_gather in sync
+        if name == "fp4_param_gather" and hasattr(self, "fp4_param"):
+            if self.fp4_param != value:
+                object.__setattr__(self, "fp4_param", value)
+        elif name == "fp4_param" and hasattr(self, "fp4_param_gather"):
+            if self.fp4_param_gather != value:
+                object.__setattr__(self, "fp4_param_gather", value)
+
     def finalize(self):
         # If fp8_param is None, initialize it from fp8_param_gather
         if self.fp8_param is None:
             self.fp8_param = self.fp8_param_gather
 
-        # Validate that mxfp8 recipe requires reuse_grad_buf_for_mxfp8_param_ag=True when fp8_param_gather=True
-        if self.fp8_param_gather and self.fp8_recipe == "mxfp8":
-            assert self.reuse_grad_buf_for_mxfp8_param_ag, (
-                "When fp8_param_gather=True and fp8_recipe='mxfp8', "
-                "reuse_grad_buf_for_mxfp8_param_ag must be set to True"
-            )
+        # If fp4_param is None, initialize it from fp4_param_gather
+        if self.fp4_param is None:
+            self.fp4_param = self.fp4_param_gather
+
         # FP4 and FP8 are mutually exclusive
         if self.fp4 and self.fp8:
             raise ValueError("fp4 and fp8 cannot be used simultaneously. Please choose one.")
@@ -99,7 +112,7 @@ class MixedPrecisionConfig:
 
     def setup(
         self,
-        model_config: GPTModelProvider | T5ModelProvider,
+        model_config: "GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig",
         optimizer_config: Optional[OptimizerConfig] = None,
         ddp_config: Optional[DistributedDataParallelConfig] = None,
     ) -> None:
@@ -400,6 +413,19 @@ def bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
     cfg.fp4 = "e2m1"
     cfg.fp4_recipe = "nvfp4"
     cfg.fp8_param_gather = False
+    cfg.fp4_param_gather = True
+    return cfg
+
+
+@register
+def nemotron_3_super_bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
+    """Create a MixedPrecisionConfig for mixed precision training using BF16 with NVFP4
+    Returns:
+        MixedPrecisionConfig: Configuration for BF16 with NVFP4 mixed precision training
+    """
+    cfg = bf16_with_nvfp4_mixed()
+    cfg.first_last_layers_bf16 = True
+    cfg.num_layers_at_end_in_bf16 = 14
     return cfg
 
 

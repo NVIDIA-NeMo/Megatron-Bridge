@@ -19,7 +19,7 @@ import torch
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 
 
-SPIKY_LOSS_FACTOR: int = 10
+_DEFAULT_SPIKY_LOSS_FACTOR: float = 10.0
 
 
 def create_masked_next_token_loss_function(
@@ -86,11 +86,12 @@ def masked_next_token_loss(
         )
     # Check for spiky loss
     if check_for_spiky_loss:
+        spiky_loss_factor = getattr(rerun_state_machine, "spiky_loss_factor", _DEFAULT_SPIKY_LOSS_FACTOR)
         rerun_state_machine.validate_result(
             result=loss,
             rejection_func=partial(
                 rerun_state_machine.is_unexpectedly_large,
-                threshold=SPIKY_LOSS_FACTOR,
+                threshold=spiky_loss_factor,
                 context="loss",
             ),
             message="Spiky loss",

@@ -24,14 +24,22 @@ Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 """
 
 import types
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
+from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+from megatron.bridge.utils.common_utils import (
+    hook_hf_module_setattr_for_tp_grad_sync,
+    slice_batch_for_context_parallel,
+)
+
+
+if TYPE_CHECKING:
+    from megatron.core.packed_seq_params import PackedSeqParams
 
 
 # Import HuggingFace Mistral3 model classes with fallback
@@ -133,11 +141,10 @@ class Ministral3Model(MegatronModule):
                     # Apply the transformation (e.g., bfloat16 conversion)
                     result = original_apply(fn)
 
-                    # Restore inv_freq to FP32 (only move device, keep dtype)
+                    # Restore inv_freq to FP32 but on the correct device
                     if inv_freq_backup is not None:
-                        # Get the new device from the transformation
-                        new_device = fn(torch.tensor([1.0])).device
-                        pos_emb.inv_freq.data = inv_freq_backup.to(device=new_device)
+                        target_device = pos_emb.inv_freq.data.device
+                        pos_emb.inv_freq.data = inv_freq_backup.to(device=target_device)
 
                     return result
 
@@ -170,6 +177,9 @@ class Ministral3Model(MegatronModule):
         # Some config requires from HF vision tower
         self.config.spatial_merge_size = getattr(self.config.hf_config, "spatial_merge_size", 2)
         self.config.vision_feature_layer = getattr(self.config.hf_config, "vision_feature_layer", -1)
+        # HF's get_image_features accesses self.config.return_dict
+        if not hasattr(self.config, "return_dict"):
+            self.config.return_dict = True
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
@@ -185,9 +195,10 @@ class Ministral3Model(MegatronModule):
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
         image_sizes: Optional[torch.Tensor] = None,
+        packed_seq_params: Optional["PackedSeqParams"] = None,
         *,
         loss_mask: Optional[Tensor] = None,
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor | None]:
         """
         Forward pass combining HuggingFace vision encoder with Megatron language model.
 
@@ -202,7 +213,8 @@ class Ministral3Model(MegatronModule):
             loss_mask: Mask for loss computation.
 
         Returns:
-            Model output (logits or loss depending on mode).
+            tuple: (output_tensor, loss_mask) where output_tensor contains model output
+                   and loss_mask is the CP-sliced mask for consistent loss computation.
         """
         if self.pre_process:
             if inputs_embeds is None:
@@ -216,7 +228,9 @@ class Ministral3Model(MegatronModule):
 
             if pixel_values is not None:
                 # Get image features using HF's method (monkey-patched)
-                image_features = self.get_image_features(pixel_values.to(inputs_embeds.dtype), image_sizes=image_sizes)
+                image_features = self.get_image_features(
+                    pixel_values.to(inputs_embeds.dtype), image_sizes=image_sizes, return_dict=True
+                ).pooler_output
                 image_features = torch.cat(image_features, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
 
                 # Replace image tokens in text embeddings with image features
@@ -237,6 +251,25 @@ class Ministral3Model(MegatronModule):
             # Transpose back to Megatron format [seq_len, batch, hidden]
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
+        # CP slicing: slice embeddings, labels, loss_mask, position_ids, and attention_mask
+        # This must happen AFTER vision-text merge so image token positions are correct
+        inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            loss_mask=loss_mask,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            packed_seq_params=packed_seq_params,
+            pg_collection=self.config._pg_collection,
+        )
+
+        # Apply SP scatter after CP slice, before entering the language model.
+        # The language model's embedding layer (which normally handles SP scatter) is
+        # bypassed when decoder_input is provided. Matches Megatron Core's LLaVA pattern
+        # (llava_model.py:747-750): CP slice first, then SP scatter → [S/(CP*TP), B, H].
+        if self.config.sequence_parallel and inputs_embeds is not None:
+            inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+
         # Forward through Megatron language model
         outputs = self.language_model.forward(
             input_ids=None,
@@ -246,8 +279,10 @@ class Ministral3Model(MegatronModule):
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
-        return outputs
+        # Return both outputs and the CP-sliced loss_mask for consistent loss computation
+        return (outputs, loss_mask)
 
     def freeze(
         self,

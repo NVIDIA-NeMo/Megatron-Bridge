@@ -23,18 +23,16 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen.qwen_provider import Qwen3ModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3ForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=Qwen3ForCausalLM, target=GPTModel, model_type="qwen3")
 class Qwen3Bridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3 Causal LM.
 
-    This bridge handles the conversion between HuggingFace Qwen2ForCausalLM
-    (used for Qwen3 models) and Megatron-Core GPTModel formats. Qwen3 differs
-    from Qwen2 by using QK layernorm.
+    This bridge handles the conversion between HuggingFace Qwen3ForCausalLM
+    and Megatron-Core GPTModel formats. Qwen3 differs from Qwen2 by using
+    QK layernorm and no QKV bias.
 
     Example:
         >>> from megatron.bridge import AutoBridge
@@ -42,48 +40,58 @@ class Qwen3Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3ModelProvider:
-        hf_config = hf_pretrained.config
+    def provider_bridge(self, hf_pretrained):
+        """Convert HuggingFace Qwen3 config to GPTModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
 
-        provider = Qwen3ModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=hf_config.rope_theta,
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-            qk_layernorm=True,  # Qwen3 uses QK layernorm
-        )
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_bias_linear = False
+        provider.add_qkv_bias = False  # Qwen3 does NOT have QKV bias (unlike Qwen2)
+        provider.hidden_dropout = 0.0
+        provider.qk_layernorm = True  # Qwen3 uses QK layernorm
+        provider.autocast_dtype = torch.bfloat16
 
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
-        # First create simple 1:1 parameter mappings using a dictionary for readability
+        """Return the MegatronMappingRegistry for Qwen3 parameter conversion.
 
+        Covers all Megatron-Core parameter names for both the standard decoder
+        layers and the MTP (Multi-Token Prediction) transformer layers that are
+        present when ``mtp_num_layers >= 1``.
+
+        Simple 1:1 renames are expressed as :class:`AutoMapping` entries.
+        The fused QKV matrix is handled by :class:`QKVMapping` and the gated
+        MLP gate+up projection by :class:`GatedMLPMapping`.
+        """
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
+            # Embedding and output
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
+            # Decoder layer attention norms and projections
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",  # Qwen3 specific
             "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",  # Qwen3 specific
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
+            # MTP projection and norms (used when mtp_num_layers >= 1)
+            "mtp.layers.0.eh_proj.weight": "mtp.fc.weight",
+            "mtp.layers.0.enorm.weight": "mtp.pre_fc_norm_embedding.weight",
+            "mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
+            "mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
+            # MTP transformer layer attention
+            "mtp.layers.0.transformer_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
+            "mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
+            "mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
+            "mtp.layers.0.transformer_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
+            # MTP transformer layer MLP
+            "mtp.layers.0.transformer_layer.mlp.linear_fc1.layer_norm_weight": "mtp.layers.0.post_attention_layernorm.weight",
+            "mtp.layers.0.transformer_layer.mlp.linear_fc2.weight": "mtp.layers.0.mlp.down_proj.weight",
         }
 
         mapping_list = []
@@ -107,6 +115,19 @@ class Qwen3Bridge(MegatronModelBridge):
                     megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
                     gate="model.layers.*.mlp.gate_proj.weight",
                     up="model.layers.*.mlp.up_proj.weight",
+                ),
+                # MTP QKV: same split/merge as decoder layers
+                QKVMapping(
+                    megatron_param="mtp.layers.*.transformer_layer.self_attention.linear_qkv.weight",
+                    q="mtp.layers.*.self_attn.q_proj.weight",
+                    k="mtp.layers.*.self_attn.k_proj.weight",
+                    v="mtp.layers.*.self_attn.v_proj.weight",
+                ),
+                # MTP Gated MLP
+                GatedMLPMapping(
+                    megatron_param="mtp.layers.0.transformer_layer.mlp.linear_fc1.weight",
+                    gate="mtp.layers.0.mlp.gate_proj.weight",
+                    up="mtp.layers.0.mlp.up_proj.weight",
                 ),
             ]
         )

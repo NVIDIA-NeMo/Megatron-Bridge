@@ -33,8 +33,17 @@ class EnergonProvider(DatasetProvider):
     num_workers: int_repr
     dataloader_type: str = "external"
     task_encoder: Optional[Any] = None
+    # Enable batch-level online sequence packing
+    pack_sequences_in_batch: bool = False
 
     def build_datasets(self, context: DatasetBuildContext):
+        assert self.path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
+        if (
+            self.pack_sequences_in_batch
+            and self.task_encoder is not None
+            and hasattr(self.task_encoder, "pack_sequences")
+        ):
+            self.task_encoder.pack_sequences = True
         dataset = EnergonMultiModalDataModule(
             path=self.path,
             tokenizer=context.tokenizer if context.tokenizer is not None else self.tokenizer,
@@ -44,6 +53,7 @@ class EnergonProvider(DatasetProvider):
             micro_batch_size=self.micro_batch_size,
             global_batch_size=self.global_batch_size,
             num_workers=self.num_workers,
+            pg_collection=context.pg_collection,
         )
         return (
             iter(dataset.train_dataloader()),

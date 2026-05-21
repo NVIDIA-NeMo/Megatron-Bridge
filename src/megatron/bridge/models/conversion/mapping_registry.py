@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import re
 from typing import List, Optional
 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, MegatronParamMapping
+from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map
 
 
 class MegatronMappingRegistry:
@@ -113,6 +115,12 @@ class MegatronMappingRegistry:
         if extra_mappings:
             self.mappings.extend(extra_mappings)
 
+    def _add_quantization_mappings(self) -> None:
+        """Add quantization mappings for weight quantizers and input quantizers."""
+        original_mappings = list(self.mappings)
+        self.mappings.extend(convert_to_amax_map(original_mappings, ".weight_quantizer._amax"))
+        self.mappings.extend(convert_to_amax_map(original_mappings, ".input_quantizer._amax"))
+
     def _convert_pattern_to_regex(self, pattern: str) -> str:
         """Convert a pattern with wildcards to regex pattern.
 
@@ -148,6 +156,8 @@ class MegatronMappingRegistry:
         """
         self.mappings = list(mappings)
         self._add_separate_layernorm_mappings()
+        if int(os.environ.get("ENABLE_BRIDGE_QUANT_MAPPING", "0")):
+            self._add_quantization_mappings()
 
         # Pre-compile patterns for efficiency
         self._compiled_patterns = []

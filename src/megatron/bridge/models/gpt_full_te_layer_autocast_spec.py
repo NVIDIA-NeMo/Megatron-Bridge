@@ -27,6 +27,8 @@ from megatron.core.transformer.transformer_layer import BaseTransformerLayer
 from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
 from transformer_engine.pytorch import TransformerLayer
 
+from megatron.bridge.utils.cuda_graph import uses_local_cuda_graph_manager
+
 
 # Copied from  nemo/collections/nlp/models/language_modeling/megatron/gpt_full_te_layer_autocast_spec.py
 class AutocastTransformerLayer(TransformerLayer):
@@ -225,11 +227,7 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
             transformer_layer_args["ub_atomic_gemm_rs"] = config.tp_comm_atomic_rs
         self.transformer_layer = AutocastTransformerLayer(**transformer_layer_args)
 
-        if (
-            self.config.cuda_graph_impl == "local"
-            and self.training
-            and "full_iteration" not in self.config.cuda_graph_scope
-        ):
+        if uses_local_cuda_graph_manager(self.config) and self.training:
             assert not config.cpu_offloading and config.recompute_granularity is None, "Cudagraphs not supported"
             self.add_module("cudagraph_manager", CudaGraphManager(config))
 
@@ -334,11 +332,9 @@ def get_gpt_full_te_layer_autocast_spec(transformer_config) -> ModuleSpec:
 
 def torch_dtype_from_precision(precision: Union[int, str]) -> torch.dtype:
     """Mapping from precision types to corresponding PyTorch parameter datatype."""
-    if precision in ("bf16", "bf16-mixed"):
-        return torch.bfloat16
-    elif precision in (16, "16", "16-mixed"):
-        return torch.float16
-    elif precision in (32, "32", "32-true"):
-        return torch.float32
-    else:
+    from megatron.bridge.utils.activation_map import str_to_dtype
+
+    try:
+        return str_to_dtype(str(precision))
+    except ValueError:
         raise ValueError(f"Could not parse the precision of `{precision}` to a valid torch.dtype")

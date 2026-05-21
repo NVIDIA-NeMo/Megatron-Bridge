@@ -91,6 +91,7 @@ Output:
 """
 
 import argparse
+import gc
 import importlib
 import os
 import sys
@@ -110,17 +111,18 @@ try:
 except ImportError:
     QWEN_VL_UTILS_AVAILABLE = False
     process_vision_info = None
+import io
 import os
 
 # Import debugger module from same directory
 import sys
 
-import requests
 from PIL import Image
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
+from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
 # Cosine similarity threshold: require at least 98% similarity (2% tolerance)
@@ -318,7 +320,13 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     def loss_func(x, **kwargs):
         return x
 
-    return model(**forward_args), loss_func
+    model_output = model(**forward_args)
+    if isinstance(model_output, tuple):
+        output_tensor, _ = model_output
+    else:
+        output_tensor = model_output
+
+    return output_tensor, loss_func
 
 
 def load_image(image_path: str) -> Image.Image:
@@ -331,11 +339,12 @@ def load_image(image_path: str) -> Image.Image:
         PIL Image object
     """
     if image_path.startswith(("http://", "https://")):
-        response = requests.get(image_path)
-        response.raise_for_status()
-        return Image.open(requests.get(image_path, stream=True).raw)
-    else:
-        return Image.open(image_path)
+        is_safe, reason = is_safe_public_http_url(image_path)
+        if not is_safe:
+            raise ValueError(f"Refusing to fetch image URL ({reason}): {image_path}")
+        with safe_url_open(image_path) as resp:
+            return Image.open(io.BytesIO(resp.read()))
+    return Image.open(image_path)
 
 
 def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0):
@@ -609,6 +618,10 @@ def _load_megatron_model(args):
         model_provider.finalize()
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
+    # Workaround: disable MTP for inference (causes hangs on NCCL collectives)
+    for m in megatron_model:
+        disable_mtp_for_inference(m)
+
     model_components = [m.eval() for m in megatron_model]
 
     # Register debug hooks if enabled
@@ -715,12 +728,16 @@ def compare_models_one_step(args) -> None:
     )
 
     del hf_model
-    # Reload Megatron model to ensure a fresh instance before comparison
-    megatron_model, _ = _load_megatron_model(args)
+    gc.collect()
+    torch.cuda.empty_cache()
 
-    # Broadcast HF results to all ranks after Megatron initialization
-    # (following the pattern from generate_from_hf.py)
+    # Broadcast HF results to all ranks
     if torch.distributed.is_initialized():
+        # Ensure consistent dtype across ranks: rank 0 has bfloat16 logits from the HF model,
+        # so all ranks must use the same dtype for NCCL broadcast to work correctly.
+        if hf_logits is not None:
+            hf_logits = hf_logits.float()
+
         # Create tensors for broadcasting if they don't exist on non-rank-0
         if hf_next_token is None:
             hf_next_token = torch.zeros(1, device=input_ids.device, dtype=torch.long)
@@ -729,11 +746,16 @@ def compare_models_one_step(args) -> None:
             vocab_size = getattr(
                 tokenizer, "vocab_size", len(tokenizer.vocab) if hasattr(tokenizer, "vocab") else 32000
             )
-            hf_logits = torch.zeros(vocab_size, device=input_ids.device, dtype=torch.bfloat16)
+            hf_logits = torch.zeros(vocab_size, device=input_ids.device, dtype=torch.float32)
+
+        # Ensure consistent dtype across ranks before broadcast
+        hf_logits = hf_logits.float()
 
         # Broadcast from rank 0 to all ranks
         torch.distributed.broadcast(hf_next_token, 0)
         torch.distributed.broadcast(hf_logits, 0)
+        torch.distributed.barrier()
+        print_rank_0("HF results broadcast complete.")
 
     # Run Megatron model forward pass
     print_rank_0("=== RUNNING MEGATRON MODEL (1-STEP) ===")
@@ -743,7 +765,12 @@ def compare_models_one_step(args) -> None:
             .unsqueeze(0)
             .expand_as(input_ids)
         )
-        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+        # Megatron-Core convention: True in attention_mask means "mask OUT this token"
+        # (opposite of HuggingFace where True means "attend to this token").
+        # Passing None lets Megatron auto-generate the correct causal mask internally,
+        # which is the standard approach used throughout the codebase
+        # (see: qwenvl_inference_wrapper.py, vlm_step.py, sft.py).
+        attention_mask = None
 
         fwd_bwd_function = get_forward_backward_func()
         iterator = SingleBatchIterator(input_ids, position_ids, attention_mask, pixel_values, image_grid_thw)
@@ -778,7 +805,10 @@ def compare_models_one_step(args) -> None:
             megatron_logits = megatron_output[0, -1, :]
             megatron_next_token = torch.argmax(megatron_logits, dim=-1)
 
-            if not torch.distributed.is_initialized() or parallel_state.get_tensor_model_parallel_rank() == 0:
+            if not torch.distributed.is_initialized() or (
+                parallel_state.get_tensor_model_parallel_rank() == 0
+                and parallel_state.get_expert_model_parallel_rank() == 0
+            ):
                 print(f"Megatron output shape: {megatron_output.shape}")
                 print(f"Megatron logits stats - mean: {megatron_logits.mean():.4f}, std: {megatron_logits.std():.4f}")
                 print(
@@ -790,27 +820,26 @@ def compare_models_one_step(args) -> None:
                 top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
                 print(f"Megatron Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
 
+                # Megatron may pad vocab_size for GPU kernel efficiency — truncate
+                # to the HF vocab size so logits are directly comparable.
+                hf_vocab_size = hf_logits.shape[0]
+                megatron_logits_cmp = megatron_logits[:hf_vocab_size]
+                megatron_next_token_cmp = torch.argmax(megatron_logits_cmp, dim=-1)
+
                 # Compare outputs (only where we have valid Megatron results)
                 print("=== COMPARISON ===")
-                token_match = hf_next_token.item() == megatron_next_token.item()
+                token_match = hf_next_token.item() == megatron_next_token_cmp.item()
                 token_status_emoji = "✅" if token_match else "❌"
                 print(f"Token match: {token_match} {token_status_emoji}")
 
-                # Compare logits if shapes match
-                if hf_logits.shape == megatron_logits.shape:
-                    diff = (hf_logits - megatron_logits).abs()
-                    print(f"Logits diff - max: {diff.max():.6f}, mean: {diff.mean():.6f}")
-                    cosine_sim = torch.cosine_similarity(hf_logits.unsqueeze(0), megatron_logits.unsqueeze(0))
-                    cos_val = cosine_sim.item()
-                    percent = cos_val * 100.0
-                    status_emoji = "✅" if cos_val >= SIMILARITY_THRESHOLD else "❌"
-                    tolerance_text = "within ±2%" if cos_val >= SIMILARITY_THRESHOLD else "outside ±2%"
-                    print(
-                        f"Cosine similarity: {cos_val:.6f} ({percent:.2f}%) {status_emoji} ({tolerance_text} tolerance)"
-                    )
-                else:
-                    print(f"Shape mismatch: HF {hf_logits.shape} vs Megatron {megatron_logits.shape}")
-                    print("Cannot compare logits directly due to shape mismatch")
+                diff = (hf_logits - megatron_logits_cmp).abs()
+                print(f"Logits diff - max: {diff.max():.6f}, mean: {diff.mean():.6f}")
+                cosine_sim = torch.cosine_similarity(hf_logits.unsqueeze(0), megatron_logits_cmp.unsqueeze(0))
+                cos_val = cosine_sim.item()
+                percent = cos_val * 100.0
+                status_emoji = "✅" if cos_val >= SIMILARITY_THRESHOLD else "❌"
+                tolerance_text = "within ±2%" if cos_val >= SIMILARITY_THRESHOLD else "outside ±2%"
+                print(f"Cosine similarity: {cos_val:.6f} ({percent:.2f}%) {status_emoji} ({tolerance_text} tolerance)")
 
                 print("=== COMPARISON COMPLETE ===")
         else:

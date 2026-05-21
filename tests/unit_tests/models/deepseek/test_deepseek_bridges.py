@@ -23,10 +23,10 @@ import torch
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV2ModelProvider, DeepSeekV3ModelProvider
 from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge
-from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
+from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge, _dequant_fp8_blockwise
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
 class TestDeepSeekV2Bridge:
@@ -94,7 +94,8 @@ class TestDeepSeekV2Bridge:
 
     @pytest.fixture
     def mock_pretrained_v2(self, ds_v2_config):
-        cfg = Mock()
+        # Use spec to prevent Mock from auto-creating undefined attributes
+        cfg = Mock(spec=list(ds_v2_config.keys()))
         for k, v in ds_v2_config.items():
             setattr(cfg, k, v)
 
@@ -109,7 +110,7 @@ class TestDeepSeekV2Bridge:
     def test_provider_bridge_maps_config(self, mock_pretrained_v2):
         bridge = DeepSeekV2Bridge()
         provider = bridge.provider_bridge(mock_pretrained_v2)
-        assert isinstance(provider, DeepSeekV2ModelProvider)
+        assert isinstance(provider, MLAModelProvider)
         assert provider.hidden_size == mock_pretrained_v2.config.hidden_size
         assert provider.num_attention_heads == mock_pretrained_v2.config.num_attention_heads
         assert provider.ffn_hidden_size == mock_pretrained_v2.config.intermediate_size
@@ -120,6 +121,77 @@ class TestDeepSeekV2Bridge:
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+
+    def test_hf_config_to_provider_kwargs_preserves_none_q_lora_rank(self, mock_pretrained_v2):
+        mock_pretrained_v2.config.q_lora_rank = None
+        bridge = DeepSeekV2Bridge()
+
+        provider_kwargs = bridge.hf_config_to_provider_kwargs(mock_pretrained_v2.config)
+
+        assert "q_lora_rank" in provider_kwargs
+        assert provider_kwargs["q_lora_rank"] is None
+
+    def test_provider_bridge_preserves_none_q_lora_rank(self, mock_pretrained_v2):
+        mock_pretrained_v2.config.q_lora_rank = None
+        bridge = DeepSeekV2Bridge()
+
+        provider = bridge.provider_bridge(mock_pretrained_v2)
+
+        assert provider.q_lora_rank is None
+
+    def test_megatron_to_hf_config_preserves_none_q_lora_rank(self, mock_pretrained_v2):
+        mock_pretrained_v2.config.q_lora_rank = None
+        bridge = DeepSeekV2Bridge()
+        provider = bridge.provider_bridge(mock_pretrained_v2)
+
+        hf_config = bridge.megatron_to_hf_config(provider)
+
+        assert "q_lora_rank" in hf_config
+        assert hf_config["q_lora_rank"] is None
+
+    def test_hf_config_to_provider_kwargs_nested_dot_notation(self, mock_pretrained_v2):
+        """Test that dot-notation CONFIG_MAPPING reads nested dict values (including None)."""
+        bridge = DeepSeekV2Bridge()
+        # Patch CONFIG_MAPPING with a dot-notation entry pointing into rope_scaling dict
+        original = bridge.CONFIG_MAPPING
+        bridge.CONFIG_MAPPING = list(original) + [("rope_scaling.factor", "yarn_rotary_scaling_factor")]
+        mock_pretrained_v2.config.rope_scaling = {"factor": 40, "type": "yarn"}
+
+        kwargs = bridge.hf_config_to_provider_kwargs(mock_pretrained_v2.config)
+
+        bridge.CONFIG_MAPPING = original
+        assert kwargs.get("yarn_rotary_scaling_factor") == 40
+
+    def test_hf_config_to_provider_kwargs_nested_dot_notation_none_value(self, mock_pretrained_v2):
+        """Test that dot-notation CONFIG_MAPPING preserves None values from nested dicts."""
+        bridge = DeepSeekV2Bridge()
+        original = bridge.CONFIG_MAPPING
+        bridge.CONFIG_MAPPING = list(original) + [("rope_scaling.factor", "yarn_rotary_scaling_factor")]
+        mock_pretrained_v2.config.rope_scaling = {"factor": None, "type": "yarn"}
+
+        kwargs = bridge.hf_config_to_provider_kwargs(mock_pretrained_v2.config)
+
+        bridge.CONFIG_MAPPING = original
+        assert "yarn_rotary_scaling_factor" in kwargs
+        assert kwargs["yarn_rotary_scaling_factor"] is None
+
+    def test_megatron_to_hf_config_yarn_none_value(self, mock_pretrained_v2):
+        """Test that YARN_ROPE_SCALING_MAPPING omits None values on provider.
+
+        Since yarn_* fields are now proper dataclass fields defaulting to None,
+        None means 'unset' and should not appear in the exported rope_scaling dict.
+        """
+        bridge = DeepSeekV2Bridge()
+        provider = bridge.provider_bridge(mock_pretrained_v2)
+        provider.yarn_rotary_scaling_factor = 40
+        provider.yarn_mscale = None
+
+        hf_config = bridge.megatron_to_hf_config(provider)
+
+        assert "rope_scaling" in hf_config
+        assert hf_config["rope_scaling"]["rope_type"] == "yarn"
+        assert hf_config["rope_scaling"]["factor"] == 40
+        assert "mscale" not in hf_config["rope_scaling"]
 
 
 class TestDeepSeekV3Bridge:
@@ -183,6 +255,7 @@ class TestDeepSeekV3Bridge:
             "tie_word_embeddings": False,
             "topk_group": 4,
             "topk_method": "noaux_tc",
+            "aux_loss_alpha": 0.0001,
             "torch_dtype": "bfloat16",
             "transformers_version": "4.33.1",
             "use_cache": True,
@@ -192,7 +265,8 @@ class TestDeepSeekV3Bridge:
 
     @pytest.fixture
     def mock_pretrained_v3(self, ds_v3_config):
-        cfg = Mock()
+        # Use spec to prevent Mock from auto-creating undefined attributes
+        cfg = Mock(spec=list(ds_v3_config.keys()))
         for k, v in ds_v3_config.items():
             setattr(cfg, k, v)
 
@@ -207,7 +281,7 @@ class TestDeepSeekV3Bridge:
     def test_provider_bridge_maps_config(self, mock_pretrained_v3):
         bridge = DeepSeekV3Bridge()
         provider = bridge.provider_bridge(mock_pretrained_v3)
-        assert isinstance(provider, DeepSeekV3ModelProvider)
+        assert isinstance(provider, MLAModelProvider)
         assert provider.hidden_size == mock_pretrained_v3.config.hidden_size
         assert provider.num_attention_heads == mock_pretrained_v3.config.num_attention_heads
         assert provider.ffn_hidden_size == mock_pretrained_v3.config.intermediate_size
@@ -218,6 +292,33 @@ class TestDeepSeekV3Bridge:
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+
+    def test_hf_config_to_provider_kwargs_preserves_none_q_lora_rank(self, mock_pretrained_v3):
+        mock_pretrained_v3.config.q_lora_rank = None
+        bridge = DeepSeekV3Bridge()
+
+        provider_kwargs = bridge.hf_config_to_provider_kwargs(mock_pretrained_v3.config)
+
+        assert "q_lora_rank" in provider_kwargs
+        assert provider_kwargs["q_lora_rank"] is None
+
+    def test_provider_bridge_preserves_none_q_lora_rank(self, mock_pretrained_v3):
+        mock_pretrained_v3.config.q_lora_rank = None
+        bridge = DeepSeekV3Bridge()
+
+        provider = bridge.provider_bridge(mock_pretrained_v3)
+
+        assert provider.q_lora_rank is None
+
+    def test_megatron_to_hf_config_preserves_none_q_lora_rank(self, mock_pretrained_v3):
+        mock_pretrained_v3.config.q_lora_rank = None
+        bridge = DeepSeekV3Bridge()
+        provider = bridge.provider_bridge(mock_pretrained_v3)
+
+        hf_config = bridge.megatron_to_hf_config(provider)
+
+        assert "q_lora_rank" in hf_config
+        assert hf_config["q_lora_rank"] is None
 
     def test_export_injects_inv_freq_for_layer(self, mock_pretrained_v3):
         bridge = DeepSeekV3Bridge()
@@ -272,3 +373,101 @@ class TestDeepSeekV3Bridge:
 
         inv_key = "model.layers.0.self_attn.rotary_emb.inv_freq"
         assert inv_key not in result
+
+
+class TestDeepSeekV3DequantFP8Blockwise:
+    """Unit tests for the standalone _dequant_fp8_blockwise helper."""
+
+    def test_identity_scale_inv(self):
+        """With scale_inv=1 the output equals the input cast to bfloat16."""
+        weight = torch.ones(128, 128, dtype=torch.float8_e4m3fn)
+        scale_inv = torch.ones(1, 1)
+        result = _dequant_fp8_blockwise(weight, scale_inv)
+
+        assert result.dtype == torch.bfloat16
+        assert result.shape == (128, 128)
+        assert torch.all(result == 1.0)
+
+    def test_scale_inv_applied_per_block(self):
+        """scale_inv value is multiplied block-wise across all 128x128 blocks."""
+        weight = torch.ones(256, 256, dtype=torch.float8_e4m3fn)
+        scale_inv = torch.full((2, 2), 2.0)
+        result = _dequant_fp8_blockwise(weight, scale_inv)
+
+        assert result.dtype == torch.bfloat16
+        assert torch.all(result == 2.0)
+
+    def test_distinct_scale_per_block(self):
+        """Each 128x128 block uses its own scale value."""
+        weight = torch.ones(256, 256, dtype=torch.float8_e4m3fn)
+        scale_inv = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        result = _dequant_fp8_blockwise(weight, scale_inv).float()
+
+        assert torch.all(result[:128, :128] == 1.0)
+        assert torch.all(result[:128, 128:] == 2.0)
+        assert torch.all(result[128:, :128] == 3.0)
+        assert torch.all(result[128:, 128:] == 4.0)
+
+    def test_non_multiple_dim(self):
+        """Trailing partial block (dim not divisible by 128) is handled."""
+        weight = torch.zeros(100, 70, dtype=torch.float8_e4m3fn)
+        scale_inv = torch.ones(1, 1)
+        result = _dequant_fp8_blockwise(weight, scale_inv)
+
+        assert result.shape == (100, 70)
+        assert result.dtype == torch.bfloat16
+
+
+class TestDeepSeekV3MaybeModifyLoadedHFWeight:
+    """Unit tests for DeepSeekV3Bridge.maybe_modify_loaded_hf_weight (FP8 dequant on import)."""
+
+    def test_passthrough_bfloat16(self):
+        """Non-FP8 weights are returned unchanged."""
+        bridge = DeepSeekV3Bridge()
+        w = torch.randn(4, 4, dtype=torch.bfloat16)
+        state = {"layer.weight": w}
+        result = bridge.maybe_modify_loaded_hf_weight("layer.weight", state)
+        assert result is w
+
+    def test_passthrough_float32(self):
+        """Non-FP8 (float32) weights pass through unchanged."""
+        bridge = DeepSeekV3Bridge()
+        w = torch.randn(4, 4, dtype=torch.float32)
+        state = {"layer.weight": w}
+        result = bridge.maybe_modify_loaded_hf_weight("layer.weight", state)
+        assert result is w
+
+    def test_dequants_fp8_when_scale_inv_present(self):
+        """FP8 weight with a ``*_scale_inv`` key is block-wise dequantized."""
+        bridge = DeepSeekV3Bridge()
+        w = torch.ones(128, 128, dtype=torch.float8_e4m3fn)
+        sinv = torch.full((1, 1), 3.0)
+        state = {"layer.weight": w, "layer.weight_scale_inv": sinv}
+        result = bridge.maybe_modify_loaded_hf_weight("layer.weight", state)
+
+        assert result.dtype == torch.bfloat16
+        assert torch.all(result == 3.0)
+
+    def test_fp8_without_scale_inv_cast_to_bfloat16(self):
+        """FP8 weight without ``*_scale_inv`` falls back to a plain float cast."""
+        bridge = DeepSeekV3Bridge()
+        w = torch.ones(4, 4, dtype=torch.float8_e4m3fn)
+        state = {"layer.weight": w}
+        result = bridge.maybe_modify_loaded_hf_weight("layer.weight", state)
+
+        assert result.dtype == torch.bfloat16
+
+    def test_dict_hf_param_each_key_processed(self):
+        """Compound (dict) hf_param dequantizes every sub-key independently."""
+        bridge = DeepSeekV3Bridge()
+        w1 = torch.ones(128, 128, dtype=torch.float8_e4m3fn)
+        w2 = torch.ones(64, 64, dtype=torch.bfloat16)
+        sinv = torch.full((1, 1), 2.0)
+        state = {"key1": w1, "key1_scale_inv": sinv, "key2": w2}
+        result = bridge.maybe_modify_loaded_hf_weight({"gate": "key1", "up": "key2"}, state)
+
+        assert isinstance(result, dict)
+        assert result["gate"].dtype == torch.bfloat16
+        assert torch.all(result["gate"] == 2.0)
+        # Non-FP8 entries pass through unchanged.
+        assert result["up"] is w2

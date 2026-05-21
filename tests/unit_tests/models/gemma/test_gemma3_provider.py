@@ -22,16 +22,13 @@ from megatron.core.transformer.enums import AttnBackend
 from megatron.bridge.models.gemma.gemma3_provider import (
     Gemma3LanguageModelEmbedding,
     Gemma3ModelProvider,
-    Gemma3ModelProvider1B,
-    Gemma3ModelProvider4B,
-    Gemma3ModelProvider12B,
-    Gemma3ModelProvider27B,
     Gemma3RotaryEmbedding,
     Gemma3SelfAttention,
     Gemma3TEDotProductAttention,
     TERowParallelLinearLayerNorm,
     _is_local_attn_layer,
 )
+from megatron.bridge.utils.fusions import can_enable_gradient_accumulation_fusion
 
 
 class TestGemma3ModelProvider:
@@ -76,7 +73,7 @@ class TestGemma3ModelProvider:
         # Check other settings
         assert provider.is_vision_language is False
         assert provider.flash_decode is False
-        assert provider.gradient_accumulation_fusion is False
+        assert provider.gradient_accumulation_fusion is can_enable_gradient_accumulation_fusion()
         assert provider.scatter_embedding_sequence_parallel is True
 
         # Check data type settings
@@ -187,127 +184,6 @@ class TestGemma3ModelProvider:
                 mock_model.setup_embeddings_and_output_layer.assert_called_once()
 
 
-class TestGemma3ModelProvider1B:
-    """Test cases for Gemma3ModelProvider1B class."""
-
-    def test_gemma3_1b_configuration(self):
-        """Test that Gemma3ModelProvider1B has correct configuration values."""
-        provider = Gemma3ModelProvider1B()
-
-        # Test 1B specific values
-        assert provider.is_vision_language is False
-        assert provider.num_layers == 26
-        assert provider.hidden_size == 1152
-        assert provider.num_attention_heads == 4
-        assert provider.num_query_groups == 1
-        assert provider.kv_channels == 256
-        assert provider.ffn_hidden_size == 6912
-        assert provider.window_size == 512
-        assert provider.rope_scaling_factor == 1.0  # no rope scaling
-        assert provider.seq_length == 32768
-        assert provider.bf16 is True
-        assert provider.vocab_size == 262_144
-
-        # Test inherited Gemma3 defaults
-        assert provider.normalization == "RMSNorm"
-        assert provider.gated_linear_unit is True
-        assert provider.rotary_base == (10_000, 1_000_000)
-        assert provider.interleaved_attn_pattern == (5, 1)
-
-    def test_gemma3_1b_inheritance(self):
-        """Test that Gemma3ModelProvider1B properly inherits from Gemma3ModelProvider."""
-        provider = Gemma3ModelProvider1B()
-        assert isinstance(provider, Gemma3ModelProvider)
-
-
-class TestGemma3ModelProvider4B:
-    """Test cases for Gemma3ModelProvider4B class."""
-
-    def test_gemma3_4b_configuration(self):
-        """Test that Gemma3ModelProvider4B has correct configuration values."""
-        provider = Gemma3ModelProvider4B()
-
-        # Test 4B specific values
-        assert provider.is_vision_language is True  # VL model
-        assert provider.num_layers == 34
-        assert provider.hidden_size == 2560
-        assert provider.num_attention_heads == 8
-        assert provider.num_query_groups == 4
-        assert provider.kv_channels == 256
-        assert provider.ffn_hidden_size == 10240
-        assert provider.window_size == 1024
-        assert provider.rope_scaling_factor == 8.0
-        assert provider.vocab_size == 262_208
-
-        # Test inherited Gemma3 defaults
-        assert provider.normalization == "RMSNorm"
-        assert provider.gated_linear_unit is True
-
-    def test_gemma3_4b_inheritance(self):
-        """Test that Gemma3ModelProvider4B properly inherits from Gemma3ModelProvider."""
-        provider = Gemma3ModelProvider4B()
-        assert isinstance(provider, Gemma3ModelProvider)
-
-
-class TestGemma3ModelProvider12B:
-    """Test cases for Gemma3ModelProvider12B class."""
-
-    def test_gemma3_12b_configuration(self):
-        """Test that Gemma3ModelProvider12B has correct configuration values."""
-        provider = Gemma3ModelProvider12B()
-
-        # Test 12B specific values
-        assert provider.is_vision_language is True  # VL model
-        assert provider.num_layers == 48
-        assert provider.hidden_size == 3840
-        assert provider.num_attention_heads == 16
-        assert provider.num_query_groups == 8
-        assert provider.kv_channels == 256
-        assert provider.ffn_hidden_size == 15360
-        assert provider.window_size == 1024
-        assert provider.rope_scaling_factor == 8.0
-        assert provider.vocab_size == 262_208
-
-    def test_gemma3_12b_inheritance(self):
-        """Test that Gemma3ModelProvider12B properly inherits from Gemma3ModelProvider."""
-        provider = Gemma3ModelProvider12B()
-        assert isinstance(provider, Gemma3ModelProvider)
-
-
-class TestGemma3ModelProvider27B:
-    """Test cases for Gemma3ModelProvider27B class."""
-
-    def test_gemma3_27b_configuration(self):
-        """Test that Gemma3ModelProvider27B has correct configuration values."""
-        provider = Gemma3ModelProvider27B()
-
-        # Test 27B specific values
-        assert provider.is_vision_language is True  # VL model
-        assert provider.num_layers == 62
-        assert provider.hidden_size == 5376
-        assert provider.num_attention_heads == 32
-        assert provider.num_query_groups == 16
-        assert provider.kv_channels == 128  # Different from other sizes
-        assert provider.softmax_scale == 1.0 / math.sqrt(168)  # Special for 27B
-        assert provider.ffn_hidden_size == 21504
-        assert provider.window_size == 1024
-        assert provider.rope_scaling_factor == 8.0
-        assert provider.vocab_size == 262_208
-
-    def test_gemma3_27b_softmax_scale_calculation(self):
-        """Test that 27B model has correct softmax scale calculation."""
-        provider = Gemma3ModelProvider27B()
-
-        # Verify the softmax scale calculation: (5376 // 32)^(-0.5) = 168^(-0.5)
-        expected_scale = 1.0 / math.sqrt(168)
-        assert abs(provider.softmax_scale - expected_scale) < 1e-10
-
-    def test_gemma3_27b_inheritance(self):
-        """Test that Gemma3ModelProvider27B properly inherits from Gemma3ModelProvider."""
-        provider = Gemma3ModelProvider27B()
-        assert isinstance(provider, Gemma3ModelProvider)
-
-
 class TestGemma3UtilityFunctions:
     """Test cases for Gemma3 utility functions."""
 
@@ -416,6 +292,89 @@ class TestGemma3CustomComponents:
             # Verify that RotaryEmbedding was called for local rope
             assert mock_rotary_embedding.call_count >= 1
 
+    def test_gemma3_rotary_embedding_forward_with_cp_group(self):
+        """Test Gemma3RotaryEmbedding forward method with cp_group (non-None path)."""
+        # Create a minimal Gemma3RotaryEmbedding instance via __new__ to avoid complex init
+        rope_emb = Gemma3RotaryEmbedding.__new__(Gemma3RotaryEmbedding)
+
+        # Mock the rope_local attribute
+        mock_rope_local = Mock()
+        mock_rope_local.forward = Mock(return_value=torch.tensor([1.0, 2.0]))
+        rope_emb.rope_local = mock_rope_local
+
+        # Mock the parent class forward method (called via super().forward)
+        mock_global_output = torch.tensor([3.0, 4.0])
+        mock_local_output = torch.tensor([1.0, 2.0])
+
+        # Create a mock cp_group (ProcessGroup)
+        mock_cp_group = Mock()
+
+        with patch.object(
+            Gemma3RotaryEmbedding.__bases__[0], "forward", return_value=mock_global_output
+        ) as mock_super_forward:
+            result = rope_emb.forward(max_seq_len=1024, offset=0, packed_seq=False, cp_group=mock_cp_group)
+
+            # Verify super().forward was called with cp_group
+            mock_super_forward.assert_called_once_with(1024, 0, False, mock_cp_group)
+
+            # Verify rope_local.forward was called with cp_group
+            mock_rope_local.forward.assert_called_once_with(1024, 0, False, mock_cp_group)
+
+            # Verify return is tensor with (rope_local, rope_global) as first dim
+            assert isinstance(result, torch.Tensor)
+            assert result.ndim >= 1
+            assert result.size(0) == 2
+            rope_local_result, rope_global_result = result
+            assert torch.equal(rope_local_result, mock_local_output)
+            assert torch.equal(rope_global_result, mock_global_output)
+
+    def test_gemma3_rotary_embedding_forward_without_cp_group(self):
+        """Test Gemma3RotaryEmbedding forward method without cp_group (cached path)."""
+        # Create a minimal Gemma3RotaryEmbedding instance via __new__
+        rope_emb = Gemma3RotaryEmbedding.__new__(Gemma3RotaryEmbedding)
+
+        # Mock the _forward_cached method
+        mock_cached_result = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        rope_emb._forward_cached = Mock(return_value=mock_cached_result)
+
+        # Call forward without cp_group (None)
+        result = rope_emb.forward(max_seq_len=1024, offset=0, packed_seq=False, cp_group=None)
+
+        # Verify _forward_cached was called
+        rope_emb._forward_cached.assert_called_once_with(1024, 0, False)
+
+        # Verify result matches cached result
+        compare_results = torch.all(result == mock_cached_result)
+        assert compare_results.item()
+
+    def test_gemma3_rotary_embedding_forward_cached(self):
+        """Test Gemma3RotaryEmbedding _forward_cached method."""
+        # Create a minimal Gemma3RotaryEmbedding instance via __new__
+        rope_emb = Gemma3RotaryEmbedding.__new__(Gemma3RotaryEmbedding)
+
+        # Mock the rope_local attribute
+        mock_rope_local = Mock()
+        mock_rope_local.forward = Mock(return_value=torch.tensor([1.0, 2.0]))
+        rope_emb.rope_local = mock_rope_local
+
+        mock_global_output = torch.tensor([3.0, 4.0])
+
+        with patch.object(
+            Gemma3RotaryEmbedding.__bases__[0], "forward", return_value=mock_global_output
+        ) as mock_super_forward:
+            result = rope_emb._forward_cached(max_seq_len=512, offset=10, packed_seq=True)
+
+            # Verify super().forward was called with cp_group=None
+            mock_super_forward.assert_called_once_with(512, 10, True, None)
+
+            # Verify rope_local.forward was called with cp_group=None
+            mock_rope_local.forward.assert_called_once_with(512, 10, True, None)
+
+            # Verify return is tensor with (rope_local, rope_global) as first dim
+            assert isinstance(result, torch.Tensor)
+            assert result.ndim >= 1
+            assert result.size(0) == 2
+
     def test_te_row_parallel_linear_layer_norm(self):
         """Test TERowParallelLinearLayerNorm initialization and forward."""
         # Test that the class exists and can be imported
@@ -443,128 +402,36 @@ class TestGemma3CustomComponents:
 class TestGemma3ModelProviderIntegration:
     """Integration tests for Gemma3 model providers."""
 
-    def test_all_providers_have_provide_method(self):
-        """Test that all provider classes have the provide method."""
+    def test_provider_accepts_explicit_architecture_values(self):
+        """Test that architecture values can be supplied without size subclasses."""
         providers = [
-            Gemma3ModelProvider1B(),
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
-        ]
-
-        for provider in providers:
-            assert hasattr(provider, "provide")
-            assert callable(getattr(provider, "provide"))
-
-    def test_vision_language_configuration(self):
-        """Test that VL models are configured correctly."""
-        # 1B is not VL
-        provider_1b = Gemma3ModelProvider1B()
-        assert provider_1b.is_vision_language is False
-
-        # 4B, 12B, 27B are VL models
-        vl_providers = [
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
-        ]
-
-        for provider in vl_providers:
-            assert provider.is_vision_language is True
-
-    def test_rope_scaling_configuration(self):
-        """Test rope scaling configuration across different model sizes."""
-        # 1B has no rope scaling
-        provider_1b = Gemma3ModelProvider1B()
-        assert provider_1b.rope_scaling_factor == 1.0
-
-        # Larger models have rope scaling
-        scaled_providers = [
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
-        ]
-
-        for provider in scaled_providers:
-            assert provider.rope_scaling_factor == 8.0
-
-    def test_window_size_configuration(self):
-        """Test window size configuration across different model sizes."""
-        # 1B has smaller window
-        provider_1b = Gemma3ModelProvider1B()
-        assert provider_1b.window_size == 512
-
-        # Larger models have bigger window
-        larger_providers = [
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
-        ]
-
-        for provider in larger_providers:
-            assert provider.window_size == 1024
-
-    def test_kv_channels_configuration(self):
-        """Test kv_channels configuration across different model sizes."""
-        # Most models use 256
-        standard_providers = [
-            Gemma3ModelProvider1B(),
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-        ]
-
-        for provider in standard_providers:
-            assert provider.kv_channels == 256
-
-        # 27B uses different kv_channels
-        provider_27b = Gemma3ModelProvider27B()
-        assert provider_27b.kv_channels == 128
-
-    def test_vocab_size_configuration(self):
-        """Test vocabulary size configuration across different model sizes."""
-        # 1B has different vocab size
-        provider_1b = Gemma3ModelProvider1B()
-        assert provider_1b.vocab_size == 262_144
-
-        # Larger models have same vocab size
-        larger_providers = [
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
-        ]
-
-        for provider in larger_providers:
-            assert provider.vocab_size == 262_208
-
-    def test_all_providers_inherit_correctly(self):
-        """Test that all provider variants inherit from base Gemma3ModelProvider."""
-        providers = [
-            Gemma3ModelProvider1B(),
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
+            Gemma3ModelProvider(
+                num_layers=26,
+                hidden_size=1152,
+                num_attention_heads=4,
+                num_query_groups=1,
+                kv_channels=256,
+                ffn_hidden_size=6912,
+                window_size=512,
+                rope_scaling_factor=1.0,
+                seq_length=32768,
+                vocab_size=262_144,
+            ),
+            Gemma3ModelProvider(
+                num_layers=62,
+                hidden_size=5376,
+                num_attention_heads=32,
+                num_query_groups=16,
+                kv_channels=128,
+                softmax_scale=1.0 / math.sqrt(168),
+                ffn_hidden_size=21504,
+                window_size=1024,
+                rope_scaling_factor=8.0,
+                vocab_size=262_208,
+            ),
         ]
 
         for provider in providers:
             assert isinstance(provider, Gemma3ModelProvider)
-
-    def test_softmax_scale_configuration(self):
-        """Test features unique to the 27B model."""
-        provider_27b = Gemma3ModelProvider27B()
-
-        # 27B has unique softmax_scale
-        assert hasattr(provider_27b, "softmax_scale")
-        expected_scale = 1.0 / math.sqrt(168)
-        assert abs(provider_27b.softmax_scale - expected_scale) < 1e-10
-
-        # Other models have this attribute set to 1.0 / math.sqrt(256)
-        other_providers = [
-            Gemma3ModelProvider1B(),
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-        ]
-
-        for provider in other_providers:
-            assert hasattr(provider, "softmax_scale")
-            expected_scale = 1.0 / math.sqrt(256)
-            assert abs(provider.softmax_scale - expected_scale) < 1e-10
+            assert hasattr(provider, "provide")
+            assert callable(getattr(provider, "provide"))

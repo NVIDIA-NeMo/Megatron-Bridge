@@ -68,6 +68,7 @@ class Gemma3ModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
 
     # attention
+    qk_layernorm: bool = True
     window_size: tuple = 512  # local
     interleaved_attn_pattern: tuple = (5, 1)  # (local, global)
     attention_dropout: float = 0.0
@@ -85,7 +86,6 @@ class Gemma3ModelProvider(GPTModelProvider):
     # Do not change
     is_vision_language: bool = False
     flash_decode: bool = False
-    gradient_accumulation_fusion: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["Gemma3ModelProvider"], ModuleSpec]] = field(
         default_factory=lambda: gemma3_layer_spec
     )
@@ -140,73 +140,6 @@ class Gemma3ModelProvider(GPTModelProvider):
         return model
 
 
-@dataclass
-class Gemma3ModelProvider1B(Gemma3ModelProvider):
-    """Gemma3 1B config"""
-
-    is_vision_language: bool = False
-    num_layers: int = 26
-    hidden_size: int = 1152
-    num_attention_heads: int = 4
-    num_query_groups: int = 1
-    kv_channels: int = 256
-    ffn_hidden_size: int = 6912
-    window_size: int = 512
-    rope_scaling_factor: float = 1.0  # no rope scaling
-    seq_length: int = 32768
-    bf16: bool = True
-    vocab_size: int = 262_144
-
-
-@dataclass
-class Gemma3ModelProvider4B(Gemma3ModelProvider):
-    """Gemma3 4B config"""
-
-    is_vision_language: bool = True
-    num_layers: int = 34
-    hidden_size: int = 2560
-    num_attention_heads: int = 8
-    num_query_groups: int = 4
-    kv_channels: int = 256
-    ffn_hidden_size: int = 10240
-    window_size: int = 1024
-    rope_scaling_factor: float = 8.0
-    vocab_size: int = 262_208
-
-
-@dataclass
-class Gemma3ModelProvider12B(Gemma3ModelProvider):
-    """Gemma3 12B config"""
-
-    is_vision_language: bool = True
-    num_layers: int = 48
-    hidden_size: int = 3840
-    num_attention_heads: int = 16
-    num_query_groups: int = 8
-    kv_channels: int = 256
-    ffn_hidden_size: int = 15360
-    window_size: int = 1024
-    rope_scaling_factor: float = 8.0
-    vocab_size: int = 262_208
-
-
-@dataclass
-class Gemma3ModelProvider27B(Gemma3ModelProvider):
-    """Gemma3 27B config"""
-
-    is_vision_language: bool = True
-    num_layers: int = 62
-    hidden_size: int = 5376
-    num_attention_heads: int = 32
-    num_query_groups: int = 16
-    kv_channels: int = 128
-    softmax_scale: int = 1.0 / math.sqrt(168)  # only for 27B, (5376 // 32)^(-0.5)
-    ffn_hidden_size: int = 21504
-    window_size: int = 1024
-    rope_scaling_factor: float = 8.0
-    vocab_size: int = 262_208
-
-
 def gemma3_layer_spec(config) -> ModuleSpec:
     """Gemma3 custom layer spec."""
     return ModuleSpec(
@@ -218,8 +151,8 @@ def gemma3_layer_spec(config) -> ModuleSpec:
                 submodules=SelfAttentionSubmodules(
                     linear_qkv=TELayerNormColumnParallelLinear,
                     core_attention=Gemma3TEDotProductAttention,  # mixed gloabl/local attn
-                    q_layernorm=TENorm,
-                    k_layernorm=TENorm,
+                    q_layernorm=TENorm if config.qk_layernorm else None,
+                    k_layernorm=TENorm if config.qk_layernorm else None,
                     linear_proj=TERowParallelLinearLayerNorm,  # post attn RMSNorm
                 ),
             ),
@@ -249,7 +182,7 @@ class Gemma3SelfAttention(SelfAttention):
         attention_mask: Tensor,
         key_value_states: Optional[Tensor] = None,
         inference_context: Optional[BaseInferenceContext] = None,
-        rotary_pos_emb: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
+        rotary_pos_emb: Optional[Tensor] = None,
         rotary_pos_cos: Optional[Tensor] = None,
         rotary_pos_sin: Optional[Tensor] = None,
         rotary_pos_cos_sin: Optional[Tuple[Tensor, Tensor]] = None,
@@ -260,7 +193,7 @@ class Gemma3SelfAttention(SelfAttention):
         inference_params: Optional[BaseInferenceContext] = None,
     ) -> Tuple[Tensor, Tensor]:
         """Switch to either local or global rope embedding before forward"""
-        assert isinstance(rotary_pos_emb, tuple)
+        assert isinstance(rotary_pos_emb, torch.Tensor) and rotary_pos_emb.ndim >= 1 and rotary_pos_emb.size(0) == 2
         assert rotary_pos_cos is None and rotary_pos_sin is None
 
         if _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern):
@@ -302,7 +235,7 @@ class Gemma3TEDotProductAttention(TEDotProductAttention):
         config = copy.deepcopy(config)
         if _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
             # local attention, (q, k)
-            config.window_size = (config.window_size, 0)
+            config.window_size = (config.window_size - 1, 0)
         else:
             # global attention
             config.window_size = None
@@ -367,12 +300,35 @@ class Gemma3RotaryEmbedding(RotaryEmbedding):
             **kwargs,
         )
 
+    def forward(
+        self,
+        max_seq_len: int,
+        offset: int = 0,
+        packed_seq: bool = False,
+        cp_group: torch.distributed.ProcessGroup | None = None,
+    ) -> Tensor:
+        """Get global and local rope embedding.
+
+        Note: Caching is bypassed when cp_group is provided since ProcessGroup is unhashable.
+        """
+        # ProcessGroup is unhashable, so bypass caching when cp_group is provided
+        if cp_group is not None:
+            rope_global = super().forward(max_seq_len, offset, packed_seq, cp_group)
+            rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq, cp_group)
+            return torch.stack([rope_local, rope_global], dim=0)
+        return self._forward_cached(max_seq_len, offset, packed_seq)
+
     @lru_cache(maxsize=32)
-    def forward(self, max_seq_len: int, offset: int = 0, packed_seq: bool = False) -> Tensor:
-        """Get global and local rope embedding"""
-        rope_global = super().forward(max_seq_len, offset, packed_seq)
-        rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq)
-        return rope_local, rope_global
+    def _forward_cached(
+        self,
+        max_seq_len: int,
+        offset: int = 0,
+        packed_seq: bool = False,
+    ) -> Tensor:
+        """Cached forward for hashable parameters only."""
+        rope_global = super().forward(max_seq_len, offset, packed_seq, None)
+        rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq, None)
+        return torch.stack([rope_local, rope_global], dim=0)
 
 
 def _is_local_attn_layer(

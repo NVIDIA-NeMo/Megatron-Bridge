@@ -19,7 +19,7 @@ Tests the AdapterWrapper base class and its functionality for wrapping
 modules with adapters in Parameter-Efficient Fine-Tuning scenarios.
 """
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -86,6 +86,14 @@ class AdapterModel(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         output, _ = self.lora(x)
         return output
+
+
+class MockParallelLinearAdapter(nn.Module):
+    """Minimal ParallelLinearAdapter stand-in for sharded_state_dict tests."""
+
+    def __init__(self, base_linear_name: str):
+        super().__init__()
+        self.base_linear_name = base_linear_name
 
 
 class TestAdapterWrapper:
@@ -234,6 +242,46 @@ class TestAdapterWrapper:
         assert "adapter_shard" in result
         mock_linear_simple.sharded_state_dict.assert_called_once_with("test_", (), None)
         simple_adapter.sharded_state_dict.assert_called_once_with("test_adapter.", (), None)
+
+    def test_sharded_state_dict_skips_mamba_metadata_for_non_mixer_in_proj(self, mock_linear_simple):
+        """Test that non-Mamba in_proj adapters do not request Mamba metadata."""
+        mock_linear_simple.sharded_state_dict = Mock(return_value={"linear_shard": "value1"})
+        adapter = MockParallelLinearAdapter("decoder.layers.0.self_attention.in_proj")
+        adapter.sharded_state_dict = Mock(return_value={"adapter_shard": "value2"})
+
+        with (
+            patch("megatron.bridge.peft.adapter_wrapper.ParallelLinearAdapter", MockParallelLinearAdapter),
+            patch(
+                "megatron.bridge.peft.adapter_wrapper._compute_mamba_dim_info", return_value={"dummy": 1}
+            ) as mock_dim,
+        ):
+            wrapper = ConcreteAdapterWrapper(mock_linear_simple, adapter)
+            result = wrapper.sharded_state_dict(prefix="test_")
+
+        assert "linear_shard" in result
+        assert "adapter_shard" in result
+        mock_dim.assert_not_called()
+        adapter.sharded_state_dict.assert_called_once_with("test_adapter.", (), None)
+
+    def test_sharded_state_dict_adds_mamba_metadata_for_mixer_in_proj(self, mock_linear_simple):
+        """Test that Mamba mixer.in_proj adapters request Mamba metadata."""
+        mock_linear_simple.sharded_state_dict = Mock(return_value={"linear_shard": "value1"})
+        adapter = MockParallelLinearAdapter("decoder.layers.0.mixer.in_proj")
+        adapter.sharded_state_dict = Mock(return_value={"adapter_shard": "value2"})
+
+        with (
+            patch("megatron.bridge.peft.adapter_wrapper.ParallelLinearAdapter", MockParallelLinearAdapter),
+            patch(
+                "megatron.bridge.peft.adapter_wrapper._compute_mamba_dim_info", return_value={"dummy": 1}
+            ) as mock_dim,
+        ):
+            wrapper = ConcreteAdapterWrapper(mock_linear_simple, adapter)
+            result = wrapper.sharded_state_dict(prefix="test_")
+
+        assert "linear_shard" in result
+        assert "adapter_shard" in result
+        mock_dim.assert_called_once_with(mock_linear_simple)
+        adapter.sharded_state_dict.assert_called_once_with("test_adapter.", (), None, mamba_dim_info={"dummy": 1})
 
     def test_forward_integration(self, mock_linear_simple, simple_adapter):
         """Test full forward pass integration."""
