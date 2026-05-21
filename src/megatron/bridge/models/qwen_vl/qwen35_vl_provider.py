@@ -32,7 +32,7 @@ This module provides two model providers:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, ClassVar, List, Optional
 
 import transformers
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
@@ -69,9 +69,14 @@ from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_trans
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+
+
+_QWEN_VISUAL_ENCODER_KEY = "qwen_visual"
+_IMAGES_MODALITY_KEY = "images"
 
 
 def _check_qwen3_5_available() -> None:
@@ -111,6 +116,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
     - mRoPE with sections [11, 11, 10], rope_theta=10,000,000
     - partial_rotary_factor=0.25
     """
+
+    modality_keys: ClassVar[dict[str, str]] = {_IMAGES_MODALITY_KEY: _QWEN_VISUAL_ENCODER_KEY}
 
     # =========================================================================
     # Hybrid Architecture (Qwen3-Next style)
@@ -185,6 +192,11 @@ class Qwen35VLModelProvider(GPTModelProvider):
 
     mtp_num_layers: Optional[int] = None
 
+    @property
+    def special_token_ids(self) -> dict[str, int]:
+        """Return modality token ids."""
+        return {_IMAGES_MODALITY_KEY: self.image_token_id}
+
     def __post_init__(self):
         _check_qwen3_5_available()
         if self.vision_config is None:
@@ -199,44 +211,20 @@ class Qwen35VLModelProvider(GPTModelProvider):
     def build_language_spec(
         self, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
     ) -> TransformerBlockSubmodules | ModuleSpec:
-        """Build the hybrid language transformer-block spec with Qwen3VLSelfAttention patched in.
-
-        Single-sources the language-side spec construction used by both the
-        standard ``provide()`` path and MegatronMIMO.
-
-        ``pp_rank`` is forwarded to
-        ``get_transformer_block_with_experimental_attention_variant_spec``.
-        Standard callers leave it ``None``; MIMO callers may pass the
-        component-local PP rank explicitly.
-        """
+        """Build the language transformer-block spec."""
         return _qwen35_build_language_block_spec(self, vp_stage, pp_rank)
 
     def build_mtp_spec(self, vp_stage: Optional[int] = None) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
-        """Build the MTP block spec (or ``None`` when MTP is disabled).
-
-        Returns ``None`` when ``provider.mtp_num_layers`` is falsy — the
-        standard ``mtp_block_spec`` helper already guards on this.
-        """
+        """Build the MTP block spec."""
         return _qwen35_build_mtp_block_spec(self, vp_stage)
 
     def build_vision_encoder_spec(self) -> ModuleSpec:
-        """Build a ``ModuleSpec`` for the Qwen3.5-VL Megatron-native vision encoder.
-
-        Mirrors the vision-branch construction inside ``Qwen3VLModel.__init__``
-        but packages it as a ``ModuleSpec`` for MegatronMIMO.
-
-        The returned spec deliberately does **not** include ``pg_collection``
-        in ``params``: ``MegatronMIMOProvider._inject_pg_collection_into_modality_spec``
-        writes the per-rank ``ProcessGroupCollection`` into encoder spec params at
-        build_infra() time. Standard non-MIMO callers can mutate
-        ``spec.params["pg_collection"]`` directly before ``build_module(spec)``.
-
-        Behaviour parity with the standard non-MIMO path is preserved:
-        ``provide()`` still constructs a ``Qwen3VLModel`` whose ``__init__``
-        builds its own vision branch — this helper is an additional entry
-        point for MIMO, not a replacement.
-        """
+        """Build the vision encoder spec."""
         return _qwen35_build_vision_encoder_spec(self)
+
+    def build_language_model_spec(self, pp_rank: Optional[int] = 0) -> ModuleSpec:
+        """Build the language model spec."""
+        return _qwen35_build_language_model_spec(self, pp_rank=pp_rank)
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 VL dense model instance with vision and language components."""
@@ -293,6 +281,8 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     Note: num_query_groups corresponds to num_key_value_heads in HF config (for
     standard Gated Attention layers). GDN layers have separate head counts.
     """
+
+    modality_keys: ClassVar[dict[str, str]] = {_IMAGES_MODALITY_KEY: _QWEN_VISUAL_ENCODER_KEY}
 
     # =========================================================================
     # Hybrid Architecture (Qwen3-Next style)
@@ -392,6 +382,11 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
 
     mtp_num_layers: Optional[int] = None
 
+    @property
+    def special_token_ids(self) -> dict[str, int]:
+        """Return modality token ids."""
+        return {_IMAGES_MODALITY_KEY: self.image_token_id}
+
     def __post_init__(self):
         _check_qwen3_5_moe_available()
         if self.vision_config is None:
@@ -406,13 +401,7 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     def build_language_spec(
         self, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
     ) -> TransformerBlockSubmodules | ModuleSpec:
-        """Build the hybrid language transformer-block spec with Qwen3VLSelfAttention patched in.
-
-        Selectively patches only the standard (full) attention layer specs in
-        the hybrid GDN+Attention block — GDN layers are left as-is. Single-
-        sources the construction used by both ``provide()`` and MegatronMIMO.
-        See the dense provider's ``build_language_spec`` for ``pp_rank``.
-        """
+        """Build the language transformer-block spec."""
         return _qwen35_build_language_block_spec(self, vp_stage, pp_rank)
 
     def build_mtp_spec(self, vp_stage: Optional[int] = None) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
@@ -420,23 +409,15 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         return _qwen35_build_mtp_block_spec(self, vp_stage)
 
     def build_vision_encoder_spec(self) -> ModuleSpec:
-        """Build a ``ModuleSpec`` for the Qwen3.5-VL Megatron-native vision encoder.
-
-        See ``Qwen35VLModelProvider.build_vision_encoder_spec`` for the rationale —
-        same helper, MoE variant.
-        """
+        """Build the vision encoder spec."""
         return _qwen35_build_vision_encoder_spec(self)
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
-        """Provide a Qwen3.5 VL model instance with vision and language components.
+    def build_language_model_spec(self, pp_rank: Optional[int] = 0) -> ModuleSpec:
+        """Build the language model spec."""
+        return _qwen35_build_language_model_spec(self, pp_rank=pp_rank)
 
-        Qwen3.5 uses a hybrid architecture (GDN + standard attention). The
-        ``build_language_spec`` helper produces a ``TransformerBlockSubmodules``
-        with per-layer specs (GDN layers get ``GatedDeltaNet``; attention
-        layers get standard ``SelfAttention`` + MoE) and selectively patches
-        only the standard-attention layer specs with ``Qwen3VLSelfAttention``
-        for mRoPE support. GDN layers are left as-is.
-        """
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
+        """Provide a Qwen3.5 VL model instance with vision and language components."""
         language_transformer_config = self
         hf_vision_config = self.vision_config
         hf_vision_config.torch_dtype = self.params_dtype
@@ -475,15 +456,7 @@ def _qwen35_build_language_block_spec(
     vp_stage: Optional[int],
     pp_rank: Optional[int] = None,
 ) -> TransformerBlockSubmodules | ModuleSpec:
-    """Build the hybrid language transformer-block spec and patch standard-attention layers.
-
-    Shared implementation used by both ``Qwen35VLModelProvider.build_language_spec``
-    and ``Qwen35VLMoEModelProvider.build_language_spec``. Mirrors the inline
-    construction that previously lived in each ``provide()``. ``pp_rank`` is
-    forwarded verbatim — ``None`` means "read from parallel_state" (standard
-    non-MIMO path); an explicit value (e.g. ``0`` from the MIMO builder
-    when PP=1 per component) bypasses the global lookup.
-    """
+    """Build the language transformer-block spec."""
     block_spec = get_transformer_block_with_experimental_attention_variant_spec(
         provider,
         vp_stage=vp_stage,
@@ -497,13 +470,7 @@ def _qwen35_build_mtp_block_spec(
     provider: GPTModelProvider,
     vp_stage: Optional[int],
 ) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
-    """Build the MTP block spec and patch standard-attention layers, or return ``None``.
-
-    ``mtp_block_spec`` returns ``None`` when ``provider.mtp_num_layers`` is
-    falsy (``gpt_provider.py:351``), so MIMO callers that disable MTP at
-    config time receive a ``None`` here and the MIMO model is built without
-    MTP layers.
-    """
+    """Build the MTP block spec."""
     from megatron.bridge.models.gpt_provider import mtp_block_spec
 
     mtp_spec = mtp_block_spec(provider, vp_stage=vp_stage)
@@ -511,16 +478,29 @@ def _qwen35_build_mtp_block_spec(
     return mtp_spec
 
 
+def _qwen35_build_language_model_spec(provider: GPTModelProvider, pp_rank: Optional[int] = 0) -> ModuleSpec:
+    """Build the Qwen3VL language model spec."""
+    return ModuleSpec(
+        module=Qwen3VLGPTModel,
+        params={
+            "config": provider,
+            "transformer_layer_spec": provider.build_language_spec(pp_rank=pp_rank),
+            "vocab_size": provider.vocab_size,
+            "max_sequence_length": provider.language_max_sequence_length,
+            "fp16_lm_cross_entropy": provider.fp16_lm_cross_entropy,
+            "parallel_output": True,
+            "share_embeddings_and_output_weights": provider.share_embeddings_and_output_weights,
+            "position_embedding_type": "mrope",
+            "rotary_percent": provider.rotary_percent,
+            "rotary_base": provider.rotary_base,
+            "scatter_embedding_sequence_parallel": False,
+            "mtp_block_spec": None,
+        },
+    )
+
+
 def _qwen35_build_vision_encoder_spec(provider: GPTModelProvider) -> ModuleSpec:
-    """Build a ``ModuleSpec`` for ``Qwen3VLVisionModel`` from a Qwen3.5-VL provider.
-
-    Mirrors the vision-branch construction inside ``Qwen3VLModel.__init__``
-    but packages it as a ``ModuleSpec`` for MegatronMIMO. The per-rank
-    ``pg_collection`` is injected later by ``MegatronMIMOProvider``.
-
-    The standard non-MIMO path is unchanged: ``provide()`` still constructs
-    a ``Qwen3VLModel`` whose ``__init__`` builds its own vision branch.
-    """
+    """Build the Qwen3VL vision encoder spec."""
     if getattr(provider, "use_hf_vision_model", False):
         raise ValueError("use_hf_vision_model is not supported for Qwen3VLVisionModel")
 
@@ -543,7 +523,6 @@ def _qwen35_build_vision_encoder_spec(provider: GPTModelProvider) -> ModuleSpec:
             ),
             "pre_process": True,
             "post_process": True,
-            # pg_collection injected by MegatronMIMOProvider._inject_pg_collection_into_modality_spec
         },
     )
 

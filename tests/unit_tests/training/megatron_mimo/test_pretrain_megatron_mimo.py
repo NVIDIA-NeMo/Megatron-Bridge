@@ -64,7 +64,9 @@ def test_set_megatron_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mo
 
     megatron_mimo_infra = SimpleNamespace(module_to_grid_map={"vision": grid})
 
-    with patch("megatron.bridge.models.megatron_mimo.build_model.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
+    with patch(
+        "megatron.bridge.models.megatron_mimo.build_model.tensor_parallel.model_parallel_cuda_manual_seed"
+    ) as mock_seed:
         import torch
 
         with patch.object(torch.cuda, "device_count", return_value=1):
@@ -94,7 +96,9 @@ def test_set_megatron_mimo_random_seeds_offsets_by_pp_rank(mock_dist):
 
     megatron_mimo_infra = SimpleNamespace(module_to_grid_map={"llm": grid})
 
-    with patch("megatron.bridge.models.megatron_mimo.build_model.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed:
+    with patch(
+        "megatron.bridge.models.megatron_mimo.build_model.tensor_parallel.model_parallel_cuda_manual_seed"
+    ) as mock_seed:
         import torch
 
         with patch.object(torch.cuda, "device_count", return_value=1):

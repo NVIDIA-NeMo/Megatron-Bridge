@@ -101,6 +101,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         >>> infra = provider.build_infra()
     """
 
+    # Durable input state for conversion-generated providers. Derived specs are
+    # cleared before YAML save and rebuilt from this provider on load.
+    standard_provider: Optional[object] = None
+
     # Model specs (user provides, like llava_vlm.py example).
     # Optional so subclasses (e.g. LlavaMegatronMIMOProvider) can build it in __post_init__.
     language_model_spec: Optional[ModuleSpec] = None
@@ -132,6 +136,52 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
     bf16: bool = True
     use_cpu_initialization: bool = False
     init_model_with_meta_device: bool = False
+
+    def __post_init__(self) -> None:
+        if self.standard_provider is not None:
+            self._rebuild_derived_specs_from_standard_provider()
+
+    @classmethod
+    def from_standard_provider(
+        cls,
+        standard_provider: object,
+        megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig,
+    ) -> "MegatronMIMOProvider":
+        """Build a MegatronMIMO provider from a standard modality-aware provider."""
+        return cls(
+            standard_provider=standard_provider,
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+
+    def _rebuild_derived_specs_from_standard_provider(self) -> None:
+        standard_provider = self.standard_provider
+        if standard_provider is None:
+            return
+
+        # MIMO conversion does not import/export MTP routes yet.
+        if hasattr(standard_provider, "mtp_num_layers"):
+            setattr(standard_provider, "mtp_num_layers", None)
+
+        if self.language_model_spec is None:
+            build_language_model_spec = getattr(standard_provider, "build_language_model_spec", None)
+            if not callable(build_language_model_spec):
+                raise TypeError("standard_provider must define build_language_model_spec().")
+            self.language_model_spec = build_language_model_spec()
+
+        if not self.modality_submodules_spec:
+            build_modality_specs = getattr(standard_provider, "build_mimo_modality_submodules_spec", None)
+            if callable(build_modality_specs):
+                self.modality_submodules_spec = build_modality_specs()
+            else:
+                self.modality_submodules_spec = _build_default_mimo_modality_submodules_spec(standard_provider)
+
+        if not self.special_token_ids:
+            special_token_ids = getattr(standard_provider, "special_token_ids", None)
+            if callable(special_token_ids):
+                special_token_ids = special_token_ids()
+            if special_token_ids is None:
+                raise TypeError("standard_provider must define special_token_ids.")
+            self.special_token_ids = dict(special_token_ids)
 
     def build_infra(self) -> MegatronMIMOInfra:
         """Build MegatronMIMO parallelism infrastructure.
@@ -592,6 +642,31 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     "Call torch.distributed.init_process_group() first."
                 )
             self.megatron_mimo_parallelism_config.finalize(dist.get_world_size())
+
+
+def _build_default_mimo_modality_submodules_spec(standard_provider: object) -> Dict[str, ModuleSpec]:
+    """Build default MIMO modality specs from provider metadata."""
+    from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
+
+    modality_keys = getattr(standard_provider, "modality_keys", None)
+    build_vision_encoder_spec = getattr(standard_provider, "build_vision_encoder_spec", None)
+    if modality_keys is None or not callable(build_vision_encoder_spec):
+        raise TypeError(
+            "standard_provider must define build_mimo_modality_submodules_spec() or "
+            "both modality_keys and build_vision_encoder_spec()."
+        )
+
+    return {
+        modality_name: ModuleSpec(
+            module=VisionModalitySubmodules,
+            params={},
+            submodules={
+                "encoders": {encoder_key: build_vision_encoder_spec()},
+                "input_projections": [],
+            },
+        )
+        for modality_name, encoder_key in modality_keys.items()
+    }
 
 
 def _finalize_transformer_configs_in_specs(

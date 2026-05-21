@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Dict,
     Generic,
     Iterable,
@@ -394,6 +395,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
     # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
     hf_config = None
+
+    # Optional MIMO conversion metadata. Subclasses set this when the standard
+    # bridge registry can be split into MIMO component routes.
+    mimo_source_prefixes: ClassVar[Mapping[str, str] | None] = None
 
     # Common bidirectional config field name mapping: (hf_name, megatron_name)
     # Some mappings may not be used by all models - that's fine, unused fields are skipped

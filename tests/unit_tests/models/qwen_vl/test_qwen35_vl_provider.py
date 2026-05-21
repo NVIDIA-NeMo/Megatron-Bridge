@@ -164,6 +164,9 @@ class TestQwen35VLModelProvider:
         assert hasattr(provider, "build_language_spec") and callable(provider.build_language_spec)
         assert hasattr(provider, "build_mtp_spec") and callable(provider.build_mtp_spec)
         assert hasattr(provider, "build_vision_encoder_spec") and callable(provider.build_vision_encoder_spec)
+        assert hasattr(provider, "build_language_model_spec") and callable(provider.build_language_model_spec)
+        assert provider.modality_keys == {"images": "qwen_visual"}
+        assert provider.special_token_ids == {"images": provider.image_token_id}
 
     def test_build_mtp_spec_returns_none_when_mtp_disabled(self):
         """MIMO conversion v1 disables MTP at config time. Verify the helper
@@ -304,6 +307,9 @@ class TestQwen35VLMoEModelProvider:
         assert hasattr(provider, "build_language_spec") and callable(provider.build_language_spec)
         assert hasattr(provider, "build_mtp_spec") and callable(provider.build_mtp_spec)
         assert hasattr(provider, "build_vision_encoder_spec") and callable(provider.build_vision_encoder_spec)
+        assert hasattr(provider, "build_language_model_spec") and callable(provider.build_language_model_spec)
+        assert provider.modality_keys == {"images": "qwen_visual"}
+        assert provider.special_token_ids == {"images": provider.image_token_id}
 
     def test_build_mtp_spec_returns_none_when_mtp_disabled(self):
         provider = Qwen35VLMoEModelProvider(

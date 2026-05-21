@@ -15,9 +15,9 @@
 
 """Generic MegatronMIMO conversion CLI: HF <-> MIMO.
 
-Loads an HF model via ``AutoBridge``, resolves the per-family MIMO adapter
-from the conversion registry, and imports or exports a MegatronMIMO
-distributed checkpoint.
+Loads an HF model via ``AutoBridge``, resolves MIMO route metadata from the
+standard bridge/provider or an explicit conversion spec, and imports or exports
+a MegatronMIMO distributed checkpoint.
 
 Usage:
     # HF -> MIMO checkpoint.
@@ -263,7 +263,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Per-component parallelism: 'name=tp=N[,pp=N,dp=N,cp=N,etp=N,rank_offset=N]'. "
             "Repeat once per component. Names must match the route table declared by the "
-            "MIMO adapter resolved from --hf-model."
+            "MIMO metadata resolved from --hf-model."
         ),
     )
     parser.add_argument(

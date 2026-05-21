@@ -39,8 +39,7 @@ set -xeuo pipefail
 WORKSPACE=${WORKSPACE:-/workspace}
 
 # Supported dense Qwen3.5-VL variants. MoE variants
-# (Qwen3.5-35B-A3B / 122B-A10B / 397B-A17B) are out of v1 scope: the MIMO
-# MoE builder does not exist yet (Qwen35VLMegatronMIMOProvider is dense-only).
+# (Qwen3.5-35B-A3B / 122B-A10B / 397B-A17B) are out of v1 scope.
 MODEL_NAME=${MODEL_NAME:-Qwen3.5-0.8B}
 
 case "${MODEL_NAME}" in

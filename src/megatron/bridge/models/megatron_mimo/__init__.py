@@ -10,7 +10,6 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import (
     MegatronMIMOInfra,
     MegatronMIMOProvider,
 )
-from megatron.bridge.models.megatron_mimo.qwen35_vl_provider import Qwen35VLMegatronMIMOProvider
 
 
 def __getattr__(name: str):
@@ -28,6 +27,5 @@ __all__ = [
     "MegatronMIMOProvider",
     "MegatronMIMOParallelismConfig",
     "ModuleParallelismConfig",
-    "Qwen35VLMegatronMIMOProvider",
     "build_megatron_mimo_model",
 ]

@@ -12,21 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the Qwen3.5-VL MegatronMIMO conversion adapter."""
+"""Unit tests for Qwen3.5-VL default MegatronMIMO conversion metadata."""
 
-import importlib
 from unittest.mock import MagicMock
 
 import pytest
+from megatron.core.transformer.spec_utils import ModuleSpec
 
-from megatron.bridge.models.megatron_mimo.conversion import MIMOComponent, get_mimo_adapter, validate_route_table
-from megatron.bridge.models.megatron_mimo.conversion.adapters.qwen35_vl import qwen35_vl_mimo_adapter
+from megatron.bridge.models.megatron_mimo.conversion import (
+    MIMOComponent,
+    get_mimo_conversion_spec,
+    supports_mimo_conversion,
+    validate_route_table,
+)
 from megatron.bridge.models.megatron_mimo.conversion.orchestrator import _reset_registry_for_tests
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
-from megatron.bridge.models.megatron_mimo.qwen35_vl_provider import Qwen35VLMegatronMIMOProvider
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5, Qwen35VLModelProvider
 
@@ -62,68 +66,80 @@ def _make_language_provider() -> Qwen35VLModelProvider:
     return provider
 
 
-class TestQwen35VLAdapterRegistration:
-    def test_registered_for_qwen35_vl_bridge(self):
-        _reset_registry_for_tests()
-        import megatron.bridge.models.megatron_mimo.conversion.adapters.qwen35_vl as adapter_module
-
-        importlib.reload(adapter_module)
-
-        assert get_mimo_adapter(Qwen35VLBridge) is adapter_module.qwen35_vl_mimo_adapter
+def _patch_language_spec(monkeypatch, language_provider: Qwen35VLModelProvider) -> None:
+    monkeypatch.setattr(
+        language_provider,
+        "build_language_spec",
+        lambda vp_stage=None, pp_rank=None: ModuleSpec(module=object),
+    )
 
 
-class TestQwen35VLAdapter:
+def _get_qwen35_conversion_spec():
+    _reset_registry_for_tests()
+    return get_mimo_conversion_spec(Qwen35VLBridge)
+
+
+def _run_qwen35_conversion_spec(
+    monkeypatch,
+    language_provider: Qwen35VLModelProvider,
+    parallelism_config: MegatronMIMOParallelismConfig,
+) -> tuple[MegatronMIMOProvider, list[MIMOComponent], Qwen35VLBridge, object]:
+    source_bridge = Qwen35VLBridge()
+    monkeypatch.setattr(source_bridge, "provider_bridge", MagicMock(return_value=language_provider))
+    hf_pretrained = object()
+    provider, routes = _get_qwen35_conversion_spec()(source_bridge, hf_pretrained, parallelism_config)
+    return provider, routes, source_bridge, hf_pretrained
+
+
+class TestQwen35VLDefaultMIMOConversion:
+    def test_default_conversion_spec_available_for_qwen35_vl_bridge(self):
+        conversion_spec = _get_qwen35_conversion_spec()
+
+        assert callable(conversion_spec)
+        assert supports_mimo_conversion(Qwen35VLBridge)
+
     def test_returns_provider_and_routes(self, monkeypatch):
         language_provider = _make_language_provider()
+        _patch_language_spec(monkeypatch, language_provider)
         parallelism_config = _make_parallelism_config()
 
-        source_bridge = MagicMock(spec=Qwen35VLBridge)
-        source_bridge.provider_bridge = MagicMock(return_value=language_provider)
-        hf_pretrained = MagicMock()
+        provider, routes, source_bridge, hf_pretrained = _run_qwen35_conversion_spec(
+            monkeypatch,
+            language_provider,
+            parallelism_config,
+        )
 
-        provider, routes = qwen35_vl_mimo_adapter(source_bridge, hf_pretrained, parallelism_config)
-
-        # Adapter must consult the source bridge to derive the language provider
-        # rather than constructing one from scratch.
         source_bridge.provider_bridge.assert_called_once_with(hf_pretrained)
-
-        assert isinstance(provider, Qwen35VLMegatronMIMOProvider)
-        assert provider.language_provider is language_provider
+        assert isinstance(provider, MegatronMIMOProvider)
+        assert provider.language_model_spec.params["config"] is language_provider
         assert provider.megatron_mimo_parallelism_config is parallelism_config
 
         assert len(routes) == 2
         assert all(isinstance(r, MIMOComponent) for r in routes)
 
-    def test_forces_mtp_off(self):
-        """MIMO v1 doesn't support MTP. Adapter must force ``mtp_num_layers=None``
-        so ``Qwen35VLMegatronMIMOProvider`` doesn't reject the model.
-        """
+    def test_forces_mtp_off(self, monkeypatch):
+        """MIMO conversion disables MTP for the standard provider."""
         language_provider = _make_language_provider()
-        language_provider.mtp_num_layers = 4  # would otherwise be rejected
+        _patch_language_spec(monkeypatch, language_provider)
+        language_provider.mtp_num_layers = 4
         parallelism_config = _make_parallelism_config()
 
-        source_bridge = MagicMock(spec=Qwen35VLBridge)
-        source_bridge.provider_bridge = MagicMock(return_value=language_provider)
-        hf_pretrained = MagicMock()
+        provider, _, _, _ = _run_qwen35_conversion_spec(monkeypatch, language_provider, parallelism_config)
+        assert isinstance(provider, MegatronMIMOProvider)
+        assert language_provider.mtp_num_layers is None
 
-        provider, _ = qwen35_vl_mimo_adapter(source_bridge, hf_pretrained, parallelism_config)
-        assert provider.language_provider.mtp_num_layers is None
-
-    def test_route_table_contents(self):
+    def test_route_table_contents(self, monkeypatch):
         """Routes match the parameter prefixes used by Qwen35VLBridge.mapping_registry.
 
         Source bridge mapping registry uses ``language_model.`` and ``vision_model.``
-        as the two top-level prefixes (see ``qwen35_vl_bridge.py:212-268``).
+        as the two top-level prefixes.
         The route table strips these and dispatches to:
           - ``mimo_model.language_model``
           - ``mimo_model.modality_submodules.images.encoders.qwen_visual``
         """
         language_provider = _make_language_provider()
-        parallelism_config = _make_parallelism_config()
-        source_bridge = MagicMock(spec=Qwen35VLBridge)
-        source_bridge.provider_bridge = MagicMock(return_value=language_provider)
-
-        _, routes = qwen35_vl_mimo_adapter(source_bridge, MagicMock(), parallelism_config)
+        _patch_language_spec(monkeypatch, language_provider)
+        _, routes, _, _ = _run_qwen35_conversion_spec(monkeypatch, language_provider, _make_parallelism_config())
 
         names = {route.name: route for route in routes}
         assert set(names.keys()) == {"language", "images"}
@@ -137,16 +153,14 @@ class TestQwen35VLAdapter:
         assert names["images"].source_prefix == "vision_model."
         assert names["images"].target_module_path == "modality_submodules.images.encoders.qwen_visual"
 
-    def test_route_table_validates_against_parallelism_config(self):
+    def test_route_table_validates_against_parallelism_config(self, monkeypatch):
         """The returned route table must pass ``validate_route_table`` against
         the same parallelism config — guarantees orchestrator can drive both
         routes without spurious "unmapped component" errors.
         """
-        language_provider = _make_language_provider()
         parallelism_config = _make_parallelism_config()
-        source_bridge = MagicMock(spec=Qwen35VLBridge)
-        source_bridge.provider_bridge = MagicMock(return_value=language_provider)
-
-        _, routes = qwen35_vl_mimo_adapter(source_bridge, MagicMock(), parallelism_config)
+        language_provider = _make_language_provider()
+        _patch_language_spec(monkeypatch, language_provider)
+        _, routes, _, _ = _run_qwen35_conversion_spec(monkeypatch, language_provider, parallelism_config)
 
         validate_route_table(routes, parallelism_config=parallelism_config)

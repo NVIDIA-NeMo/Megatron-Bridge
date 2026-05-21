@@ -15,8 +15,8 @@
 """MegatronMIMO HF<->Megatron conversion framework.
 
 Public surface for the generic MIMO conversion framework. Per-model-family
-adapters register themselves via :func:`register_mimo_conversion` and
-declare a route table built from :class:`MIMOComponent` entries.
+routes are derived from standard bridge/provider metadata when possible; custom
+provider construction can use :func:`register_mimo_conversion_spec`.
 """
 
 from megatron.bridge.models.megatron_mimo.conversion.orchestrator import (
@@ -26,12 +26,12 @@ from megatron.bridge.models.megatron_mimo.conversion.orchestrator import (
     build_route_local_registry,
     component_pg_context,
     export_megatron_mimo_to_hf,
-    get_mimo_adapter,
+    get_mimo_conversion_spec,
     import_hf_to_megatron_mimo,
-    list_mimo_adapters,
     make_route_local_bridge,
-    register_mimo_conversion,
+    register_mimo_conversion_spec,
     save_hf_pretrained_mimo,
+    supports_mimo_conversion,
     validate_route_table,
 )
 
@@ -51,13 +51,13 @@ __all__ = [
     "build_route_local_registry",
     "component_pg_context",
     "export_megatron_mimo_to_hf",
-    "get_mimo_adapter",
+    "get_mimo_conversion_spec",
     "import_hf_to_megatron_mimo",
-    "list_mimo_adapters",
     "load_megatron_mimo_model",
     "make_route_local_bridge",
-    "register_mimo_conversion",
+    "register_mimo_conversion_spec",
     "save_hf_pretrained_mimo",
     "save_megatron_mimo_model",
+    "supports_mimo_conversion",
     "validate_route_table",
 ]

@@ -26,9 +26,9 @@ from megatron.bridge.models.megatron_mimo.conversion import (
     MIMOComponent,
     component_pg_context,
     export_megatron_mimo_to_hf,
-    get_mimo_adapter,
+    get_mimo_conversion_spec,
     import_hf_to_megatron_mimo,
-    register_mimo_conversion,
+    register_mimo_conversion_spec,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
@@ -376,20 +376,20 @@ def _bridge_routes() -> list[MIMOComponent]:
     ]
 
 
-def _ensure_fake_mimo_bridge_adapter_registered() -> None:
+def _ensure_fake_mimo_conversion_spec_registered() -> None:
     try:
-        get_mimo_adapter(_FakeSourceBridgeForMIMOBridge)
+        get_mimo_conversion_spec(_FakeSourceBridgeForMIMOBridge)
         return
     except KeyError:
         pass
 
-    @register_mimo_conversion(_FakeSourceBridgeForMIMOBridge)
-    def _fake_mimo_bridge_adapter(source_bridge, hf_pretrained, parallelism_config):
+    @register_mimo_conversion_spec(_FakeSourceBridgeForMIMOBridge)
+    def _fake_mimo_conversion_spec(source_bridge, hf_pretrained, parallelism_config):
         return _FakeProviderForMIMOBridge(), _bridge_routes()
 
 
 def _mimo_bridge() -> MegatronMIMOBridge:
-    _ensure_fake_mimo_bridge_adapter_registered()
+    _ensure_fake_mimo_conversion_spec_registered()
     return MegatronMIMOBridge(
         PretrainedConfig(),
         parallelism_config=_bridge_parallelism_config(),
@@ -398,16 +398,22 @@ def _mimo_bridge() -> MegatronMIMOBridge:
 
 
 class TestMegatronMIMOBridge:
-    def test_to_megatron_provider_resolves_adapter_and_routes(self):
+    def test_to_megatron_mimo_provider_resolves_conversion_spec_and_routes(self):
         bridge = _mimo_bridge()
 
-        provider = bridge.to_megatron_provider()
+        mimo_provider = bridge.to_megatron_mimo_provider()
 
-        assert isinstance(provider, _FakeProviderForMIMOBridge)
+        assert isinstance(mimo_provider, _FakeProviderForMIMOBridge)
         assert [route.name for route in bridge.routes] == ["language", "images"]
 
+    def test_standard_provider_method_points_to_mimo_specific_name(self):
+        bridge = _mimo_bridge()
+
+        with pytest.raises(NotImplementedError, match="to_megatron_mimo_provider"):
+            bridge.to_megatron_provider()
+
     def test_from_bridge_copies_source_state(self):
-        _ensure_fake_mimo_bridge_adapter_registered()
+        _ensure_fake_mimo_conversion_spec_registered()
 
         class _StandardBridge:
             hf_pretrained = PretrainedConfig()
@@ -434,7 +440,7 @@ class TestMegatronMIMOBridge:
         monkeypatch.setattr(orchestrator_module, "import_hf_to_megatron_mimo", fake_import_hf_to_megatron_mimo)
 
         bridge = _mimo_bridge()
-        bridge.to_megatron_provider()
+        bridge.to_megatron_mimo_provider()
         bridge._infra = _FakeInfraForMIMOBridge()
         monkeypatch.setattr(bridge, "_resolve_hf_pretrained", lambda hf_path: "hf")
 

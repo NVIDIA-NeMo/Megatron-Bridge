@@ -13,11 +13,16 @@
 # limitations under the License.
 
 import pytest
+from megatron.core.transformer.spec_utils import ModuleSpec
+from transformers.configuration_utils import PretrainedConfig
 
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.megatron_mimo.conversion import (
+    MegatronMIMOBridge,
     MIMOComponent,
-    get_mimo_adapter,
-    register_mimo_conversion,
+    get_mimo_conversion_spec,
+    register_mimo_conversion_spec,
+    supports_mimo_conversion,
     validate_route_table,
 )
 from megatron.bridge.models.megatron_mimo.conversion.orchestrator import _reset_registry_for_tests
@@ -25,6 +30,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 
 
 def _two_component_config() -> MegatronMIMOParallelismConfig:
@@ -150,7 +156,32 @@ class _FakeBridgeB:
     pass
 
 
-class TestAdapterRegistry:
+class _FakeStandardProvider:
+    modality_keys = {"vision": "fake_visual"}
+    special_token_ids = {"vision": 7}
+
+    def build_language_model_spec(self):
+        return ModuleSpec(module=object)
+
+    def build_vision_encoder_spec(self):
+        return ModuleSpec(module=object)
+
+
+class _FakeSourceBridgeWithProvider:
+    def __init__(self):
+        self.provider = _FakeStandardProvider()
+        self.hf_pretrained = None
+
+    def provider_bridge(self, hf_pretrained):
+        self.hf_pretrained = hf_pretrained
+        return self.provider
+
+
+class _FakeSourceBridgeWithDefaultRoutes(_FakeSourceBridgeWithProvider):
+    mimo_source_prefixes = {"language": "language_model.", "vision": "vision_model."}
+
+
+class TestConversionSpecRegistry:
     def setup_method(self):
         _reset_registry_for_tests()
 
@@ -158,31 +189,74 @@ class TestAdapterRegistry:
         _reset_registry_for_tests()
 
     def test_register_and_lookup(self):
-        @register_mimo_conversion(_FakeBridgeA)
-        def adapter(source_bridge, hf_pretrained, parallelism_config):
+        @register_mimo_conversion_spec(_FakeBridgeA)
+        def conversion_spec(source_bridge, hf_pretrained, parallelism_config):
             return None, []
 
-        assert get_mimo_adapter(_FakeBridgeA) is adapter
+        assert get_mimo_conversion_spec(_FakeBridgeA) is conversion_spec
+        assert supports_mimo_conversion(_FakeBridgeA)
 
     def test_duplicate_registration_rejected(self):
-        @register_mimo_conversion(_FakeBridgeA)
+        @register_mimo_conversion_spec(_FakeBridgeA)
         def first(source_bridge, hf_pretrained, parallelism_config):
             return None, []
 
         with pytest.raises(ValueError, match="already registered"):
 
-            @register_mimo_conversion(_FakeBridgeA)
+            @register_mimo_conversion_spec(_FakeBridgeA)
             def second(source_bridge, hf_pretrained, parallelism_config):
                 return None, []
 
     def test_different_bridges_independent(self):
-        @register_mimo_conversion(_FakeBridgeA)
-        def adapter_a(source_bridge, hf_pretrained, parallelism_config):
+        @register_mimo_conversion_spec(_FakeBridgeA)
+        def conversion_spec_a(source_bridge, hf_pretrained, parallelism_config):
             return "A", []
 
-        @register_mimo_conversion(_FakeBridgeB)
-        def adapter_b(source_bridge, hf_pretrained, parallelism_config):
+        @register_mimo_conversion_spec(_FakeBridgeB)
+        def conversion_spec_b(source_bridge, hf_pretrained, parallelism_config):
             return "B", []
 
-        assert get_mimo_adapter(_FakeBridgeA) is adapter_a
-        assert get_mimo_adapter(_FakeBridgeB) is adapter_b
+        assert get_mimo_conversion_spec(_FakeBridgeA) is conversion_spec_a
+        assert get_mimo_conversion_spec(_FakeBridgeB) is conversion_spec_b
+
+    def test_unregistered_bridge_with_mimo_metadata_uses_default_conversion_spec(self):
+        assert supports_mimo_conversion(_FakeSourceBridgeWithDefaultRoutes)
+
+        source_bridge = _FakeSourceBridgeWithDefaultRoutes()
+        hf_pretrained = object()
+        provider, route_table = get_mimo_conversion_spec(_FakeSourceBridgeWithDefaultRoutes)(
+            source_bridge,
+            hf_pretrained,
+            _two_component_config(),
+        )
+
+        assert isinstance(provider, MegatronMIMOProvider)
+        assert provider.standard_provider is source_bridge.provider
+        assert source_bridge.hf_pretrained is hf_pretrained
+        assert route_table == [
+            MIMOComponent("language", "language_model.", "language_model"),
+            MIMOComponent("vision", "vision_model.", "modality_submodules.vision.encoders.fake_visual"),
+        ]
+
+    def test_unregistered_bridge_without_mimo_metadata_rejected(self):
+        assert not supports_mimo_conversion(_FakeBridgeA)
+        assert not supports_mimo_conversion(MegatronModelBridge)
+
+        with pytest.raises(KeyError, match="mimo_source_prefixes"):
+            get_mimo_conversion_spec(_FakeBridgeA)
+
+    def test_validate_mimo_conversion_support_resolves_provider_and_routes(self):
+        source_bridge = _FakeSourceBridgeWithDefaultRoutes()
+        bridge = MegatronMIMOBridge(
+            PretrainedConfig(),
+            parallelism_config=_two_component_config(),
+            source_bridge=source_bridge,
+        )
+
+        bridge.validate_mimo_conversion_support()
+
+        assert isinstance(bridge.to_megatron_mimo_provider(load_weights=False), MegatronMIMOProvider)
+        assert bridge.routes == [
+            MIMOComponent("language", "language_model.", "language_model"),
+            MIMOComponent("vision", "vision_model.", "modality_submodules.vision.encoders.fake_visual"),
+        ]
