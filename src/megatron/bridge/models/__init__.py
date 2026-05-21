@@ -149,6 +149,9 @@ from megatron.bridge.models.sarvam import (
     SarvamMLABridge,
     SarvamMoEBridge,
 )
+from megatron.bridge.models.param2 import (
+  Param2ModelProvider  
+        )
 from megatron.bridge.models.t5_provider import T5ModelProvider
 
 
@@ -164,6 +167,7 @@ __all__ = [
     "RowParallelMapping",
     "AutoMapping",
     "BailingMoeV2Bridge",
+    "Param2ModelProvider",
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
