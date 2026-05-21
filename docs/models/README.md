@@ -13,8 +13,7 @@ Megatron Bridge conversion, training recipe links, and model-specific notes.
 | **GLM** | [GLM 4.5](glm/glm45.md), [GLM-4.5V](glm/glm-45v.md) |
 | **GPT-OSS** | [GPT OSS](gpt_oss/gpt-oss.md) |
 | **Llama** | [Llama 3](llama/llama3.md) |
-| **Ministral** | [Ministral 3](ministral/ministral3.md) |
-| **Mistral** | [Mistral](mistral/mistral.md) |
+| **Mistral** | [Mistral](mistral/mistral.md), [Ministral 3](mistral/ministral3.md) |
 | **Moonlight** | [Moonlight](moonlight/moonlight.md) |
 | **Nemotron** | [Llama Nemotron](nemotron/llama-nemotron.md), [Nemotron H and Nemotron Nano v2](nemotron/nemotronh.md), [Nemotron-3 Nano](nemotron/nemotron3-nano.md), [Nemotron-3 Super](nemotron/nemotron3-super.md), [Nemotron Nano V2 VL](nemotron/nemotron-nano-v2-vl.md), [Nemotron-3 Nano Omni](nemotron/nemotron-3-omni.md) |
 | **OLMoE** | [OLMoE](olmoe/olmoe.md) |
@@ -59,6 +58,7 @@ Each model documentation page typically includes:
 
 - Gemma 3 VL and Gemma 4 VL
 - GLM-4.5V
+- Ministral 3
 - Nemotron Nano V2 VL and Nemotron-3 Nano Omni
 - Qwen2.5-VL, Qwen3-VL, Qwen3.5 / 3.6, and Qwen3-Omni
 

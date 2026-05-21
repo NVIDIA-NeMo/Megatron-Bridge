@@ -39,7 +39,6 @@ models/gemma/index.md
 models/glm/index.md
 models/gpt_oss/index.md
 models/llama/index.md
-models/ministral/index.md
 models/mistral/index.md
 models/moonlight/index.md
 models/nemotron/index.md

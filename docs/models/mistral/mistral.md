@@ -97,7 +97,7 @@ Training recipes for Mistral models are not currently available. The Bridge supp
 - Mistral Documentation: https://docs.mistral.ai/
 
 ## Related Docs
+- Related Mistral variant: [Ministral 3](ministral3.md)
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-
