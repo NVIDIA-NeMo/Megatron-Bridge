@@ -31,6 +31,20 @@ Beyond fragmentation, actual peak memory is determined by:
   micro-batch size
 - **Temporary / workspace memory** — CUDA kernels, NCCL buffers, CUDA graphs
 
+For configuration planning, use the Bridge theoretical estimator before launching
+large jobs:
+
+```python
+from megatron.bridge.training.utils.theoretical_memory_utils import estimate_training_memory
+
+estimate = estimate_training_memory(cfg, num_microbatches=num_microbatches)
+```
+
+The estimator reports the most-loaded GPU shard and separates dense/embedding,
+routed MoE expert, and activation components. It does not include allocator
+fragmentation, CUDA/NCCL workspace, CUDA graph buffers, token imbalance, or
+dispatcher workspace, so validate final configs with runtime memory metrics.
+
 ## Quick Decision
 
 When a training run OOMs or is close to the memory limit:
@@ -208,6 +222,7 @@ model_config = GPTModelProvider(
 |---|---|---|---|
 | OOM on a single rank despite headroom on others | Memory fragmentation | check if `expandable_segments:True` is set | set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` |
 | OOM with `expandable_segments` already set | Genuine capacity limit | check `nvidia-smi` for param/optimizer memory | increase PP, use distributed optimizer, or add recompute |
+| Estimated memory exceeds GPU capacity before launch | model state or activations genuinely too large | run `estimate_training_memory` and inspect the largest component | adjust PP/TP/CP/EP, distributed optimizer, or recompute before launching |
 | `ValueError: PP + CPU offloading` | using cpu_offloading with PP > 1 | check PP config | disable CPU offloading or set PP=1 |
 | `RuntimeError` with `--use-nccl-ub` + expandable segments | NCCL UB incompatible with expandable allocator | check env vars | remove `expandable_segments:True` or disable `--use-nccl-ub` |
 
@@ -215,7 +230,8 @@ model_config = GPTModelProvider(
 
 - CPU offloading is blocked when PP > 1
 - Parallelism resizing (TP/PP) often has significant throughput costs
-- No automatic memory profiling to recommend the optimal strategy
+- The theoretical estimator is formula-based and does not replace runtime
+  profiling or CUDA memory reports
 
 ## Verification
 
