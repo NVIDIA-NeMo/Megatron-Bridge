@@ -56,6 +56,7 @@ def gpt_oss_20b_pretrain_config_b200(
 
     # 8 GPUs
     if precision == "bf16" and config_variant == "v1":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
@@ -72,6 +73,7 @@ def gpt_oss_20b_pretrain_config_b200(
         cfg.scheduler.lr_warmup_iters = 128
     # 64 GPUs
     elif precision == "bf16" and config_variant == "v2":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
@@ -110,6 +112,7 @@ def gpt_oss_20b_pretrain_config_b300(
 
     # 8 GPUs
     if precision == "bf16" and config_variant == "v1":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0004
@@ -123,6 +126,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.scheduler.lr_warmup_iters = 256
     # 64 GPUs
     elif precision == "bf16" and config_variant == "v2":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
@@ -157,10 +161,11 @@ def gpt_oss_20b_pretrain_config_gb200(
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
-        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
 
     # 8 GPUs
     if precision == "bf16" and config_variant == "v1":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
@@ -178,6 +183,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.scheduler.lr_warmup_iters = 128
     # 72 GPUs
     elif precision == "bf16" and config_variant == "v2":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
@@ -224,6 +230,7 @@ def gpt_oss_20b_pretrain_config_gb300(
 
     # 8 GPUs
     if precision == "bf16" and config_variant == "v1":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0004
@@ -237,6 +244,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.scheduler.lr_warmup_iters = 256
     # 72 GPUs
     elif precision == "bf16" and config_variant == "v2":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
@@ -283,12 +291,14 @@ def gpt_oss_20b_pretrain_config_vr200(
 
     # 8 GPUs
     if precision == "bf16" and config_variant == "v1":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0004
         cfg.validation.eval_interval = 512
         cfg.scheduler.lr_warmup_iters = 192
     elif precision == "fp8_mx" and config_variant == "v1":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0005
@@ -296,6 +306,7 @@ def gpt_oss_20b_pretrain_config_vr200(
         cfg.scheduler.lr_warmup_iters = 192
     # 64 GPUs
     elif precision == "bf16" and config_variant == "v2":
+        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
