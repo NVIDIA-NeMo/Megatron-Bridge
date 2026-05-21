@@ -6,6 +6,17 @@ attention interleaved with sliding attention), a fused per-head attention gate
 (`g_proj` merged into `linear_qkv`), MoE layers (3-44) with dense layers at the
 top/bottom (0-2 and MTP layers 45-47), and Multi-Token Prediction.
 
+## MCore Dev Branch Requirement
+
+Step-3.5-Flash imports require MCore changes that are not yet on a tagged release: PR [#4473](https://github.com/NVIDIA/Megatron-LM/pull/4473), PR [#4841](https://github.com/NVIDIA/Megatron-LM/pull/4841). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch:
+
+```bash
+./scripts/switch_mcore.sh dev
+uv sync
+```
+
+Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pinned main-branch submodule.
+
 ## Workspace Configuration
 
 All scripts use a `WORKSPACE` environment variable to define the base directory for
