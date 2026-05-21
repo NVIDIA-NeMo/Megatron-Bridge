@@ -425,8 +425,9 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         # (mtp.layers.0.mlp.experts.gate_up_proj). Same architecture string,
         # different storage — must inspect HF keys.
         mtp_experts_packed = False
-        if hasattr(self.hf_pretrained, "state") and hasattr(self.hf_pretrained.state, "source"):
-            hf_keys = set(self.hf_pretrained.state.source.get_all_keys())
+        hf_pretrained = getattr(self, "hf_pretrained", None)
+        if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
+            hf_keys = set(hf_pretrained.state.source.get_all_keys())
             if "mtp.layers.0.mlp.experts.gate_up_proj" in hf_keys:
                 mtp_experts_packed = True
 
