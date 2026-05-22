@@ -307,6 +307,9 @@ def _megatron_local_name_to_global(
                     f".local_experts.{global_expert_number}.",
                     1,
                 )
+        # Grouped MoE uses numeric suffixes for per-expert weight and bias
+        # parameters, e.g. .weight0 and .bias1. Shared quantizer buffers such
+        # as .weight_quantizer._amax must not go through EP renumbering.
         elif re.search(r"\.weight\d+(?=$|\.)", param_name):
             param_name = _update_grouped_expert_number(param_name, "weight")
         elif re.search(r"\.bias\d+(?=$|\.)", param_name):
@@ -895,10 +898,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         """
         from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
-        group_key = task.mapping.group_key
-        if group_key not in grouped_buffers:
-            grouped_buffers[group_key] = {}
-
         ep_size = parallel_state.get_expert_model_parallel_world_size()
         num_experts = model_config.num_moe_experts
         experts_per_rank = num_experts // ep_size
@@ -908,7 +907,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         except ValueError:
             return None
 
-        for _, value in converted_weights_dict.items():
+        merged_result: Dict[str, torch.Tensor] = {}
+        for group_key, value in converted_weights_dict.items():
+            if group_key not in grouped_buffers:
+                grouped_buffers[group_key] = {}
+
             if ep_size == 1:
                 grouped_buffers[group_key][local_expert_number] = value
             else:
@@ -919,7 +922,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 else:
                     grouped_buffers[group_key][local_expert_number] = value
 
-        if len(grouped_buffers[group_key]) == num_experts:
+            if len(grouped_buffers[group_key]) != num_experts:
+                continue
+
             merged = torch.stack([grouped_buffers[group_key][i] for i in range(num_experts)], dim=0)
 
             if getattr(task.mapping, "transpose_on_export", False):
@@ -936,9 +941,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     merged = merged.transpose(-1, -2).contiguous()
 
             del grouped_buffers[group_key]
-            return {group_key: merged}
+            merged_result[group_key] = merged
 
-        return None
+        return merged_result or None
 
     def load_weights_hf_to_megatron(
         self,
@@ -1243,12 +1248,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
-        # Pre-compute expected expert counts for grouped export mappings
-        _grouped_task_counts: Dict[str, int] = {}
-        for task in megatron_to_hf_tasks:
-            if task is not None and getattr(task.mapping, "is_grouped_export", False):
-                gk = task.mapping.group_key
-                _grouped_task_counts[gk] = _grouped_task_counts.get(gk, 0) + 1
         _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
