@@ -25,7 +25,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.nn as nn
-from megatron.core.dist_checkpointing.mapping import ShardedTensorFactory
+from megatron.core.dist_checkpointing.mapping import ShardedTensor, ShardedTensorFactory
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 
 from megatron.bridge.peft import utils as peft_utils
@@ -656,6 +656,7 @@ class TestParallelLinearAdapter:
 
         # Mock the swiglu factory
         mock_swiglu_factory.return_value = "swiglu_processed_tensor"
+        mock_config.gated_linear_unit = True
 
         adapter = ParallelLinearAdapter(
             in_features=20, out_features=10, dim=16, base_linear_name="linear_fc1", model_parallel_config=mock_config
@@ -666,6 +667,74 @@ class TestParallelLinearAdapter:
         # Should call swiglu factory for fc1 weights
         mock_swiglu_factory.assert_called()
         assert result["adapter.linear_out.weight"] == "swiglu_processed_tensor"
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_grouped_expert_sharded_state_dict_uses_expert_axis(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Shared grouped-expert adapters should add a stable checkpoint expert axis."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        linear_in_weight = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+        linear_out_weight = torch.arange(4, 8, dtype=torch.float32).reshape(2, 2)
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", linear_in_weight, replica_id=(0, 0, 0)
+            ),
+            "adapter.linear_in._extra_state": torch.tensor([1.0]),
+        }
+        mock_linear_out.sharded_state_dict.return_value = {
+            "adapter.linear_out.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_out.weight", linear_out_weight, replica_id=(0, 0, 0)
+            ),
+            "adapter.linear_out._extra_state": torch.tensor([2.0]),
+        }
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+
+        with (
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_world_size",
+                return_value=2,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_rank",
+                return_value=1,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_rank",
+                return_value=0,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_data_parallel_rank",
+                return_value=3,
+            ),
+        ):
+            adapter = ParallelLinearAdapter(
+                in_features=2,
+                out_features=2,
+                dim=2,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+                is_expert=True,
+                model_parallel_config=mock_config,
+            )
+            result = adapter.sharded_state_dict(prefix="adapter.")
+
+        assert "adapter.linear_in._extra_state" not in result
+        assert "adapter.linear_out._extra_state" not in result
+        factory = result["adapter.linear_in.weight"]
+        assert isinstance(factory, ShardedTensorFactory)
+        assert factory.replica_id == (0, 0, 3)
+
+        built = factory.build()
+        assert len(built) == 2
+        assert built[0].global_shape == (4, 2, 2)
+        assert built[0].global_offset == (2, 0, 0)
+        assert built[1].global_offset == (3, 0, 0)
+
+        merged = factory.merge_fn([torch.ones(2, 2), torch.full((2, 2), 3.0)])
+        torch.testing.assert_close(merged, torch.full((2, 2), 2.0))
 
 
 class TestGroupedExpertLinearAdapter:
@@ -974,6 +1043,8 @@ class TestGroupedExpertLinearAdapter:
                 return_value=1,
             ),
         ):
+            config = MockModelParallelConfig()
+            config.gated_linear_unit = True
             adapter = GroupedExpertLinearAdapter(
                 in_features=2,
                 out_features=4,
@@ -982,7 +1053,7 @@ class TestGroupedExpertLinearAdapter:
                 base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
                 activation="identity",
                 input_is_parallel=False,
-                model_parallel_config=MockModelParallelConfig(),
+                model_parallel_config=config,
             )
 
             result = adapter.sharded_state_dict("adapter.")
@@ -1023,6 +1094,8 @@ class TestGroupedExpertLinearAdapter:
                 return_value=0,
             ),
         ):
+            config = MockModelParallelConfig()
+            config.gated_linear_unit = True
             adapter = GroupedExpertLinearAdapter(
                 in_features=2,
                 out_features=8,
@@ -1031,7 +1104,7 @@ class TestGroupedExpertLinearAdapter:
                 base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
                 activation="identity",
                 input_is_parallel=False,
-                model_parallel_config=MockModelParallelConfig(),
+                model_parallel_config=config,
             )
 
             factory = adapter.sharded_state_dict("adapter.")["adapter.linear_out.weight"]

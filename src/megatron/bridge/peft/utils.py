@@ -885,6 +885,201 @@ class ParallelLinearAdapter(nn.Module):
 
         return x
 
+    def local_experts_per_rank(self) -> int:
+        """Return the number of global expert slots owned by this EP rank."""
+
+        ep_size = parallel_state.get_expert_model_parallel_world_size() or self.config.expert_model_parallel_size or 1
+        num_global_experts = getattr(self.config, "num_moe_experts", None)
+        if num_global_experts is None:
+            return 1
+        if int(num_global_experts) % int(ep_size) != 0:
+            raise ValueError(
+                f"num_moe_experts={num_global_experts} must be divisible by expert_model_parallel_size={ep_size}"
+            )
+        return int(num_global_experts) // int(ep_size)
+
+    def _uses_grouped_expert_sharding(self) -> bool:
+        """Return whether this shared adapter needs an explicit expert axis."""
+
+        return self.is_expert and is_grouped_expert_linear(self.base_linear_name)
+
+    def _expert_axis_info(self, sharded_offsets: Tuple) -> Tuple[int, int, int]:
+        """Return the global expert-axis sharding metadata for this rank."""
+
+        ep_size = parallel_state.get_expert_model_parallel_world_size() or self.config.expert_model_parallel_size or 1
+        ep_rank = parallel_state.get_expert_model_parallel_rank() or 0
+        local_experts = self.local_experts_per_rank()
+        if local_experts <= 0:
+            raise ValueError(f"local_experts_per_rank must be positive, got {local_experts}")
+
+        num_global_experts = getattr(self.config, "num_moe_experts", None)
+        if num_global_experts is None:
+            num_global_experts = ep_size * local_experts
+        num_global_experts = int(num_global_experts)
+        first_expert_slot = ep_rank * local_experts
+        if first_expert_slot >= num_global_experts:
+            raise ValueError(
+                f"Invalid expert adapter sharding for {self.base_linear_name}: "
+                f"ep_rank={ep_rank}, local_experts_per_rank={local_experts}, "
+                f"num_global_experts={num_global_experts}"
+            )
+
+        expert_axis = len(sharded_offsets)
+        return expert_axis, first_expert_slot, num_global_experts
+
+    def _keep_expert_extra_state(self) -> bool:
+        """Keep one unsharded adapter extra-state entry."""
+
+        tp_rank = parallel_state.get_expert_tensor_parallel_rank()
+        ep_rank = parallel_state.get_expert_model_parallel_rank()
+        return tp_rank == 0 and ep_rank == 0
+
+    def _set_expert_replica_ids(self, *state_dicts: ShardedStateDict) -> None:
+        """Mark expert adapter replicas across expert data-parallel ranks."""
+
+        edp_rank = parallel_state.get_expert_data_parallel_rank() or 0
+        for state_dict in state_dicts:
+            for value in state_dict.values():
+                if not hasattr(value, "replica_id"):
+                    continue
+                replica_id = value.replica_id
+                if isinstance(replica_id, int):
+                    replica_id = (0, 0, replica_id)
+                if len(replica_id) != 3:
+                    raise ValueError(
+                        f"Expected replica_id for {self.base_linear_name} to be in "
+                        f"(PP, TP, DP) format, got: {replica_id}"
+                    )
+                dp_replica_id = 0 if getattr(value, "is_data_parallel_fully_shard", False) else edp_rank
+                value.replica_id = (*replica_id[:2], dp_replica_id)
+
+    def _apply_expert_axis_factory(
+        self,
+        sharded_tensor: ShardedTensor,
+        sharded_offsets: Tuple,
+        *,
+        split_swiglu: bool = False,
+    ) -> ShardedTensorFactory:
+        """Map one shared 2D adapter tensor to this rank's global expert slots."""
+
+        expert_axis, first_expert_slot, num_global_experts = self._expert_axis_info(sharded_offsets)
+        local_experts = self.local_experts_per_rank()
+        base_prepend_axis_num = len(sharded_offsets)
+        output_prepend_axis_num = base_prepend_axis_num + 1
+        swiglu_shard_axis = 0
+
+        preserved_rank_offsets = []
+        for axis, local_axis_shape in enumerate(sharded_tensor.local_shape):
+            base_global_axis_idx = axis + base_prepend_axis_num
+            output_global_axis_idx = base_global_axis_idx + 1
+            axis_fragments = sharded_tensor.axis_fragmentations[base_global_axis_idx]
+            if axis_fragments <= 1:
+                continue
+            global_offset = sharded_tensor.global_offset[base_global_axis_idx]
+            if global_offset % local_axis_shape != 0:
+                raise ValueError(
+                    f"Cannot preserve non-integral sharding for {sharded_tensor.key}: "
+                    f"offset={global_offset}, local_axis_shape={local_axis_shape}"
+                )
+            preserved_rank_offsets.append((output_global_axis_idx, global_offset // local_axis_shape, axis_fragments))
+
+        swiglu_axis_frag = None
+        swiglu_rank_offset = None
+        base_swiglu_global_axis = swiglu_shard_axis + base_prepend_axis_num
+        output_swiglu_global_axis = swiglu_shard_axis + output_prepend_axis_num
+        if split_swiglu:
+            local_axis_size = sharded_tensor.local_shape[swiglu_shard_axis]
+            if sharded_tensor.global_offset[base_swiglu_global_axis] % local_axis_size != 0:
+                raise ValueError(
+                    f"Cannot split SwiGLU tensor {sharded_tensor.key}: "
+                    f"offset={sharded_tensor.global_offset[base_swiglu_global_axis]}, local_axis_size={local_axis_size}"
+                )
+            swiglu_rank_offset = sharded_tensor.global_offset[base_swiglu_global_axis] // local_axis_size
+            swiglu_axis_frag = sharded_tensor.axis_fragmentations[base_swiglu_global_axis]
+            preserved_rank_offsets = [
+                rank_offset for rank_offset in preserved_rank_offsets if rank_offset[0] != output_swiglu_global_axis
+            ]
+
+        @torch.no_grad()
+        def sh_ten_build_fn(key: str, tensor: torch.Tensor, replica_id, flattened_range):
+            del flattened_range
+            sharded_tensors = []
+            for expert_index in range(local_experts):
+                expert_offset = (expert_axis, first_expert_slot + expert_index, num_global_experts)
+                if not split_swiglu:
+                    sharded_tensors.append(
+                        ShardedTensor.from_rank_offsets(
+                            key,
+                            tensor,
+                            *sharded_offsets,
+                            *preserved_rank_offsets,
+                            expert_offset,
+                            replica_id=replica_id,
+                            prepend_axis_num=output_prepend_axis_num,
+                        )
+                    )
+                    continue
+
+                tensor_w, tensor_v = torch.chunk(tensor, 2, dim=swiglu_shard_axis)
+                offset_w = (output_swiglu_global_axis, swiglu_rank_offset, swiglu_axis_frag * 2)
+                offset_v = (
+                    output_swiglu_global_axis,
+                    swiglu_rank_offset + swiglu_axis_frag,
+                    swiglu_axis_frag * 2,
+                )
+                for tensor_part, swiglu_offset in ((tensor_w, offset_w), (tensor_v, offset_v)):
+                    sharded_tensors.append(
+                        ShardedTensor.from_rank_offsets(
+                            key,
+                            tensor_part,
+                            *sharded_offsets,
+                            *preserved_rank_offsets,
+                            expert_offset,
+                            swiglu_offset,
+                            replica_id=replica_id,
+                            prepend_axis_num=output_prepend_axis_num,
+                        )
+                    )
+            return sharded_tensors
+
+        def sh_ten_merge_fn(sub_state_dict):
+            if not isinstance(sub_state_dict, list):
+                sub_state_dict = [sub_state_dict]
+            if split_swiglu:
+                if len(sub_state_dict) % 2 != 0:
+                    raise ValueError(f"Expected even number of SwiGLU shards for {sharded_tensor.key}")
+                sub_state_dict = [
+                    torch.cat(sub_state_dict[index : index + 2], dim=swiglu_shard_axis)
+                    for index in range(0, len(sub_state_dict), 2)
+                ]
+            if len(sub_state_dict) == 1:
+                return sub_state_dict[0]
+            return torch.stack(sub_state_dict, dim=0).mean(dim=0)
+
+        return ShardedTensorFactory(
+            sharded_tensor.key,
+            sharded_tensor.data,
+            sh_ten_build_fn,
+            sh_ten_merge_fn,
+            sharded_tensor.replica_id,
+            flattened_range=sharded_tensor.flattened_range,
+        )
+
+    @staticmethod
+    def _replace_extra_state(
+        state_dict: ShardedStateDict,
+        extra_state_dict: ShardedStateDict,
+        *,
+        keep_extra_state: bool,
+    ) -> None:
+        """Replace sharded extra-state entries with a single shared entry."""
+
+        extra_state_items = [(key, value) for key, value in extra_state_dict.items() if "_extra_state" in key]
+        for key in [k for k in state_dict if "_extra_state" in k]:
+            del state_dict[key]
+        if keep_extra_state:
+            state_dict.update(extra_state_items)
+
     def sharded_state_dict(
         self,
         prefix: str = "",
@@ -906,40 +1101,32 @@ class ParallelLinearAdapter(nn.Module):
             Sharded state dictionary for distributed checkpointing.
         """
         sharded_state_dict = {}
+        use_expert_axis = self._uses_grouped_expert_sharding()
+        split_swiglu = "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False)
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
 
-        # The experts.py code in Megatron-LM set replica_id = (PP, ETP, EDP),
-        # but it will cause errors as mentioned in https://github.com/volcengine/verl/issues/4303,
-        # since adapter weights are not EP sharded and it assumes that it will
-        # replicate along DP modulo EP (sharded by EP)
-        if self.is_expert:
-            from megatron.core import parallel_state
+        if use_expert_axis:
+            keep_extra_state = self._keep_expert_extra_state()
+            self._replace_extra_state(linear_in_sd, linear_in_sd, keep_extra_state=keep_extra_state)
+            self._replace_extra_state(linear_out_sd, linear_out_sd, keep_extra_state=keep_extra_state)
+            for key, value in list(linear_in_sd.items()):
+                if isinstance(value, ShardedTensor):
+                    linear_in_sd[key] = self._apply_expert_axis_factory(value, sharded_offsets)
+            for key, value in list(linear_out_sd.items()):
+                if isinstance(value, ShardedTensor):
+                    linear_out_sd[key] = self._apply_expert_axis_factory(
+                        value,
+                        sharded_offsets,
+                        split_swiglu=split_swiglu,
+                    )
+        elif self.is_expert:
+            if parallel_state.get_tensor_model_parallel_rank() > 0:
+                for state_dict in (linear_in_sd, linear_out_sd):
+                    for key in [k for k in state_dict if "_extra_state" in k]:
+                        del state_dict[key]
 
-            ep_rank = parallel_state.get_expert_model_parallel_rank()
-            edp_rank = parallel_state.get_expert_data_parallel_rank()
-            dp_size = parallel_state.get_data_parallel_world_size()
-            # TODO: This modification logic is in question and needs further verification.
-            rank = (ep_rank + 1) * (edp_rank + 1) - 1 if dp_size == 1 else ep_rank
-            for sd in [linear_in_sd, linear_out_sd]:
-                for v in sd.values():
-                    if hasattr(v, "replica_id"):
-                        old_rid = v.replica_id
-                        v.replica_id = (old_rid[0], rank, old_rid[2])
-
-            # TE FP8 _extra_state is a ShardedObject (no replica_id) that is
-            # identical across all TP ranks in the same EP group — experts are
-            # EP-sharded, not TP-sharded, so every TP rank sees the same experts
-            # and produces the same shard_X_N keys.  Keep it only on TP rank 0
-            # to avoid CheckpointingException: Duplicate ShardedObject keys.
-            tp_rank = parallel_state.get_tensor_model_parallel_rank()
-            if tp_rank > 0:
-                for sd in [linear_in_sd, linear_out_sd]:
-                    extra_state_keys = [k for k in sd if "_extra_state" in k]
-                    for k in extra_state_keys:
-                        del sd[k]
-
-        if "linear_fc1" in self.base_linear_name:
+        if split_swiglu and not use_expert_axis:
             for k, v in linear_out_sd.items():
                 if k in (f"{prefix}linear_out.weight", f"{prefix}linear_out.bias"):
                     linear_out_sd[k] = apply_swiglu_sharded_factory(v, sharded_offsets)
@@ -972,6 +1159,9 @@ class ParallelLinearAdapter(nn.Module):
                             ["z", "x", "B", "C", "dt"],
                             0,  # split along dimension 0
                         )
+
+        if self.is_expert:
+            self._set_expert_replica_ids(linear_in_sd, linear_out_sd)
 
         sharded_state_dict.update(linear_in_sd)
         sharded_state_dict.update(linear_out_sd)
@@ -1627,7 +1817,7 @@ class GroupedExpertLinearAdapter(nn.Module):
             )
         }
 
-        if "linear_fc1" in self.base_linear_name:
+        if "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False):
             singleton_local_shards = (metadata or {}).get("singleton_local_shards", False)
             linear_out_key = f"{prefix}linear_out.weight"
             linear_out_sd[linear_out_key] = _apply_grouped_expert_swiglu_sharded_factory(
