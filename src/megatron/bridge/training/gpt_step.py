@@ -22,7 +22,6 @@ from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import (
-    get_batch_on_this_cp_rank,
     get_model_config,
     is_te_min_version,
     unwrap_model,
@@ -34,6 +33,7 @@ from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
+from megatron.bridge.utils.common_utils import get_batch_on_this_cp_rank_compat
 
 
 logger = logging.getLogger(__name__)
@@ -183,7 +183,7 @@ def get_batch(
         batch = _partition_packed_batch_for_cp(batch, cp_size)
     else:
         # slice batch along sequence dimension for context parallelism
-        batch = get_batch_on_this_cp_rank(batch, cp_group=pg_collection.cp)
+        batch = get_batch_on_this_cp_rank_compat(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
 
     return (
         batch["tokens"],

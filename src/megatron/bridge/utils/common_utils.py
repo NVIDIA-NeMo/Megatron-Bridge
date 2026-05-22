@@ -16,7 +16,11 @@ import os
 import re
 import types
 import warnings
+from collections.abc import Callable
+from functools import lru_cache
+from inspect import Parameter, signature
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.distributed
@@ -293,6 +297,40 @@ def disable_mtp_for_inference(m: torch.nn.Module) -> None:
         lang.mtp_process = False
 
 
+@lru_cache
+def _get_batch_on_this_cp_rank_parameter_names(core_fn: Callable[..., Any]) -> frozenset[str] | None:
+    parameters = signature(core_fn).parameters
+    if any(parameter.kind == Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        return None
+    return frozenset(parameters)
+
+
+def get_batch_on_this_cp_rank_compat(
+    batch: dict[str, Any],
+    *,
+    is_hybrid_cp: bool = False,
+    cp_group: object | None = None,
+    hybrid_cp_group_func: Callable[[int], object] | None = None,
+) -> dict[str, Any]:
+    """Call MCore ``get_batch_on_this_cp_rank`` across old and new signatures."""
+    from megatron.core import utils as core_utils
+
+    core_fn = core_utils.get_batch_on_this_cp_rank
+    parameter_names = _get_batch_on_this_cp_rank_parameter_names(core_fn)
+
+    all_kwargs = {
+        "is_hybrid_cp": is_hybrid_cp,
+        "cp_group": cp_group,
+        "hybrid_cp_group_func": hybrid_cp_group_func,
+    }
+    if parameter_names is None:
+        return core_fn(batch, **all_kwargs)
+
+    # TODO: remove this guard when Bridge no longer supports Megatron-LM commits before PR #4103.
+    kwargs = {name: value for name, value in all_kwargs.items() if name in parameter_names}
+    return core_fn(batch, **kwargs)
+
+
 def resolve_path(path: str) -> Path:
     """Resolve a path to an absolute path."""
 
@@ -328,8 +366,6 @@ def slice_batch_for_context_parallel(
         Tuple of (inputs_embeds, labels, loss_mask, position_ids, attention_mask)
         with all tensors sliced for this CP rank. inputs_embeds remains in (T, B, D) format.
     """
-    from megatron.core.utils import get_batch_on_this_cp_rank
-
     cp_size = pg_collection.cp.size()
     if cp_size <= 1:
         return inputs_embeds, labels, loss_mask, position_ids, attention_mask
@@ -369,7 +405,7 @@ def slice_batch_for_context_parallel(
     else:
         # For BSHD format, use standard zigzag slicing
         cp_group = pg_collection.cp
-        cp_batch = get_batch_on_this_cp_rank(
+        cp_batch = get_batch_on_this_cp_rank_compat(
             {
                 "decoder_input": inputs_embeds,
                 "labels": labels,
@@ -377,6 +413,7 @@ def slice_batch_for_context_parallel(
                 "position_ids": position_ids,
                 "attention_mask": attention_mask,
             },
+            is_hybrid_cp=False,
             cp_group=cp_group,
         )
 

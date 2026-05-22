@@ -471,7 +471,7 @@ class TestGetBatch:
             ),
             patch(
                 "megatron.bridge.diffusion.models.common.dgpt_step.get_batch_on_this_cp_rank",
-                side_effect=lambda x: x,
+                side_effect=lambda x, **kwargs: x,
             ),
         ):
             cfg = MagicMock()
