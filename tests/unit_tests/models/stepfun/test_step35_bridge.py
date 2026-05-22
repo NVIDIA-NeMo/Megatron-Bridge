@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,8 +24,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
     QKVGMapping,
+    merge_qkvg_weights,
+    split_qkvg_weights,
 )
-from megatron.bridge.models.step.step35_bridge import (
+from megatron.bridge.models.stepfun.step35_bridge import (
     StackedExpertAutoMapping,
     StackedExpertGatedMLPMapping,
     Step35Bridge,
@@ -42,10 +44,28 @@ def _make_hf_config(**overrides) -> SimpleNamespace:
     enumerating only the MoE-bearing main decoder layers.
     """
     base = dict(
+        num_hidden_layers=4,
+        hidden_size=128,
+        intermediate_size=256,
+        num_attention_heads=4,
         num_attention_groups=8,
+        head_dim=32,
+        vocab_size=512,
+        max_position_embeddings=1024,
+        rms_norm_eps=1e-5,
+        tie_word_embeddings=False,
+        torch_dtype="bfloat16",
         moe_num_experts=4,
         moe_top_k=2,
-        head_wise_attn_gate=True,
+        moe_intermediate_size=64,
+        share_expert_dim=64,
+        use_head_wise_attn_gate=True,
+        attention_other_setting={
+            "attention_type": "sliding_attention",
+            "num_attention_heads": 96,
+            "num_attention_groups": 8,
+            "head_dim": 128,
+        },
         layer_types=[
             "full_attention",
             "sliding_attention",
@@ -54,7 +74,6 @@ def _make_hf_config(**overrides) -> SimpleNamespace:
         ],
         rope_theta=10000.0,
         moe_layers_enum="2,3",
-        num_hidden_layers=4,
         num_nextn_predict_layers=2,
     )
     base.update(overrides)
@@ -73,10 +92,13 @@ class _FakeProvider:
         self.num_query_groups = None
         self.num_moe_experts = None
         self.moe_router_topk = None
-        self.head_wise_attn_gate = True
+        self.moe_shared_expert_intermediate_size = None
+        self.head_wise_attn_gate = None
         self.attention_output_gate = None
         self.layer_types = None
+        self.attention_other_setting = None
         self.sliding_attention_setting = None
+        self.kv_channels = None
         self.rotary_base = None
         self.rotary_base_per_layer = None
         # Step35Bridge.provider_bridge unconditionally writes the following:
@@ -122,7 +144,7 @@ class TestStep35BridgeRegistration:
         breaking ``AutoConfig.from_pretrained("stepfun-ai/Step-3.5-Flash")``.
         """
         # PROVIDER_CLASS is populated by the @register_bridge decorator
-        from megatron.bridge.models.step.step35_provider import Step35ModelProvider
+        from megatron.bridge.models.stepfun.step35_provider import Step35ModelProvider
 
         assert Step35Bridge.PROVIDER_CLASS is Step35ModelProvider
 
@@ -142,6 +164,14 @@ class TestStep35BridgeProviderBridge:
     def _run(self, hf_overrides=None, provider_overrides=None):
         hf_config = _make_hf_config(**(hf_overrides or {}))
         provider = _FakeProvider()
+        provider.num_query_groups = hf_config.num_attention_groups
+        provider.num_moe_experts = hf_config.moe_num_experts
+        provider.moe_router_topk = hf_config.moe_top_k
+        provider.moe_shared_expert_intermediate_size = hf_config.share_expert_dim
+        provider.head_wise_attn_gate = hf_config.use_head_wise_attn_gate
+        provider.layer_types = hf_config.layer_types
+        provider.attention_other_setting = hf_config.attention_other_setting
+        provider.kv_channels = hf_config.head_dim
         for k, v in (provider_overrides or {}).items():
             setattr(provider, k, v)
 
@@ -155,13 +185,25 @@ class TestStep35BridgeProviderBridge:
         assert p.num_query_groups == hf_config.num_attention_groups
         assert p.num_moe_experts == hf_config.moe_num_experts
         assert p.moe_router_topk == hf_config.moe_top_k
+        assert p.moe_shared_expert_intermediate_size == hf_config.share_expert_dim
         assert p.head_wise_attn_gate is True
 
-    def test_head_wise_gate_disables_attention_output_gate(self):
+    def test_nonstandard_hf_fields_are_mapped_by_base_bridge_path(self):
+        hf_config = _make_hf_config()
+        kwargs = Step35Bridge().hf_config_to_provider_kwargs(hf_config)
+        assert kwargs["num_query_groups"] == hf_config.num_attention_groups
+        assert kwargs["num_moe_experts"] == hf_config.moe_num_experts
+        assert kwargs["moe_router_topk"] == hf_config.moe_top_k
+        assert kwargs["moe_shared_expert_intermediate_size"] == hf_config.share_expert_dim
+        assert kwargs["head_wise_attn_gate"] is True
+        assert kwargs["attention_other_setting"] == hf_config.attention_other_setting
+        assert kwargs["layer_types"] == hf_config.layer_types
+
+    def test_head_wise_gate_enables_attention_output_gate(self):
         _, p = self._run()
-        # Step-3.5-Flash uses use_head_wise_attn_gate; attention_output_gate must
-        # be force-disabled so the two gating paths do not double up.
-        assert p.attention_output_gate is False
+        # Step-3.5-Flash's scalar g_proj gate is expanded by QKVGMapping into
+        # Megatron-Core's attention_output_gate layout.
+        assert p.attention_output_gate is True
 
     def test_no_head_wise_gate_leaves_attention_output_gate_untouched(self):
         _, p = self._run(
@@ -179,9 +221,8 @@ class TestStep35BridgeProviderBridge:
 
     def test_sliding_attention_setting_populated(self):
         _, p = self._run()
-        # These are the Step-3.5-Flash sliding-layer shape overrides hardcoded
-        # in Step35Bridge.provider_bridge — they must survive the bridge call
-        # so that Step35DecoderLayer can read them at construction time.
+        # These are normalized from HF's attention_other_setting so that
+        # Step35DecoderLayer can read Megatron-facing names at construction time.
         assert p.sliding_attention_setting == {
             "rotary_percent": 1.0,
             "num_attention_heads": 96,
@@ -203,9 +244,9 @@ class TestStep35BridgeProviderBridge:
 
     def test_moe_layer_freq_constructed_from_enum(self):
         _, p = self._run()
-        # num_layers=4, mtp_num_layers=2 => length 6; moe_layers_enum="2,3" =>
-        # layers 2 and 3 are MoE, all others (incl. MTP) are dense.
-        assert p.moe_layer_freq == [0, 0, 1, 1, 0, 0]
+        # num_layers=4 and moe_layers_enum="2,3" => main decoder layers 2 and 3 are MoE.
+        # MTP layers are kept dense by _MTPDenseLayerSpecsList rather than this list.
+        assert p.moe_layer_freq == [0, 0, 1, 1]
 
     def test_moe_layer_freq_skipped_when_enum_none(self):
         provider_overrides = {"moe_layer_freq": "untouched"}
@@ -235,7 +276,7 @@ class TestStep35BridgeProviderBridge:
         assert p.moe_permute_fusion is True
 
     def test_transformer_layer_spec_uses_custom_builder(self):
-        from megatron.bridge.models.step.step35_bridge import _build_step35_layer_spec
+        from megatron.bridge.models.stepfun.step35_bridge import _build_step35_layer_spec
 
         _, p = self._run()
         assert p.transformer_layer_spec is _build_step35_layer_spec
@@ -391,6 +432,83 @@ class TestStackedExpertGatedMLPMapping:
         # Expert index 1 -> both gate/up tensors must be sliced to row 1.
         assert torch.equal(seen["w"]["gate"], gate[1])
         assert torch.equal(seen["w"]["up"], up[1])
+
+    @patch("megatron.bridge.models.conversion.model_bridge.parallel_state.get_expert_model_parallel_world_size")
+    def test_grouped_export_accumulates_gate_and_up_separately(self, mock_ep_size):
+        mock_ep_size.return_value = 1
+        model_config = SimpleNamespace(num_moe_experts=2)
+        mapping = SimpleNamespace(is_grouped_export=True)
+        buffers = {}
+
+        task0 = SimpleNamespace(
+            mapping=mapping,
+            param_name="decoder.layers.5.mlp.experts.linear_fc1.weight0",
+        )
+        first = MegatronModelBridge._accumulate_grouped_export(
+            None,
+            task0,
+            {
+                "model.layers.5.moe.gate_proj.weight": torch.full((2, 3), 1.0),
+                "model.layers.5.moe.up_proj.weight": torch.full((2, 3), 2.0),
+            },
+            model_config,
+            buffers,
+            {},
+        )
+
+        task1 = SimpleNamespace(
+            mapping=mapping,
+            param_name="decoder.layers.5.mlp.experts.linear_fc1.weight1",
+        )
+        second = MegatronModelBridge._accumulate_grouped_export(
+            None,
+            task1,
+            {
+                "model.layers.5.moe.gate_proj.weight": torch.full((2, 3), 3.0),
+                "model.layers.5.moe.up_proj.weight": torch.full((2, 3), 4.0),
+            },
+            model_config,
+            buffers,
+            {},
+        )
+
+        assert first is None
+        assert set(second) == {
+            "model.layers.5.moe.gate_proj.weight",
+            "model.layers.5.moe.up_proj.weight",
+        }
+        assert torch.equal(
+            second["model.layers.5.moe.gate_proj.weight"],
+            torch.stack([torch.ones(2, 3), torch.full((2, 3), 3.0)]),
+        )
+        assert torch.equal(
+            second["model.layers.5.moe.up_proj.weight"],
+            torch.stack([torch.full((2, 3), 2.0), torch.full((2, 3), 4.0)]),
+        )
+
+
+class TestQKVGMappingHelpers:
+    def test_head_wise_scalar_gate_expands_for_mcore_attention_output_gate(self):
+        provider = SimpleNamespace(
+            attention_output_gate=True,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=2,
+            hidden_size=3,
+        )
+        q = torch.arange(4 * 2 * 3, dtype=torch.float32).reshape(8, 3)
+        k = torch.arange(100, 100 + 2 * 2 * 3, dtype=torch.float32).reshape(4, 3)
+        v = torch.arange(200, 200 + 2 * 2 * 3, dtype=torch.float32).reshape(4, 3)
+        g = torch.arange(300, 300 + 4 * 3, dtype=torch.float32).reshape(4, 3)
+
+        merged = merge_qkvg_weights(provider, q, k, v, g)
+
+        assert merged.shape == (24, 3)
+        q2, k2, v2, g2 = split_qkvg_weights(provider, merged)
+        assert torch.equal(q2, q)
+        assert torch.equal(k2, k)
+        assert torch.equal(v2, v)
+        assert torch.equal(g2, g)
 
 
 # ---------------------------------------------------------------------------

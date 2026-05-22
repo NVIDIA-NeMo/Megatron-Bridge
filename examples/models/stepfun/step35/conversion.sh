@@ -38,6 +38,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 \
     2>&1 | tee "${LOG_DIR}/convert_step35_megatron.log"
 
 echo "[convert] Done. Checkpoint saved to: ${MEGATRON_CKPT_PATH}"
+echo "[convert] Inference example: MEGATRON_MODEL_PATH=${MEGATRON_CKPT_PATH}/iter_0000000 sbatch examples/models/stepfun/step35/slurm_inference.sh"
 
 # Export Megatron -> HF (uncomment to round-trip)
 # uv run python examples/conversion/convert_checkpoints.py export \

@@ -45,13 +45,21 @@ class Step35Config(PretrainedConfig):
         max_position_embeddings: Maximum positions supported by RoPE.
         share_expert_dims: Hidden size of the shared-expert branch that runs
             alongside the routed experts.
+        share_expert_dim: Singular alias used by the published Step-3.5-Flash
+            config.
         head_dim: Per-head attention dimension.
         norm_expert_weight: Whether to normalize the top-k expert routing
             weights so they sum to 1.
         layer_types: Optional per-layer type override (e.g. attention
             variant); ``None`` uses the default for every layer.
+        attention_other_setting: Sliding-attention shape override from the HF
+            config.
+        use_head_wise_attn_gate: Whether Step-3.5 uses per-head ``g_proj``
+            gates fused into QKV.
         sliding_window: Sliding-window size for windowed attention; ``None``
             disables windowing.
+        num_nextn_predict_layers: Number of MTP layers appended after the main
+            decoder.
         moe_layers_enum: Indices of layers that use the MoE FFN. Layers not
             listed here use the dense FFN of ``intermediate_size``.
         **kwargs: Forwarded to :class:`~transformers.PretrainedConfig`.
@@ -84,10 +92,14 @@ class Step35Config(PretrainedConfig):
         rope_scaling: Optional[dict[str, Any]] = None,
         max_position_embeddings: int = 128000,
         share_expert_dims: int = 1280,
+        share_expert_dim: int | None = None,
         head_dim: int = 128,
         norm_expert_weight: bool = True,
-        layer_types: list[str] = None,
+        layer_types: list[str] | None = None,
+        attention_other_setting: dict[str, Any] | None = None,
+        use_head_wise_attn_gate: bool = True,
         sliding_window: Optional[int] = None,
+        num_nextn_predict_layers: int = 3,
         moe_layers_enum: tuple[int] = (
             3,
             4,
@@ -149,9 +161,13 @@ class Step35Config(PretrainedConfig):
         self.rope_scaling = rope_scaling
         self.max_position_embeddings = max_position_embeddings
         self.share_expert_dims = share_expert_dims
+        self.share_expert_dim = share_expert_dims if share_expert_dim is None else share_expert_dim
         self.head_dim = head_dim
         self.norm_expert_weight = norm_expert_weight
         self.moe_layers_enum = moe_layers_enum
         self.layer_types = layer_types
+        self.attention_other_setting = attention_other_setting
+        self.use_head_wise_attn_gate = use_head_wise_attn_gate
         self.sliding_window = sliding_window
+        self.num_nextn_predict_layers = num_nextn_predict_layers
         super().__init__(**kwargs)

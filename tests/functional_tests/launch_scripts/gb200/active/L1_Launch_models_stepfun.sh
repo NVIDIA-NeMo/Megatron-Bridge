@@ -1,4 +1,5 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# CI_TIMEOUT=60
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,13 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Step3.5 models
-from .step35 import (
-    step35_196b_a11b_pretrain_config,
-)
+#!/bin/bash
+set -xeuo pipefail
 
+export CUDA_VISIBLE_DEVICES="0,1"
 
-__all__ = [
-    # Step3.5 models
-    "step35_196b_a11b_pretrain_config",
-]
+uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
+  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  tests/functional_tests/test_groups/models/stepfun
+coverage combine -q

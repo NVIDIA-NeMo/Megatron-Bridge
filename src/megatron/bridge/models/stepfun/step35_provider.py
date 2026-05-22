@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ in ``layer_types`` and the sliding-layer shape overrides in
 This provider surfaces ``layer_types`` (per-layer attention type) as a
 dataclass field and ``attention_other_setting`` as the enable-flag for the
 sliding-attention path. The actual sliding-layer shape values are forwarded
-through the dynamic ``sliding_attention_setting`` attribute populated by
+through the ``sliding_attention_setting`` field populated by
 ``Step35Bridge.provider_bridge``. The custom ``Step35DecoderLayer`` reads
 all three at construction time to decide, on a per-layer basis, whether to
 use the global config or the sliding-attention overrides when building its
@@ -32,7 +32,7 @@ sub-modules.
 
 import copy
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Optional
 
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -51,9 +51,9 @@ class Step35DecoderLayer(TransformerLayer):
 
     On construction the layer resolves a global 0-indexed ``layer_idx``:
 
-    * For MTP layers or when ``add_layer_offset=False``,
-      ``layer_idx = layer_number - 1`` (MTP layers live in their own 1-indexed
-      namespace).
+    * For MTP layers, ``layer_idx`` is offset after the main decoder layers so
+      per-layer RoPE and attention-type lists can include MTP entries.
+    * When ``add_layer_offset=False``, ``layer_idx = layer_number - 1``.
     * Otherwise ``layer_idx = layer_number + get_transformer_layer_offset(
       config, vp_stage, pp_rank) - 1``, so PP>1 still maps correctly.
 
@@ -62,10 +62,10 @@ class Step35DecoderLayer(TransformerLayer):
     the enable flag), the config is deep-copied and the shape-related fields
     are overridden from ``config.sliding_attention_setting`` before delegating
     to ``TransformerLayer.__init__``. The overridden config is what every
-    downstream sub-module (``self_attention``, ``linear_qkv`` -- with the
-    per-head ``g_proj`` rows fused into its tail -- and ``linear_proj``) ends
-    up reading, so each layer is sized correctly without changing
-    Megatron-LM core.
+    downstream sub-module (``self_attention``, ``linear_qkv`` with the
+    per-head ``g_proj`` gate expanded into Megatron-Core's gated-attention
+    layout, and ``linear_proj``) ends up reading, so each layer is sized
+    correctly without changing Megatron-LM core.
 
     Fields read from ``config.sliding_attention_setting`` (HF key on the left,
     ``TransformerConfig`` attribute on the right):
@@ -79,9 +79,8 @@ class Step35DecoderLayer(TransformerLayer):
     -----
     * The spec-builder must keep ``layer_types`` indexed by the global
       0-indexed layer id (same constraint as ``rotary_base_per_layer``).
-    * Layers whose resolved ``layer_idx`` falls outside ``layer_types`` (e.g.
-      MTP layers, which are not enumerated in ``layer_types``) fall through
-      to the global config.
+    * Layers whose resolved ``layer_idx`` falls outside ``layer_types`` fall
+      through to the global config.
     """
 
     def __init__(
@@ -109,6 +108,8 @@ class Step35DecoderLayer(TransformerLayer):
             layer_types is not None
             and 0 <= layer_idx < len(layer_types)
             and layer_types[layer_idx] == "sliding_attention"
+            and getattr(config, "attention_other_setting", None)
+            and getattr(config, "sliding_attention_setting", None)
         )
         if is_sliding:
             config = copy.deepcopy(config)
@@ -139,23 +140,25 @@ class Step35DecoderLayer(TransformerLayer):
 class Step35ModelProvider(GPTModelProvider):
     """Model provider for Step-3.5-Flash.
 
-    Adds two Step3.5-specific fields on top of ``GPTModelProvider``:
+    Adds Step3.5-specific fields on top of ``GPTModelProvider``:
 
     * ``layer_types``: 0-indexed list of attention types (e.g.
       ``"full_attention"`` / ``"sliding_attention"``), one entry per main
       decoder layer. Read by ``Step35DecoderLayer`` to decide whether the
       current layer is a sliding-attention layer.
-    * ``head_wise_attn_gate``: whether to use head-wise attention gate.
-      ``Step35DecoderLayer`` only uses it as a truthy enable-flag for the
-      sliding-attention override path; the actual shape values that get
-      applied to sliding layers are taken from
-      ``provider.sliding_attention_setting`` (set as a dynamic attribute by
-      ``Step35Bridge.provider_bridge`` and read via ``getattr`` on the
-      ``TransformerConfig`` at layer-construction time).
+    * ``attention_other_setting``: HF dict that enables and describes the
+      sliding-attention override.
+    * ``sliding_attention_setting``: normalized Megatron-facing shape overrides
+      derived from ``attention_other_setting``.
+    * ``head_wise_attn_gate``: whether to map HF's per-head ``g_proj`` gate
+      through Megatron-Core's ``attention_output_gate`` path.
 
-    Both fields are populated from the HF config inside
+    These fields are populated from the HF config inside
     ``Step35Bridge.provider_bridge``.
     """
 
-    layer_types: Optional[List[str]] = None
+    layer_types: list[str] | None = None
+    attention_other_setting: dict[str, Any] | None = None
+    sliding_attention_setting: dict[str, Any] | None = None
+    rotary_base_per_layer: list[float] | None = None
     head_wise_attn_gate: Optional[bool] = False

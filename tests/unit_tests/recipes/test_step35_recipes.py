@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,22 +29,16 @@ import pytest
 import torch
 
 
-_step35_module = importlib.import_module("megatron.bridge.recipes.step.step35")
+_step35_module = importlib.import_module("megatron.bridge.recipes.stepfun.step35")
 _STEP35_RECIPE_FUNCS = [
     getattr(_step35_module, name)
-    for name in getattr(importlib.import_module("megatron.bridge.recipes.step"), "__all__", [])
+    for name in getattr(importlib.import_module("megatron.bridge.recipes.stepfun"), "__all__", [])
     if callable(getattr(_step35_module, name, None))
 ]
 
 
 class _FakeModelCfg:
-    """Stand-in for ``Step35ModelProvider`` returned by ``AutoBridge``.
-
-    The recipe assigns ~30 attributes onto ``cfg.model`` and calls
-    ``register_pre_wrap_hook``. Plain ``setattr`` covers the assignments;
-    ``register_pre_wrap_hook`` is implemented so the test can also verify the
-    freeze hook was installed.
-    """
+    """Stand-in for ``Step35ModelProvider`` returned by ``AutoBridge``."""
 
     def __init__(self):
         # Attributes the recipe reads back after assignment (e.g. for
@@ -55,10 +49,6 @@ class _FakeModelCfg:
         # Fields the recipe never sets explicitly but downstream code may read.
         self.apply_rope_fusion = False
         self.pipeline_model_parallel_layout = None
-        self._pre_wrap_hooks = []
-
-    def register_pre_wrap_hook(self, hook):
-        self._pre_wrap_hooks.append(hook)
 
     def finalize(self):
         return None
@@ -120,9 +110,9 @@ def test_each_step35_recipe_builds_config(recipe_func: Callable, monkeypatch):
 def test_step35_196b_pretrain_defaults(monkeypatch):
     """The pretrain recipe ships with the alignment-run parallelism layout:
     TP=1, PP=8, CP=8, EP=8, MoE alltoall + permute_fusion + grouped_gemm, etc."""
-    from megatron.bridge.recipes.step.step35 import step35_196b_a11b_pretrain_config
+    from megatron.bridge.recipes.stepfun.step35 import step35_196b_a11b_pretrain_config
 
-    mod = importlib.import_module("megatron.bridge.recipes.step.step35")
+    mod = importlib.import_module("megatron.bridge.recipes.stepfun.step35")
     _patch_recipe_env(monkeypatch, mod)
 
     cfg = step35_196b_a11b_pretrain_config()
@@ -155,79 +145,11 @@ def test_step35_196b_pretrain_defaults(monkeypatch):
     assert cfg.ddp.use_megatron_fsdp is False
 
 
-def test_step35_196b_recipe_registers_freeze_hook(monkeypatch):
-    """The recipe installs ``_freeze_non_layer_norm_hook`` so checkpoints loaded
-    for the resume-alignment run only update the QKV layer-norm weights. Verify
-    the hook is registered on the provider so future refactors do not silently
-    drop it."""
-    from megatron.bridge.recipes.step.step35 import step35_196b_a11b_pretrain_config
-
-    mod = importlib.import_module("megatron.bridge.recipes.step.step35")
-    _patch_recipe_env(monkeypatch, mod)
-
-    cfg = step35_196b_a11b_pretrain_config()
-
-    hooks = getattr(cfg.model, "_pre_wrap_hooks", [])
-    assert len(hooks) == 1
-    assert hooks[0].__name__ == "_freeze_non_layer_norm_hook"
-
-
 def test_step35_196b_recipe_uses_stepfun_tokenizer(monkeypatch):
-    from megatron.bridge.recipes.step.step35 import step35_196b_a11b_pretrain_config
+    from megatron.bridge.recipes.stepfun.step35 import step35_196b_a11b_pretrain_config
 
-    mod = importlib.import_module("megatron.bridge.recipes.step.step35")
+    mod = importlib.import_module("megatron.bridge.recipes.stepfun.step35")
     _patch_recipe_env(monkeypatch, mod)
 
     cfg = step35_196b_a11b_pretrain_config()
     assert cfg.tokenizer.tokenizer_model == "stepfun-ai/Step-3.5-Flash"
-
-
-# ---------------------------------------------------------------------------
-# Freeze hook behaviour
-# ---------------------------------------------------------------------------
-
-
-class _FakeParam:
-    def __init__(self):
-        self.shape = ()
-        self._requires_grad = True
-
-    def requires_grad_(self, flag):
-        self._requires_grad = flag
-
-
-class _FakeModule:
-    """Mimics one Megatron model chunk for ``_freeze_non_layer_norm_hook``."""
-
-    def __init__(self, named_params):
-        self._params = named_params
-
-    def named_parameters(self):
-        return iter(self._params)
-
-
-def test_freeze_non_layer_norm_hook_only_trains_qkv_layer_norm(monkeypatch):
-    """The hook must keep ``linear_qkv.layer_norm_weight`` trainable and freeze
-    everything else — that's the alignment-run contract for the resume recipe."""
-    from megatron.bridge.recipes.step import step35 as step35_recipe
-
-    # Suppress the rank-prefixed print spam during the test.
-    monkeypatch.setattr(step35_recipe.torch.distributed, "is_initialized", lambda: False)
-
-    trainable_param = _FakeParam()
-    frozen_param_1 = _FakeParam()
-    frozen_param_2 = _FakeParam()
-    chunk = _FakeModule(
-        [
-            ("decoder.layers.0.self_attention.linear_qkv.layer_norm_weight", trainable_param),
-            ("decoder.layers.0.self_attention.linear_qkv.weight", frozen_param_1),
-            ("decoder.layers.0.mlp.linear_fc1.weight", frozen_param_2),
-        ]
-    )
-
-    returned = step35_recipe._freeze_non_layer_norm_hook([chunk])
-
-    assert returned == [chunk]
-    assert trainable_param._requires_grad is True
-    assert frozen_param_1._requires_grad is False
-    assert frozen_param_2._requires_grad is False

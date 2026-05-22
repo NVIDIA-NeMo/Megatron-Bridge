@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ from unittest.mock import patch
 from megatron.core.transformer.transformer_layer import TransformerLayer
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.step.configuration_step35 import Step35Config
-from megatron.bridge.models.step.step35_provider import (
+from megatron.bridge.models.stepfun.configuration_step35 import Step35Config
+from megatron.bridge.models.stepfun.step35_provider import (
     Step35DecoderLayer,
     Step35ModelProvider,
 )
@@ -109,6 +109,7 @@ def _make_config(layer_types, sliding_setting=None, *, attention_other_setting=T
         num_attention_heads=64,
         num_query_groups=8,
         kv_channels=128,
+        num_layers=len(layer_types),
     )
     return cfg
 
@@ -152,9 +153,10 @@ class TestStep35DecoderLayerIsSliding:
 
         with (
             patch.object(TransformerLayer, "__init__", lambda self, config, **kw: recorder(self, config, **kw)),
-            patch("megatron.bridge.models.step.step35_provider.get_pg_rank", return_value=pp_rank),
+            patch("megatron.bridge.models.stepfun.step35_provider.get_pg_rank", return_value=pp_rank),
             patch(
-                "megatron.bridge.models.step.step35_provider.get_transformer_layer_offset", return_value=offset_return
+                "megatron.bridge.models.stepfun.step35_provider.get_transformer_layer_offset",
+                return_value=offset_return,
             ),
         ):
             Step35DecoderLayer(
@@ -188,10 +190,9 @@ class TestStep35DecoderLayerIsSliding:
         assert original.num_attention_heads == 64
         assert original.rotary_percent == 0.5
 
-    def test_mtp_layer_uses_layer_number_minus_one(self):
-        """For ``is_mtp_layer=True`` the layer index must be `layer_number - 1`,
-        regardless of pp_rank / offset, so MTP layers (which are outside
-        ``layer_types``) fall through to the full-attention path."""
+    def test_mtp_layer_uses_global_layer_index_after_main_decoder(self):
+        """For ``is_mtp_layer=True`` the layer index is offset after the main
+        decoder, so MTP entries can be represented in per-layer config lists."""
         original, captured = self._build(
             layer_number=1,
             is_mtp_layer=True,

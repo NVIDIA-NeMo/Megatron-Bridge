@@ -63,14 +63,26 @@ uv run python -m torch.distributed.run --nproc_per_node=1 \
     --megatron-path "${MEGATRON_CKPT_PATH}"
 ```
 
+## Inference
+
+[slurm_inference.sh](slurm_inference.sh) runs greedy generation on 1 node / 8 GPUs
+with `TP=1`, `PP=1`, and `EP=8`.
+
+By default it loads `stepfun-ai/Step-3.5-Flash` and converts in memory. To run
+from a checkpoint produced by [conversion.sh](conversion.sh), pass:
+
+```bash
+MEGATRON_MODEL_PATH="${MEGATRON_CKPT_PATH}/iter_0000000" \
+    sbatch examples/models/stepfun/step35/slurm_inference.sh
+```
+
 ## Pretraining / Resume
 
 The recipe `step35_196b_a11b_pretrain_config` (in
-`src/megatron/bridge/recipes/step/step35.py`) ships with TP=1, PP=8, CP=8, EP=8
-and `mtp_num_layers=1`. It is meant as a **resume / continued pretraining** entry
-point — `cfg.dataset.blend = None` (mock data) and a pre-wrap hook that freezes
-everything except the `linear_qkv.layer_norm_weight` parameters by default. Swap
-the dataset blend and remove / replace the pre-wrap hook before running real
+`src/megatron/bridge/recipes/stepfun/step35.py`) ships with TP=1, PP=8, CP=8, EP=8
+and inherits the published checkpoint's MTP layer count. It is meant as a
+**resume / continued pretraining** entry point; `cfg.dataset.blend = None`
+uses mock data by default. Set a real dataset blend before running real
 pretraining.
 
 Before launching, ensure the following environment variables are set:
@@ -120,7 +132,7 @@ train.global_batch_size=1024
 
 `Step35Bridge.provider_bridge` populates `provider.layer_types` from the HF
 `layer_types` list and writes the sliding-layer shape overrides into
-`provider.sliding_attention_setting` (a dynamic attribute):
+`provider.sliding_attention_setting`:
 
 ```python
 provider.sliding_attention_setting = {

@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -32,8 +32,8 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.step.configuration_step35 import Step35Config
-from megatron.bridge.models.step.step35_provider import (
+from megatron.bridge.models.stepfun.configuration_step35 import Step35Config
+from megatron.bridge.models.stepfun.step35_provider import (
     Step35DecoderLayer,
     Step35ModelProvider,
 )
@@ -41,9 +41,9 @@ from megatron.bridge.models.step.step35_provider import (
 
 logger = logging.getLogger(__name__)
 
-# Register the Step3.5 config and model classes with transformers Auto classes.
-# This allows AutoConfig.from_pretrained and AutoModelForCausalLM to resolve "step3p5"
-# without requiring hub access (works in offline CI environments).
+# Register the Step3.5 config with transformers AutoConfig.
+# This allows AutoConfig.from_pretrained to resolve "step3p5" without requiring
+# hub access (works in offline CI environments).
 #
 # The literal strings "step3p5" and "Step3p5ForCausalLM" are *external HF
 # identifiers*: they come from the `model_type` and `architectures` fields in
@@ -52,7 +52,6 @@ logger = logging.getLogger(__name__)
 # `AutoConfig.from_pretrained("stepfun-ai/Step-3.5-Flash")` would route to a
 # different config class and the bridge resolution below would fail.
 AutoConfig.register("step3p5", Step35Config, exist_ok=True)
-AutoModelForCausalLM.register(Step35Config, "Step3p5ForCausalLM", exist_ok=True)
 
 
 class StackedExpertAutoMapping(AutoMapping):
@@ -147,8 +146,8 @@ def _build_step35_layer_spec(cfg, **kw):
     block_submodules = get_gpt_decoder_block_spec(cfg, use_transformer_engine=True, normalization="RMSNorm", **kw)
     # Swap the layer module class on every main-decoder spec. The dense MTP
     # spec below is used for MTP layers (which have their own 1-indexed
-    # layer_number namespace and are NOT in layer_types) so it intentionally
-    # keeps the default TransformerLayer.
+    # layer_number namespace) so the routed-expert FFN stays disabled even
+    # when the last main decoder layer is MoE.
     for spec in block_submodules.layer_specs:
         spec.module = Step35DecoderLayer
     dense_mtp_spec = get_gpt_layer_with_transformer_engine_spec(
@@ -189,44 +188,42 @@ class Step35Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    @classmethod
-    def megatron_to_hf_config(cls, provider) -> dict:
-        """Convert Megatron provider config to HuggingFace Step35Config dict."""
-        hf_config = super().megatron_to_hf_config(provider)
-        return hf_config
+    CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
+        ("num_attention_groups", "num_query_groups"),
+        ("moe_num_experts", "num_moe_experts"),
+        ("moe_top_k", "moe_router_topk"),
+        ("share_expert_dim", "moe_shared_expert_intermediate_size"),
+        ("share_expert_dims", "moe_shared_expert_intermediate_size"),
+        ("use_head_wise_attn_gate", "head_wise_attn_gate"),
+        ("attention_other_setting", "attention_other_setting"),
+        ("layer_types", "layer_types"),
+    ]
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace Step3.5 config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
 
-        # Step35Config uses non-standard field names that don't match CONFIG_MAPPING.
-        # num_key_value_heads -> num_attention_groups, num_experts -> moe_num_experts, topk -> moe_top_k
         hf_config = hf_pretrained.config
 
-        provider.num_query_groups = hf_config.num_attention_groups
-        provider.num_moe_experts = hf_config.moe_num_experts
-        provider.moe_router_topk = hf_config.moe_top_k
-        # HF Step3.5 config.json carries the singular ``share_expert_dim`` field
-        # (per-shared-expert intermediate size, e.g. 1280). MCore's MoE block
-        # uses ``moe_shared_expert_intermediate_size`` to size the shared-expert
-        # FFN (mlp.shared_experts.linear_fc1 / linear_fc2). Forward it here so
-        # the shared-expert branch is built end-to-end.
-        provider.moe_shared_expert_intermediate_size = getattr(
-            hf_config, "share_expert_dim", getattr(hf_config, "share_expert_dims", None)
-        )
-        provider.head_wise_attn_gate = hf_config.use_head_wise_attn_gate
         if provider.head_wise_attn_gate:
-            assert provider.attention_output_gate is False, (
-                "attention_output_gate must be False when head_wise_attn_gate is True"
-            )
-        provider.layer_types = list(getattr(hf_config, "layer_types", []) or [])
+            provider.attention_output_gate = True
+
+        provider.layer_types = list(provider.layer_types or [])
         provider.rotary_percent = 0.5
-        provider.sliding_attention_setting = {
-            "rotary_percent": 1.0,
-            "num_attention_heads": 96,
-            "num_query_groups": 8,
-            "head_dim": 128,
-        }
+        provider.sliding_attention_setting = None
+        if provider.attention_other_setting:
+            attention_other_setting = provider.attention_other_setting
+            provider.sliding_attention_setting = {
+                "rotary_percent": 1.0,
+                "num_attention_heads": attention_other_setting["num_attention_heads"],
+                "num_query_groups": attention_other_setting.get(
+                    "num_query_groups", attention_other_setting.get("num_attention_groups", provider.num_query_groups)
+                ),
+                "head_dim": attention_other_setting.get(
+                    "head_dim", attention_other_setting.get("true_head_dim", provider.kv_channels)
+                ),
+            }
+
         rope_theta = hf_config.rope_theta
         if isinstance(rope_theta, list):
             provider.rotary_base = rope_theta[0]  # for main model
@@ -251,10 +248,14 @@ class Step35Bridge(MegatronModelBridge):
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_permute_fusion = True
 
-        if hf_config.moe_layers_enum is not None:
+        moe_layers_enum = getattr(hf_config, "moe_layers_enum", None)
+        if moe_layers_enum is not None:
             moe_layer_freq = [0] * provider.num_layers
-            for layer in hf_config.moe_layers_enum.split(","):
-                idx = int(layer)
+            if isinstance(moe_layers_enum, str):
+                moe_layers = [int(layer) for layer in moe_layers_enum.split(",") if layer]
+            else:
+                moe_layers = [int(layer) for layer in moe_layers_enum]
+            for idx in moe_layers:
                 if idx < provider.num_layers:
                     moe_layer_freq[idx] = 1
             provider.moe_layer_freq = moe_layer_freq
@@ -302,8 +303,8 @@ class Step35Bridge(MegatronModelBridge):
 
         mapping_list.extend(
             [
-                # QKV + per-head gate: merge Q, K, V (GQA-interleaved) and append
-                # the per-head scalar gate weights at the tail of linear_qkv.weight.
+                # QKV + per-head gate: merge Q, K, V (GQA-interleaved) and expand
+                # the scalar g_proj rows into MCore's attention_output_gate layout.
                 QKVGMapping(
                     megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                     q="model.layers.*.self_attn.q_proj.weight",

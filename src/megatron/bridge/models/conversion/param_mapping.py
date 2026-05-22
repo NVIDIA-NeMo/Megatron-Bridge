@@ -1528,9 +1528,11 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 class QKVGMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """QKV mapping that also fuses a per-head scalar gate (``g_proj``).
 
-    Megatron format: ``[interleaved QKV block, gate rows]`` — gate rows are
-    appended after the standard GQA-interleaved QKV block produced by
-    :class:`QKVMapping`. See :func:`merge_qkvg_weights` for the layout.
+    Megatron format follows the attention module selected by the provider. For
+    regular QKV modules, gate rows are appended after the standard
+    GQA-interleaved QKV block. For Megatron-Core ``attention_output_gate``
+    modules, the scalar gate is expanded across each head dimension and
+    interleaved as the module's output-gate block.
 
     External (HF) format: four separate tensors ``q_proj``, ``k_proj``,
     ``v_proj``, ``g_proj``.
@@ -2766,9 +2768,13 @@ def merge_qkvg_weights(
 ) -> torch.Tensor:
     """Merge Q, K, V, and per-head scalar gate into Megatron's fused linear_qkv format.
 
-    Layout: the standard GQA-interleaved QKV block (see :func:`merge_qkv_weights`)
-    followed by the gate rows appended at the end. For Step-3.5-Flash this
-    yields ``out_dim = num_heads*head_dim + 2*num_query_groups*head_dim + num_heads``.
+    Layout is selected by ``provider.attention_output_gate``:
+
+    * ``False``: standard GQA-interleaved QKV block followed by ``num_heads``
+      scalar gate rows.
+    * ``True``: Megatron-Core gated-attention layout ``[Q, gate, K, V]`` per
+      query group. The HF scalar gate row for each head is expanded across the
+      head dimension so MCore can apply it elementwise after attention.
 
     Args:
         provider: Model configuration provider.
@@ -2776,6 +2782,32 @@ def merge_qkvg_weights(
         g: Per-head gate projection weights ``[num_heads, hidden_size]`` (bias
             shape ``[num_heads]``).
     """
+    if getattr(provider, "attention_output_gate", False):
+        head_num = provider.num_attention_heads
+        num_query_groups = provider.num_query_groups
+        heads_per_group = head_num // num_query_groups
+        head_size = provider.kv_channels or (provider.hidden_size // head_num)
+        hidden_size = provider.hidden_size
+
+        if g.ndim != q.ndim:
+            raise ValueError(f"QKV/gate tensor rank mismatch: q.ndim={q.ndim}, g.ndim={g.ndim}")
+        if g.shape[0] != head_num:
+            raise ValueError(f"Expected scalar gate rows for {head_num} heads, got shape={tuple(g.shape)}")
+
+        q_reshaped = q.view(head_num, head_size, hidden_size)
+        k_reshaped = k.view(num_query_groups, head_size, hidden_size)
+        v_reshaped = v.view(num_query_groups, head_size, hidden_size)
+        g_reshaped = g.view(head_num, 1, hidden_size).expand(-1, head_size, -1)
+
+        qkvg_weights = []
+        for i in range(num_query_groups):
+            q_group = q_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
+            g_group = g_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
+            k_group = k_reshaped[i : i + 1]
+            v_group = v_reshaped[i : i + 1]
+            qkvg_weights.extend([q_group, g_group, k_group, v_group])
+        return torch.cat(qkvg_weights, dim=0).reshape(-1, hidden_size)
+
     qkv = merge_qkv_weights(provider, q, k, v)
     if g.ndim != qkv.ndim:
         raise ValueError(f"QKV/gate tensor rank mismatch: qkv.ndim={qkv.ndim}, g.ndim={g.ndim}")
@@ -2903,10 +2935,42 @@ def split_qkvg_weights(
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Split Megatron's fused linear_qkv tensor into (Q, K, V, gate).
 
-    Inverse of :func:`merge_qkvg_weights`: peels the trailing ``num_heads`` rows
-    off as the per-head gate, then delegates the rest to :func:`split_qkv_weights`.
+    Inverse of :func:`merge_qkvg_weights`.
     """
     head_num = provider.num_attention_heads
+    if getattr(provider, "attention_output_gate", False):
+        num_query_groups = provider.num_query_groups
+        heads_per_group = head_num // num_query_groups
+        head_size = provider.kv_channels or (provider.hidden_size // head_num)
+        hidden_size = feature_dim or qkvg.shape[-1]
+        total_heads_per_group = 2 * heads_per_group + 2
+        qkvg_total_dim = 2 * head_num + 2 * num_query_groups
+        qkvg_reshaped = qkvg.view(qkvg_total_dim, head_size, hidden_size)
+
+        q_slice = torch.cat(
+            [
+                torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+                for i in range(num_query_groups)
+            ]
+        )
+        g_slice = torch.cat(
+            [
+                torch.arange(
+                    total_heads_per_group * i + heads_per_group,
+                    total_heads_per_group * i + heads_per_group * 2,
+                )
+                for i in range(num_query_groups)
+            ]
+        )
+        k_slice = torch.arange(total_heads_per_group - 2, qkvg_total_dim, total_heads_per_group)
+        v_slice = torch.arange(total_heads_per_group - 1, qkvg_total_dim, total_heads_per_group)
+
+        q = qkvg_reshaped[q_slice].reshape(-1, hidden_size)
+        k = qkvg_reshaped[k_slice].reshape(-1, hidden_size)
+        v = qkvg_reshaped[v_slice].reshape(-1, hidden_size)
+        g = qkvg_reshaped[g_slice].reshape(head_num, head_size, hidden_size)[:, 0, :]
+        return q, k, v, g
+
     gate_rows = head_num
     if qkvg.shape[0] <= gate_rows:
         raise ValueError(
