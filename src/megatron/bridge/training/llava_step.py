@@ -19,7 +19,7 @@ from typing import Iterable
 import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_model_config
+from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import (
@@ -28,7 +28,6 @@ from megatron.bridge.training.gpt_step import (
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
-from megatron.bridge.utils.common_utils import get_batch_on_this_cp_rank_compat
 
 
 logger = logging.getLogger(__name__)
@@ -127,7 +126,7 @@ def get_batch(
     images = batch.get("pixel_values")
 
     # slice batch along sequence dimension for context parallelism
-    batch = get_batch_on_this_cp_rank_compat(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
+    batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
     if images is not None:
         batch["images"] = images
 

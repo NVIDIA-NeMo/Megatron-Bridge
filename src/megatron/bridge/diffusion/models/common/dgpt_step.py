@@ -24,14 +24,13 @@ from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.rerun_state_machine import get_rerun_state_machine
-from megatron.core.utils import get_model_config, unwrap_model
+from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
 
 from megatron.bridge.diffusion.common.dllm import forward_process_simple_masking
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import _DEFAULT_SPIKY_LOSS_FACTOR as SPIKY_LOSS_FACTOR
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.utils.common_utils import get_batch_on_this_cp_rank_compat as get_batch_on_this_cp_rank
 
 
 logger = logging.getLogger(__name__)
@@ -99,7 +98,7 @@ def get_batch(
         use_mtp,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
     )
-    batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False)
+    batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=parallel_state.get_context_parallel_group())
 
     return (
         batch["tokens"],
