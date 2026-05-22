@@ -93,6 +93,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+    # Uninstall nvidia-cutlass-dsl from system packages to ensure correct venv install
+    pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: skipping --locked flag"; \
         uv sync --only-group build && \
