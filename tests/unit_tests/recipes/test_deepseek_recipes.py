@@ -32,10 +32,14 @@ from megatron.bridge.recipes.deepseek import set_deepseek_v3_pipeline_model_para
 
 
 _deepseek_module = importlib.import_module("megatron.bridge.recipes.deepseek")
+_DEEPSEEK_RECIPE_NAMES = (
+    "deepseek_v2_pretrain_config",
+    "deepseek_v2_lite_pretrain_config",
+    "deepseek_v3_pretrain_config",
+    "deepseek_v3_pretrain_config_32nodes",
+)
 _DEEPSEEK_RECIPE_FUNCS = [
-    getattr(_deepseek_module, name)
-    for name in getattr(_deepseek_module, "__all__", [])
-    if "_config" in name and callable(getattr(_deepseek_module, name, None))
+    getattr(_deepseek_module, name) for name in _DEEPSEEK_RECIPE_NAMES if callable(getattr(_deepseek_module, name))
 ]
 
 

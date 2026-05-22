@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,8 @@ import pytest
 
 from megatron.bridge.training.utils.mlflow_utils import (
     _sanitize_mlflow_metrics,
+    end_active_mlflow_run,
+    install_mlflow_failure_hook,
     on_load_checkpoint_success,
     on_save_checkpoint_success,
 )
@@ -283,3 +286,117 @@ class TestSanitizeMlflowMetrics:
             "eval/accuracy": 0.9,
             "learning_rate": 0.001,
         }
+
+
+@pytest.mark.unit
+class TestEndActiveMlflowRun:
+    """Test cases for end_active_mlflow_run function."""
+
+    def test_noop_when_mlflow_not_installed(self):
+        """Test that the function does nothing when mlflow cannot be imported."""
+        # Setting sys.modules['mlflow'] = None causes `import mlflow` to raise ImportError
+        with patch.dict("sys.modules", {"mlflow": None}):
+            # Should not raise any exception
+            end_active_mlflow_run("FAILED")
+
+    def test_noop_when_no_active_run(self):
+        """Test that end_run is not called when no MLFlow run is active."""
+        mock_mlflow = MagicMock()
+        mock_mlflow.active_run.return_value = None
+
+        with patch.dict("sys.modules", {"mlflow": mock_mlflow}):
+            end_active_mlflow_run("KILLED")
+
+        mock_mlflow.end_run.assert_not_called()
+
+    def test_calls_end_run_with_status(self):
+        """Test that end_run is called with the provided status."""
+        mock_mlflow = MagicMock()
+        mock_mlflow.active_run.return_value = MagicMock()
+
+        with patch.dict("sys.modules", {"mlflow": mock_mlflow}):
+            end_active_mlflow_run("KILLED")
+
+        mock_mlflow.end_run.assert_called_once_with(status="KILLED")
+
+    def test_suppresses_end_run_exception(self):
+        """Test that exceptions inside end_run are caught and logged."""
+        mock_mlflow = MagicMock()
+        mock_mlflow.active_run.return_value = MagicMock()
+        mock_mlflow.end_run.side_effect = Exception("MLFlow API error")
+
+        with (
+            patch.dict("sys.modules", {"mlflow": mock_mlflow}),
+            patch("megatron.bridge.training.utils.mlflow_utils.print_rank_last") as mock_print,
+        ):
+            # Should not raise exception
+            end_active_mlflow_run("FAILED")
+
+        # Should print error message
+        mock_print.assert_called_once()
+        error_msg = mock_print.call_args[0][0]
+        assert "Failed to end MLFlow run with status=FAILED" in error_msg
+        assert "MLFlow API error" in error_msg
+
+
+@pytest.mark.unit
+class TestInstallMlflowFailureHook:
+    """Test cases for install_mlflow_failure_hook function."""
+
+    @pytest.fixture(autouse=True)
+    def restore_excepthook(self):
+        """Snapshot and restore sys.excepthook so tests don't leak global state.
+
+        Resets to ``sys.__excepthook__`` before each test so an earlier test
+        in the suite that installed our hook (e.g. via ``state.mlflow_logger``)
+        does not pollute the starting state here.
+        """
+        original = sys.excepthook
+        sys.excepthook = sys.__excepthook__
+        yield
+        sys.excepthook = original
+
+    def test_replaces_sys_excepthook_with_marked_wrapper(self):
+        """Test that install replaces sys.excepthook with a marked wrapper."""
+        original = sys.excepthook
+        install_mlflow_failure_hook()
+
+        assert sys.excepthook is not original
+        assert getattr(sys.excepthook, "_mlflow_failure_hook", False) is True
+
+    def test_idempotent_second_call_is_noop(self):
+        """Test that a second install does not re-wrap the hook."""
+        install_mlflow_failure_hook()
+        first_hook = sys.excepthook
+
+        install_mlflow_failure_hook()
+
+        assert sys.excepthook is first_hook
+
+    def test_hook_calls_end_active_mlflow_run_with_failed(self):
+        """Test that invoking the installed hook ends the active run as FAILED."""
+        install_mlflow_failure_hook()
+
+        with patch("megatron.bridge.training.utils.mlflow_utils.end_active_mlflow_run") as mock_end:
+            try:
+                raise RuntimeError("simulated crash")
+            except RuntimeError:
+                sys.excepthook(*sys.exc_info())
+
+        mock_end.assert_called_once_with("FAILED")
+
+    def test_hook_chains_to_previous_excepthook(self):
+        """Test that the installed hook delegates to the previous excepthook."""
+        previous = MagicMock()
+        sys.excepthook = previous
+
+        install_mlflow_failure_hook()
+
+        with patch("megatron.bridge.training.utils.mlflow_utils.end_active_mlflow_run"):
+            try:
+                raise RuntimeError("simulated crash")
+            except RuntimeError:
+                sys.excepthook(*sys.exc_info())
+
+        # Previous excepthook ran (default traceback printing still happens)
+        previous.assert_called_once()

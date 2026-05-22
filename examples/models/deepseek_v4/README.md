@@ -2,7 +2,7 @@
 
 End-to-end conversion and inference scripts for the DeepSeek V4 family on Megatron Bridge.
 
-The bridge supports four published variants out of the same code path. The on-disk quantisation differs between post-trained (Flash, Pro) and pretrained-only (Flash-Base, Pro-Base) models — see [`docs/models/llm/deepseek-v4.md`](../../../docs/models/llm/deepseek-v4.md) for the per-variant scheme.
+The bridge supports four published variants out of the same code path. The on-disk quantisation differs between post-trained (Flash, Pro) and pretrained-only (Flash-Base, Pro-Base) models — see [`docs/models/deepseek/deepseek-v4.md`](../../../docs/models/deepseek/deepseek-v4.md) for the per-variant scheme.
 
 ## MCore Dev Branch Requirement
 
