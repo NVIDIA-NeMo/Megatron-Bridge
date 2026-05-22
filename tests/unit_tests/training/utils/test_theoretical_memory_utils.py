@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from megatron.bridge.training.utils.theoretical_memory_utils import (
     estimate_training_memory,
     format_training_memory_estimate,
+    report_theoretical_memory,
 )
 
 
@@ -63,6 +65,13 @@ def _make_config(**model_overrides):
         optimizer=SimpleNamespace(use_distributed_optimizer=True),
         data_parallel_size=4,
     )
+
+
+def _mock_megatron_mimo_provider(monkeypatch):
+    module_name = "megatron.bridge.models.megatron_mimo.megatron_mimo_provider"
+    module = ModuleType(module_name)
+    module.MegatronMIMOProvider = type("MegatronMIMOProvider", (), {})
+    monkeypatch.setitem(sys.modules, module_name, module)
 
 
 @pytest.mark.unit
@@ -167,3 +176,16 @@ def test_format_training_memory_estimate_rejects_unknown_unit():
 
     with pytest.raises(ValueError, match="Unsupported memory unit"):
         format_training_memory_estimate(estimate, unit="bytes")
+
+
+@pytest.mark.unit
+def test_report_theoretical_memory_uses_structured_estimate(monkeypatch, capsys):
+    _mock_megatron_mimo_provider(monkeypatch)
+    config = _make_config()
+
+    report_theoretical_memory(config, num_microbatches=4)
+
+    captured = capsys.readouterr()
+    assert "Theoretical memory footprints: weight and optimizer=0.03 MB" in captured.out
+    assert "activation=0.02 MB" in captured.out
+    assert "total=0.05 MB" in captured.out
