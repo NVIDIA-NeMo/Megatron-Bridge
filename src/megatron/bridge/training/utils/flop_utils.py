@@ -15,8 +15,6 @@
 import importlib
 from pathlib import Path
 
-import torch.nn.functional as F
-
 from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
@@ -442,9 +440,7 @@ def num_floating_point_operations(
             else cfg.model.moe_shared_expert_intermediate_size
         )
         # GLU: h->2*ffn_h and ffn_h->h = 3 projections; non-GLU: h->ffn_h and ffn_h->h = 2 projections.
-        ffn_expansion_factor = (
-            3 if cfg.model.gated_linear_unit is True else 2
-        )
+        ffn_expansion_factor = 3 if cfg.model.gated_linear_unit is True else 2
 
         if cfg.model.multi_latent_attention:
             """

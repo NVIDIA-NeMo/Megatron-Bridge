@@ -972,9 +972,7 @@ class TestGluFfnExpansion:
         assert flops_glu_gelu == flops_glu_silu, "GLU FLOPs must not depend on activation_func"
 
         # Only the dense MLP term changes: expansion 3 vs 2 (attn + logit are identical).
-        expected_mlp_delta = (
-            batch_size * seq_length * 3 * 2 * hidden_size * ffn_hidden_size * num_layers
-        )
+        expected_mlp_delta = batch_size * seq_length * 3 * 2 * hidden_size * ffn_hidden_size * num_layers
         assert flops_glu_gelu - flops_no_glu == expected_mlp_delta
         assert flops_glu_silu - flops_no_glu == expected_mlp_delta
 
@@ -1069,8 +1067,7 @@ class TestSlidingWindowAttentionFlops:
         # Causal SWA: query at position t attends to min(t, W) keys.
         # Sum over t=1..T, then average (flop_utils divides by T; *T happens in seq_length).
         total_swa_keys = (
-            effective_window * (effective_window + 1) / 2
-            + (seq_length - effective_window) * effective_window
+            effective_window * (effective_window + 1) / 2 + (seq_length - effective_window) * effective_window
         )
         avg_swa_keys = total_swa_keys / seq_length
         core_diff_per_layer = query_projection_size * (seq_length - 2 * avg_swa_keys)
