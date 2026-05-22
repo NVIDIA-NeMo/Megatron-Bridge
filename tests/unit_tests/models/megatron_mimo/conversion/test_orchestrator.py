@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
 
+import megatron.bridge.models.megatron_mimo as megatron_mimo_module
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.megatron_mimo.conversion import (
@@ -37,6 +38,12 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
 
 
 HFWeightTuple = namedtuple("HFWeightTuple", ["param_name", "weight"])
+
+
+def test_root_package_lazy_exports_megatron_mimo_bridge():
+    assert megatron_mimo_module.__getattr__("MegatronMIMOBridge") is MegatronMIMOBridge
+    with pytest.raises(AttributeError, match="does_not_exist"):
+        megatron_mimo_module.__getattr__("does_not_exist")
 
 
 class _FakeMimoModel(nn.Module):
