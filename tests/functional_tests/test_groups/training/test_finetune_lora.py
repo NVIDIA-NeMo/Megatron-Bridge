@@ -51,7 +51,7 @@ from tests.functional_tests.utils import (
 
 
 @dataclass
-class Llama3ModelProvider145M(GPTModelProvider):
+class Llama3TinyModelProvider(GPTModelProvider):
     """Smaller Llama3 config used previously for functional tests."""
 
     normalization: str = "RMSNorm"
@@ -276,7 +276,7 @@ class TestLoRAFinetune:
 
     def _create_model_provider(self, seq_length=512, tensor_parallel_size=1, pipeline_parallel_size=1):
         """Create a model provider with specified configuration."""
-        return Llama3ModelProvider145M(
+        return Llama3TinyModelProvider(
             seq_length=seq_length,
             tensor_model_parallel_size=tensor_parallel_size,
             pipeline_model_parallel_size=pipeline_parallel_size,

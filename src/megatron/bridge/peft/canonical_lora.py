@@ -33,6 +33,7 @@ from megatron.bridge.peft.utils import (
     get_effective_lora_dim,
     is_expert_linear,
     is_grouped_expert_linear,
+    is_modelopt_linear,
 )
 
 
@@ -323,7 +324,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
 
         if (ans := self.match(m, name, prefix)) is not None:
             (match, full_name) = ans
-            if isinstance(m, nn.Linear):
+            if isinstance(m, nn.Linear) and not is_modelopt_linear(m):
                 return LinearAdapter(
                     m, dim=self.dim, alpha=self.alpha, dropout=self.dropout, lora_A_init_method=self.lora_A_init_method
                 )

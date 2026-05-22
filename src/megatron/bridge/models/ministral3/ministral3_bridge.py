@@ -44,6 +44,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.quantization_utils import maybe_dequantize_fp8
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 
@@ -211,13 +212,8 @@ class Ministral3Bridge(MegatronModelBridge):
 
             w_bf16 = weight.to(bfloat16) * scale_inv
         """
-        if weight.dtype != torch.float8_e4m3fn:
-            return weight
         scale_key = param_name + "_scale_inv"
-        if scale_key not in hf_state_dict:
-            return weight.to(torch.bfloat16)
-        scale_inv = hf_state_dict[scale_key].to(torch.bfloat16)
-        return weight.to(torch.bfloat16) * scale_inv
+        return maybe_dequantize_fp8(weight, hf_state_dict.get(scale_key))
 
 
 # Register the bridge if Mistral3ForConditionalGeneration is available

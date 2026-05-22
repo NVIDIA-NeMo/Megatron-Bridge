@@ -18,8 +18,7 @@ Config naming convention:
     {MODEL}_{SIZE}_{TASK}_CONFIG_{GPU}_{PRECISION}_{VERSION}
 
 All configs use bf16 precision (diffusion training does not use fp8).
-Parallelism settings are sourced from the per-GPU YAML perf configs in
-examples/diffusion/models/wan/conf/.
+Parallelism settings mirror the WAN recipe and performance presets.
 """
 
 from dataclasses import replace

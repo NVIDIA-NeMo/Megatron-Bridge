@@ -1,6 +1,6 @@
 # Megatron Bridge Documentation
 
-Welcome to the Megatron Bridge documentation! This guide helps you navigate our comprehensive documentation to find exactly what you need for training, converting, and working with large language models and vision language models.
+Welcome to the Megatron Bridge documentation! This guide helps you navigate our comprehensive documentation to find exactly what you need for training, converting, and working with language, vision-language, audio, and multimodal models.
 
 ## 🚀 Quick Start Paths
 
@@ -16,7 +16,7 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 → See [Training Documentation](training/README.md) for comprehensive training guides
 
 **📚 Find model documentation**
-→ Browse [Supported Models](models/llm/index.md) for LLMs or [Vision Language Models](models/vlm/index.md) for VLMs
+→ Browse [Supported Models](models/README.md), organized by family and model variant
 
 **🔧 Migrate from NeMo 2 or Megatron-LM**
 → Check [NeMo 2 Migration Guide](nemo2-migration-guide.md) or [Megatron-LM Migration Guide](megatron-lm-to-megatron-bridge.md)
@@ -38,7 +38,7 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 
 - **Start here:** [Bridge Guide](bridge-guide.md) → [Training Documentation](training/README.md)
 - **Deep dive:** [Performance Guide](performance-guide.md) → [Training Optimization Guides](training/README.md#optimization-and-performance)
-- **Model support:** [Supported Models](models/llm/index.md) → [Adding New Models](adding-new-models.md)
+- **Model support:** [Supported Models](models/README.md) → [Adding New Models](adding-new-models.md)
 
 ### For Training Engineers
 
@@ -49,7 +49,7 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 ### For Model Developers
 
 - **Start here:** [Bridge Guide](bridge-guide.md) → [Bridge Tech Details](bridge-tech-details.md)
-- **Model support:** [Adding New Models](adding-new-models.md) → [Model Documentation](models/llm/index.md)
+- **Model support:** [Adding New Models](adding-new-models.md) → [Model Documentation](models/README.md)
 - **Integration:** [Bridge RL Integration](bridge-rl-integration.md)
 
 ### For DevOps & Platform Teams
@@ -76,8 +76,7 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 
 | Document | Purpose | When to Read |
 |----------|---------|--------------|
-| **[Large Language Models](models/llm/index.md)** | LLM model documentation | Working with LLM models |
-| **[Vision Language Models](models/vlm/index.md)** | VLM model documentation | Working with VLM models |
+| **[Supported Models](models/README.md)** | Family-organized model documentation | Working with supported model variants |
 | **[Adding New Models](adding-new-models.md)** | Guide for adding model support | Extending model support |
 
 ### Training and Customization
@@ -149,16 +148,22 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 
 1. [Bridge Guide](bridge-guide.md) *(conversion basics)*
 2. [Bridge Tech Details](bridge-tech-details.md) *(technical details)*
-3. [Supported Models](models/llm/index.md) or [Vision Language Models](models/vlm/index.md) *(model-specific guides)*
+3. [Supported Models](models/README.md) *(model-specific guides)*
 4. [Adding New Models](adding-new-models.md) *(extend support)*
 
 ### 🔧 Customization and Extension
 
 1. [Training Documentation](training/README.md) *(training customization)*
 2. [PEFT](training/peft.md) *(parameter-efficient fine-tuning)*
-3. [Distillation](training/distillation.md) *(knowledge distillation)*
-4. [Adding New Models](adding-new-models.md) *(add model support)*
-5. [Bridge RL Integration](bridge-rl-integration.md) *(RL workflows)*
+3. [Adding New Models](adding-new-models.md) *(add model support)*
+4. [Bridge RL Integration](bridge-rl-integration.md) *(RL workflows)*
+
+### 🪄 Model Optimization (ModelOpt)
+
+1. [Model Optimization Overview](modelopt/README.md) *(quantization, distillation, pruning)*
+2. [Quantization](modelopt/quantization.md) *(PTQ and QAT)*
+3. [Distillation](modelopt/distillation.md) *(knowledge distillation)*
+4. [Pruning](modelopt/pruning.md) *(Minitron-based pruning)*
 
 ### 📦 Migration Paths
 
@@ -180,12 +185,9 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 
 #### [models/](models/README.md)
 
-- **[llm/](models/llm/README.md)** - Large Language Model documentation
-  - Individual model guides (Qwen, LLaMA, Mistral, etc.)
-  - Conversion examples and training recipes
-- **[vlm/](models/vlm/README.md)** - Vision Language Model documentation
-  - VLM model guides (Qwen VL, Gemma VL, etc.)
-  - Multimodal model support
+- Family folders such as **[qwen/](models/qwen/index.md)**, **[gemma/](models/gemma/index.md)**, and **[nemotron/](models/nemotron/index.md)**
+  - Model-variant guides for conversion, training recipes, and architecture notes
+  - Multimodal variants live with their model families
 
 #### [training/](training/README.md)
 
@@ -193,7 +195,13 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 - **Optimization** - Optimizer, scheduler, mixed precision, communication overlap
 - **Performance** - Attention optimizations, activation recomputation, CPU offloading
 - **Monitoring** - Logging, profiling, checkpointing, resiliency
-- **Advanced** - PEFT, packed sequences, distillation
+- **Advanced** - PEFT, packed sequences
+
+#### [modelopt/](modelopt/README.md)
+
+- **Quantization** - PTQ and QAT workflows (FP8, INT8, INT4)
+- **Distillation** - Knowledge distillation from teacher to student
+- **Pruning** - Minitron-based depth and width pruning
 
 #### [releases/](releases/README.md)
 
@@ -227,8 +235,8 @@ graph TD
     I --> N[Data Parallelism<br/>DDP]
     I --> O[Model Parallelism<br/>TP/PP/VPP]
     
-    D --> P[LLM Models<br/>Language Models]
-    D --> Q[VLM Models<br/>Vision Language Models]
+    D --> P[Family Index<br/>Model Variants]
+    D --> Q[Model Pages<br/>Recipes and Conversion]
     
     style A fill:#e1f5fe
     style B fill:#f3e5f5

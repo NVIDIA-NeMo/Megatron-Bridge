@@ -18,12 +18,14 @@ import math
 import os
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
 import torch.nn as nn
+from megatron.core import tensor_parallel
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
@@ -46,6 +48,148 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+ModelList = list[MegatronModule]
+ModelHook = Callable[[ModelList], ModelList | None]
+
+
+class LinearForLastLayer(nn.Linear):
+    """Final replicated projection head compatible with Megatron output-layer calls.
+
+    Megatron-Core output layers receive a few runtime-only arguments. This head
+    accepts those arguments for call-site compatibility while using a standard
+    replicated linear projection.
+    """
+
+    def __init__(self, input_size: int, output_size: int, sequence_parallel: bool) -> None:
+        """Initialize a replicated final projection.
+
+        Args:
+            input_size: Hidden dimension of the transformer output.
+            output_size: Output dimension of the value/reward head.
+            sequence_parallel: Whether to gather sequence-parallel activations.
+        """
+        super().__init__(in_features=input_size, out_features=output_size, bias=False)
+        self.sequence_parallel = sequence_parallel
+        if sequence_parallel:
+            setattr(self.weight, "sequence_parallel", True)
+
+    def forward(
+        self,
+        input_: torch.Tensor,
+        weight: torch.Tensor | None = None,
+        runtime_gather_output: bool | None = None,
+    ) -> tuple[torch.Tensor, None]:
+        """Run the final projection and return Megatron-style ``(output, bias)``."""
+        del weight, runtime_gather_output
+        logits = super().forward(input_).float()
+        if self.sequence_parallel:
+            logits = tensor_parallel.gather_from_sequence_parallel_region(
+                logits,
+                tensor_parallel_output_grad=False,
+            )
+        return logits, None
+
+
+def create_value_head_hook(hidden_size: int, sequence_parallel: bool, output_size: int = 1) -> ModelHook:
+    """Create a pre-wrap hook that replaces the final pipeline stage output head.
+
+    Args:
+        hidden_size: Hidden dimension of the transformer output.
+        sequence_parallel: Whether the model uses sequence parallelism.
+        output_size: Number of outputs produced by the final head.
+
+    Returns:
+        A model hook suitable for external trainer provider construction.
+    """
+    from megatron.core import parallel_state
+
+    _register_linear_for_last_layer_mapping()
+
+    def hook(model: ModelList | MegatronModule) -> ModelList:
+        model_chunks = _ensure_model_list(model)
+        model_post_process: list[bool] = []
+        if (
+            parallel_state.get_pipeline_model_parallel_world_size() > 1
+            and parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None
+        ):
+            for vp_stage in range(parallel_state.get_virtual_pipeline_model_parallel_world_size()):
+                model_post_process.append(
+                    parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage)
+                )
+        else:
+            model_post_process.append(parallel_state.is_pipeline_last_stage())
+
+        if len(model_post_process) != len(model_chunks):
+            raise ValueError(
+                "Model list length and pipeline post-process list length must match. "
+                f"Got {len(model_chunks)} model chunks and {len(model_post_process)} post-process flags."
+            )
+
+        for index, model_chunk in enumerate(model_chunks):
+            if model_post_process[index]:
+                model_chunk.output_layer = LinearForLastLayer(
+                    input_size=hidden_size,
+                    output_size=output_size,
+                    sequence_parallel=sequence_parallel,
+                )
+
+        return model_chunks
+
+    return hook
+
+
+def make_value_model(hidden_size: int, sequence_parallel: bool) -> ModelHook:
+    """Create a value-head hook compatible with existing external trainer code."""
+    return create_value_head_hook(hidden_size=hidden_size, sequence_parallel=sequence_parallel)
+
+
+def freeze_moe_router(model: ModelList | MegatronModule) -> ModelList:
+    """Freeze MoE router and shared-expert gate parameters in model chunks.
+
+    Args:
+        model: Single Megatron module or list of virtual-pipeline model chunks.
+
+    Returns:
+        The normalized model chunk list with router parameters frozen in place.
+    """
+    model_chunks = _ensure_model_list(model)
+    for model_chunk in model_chunks:
+        decoder = getattr(model_chunk, "decoder", None)
+        layers = getattr(decoder, "layers", None)
+        if layers is None:
+            continue
+        for layer in layers:
+            mlp = getattr(layer, "mlp", None)
+            if mlp is None:
+                continue
+            router = getattr(mlp, "router", None)
+            if router is not None:
+                _freeze_parameter_if_present(router, "weight")
+                _freeze_parameter_if_present(router, "bias")
+
+            shared_experts = getattr(mlp, "shared_experts", None)
+            if shared_experts is not None:
+                _freeze_parameter_if_present(shared_experts, "gate_weight")
+                _freeze_parameter_if_present(shared_experts, "gate_bias")
+
+    return model_chunks
+
+
+def _ensure_model_list(model: ModelList | MegatronModule) -> ModelList:
+    return model if isinstance(model, list) else [model]
+
+
+def _freeze_parameter_if_present(module: object, name: str) -> None:
+    parameter = getattr(module, name, None)
+    if parameter is not None:
+        parameter.requires_grad = False
+
+
+def _register_linear_for_last_layer_mapping() -> None:
+    from megatron.bridge.models.conversion.param_mapping import AutoMapping
+
+    AutoMapping.register_module_type("LinearForLastLayer", "replicated")
 
 
 def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
@@ -382,6 +526,139 @@ def logical_and_across_model_parallel_group(input: bool, mp_group: "TorchProcess
     return bool(input.item())
 
 
+def reduce_max_memory_across_pp_group(
+    memory_report: dict[str, Union[int, float]],
+    pp_group: "TorchProcessGroup",
+) -> dict[str, Union[int, float]]:
+    """Reduce per-rank memory metrics across the PP group with MAX.
+
+    With pipeline parallelism, peak GPU memory is typically dominated by the
+    first PP stage (activation buildup). The TensorBoard / W&B / MLFlow / Comet
+    writers, however, only initialize on the last rank (``world_size - 1``), so
+    without aggregation the logged values reflect only the last PP stage and
+    under-report true peak headroom.
+
+    This helper performs a single bulk all-reduce with MAX over the PP group
+    so that the writer rank emits the per-metric peak across the pipeline.
+    Counter-style integer keys (e.g. ``alloc_retries``) are preserved as
+    ``int`` so dashboards continue to render them correctly.
+
+    No-op when distributed is uninitialized, the PP group has a single rank,
+    or the report is empty.
+
+    Args:
+        memory_report: Mapping of metric name to per-rank value.
+        pp_group: The pipeline-parallel process group to reduce across.
+
+    Returns:
+        A new dict with values replaced by the per-metric MAX across the PP
+        group, or the input report unchanged when no reduction is needed.
+    """
+    if not memory_report:
+        return memory_report
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return memory_report
+    pp_size_attr = getattr(pp_group, "size", None)
+    if not callable(pp_size_attr) or pp_size_attr() <= 1:
+        return memory_report
+
+    keys = list(memory_report.keys())
+    values = torch.tensor(
+        [memory_report[k] for k in keys],
+        dtype=torch.float64,
+        device=torch.cuda.current_device(),
+    )
+    torch.distributed.all_reduce(values, op=torch.distributed.ReduceOp.MAX, group=pp_group)
+
+    reduced: dict[str, Union[int, float]] = {}
+    for key, max_val in zip(keys, values.tolist()):
+        original = memory_report[key]
+        # Preserve int type for counter-style metrics; floats stay as floats.
+        if not isinstance(original, bool) and isinstance(original, int):
+            reduced[key] = int(max_val)
+        else:
+            reduced[key] = max_val
+    return reduced
+
+
+class _MoeMetricFanoutWriter:
+    """SummaryWriter-shaped adapter that fans add_scalar to MLFlow / Comet.
+
+    MCore's `track_moe_metrics` and `track_mtp_metrics` emit metrics through a
+    TensorBoard `writer.add_scalar(name, value, iteration)` call (and a separate
+    `wandb_writer.log(...)` call). They do not know about MLFlow or Comet, so
+    those backends never see MoE / MTP metrics — see issue #2989.
+
+    Rather than fork MCore, this adapter wraps the real TB writer (or stands in
+    for a missing one) and forwards every `add_scalar` to MLFlow and Comet
+    using the same per-step value. W&B is unaffected — the underlying functions
+    still receive `wandb_writer` directly so their dict-based per-layer logging
+    stays untouched.
+
+    Tensors are sanitized with `.item()` before being handed to MLFlow / Comet,
+    matching the float/int conversion the existing MoE TensorBoard path
+    implicitly relies on (TB tolerates 0-d tensors; MLFlow / Comet do not).
+    """
+
+    def __init__(
+        self,
+        tb_writer: Optional[Any],
+        comet_logger: Optional[Any],
+        mlflow_logger: Optional[Any],
+    ) -> None:
+        self._tb_writer = tb_writer
+        self._comet_logger = comet_logger
+        self._mlflow_logger = mlflow_logger
+
+    @staticmethod
+    def _sanitize(value: Any) -> Any:
+        """Convert 0-d torch tensors to Python scalars; pass other values through.
+
+        MLFlow / Comet client APIs reject torch tensors silently or raise; the
+        existing TB call accepts them. Force a scalar so all sinks behave.
+        """
+        if isinstance(value, torch.Tensor):
+            try:
+                return value.item()
+            except (RuntimeError, ValueError):
+                return value
+        return value
+
+    def add_scalar(self, name: str, value: Any, iteration: int) -> None:
+        """Forward an add_scalar call to TB (if any), MLFlow, and Comet."""
+        if self._tb_writer is not None:
+            self._tb_writer.add_scalar(name, value, iteration)
+        # Only sanitize for the MLFlow / Comet sinks — the TB writer tolerates
+        # tensors and we do not want to perturb its behavior.
+        if self._mlflow_logger is not None or self._comet_logger is not None:
+            scalar = self._sanitize(value)
+            metrics = {name: scalar}
+            if self._mlflow_logger is not None:
+                self._mlflow_logger.log_metrics(_sanitize_mlflow_metrics(metrics), step=iteration)
+            if self._comet_logger is not None:
+                self._comet_logger.log_metrics(metrics, step=iteration)
+
+
+def _build_moe_metric_writer(
+    tb_writer: Optional[Any],
+    comet_logger: Optional[Any],
+    mlflow_logger: Optional[Any],
+) -> Optional[Any]:
+    """Return a writer suitable for MCore's MoE/MTP metric helpers.
+
+    - When neither MLFlow nor Comet is wired up, the real TB writer is returned
+      unchanged (zero overhead, no behavior change).
+    - When at least one of MLFlow / Comet is wired up, return a fanout adapter
+      that forwards `add_scalar` to all configured backends. The adapter is
+      returned even when the TB writer itself is None, which is required to
+      surface MoE / MTP metrics in Comet / MLFlow on rank N-1 even if the user
+      hasn't enabled TensorBoard.
+    """
+    if comet_logger is None and mlflow_logger is None:
+        return tb_writer
+    return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
+
+
 def training_log(
     loss_dict: dict[str, torch.Tensor],
     total_loss_dict: dict[str, Any],
@@ -400,6 +677,7 @@ def training_log(
     pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
     loaded_iteration: int = 0,
+    seq_length: Optional[int] = None,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -533,6 +811,17 @@ def training_log(
                 dump(snapshot, f)
                 print_rank_0(f"Saved memory snapshot to {filename}")
 
+    # Memory metrics must be aggregated across the PP group BEFORE the
+    # writer-gated block below. The TensorBoard / W&B / MLFlow / Comet writers
+    # only initialize on the last rank, but peak GPU memory typically lives on
+    # the first PP stage. Compute and reduce on all ranks so the writer rank
+    # emits the per-metric peak across the pipeline (issue #3167).
+    memory_report: Optional[dict[str, Union[int, float]]] = None
+    if logger_config.log_memory_to_tensorboard and iteration % logger_config.tensorboard_log_interval == 0:
+        memory_report = report_memory(memory_keys=logger_config.memory_keys)
+        memory_report = reduce_max_memory_across_pp_group(memory_report, pg_collection.pp)
+        memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
+
     if loggers_exist and iteration % logger_config.tensorboard_log_interval == 0:
         if logger_config.log_throughput_to_tensorboard:
             throughput_report = report_throughput(
@@ -551,9 +840,7 @@ def training_log(
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(throughput_report), step=iteration)
             if comet_logger:
                 comet_logger.log_metrics(throughput_report, step=iteration)
-        if logger_config.log_memory_to_tensorboard:
-            memory_report = report_memory(memory_keys=logger_config.memory_keys)
-            memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
+        if logger_config.log_memory_to_tensorboard and memory_report is not None:
             if writer:
                 for metric, value in memory_report.items():
                     writer.add_scalar(metric, value, iteration)
@@ -758,10 +1045,13 @@ def training_log(
         else:
             layers = getattr(config.model, "num_layers", None)
 
+        # Wrap the TB writer so MoE/MTP metrics also reach MLFlow / Comet (issue #2989).
+        # No-op when neither logger is configured: the original writer is returned as-is.
+        moe_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
         track_moe_metrics(
             loss_scale=moe_loss_scale,
             iteration=iteration,
-            writer=writer,
+            writer=moe_metric_writer,
             wandb_writer=wandb_writer,
             total_loss_dict=total_loss_dict,
             per_layer_logging=getattr(config.model, "moe_per_layer_logging", False),
@@ -774,7 +1064,10 @@ def training_log(
         )
     if getattr(config.model, "mtp_num_layers", None) is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
-        MTPLossLoggingHelper.track_mtp_metrics(mtp_loss_scale, iteration, writer, wandb_writer, total_loss_dict)
+        mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
+        MTPLossLoggingHelper.track_mtp_metrics(
+            mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
+        )
 
     if iteration % logger_config.log_interval == 0:
         elapsed_time = timers("interval-time").elapsed(barrier=True)
@@ -783,7 +1076,58 @@ def training_log(
         # Calculate GPU utilization
         num_flops = None
         if hasattr(config.model, "kv_channels") and hasattr(config.model, "num_attention_heads"):
-            num_flops = num_floating_point_operations(config, batch_size)
+            # Prefer per-microbatch FLOPS accumulators populated by forward_step
+            # (e.g. vlm_step). They carry the true Σs / Σs² / vision-patches under
+            # variable-length batches; fall back to the fixed-length assumption
+            # (batch_size * seq_length) only when no accumulation happened.
+            # This keeps the per-step TFLOP/s/GPU shown here consistent with the
+            # `floating_point_operations_so_far` accumulated by the main loop.
+            #
+            # VPP correction: forward_step_func is called once per virtual-stage
+            # per microbatch, so the accumulators over-count by vp_size. Divide
+            # them back so the FLOPS formula (which already covers all layers)
+            # receives the correct per-microbatch totals.
+            # Coerce accumulators to int — getattr on MagicMock test doubles
+            # returns a MagicMock (not the default), which breaks numeric ops.
+            local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
+            local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
+            local_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
+            if not isinstance(local_seqlen_sum, int):
+                local_seqlen_sum = 0
+            if not isinstance(local_seqlen_sq_sum, int):
+                local_seqlen_sq_sum = 0
+            if not isinstance(local_vision_patches, int):
+                local_vision_patches = 0
+            num_vision_patches = local_vision_patches * config.data_parallel_size if local_vision_patches > 0 else 0
+
+            vp_size = getattr(config.model, "virtual_pipeline_model_parallel_size", None)
+            if isinstance(vp_size, int) and vp_size > 1:
+                local_seqlen_sum = local_seqlen_sum // vp_size
+                local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
+                num_vision_patches = num_vision_patches // vp_size
+
+            if local_seqlen_sum > 0:
+                seqlen_sum = local_seqlen_sum * config.data_parallel_size
+                seqlen_squared_sum = local_seqlen_sq_sum * config.data_parallel_size
+                num_flops = num_floating_point_operations(
+                    config,
+                    batch_size,
+                    seqlen_sum=seqlen_sum,
+                    seqlen_squared_sum=seqlen_squared_sum,
+                    num_vision_patches=num_vision_patches,
+                )
+            elif seq_length is not None:
+                seqlen_sum = batch_size * seq_length
+                seqlen_squared_sum = batch_size * seq_length**2
+                num_flops = num_floating_point_operations(
+                    config,
+                    batch_size,
+                    seqlen_sum=seqlen_sum,
+                    seqlen_squared_sum=seqlen_squared_sum,
+                    num_vision_patches=num_vision_patches,
+                )
+            else:
+                num_flops = num_floating_point_operations(config, batch_size)
             per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
             print_rank_0(
                 f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"

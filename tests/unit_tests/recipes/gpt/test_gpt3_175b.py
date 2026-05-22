@@ -15,7 +15,7 @@
 import pytest
 import torch
 
-from megatron.bridge.models.gpt_provider import GPTProvider175B
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.recipes.gpt.gpt3_175b import gpt3_175b_pretrain_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
@@ -30,7 +30,7 @@ class TestPretrainConfig:
         config = gpt3_175b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, GPTProvider175B)
+        assert isinstance(config.model, GPTModelProvider)
         assert config.train is not None
         assert config.optimizer is not None
         assert config.scheduler is not None
