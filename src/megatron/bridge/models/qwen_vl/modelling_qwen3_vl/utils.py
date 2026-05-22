@@ -200,7 +200,7 @@ def split_part_by_cp_tp(cp_size, cp_rank, tp_size, tp_rank, split_size):
 
 def split_deepstack_embs(
     visual_pos_masks: torch.Tensor,
-    deepstack_visual_embeds: list[torch.Tensor],
+    deepstack_visual_embeds: list[torch.Tensor] | None,
     tp_size: int = 1,
     tp_rank: int = 0,
     cp_size: int = 1,
@@ -230,7 +230,7 @@ def split_deepstack_embs(
     split_size = tp_size
     if cp_size > 1:
         split_size *= cp_size * 2
-    if split_size == 1 or visual_pos_masks is None:
+    if split_size == 1 or visual_pos_masks is None or deepstack_visual_embeds is None:
         return visual_pos_masks, deepstack_visual_embeds
 
     assert visual_pos_masks.dim() == 2
@@ -636,7 +636,9 @@ def pack_dist_train_vision_module_output(
     deepstack_feature_lists: Sequence[torch.Tensor],
 ) -> dict[str, torch.Tensor]:
     """Concat deepstack features and final vision embeddings; shape as 3D for bridge communicator."""
-    vision_module_output_tensor = torch.cat([vision_embeds, *deepstack_feature_lists], dim=0)
+    # ``set_dist_train_input_tensors`` unpacks all leading chunks as deepstack features and the final
+    # chunk as the final vision embedding.
+    vision_module_output_tensor = torch.cat([*deepstack_feature_lists, vision_embeds], dim=0)
     # 2D [batch*seq, hidden] -> 3D [1, batch*seq, hidden]
     vision_module_output_tensor = vision_module_output_tensor.unsqueeze(0)
     return {"vision_module": vision_module_output_tensor}

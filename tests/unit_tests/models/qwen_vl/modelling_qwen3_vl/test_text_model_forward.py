@@ -42,6 +42,7 @@ class _DummyModel:
             torch.randn(1, 1),
             torch.randn(1, 1),
             torch.tensor([0]),
+            None,
             torch.randn(1, 1),
         )
         return self.preprocess_output
@@ -72,5 +73,6 @@ def test_forward_accepts_extra_preprocess_output():
     assert dummy.decoder.called_with["rotary_pos_cos"] is preproc[2]
     assert dummy.decoder.called_with["rotary_pos_sin"] is preproc[3]
     assert dummy.decoder.called_with["sequence_len_offset"] is preproc[4]
-    assert not any(value is preproc[5] for value in dummy.decoder.called_with.values())
+    assert dummy.decoder.called_with["padding_mask"] is preproc[5]
+    assert not any(value is preproc[6] for value in dummy.decoder.called_with.values())
     assert dummy.postprocess_args["decoder_input"] is preproc[0]

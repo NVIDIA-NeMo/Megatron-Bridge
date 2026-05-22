@@ -120,6 +120,7 @@ class Qwen3VLGPTModel(GPTModel):
         *,
         inference_params: Optional[BaseInferenceContext] = None,
         loss_mask: Optional[Tensor] = None,
+        padding_mask: Optional[Tensor] = None,
         # args for deepstack
         visual_pos_masks: Optional[torch.Tensor] = None,
         deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
@@ -140,14 +141,15 @@ class Qwen3VLGPTModel(GPTModel):
         inference_context = deprecate_inference_params(inference_context, inference_params)
 
         # `_preprocess` can optionally return an extra fused cos/sin buffer (for
-        # flash decode). Match the upstream GPTModel handling to avoid unpack
-        # errors when six values are returned.
+        # flash decode). Keep the first six fields aligned with the upstream
+        # GPTModel contract; Qwen3-VL reads padding_mask from index 5 below.
         preproc_output = self._preprocess(
             input_ids=input_ids,
             position_ids=position_ids,
             decoder_input=decoder_input,
             inference_context=inference_context,
             packed_seq_params=packed_seq_params,
+            padding_mask=padding_mask,
         )
 
         (
@@ -156,7 +158,19 @@ class Qwen3VLGPTModel(GPTModel):
             rotary_pos_cos,
             rotary_pos_sin,
             sequence_len_offset,
-        ) = preproc_output[:5]
+            padding_mask,
+        ) = preproc_output[:6]
+        if (
+            padding_mask is not None
+            and decoder_input is not None
+            and getattr(getattr(self, "config", None), "sequence_parallel", False)
+            and padding_mask.shape[-1] != decoder_input.shape[0]
+        ):
+            padding_mask = (
+                tensor_parallel.scatter_to_sequence_parallel_region(padding_mask.transpose(0, 1).contiguous())
+                .transpose(0, 1)
+                .contiguous()
+            )
 
         # Run decoder.
         hidden_states = self.decoder(
@@ -170,6 +184,7 @@ class Qwen3VLGPTModel(GPTModel):
             # the standard components only.
             packed_seq_params=packed_seq_params,
             sequence_len_offset=sequence_len_offset,
+            padding_mask=padding_mask,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
             **(extra_block_kwargs or {}),

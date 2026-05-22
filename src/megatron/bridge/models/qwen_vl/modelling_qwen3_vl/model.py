@@ -349,6 +349,7 @@ class Qwen3VLModel(MegatronModule):
         video_input_mask: torch.Tensor = None,
         cp_img_num: list[int] = None,
         images_padded: list[bool] = None,
+        moe_padding_mask: torch.Tensor = None,
         inference_context: object | None = None,
         runtime_gather_output: bool | None = None,
         mm_token_type_ids: torch.Tensor = None,
@@ -380,6 +381,27 @@ class Qwen3VLModel(MegatronModule):
         del inference_context, mm_token_type_ids  # Unused, kept for API compatibility
         assert inference_params is None, "not support inference"
 
+        def _packed_cu_seqlens_for_rope(packed_params: PackedSeqParams | None) -> torch.Tensor | None:
+            if packed_params is None:
+                return None
+            cu_seqlens = packed_params.cu_seqlens_q_padded
+            if cu_seqlens is None:
+                cu_seqlens = packed_params.cu_seqlens_q
+            return cu_seqlens.reshape(-1) if cu_seqlens is not None else None
+
+        def _packed_thd_to_bshd(packed_values: torch.Tensor, cu_seqlens: torch.Tensor) -> torch.Tensor:
+            seqlens = cu_seqlens[1:] - cu_seqlens[:-1]
+            output = packed_values.new_zeros((seqlens.numel(), int(seqlens.max().item()), *packed_values.shape[2:]))
+            for i, (start, seqlen) in enumerate(zip(cu_seqlens[:-1].tolist(), seqlens.tolist())):
+                output[i, :seqlen] = packed_values[0, start : start + seqlen]
+            return output
+
+        def _packed_bshd_to_thd(unpacked_values: torch.Tensor, cu_seqlens: torch.Tensor) -> torch.Tensor:
+            output = unpacked_values.new_zeros((1, int(cu_seqlens[-1].item()), *unpacked_values.shape[2:]))
+            for i, (start, end) in enumerate(zip(cu_seqlens[:-1].tolist(), cu_seqlens[1:].tolist())):
+                output[0, start:end] = unpacked_values[i, : end - start]
+            return output
+
         vision_grid_thw = None
         vision_data = None
         vision_mask = None
@@ -399,6 +421,7 @@ class Qwen3VLModel(MegatronModule):
         # so it must be a real tensor. For packed sequences we use the THD-format
         # input_ids_thd (updated below); for regular sequences we use input_ids as-is.
         lm_input_ids = input_ids
+        moe_padding_mask_for_lm = moe_padding_mask
 
         if self.pre_process:
             # can reorganize_inputs at dataset
@@ -510,6 +533,13 @@ class Qwen3VLModel(MegatronModule):
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
                 lm_input_ids = input_ids_thd
+                if moe_padding_mask_for_lm is not None:
+                    moe_padding_mask_for_lm = preprocess_packed_seqs(
+                        moe_padding_mask_for_lm.to(dtype=torch.int32),
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0].bool()
                 _, _, vision_mask_thd = reorganize_inputs(
                     input_ids=input_ids_thd,
                     pixel_values=pixel_values,
@@ -565,6 +595,13 @@ class Qwen3VLModel(MegatronModule):
                 lm_input_ids, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
+                if moe_padding_mask_for_lm is not None:
+                    moe_padding_mask_for_lm = preprocess_packed_seqs(
+                        moe_padding_mask_for_lm.to(dtype=torch.int32),
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0].bool()
 
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
@@ -591,37 +628,48 @@ class Qwen3VLModel(MegatronModule):
                 )
 
         if position_ids is None:
-            # BSHD
-            # Megatron uses 4D bool masks ([B|1,1,S,S], True=masked); HF uses 2D keep masks ([B,S], 1=keep)
-            # For simplicity, we set hf_attention_mask to None.
-            hf_attention_mask = None
+            packed_rope_cu_seqlens = _packed_cu_seqlens_for_rope(packed_seq_params)
+            convert_rope_input_from_thd = packed_rope_cu_seqlens is not None and input_ids.shape[0] == 1
+            input_ids_for_rope = (
+                _packed_thd_to_bshd(input_ids, packed_rope_cu_seqlens) if convert_rope_input_from_thd else input_ids
+            )
+            # Megatron uses 4D bool masks ([B|1,1,S,S], True=masked); HF uses 2D keep masks ([B,S], 1=keep).
+            # Qwen3-VL computes MRoPE on the full sequence and masks loss/MoE separately.
             position_ids, _ = get_rope_index(
                 self.config.spatial_merge_size,
                 self.image_token_id,
                 self.video_token_id,
                 self.vision_start_token_id,
-                input_ids,
+                input_ids_for_rope,
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
-                attention_mask=hf_attention_mask,
+                attention_mask=None,
             )  #  [3*b*s]
             if packed_seq_params is not None:
                 # convert position_ids to THD format
-                position_ids = (
-                    preprocess_packed_seqs(
+                if convert_rope_input_from_thd:
+                    position_ids = _packed_bshd_to_thd(position_ids.permute(1, 2, 0), packed_rope_cu_seqlens).permute(
+                        2, 0, 1
+                    )
+                else:
+                    position_ids = preprocess_packed_seqs(
                         position_ids.permute(1, 2, 0),
                         attention_mask,
                         pre_process=True,
                         pg_collection=self.pg_collection,
-                    )[0]
-                    .permute(2, 0, 1)
-                    .contiguous()
-                )
+                    )[0].permute(2, 0, 1)
+                position_ids = position_ids.contiguous()
                 attention_mask = None
                 self.language_model.rotary_pos_emb.is_thd_format = True
 
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
+
+        padding_mask_for_moe = None
+        if moe_padding_mask_for_lm is not None:
+            padding_mask_for_moe = moe_padding_mask_for_lm.bool()
+        elif packed_seq_params is not None and lm_input_ids is not None:
+            padding_mask_for_moe = lm_input_ids.eq(0)
 
         output = self.language_model(
             input_ids=lm_input_ids,
@@ -630,6 +678,7 @@ class Qwen3VLModel(MegatronModule):
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
             labels=labels,  # only not None in the last decoder PP stage
             loss_mask=loss_mask,  # Added for THD training compatibility
+            padding_mask=padding_mask_for_moe,
             inference_params=inference_params,  # currently always None
             packed_seq_params=packed_seq_params,  # currently always None
             runtime_gather_output=runtime_gather_output,
