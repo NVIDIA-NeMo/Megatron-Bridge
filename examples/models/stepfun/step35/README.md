@@ -65,15 +65,33 @@ uv run python -m torch.distributed.run --nproc_per_node=1 \
 
 ## Inference
 
-[slurm_inference.sh](slurm_inference.sh) runs greedy generation on 1 node / 8 GPUs
-with `TP=1`, `PP=1`, and `EP=8`.
+[inference.sh](inference.sh) runs greedy generation directly with
+`torch.distributed.run` on 1 node / 8 GPUs with `TP=1`, `PP=1`, and `EP=8`.
+Run it from an interactive 8-GPU allocation or equivalent single-node
+environment:
 
-By default it loads `stepfun-ai/Step-3.5-Flash` and converts in memory. To run
-from a checkpoint produced by [conversion.sh](conversion.sh), pass:
+```bash
+bash examples/models/stepfun/step35/inference.sh
+```
+
+By default it loads `stepfun-ai/Step-3.5-Flash` and converts in memory. To
+generate from a checkpoint produced by [conversion.sh](conversion.sh), pass:
 
 ```bash
 MEGATRON_MODEL_PATH="${MEGATRON_CKPT_PATH}/iter_0000000" \
-    sbatch examples/models/stepfun/step35/slurm_inference.sh
+    bash examples/models/stepfun/step35/inference.sh
+```
+
+### Expected output
+
+The following smoke-test output was produced with `TP=1`, `PP=1`, `EP=8`, and
+`MAX_NEW_TOKENS=4`:
+
+```text
+======== GENERATED TEXT OUTPUT ========
+Prompt: Write one concise sentence about Megatron Bridge.
+Generated: <｜begin▁of▁sentence｜>Write one concise sentence about Megatron Bridge. Write one concise sentence
+=======================================
 ```
 
 ## Pretraining / Resume
