@@ -1,10 +1,10 @@
 # Ministral 3
 
-[Mistral AI's Ministral 3](https://huggingface.co/collections/mistralai/ministral-3) is a family of edge-optimized vision-language models designed for deployment across various hardware configurations. The Ministral 3 architecture combines a powerful language model with a vision encoder for multimodal understanding.
+[Mistral AI's Ministral 3](https://huggingface.co/collections/mistralai/ministral-3) is part of the Mistral family and is designed for edge-optimized vision-language deployment across various hardware configurations. The Ministral 3 architecture combines a powerful language model with a vision encoder for multimodal understanding.
 
 Ministral 3 models support multimodal tasks including image captioning, visual question answering, OCR, and general vision-language understanding. Despite their compact size, these models deliver strong performance for on-device and edge deployment scenarios.
 
-Ministral family models are supported via the Bridge system with auto-detected configuration and weight mapping.
+Ministral 3 models are supported via the Bridge system with auto-detected configuration and weight mapping.
 
 ```{important}
 Please upgrade to `transformers` v5 and upgrade `mistral-common` in order to use the Ministral 3 models.
@@ -51,7 +51,7 @@ Ministral 3 combines efficient language modeling with multimodal capabilities:
 
 ## Examples
 
-For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Ministral 3 Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/ministral/ministral3/README.md).
+For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Ministral 3 examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/mistral/ministral3/README.md).
 
 ## Hugging Face Model Cards
 
@@ -63,8 +63,7 @@ For checkpoint conversion, inference, finetuning recipes, and step-by-step train
 - Ministral 3 14B Instruct: https://huggingface.co/mistralai/Ministral-3-14B-Instruct-2512
 
 ## Related Docs
-- Related LLM: [Mistral](../llm/mistral.md)
+- Related Mistral variant: [Mistral](mistral.md)
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-

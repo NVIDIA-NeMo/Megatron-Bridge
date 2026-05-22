@@ -48,8 +48,7 @@ For checkpoint conversion, inference, finetuning recipes, and step-by-step train
 - GLM-4.5V: https://huggingface.co/zai-org/GLM-4.5V
 
 ## Related Docs
-- Related LLM: [GLM 4.5](../llm/glm45.md)
+- Related GLM variant: [GLM 4.5](glm45.md)
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-
