@@ -177,6 +177,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.mixed_precision.fp8_param_gather = True
         cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = True
         cfg.model.cuda_graph_warmup_steps = 5
+        cfg.model.calculate_per_token_loss = False
         cfg.ddp.average_in_collective = True
         cfg.optimizer.lr = 0.0004
         cfg.validation.eval_interval = 768
@@ -238,6 +239,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.scheduler.lr_warmup_iters = 192
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.calculate_per_token_loss = False
         cfg.ddp.average_in_collective = True
         cfg.optimizer.lr = 0.0005
         cfg.validation.eval_interval = 512
