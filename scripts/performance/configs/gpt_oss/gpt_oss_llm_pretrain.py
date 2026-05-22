@@ -197,7 +197,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.validation.eval_interval = 341
         cfg.scheduler.lr_warmup_iters = 256
     # 512 GPUs
-    elif precision == "fp8_mx" and config_variant == "v3":
+    elif precision == "bf16" and config_variant == "v3":
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 7
         cfg.model.sequence_parallel = True
@@ -259,7 +259,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.validation.eval_interval = 341
         cfg.scheduler.lr_warmup_iters = 256
     # 512 GPUs
-    elif precision == "fp8_mx" and config_variant == "v3":
+    elif precision == "bf16" and config_variant == "v3":
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 7
         cfg.model.sequence_parallel = True
