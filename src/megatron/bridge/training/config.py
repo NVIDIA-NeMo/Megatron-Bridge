@@ -656,14 +656,20 @@ class CheckpointConfig(MTrainCheckpointConfig):
     also_save_hf_checkpoint: bool = False
     """Whether to export an additional HuggingFace artifact alongside each Megatron checkpoint.
 
-    When enabled, a complete Megatron checkpoint is still saved under each ``iter_*/`` directory,
-    including model weights, optimizer, RNG, scheduler, and rerun state.  In addition, model weights
-    are exported as HuggingFace ``*.safetensors`` under ``iter_*/hf/`` together with HF
-    ``config.json`` / tokenizer / (optional) custom modeling files.
+    When enabled, the native Megatron checkpoint under each ``iter_*/`` directory keeps the same
+    behavior as normal checkpoint saves.  In addition, model weights are exported as HuggingFace
+    ``*.safetensors`` under ``iter_*/hf/`` together with HF ``config.json`` / tokenizer /
+    (optional) custom modeling files.
 
     When ``cfg.peft`` is configured, the extra HF export writes a HuggingFace
     PEFT-compatible ``adapter_model.safetensors`` + ``adapter_config.json`` instead of the
     full base weights.
+
+    Warning:
+        Full-model HF export is synchronous and runs on the checkpoint save critical path.  It can
+        considerably slow down checkpoint saving and is intended for small models or debugging.
+        For larger models, prefer a separate background conversion job that scans for new native
+        Megatron checkpoints and exports HF weights outside the training step.
     """
 
     hf_source_path: Optional[str] = None

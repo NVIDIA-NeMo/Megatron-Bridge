@@ -800,6 +800,127 @@ class TestSaveCheckpoint:
     @patch("shutil.copy")
     @patch("megatron.bridge.training.checkpointing.schedule_async_save")
     @patch("megatron.bridge.training.checkpointing._save_hf_weights")
+    @patch("megatron.bridge.training.checkpointing.apply_peft_adapter_filter_to_state_dict")
+    @patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing.get_rng_state")
+    @patch("megatron.bridge.training.checkpointing.get_rerun_state_machine")
+    @patch("megatron.bridge.training.checkpointing.generate_state_dict")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing.get_pg_collection")
+    @patch("megatron.bridge.training.checkpointing.fault_tolerance")
+    @patch("megatron.bridge.training.checkpointing.is_empty_async_queue")
+    @patch("megatron.bridge.training.checkpointing.get_rank_safe")
+    @patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state")
+    @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
+    @patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.get_rank")
+    @patch("torch.distributed.barrier")
+    def test_save_checkpoint_peft_hf_keeps_adapter_only_megatron_state_and_exports_hf_sidecar(
+        self,
+        mock_barrier,
+        mock_get_dist_rank,
+        mock_dist_init,
+        mock_print_rank_0,
+        mock_get_strategy,
+        mock_ensure_dir,
+        mock_save_dataloader,
+        mock_get_rank_safe,
+        mock_empty_queue,
+        mock_ft,
+        mock_get_pg_collection,
+        mock_dist_ckpt,
+        mock_gen_state,
+        mock_rerun,
+        mock_get_rng,
+        mock_unwrap,
+        mock_save_modelopt,
+        mock_apply_peft_filter,
+        mock_save_hf_weights,
+        mock_schedule_async_save,
+        mock_shutil_copy,
+        mock_torch_save,
+        mock_file_open,
+        mock_is_last_rank,
+        mock_wandb,
+        save_checkpoint_fixtures,
+    ):
+        """PEFT + HF sidecar should preserve adapter-only Megatron checkpoint behavior."""
+        mock_dist_init.return_value = True
+        mock_get_dist_rank.return_value = 0
+        mock_get_rank_safe.return_value = 0
+        mock_empty_queue.return_value = True
+        mock_unwrap.return_value = save_checkpoint_fixtures["mock_model"]
+        mock_get_rng.return_value = Mock()
+        mock_rerun.return_value.state_dict.return_value = {}
+        full_state_dict = {
+            "model": {
+                "decoder.layers.0.self_attention.linear_qkv.weight": "base",
+                "decoder.layers.0.self_attention.linear_qkv.adapter.weight": "adapter",
+            },
+            "optimizer": {"state": "value2"},
+            "rng_state": ["value3"],
+        }
+        filtered_state_dict = {
+            "model": {
+                "decoder.layers.0.self_attention.linear_qkv.adapter.weight": "adapter",
+            },
+            "optimizer": {"state": "value2"},
+            "rng_state": ["value3"],
+        }
+        mock_gen_state.return_value = full_state_dict
+        mock_apply_peft_filter.return_value = filtered_state_dict
+
+        mock_pg_collection = Mock()
+        mock_pg_collection.expt_dp.rank.return_value = 0
+        mock_pg_collection.tp.rank.return_value = 0
+        mock_pg_collection.tp.size.return_value = 1
+        mock_pg_collection.pp.rank.return_value = 0
+        mock_pg_collection.pp.size.return_value = 1
+        mock_get_pg_collection.return_value = mock_pg_collection
+
+        mock_get_strategy.return_value = Mock()
+        mock_dist_ckpt.save.return_value = None
+        mock_save_modelopt.return_value = None
+        mock_is_last_rank.return_value = False
+        mock_torch_save.return_value = None
+        mock_shutil_copy.return_value = None
+
+        state = save_checkpoint_fixtures["mock_state"]
+        state.wandb_logger = Mock()
+        state.cfg.peft = Mock()
+        state.cfg.checkpoint.most_recent_k = -1
+        state.cfg.checkpoint.also_save_hf_checkpoint = True
+
+        save_checkpoint(
+            state,
+            save_checkpoint_fixtures["mock_model"],
+            save_checkpoint_fixtures["mock_optimizer"],
+            save_checkpoint_fixtures["mock_scheduler"],
+            1000000,
+            checkpointing_context={},
+            non_persistent_ckpt=False,
+        )
+
+        iter_dir = "/checkpoints/iter_0001000"
+        mock_apply_peft_filter.assert_called_once_with(full_state_dict, state.cfg.peft)
+        mock_dist_ckpt.save.assert_called_once()
+        saved_state_dict, save_target = mock_dist_ckpt.save.call_args.args[:2]
+        assert save_target == iter_dir
+        assert saved_state_dict == filtered_state_dict
+        assert "decoder.layers.0.self_attention.linear_qkv.weight" not in saved_state_dict["model"]
+        mock_save_hf_weights.assert_called_once_with(state, save_checkpoint_fixtures["mock_model"], f"{iter_dir}/hf")
+        mock_schedule_async_save.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing.wandb_utils")
+    @patch("megatron.bridge.training.checkpointing.is_last_rank")
+    @patch("builtins.open", new_callable=mock_open)
+    @patch("torch.save")
+    @patch("shutil.copy")
+    @patch("megatron.bridge.training.checkpointing.schedule_async_save")
+    @patch("megatron.bridge.training.checkpointing._save_hf_weights")
     @patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing.get_rng_state")

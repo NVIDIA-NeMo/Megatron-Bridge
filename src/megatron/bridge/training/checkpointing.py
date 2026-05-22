@@ -885,6 +885,12 @@ def _save_hf_weights(
         torch.distributed.barrier()
 
     if get_rank_safe() == 0:
+        logger.warning(
+            "also_save_hf_checkpoint=True performs full-model HuggingFace export synchronously on the "
+            "checkpoint save critical path. This can considerably slow down checkpoint saving and is "
+            "intended for small models or debugging. For larger models, run a separate background "
+            "conversion job that scans for new native Megatron checkpoints."
+        )
         logger.info(
             "Saving HuggingFace full model weights to %s (hf_source=%s, distributed_save=%s, "
             "hf_save_every_n_ranks=%s)",
@@ -1209,14 +1215,14 @@ def save_checkpoint(
                         use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
                     )
 
-    # Apply PEFT filtering to save adapter-only checkpoints.  In HF sidecar export mode,
-    # keep the Megatron checkpoint complete and write the PEFT adapter as the
+    # Apply PEFT filtering to preserve the existing adapter-only Megatron
+    # checkpoint behavior.  ``also_save_hf_checkpoint=True`` only adds the
     # extra HF artifact under ``iter_*/hf/``.
-    if cfg.peft is not None and not ckpt_cfg.also_save_hf_checkpoint:
+    if cfg.peft is not None:
         state_dict = apply_peft_adapter_filter_to_state_dict(state_dict, cfg.peft)
 
     # ``also_save_hf_checkpoint=True`` is an extra export:
-    # keep the complete Megatron checkpoint at ``iter_*/`` and write HF
+    # keep the native Megatron checkpoint behavior at ``iter_*/`` and write HF
     # artifacts under ``iter_*/hf/`` after the Megatron state is scheduled.
     is_hf_save = ckpt_type == CheckpointType.GLOBAL and ckpt_cfg.also_save_hf_checkpoint and bool(model)
     pending_hf_save_dir = _hf_weights_dir(checkpoint_name) if is_hf_save else None

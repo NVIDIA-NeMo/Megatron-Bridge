@@ -828,6 +828,13 @@ class TestCheckpointUtils:
         assert checkpoint_exists(str(hf_dir)) is False
         assert checkpoint_exists(str(hf_dir)) or is_hf_checkpoint_dir(str(hf_dir))
 
+        adapter_dir = tmp_path / "adapter_only"
+        adapter_dir.mkdir()
+        (adapter_dir / "adapter_config.json").touch()
+        (adapter_dir / "adapter_model.safetensors").touch()
+
+        assert is_hf_checkpoint_dir(str(adapter_dir)) is False
+
     def test_checkpoint_exists_with_iteration_directory(self, tmp_path):
         """Test checkpoint_exists detects a direct iteration directory."""
         iter_dir = tmp_path / "iter_0001000"
