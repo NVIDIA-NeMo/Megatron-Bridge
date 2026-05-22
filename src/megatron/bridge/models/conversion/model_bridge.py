@@ -318,7 +318,12 @@ def _megatron_local_name_to_global(
     # EP for SequentialMLP: expert index is in the module path as local_experts.N.
     # This covers both standard SequentialMLP (e.g., quantization) and dual-pool MoE
     # (e.g., text_moe_layer.experts.local_experts.N or vision_moe_layer.experts.local_experts.N).
-    elif ".experts.local_experts." in param_name and get_pg_size(ep_group) > 1 and ".adapter." not in param_name:
+    elif (
+        ".experts.local_experts." in param_name
+        and ep_group is not None
+        and get_pg_size(ep_group) > 1
+        and ".adapter." not in param_name
+    ):
         num_experts = config.num_moe_experts
         num_experts_per_rank = num_experts // ep_group.size()
 
