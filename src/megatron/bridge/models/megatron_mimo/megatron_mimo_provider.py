@@ -13,6 +13,7 @@ Key differences from standard providers:
 from __future__ import annotations
 
 import copy
+import inspect
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
 
@@ -158,15 +159,14 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         if standard_provider is None:
             return
 
+        self._sync_standard_provider_language_parallelism()
+
         # MIMO conversion does not import/export MTP routes yet.
         if hasattr(standard_provider, "mtp_num_layers"):
             setattr(standard_provider, "mtp_num_layers", None)
 
         if self.language_model_spec is None:
-            build_language_model_spec = getattr(standard_provider, "build_language_model_spec", None)
-            if not callable(build_language_model_spec):
-                raise TypeError("standard_provider must define build_language_model_spec().")
-            self.language_model_spec = build_language_model_spec()
+            self.language_model_spec = self._build_standard_language_model_spec(pp_rank=0)
 
         if not self.modality_submodules_spec:
             build_modality_specs = getattr(standard_provider, "build_mimo_modality_submodules_spec", None)
@@ -182,6 +182,43 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             if special_token_ids is None:
                 raise TypeError("standard_provider must define special_token_ids.")
             self.special_token_ids = dict(special_token_ids)
+
+    def _sync_standard_provider_language_parallelism(self) -> None:
+        """Apply the language component's parallelism to the wrapped provider."""
+        standard_provider = self.standard_provider
+        if standard_provider is None or self.megatron_mimo_parallelism_config is None:
+            return
+
+        language_parallelism = self.megatron_mimo_parallelism_config.module_parallelisms.get(MIMO_LANGUAGE_MODULE_KEY)
+        if language_parallelism is None:
+            return
+
+        for attr, value in (
+            ("tensor_model_parallel_size", language_parallelism.tensor_model_parallel_size),
+            ("pipeline_model_parallel_size", language_parallelism.pipeline_model_parallel_size),
+            ("context_parallel_size", language_parallelism.context_parallel_size),
+            ("expert_tensor_parallel_size", language_parallelism.expert_tensor_parallel_size),
+        ):
+            if hasattr(standard_provider, attr):
+                setattr(standard_provider, attr, value)
+
+    def _build_standard_language_model_spec(self, pp_rank: int) -> ModuleSpec:
+        standard_provider = self.standard_provider
+        if standard_provider is None:
+            raise TypeError("standard_provider must be set to build a standard language model spec.")
+
+        self._sync_standard_provider_language_parallelism()
+        build_language_model_spec = getattr(standard_provider, "build_language_model_spec", None)
+        if not callable(build_language_model_spec):
+            raise TypeError("standard_provider must define build_language_model_spec().")
+        signature = inspect.signature(build_language_model_spec)
+        if "pp_rank" not in signature.parameters and not any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+        ):
+            if pp_rank != 0:
+                raise TypeError("standard_provider.build_language_model_spec() must accept pp_rank for MIMO PP > 1.")
+            return build_language_model_spec()
+        return build_language_model_spec(pp_rank=pp_rank)
 
     def build_infra(self) -> MegatronMIMOInfra:
         """Build MegatronMIMO parallelism infrastructure.
@@ -360,6 +397,8 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         if self.megatron_mimo_parallelism_config:
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
+                if self.standard_provider is not None:
+                    language_spec = self._build_standard_language_model_spec(pp_rank=dist.get_rank(group=llm_pg.pp))
                 language_spec = self._inject_pg_collection_into_language_spec(
                     language_spec,
                     llm_pg,

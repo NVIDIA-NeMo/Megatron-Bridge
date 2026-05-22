@@ -201,6 +201,13 @@ def load_megatron_mimo_model(
         checkpoint=CheckpointConfig(
             async_save=False,
             load=str(path),
+            load_optim=False,
+            load_rng=False,
+            ckpt_format="torch_dist",
+            # Must match conversion save. MIMO conversion checkpoints use
+            # disjoint per-component state dicts that do not pass global
+            # fully-parallel access validation.
+            fully_parallel_save=False,
         ),
         dist=None,
     )

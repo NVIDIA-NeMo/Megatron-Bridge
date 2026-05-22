@@ -15,6 +15,27 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
 )
 
 
+class FakeStandardProvider:
+    """Minimal standard provider used by MIMO factory tests."""
+
+    modality_keys = {}
+    special_token_ids = {"images": 32000}
+
+    def __init__(self):
+        self.tensor_model_parallel_size = 1
+        self.pipeline_model_parallel_size = 1
+        self.context_parallel_size = 1
+        self.expert_tensor_parallel_size = 1
+        self.build_language_model_spec_calls = []
+
+    def build_language_model_spec(self, pp_rank=0):
+        self.build_language_model_spec_calls.append(pp_rank)
+        return ModuleSpec(module=Mock, params={"config": self, "pp_rank": pp_rank})
+
+    def build_vision_encoder_spec(self):
+        return ModuleSpec(module=Mock, params={})
+
+
 class TestMegatronMIMOProvider:
     """Test cases for MegatronMIMOProvider."""
 
@@ -56,6 +77,75 @@ class TestMegatronMIMOProvider:
         assert provider.megatron_mimo_parallelism_config == megatron_mimo_parallelism_config
         assert provider.freeze_language_model is True
         assert provider.freeze_modality_encoders == {"images": True}
+
+    def test_from_standard_provider_applies_language_parallelism(self):
+        """Test standard-provider specs inherit language component TP/PP."""
+        standard_provider = FakeStandardProvider()
+        megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=3,
+                    context_parallel_size=4,
+                    expert_tensor_parallel_size=1,
+                    data_parallel_size=1,
+                ),
+            },
+        )
+
+        provider = MegatronMIMOProvider.from_standard_provider(
+            standard_provider=standard_provider,
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+
+        assert standard_provider.tensor_model_parallel_size == 2
+        assert standard_provider.pipeline_model_parallel_size == 3
+        assert standard_provider.context_parallel_size == 4
+        assert standard_provider.build_language_model_spec_calls == [0]
+
+        spec = provider._build_standard_language_model_spec(pp_rank=2)
+        assert spec.params["pp_rank"] == 2
+
+    @patch("torch.distributed.new_group")
+    @patch("torch.distributed.get_process_group_ranks")
+    @patch("torch.distributed.get_rank")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids")
+    def test_provide_rebuilds_standard_language_spec_for_component_pp_rank(
+        self, mock_build_grids, mock_mimo_model, mock_get_rank, mock_get_pg_ranks, mock_new_group
+    ):
+        """Test MIMO rebuilds PP-sliced language specs per component rank."""
+        mock_get_rank.return_value = 1
+        mock_get_pg_ranks.return_value = [0, 1]
+        mock_new_group.return_value = MagicMock()
+
+        standard_provider = FakeStandardProvider()
+        megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    pipeline_model_parallel_size=2,
+                    data_parallel_size=1,
+                ),
+            },
+        )
+
+        pp_group = MagicMock(name="pp_group")
+        mock_grid = MagicMock()
+        mock_grid.is_current_rank_in_grid.return_value = True
+        mock_grid.get_pg.side_effect = lambda dims: pp_group if dims == ["pp"] else MagicMock()
+        mock_build_grids.return_value = {"language": mock_grid}
+
+        provider = MegatronMIMOProvider.from_standard_provider(
+            standard_provider=standard_provider,
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+        mock_mimo_model.return_value = MagicMock()
+
+        provider.provide()
+
+        mimo_config = mock_mimo_model.call_args[0][0]
+        assert mimo_config.language_model_spec.params["pp_rank"] == 1
 
     def test_provider_has_mixin_fields(self):
         """Test provider has fields required by ModelProviderMixin."""
