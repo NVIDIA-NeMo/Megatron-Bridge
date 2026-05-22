@@ -168,25 +168,24 @@ For a deeper dive into conversion design and advanced usage, see the [models REA
 
 Megatron Bridge provides out-of-the-box bridges and training recipes for a wide range of models, built on top of base model architectures from [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core). Refer to the [models directory](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models) for the full list of model bridges.
 
-| Family | Supported variants | Resources |
-|----------------|--------------------|-----------|
-| **Bailing** | Ling 2.0 (Bailing) | [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/bailing/README.md) |
-| **DeepSeek** | DeepSeek V2 / V2 Lite, DeepSeek V3, DeepSeek V4 | [model docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/models/deepseek/index.md), [DeepSeek V4 examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/deepseek_v4/README.md) |
-| **Falcon** | Falcon H1 | [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/falcon_h1/README.md) |
-| **Gemma** | Gemma / Gemma 2, Gemma 3, Gemma 3-VL, Gemma 4-VL (26B-A4B MoE) | [model docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/models/gemma/index.md), [Gemma 3-VL README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gemma/gemma3_vl/README.md), [Gemma 4-VL README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gemma/gemma4_vl/README.md) |
-| **GLM** | GLM-4.5 / 4.7 / 4.7-Flash, GLM-4.5V, GLM-5 / 5.1 | [model docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/models/glm/index.md), [GLM-4.5V README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/glm/glm_45v/README.md), [GLM-4.7 README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/glm47/README.md), [GLM-5 README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/glm/glm5/README.md) |
-| **GPT-OSS** | GPT-oss | [model docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/models/gpt_oss/index.md), [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gpt_oss/README.md) |
-| **Kimi** | Kimi K2, Kimi-K2.5-VL | [Kimi-K2.5-VL examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/kimi/kimi_k25_vl/README.md) |
-| **Llama** | Llama 2, Llama 3 / 3.1 / 3.2 / 3.3 | [model docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/models/llama/index.md), [recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/recipes/llama) |
-| **Mamba** | Mamba | [model bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/mamba) |
-| **MiniMax** | MiniMax-M2 / M2.5 / M2.7 | [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/minimax/minimax_m2/README.md) |
-| **Mistral** | Mistral, Ministral 3 (3B/8B/14B) | [model docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/models/mistral/index.md), [Ministral 3 examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/mistral/ministral3/README.md) |
-| **MiMo** | MiMo | [Megatron-MiMo training examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/megatron_mimo) |
-| **Moonlight** | Moonlight | [model docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/models/moonlight/index.md), [recipe](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/moonlight/moonlight_16b.py) |
-| **Nemotron** | Nemotron H, Nemotron Nano v2, Nemotron-3 Nano, Nemotron-3 Super, Llama Nemotron, Nemotron Nano v2 VL, Nemotron-3 Nano Omni | [model docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/models/nemotron/index.md), [Nemotron-3 README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3/README.md), [Nemotron-3 Omni README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_omni/README.md) |
-| **OLMoE** | OLMoE | [model docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/models/olmoe/index.md), [recipe](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/olmoe/olmoe_7b.py) |
-| **Qwen** | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR | [model docs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docs/models/qwen/index.md), [examples directory](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/qwen) |
-| **Sarvam** | Sarvam | [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/sarvam/README.md) |
+| Family | Supported variants |
+|----------------|--------------------|
+| [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 (Bailing) |
+| [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite, DeepSeek V3, DeepSeek V4 |
+| [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
+| [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2, Gemma 3, Gemma 3-VL, Gemma 4-VL (26B-A4B MoE) |
+| [**GLM**](docs/models/glm/index.md) | GLM-4.5 / 4.7 / 4.7-Flash, GLM-4.5V, GLM-5 / 5.1 |
+| [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
+| [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL |
+| [**Llama**](docs/models/llama/index.md) | Llama 2, Llama 3 / 3.1 / 3.2 / 3.3 |
+| [**MiniMax**](docs/models/minimax/index.md) | MiniMax-M2 / M2.5 / M2.7 |
+| [**Mistral**](docs/models/mistral/index.md) | Mistral, Ministral 3 (3B/8B/14B) |
+| [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo |
+| [**Moonlight**](docs/models/moonlight/index.md) | Moonlight |
+| [**Nemotron**](docs/models/nemotron/index.md) | Nemotron H, Nemotron Nano v2, Nemotron-3 Nano, Nemotron-3 Super, Llama Nemotron, Nemotron Nano v2 VL, Nemotron-3 Nano Omni |
+| [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
+| [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
+| [**Sarvam**](docs/models/sarvam/index.md) | Sarvam |
 
 ### Launching Recipes
 

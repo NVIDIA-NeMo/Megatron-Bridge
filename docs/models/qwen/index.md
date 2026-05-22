@@ -19,3 +19,7 @@ qwen3-omni.md
 | Qwen3-VL | [qwen3-vl.md](qwen3-vl.md) |
 | Qwen3.5 / 3.6 | [qwen35-vl.md](qwen35-vl.md) |
 | Qwen3-Omni | [qwen3-omni.md](qwen3-omni.md) |
+
+## Examples
+
+- Qwen examples: [`examples/models/qwen`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/qwen)

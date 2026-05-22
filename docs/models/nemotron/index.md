@@ -21,3 +21,8 @@ nemotron-3-omni.md
 | Nemotron-3 Super | [nemotron3-super.md](nemotron3-super.md) |
 | Nemotron Nano V2 VL | [nemotron-nano-v2-vl.md](nemotron-nano-v2-vl.md) |
 | Nemotron-3 Nano Omni | [nemotron-3-omni.md](nemotron-3-omni.md) |
+
+## Examples
+
+- Nemotron-3 examples: [`examples/models/nemotron/nemotron_3/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3/README.md)
+- Nemotron-3 Omni examples: [`examples/models/nemotron/nemotron_3_omni/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_omni/README.md)

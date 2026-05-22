@@ -11,3 +11,7 @@ moonlight.md
 | Variant | Guide |
 |---------|-------|
 | Moonlight | [moonlight.md](moonlight.md) |
+
+## Recipes
+
+- Moonlight recipe: [`src/megatron/bridge/recipes/moonlight/moonlight_16b.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/moonlight/moonlight_16b.py)

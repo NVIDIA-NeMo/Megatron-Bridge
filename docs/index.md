@@ -34,16 +34,22 @@ bridge-tech-details.md
 :hidden:
 
 models/README.md
+models/bailing/index.md
 models/deepseek/index.md
+models/falcon/index.md
 models/gemma/index.md
 models/glm/index.md
 models/gpt_oss/index.md
+models/kimi/index.md
 models/llama/index.md
+models/minimax/index.md
 models/mistral/index.md
+models/mimo/index.md
 models/moonlight/index.md
 models/nemotron/index.md
 models/olmoe/index.md
 models/qwen/index.md
+models/sarvam/index.md
 ```
 
 ```{toctree}
