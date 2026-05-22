@@ -75,8 +75,8 @@ class Step35DecoderLayer(TransformerLayer):
     * ``num_query_groups``      -> ``num_query_groups``
     * ``head_dim``              -> ``kv_channels``
 
-    Notes
-    -----
+    Implementation notes:
+
     * The spec-builder must keep ``layer_types`` indexed by the global
       0-indexed layer id (same constraint as ``rotary_base_per_layer``).
     * Layers whose resolved ``layer_idx`` falls outside ``layer_types`` fall
