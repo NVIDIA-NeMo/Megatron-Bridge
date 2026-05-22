@@ -1016,8 +1016,14 @@ class TestSlidingWindowAttentionFlops:
         query_projection_size = kv_channels * num_attention_heads
         effective_window = window_left + 0 + 1  # 512
 
-        # Core attention difference per SWA layer: Q * (S - W) (the /2 *2 cancels)
-        core_diff_per_layer = query_projection_size * (seq_length - effective_window)
+        # Causal SWA: query at position t attends to min(t, W) keys.
+        # Sum over t=1..T, then average (flop_utils divides by T; *T happens in seq_length).
+        total_swa_keys = (
+            effective_window * (effective_window + 1) / 2
+            + (seq_length - effective_window) * effective_window
+        )
+        avg_swa_keys = total_swa_keys / seq_length
+        core_diff_per_layer = query_projection_size * (seq_length - 2 * avg_swa_keys)
         expected_delta = batch_size * seq_length * 3 * 2 * num_swa_layers * core_diff_per_layer
         actual_delta = flops_full - flops_swa
 
